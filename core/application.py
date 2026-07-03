@@ -1,39 +1,24 @@
-from database.database import Database
+def run(self):
 
-from rich.console import Console
+    show_banner()
 
-from config.settings import settings
-from core.banner import show_banner
-from core.health import HealthCheck
-from core.logger import get_logger
+    self.logger.info("ATHENA started.")
 
+    self.console.print("[green]✓ Configuration Loaded[/green]")
+    self.console.print(f"Debug: {settings.DEBUG}")
 
-class AthenaApplication:
+    database = Database()
+    database.initialize()
 
-    def __init__(self):
+    self.logger.info("Database initialized.")
 
-        self.console = Console()
-        self.logger = get_logger()
+    checker = HealthCheck()
+    health = checker.run()
 
-    def run(self):
+    self.console.print("\n[bold]System Health[/bold]")
 
-        show_banner()
+    for component, status in health.items():
+        icon = "🟢" if status else "🔴"
+        self.console.print(f"{icon} {component}")
 
-        self.logger.info("ATHENA started.")
-
-        self.console.print("[green]✓ Configuration Loaded[/green]")
-        self.console.print(f"Debug: {settings.DEBUG}")
-
-        checker = HealthCheck()
-
-        health = checker.run()
-
-        self.console.print("\n[bold]System Health[/bold]")
-
-        for component, status in health.items():
-
-            icon = "🟢" if status else "🔴"
-
-            self.console.print(f"{icon} {component}")
-
-        self.logger.info("Startup completed successfully.")
+    self.logger.success("Startup completed successfully.")
