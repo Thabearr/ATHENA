@@ -1,3 +1,5 @@
+from database.database import Database
+
 from rich.console import Console
 
 from config.settings import settings
