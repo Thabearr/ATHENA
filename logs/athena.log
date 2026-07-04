@@ -1,0 +1,10 @@
+2026-07-03 20:05:46.345 | INFO     | core.application:run:20 - ATHENA started.
+2026-07-03 20:05:46.349 | INFO     | core.application:run:37 - Startup completed successfully.
+2026-07-03 20:56:54.408 | INFO     | core.application:run:20 - ATHENA started.
+2026-07-03 20:56:54.712 | INFO     | core.application:run:37 - Startup completed successfully.
+2026-07-04 09:46:00.073 | INFO     | core.application:run:20 - ATHENA started.
+2026-07-04 09:46:01.990 | INFO     | core.application:run:28 - Database initialized.
+2026-07-04 09:46:01.995 | SUCCESS  | core.application:run:39 - Startup completed successfully.
+2026-07-04 10:02:53.450 | INFO     | core.application:run:20 - ATHENA started.
+2026-07-04 10:02:53.555 | INFO     | core.application:run:28 - Database initialized.
+2026-07-04 10:02:53.559 | SUCCESS  | core.application:run:39 - Startup completed successfully.
