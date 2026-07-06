@@ -7,14 +7,20 @@ headers = {
 }
 
 try:
-    response = httpx.get(
-        "https://v3.football.api-sports.io/status",
-        headers=headers,
+    with httpx.Client(
+        http2=False,
+        verify=True,
         timeout=20
-    )
+    ) as client:
 
-    print(response.status_code)
-    print(response.text)
+        r = client.get(
+            "https://v3.football.api-sports.io/status",
+            headers=headers
+        )
+
+        print(r.status_code)
+        print(r.text)
 
 except Exception as e:
+    print(type(e))
     print(e)
