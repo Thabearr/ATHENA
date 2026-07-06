@@ -47,11 +47,13 @@ class AthenaApplication:
 
         try:
             loader = LiveFixtureLoader()
-            fixtures = loader.load()
+            fixtures = loader.load_today()
 
             if fixtures:
 
-                self.console.print("\n[bold green]Today's Fixtures[/bold green]")
+                self.console.print(
+    f"\n[cyan]Downloaded and stored {len(fixtures)} fixtures.[/cyan]"
+)
                 self.console.print("-" * 60)
 
                 for fixture in fixtures[:10]:
