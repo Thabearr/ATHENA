@@ -52,13 +52,18 @@ class AthenaApplication:
             if fixtures:
 
                 self.console.print(
-    f"\n[cyan]Downloaded and stored {len(fixtures)} fixtures.[/cyan]"
-)
+                    f"\n[cyan]Downloaded and stored {len(fixtures)} fixtures.[/cyan]"
+                )
                 self.console.print("-" * 60)
 
+                # Display first 10 fixtures
                 for fixture in fixtures[:10]:
+                    home = fixture["teams"]["home"]["name"]
+                    away = fixture["teams"]["away"]["name"]
+                    league = fixture["league"]["name"]
+
                     self.console.print(
-                        f"{fixture.home_team} vs {fixture.away_team} | {fixture.league}"
+                        f"{home} vs {away} | {league}"
                     )
 
                 self.console.print(
