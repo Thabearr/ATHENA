@@ -1,9 +1,20 @@
--- =========================
+-- ==========================================
 -- ATHENA Database Schema
--- Version: 0.1
+-- Version: 0.2
+-- ==========================================
+
+DROP TABLE IF EXISTS teams;
+DROP TABLE IF EXISTS fixtures;
+DROP TABLE IF EXISTS odds;
+DROP TABLE IF EXISTS predictions;
+DROP TABLE IF EXISTS results;
+DROP TABLE IF EXISTS api_cache;
+
+-- =========================
+-- Teams
 -- =========================
 
-CREATE TABLE IF NOT EXISTS teams (
+CREATE TABLE teams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id INTEGER UNIQUE,
     name TEXT NOT NULL,
@@ -11,46 +22,84 @@ CREATE TABLE IF NOT EXISTS teams (
     league TEXT
 );
 
-CREATE TABLE IF NOT EXISTS fixtures (
+-- =========================
+-- Fixtures
+-- =========================
+
+CREATE TABLE fixtures (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     fixture_id INTEGER UNIQUE,
+
     league TEXT,
     season INTEGER,
+
     home_team TEXT,
     away_team TEXT,
+
+    match_date TEXT,
     kickoff TEXT,
+
+    venue TEXT,
     status TEXT
 );
 
-CREATE TABLE IF NOT EXISTS odds (
+-- =========================
+-- Odds
+-- =========================
+
+CREATE TABLE odds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     fixture_id INTEGER,
+
     market TEXT,
     selection TEXT,
     price REAL
 );
 
-CREATE TABLE IF NOT EXISTS predictions (
+-- =========================
+-- Predictions
+-- =========================
+
+CREATE TABLE predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     fixture_id INTEGER,
+
     market TEXT,
+
     probability REAL,
     confidence REAL,
     reliability REAL,
+
     recommendation INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS results (
+-- =========================
+-- Results
+-- =========================
+
+CREATE TABLE results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     fixture_id INTEGER,
+
     home_score INTEGER,
     away_score INTEGER,
+
     finished INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS api_cache (
+-- =========================
+-- API Cache
+-- =========================
+
+CREATE TABLE api_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+
     endpoint TEXT,
     response TEXT,
+
     created_at TEXT
-); 
+);
