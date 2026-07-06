@@ -8,26 +8,43 @@ class FootballProvider:
 
     def __init__(self, api_key):
 
+        self.api_key = api_key
+
         self.client = httpx.Client(
             headers={
-                "x-apisports-key": api_key
+                "x-apisports-key": self.api_key,
+                "Accept": "application/json",
+                "User-Agent": "ATHENA/0.1"
             },
-            timeout=20
+            timeout=httpx.Timeout(30.0),
+            follow_redirects=True,
+            http2=False
         )
 
     def get_today_fixtures(self):
 
         today = date.today().strftime("%Y-%m-%d")
 
-        response = self.client.get(
-            f"{self.BASE_URL}/fixtures",
-            params={
-                "date": today
-            }
-        )
+        try:
 
-        response.raise_for_status()
+            response = self.client.get(
+                f"{self.BASE_URL}/fixtures",
+                params={
+                    "date": today
+                }
+            )
 
-        data = response.json()
+            print("Status Code:", response.status_code)
 
-        return data["response"]
+            response.raise_for_status()
+
+            data = response.json()
+
+            if "response" not in data:
+                raise Exception(f"Unexpected API response: {data}")
+
+            return data["response"]
+
+        except Exception as e:
+            print("Football API Error:", e)
+            raise
