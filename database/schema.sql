@@ -1,20 +1,12 @@
 -- ==========================================
 -- ATHENA Database Schema
--- Version: 0.2
+-- Version: 0.2 (Production / Safe Migration)
 -- ==========================================
-
-DROP TABLE IF EXISTS teams;
-DROP TABLE IF EXISTS fixtures;
-DROP TABLE IF EXISTS odds;
-DROP TABLE IF EXISTS predictions;
-DROP TABLE IF EXISTS results;
-DROP TABLE IF EXISTS api_cache;
 
 -- =========================
 -- Teams
 -- =========================
-
-CREATE TABLE teams (
+CREATE TABLE IF NOT EXISTS teams (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     team_id INTEGER UNIQUE,
     name TEXT NOT NULL,
@@ -25,21 +17,15 @@ CREATE TABLE teams (
 -- =========================
 -- Fixtures
 -- =========================
-
-CREATE TABLE fixtures (
+CREATE TABLE IF NOT EXISTS fixtures (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     fixture_id INTEGER UNIQUE,
-
     league TEXT,
     season INTEGER,
-
     home_team TEXT,
     away_team TEXT,
-
     match_date TEXT,
     kickoff TEXT,
-
     venue TEXT,
     status TEXT
 );
@@ -47,12 +33,9 @@ CREATE TABLE fixtures (
 -- =========================
 -- Odds
 -- =========================
-
-CREATE TABLE odds (
+CREATE TABLE IF NOT EXISTS odds (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     fixture_id INTEGER,
-
     market TEXT,
     selection TEXT,
     price REAL
@@ -61,72 +44,66 @@ CREATE TABLE odds (
 -- =========================
 -- Predictions
 -- =========================
-
-CREATE TABLE predictions (
+CREATE TABLE IF NOT EXISTS predictions (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     fixture_id INTEGER,
-
     market TEXT,
-
     probability REAL,
     confidence REAL,
     reliability REAL,
-
     recommendation INTEGER
 );
 
 -- =========================
 -- Results
 -- =========================
-
-CREATE TABLE results (
+CREATE TABLE IF NOT EXISTS results (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     fixture_id INTEGER,
-
     home_score INTEGER,
     away_score INTEGER,
-
     finished INTEGER
 );
 
 -- =========================
 -- API Cache
 -- =========================
-
-CREATE TABLE api_cache (
+CREATE TABLE IF NOT EXISTS api_cache (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     endpoint TEXT,
     response TEXT,
-
     created_at TEXT
 );
 
+-- =========================
+-- Team Statistics (Sprint 2)
+-- =========================
 CREATE TABLE IF NOT EXISTS team_statistics (
-
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-
     team_id INTEGER,
-
     league_id INTEGER,
-
     season INTEGER,
-
     form TEXT,
-
-    played INTEGER,
-
-    wins INTEGER,
-
-    draws INTEGER,
-
-    losses INTEGER,
-
-    goals_for INTEGER,
-
-    goals_against INTEGER,
-
-    updated_at TEXT
+    played INTEGER DEFAULT 0,
+    wins INTEGER DEFAULT 0,
+    draws INTEGER DEFAULT 0,
+    losses INTEGER DEFAULT 0,
+    goals_for INTEGER DEFAULT 0,
+    goals_against INTEGER DEFAULT 0,
+    -- Home Records (Crucial for Form Engine Advantage Metrics)
+    home_played INTEGER DEFAULT 0,
+    home_wins INTEGER DEFAULT 0,
+    home_draws INTEGER DEFAULT 0,
+    home_losses INTEGER DEFAULT 0,
+    home_goals_for INTEGER DEFAULT 0,
+    home_goals_against INTEGER DEFAULT 0,
+    -- Away Records (Crucial for Form Engine Clash Metrics)
+    away_played INTEGER DEFAULT 0,
+    away_wins INTEGER DEFAULT 0,
+    away_draws INTEGER DEFAULT 0,
+    away_losses INTEGER DEFAULT 0,
+    away_goals_for INTEGER DEFAULT 0,
+    away_goals_against INTEGER DEFAULT 0,
+    updated_at TEXT,
+    UNIQUE(team_id, league_id, season)
 );
