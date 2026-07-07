@@ -8,7 +8,8 @@ try:
     from services.statistics_service import StatisticsService
     from services.standings_service import StandingsService
     from services.team_form_service import TeamFormService
-    from intelligence.form_engine import FormEngine
+    # Changed from intelligence.form_engine to match your repository layout
+    from intelligence.form import FormEngine
     
     logger.info("✅ All Sprint 2 Football Intelligence modules imported successfully!")
     
