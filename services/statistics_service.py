@@ -1,12 +1,13 @@
 import logging
 from datetime import datetime
-from database.database import get_db_connection
+from database.database import Database
 
 logger = logging.getLogger("athena.statistics_service")
 
 class StatisticsService:
     def __init__(self):
-        pass
+        # Instantiate your custom Database utility class
+        self.db = Database()
 
     def save_team_statistics(self, stats_data: dict):
         query = """
@@ -28,7 +29,7 @@ class StatisticsService:
             away_goals_against=excluded.away_goals_against, updated_at=excluded.updated_at;
         """
         try:
-            with get_db_connection() as conn:
+            with self.db.connect() as conn:
                 cursor = conn.cursor()
                 cursor.execute(query, (
                     stats_data['team_id'], stats_data['league_id'], stats_data['season'], stats_data.get('form', ''),
@@ -46,8 +47,12 @@ class StatisticsService:
 
     def get_team_statistics(self, team_id: int, league_id: int, season: int) -> dict:
         query = "SELECT * FROM team_statistics WHERE team_id = ? AND league_id = ? AND season = ?"
-        with get_db_connection() as conn:
-            conn.row_factory = lambda cursor, row: dict((cursor.description[i][0], value) for i, value in enumerate(row))
-            cursor = conn.cursor()
-            cursor.execute(query, (team_id, league_id, season))
-            return cursor.fetchone()
+        try:
+            with self.db.connect() as conn:
+                conn.row_factory = lambda cursor, row: dict((cursor.description[i][0], value) for i, value in enumerate(row))
+                cursor = conn.cursor()
+                cursor.execute(query, (team_id, league_id, season))
+                return cursor.fetchone()
+        except Exception as e:
+            logger.error(f"Error fetching team stats: {e}")
+            return None
