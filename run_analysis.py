@@ -9,17 +9,16 @@ from intelligence.fatigue import FatigueEngine
 from intelligence.injuries import InjuryEngine
 from intelligence.match_analyst import MatchAnalyst
 from services.analysis_pipeline import AnalysisPipeline
+from intelligence.accumulator import AccumulatorEngine
 
-# Suppress background logs to keep the terminal console report pristine
 logging.basicConfig(level=logging.WARNING)
 
 def main():
-    print("\n" + "="*65)
-    print("      🔮 ATHENA FOOTBALL INTELLIGENCE ANALYSIS PIPELINE 🔮")
-    print("="*65)
+    print("\n" + "="*70)
+    print("      🔮 ATHENA FOOTBALL INTELLIGENCE & ACCUMULATOR SYSTEM 🔮")
+    print("="*70)
     
     try:
-        # Initialize full infrastructure dependency stack
         stats_svc = StatisticsService()
         form_svc = TeamFormService()
         form_eng = FormEngine(stats_svc, form_svc)
@@ -31,25 +30,28 @@ def main():
         analyst = MatchAnalyst(form_eng, motivation_eng, weather_eng, fatigue_eng, injury_eng)
         pipeline = AnalysisPipeline(analyst, form_svc)
         
-        print("\n⏳ Accessing database to capture upcoming unplayed fixtures...")
-        results = pipeline.run_pipeline_snapshot(execution_limit=10)
+        print("\n⏳ Processing pipeline metrics over upcoming schedules...")
+        results = pipeline.run_pipeline_snapshot(execution_limit=35)
         
-        print("\n" + "-"*65)
-        print(f" {'UPCOMING FIXTURE':<28} | {'EDGE':<6} | {'TARGET VERDICT'}")
-        print("-"*65)
+        # Initialize the custom Accumulator Engine built from standard options
+        acca_engine = AccumulatorEngine(min_edge=0.02)
         
-        if not results:
-            print(f"   {'No upcoming matches currently populated in the database.':^58}")
+        # Construct an ultra-reliable 5-fold anchor slip for testing
+        slip_5_fold = acca_engine.generate_accumulator(results, fold_size=5)
+        
+        print("\n" + "🚀 TARGET ACCUMULATOR SELECTIONS (LOW-VARIANCE ENGINE)")
+        print("="*70)
+        if not slip_5_fold or 'legs' not in slip_5_fold:
+            print(" No qualified high-confidence selections passed structural risk filtering.")
         else:
-            for res in results:
-                edge_val = res['edge']
-                edge_str = f"+{edge_val:.2f}" if edge_val > 0 else f"{edge_val:.2f}"
-                print(f" {res['fixture']:<28} | {edge_str:<6} | {res['verdict']}")
-                
-        print("="*65 + "\n")
+            print(f" TYPE: {slip_5_fold['fold_size']}-Fold Slip | COMPOUNDED ODDS: {slip_5_fold['total_estimated_odds']}x")
+            print("-"*70)
+            for idx, leg in enumerate(slip_5_fold['legs'], 1):
+                print(f" {idx}. {leg['fixture']:<28} | {leg['market']:<20} -> {leg['selection']}")
+        print("="*70 + "\n")
 
     except Exception as e:
-        print(f"❌ Engine Execution Interrupted: {e}")
+        print(f"❌ System Interrupted: {e}")
 
 if __name__ == "__main__":
     main()
