@@ -11,22 +11,29 @@ try:
     from intelligence.form import FormEngine
     from intelligence.motivation import MotivationEngine
     from intelligence.weather import WeatherEngine
+    from intelligence.fatigue import FatigueEngine
     
     logger.info("✅ All Sprint 2 Football Intelligence modules imported successfully!")
     
-    # Core Service and Engine Initialization
+    # Initialize Core Classes
     stats_svc = StatisticsService()
     form_svc = TeamFormService()
     standings_svc = StandingsService(stats_svc)
     form_eng = FormEngine(stats_svc, form_svc)
     motivation_eng = MotivationEngine()
     weather_eng = WeatherEngine()
+    fatigue_eng = FatigueEngine()
     
-    # Weather Dry-Run Verification
-    mock_weather = {"condition": "heavy rain", "wind_speed": 28.5, "temp": 14.0}
-    weather_clash = weather_eng.assess_tactical_weather_impact(mock_weather, home_style="passing", away_style="long_ball")
+    # Fatigue Dry-Run Verification
+    fatigue_clash = fatigue_eng.analyze_fixture_fatigue_clash(
+        home_team_id=10, away_team_id=20,
+        current_date="2026-07-07",
+        home_last_date="2026-07-02",  # 5 days rest
+        away_last_date="2026-07-04",  # 3 days rest + continental travel
+        away_has_continental_travel=True
+    )
     
-    logger.info(f"✅ Weather check complete. Home Mod: {weather_clash['home_weather_modifier']}, Away Mod: {weather_clash['away_weather_modifier']}")
+    logger.info(f"✅ Fatigue check complete. Home Index: {fatigue_clash['home_fatigue_score']}, Away Index: {fatigue_clash['away_fatigue_score']}")
     logger.info("✅ Architecture initialized cleanly without breaking dependencies.")
 
 except Exception as e:
