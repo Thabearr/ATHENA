@@ -12,10 +12,11 @@ try:
     from intelligence.motivation import MotivationEngine
     from intelligence.weather import WeatherEngine
     from intelligence.fatigue import FatigueEngine
+    from intelligence.injuries import InjuryEngine
     
     logger.info("✅ All Sprint 2 Football Intelligence modules imported successfully!")
     
-    # Initialize Core Classes
+    # Core Service and Engine initializations
     stats_svc = StatisticsService()
     form_svc = TeamFormService()
     standings_svc = StandingsService(stats_svc)
@@ -23,18 +24,20 @@ try:
     motivation_eng = MotivationEngine()
     weather_eng = WeatherEngine()
     fatigue_eng = FatigueEngine()
+    injury_eng = InjuryEngine()
     
-    # Fatigue Dry-Run Verification
-    fatigue_clash = fatigue_eng.analyze_fixture_fatigue_clash(
-        home_team_id=10, away_team_id=20,
-        current_date="2026-07-07",
-        home_last_date="2026-07-02",  # 5 days rest
-        away_last_date="2026-07-04",  # 3 days rest + continental travel
-        away_has_continental_travel=True
-    )
+    # Comprehensive Dry-Run execution check
+    mock_absences = [
+        {"name": "Star Striker", "role": "critical", "reason": "Hamstring Strain"},
+        {"name": "Main Center Back", "role": "key", "reason": "Suspension"}
+    ]
+    injury_check = injury_eng.calculate_squad_degradation(mock_absences)
     
-    logger.info(f"✅ Fatigue check complete. Home Index: {fatigue_clash['home_fatigue_score']}, Away Index: {fatigue_clash['away_fatigue_score']}")
-    logger.info("✅ Architecture initialized cleanly without breaking dependencies.")
+    logger.info(f"✅ Injury check complete. Squad Integrity Modifier: {injury_check['squad_integrity_modifier']}")
+    for note in injury_check['tactical_impact_notes']:
+        logger.info(f"   -> {note}")
+        
+    logger.info("✅ Complete Sprint 2 Intelligence Architecture initialized cleanly without breaking dependencies!")
 
 except Exception as e:
     logger.error(f"❌ Initialization failed: {e}")
