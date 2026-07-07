@@ -61,6 +61,7 @@ class LiveAPILoader:
             
             league_name = league_data.get("name", "Unknown League")
             league_id = league_data.get("id", 0)
+            season = league_data.get("season", 2026)
             
             if not self._is_valid_structural_league(league_name, league_id):
                 continue
@@ -74,6 +75,7 @@ class LiveAPILoader:
                 "fixture_id": fixture_id,
                 "league_id": league_id,
                 "league": league_name,
+                "season": season,
                 "match_date": match_date,
                 "home_team": home_team,
                 "away_team": away_team,
@@ -99,7 +101,7 @@ class LiveAPILoader:
         
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS fixtures (
-                fixture_id INTEGER PRIMARY KEY, league_id INTEGER, league TEXT, match_date TEXT,
+                fixture_id INTEGER PRIMARY KEY, league_id INTEGER, league TEXT, season INTEGER, match_date TEXT,
                 home_team TEXT, away_team TEXT, home_odds REAL, draw_odds REAL, away_odds REAL,
                 dnb_home_odds REAL, dnb_away_odds REAL, dc_home_odds REAL, dc_away_odds REAL,
                 over_15_odds REAL, under_35_odds REAL
@@ -108,11 +110,11 @@ class LiveAPILoader:
         
         cursor.execute("""
             INSERT OR REPLACE INTO fixtures (
-                fixture_id, league_id, league, match_date, home_team, away_team, home_odds, draw_odds, away_odds,
+                fixture_id, league_id, league, season, match_date, home_team, away_team, home_odds, draw_odds, away_odds,
                 dnb_home_odds, dnb_away_odds, dc_home_odds, dc_away_odds, over_15_odds, under_35_odds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            p["fixture_id"], p["league_id"], p["league"], p["match_date"], p["home_team"], p["away_team"],
+            p["fixture_id"], p["league_id"], p["league"], p["season"], p["match_date"], p["home_team"], p["away_team"],
             p["home_odds"], p["draw_odds"], p["away_odds"], p["dnb_home_odds"], p["dnb_away_odds"],
             p["dc_home_odds"], p["dc_away_odds"], p["over_15_odds"], p["under_35_odds"]
         ))
@@ -123,37 +125,37 @@ class LiveAPILoader:
         return [
             {
                 "fixture": {"id": 1001, "date": "2026-07-10 20:00:00"},
-                "league": {"id": 39, "name": "Premier League"},
+                "league": {"id": 39, "name": "Premier League", "season": 2026},
                 "teams": {"home": {"name": "Arsenal"}, "away": {"name": "Everton"}},
                 "odds_mock": {"home": 1.35, "draw": 5.00, "away": 8.50, "dnb_home": 1.10, "dnb_away": 6.50, "dc_home": 1.07, "dc_away": 3.20, "over_15": 1.22, "under_35": 1.45}
             },
             {
                 "fixture": {"id": 1002, "date": "2026-07-11 16:00:00"},
-                "league": {"id": 39, "name": "Premier League"},
+                "league": {"id": 39, "name": "Premier League", "season": 2026},
                 "teams": {"home": {"name": "Liverpool"}, "away": {"name": "Aston Villa"}},
                 "odds_mock": {"home": 1.44, "draw": 4.73, "away": 6.00, "dnb_home": 1.14, "dnb_away": 4.50, "dc_home": 1.10, "dc_away": 2.50, "over_15": 1.18, "under_35": 1.60}
             },
             {
                 "fixture": {"id": 1003, "date": "2026-07-11 18:30:00"},
-                "league": {"id": 140, "name": "La Liga"},
+                "league": {"id": 140, "name": "La Liga", "season": 2026},
                 "teams": {"home": {"name": "Real Madrid"}, "away": {"name": "Getafe"}},
                 "odds_mock": {"home": 1.26, "draw": 5.50, "away": 11.00, "dnb_home": 1.06, "dnb_away": 8.00, "dc_home": 1.03, "dc_away": 4.00, "over_15": 1.15, "under_35": 1.80}
             },
             {
                 "fixture": {"id": 1004, "date": "2026-07-12 20:45:00"},
-                "league": {"id": 135, "name": "Serie A"},
+                "league": {"id": 135, "name": "Serie A", "season": 2026},
                 "teams": {"home": {"name": "Inter Milan"}, "away": {"name": "Empoli"}},
                 "odds_mock": {"home": 1.30, "draw": 5.00, "away": 9.50, "dnb_home": 1.08, "dnb_away": 7.00, "dc_home": 1.05, "dc_away": 3.40, "over_15": 1.20, "under_35": 1.55}
             },
             {
                 "fixture": {"id": 1005, "date": "2026-07-13 19:45:00"},
-                "league": {"id": 61, "name": "Ligue 1"},
+                "league": {"id": 61, "name": "Ligue 1", "season": 2026},
                 "teams": {"home": {"name": "Paris Saint Germain"}, "away": {"name": "Brest"}},
                 "odds_mock": {"home": 1.40, "draw": 4.80, "away": 7.00, "dnb_home": 1.12, "dnb_away": 5.20, "dc_home": 1.09, "dc_away": 2.80, "over_15": 1.16, "under_35": 1.70}
             },
             {
                 "fixture": {"id": 9999, "date": "2026-07-14 12:00:00"},
-                "league": {"id": 800, "name": "Women's Super League"},
+                "league": {"id": 800, "name": "Women's Super League", "season": 2026},
                 "teams": {"home": {"name": "Chelsea Women"}, "away": {"name": "Arsenal Women"}},
                 "odds_mock": {"home": 2.10, "draw": 3.40, "away": 3.20, "dnb_home": 1.50, "dnb_away": 2.30, "dc_home": 1.30, "dc_away": 1.65, "over_15": 1.25, "under_35": 1.35}
             }
