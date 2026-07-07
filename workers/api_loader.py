@@ -72,6 +72,7 @@ class LiveAPILoader:
 
             payload = {
                 "fixture_id": fixture_id,
+                "league_id": league_id,
                 "league": league_name,
                 "match_date": match_date,
                 "home_team": home_team,
@@ -96,10 +97,9 @@ class LiveAPILoader:
         conn = self.db.get_connection()
         cursor = conn.cursor()
         
-        # Updated table string targets to 'fixtures'
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS fixtures (
-                fixture_id INTEGER PRIMARY KEY, league TEXT, match_date TEXT,
+                fixture_id INTEGER PRIMARY KEY, league_id INTEGER, league TEXT, match_date TEXT,
                 home_team TEXT, away_team TEXT, home_odds REAL, draw_odds REAL, away_odds REAL,
                 dnb_home_odds REAL, dnb_away_odds REAL, dc_home_odds REAL, dc_away_odds REAL,
                 over_15_odds REAL, under_35_odds REAL
@@ -108,11 +108,11 @@ class LiveAPILoader:
         
         cursor.execute("""
             INSERT OR REPLACE INTO fixtures (
-                fixture_id, league, match_date, home_team, away_team, home_odds, draw_odds, away_odds,
+                fixture_id, league_id, league, match_date, home_team, away_team, home_odds, draw_odds, away_odds,
                 dnb_home_odds, dnb_away_odds, dc_home_odds, dc_away_odds, over_15_odds, under_35_odds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
-            p["fixture_id"], p["league"], p["match_date"], p["home_team"], p["away_team"],
+            p["fixture_id"], p["league_id"], p["league"], p["match_date"], p["home_team"], p["away_team"],
             p["home_odds"], p["draw_odds"], p["away_odds"], p["dnb_home_odds"], p["dnb_away_odds"],
             p["dc_home_odds"], p["dc_away_odds"], p["over_15_odds"], p["under_35_odds"]
         ))
