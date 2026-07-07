@@ -1,5 +1,4 @@
 import sqlite3
-import os
 
 class Database:
     def __init__(self, db_path="athena.db"):
@@ -15,6 +14,12 @@ class Database:
         """
         return sqlite3.connect(self.db_path)
 
+    def connect(self):
+        """
+        Alias method to support pipeline components calling .connect().
+        """
+        return self.get_connection()
+
     def _init_db(self):
         """
         Ensures the structural tables exist upon system initialization.
@@ -22,7 +27,6 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Core table to hold filtered tier-1 matches
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS upcoming_fixtures (
                 fixture_id INTEGER PRIMARY KEY,
