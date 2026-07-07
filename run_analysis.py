@@ -1,5 +1,6 @@
 import sys
 import logging
+from workers.api_loader import LiveAPILoader
 from services.statistics_service import StatisticsService
 from services.team_form_service import TeamFormService
 from intelligence.form import FormEngine
@@ -15,10 +16,16 @@ logging.basicConfig(level=logging.WARNING)
 
 def main():
     print("\n" + "="*70)
-    print("      🔮 ATHENA FOOTBALL INTELLIGENCE & ACCUMULATOR SYSTEM 🔮")
+    print("      🔮 ATHENA FOOTBALL INTELLIGENCE & LIVE FEED LIVE SYSTEM 🔮")
     print("="*70)
     
     try:
+        # Step 1: Spin up the Ingestion Worker to capture new matches
+        print("📥 Initializing API ingestion sync down worker...")
+        loader = LiveAPILoader()
+        loader.sync_fixtures_to_db()
+        
+        # Step 2: Initialize full analytical dependency stack
         stats_svc = StatisticsService()
         form_svc = TeamFormService()
         form_eng = FormEngine(stats_svc, form_svc)
@@ -30,18 +37,16 @@ def main():
         analyst = MatchAnalyst(form_eng, motivation_eng, weather_eng, fatigue_eng, injury_eng)
         pipeline = AnalysisPipeline(analyst, form_svc)
         
-        print("\n⏳ Processing pipeline metrics over upcoming schedules...")
-        results = pipeline.run_pipeline_snapshot(execution_limit=35)
+        print("\n⏳ Processing analytical engine vectors across active lines...")
+        results = pipeline.run_pipeline_snapshot(execution_limit=10)
         
-        # Initialize the custom Accumulator Engine built from standard options
-        acca_engine = AccumulatorEngine(min_edge=0.02)
-        
-        # Construct an ultra-reliable 5-fold anchor slip for testing
+        # Step 3: Extract and generate high-probability slips matching your bookie options
+        acca_engine = AccumulatorEngine(min_edge=0.01)
         slip_5_fold = acca_engine.generate_accumulator(results, fold_size=5)
         
-        print("\n" + "🚀 TARGET ACCUMULATOR SELECTIONS (LOW-VARIANCE ENGINE)")
+        print("\n" + "🚀 LIVE ACCUMULATOR SELECTIONS (ZERO-VOLATILITY FILTER)")
         print("="*70)
-        if not slip_5_fold or 'legs' not in slip_5_fold:
+        if not slip_5_fold or 'legs' not in slip_5_fold or len(slip_5_fold['legs']) == 0:
             print(" No qualified high-confidence selections passed structural risk filtering.")
         else:
             print(f" TYPE: {slip_5_fold['fold_size']}-Fold Slip | COMPOUNDED ODDS: {slip_5_fold['total_estimated_odds']}x")
