@@ -103,3 +103,30 @@ CREATE TABLE api_cache (
 
     created_at TEXT
 );
+
+CREATE TABLE IF NOT EXISTS team_statistics (
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    team_id INTEGER,
+
+    league_id INTEGER,
+
+    season INTEGER,
+
+    form TEXT,
+
+    played INTEGER,
+
+    wins INTEGER,
+
+    draws INTEGER,
+
+    losses INTEGER,
+
+    goals_for INTEGER,
+
+    goals_against INTEGER,
+
+    updated_at TEXT
+);
