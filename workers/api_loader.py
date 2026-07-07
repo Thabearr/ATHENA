@@ -2,7 +2,7 @@ import os
 import logging
 import requests
 from datetime import datetime
-from database import Database  # Pulls directly from your core DB architecture
+from database import Database
 
 logger = logging.getLogger(__name__)
 
@@ -12,7 +12,6 @@ class LiveAPILoader:
         self.base_url = base_url
         self.db = Database()
         
-        # Approved high-predictability men's professional competition contexts
         self.ELIGIBLE_LEAGUE_IDS = {
             39: "English Premier League",
             140: "La Liga",
@@ -23,10 +22,6 @@ class LiveAPILoader:
         }
 
     def _is_valid_structural_league(self, league_name, league_id):
-        """
-        Enforces defensive structural mapping boundaries.
-        Explicitly blocks non-tier-1 setups, youth, and women's games from entry.
-        """
         name_upper = league_name.upper()
         if "WOMEN" in name_upper or "WNL" in name_upper or "FEMENINO" in name_upper:
             return False
@@ -35,10 +30,6 @@ class LiveAPILoader:
         return True
 
     def fetch_upcoming_fixtures(self, days_ahead=3):
-        """
-        Queries live fixture data feeds for upcoming scheduled matches.
-        Falls back smoothly to a robust sample structural payload if using a test key.
-        """
         if self.api_key == "MOCK_KEY_ACTIVE":
             logger.info("Using embedded operational live feed stream.")
             return self._generate_mock_live_payload()
@@ -48,40 +39,29 @@ class LiveAPILoader:
             "x-rapidapi-host": "v3.football.api-sports.io"
         }
         endpoint = f"{self.base_url}/fixtures"
-        params = {
-            "next": 20,
-            "status": "NS"  # Not Started matches only
-        }
+        params = {"next": 20, "status": "NS"}
         
         try:
             response = requests.get(endpoint, headers=headers, params=params, timeout=10)
             if response.status_code == 200:
                 return response.json().get("response", [])
-            logger.error(f"API Feed rejected request with status: {response.status_code}")
         except Exception as e:
             logger.error(f"Network exception intercepted during feed fetch: {e}")
-        
         return []
 
     def sync_fixtures_to_db(self):
-        """
-        Extracts, filters, maps odds parameters matching your bookmaker screens,
-        and safely commits live lines directly into your local database.
-        """
         raw_fixtures = self.fetch_upcoming_fixtures()
         synced_count = 0
         
         for item in raw_fixtures:
-            # Safely navigate varied structural formats of alternative providers
             fixture_data = item.get("fixture", item)
             league_data = item.get("league", item)
             teams_data = item.get("teams", item)
-            odds_data = item.get("odds_mock", {}) # Merged odds context
+            odds_data = item.get("odds_mock", {})
             
             league_name = league_data.get("name", "Unknown League")
             league_id = league_data.get("id", 0)
             
-            # Enforce hard structural constraint filter
             if not self._is_valid_structural_league(league_name, league_id):
                 continue
                 
@@ -90,40 +70,35 @@ class LiveAPILoader:
             fixture_id = fixture_data.get("id")
             match_date = fixture_data.get("date", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
 
-            # Normalize values to ensure exact alignment with images 3-12 market lines
             payload = {
                 "fixture_id": fixture_id,
                 "league": league_name,
                 "match_date": match_date,
                 "home_team": home_team,
                 "away_team": away_team,
-                "home_odds": odds_data.get("home", 1.44),        # Early Payout baseline (image_7.png)
+                "home_odds": odds_data.get("home", 1.44),
                 "draw_odds": odds_data.get("draw", 4.73),
                 "away_odds": odds_data.get("away", 3.58),
-                "dnb_home_odds": odds_data.get("dnb_home", 1.14), # Draw No Bet option (image_12.png)
+                "dnb_home_odds": odds_data.get("dnb_home", 1.14),
                 "dnb_away_odds": odds_data.get("dnb_away", 5.90),
-                "dc_home_odds": odds_data.get("dc_home", 1.10),   # Double Chance option (image_9.png)
+                "dc_home_odds": odds_data.get("dc_home", 1.10),
                 "dc_away_odds": odds_data.get("dc_away", 2.65),
-                "over_15_odds": odds_data.get("over_15", 1.37),   # Over 1.5 Goals line (image_5.png)
-                "under_35_odds": odds_data.get("under_35", 1.29)  # Under 3.5 Goals line (image_5.png)
+                "over_15_odds": odds_data.get("over_15", 1.37),
+                "under_35_odds": odds_data.get("under_35", 1.29)
             }
             
-            # Safely write to database using core context executing script injection
             self._write_to_database(payload)
             synced_count += 1
             
         print(f"✅ Ingestion Sync Cycle Complete: Captured {synced_count} tier-1 fixtures.")
 
     def _write_to_database(self, p):
-        """
-        Executes structural query statement inserts into the operational SQLite schema.
-        """
         conn = self.db.get_connection()
         cursor = conn.cursor()
         
-        # Ensure our target pipeline operational tables are populated
+        # Updated table string targets to 'fixtures'
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS upcoming_fixtures (
+            CREATE TABLE IF NOT EXISTS fixtures (
                 fixture_id INTEGER PRIMARY KEY, league TEXT, match_date TEXT,
                 home_team TEXT, away_team TEXT, home_odds REAL, draw_odds REAL, away_odds REAL,
                 dnb_home_odds REAL, dnb_away_odds REAL, dc_home_odds REAL, dc_away_odds REAL,
@@ -132,7 +107,7 @@ class LiveAPILoader:
         """)
         
         cursor.execute("""
-            INSERT OR REPLACE INTO upcoming_fixtures (
+            INSERT OR REPLACE INTO fixtures (
                 fixture_id, league, match_date, home_team, away_team, home_odds, draw_odds, away_odds,
                 dnb_home_odds, dnb_away_odds, dc_home_odds, dc_away_odds, over_15_odds, under_35_odds
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
@@ -142,12 +117,9 @@ class LiveAPILoader:
             p["dc_home_odds"], p["dc_away_odds"], p["over_15_odds"], p["under_35_odds"]
         ))
         conn.commit()
+        conn.close()
 
     def _generate_mock_live_payload(self):
-        """
-        Generates production-grade mock data simulating live top-flight schedules 
-        to test end-to-end processing safely without blowing API token quotas.
-        """
         return [
             {
                 "fixture": {"id": 1001, "date": "2026-07-10 20:00:00"},
@@ -179,7 +151,6 @@ class LiveAPILoader:
                 "teams": {"home": {"name": "Paris Saint Germain"}, "away": {"name": "Brest"}},
                 "odds_mock": {"home": 1.40, "draw": 4.80, "away": 7.00, "dnb_home": 1.12, "dnb_away": 5.20, "dc_home": 1.09, "dc_away": 2.80, "over_15": 1.16, "under_35": 1.70}
             },
-            # This row explicitly mimics a volatile category to test out our filtering safety nets
             {
                 "fixture": {"id": 9999, "date": "2026-07-14 12:00:00"},
                 "league": {"id": 800, "name": "Women's Super League"},
