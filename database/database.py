@@ -32,6 +32,7 @@ class Database:
                 fixture_id INTEGER PRIMARY KEY,
                 league_id INTEGER,
                 league TEXT,
+                season INTEGER,
                 match_date TEXT,
                 home_team TEXT,
                 away_team TEXT,
