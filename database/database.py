@@ -1,33 +1,45 @@
 import sqlite3
-from pathlib import Path
-
+import os
 
 class Database:
-    """Handles all database initialization and connections."""
+    def __init__(self, db_path="athena.db"):
+        """
+        Initializes the core SQLite database instance for ATHENA.
+        """
+        self.db_path = db_path
+        self._init_db()
 
-    def __init__(self):
-        self.db_path = Path("database/athena.db")
-        self.schema_path = Path("database/schema.sql")
-
-    def connect(self):
-        """Returns a connection to the SQLite database."""
+    def get_connection(self):
+        """
+        Returns a clean connection instance to the SQLite database file.
+        """
         return sqlite3.connect(self.db_path)
 
-    def initialize(self):
-        """Creates the database and tables if they don't exist."""
-
-        connection = self.connect()
-        cursor = connection.cursor()
-
-        if not self.schema_path.exists():
-            raise FileNotFoundError(
-                f"Schema file not found: {self.schema_path}"
+    def _init_db(self):
+        """
+        Ensures the structural tables exist upon system initialization.
+        """
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        # Core table to hold filtered tier-1 matches
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS upcoming_fixtures (
+                fixture_id INTEGER PRIMARY KEY,
+                league TEXT,
+                match_date TEXT,
+                home_team TEXT,
+                away_team TEXT,
+                home_odds REAL,
+                draw_odds REAL,
+                away_odds REAL,
+                dnb_home_odds REAL,
+                dnb_away_odds REAL,
+                dc_home_odds REAL,
+                dc_away_odds REAL,
+                over_15_odds REAL,
+                under_35_odds REAL
             )
-
-        with open(self.schema_path, "r", encoding="utf-8") as file:
-            cursor.executescript(file.read())
-
-        connection.commit()
-        connection.close()
-
-        print("✓ Database initialized successfully.")
+        """)
+        conn.commit()
+        conn.close()
