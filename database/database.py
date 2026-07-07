@@ -2,28 +2,16 @@ import sqlite3
 
 class Database:
     def __init__(self, db_path="athena.db"):
-        """
-        Initializes the core SQLite database instance for ATHENA.
-        """
         self.db_path = db_path
         self._init_db()
 
     def get_connection(self):
-        """
-        Returns a clean connection instance to the SQLite database file.
-        """
         return sqlite3.connect(self.db_path)
 
     def connect(self):
-        """
-        Alias method to support pipeline components calling .connect().
-        """
         return self.get_connection()
 
     def _init_db(self):
-        """
-        Ensures the structural tables exist upon system initialization.
-        """
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -33,6 +21,7 @@ class Database:
                 league_id INTEGER,
                 league TEXT,
                 season INTEGER,
+                status TEXT,
                 match_date TEXT,
                 home_team TEXT,
                 away_team TEXT,
