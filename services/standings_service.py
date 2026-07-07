@@ -1,5 +1,4 @@
 import logging
-from database.database import get_db_connection
 
 logger = logging.getLogger("athena.standings_service")
 
@@ -8,6 +7,9 @@ class StandingsService:
         self.stats_service = statistics_service
 
     def process_and_save_standings(self, league_id: int, season: int, standings_list: list):
+        """
+        Accepts raw structured lists from external feeds, updates individual team profiles.
+        """
         for team in standings_list:
             stats_payload = {
                 'team_id': team['team']['id'],
