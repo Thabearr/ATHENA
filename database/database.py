@@ -27,8 +27,9 @@ class Database:
         conn = self.get_connection()
         cursor = conn.cursor()
         
+        # Swapped target name to 'fixtures' to match the pipeline's expectations
         cursor.execute("""
-            CREATE TABLE IF NOT EXISTS upcoming_fixtures (
+            CREATE TABLE IF NOT EXISTS fixtures (
                 fixture_id INTEGER PRIMARY KEY,
                 league TEXT,
                 match_date TEXT,
