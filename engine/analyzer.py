@@ -20,7 +20,11 @@ class Analyzer:
             away_team=fixture["teams"]["away"]["name"],
         )
 
-        # Analyse each team
+        # =====================================
+        # Temporary Team Statistics
+        # (These will soon come from StatisticsService)
+        # =====================================
+
         home_stats = self._build_team_stats(fixture, True)
         away_stats = self._build_team_stats(fixture, False)
 
@@ -30,18 +34,22 @@ class Analyzer:
         prediction.home_strength = home_strength
         prediction.away_strength = away_strength
 
-        goals = self.score_engine.expected_goals(
+        # =====================================
+        # Expected Goals
+        # =====================================
+
+        goals = self.score_engine.calculate(
             home_strength,
             away_strength
         )
 
         prediction.home_xg = goals["home_xg"]
         prediction.away_xg = goals["away_xg"]
+        prediction.expected_goals = goals["total_xg"]
 
-        prediction.expected_goals = (
-            prediction.home_xg +
-            prediction.away_xg
-        )
+        # =====================================
+        # Extra Analysis
+        # =====================================
 
         self._analyze_form(prediction)
         self._analyze_home_advantage(prediction)
@@ -53,9 +61,17 @@ class Analyzer:
 
     def _build_team_stats(self, fixture, home=True):
 
-        # Temporary values.
-        # Later these will come from TeamRepository,
-        # StandingsService and StatisticsService.
+        # -------------------------------------------------
+        # TEMPORARY PLACEHOLDER
+        #
+        # Soon this will load from:
+        #
+        # StatisticsService
+        # StandingsService
+        # TeamRepository
+        #
+        # instead of hardcoded values.
+        # -------------------------------------------------
 
         return {
 
@@ -72,6 +88,7 @@ class Analyzer:
             "clean_sheets": 5,
 
             "is_home": home
+
         }
 
     def _analyze_form(self, prediction):
