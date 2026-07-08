@@ -1,4 +1,5 @@
 from rich.console import Console
+import traceback
 
 from config.settings import settings
 from core.banner import show_banner
@@ -34,7 +35,7 @@ class AthenaApplication:
 
         self.logger.info("Database initialized.")
 
-        # Health check
+        # Health Check
         checker = HealthCheck()
         health = checker.run()
 
@@ -44,10 +45,11 @@ class AthenaApplication:
             icon = "🟢" if status else "🔴"
             self.console.print(f"{icon} {component}")
 
-        # Load today's fixtures
+        # Load Today's Fixtures
         self.console.print("\n[bold cyan]Loading Today's Fixtures...[/bold cyan]")
 
         try:
+
             loader = LiveFixtureLoader()
             fixtures = loader.load_today()
 
@@ -75,7 +77,7 @@ class AthenaApplication:
                 )
 
                 # ==========================================
-                # ATHENA Prediction Engine Test
+                # Prediction Test
                 # ==========================================
 
                 self.console.print(
@@ -95,9 +97,14 @@ class AthenaApplication:
                     "[yellow]No fixtures found today.[/yellow]"
                 )
 
-       import traceback
+        except Exception as e:
 
-except Exception as e:
-    self.console.print(f"[red]Fixture loading failed:[/red] {repr(e)}")
-    traceback.print_exc()
-    self.logger.exception("Fixture loading failed")
+            self.console.print(
+                f"[red]Fixture loading failed:[/red] {repr(e)}"
+            )
+
+            traceback.print_exc()
+
+            self.logger.exception("Fixture loading failed")
+
+        self.logger.success("Startup completed successfully.")
