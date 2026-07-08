@@ -15,13 +15,16 @@ class FootballProvider:
         url = f"{self.BASE_URL}/{endpoint}"
 
         if params:
-            query = "&".join(f"{k}={v}" for k, v in params.items())
-            url = f"{url}?{query}"
+            query = "&".join(
+                f"{k}={v}" for k, v in params.items()
+            )
+            url += "?" + query
 
         command = [
             "curl",
-            "-s",
+            "-v",
             "-L",
+            "--http1.1",
             url,
             "-H",
             f"x-apisports-key: {self.api_key}"
@@ -33,15 +36,26 @@ class FootballProvider:
             text=True
         )
 
-        if result.returncode != 0:
-            raise RuntimeError(result.stderr)
+        print("\n========== CURL COMMAND ==========")
+        print(" ".join(command))
 
-        try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError:
+        print("\n========== RETURN CODE ==========")
+        print(result.returncode)
+
+        print("\n========== STDOUT ==========")
+        print(result.stdout[:1000])
+
+        print("\n========== STDERR ==========")
+        print(result.stderr[:1000])
+
+        if result.returncode != 0:
             raise RuntimeError(
-                f"Invalid JSON received:\n{result.stdout}"
+                f"Curl failed with code {result.returncode}"
             )
+
+        data = json.loads(result.stdout)
+
+        return data
 
     def get_today_fixtures(self):
 
@@ -49,13 +63,10 @@ class FootballProvider:
 
         data = self._curl_request(
             "fixtures",
-            {
-                "date": today
-            }
+            {"date": today}
         )
 
         return data.get("response", [])
 
     def get_status(self):
-
         return self._curl_request("status")
