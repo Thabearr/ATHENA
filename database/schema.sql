@@ -1,6 +1,6 @@
 -- ==========================================
 -- ATHENA Database Schema
--- Version: 0.2 (Production / Safe Migration)
+-- Version: 0.3
 -- ==========================================
 
 -- =========================
@@ -76,34 +76,74 @@ CREATE TABLE IF NOT EXISTS api_cache (
 );
 
 -- =========================
--- Team Statistics (Sprint 2)
+-- Team Statistics
 -- =========================
 CREATE TABLE IF NOT EXISTS team_statistics (
+
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    team_id INTEGER,
-    league_id INTEGER,
-    season INTEGER,
+
+    team_id INTEGER NOT NULL,
+    league_id INTEGER NOT NULL,
+    season INTEGER NOT NULL,
+
+    -- League Information
+    rank INTEGER DEFAULT 20,
+    points INTEGER DEFAULT 0,
+
+    -- Recent Form (WWDLW)
     form TEXT,
+
+    -- Overall Record
     played INTEGER DEFAULT 0,
     wins INTEGER DEFAULT 0,
     draws INTEGER DEFAULT 0,
     losses INTEGER DEFAULT 0,
+
+    -- Goals
     goals_for INTEGER DEFAULT 0,
     goals_against INTEGER DEFAULT 0,
-    -- Home Records (Crucial for Form Engine Advantage Metrics)
+    goal_difference INTEGER DEFAULT 0,
+
+    -- Defensive Metrics
+    clean_sheets INTEGER DEFAULT 0,
+    failed_to_score INTEGER DEFAULT 0,
+
+    -- =========================
+    -- Home Record
+    -- =========================
     home_played INTEGER DEFAULT 0,
     home_wins INTEGER DEFAULT 0,
     home_draws INTEGER DEFAULT 0,
     home_losses INTEGER DEFAULT 0,
     home_goals_for INTEGER DEFAULT 0,
     home_goals_against INTEGER DEFAULT 0,
-    -- Away Records (Crucial for Form Engine Clash Metrics)
+
+    -- =========================
+    -- Away Record
+    -- =========================
     away_played INTEGER DEFAULT 0,
     away_wins INTEGER DEFAULT 0,
     away_draws INTEGER DEFAULT 0,
     away_losses INTEGER DEFAULT 0,
     away_goals_for INTEGER DEFAULT 0,
     away_goals_against INTEGER DEFAULT 0,
+
     updated_at TEXT,
+
     UNIQUE(team_id, league_id, season)
 );
+
+-- =========================
+-- Recommended Indexes
+-- =========================
+CREATE INDEX IF NOT EXISTS idx_fixture_fixture_id
+ON fixtures(fixture_id);
+
+CREATE INDEX IF NOT EXISTS idx_results_fixture_id
+ON results(fixture_id);
+
+CREATE INDEX IF NOT EXISTS idx_predictions_fixture_id
+ON predictions(fixture_id);
+
+CREATE INDEX IF NOT EXISTS idx_team_statistics_lookup
+ON team_statistics(team_id, league_id, season);
