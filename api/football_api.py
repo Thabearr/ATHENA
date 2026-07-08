@@ -15,14 +15,12 @@ class FootballProvider:
         url = f"{self.BASE_URL}/{endpoint}"
 
         if params:
-            query = "&".join(
-                f"{k}={v}" for k, v in params.items()
-            )
+            query = "&".join(f"{k}={v}" for k, v in params.items())
             url += "?" + query
 
         command = [
             "curl",
-            "-v",
+            "-s",
             "-L",
             "--http1.1",
             url,
@@ -36,26 +34,16 @@ class FootballProvider:
             text=True
         )
 
-        print("\n========== CURL COMMAND ==========")
-        print(" ".join(command))
+        # If we received JSON, use it regardless of curl's exit code.
+        if result.stdout.strip():
+            try:
+                return json.loads(result.stdout)
+            except json.JSONDecodeError:
+                pass
 
-        print("\n========== RETURN CODE ==========")
-        print(result.returncode)
-
-        print("\n========== STDOUT ==========")
-        print(result.stdout[:1000])
-
-        print("\n========== STDERR ==========")
-        print(result.stderr[:1000])
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Curl failed with code {result.returncode}"
-            )
-
-        data = json.loads(result.stdout)
-
-        return data
+        raise RuntimeError(
+            f"Curl failed.\nExit Code: {result.returncode}\n\nSTDERR:\n{result.stderr}"
+        )
 
     def get_today_fixtures(self):
 
@@ -63,7 +51,9 @@ class FootballProvider:
 
         data = self._curl_request(
             "fixtures",
-            {"date": today}
+            {
+                "date": today
+            }
         )
 
         return data.get("response", [])
