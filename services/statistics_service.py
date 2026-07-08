@@ -56,3 +56,62 @@ class StatisticsService:
         except Exception as e:
             logger.error(f"Error fetching team stats: {e}")
             return None
+                def build_strength_profile(self, team_id: int, league_id: int, season: int):
+
+        stats = self.get_team_statistics(
+            team_id,
+            league_id,
+            season
+        )
+
+        if not stats:
+            return None
+
+        # Convert form string (WWDLW) into points
+        form_points = 0
+
+        for result in stats.get("form", ""):
+
+            if result == "W":
+                form_points += 3
+
+            elif result == "D":
+                form_points += 1
+
+        goal_difference = (
+            stats["goals_for"] -
+            stats["goals_against"]
+        )
+
+        clean_sheets = 0
+
+        if stats["played"] > 0:
+
+            clean_sheets = max(
+                0,
+                int(
+                    stats["played"] * 0.30
+                )
+            )
+
+        return {
+
+            "position": stats.get("rank", 20),
+
+            "form_points": form_points,
+
+            "goal_difference": goal_difference,
+
+            "goals_scored": stats["goals_for"],
+
+            "goals_conceded": stats["goals_against"],
+
+            "clean_sheets": clean_sheets,
+
+            "wins": stats["wins"],
+
+            "draws": stats["draws"],
+
+            "losses": stats["losses"]
+
+        }
