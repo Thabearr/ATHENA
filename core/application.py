@@ -95,12 +95,9 @@ class AthenaApplication:
                     "[yellow]No fixtures found today.[/yellow]"
                 )
 
-        except Exception as e:
+       import traceback
 
-            self.console.print(
-                f"[red]Fixture loading failed:[/red] {e}"
-            )
-
-            self.logger.error(str(e))
-
-        self.logger.success("Startup completed successfully.")
+except Exception as e:
+    self.console.print(f"[red]Fixture loading failed:[/red] {repr(e)}")
+    traceback.print_exc()
+    self.logger.exception("Fixture loading failed")
