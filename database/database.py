@@ -1,40 +1,27 @@
 import sqlite3
+from pathlib import Path
+
 
 class Database:
-    def __init__(self, db_path="athena.db"):
+
+    def __init__(self, db_path="database/athena.db"):
         self.db_path = db_path
-        self._init_db()
 
     def get_connection(self):
         return sqlite3.connect(self.db_path)
 
-    def connect(self):
-        return self.get_connection()
+    def initialize(self):
 
-    def _init_db(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS fixtures (
-                fixture_id INTEGER PRIMARY KEY,
-                league_id INTEGER,
-                league TEXT,
-                season INTEGER,
-                status TEXT,
-                match_date TEXT,
-                home_team TEXT,
-                away_team TEXT,
-                home_odds REAL,
-                draw_odds REAL,
-                away_odds REAL,
-                dnb_home_odds REAL,
-                dnb_away_odds REAL,
-                dc_home_odds REAL,
-                dc_away_odds REAL,
-                over_15_odds REAL,
-                under_35_odds REAL
-            )
-        """)
-        conn.commit()
-        conn.close()
+        Path("database").mkdir(exist_ok=True)
+
+        connection = self.get_connection()
+
+        schema = Path("database/schema.sql").read_text()
+
+        connection.executescript(schema)
+
+        connection.commit()
+
+        connection.close()
+
+        print("✓ Database initialized successfully.")
