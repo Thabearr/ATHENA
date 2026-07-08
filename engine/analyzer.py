@@ -1,8 +1,15 @@
-
 from models.prediction import Prediction
+
+from engine.team_strength_engine import TeamStrengthEngine
+from engine.score_engine import ScoreEngine
 
 
 class Analyzer:
+
+    def __init__(self):
+
+        self.team_strength = TeamStrengthEngine()
+        self.score_engine = ScoreEngine()
 
     def analyze(self, fixture):
 
@@ -13,8 +20,30 @@ class Analyzer:
             away_team=fixture["teams"]["away"]["name"],
         )
 
+        # Analyse each team
+        home_stats = self._build_team_stats(fixture, True)
+        away_stats = self._build_team_stats(fixture, False)
+
+        home_strength = self.team_strength.calculate(home_stats)
+        away_strength = self.team_strength.calculate(away_stats)
+
+        prediction.home_strength = home_strength
+        prediction.away_strength = away_strength
+
+        goals = self.score_engine.expected_goals(
+            home_strength,
+            away_strength
+        )
+
+        prediction.home_xg = goals["home_xg"]
+        prediction.away_xg = goals["away_xg"]
+
+        prediction.expected_goals = (
+            prediction.home_xg +
+            prediction.away_xg
+        )
+
         self._analyze_form(prediction)
-        self._analyze_strength(prediction)
         self._analyze_home_advantage(prediction)
         self._analyze_injuries(prediction)
         self._analyze_weather(prediction)
@@ -22,10 +51,30 @@ class Analyzer:
 
         return prediction
 
-    def _analyze_form(self, prediction):
-        pass
+    def _build_team_stats(self, fixture, home=True):
 
-    def _analyze_strength(self, prediction):
+        # Temporary values.
+        # Later these will come from TeamRepository,
+        # StandingsService and StatisticsService.
+
+        return {
+
+            "position": 10,
+
+            "form_points": 8,
+
+            "goal_difference": 6,
+
+            "goals_scored": 20,
+
+            "goals_conceded": 15,
+
+            "clean_sheets": 5,
+
+            "is_home": home
+        }
+
+    def _analyze_form(self, prediction):
         pass
 
     def _analyze_home_advantage(self, prediction):
