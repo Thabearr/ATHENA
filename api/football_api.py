@@ -1,5 +1,6 @@
-import subprocess
 import json
+import pycurl
+from io import BytesIO
 from datetime import date
 
 
@@ -10,46 +11,58 @@ class FootballProvider:
     def __init__(self, api_key):
         self.api_key = api_key
 
-    def _curl_request(self, endpoint, params=None):
+    def _request(self, endpoint, params=None):
 
         url = f"{self.BASE_URL}/{endpoint}"
 
         if params:
-            query = "&".join(f"{k}={v}" for k, v in params.items())
-            url += "?" + query
+            query = "&".join(
+                f"{k}={v}" for k, v in params.items()
+            )
+            url = f"{url}?{query}"
 
-        command = [
-            "curl",
-            "-s",
-            "-L",
-            "--http1.1",
-            url,
-            "-H",
+        buffer = BytesIO()
+
+        curl = pycurl.Curl()
+
+        curl.setopt(curl.URL, url)
+        curl.setopt(curl.HTTPHEADER, [
             f"x-apisports-key: {self.api_key}"
-        ]
+        ])
 
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True
-        )
+        curl.setopt(curl.WRITEDATA, buffer)
 
-        # If we received JSON, use it regardless of curl's exit code.
-        if result.stdout.strip():
-            try:
-                return json.loads(result.stdout)
-            except json.JSONDecodeError:
-                pass
+        # SSL
+        curl.setopt(curl.SSL_VERIFYPEER, 1)
+        curl.setopt(curl.SSL_VERIFYHOST, 2)
 
-        raise RuntimeError(
-            f"Curl failed.\nExit Code: {result.returncode}\n\nSTDERR:\n{result.stderr}"
-        )
+        # Timeouts
+        curl.setopt(curl.CONNECTTIMEOUT, 20)
+        curl.setopt(curl.TIMEOUT, 60)
+
+        # Compression
+        curl.setopt(curl.ACCEPT_ENCODING, "")
+
+        try:
+            curl.perform()
+
+            status = curl.getinfo(pycurl.RESPONSE_CODE)
+
+            if status != 200:
+                raise RuntimeError(f"HTTP {status}")
+
+            body = buffer.getvalue().decode("utf-8")
+
+            return json.loads(body)
+
+        finally:
+            curl.close()
 
     def get_today_fixtures(self):
 
         today = date.today().strftime("%Y-%m-%d")
 
-        data = self._curl_request(
+        data = self._request(
             "fixtures",
             {
                 "date": today
@@ -59,4 +72,5 @@ class FootballProvider:
         return data.get("response", [])
 
     def get_status(self):
-        return self._curl_request("status")
+
+        return self._request("status")
