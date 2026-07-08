@@ -7,6 +7,8 @@ from core.logger import get_logger
 
 from database.database import Database
 from services.live_fixture_loader import LiveFixtureLoader
+from services.prediction_service import PredictionService
+from engine.report_generator import ReportGenerator
 
 
 class AthenaApplication:
@@ -54,10 +56,12 @@ class AthenaApplication:
                 self.console.print(
                     f"\n[cyan]Downloaded and stored {len(fixtures)} fixtures.[/cyan]"
                 )
+
                 self.console.print("-" * 60)
 
                 # Display first 10 fixtures
                 for fixture in fixtures[:10]:
+
                     home = fixture["teams"]["home"]["name"]
                     away = fixture["teams"]["away"]["name"]
                     league = fixture["league"]["name"]
@@ -70,11 +74,33 @@ class AthenaApplication:
                     f"\n[cyan]Total Fixtures Found:[/cyan] {len(fixtures)}"
                 )
 
+                # ==========================================
+                # ATHENA Prediction Engine Test
+                # ==========================================
+
+                self.console.print(
+                    "\n[bold green]Generating Prediction...[/bold green]"
+                )
+
+                prediction_service = PredictionService()
+                report = ReportGenerator()
+
+                prediction = prediction_service.predict(fixtures[0])
+
+                report.generate(prediction)
+
             else:
-                self.console.print("[yellow]No fixtures found today.[/yellow]")
+
+                self.console.print(
+                    "[yellow]No fixtures found today.[/yellow]"
+                )
 
         except Exception as e:
-            self.console.print(f"[red]Fixture loading failed:[/red] {e}")
+
+            self.console.print(
+                f"[red]Fixture loading failed:[/red] {e}"
+            )
+
             self.logger.error(str(e))
 
         self.logger.success("Startup completed successfully.")
