@@ -1,33 +1,28 @@
 class ScoreEngine:
+    """
+    Estimates expected goals for both teams.
+    This is ATHENA's first xG approximation before
+    Poisson and Dixon-Coles are introduced.
+    """
 
-    def expected_goals(self, home_strength, away_strength):
-        """
-        Estimate expected goals from relative team strength.
-        This is a temporary model that will later be replaced
-        by Poisson + Dixon-Coles + xG.
-        """
+    def calculate(self, home_strength, away_strength):
 
         difference = home_strength - away_strength
 
-        home_xg = 1.50 + (difference * 0.04)
-        away_xg = 1.20 - (difference * 0.03)
+        # Base goals
+        home_goals = 1.40
+        away_goals = 1.10
 
-        home_xg = max(0.20, min(home_xg, 4.50))
-        away_xg = max(0.20, min(away_xg, 4.50))
+        # Strength adjustment
+        home_goals += difference * 0.045
+        away_goals -= difference * 0.035
+
+        # Clamp values
+        home_goals = max(0.2, min(5.0, home_goals))
+        away_goals = max(0.2, min(5.0, away_goals))
 
         return {
-            "home_xg": round(home_xg, 2),
-            "away_xg": round(away_xg, 2)
+            "home_xg": round(home_goals, 2),
+            "away_xg": round(away_goals, 2),
+            "total_xg": round(home_goals + away_goals, 2)
         }
-
-    def expected_total_goals(self, home_strength, away_strength):
-
-        goals = self.expected_goals(
-            home_strength,
-            away_strength
-        )
-
-        return round(
-            goals["home_xg"] + goals["away_xg"],
-            2
-        )
