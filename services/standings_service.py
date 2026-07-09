@@ -1,38 +1,53 @@
 import logging
 
-logger = logging.getLogger("athena.standings_service")
+from repositories.standings_repository import StandingsRepository
+
+logger = logging.getLogger("athena.standings")
+
 
 class StandingsService:
-    def __init__(self, statistics_service):
-        self.stats_service = statistics_service
 
-    def process_and_save_standings(self, league_id: int, season: int, standings_list: list):
-        """
-        Accepts raw structured lists from external feeds, updates individual team profiles.
-        """
-        for team in standings_list:
-            stats_payload = {
-                'team_id': team['team']['id'],
-                'league_id': league_id,
-                'season': season,
-                'form': team.get('form', ''),
-                'played': team['all']['played'],
-                'wins': team['all']['win'],
-                'draws': team['all']['draw'],
-                'losses': team['all']['lose'],
-                'goals_for': team['all']['goals']['for'],
-                'goals_against': team['all']['goals']['against'],
-                'home_played': team['home']['played'],
-                'home_wins': team['home']['win'],
-                'home_draws': team['home']['draw'],
-                'home_losses': team['home']['lose'],
-                'home_goals_for': team['home']['goals']['for'],
-                'home_goals_against': team['home']['goals']['against'],
-                'away_played': team['away']['played'],
-                'away_wins': team['away']['win'],
-                'away_draws': team['away']['draw'],
-                'away_losses': team['away']['lose'],
-                'away_goals_for': team['away']['goals']['for'],
-                'away_goals_against': team['away']['goals']['against']
-            }
-            self.stats_service.save_team_statistics(stats_payload)
+    def __init__(self):
+
+        self.repository = StandingsRepository()
+
+    def save(self, standing: dict):
+
+        try:
+
+            values = (
+
+                standing["team_id"],
+                standing["league_id"],
+                standing["season"],
+
+                standing["position"],
+                standing["points"],
+
+                standing["played"],
+                standing["won"],
+                standing["drawn"],
+                standing["lost"],
+
+                standing["goal_difference"]
+
+            )
+
+            self.repository.save_standings(values)
+
+        except Exception as e:
+
+            logger.error(f"Failed saving standings: {e}")
+
+    def get_team_position(
+        self,
+        team_id,
+        league_id,
+        season
+    ):
+
+        return self.repository.get_team_position(
+            team_id,
+            league_id,
+            season
+        )
