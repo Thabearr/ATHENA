@@ -147,3 +147,34 @@ ON predictions(fixture_id);
 
 CREATE INDEX IF NOT EXISTS idx_team_statistics_lookup
 ON team_statistics(team_id, league_id, season);
+-- ==========================================
+-- League Standings
+-- ==========================================
+
+CREATE TABLE IF NOT EXISTS standings (
+
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+
+    team_id INTEGER,
+
+    league_id INTEGER,
+
+    season INTEGER,
+
+    position INTEGER,
+
+    points INTEGER,
+
+    played INTEGER,
+
+    won INTEGER,
+
+    drawn INTEGER,
+
+    lost INTEGER,
+
+    goal_difference INTEGER,
+
+    UNIQUE(team_id, league_id, season)
+
+);
