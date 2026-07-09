@@ -1,6 +1,5 @@
+import subprocess
 import json
-import pycurl
-from io import BytesIO
 from datetime import date
 
 
@@ -11,58 +10,47 @@ class FootballProvider:
     def __init__(self, api_key):
         self.api_key = api_key
 
-    def _request(self, endpoint, params=None):
+    def _curl_request(self, endpoint, params=None):
 
         url = f"{self.BASE_URL}/{endpoint}"
 
         if params:
-            query = "&".join(
-                f"{k}={v}" for k, v in params.items()
-            )
+            query = "&".join(f"{k}={v}" for k, v in params.items())
             url = f"{url}?{query}"
 
-        buffer = BytesIO()
-
-        curl = pycurl.Curl()
-
-        curl.setopt(curl.URL, url)
-        curl.setopt(curl.HTTPHEADER, [
+        command = [
+            "curl",
+            "-s",
+            "-L",
+            "--http1.1",
+            url,
+            "-H",
             f"x-apisports-key: {self.api_key}"
-        ])
+        ]
 
-        curl.setopt(curl.WRITEDATA, buffer)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True
+        )
 
-        # SSL
-        curl.setopt(curl.SSL_VERIFYPEER, 1)
-        curl.setopt(curl.SSL_VERIFYHOST, 2)
-
-        # Timeouts
-        curl.setopt(curl.CONNECTTIMEOUT, 20)
-        curl.setopt(curl.TIMEOUT, 60)
-
-        # Compression
-        curl.setopt(curl.ACCEPT_ENCODING, "")
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Curl failed.\n"
+                f"Exit Code: {result.returncode}\n\n"
+                f"STDERR:\n{result.stderr}"
+            )
 
         try:
-            curl.perform()
-
-            status = curl.getinfo(pycurl.RESPONSE_CODE)
-
-            if status != 200:
-                raise RuntimeError(f"HTTP {status}")
-
-            body = buffer.getvalue().decode("utf-8")
-
-            return json.loads(body)
-
-        finally:
-            curl.close()
+            return json.loads(result.stdout)
+        except json.JSONDecodeError:
+            raise RuntimeError("Invalid JSON returned from API.")
 
     def get_today_fixtures(self):
 
         today = date.today().strftime("%Y-%m-%d")
 
-        data = self._request(
+        data = self._curl_request(
             "fixtures",
             {
                 "date": today
@@ -71,6 +59,18 @@ class FootballProvider:
 
         return data.get("response", [])
 
+    def get_standings(self, league_id, season):
+
+        data = self._curl_request(
+            "standings",
+            {
+                "league": league_id,
+                "season": season
+            }
+        )
+
+        return data.get("response", [])
+
     def get_status(self):
 
-        return self._request("status")
+        return self._curl_request("status")
