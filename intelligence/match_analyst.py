@@ -14,46 +14,33 @@ class MatchAnalyst:
 
     def compile_master_fixture_prediction(self, fixture_context: dict) -> dict:
         """
-        Aggregates all intelligence variables into a unified composite rating
-        and triggers the Upset Evasion Protocol if risk thresholds are breached.
+        Aggregates all intelligence variables into a unified composite rating.
+        (Using wide-spread deterministic simulation to test all market types).
         """
-        # 1. Simulate Dynamic Form Dynamics (Deterministic so teams keep the same score)
-        home_id = fixture_context.get('home_id', 1)
-        away_id = fixture_context.get('away_id', 2)
+        fixture_id = fixture_context.get('fixture_id', 1)
         
-        # Generates a pseudo-form score between 0.40 and 0.90 based on ID
-        home_form_score = 0.40 + ((home_id * 7) % 50) / 100.0
-        away_form_score = 0.40 + ((away_id * 11) % 50) / 100.0
-
-        # 2. Extract Motivation Profile (Skipped for simulation)
-        # 3. Assess Weather Modifiers (Skipped for simulation)
-
-        # 4. Evaluate Fatigue Indices
-        fatigue = self.fatigue_eng.analyze_fixture_fatigue_clash(
-            home_team_id=home_id,
-            away_team_id=away_id,
-            current_date=fixture_context['match_date'],
-            home_last_date=fixture_context['match_date'],
-            away_last_date=fixture_context['match_date']
-        )
-
-        # --- FINAL COMPOSITE ---
-        # Calculate raw edge difference
-        raw_edge = home_form_score - away_form_score
+        # Use the fixture_id to simulate 4 completely different types of matches
+        match_scenario = fixture_id % 4 
         
-        # Engine expects a positive edge magnitude regardless of who is favored
-        edge_differential = round(abs(raw_edge), 3)
-        
-        # Map to strict optimal markets
-        if raw_edge > 0.15:
+        if match_scenario == 0:
+            # Massive Home Favorite (Edge > 0.25) -> Triggers 1UP or DNB
+            raw_edge = 0.28
             verdict = "STRONG HOME ADVANTAGE"
-        elif raw_edge < -0.15:
+        elif match_scenario == 1:
+            # Massive Away Favorite (Edge < -0.25) -> Triggers 1UP or DNB Away
+            raw_edge = -0.27
             verdict = "STRONG AWAY ADVANTAGE"
-        elif edge_differential > 0.08:
-            verdict = "HIGH_GOALS"
+        elif match_scenario == 2:
+            # Slight Home Edge (Edge < 0.15) -> Triggers Double Chance (Home or Draw)
+            raw_edge = 0.12
+            verdict = "STRONG HOME ADVANTAGE"
         else:
-            verdict = "COMPETITIVE"
-        
+            # Competitive / High Scoring -> Triggers Over 1.5 Goals
+            raw_edge = 0.09
+            verdict = "HIGH_GOALS"
+            
+        edge_differential = round(abs(raw_edge), 3)
+
         return {
             "edge_differential": edge_differential,
             "recommended_analytical_verdict": verdict,
