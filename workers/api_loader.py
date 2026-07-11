@@ -23,7 +23,7 @@ class LiveAPILoader:
             return False
         return True
 
-    def sync_fixtures_to_db(self, raw_fixtures):
+    def sync_fixtures_to_db(self, raw_fixtures=None):
         """
         Ingests fixtures using bulk transactions to prevent terminal lag.
         """
@@ -43,7 +43,7 @@ class LiveAPILoader:
             league_name = league_data.get("name", "Unknown League")
             league_id = league_data.get("id", 0)
             
-            # Apply strict league firewall[span_2](start_span)[span_2](end_span)
+            # Apply strict league firewall
             if not self._is_valid_structural_league(league_name, league_id):
                 continue
                 
