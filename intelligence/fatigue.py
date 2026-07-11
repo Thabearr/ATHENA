@@ -1,69 +1,61 @@
 import logging
 from datetime import datetime
-from database.database import Database
 
 logger = logging.getLogger("athena.fatigue_engine")
 
 class FatigueEngine:
     def __init__(self):
-        self.db = Database()
+        pass
 
-    def calculate_rest_days(self, current_match_date: str, last_match_date: str) -> int:
+    def _parse_date(self, date_string: str) -> datetime:
         """
-        Calculates the exact number of days between two fixture dates.
-        Expects date strings formatted as YYYY-MM-DD.
+        Robustly parses date strings, stripping timezone offsets 
+        to prevent 'unconverted data remains' errors.
         """
-        if not current_match_date or not last_match_date:
-            return 7  # Default to a standard full week of rest if missing data
+        if not date_string:
+            return datetime.now()
             
         try:
-            # Handle split if timestamp is attached
-            date_fmt = "%Y-%m-%d"
-            d1 = datetime.strptime(current_match_date.split(" ")[0], date_fmt)
-            d2 = datetime.strptime(last_match_date.split(" ")[0], date_fmt)
-            return abs((d1 - d2).days)
+            # If there is a 'T' and a '+', strip the timezone info
+            if 'T' in date_string and '+' in date_string:
+                date_string = date_string.split('+')[0]
+                
+            # Now parse the clean ISO string
+            if 'T' in date_string:
+                return datetime.strptime(date_string, "%Y-%m-%dT%H:%M:%S")
+            else:
+                # Fallback for standard SQL strings
+                return datetime.strptime(date_string.split()[0], "%Y-%m-%d")
+                
         except Exception as e:
-            logger.error(f"Failed to calculate rest days interval: {e}")
-            return 7
+            logger.error(f"Failed to parse date '{date_string}': {e}")
+            # Fallback to current time so the engine doesn't crash the entire pipeline
+            return datetime.now()
 
-    def evaluate_squad_fatigue(self, rest_days: int, is_away: bool = False, continental_travel: bool = False) -> float:
+    def analyze_fixture_fatigue_clash(self, home_team_id: int, away_team_id: int, current_date: str, home_last_date: str, away_last_date: str) -> dict:
         """
-        Derives a fatigue index from 0.0 (Perfectly Fresh) to 1.0 (Critically Exhausted).
+        Calculates rest differentials.
         """
-        fatigue_index = 0.0
-
-        # 1. Evaluate Rest Windows
-        if rest_days <= 2:
-            fatigue_index += 0.85  # Critical compression (48 hours or less)
-        elif rest_days == 3:
-            fatigue_index += 0.55  # Standard midweek turn-around stress
-        elif rest_days == 4:
-            fatigue_index += 0.25  # Borderline congestion
-        else:
-            fatigue_index += 0.00  # Optimal recovery (5+ days)
-
-        # 2. Append Travel Overheads
-        if is_away:
-            fatigue_index += 0.05  # Standard domestic travel taxation
-            if continental_travel:
-                fatigue_index += 0.15  # Cross-border flights deplete physical reserves
-
-        return min(round(fatigue_index, 2), 1.0)
-
-    def analyze_fixture_fatigue_clash(self, home_team_id: int, away_team_id: int, current_date: str, home_last_date: str, away_last_date: str, away_has_continental_travel: bool = False) -> dict:
-        """
-        Compares fatigue metrics between opposing clubs ahead of kickoff.
-        """
-        home_rest = self.calculate_rest_days(current_date, home_last_date)
-        away_rest = self.calculate_rest_days(current_date, away_last_date)
-
-        home_fatigue = self.evaluate_squad_fatigue(home_rest, is_away=False)
-        away_fatigue = self.evaluate_squad_fatigue(away_rest, is_away=True, continental_travel=away_has_continental_travel)
-
+        current_dt = self._parse_date(current_date)
+        home_last_dt = self._parse_date(home_last_date)
+        away_last_dt = self._parse_date(away_last_date)
+        
+        home_rest_days = max((current_dt - home_last_dt).days, 0)
+        away_rest_days = max((current_dt - away_last_dt).days, 0)
+        
+        # Calculate differential. If home had 5 days rest and away had 2, differential is +3 for home.
+        fatigue_differential = home_rest_days - away_rest_days
+        
+        # Normalize the differential to a 0.0 - 1.0 modifier for the risk engine
+        # Negative numbers mean the favorite is more fatigued than the underdog
+        modifier = 0.0
+        if fatigue_differential < -2:
+            modifier = 0.30 # High fatigue penalty
+        elif fatigue_differential < 0:
+            modifier = 0.10 # Slight penalty
+            
         return {
-            "home_rest_days": home_rest,
-            "away_rest_days": away_rest,
-            "home_fatigue_score": home_fatigue,
-            "away_fatigue_score": away_fatigue,
-            "fatigue_differential": round(home_fatigue - away_fatigue, 2)  # Negative means Home is fresher
+            "home_rest_days": home_rest_days,
+            "away_rest_days": away_rest_days,
+            "fatigue_differential": modifier
         }
