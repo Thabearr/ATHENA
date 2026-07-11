@@ -8,26 +8,25 @@ class Database:
 
         self.db_path = db_path
 
-    # --------------------------------------------------
-    # Main connection method
-    # --------------------------------------------------
+    # -----------------------------------------
+    # Main connection
+    # -----------------------------------------
 
     def connect(self):
 
         return sqlite3.connect(self.db_path)
 
-    # --------------------------------------------------
+    # -----------------------------------------
     # Backwards compatibility
-    # Older modules call get_connection()
-    # --------------------------------------------------
+    # -----------------------------------------
 
     def get_connection(self):
 
         return self.connect()
 
-    # --------------------------------------------------
-    # Initialize database
-    # --------------------------------------------------
+    # -----------------------------------------
+    # Initialize Database
+    # -----------------------------------------
 
     def initialize(self):
 
@@ -42,5 +41,3 @@ class Database:
             connection.executescript(schema)
 
             connection.commit()
-
-        print("✓ Database initialized successfully.")
