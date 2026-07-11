@@ -1,3 +1,5 @@
+import time
+
 from api.football_api import FootballProvider
 from config.settings import settings
 from services.standings_service import StandingsService
@@ -12,42 +14,68 @@ class StandingsLoader:
 
     def load(self, league_id, season):
 
-        response = self.provider.get_standings(
-            league_id,
-            season
-        )
+        response = None
+
+        # Retry API request up to 3 times
+        for attempt in range(3):
+
+            try:
+
+                response = self.provider.get_standings(
+                    league_id,
+                    season
+                )
+
+                break
+
+            except Exception as e:
+
+                if attempt == 2:
+                    raise
+
+                time.sleep(2)
 
         if not response:
-            return
+            return 0
 
         league = response[0]["league"]
 
         standings = league["standings"][0]
 
+        saved = 0
+
         for team in standings:
 
-            self.service.save({
+            try:
 
-                "team_id": team["team"]["id"],
+                self.service.save({
 
-                "league_id": league["id"],
+                    "team_id": team["team"]["id"],
 
-                "season": league["season"],
+                    "league_id": league["id"],
 
-                "position": team["rank"],
+                    "season": league["season"],
 
-                "points": team["points"],
+                    "position": team["rank"],
 
-                "played": team["all"]["played"],
+                    "points": team["points"],
 
-                "won": team["all"]["win"],
+                    "played": team["all"]["played"],
 
-                "drawn": team["all"]["draw"],
+                    "won": team["all"]["win"],
 
-                "lost": team["all"]["lose"],
+                    "drawn": team["all"]["draw"],
 
-                "goal_difference": team["goalsDiff"]
+                    "lost": team["all"]["lose"],
 
-            })
+                    "goal_difference": team["goalsDiff"]
 
-        return len(standings)
+                })
+
+                saved += 1
+
+            except Exception:
+                # Skip bad team data instead of aborting the whole league
+                continue
+
+        return saved
