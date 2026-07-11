@@ -8,7 +8,7 @@ class FootballProvider:
     BASE_URL = "https://v3.football.api-sports.io"
 
     def __init__(self, api_key):
-        self.api_key = api_key
+        self.api_key = api_key.strip()
 
     def _curl_request(self, endpoint, params=None):
 
@@ -16,16 +16,21 @@ class FootballProvider:
 
         if params:
             query = "&".join(f"{k}={v}" for k, v in params.items())
-            url = f"{url}?{query}"
+            url += f"?{query}"
 
         command = [
-            "curl",
-            "-s",
-            "-L",
+            "/usr/bin/curl",
+            "--silent",
+            "--show-error",
+            "--location",
             "--http1.1",
+            "--compressed",
+            "--connect-timeout", "30",
+            "--max-time", "60",
+            "--retry", "3",
+            "--retry-delay", "2",
+            "--header", f"x-apisports-key: {self.api_key}",
             url,
-            "-H",
-            f"x-apisports-key: {self.api_key}"
         ]
 
         result = subprocess.run(
@@ -37,39 +42,43 @@ class FootballProvider:
         if result.returncode != 0:
             raise RuntimeError(
                 f"Curl failed.\n"
-                f"Exit Code: {result.returncode}\n\n"
+                f"Exit Code: {result.returncode}\n"
+                f"STDOUT:\n{result.stdout}\n\n"
                 f"STDERR:\n{result.stderr}"
             )
 
         try:
-            return json.loads(result.stdout)
-        except json.JSONDecodeError:
-            raise RuntimeError("Invalid JSON returned from API.")
+            data = json.loads(result.stdout)
+        except Exception:
+            raise RuntimeError(
+                f"Invalid JSON:\n{result.stdout[:1000]}"
+            )
+
+        if data.get("errors"):
+            raise RuntimeError(
+                f"API Error: {data['errors']}"
+            )
+
+        return data
 
     def get_today_fixtures(self):
 
         today = date.today().strftime("%Y-%m-%d")
 
-        data = self._curl_request(
+        return self._curl_request(
             "fixtures",
-            {
-                "date": today
-            }
-        )
-
-        return data.get("response", [])
+            {"date": today}
+        ).get("response", [])
 
     def get_standings(self, league_id, season):
 
-        data = self._curl_request(
+        return self._curl_request(
             "standings",
             {
                 "league": league_id,
-                "season": season
-            }
-        )
-
-        return data.get("response", [])
+                "season": season,
+            },
+        ).get("response", [])
 
     def get_status(self):
 
