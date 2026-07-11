@@ -1,6 +1,38 @@
-def sync_fixtures_to_db(self):
-        raw_fixtures = self.fetch_upcoming_fixtures()
-        synced_count = 0
+import logging
+from datetime import datetime
+from database.database import Database
+
+logger = logging.getLogger("athena.api_loader")
+
+class LiveAPILoader:
+    def __init__(self):
+        self.db = Database()
+        
+    def _is_valid_structural_league(self, league_name: str, league_id: int = 0) -> bool:
+        """
+        The absolute network firewall. 
+        Permanently drops highly volatile environments, youth leagues, and women's 
+        sports before they ever consume database storage or CPU cycles.
+        """
+        blacklist = [
+            "women", "womens", "femenino", "frauen", "feminin", 
+            "u19", "u21", "youth", "friendly", "amateur"
+        ]
+        name_lower = league_name.lower()
+        if any(b in name_lower for b in blacklist):
+            return False
+        return True
+
+    def sync_fixtures_to_db(self, raw_fixtures):
+        """
+        Ingests fixtures using bulk transactions to prevent terminal lag.
+        """
+        if not raw_fixtures:
+            logger.info("No live fixtures available for sync.")
+            return
+
+        valid_fixtures = []
+        valid_odds = []
         
         for item in raw_fixtures:
             fixture_data = item.get("fixture", item)
@@ -10,68 +42,58 @@ def sync_fixtures_to_db(self):
             
             league_name = league_data.get("name", "Unknown League")
             league_id = league_data.get("id", 0)
-            season = league_data.get("season", 2026)
             
-            # The filter to keep the lines strict
+            # Apply strict league firewall[span_2](start_span)[span_2](end_span)
             if not self._is_valid_structural_league(league_name, league_id):
                 continue
                 
-            home_team = teams_data.get("home", {}).get("name")
-            away_team = teams_data.get("away", {}).get("name")
             fixture_id = fixture_data.get("id")
+            season = league_data.get("season", datetime.utcnow().year)
+            status = fixture_data.get("status", {}).get("short", "NS")
             match_date = fixture_data.get("date", datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S"))
             
-            # Extract status, default to 'NS' (Not Started)
-            status = fixture_data.get("status", {}).get("short", "NS")
+            home_team = teams_data.get("home", {}).get("name")
+            away_team = teams_data.get("away", {}).get("name")
 
-            payload = {
-                "fixture_id": fixture_id,
-                "league_id": league_id,
-                "league": league_name,
-                "season": season,
-                "status": status,
-                "match_date": match_date,
-                "home_team": home_team,
-                "away_team": away_team,
-                "home_odds": odds_data.get("home", 1.44),
-                "draw_odds": odds_data.get("draw", 4.73),
-                "away_odds": odds_data.get("away", 3.58),
-                "dnb_home_odds": odds_data.get("dnb_home", 1.14),
-                "dnb_away_odds": odds_data.get("dnb_away", 5.90),
-                "dc_home_odds": odds_data.get("dc_home", 1.10),
-                "dc_away_odds": odds_data.get("dc_away", 2.65),
-                "over_15_odds": odds_data.get("over_15", 1.37),
-                "under_35_odds": odds_data.get("under_35", 1.29)
-            }
-            
-            self._write_to_database(payload)
-            synced_count += 1
-            
-        print(f"✅ Ingestion Sync Cycle Complete: Captured {synced_count} tier-1 fixtures.")
+            # Structure for fixtures table
+            valid_fixtures.append((
+                fixture_id, league_name, season, home_team, away_team, match_date, status
+            ))
 
-    def _write_to_database(self, p):
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        
-        # Ensure the schema here matches the new one
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS fixtures (
-                fixture_id INTEGER PRIMARY KEY, league_id INTEGER, league TEXT, season INTEGER, status TEXT, match_date TEXT,
-                home_team TEXT, away_team TEXT, home_odds REAL, draw_odds REAL, away_odds REAL,
-                dnb_home_odds REAL, dnb_away_odds REAL, dc_home_odds REAL, dc_away_odds REAL,
-                over_15_odds REAL, under_35_odds REAL
-            )
-        """)
-        
-        cursor.execute("""
-            INSERT OR REPLACE INTO fixtures (
-                fixture_id, league_id, league, season, status, match_date, home_team, away_team, home_odds, draw_odds, away_odds,
-                dnb_home_odds, dnb_away_odds, dc_home_odds, dc_away_odds, over_15_odds, under_35_odds
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            p["fixture_id"], p["league_id"], p["league"], p["season"], p["status"], p["match_date"], p["home_team"], p["away_team"],
-            p["home_odds"], p["draw_odds"], p["away_odds"], p["dnb_home_odds"], p["dnb_away_odds"],
-            p["dc_home_odds"], p["dc_away_odds"], p["over_15_odds"], p["under_35_odds"]
-        ))
-        conn.commit()
-        conn.close()
+            # Structure for normalized odds table
+            market_odds = [
+                (fixture_id, "Home Win", odds_data.get("home", 1.44)),
+                (fixture_id, "Draw", odds_data.get("draw", 4.73)),
+                (fixture_id, "Away Win", odds_data.get("away", 3.58)),
+                (fixture_id, "DNB Home", odds_data.get("dnb_home", 1.14)),
+                (fixture_id, "DNB Away", odds_data.get("dnb_away", 5.90)),
+                (fixture_id, "DC Home", odds_data.get("dc_home", 1.10)),
+                (fixture_id, "DC Away", odds_data.get("dc_away", 2.65)),
+                (fixture_id, "Over 1.5", odds_data.get("over_15", 1.37)),
+                (fixture_id, "Under 3.5", odds_data.get("under_35", 1.29))
+            ]
+            valid_odds.extend(market_odds)
+
+        # Execute ultra-fast bulk transaction
+        self._bulk_write_to_database(valid_fixtures, valid_odds)
+        print(f"✅ Ingestion Sync Cycle Complete: Captured {len(valid_fixtures)} tier-1 fixtures.")
+
+    def _bulk_write_to_database(self, fixtures: list, odds: list):
+        with self.db.connect() as conn:
+            cursor = conn.cursor()
+            
+            # Bulk Insert Fixtures
+            cursor.executemany("""
+                INSERT OR REPLACE INTO fixtures (
+                    fixture_id, league, season, home_team, away_team, match_date, status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, fixtures)
+            
+            # Bulk Insert Odds
+            cursor.executemany("""
+                INSERT OR REPLACE INTO odds (
+                    fixture_id, market, price
+                ) VALUES (?, ?, ?)
+            """, odds)
+            
+            conn.commit()
