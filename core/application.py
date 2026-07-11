@@ -1,5 +1,4 @@
 from rich.console import Console
-import traceback
 
 from config.settings import settings
 from core.banner import show_banner
@@ -7,9 +6,14 @@ from core.health import HealthCheck
 from core.logger import get_logger
 
 from database.database import Database
+
 from services.live_fixture_loader import LiveFixtureLoader
+from services.standings_loader import StandingsLoader
 from services.prediction_service import PredictionService
+
 from engine.report_generator import ReportGenerator
+
+import traceback
 
 
 class AthenaApplication:
@@ -20,91 +24,129 @@ class AthenaApplication:
 
     def run(self):
 
-        # Show startup banner
         show_banner()
 
         self.logger.info("ATHENA started.")
 
-        # Configuration
         self.console.print("[green]✓ Configuration Loaded[/green]")
         self.console.print(f"Debug: {settings.DEBUG}")
 
-        # Initialize database
         database = Database()
         database.initialize()
 
-        self.logger.info("Database initialized.")
+        self.console.print("[green]✓ Database initialized successfully.[/green]")
 
-        # Health Check
         checker = HealthCheck()
+
         health = checker.run()
 
         self.console.print("\n[bold]System Health[/bold]")
 
         for component, status in health.items():
+
             icon = "🟢" if status else "🔴"
+
             self.console.print(f"{icon} {component}")
 
-        # Load Today's Fixtures
         self.console.print("\n[bold cyan]Loading Today's Fixtures...[/bold cyan]")
 
         try:
 
             loader = LiveFixtureLoader()
+
             fixtures = loader.load_today()
 
-            if fixtures:
+            if not fixtures:
+
+                self.console.print("[yellow]No fixtures today.[/yellow]")
+
+                return
+
+            self.console.print(
+                f"\n[cyan]Downloaded and stored {len(fixtures)} fixtures.[/cyan]"
+            )
+
+            self.console.print("-" * 60)
+
+            for fixture in fixtures[:10]:
 
                 self.console.print(
-                    f"\n[cyan]Downloaded and stored {len(fixtures)} fixtures.[/cyan]"
+                    f"{fixture['teams']['home']['name']} vs "
+                    f"{fixture['teams']['away']['name']} | "
+                    f"{fixture['league']['name']}"
                 )
 
-                self.console.print("-" * 60)
+            self.console.print(
+                f"\n[cyan]Total Fixtures Found:[/cyan] {len(fixtures)}"
+            )
 
-                # Display first 10 fixtures
-                for fixture in fixtures[:10]:
+            # ============================================
+            # Download standings
+            # ============================================
 
-                    home = fixture["teams"]["home"]["name"]
-                    away = fixture["teams"]["away"]["name"]
-                    league = fixture["league"]["name"]
+            self.console.print(
+                "\n[bold cyan]Updating League Standings...[/bold cyan]"
+            )
 
-                    self.console.print(
-                        f"{home} vs {away} | {league}"
+            downloaded = set()
+
+            standings_loader = StandingsLoader()
+
+            for fixture in fixtures:
+
+                league = fixture["league"]["id"]
+                season = fixture["league"]["season"]
+
+                key = (league, season)
+
+                if key in downloaded:
+                    continue
+
+                downloaded.add(key)
+
+                try:
+
+                    count = standings_loader.load(
+                        league,
+                        season
                     )
 
-                self.console.print(
-                    f"\n[cyan]Total Fixtures Found:[/cyan] {len(fixtures)}"
-                )
+                    if count:
 
-                # ==========================================
-                # Prediction Test
-                # ==========================================
+                        self.console.print(
+                            f"✓ League {league}: {count} teams updated."
+                        )
 
-                self.console.print(
-                    "\n[bold green]Generating Prediction...[/bold green]"
-                )
+                except Exception as e:
 
-                prediction_service = PredictionService()
-                report = ReportGenerator()
+                    self.console.print(
+                        f"[yellow]Skipped league {league}: {e}[/yellow]"
+                    )
 
-                prediction = prediction_service.predict(fixtures[0])
+            # ============================================
+            # Prediction
+            # ============================================
 
-                report.generate(prediction)
+            self.console.print(
+                "\n[bold green]Generating Prediction...[/bold green]"
+            )
 
-            else:
+            prediction_service = PredictionService()
 
-                self.console.print(
-                    "[yellow]No fixtures found today.[/yellow]"
-                )
+            report = ReportGenerator()
+
+            prediction = prediction_service.predict(
+                fixtures[0]
+            )
+
+            report.generate(prediction)
 
         except Exception as e:
 
             self.console.print(
-                f"[red]Fixture loading failed:[/red] {repr(e)}"
+                f"[red]Startup failed:[/red] {e}"
             )
 
             traceback.print_exc()
 
-            self.logger.exception("Fixture loading failed")
-
-        self.logger.success("Startup completed successfully.")
+            self.logger.exception(e)
