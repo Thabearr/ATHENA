@@ -3,182 +3,193 @@ from models.prediction import Prediction
 
 class MarketSelector:
     """
-    ATHENA Market Intelligence Engine v1
+    ATHENA Market Selection Engine
 
-    Scores every supported betting market and ranks them.
+    Ranks every supported betting market and selects
+    the safest value market.
+
+    Over 0.5 is intentionally NOT supported because
+    the odds are usually too small to provide value.
     """
 
     def select(self, prediction: Prediction):
 
-        scores = {}
+        markets = []
 
         home = prediction.home_win_probability
         draw = prediction.draw_probability
         away = prediction.away_win_probability
 
-        xg = prediction.expected_goals
+        total_xg = prediction.expected_goals
 
-        # ============================================
-        # TO QUALIFY
-        # ============================================
+        # -----------------------------
+        # Match Winner
+        # -----------------------------
 
-        scores["To Qualify - Home"] = home
-        scores["To Qualify - Away"] = away
+        markets.append((
+            "Home Win",
+            home
+        ))
 
-        # ============================================
-        # OVER / UNDER
-        # ============================================
+        markets.append((
+            "Away Win",
+            away
+        ))
 
-        scores["Over 0.5"] = min(99, xg * 40)
+        # -----------------------------
+        # Double Chance
+        # -----------------------------
 
-        scores["Over 1.5"] = min(99, xg * 30)
+        markets.append((
+            "Home or Draw",
+            home + draw
+        ))
 
-        scores["Over 2.5"] = min(99, xg * 22)
+        markets.append((
+            "Away or Draw",
+            away + draw
+        ))
 
-        scores["Over 3.5"] = max(0, (xg - 1.5) * 25)
+        markets.append((
+            "Home or Away",
+            home + away
+        ))
 
-        scores["Over 4.5"] = max(0, (xg - 2.5) * 20)
+        # -----------------------------
+        # Goals Markets
+        # -----------------------------
 
-        scores["Over 5.5"] = max(0, (xg - 3.5) * 15)
+        if total_xg >= 1.60:
+            markets.append((
+                "Over 1.5",
+                min(98, total_xg * 28)
+            ))
 
-        # ============================================
-        # DOUBLE CHANCE
-        # ============================================
+        if total_xg >= 2.35:
+            markets.append((
+                "Over 2.5",
+                min(95, total_xg * 24)
+            ))
 
-        scores["Home or Draw"] = home + draw
+        if total_xg >= 3.20:
+            markets.append((
+                "Over 3.5",
+                min(90, total_xg * 18)
+            ))
 
-        scores["Draw or Away"] = draw + away
+        if total_xg <= 2.40:
+            markets.append((
+                "Under 2.5",
+                70 + (2.5 - total_xg) * 10
+            ))
 
-        scores["Home or Away"] = home + away
+        # -----------------------------
+        # BTTS
+        # -----------------------------
 
-        # ============================================
-        # DRAW / HOME / AWAY + OVER 2.5
-        # ============================================
+        if (
+            prediction.home_xg >= 0.90 and
+            prediction.away_xg >= 0.90
+        ):
 
-        over25 = scores["Over 2.5"]
+            markets.append((
+                "Both Teams To Score",
+                72 + total_xg * 5
+            ))
 
-        scores["Home Team or Over 2.5"] = (
-            home + over25
-        ) / 2
+        # -----------------------------
+        # Combo Markets
+        # -----------------------------
 
-        scores["Away Team or Over 2.5"] = (
-            away + over25
-        ) / 2
+        if (
+            home >= 55 and
+            total_xg >= 2.10
+        ):
 
-        scores["Draw or Over 2.5"] = (
-            draw + over25
-        ) / 2
+            markets.append((
+                "Home or Over 1.5",
+                min(99, home + 18)
+            ))
 
-        # ============================================
-        # GG / NG
-        # ============================================
+        if (
+            away >= 55 and
+            total_xg >= 2.10
+        ):
 
-        if prediction.home_xg > 0.8 and prediction.away_xg > 0.8:
-            scores["GG Yes"] = 82
-            scores["GG No"] = 18
-        else:
-            scores["GG Yes"] = 40
-            scores["GG No"] = 60
+            markets.append((
+                "Away or Over 1.5",
+                min(99, away + 18)
+            ))
 
-        # ============================================
-        # WIN EITHER HALF
-        # ============================================
+        if (
+            home >= 60 and
+            total_xg >= 2.60
+        ):
 
-        scores["Home Team to Win Either Half"] = min(
-            99,
-            home + 15
-        )
+            markets.append((
+                "Home or Over 2.5",
+                min(99, home + 15)
+            ))
 
-        scores["Away Team to Win Either Half"] = min(
-            99,
-            away + 15
-        )
+        if (
+            away >= 60 and
+            total_xg >= 2.60
+        ):
 
-        # ============================================
-        # WIN TO NIL
-        # ============================================
+            markets.append((
+                "Away or Over 2.5",
+                min(99, away + 15)
+            ))
 
-        scores["Home Team Win To Nil"] = max(
-            0,
-            home - prediction.away_xg * 15
-        )
+        if (
+            prediction.home_xg >= 1.0 and
+            prediction.away_xg >= 1.0 and
+            total_xg >= 2.70
+        ):
 
-        scores["Away Team Win To Nil"] = max(
-            0,
-            away - prediction.home_xg * 15
-        )
+            markets.append((
+                "BTTS & Over 2.5",
+                78 + total_xg * 3
+            ))
 
-        # ============================================
-        # DRAW NO BET
-        # ============================================
+        # -----------------------------
+        # Remove weak selections
+        # -----------------------------
 
-        scores["Draw No Bet Home"] = home
+        markets = [
 
-        scores["Draw No Bet Away"] = away
+            (name, score)
 
-        # ============================================
-        # ASIAN HANDICAP
-        # ============================================
+            for name, score in markets
 
-        scores["Home -0.5"] = home
+            if score >= 60
 
-        scores["Away +0.5"] = away + draw
+        ]
 
-        scores["Home -1.0"] = max(0, home - 8)
+        # -----------------------------
+        # Sort
+        # -----------------------------
 
-        scores["Away +1.0"] = min(99, away + draw + 5)
-
-        scores["Home -1.5"] = max(0, home - 15)
-
-        scores["Away +1.5"] = min(99, away + draw + 8)
-
-        scores["Home -2.0"] = max(0, home - 20)
-
-        scores["Away +2.0"] = min(99, away + draw + 10)
-
-        scores["Home -2.5"] = max(0, home - 25)
-
-        scores["Away +2.5"] = min(99, away + draw + 12)
-
-        scores["Home -3.0"] = max(0, home - 30)
-
-        scores["Away +3.0"] = min(99, away + draw + 15)
-
-        scores["Home -3.5"] = max(0, home - 35)
-
-        scores["Away +3.5"] = min(99, away + draw + 18)
-
-        # ============================================
-        # 1UP / 2UP
-        # ============================================
-
-        scores["1UP Home"] = home
-        scores["1UP Draw"] = draw
-        scores["1UP Away"] = away
-
-        scores["2UP Home"] = home
-        scores["2UP Draw"] = draw
-        scores["2UP Away"] = away
-
-        # ============================================
-        # SORT
-        # ============================================
-
-        ranked = sorted(
-            scores.items(),
+        markets.sort(
             key=lambda x: x[1],
             reverse=True
         )
 
-        prediction.market_scores = scores
+        prediction.ranked_markets = markets
 
-        prediction.ranked_markets = ranked
+        if markets:
 
-        prediction.recommended_market = ranked[0][0]
+            prediction.recommended_market = markets[0][0]
 
-        prediction.market_confidence = round(
-            ranked[0][1],
-            1
-        )
+            prediction.market_confidence = round(
+                markets[0][1],
+                1
+            )
+
+        else:
+
+            prediction.recommended_market = "No Recommendation"
+
+            prediction.market_confidence = 0.0
 
         return prediction
