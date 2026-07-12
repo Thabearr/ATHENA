@@ -8,11 +8,11 @@ def seed_data():
     # Clear old junk to ensure a fresh test
     cursor.execute("DELETE FROM fixtures")
     
-    # Inject 20 mock "Live/Upcoming" matches for today
+    # Inject 35 mock "Live/Upcoming" matches for today
     today = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     fixtures = [
         (i, "Test League", 2026, f"Team Home {i}", f"Team Away {i}", today, "NS")
-        for i in range(100, 120)
+        for i in range(100, 135)
     ]
     
     cursor.executemany("""
@@ -22,7 +22,7 @@ def seed_data():
     
     conn.commit()
     conn.close()
-    print("✅ Seeded 20 valid upcoming fixtures into athena.db")
+    print("✅ Seeded 35 valid upcoming fixtures into athena.db")
 
 if __name__ == "__main__":
     seed_data()
