@@ -2,27 +2,31 @@ import logging
 
 logger = logging.getLogger("athena.referee_engine")
 
-class RefereeEngine:
-    def __init__(self):
-        # In a full deployment, this would connect to the database to fetch
-        # referee card/penalty stats for the specific fixture_id
-        pass
 
-    def check_referee_anomaly(self, fixture_id: int) -> bool:
-        """
-        Analyzes the assigned official's historical card/penalty volatility.
-        Returns True if the referee is considered 'high-volatility' (Upset Risk).
-        """
-        # Logic: We use the fixture_id to generate a deterministic 'risk score'
-        # In production, this replaces the math with a DB lookup for referee stats.
-        
-        # Simulating volatility: referees with high cards-per-game 
-        # often disrupt the rhythm of heavy favorites.
-        referee_volatility_index = (fixture_id % 10) 
-        
-        # If the index is 0 or 1, the referee is statistically high-risk (10% of games)
-        if referee_volatility_index <= 1:
-            logger.info(f"Upset Alert: High-volatility referee detected for fixture {fixture_id}.")
-            return True
-            
-        return False
+class RefereeEngine:
+    """
+    Placeholder for referee-based upset risk.
+
+    IMPORTANT: there is no real referee data source connected yet
+    (no assignment API, no historical card/penalty stats). This
+    intentionally returns a neutral "no signal" result rather than
+    fabricating a volatility score from the fixture_id, which is
+    what this file used to do (fixture_id % 10 <= 1).
+
+    Once a real referee data feed is connected, replace `has_data`
+    and the logic below with a real lookup.
+    """
+
+    def __init__(self):
+        self.has_data = False  # flip to True once a real feed is wired in
+
+    def check_referee_anomaly(self, fixture_id: int) -> dict:
+        if not self.has_data:
+            return {
+                "has_data": False,
+                "high_volatility": False,
+                "reason": "no_referee_data_source_connected",
+            }
+
+        # Real logic goes here once we have a data source.
+        return {"has_data": True, "high_volatility": False, "reason": "not_implemented"}
