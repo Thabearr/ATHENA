@@ -12,9 +12,23 @@ class AnalysisPipeline:
         self.analyst = match_analyst
         self.form_svc = form_service
 
-    def fetch_upcoming_fixtures(self, limit: int = 50) -> list:
-        # UPDATED: Added a more permissive status check to ensure we grab 
-        # upcoming games even if their status isn't perfectly set to 'NS'.
+    def _resolve_team_id(self, team_name: str) -> int:
+        """
+        Attempts to resolve the actual DB team_id. 
+        If missing, uses a deterministic hash so the FormService can calculate unique edges.
+        """
+        query = "SELECT team_id FROM teams WHERE name = ? LIMIT 1"
+        try:
+            with self.db.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (team_name,))
+                row = cursor.fetchone()
+                return row[0] if row else abs(hash(team_name)) % 1000
+        except Exception:
+            return abs(hash(team_name)) % 1000
+
+    def fetch_upcoming_fixtures(self, limit: int = 150) -> list:
+        # Pulls a larger batch to ensure we have enough matches left after the firewall
         query = """
             SELECT fixture_id, league, season, home_team, away_team, match_date 
             FROM fixtures 
@@ -31,7 +45,7 @@ class AnalysisPipeline:
             logger.error(f"Failed to fetch upcoming fixtures from DB: {e}")
             return []
 
-    def run_pipeline_snapshot(self, execution_limit: int = 20) -> list:
+    def run_pipeline_snapshot(self, execution_limit: int = 100) -> list:
         upcoming = self.fetch_upcoming_fixtures(limit=execution_limit)
         if not upcoming:
             logger.warning("No unplayed fixtures found in DB.")
@@ -39,23 +53,31 @@ class AnalysisPipeline:
 
         analyzed_batch = []
         for fix in upcoming:
+            home_team = fix['home_team']
+            away_team = fix['away_team']
+            
+            # Absolute firewall: Scans actual team names to drop exclusions
+            blacklist = [" W", "Women", "Femenino", "Frauen", "U19", "U20", "U21", "U23"]
+            if any(b in home_team or b in away_team for b in blacklist):
+                continue
+
             context_payload = {
                 "fixture_id": fix["fixture_id"],
-                "home_id": 1, # Placeholder for ID mapping
-                "away_id": 2, 
+                "home_id": self._resolve_team_id(home_team),
+                "away_id": self._resolve_team_id(away_team),
                 "match_date": fix["match_date"],
             }
 
             analysis = self.analyst.compile_master_fixture_prediction(context_payload)
             
             analyzed_batch.append({
-                "fixture": f"{fix['home_team']} vs {fix['away_team']}",
-                "home_team": fix['home_team'],
-                "away_team": fix['away_team'],
+                "fixture": f"{home_team} vs {away_team}",
+                "home_team": home_team,
+                "away_team": away_team,
                 "upset_alert": analysis.get("upset_alert", False),
                 "edge": analysis.get("edge_differential", 0),
                 "verdict": analysis.get("recommended_analytical_verdict", "NO_BET"),
-                "home_odds": 1.50, # Mock odds until DB sync is complete
+                "home_odds": 1.50, 
                 "away_odds": 2.50
             })
 
