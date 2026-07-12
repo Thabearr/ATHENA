@@ -1,105 +1,93 @@
+import sys
 import logging
+from workers.api_loader import LiveAPILoader
+from services.statistics_service import StatisticsService
+from services.team_form_service import TeamFormService
+from intelligence.form import FormEngine
+from intelligence.motivation import MotivationEngine
+from intelligence.weather import WeatherEngine
+from intelligence.fatigue import FatigueEngine
+from intelligence.injuries import InjuryEngine
+from intelligence.referee import RefereeEngine
+from engine.risk_engine import RiskEngine
+from intelligence.match_analyst import MatchAnalyst
+from services.analysis_pipeline import AnalysisPipeline
+from intelligence.accumulator import AccumulatorEngine
 
-logger = logging.getLogger("athena.accumulator")
+# Kept at warning to keep your terminal output clean during production runs
+logging.basicConfig(level=logging.WARNING)
 
-class AccumulatorEngine:
-    def __init__(self, confidence_threshold=0.60, min_edge=0.05):
-        self.confidence_threshold = confidence_threshold
-        self.min_edge = min_edge
-
-    def _is_safe_structural_fixture(self, match_data):
-        """Strict structural firewall."""
-        league = match_data.get('league', '').upper()
-        blacklist = ["WOMEN", "WNL", "FEMENINO", "FRAUEN", "FEMININ", "U19", "U21", "YOUTH"]
-        if any(b in league for b in blacklist):
-            return False
-        return True
-
-    def select_optimal_market(self, match_data):
-        """
-        Transforms high-confidence outcomes into ultra-safe, low-variance selections
-        with an automated 1.15 minimum odds floor.
-        """
-        edge = match_data.get('edge', 0)
-        verdict = match_data.get('verdict', 'NO_BET')
-        home_team = match_data.get('home_team', 'Home')
-        away_team = match_data.get('away_team', 'Away')
+def main():
+    print("\n" + "="*70)
+    print("      🔮 ATHENA FOOTBALL INTELLIGENCE & LIVE FEED LIVE SYSTEM 🔮")
+    print("="*70)
+    
+    try:
+        # Step 1: Spin up the Ingestion Worker to capture new matches
+        print("📥 Initializing API ingestion sync down worker...")
+        loader = LiveAPILoader()
         
-        def validate_odds(odds):
-            return odds if odds >= 1.15 else None
-
-        if verdict in ["STRONG HOME ADVANTAGE", "HOME_WIN"]:
-            if edge > 0.25:
-                odds = validate_odds(match_data.get('home_odds', 1.44))
-                if odds:
-                    return {"market": "1X2 - 1UP/2UP", "selection": f"{home_team} (1UP)", "odds": odds}
-            if edge > 0.15:
-                odds = validate_odds(match_data.get('dnb_home_odds', 1.20))
-                if odds:
-                    return {"market": "Draw No Bet", "selection": f"{home_team}", "odds": odds}
-            odds = validate_odds(match_data.get('dc_home_odds', 1.16))
-            if odds:
-                return {"market": "Double Chance", "selection": "Home or Draw", "odds": odds}
-
-        elif verdict in ["STRONG AWAY ADVANTAGE", "AWAY_WIN"]:
-            if edge > 0.25:
-                odds = validate_odds(match_data.get('away_odds', 1.75))
-                if odds:
-                    return {"market": "1X2 - 1UP/2UP", "selection": f"{away_team} (1UP)", "odds": odds}
-            if edge > 0.15:
-                odds = validate_odds(match_data.get('dnb_away_odds', 1.40))
-                if odds:
-                    return {"market": "Draw No Bet", "selection": f"{away_team}", "odds": odds}
-            odds = validate_odds(match_data.get('dc_away_odds', 1.35))
-            if odds:
-                return {"market": "Double Chance", "selection": "Draw or Away", "odds": odds}
-
-        elif verdict == "HIGH_GOALS":
-            odds = validate_odds(match_data.get('over_15_odds', 1.37))
-            if odds:
-                return {"market": "Over/Under", "selection": "Over 1.5 Goals", "odds": odds}
-            
-        elif verdict == "LOW_GOALS":
-            odds = validate_odds(match_data.get('under_35_odds', 1.29))
-            if odds:
-                return {"market": "Over/Under", "selection": "Under 3.5 Goals", "odds": odds}
-            
-        return None
-
-    def generate_accumulator(self, analyzed_matches, fold_size=10):
-        """
-        Builds the accumulator slip, proactively dropping any fixture 
-        flagged with an upset alert or failing structural safety.
-        """
-        valid_selections = []
+        # Accommodates the updated bulk-transaction loader we built
+        raw_fixtures = loader.fetch_upcoming_fixtures() if hasattr(loader, 'fetch_upcoming_fixtures') else []
+        try:
+            loader.sync_fixtures_to_db(raw_fixtures)
+        except TypeError:
+            loader.sync_fixtures_to_db()
         
-        for match in analyzed_matches:
-            if not self._is_safe_structural_fixture(match):
-                continue
+        # Step 2: Initialize full analytical dependency stack
+        stats_svc = StatisticsService()
+        form_svc = TeamFormService()
+        
+        form_eng = FormEngine(stats_svc, form_svc)
+        motivation_eng = MotivationEngine()
+        weather_eng = WeatherEngine()
+        fatigue_eng = FatigueEngine()
+        injury_eng = InjuryEngine()
+        referee_eng = RefereeEngine()  # New Upset Mitigation Engine
+        risk_eng = RiskEngine()        # New Traps & Variance Filter
+        
+        # Updated Analyst now maps all 7 parameters for the foolproof matrices
+        analyst = MatchAnalyst(
+            form_engine=form_eng, 
+            motivation_engine=motivation_eng, 
+            weather_engine=weather_eng, 
+            fatigue_engine=fatigue_eng, 
+            injury_engine=injury_eng,
+            referee_engine=referee_eng,
+            risk_engine=risk_eng
+        )
+        pipeline = AnalysisPipeline(analyst, form_svc)
+        
+        print("\n⏳ Processing analytical engine vectors across active lines...")
+        # Spiked the execution limit to 150 to ensure enough matches are scanned for a 30-leg slip
+        results = pipeline.run_pipeline_snapshot(execution_limit=150)
+        
+        # Step 3: Extract and generate high-probability slips matching your bookie options
+        # Bumped min_edge to 0.05 to enforce stricter mathematical safety floors
+        acca_engine = AccumulatorEngine(min_edge=0.05)
+        
+        print("\n" + "🚀 LIVE ACCUMULATOR SELECTIONS (ZERO-VOLATILITY FILTER)")
+        print("="*70)
+
+        # Generate cascading slip tiers based on available safe matches
+        folds = [5, 10, 20, 30]
+        for fold in folds:
+            slip = acca_engine.generate_accumulator(results, fold_size=fold)
             
-            if match.get("upset_alert", False):
-                logger.info(f"Upset Alert triggered: Dropping {match.get('fixture')} from slip.")
+            if not slip or 'legs' not in slip or len(slip['legs']) == 0:
+                print(f"\n⚠️  Not enough strictly safe fixtures to fulfill a {fold}-Fold slip.")
                 continue
                 
-            if match.get('edge', 0) < self.min_edge:
-                continue
+            print(f"\n⚡ TYPE: {slip['fold_size']}-Fold Slip | COMPOUNDED ODDS: {slip['total_estimated_odds']}x")
+            print("-" * 70)
+            for idx, leg in enumerate(slip['legs'], 1):
+                # Formatted to perfectly align in a Unix terminal
+                print(f" {idx:02d}. {leg['fixture']:<32} | {leg['market']:<15} -> {leg['selection']}")
                 
-            safe_market = self.select_optimal_market(match)
-            if safe_market:
-                # Merge the market selection into the match dictionary
-                match.update(safe_market)
-                valid_selections.append(match)
-                
-        valid_selections.sort(key=lambda x: x.get('edge', 0), reverse=True)
-        
-        final_slip = valid_selections[:fold_size]
-        
-        total_odds = 1.0
-        for leg in final_slip:
-            total_odds *= leg.get('odds', 1.0)
-            
-        return {
-            "fold_size": len(final_slip),
-            "total_estimated_odds": round(total_odds, 2),
-            "legs": final_slip
-        }
+        print("\n" + "="*70 + "\n")
+
+    except Exception as e:
+        print(f"❌ System Interrupted: {e}")
+
+if __name__ == "__main__":
+    main()
