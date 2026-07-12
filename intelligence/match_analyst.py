@@ -3,27 +3,63 @@ import math
 
 logger = logging.getLogger("athena.match_analyst")
 
+
 class MatchAnalyst:
-    def __init__(self, form_engine, motivation_engine, weather_engine, fatigue_engine, injury_engine, referee_engine, risk_engine):
+    def __init__(self, form_engine, motivation_engine, weather_engine, fatigue_engine,
+                 injury_engine, referee_engine, risk_engine):
         self.form_eng = form_engine
         self.motivation_engine = motivation_engine
         self.weather_engine = weather_engine
         self.fatigue_eng = fatigue_engine
         self.injury_eng = injury_engine
         self.ref_eng = referee_engine
+        # Not used directly below — the old engine/risk_engine.RiskEngine class
+        # expects a Prediction dataclass object this pipeline doesn't build.
+        # Kept as a constructor param so run_analysis.py doesn't break; real
+        # risk scoring lives in _assess_upset_risk below using data this
+        # pipeline actually has.
         self.risk_eng = risk_engine
 
     def _calculate_poisson_probability(self, actual_goals: int, expected_goals: float) -> float:
-        """Calculates pure probability mass function for given expected parameters."""
         if expected_goals <= 0:
             return 1.0 if actual_goals == 0 else 0.0
         return math.exp(-expected_goals) * (expected_goals ** actual_goals) / math.factorial(actual_goals)
 
+    def _assess_upset_risk(self, prob_home_win: float, prob_away_win: float,
+                            fatigue_diff: float, referee_signal: dict) -> dict:
+        """
+        Honest risk assessment using only signals we have real data for:
+          - match closeness (from the Poisson probabilities just computed)
+          - fatigue differential (real rest-day calculation)
+          - referee signal (only counts once a real feed is connected)
+
+        Replaces the old fixture_id-modulo trick, and fixes the bug where
+        upset_alert was hardcoded False everywhere.
+        """
+        favorite_prob = max(prob_home_win, prob_away_win)
+
+        risk = 0.0
+        if favorite_prob < 0.55:
+            risk += 35
+        elif favorite_prob < 0.65:
+            risk += 20
+        else:
+            risk += 8
+
+        if fatigue_diff >= 0.30:
+            risk += 25
+        elif fatigue_diff >= 0.10:
+            risk += 10
+
+        if referee_signal.get("has_data") and referee_signal.get("high_volatility"):
+            risk += 20
+
+        risk = min(risk, 100)
+        upset_alert = risk >= 55
+
+        return {"risk_score": round(risk, 1), "upset_alert": upset_alert}
+
     def compile_master_fixture_prediction(self, fixture_context: dict) -> dict:
-        """
-        Executes a rigorous Poisson scoreline probability distribution matrix 
-        to mathematically derive true value across all 10 specified asset classes.
-        """
         home_team = fixture_context.get('home_team', 'Home')
         away_team = fixture_context.get('away_team', 'Away')
         home_id = fixture_context.get('home_id', 1)
@@ -32,7 +68,6 @@ class MatchAnalyst:
         fixture_id = fixture_context.get('fixture_id', 0)
         is_knockout = fixture_context.get('is_knockout', False)
 
-        # Dynamic extraction matching your exact repository service properties
         form_service = getattr(self.form_eng, 'form_svc', None) or getattr(self.form_eng, 'form_service', None)
         home_raw = form_service.get_recent_form_score(home_id, match_date) if form_service else 0.50
         away_raw = form_service.get_recent_form_score(away_id, match_date) if form_service else 0.50
@@ -40,24 +75,22 @@ class MatchAnalyst:
         fatigue = self.fatigue_eng.analyze_fixture_fatigue_clash(home_id, away_id, match_date, match_date, match_date)
         fatigue_diff = fatigue.get("fatigue_differential", 0.0)
 
-        # Derive Lambda (Home Expected Goals) & Mu (Away Expected Goals)
+        referee_signal = self.ref_eng.check_referee_anomaly(fixture_id)
+
         base_home_lambda = 1.45 + (home_raw - away_raw) - (fatigue_diff * 0.5)
         base_away_mu = 1.25 + (away_raw - home_raw) + (fatigue_diff * 0.5)
-        
+
         lambda_val = max(0.05, round(base_home_lambda, 3))
         mu_val = max(0.05, round(base_away_mu, 3))
 
-        # Construct the Probability Score Grid (up to 5 goals each)
         score_matrix = {}
         prob_home_win = 0.0
         prob_away_win = 0.0
         prob_draw = 0.0
-        
         prob_over_15 = 0.0
         prob_under_35 = 0.0
         prob_over_25 = 0.0
         prob_gg = 0.0
-        
         prob_home_win_to_nil = 0.0
         prob_away_win_to_nil = 0.0
 
@@ -65,14 +98,14 @@ class MatchAnalyst:
             for a in range(6):
                 p_score = self._calculate_poisson_probability(h, lambda_val) * self._calculate_poisson_probability(a, mu_val)
                 score_matrix[(h, a)] = p_score
-                
+
                 if h > a:
                     prob_home_win += p_score
                 elif a > h:
                     prob_away_win += p_score
                 else:
                     prob_draw += p_score
-                    
+
                 total_goals = h + a
                 if total_goals > 1:
                     prob_over_15 += p_score
@@ -80,10 +113,10 @@ class MatchAnalyst:
                     prob_under_35 += p_score
                 if total_goals > 2:
                     prob_over_25 += p_score
-                    
+
                 if h >= 1 and a >= 1:
                     prob_gg += p_score
-                    
+
                 if h > 0 and a == 0:
                     prob_home_win_to_nil += p_score
                 if a > 0 and h == 0:
@@ -92,72 +125,84 @@ class MatchAnalyst:
         prob_home_win_to_nil_no = 1.0 - prob_home_win_to_nil
         prob_away_win_to_nil_no = 1.0 - prob_away_win_to_nil
 
-        # Tactical Environmental Volatility Assessment
-        weather_volatility = (fixture_id % 5 == 0)
-        high_card_referee = (fixture_id % 6 == 0)
-        is_volatile_trap = (weather_volatility or high_card_referee or fatigue_diff > 0.15)
+        risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal)
+        risk_score = risk_assessment["risk_score"]
+        upset_alert = risk_assessment["upset_alert"]
 
-        # Strategic Routing Tree
+        def result(verdict, edge):
+            return {
+                "recommended_analytical_verdict": verdict,
+                "edge_differential": edge,
+                "upset_alert": upset_alert,
+                "risk_score": risk_score,
+            }
+
         if is_knockout:
             verdict = "TO_QUALIFY_HOME" if prob_home_win >= prob_away_win else "TO_QUALIFY_AWAY"
             edge = abs(prob_home_win - prob_away_win)
-            return {"recommended_analytical_verdict": verdict, "edge_differential": max(edge, 0.06), "upset_alert": False}
+            return result(verdict, max(edge, 0.06))
 
-        if is_volatile_trap:
-            if prob_home_win > 0.55 and prob_home_win_to_nil_no > 0.65:
-                return {"recommended_analytical_verdict": "HOME_WIN_TO_NIL_NO", "edge_differential": prob_home_win_to_nil_no, "upset_alert": False}
-            if prob_away_win > 0.55 and prob_away_win_to_nil_no > 0.65:
-                return {"recommended_analytical_verdict": "AWAY_WIN_TO_NIL_NO", "edge_differential": prob_away_win_to_nil_no, "upset_alert": False}
+        # If this fixture is genuinely high risk, route to the safest market
+        # (Double Chance) instead of pretending confidence in a sharper pick.
+        if upset_alert:
+            prob_1x = prob_home_win + prob_draw
+            prob_x2 = prob_away_win + prob_draw
+            return result("DC_1X", prob_1x) if prob_1x >= prob_x2 else result("DC_X2", prob_x2)
+
+        if prob_home_win_to_nil_no > 0.65 and prob_home_win > 0.55:
+            return result("HOME_WIN_TO_NIL_NO", prob_home_win_to_nil_no)
+        if prob_away_win_to_nil_no > 0.65 and prob_away_win > 0.55:
+            return result("AWAY_WIN_TO_NIL_NO", prob_away_win_to_nil_no)
 
         if prob_home_win > 0.72:
-            return {"recommended_analytical_verdict": "1X2_2UP_HOME", "edge_differential": prob_home_win, "upset_alert": False}
+            return result("1X2_2UP_HOME", prob_home_win)
         if prob_away_win > 0.72:
-            return {"recommended_analytical_verdict": "1X2_2UP_AWAY", "edge_differential": prob_away_win, "upset_alert": False}
+            return result("1X2_2UP_AWAY", prob_away_win)
         if prob_home_win > 0.62:
-            return {"recommended_analytical_verdict": "1X2_1UP_HOME", "edge_differential": prob_home_win, "upset_alert": False}
+            return result("1X2_1UP_HOME", prob_home_win)
         if prob_away_win > 0.62:
-            return {"recommended_analytical_verdict": "1X2_1UP_AWAY", "edge_differential": prob_away_win, "upset_alert": False}
+            return result("1X2_1UP_AWAY", prob_away_win)
 
         if lambda_val > 1.85:
-            return {"recommended_analytical_verdict": "WIN_EITHER_HALF_HOME_YES", "edge_differential": 0.68, "upset_alert": False}
+            return result("WIN_EITHER_HALF_HOME_YES", 0.68)
         if mu_val > 1.85:
-            return {"recommended_analytical_verdict": "WIN_EITHER_HALF_AWAY_YES", "edge_differential": 0.68, "upset_alert": False}
+            return result("WIN_EITHER_HALF_AWAY_YES", 0.68)
 
         prob_home_or_over_25 = max(prob_home_win, prob_over_25)
         prob_away_or_over_25 = max(prob_away_win, prob_over_25)
 
         if prob_home_or_over_25 > 0.75 and lambda_val > mu_val:
-            return {"recommended_analytical_verdict": "HOME_OR_OVER_25", "edge_differential": prob_home_or_over_25, "upset_alert": False}
+            return result("HOME_OR_OVER_25", prob_home_or_over_25)
         if prob_away_or_over_25 > 0.75 and mu_val > lambda_val:
-            return {"recommended_analytical_verdict": "AWAY_OR_OVER_25", "edge_differential": prob_away_or_over_25, "upset_alert": False}
+            return result("AWAY_OR_OVER_25", prob_away_or_over_25)
 
         if prob_over_15 > 0.82:
-            return {"recommended_analytical_verdict": "OVER_15", "edge_differential": prob_over_15, "upset_alert": False}
+            return result("OVER_15", prob_over_15)
         if prob_under_35 > 0.78:
-            return {"recommended_analytical_verdict": "UNDER_35", "edge_differential": prob_under_35, "upset_alert": False}
+            return result("UNDER_35", prob_under_35)
 
         if prob_home_win > 0.48:
-            return {"recommended_analytical_verdict": "DNB_HOME", "edge_differential": prob_home_win, "upset_alert": False}
+            return result("DNB_HOME", prob_home_win)
         if prob_away_win > 0.48:
-            return {"recommended_analytical_verdict": "DNB_AWAY", "edge_differential": prob_away_win, "upset_alert": False}
+            return result("DNB_AWAY", prob_away_win)
 
         if prob_gg > 0.62:
-            return {"recommended_analytical_verdict": "GG_YES", "edge_differential": prob_gg, "upset_alert": False}
+            return result("GG_YES", prob_gg)
         if prob_gg < 0.38:
-            return {"recommended_analytical_verdict": "GG_NO", "edge_differential": (1.0 - prob_gg), "upset_alert": False}
+            return result("GG_NO", 1.0 - prob_gg)
 
-        prob_home_plus_1_5 = prob_home_win + prob_draw + sum(score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h == 1)
-        prob_away_plus_1_5 = prob_away_win + prob_draw + sum(score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a == 1)
+        prob_home_plus_1_5 = prob_home_win + prob_draw + sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h == 1
+        )
+        prob_away_plus_1_5 = prob_away_win + prob_draw + sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a == 1
+        )
 
         if prob_home_plus_1_5 > 0.80 and lambda_val < mu_val:
-            return {"recommended_analytical_verdict": "ASIAN_HANDICAP_HOME_PLUS_1_5", "edge_differential": prob_home_plus_1_5, "upset_alert": False}
+            return result("ASIAN_HANDICAP_HOME_PLUS_1_5", prob_home_plus_1_5)
         if prob_away_plus_1_5 > 0.80 and mu_val < lambda_val:
-            return {"recommended_analytical_verdict": "ASIAN_HANDICAP_AWAY_PLUS_1_5", "edge_differential": prob_away_plus_1_5, "upset_alert": False}
+            return result("ASIAN_HANDICAP_AWAY_PLUS_1_5", prob_away_plus_1_5)
 
         prob_1x = prob_home_win + prob_draw
         prob_x2 = prob_away_win + prob_draw
-        
-        if prob_1x >= prob_x2:
-            return {"recommended_analytical_verdict": "DC_1X", "edge_differential": prob_1x, "upset_alert": False}
-        else:
-            return {"recommended_analytical_verdict": "DC_X2", "edge_differential": prob_x2, "upset_alert": False}
+        return result("DC_1X", prob_1x) if prob_1x >= prob_x2 else result("DC_X2", prob_x2)
