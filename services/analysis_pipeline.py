@@ -40,7 +40,7 @@ class AnalysisPipeline:
             logger.error(f"Failed to fetch upcoming fixtures from DB: {e}")
             return []
 
-    def run_pipeline_snapshot(self, execution_limit: int = 120) -> list:
+    def run_pipeline_snapshot(self, execution_limit: int = 150) -> list:
         upcoming = self.fetch_upcoming_fixtures(limit=execution_limit)
         if not upcoming:
             logger.warning("No unplayed fixtures found in DB.")
@@ -48,40 +48,46 @@ class AnalysisPipeline:
 
         analyzed_batch = []
         youth_pattern = re.compile(r'\b[uU]\d{2}\b')
+        womens_blacklist = [" W ", "Women", "Womens", "Femenino", "Frauen", " Féminines", "Fem."]
 
         for fix in upcoming:
-            home_team = fix['home_team']
-            away_team = fix['away_team']
+            # Bulletproof string casting to prevent NULL/NoneType crashes on raw data
+            home_team = str(fix.get('home_team') or 'Unknown Home')
+            away_team = str(fix.get('away_team') or 'Unknown Away')
+            league_name = str(fix.get('league') or '').lower()
             
-            womens_blacklist = [" W ", "Women", "Womens", "Femenino", "Frauen", " Féminines", "Fem."]
+            # Strict Exclusions
             if any(b.lower() in home_team.lower() or b.lower() in away_team.lower() for b in womens_blacklist):
                 continue
                 
             if youth_pattern.search(home_team) or youth_pattern.search(away_team):
                 continue
 
-            # CRITICAL FIX: Explicitly passing string properties down to the analyst container
             context_payload = {
-                "fixture_id": fix["fixture_id"],
+                "fixture_id": fix.get("fixture_id", 0),
                 "home_team": home_team,
                 "away_team": away_team,
                 "home_id": self._resolve_team_id(home_team),
                 "away_id": self._resolve_team_id(away_team),
-                "match_date": fix["match_date"],
-                "is_knockout": any(k in fix["league"].lower() for k in ["cup", "champions league", "playoff", "knockout"])
+                "match_date": fix.get("match_date", ""),
+                "is_knockout": any(k in league_name for k in ["cup", "champions league", "playoff", "knockout"])
             }
 
-            analysis = self.analyst.compile_master_fixture_prediction(context_payload)
-            
-            analyzed_batch.append({
-                "fixture": f"{home_team} vs {away_team}",
-                "home_team": home_team,
-                "away_team": away_team,
-                "upset_alert": analysis.get("upset_alert", False),
-                "edge": analysis.get("edge_differential", 0),
-                "verdict": analysis.get("recommended_analytical_verdict", "DC_1X"),
-                "home_odds": 1.50, 
-                "away_odds": 2.50
-            })
+            try:
+                analysis = self.analyst.compile_master_fixture_prediction(context_payload)
+                analyzed_batch.append({
+                    "fixture": f"{home_team} vs {away_team}",
+                    "home_team": home_team,
+                    "away_team": away_team,
+                    "upset_alert": analysis.get("upset_alert", False),
+                    "edge": analysis.get("edge_differential", 0),
+                    "verdict": analysis.get("recommended_analytical_verdict", "DC_1X"),
+                    "home_odds": 1.50, 
+                    "away_odds": 2.50
+                })
+            except Exception as e:
+                # If a single match triggers a math or logic error, log it and skip to the next
+                logger.error(f"Error compiling prediction for {home_team} vs {away_team}: {e}")
+                continue
 
         return analyzed_batch
