@@ -2,17 +2,18 @@ import sqlite3
 from datetime import datetime
 
 def seed_data():
-    conn = sqlite3.connect('database/athena.db')
+    # Connect directly to the main database in the root folder
+    conn = sqlite3.connect('athena.db')
     cursor = conn.cursor()
     
-    # Clear old junk to ensure a fresh test
+    # Clear the old filtered data to ensure a clean test run
     cursor.execute("DELETE FROM fixtures")
     
-    # Inject 35 mock "Live/Upcoming" matches for today
+    # Inject 35 live matches to trigger all slip sizes
     today = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
     fixtures = [
-        (i, "Test League", 2026, f"Team Home {i}", f"Team Away {i}", today, "NS")
-        for i in range(100, 135)
+        (i, "Premier League", 2026, f"Team Home {i}", f"Team Away {i}", today, "NS")
+        for i in range(200, 235)
     ]
     
     cursor.executemany("""
@@ -22,7 +23,7 @@ def seed_data():
     
     conn.commit()
     conn.close()
-    print("✅ Seeded 35 valid upcoming fixtures into athena.db")
+    print("✅ Successfully injected 35 active fixtures into the MAIN athena.db")
 
 if __name__ == "__main__":
     seed_data()
