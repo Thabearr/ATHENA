@@ -1,4 +1,5 @@
 import logging
+import re
 from datetime import datetime
 from database.database import Database
 from intelligence.match_analyst import MatchAnalyst
@@ -27,8 +28,8 @@ class AnalysisPipeline:
         except Exception:
             return abs(hash(team_name)) % 1000
 
-    def fetch_upcoming_fixtures(self, limit: int = 150) -> list:
-        # Pulls a larger batch to ensure we have enough matches left after the firewall
+    def fetch_upcoming_fixtures(self, limit: int = 250) -> list:
+        # Pulling a larger pool to compensate for strictly filtered matches
         query = """
             SELECT fixture_id, league, season, home_team, away_team, match_date 
             FROM fixtures 
@@ -52,13 +53,21 @@ class AnalysisPipeline:
             return []
 
         analyzed_batch = []
+        
+        # Regex to catch any youth teams like U17, U19, U20, U23, etc.
+        youth_pattern = re.compile(r'\b[uU]\d{2}\b')
+
         for fix in upcoming:
             home_team = fix['home_team']
             away_team = fix['away_team']
             
-            # Absolute firewall: Scans actual team names to drop exclusions
-            blacklist = [" W", "Women", "Femenino", "Frauen", "U19", "U20", "U21", "U23"]
-            if any(b in home_team or b in away_team for b in blacklist):
+            # 1. Broad Text Firewall for Women's variants
+            womens_blacklist = [" W ", "Women", "Womens", "Femenino", "Frauen", " Féminines", "Fem."]
+            if any(b.lower() in home_team.lower() or b.lower() in away_team.lower() for b in womens_blacklist):
+                continue
+                
+            # 2. Strict Regex Firewall for all Youth structural divisions (U15 through U23)
+            if youth_pattern.search(home_team) or youth_pattern.search(away_team):
                 continue
 
             context_payload = {
