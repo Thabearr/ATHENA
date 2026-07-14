@@ -117,6 +117,24 @@ class FootballProvider:
         ).get("response", [])
 
     # --------------------------------------------------
+    # Fixtures by league / season / date range
+    # --------------------------------------------------
+
+    def get_fixtures_by_league(self, league_id, season, date_from=None, date_to=None):
+
+        params = {
+            "league": league_id,
+            "season": season,
+        }
+
+        if date_from:
+            params["from"] = date_from
+        if date_to:
+            params["to"] = date_to
+
+        return self._curl_request("fixtures", params).get("response", [])
+
+    # --------------------------------------------------
     # Standings
     # --------------------------------------------------
 
