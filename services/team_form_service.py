@@ -8,10 +8,6 @@ class TeamFormService:
         self.db = Database()
 
     def get_recent_form_score(self, team_id: int, match_date: str) -> float:
-        """
-        Phase 2 Real Data Integration: Replaces placeholder values by parsing 
-        the database to calculate a normalized historical efficiency rating (0.0 - 1.0).
-        """
         query = """
             SELECT 
                 CASE WHEN home_id = ? THEN home_goals ELSE away_goals END as goals_scored,
@@ -31,34 +27,60 @@ class TeamFormService:
                 cursor = conn.cursor()
                 cursor.execute(query, (team_id, team_id, team_id, team_id, team_id, team_id, match_date))
                 rows = cursor.fetchall()
-                
+
                 if not rows:
-                    # If team has zero historical data logged, fall back to neutral baseline
                     return 0.50
-                    
+
                 points = 0
                 total_matches = len(rows)
-                
+
                 for row in rows:
                     outcome = row[2]
                     if outcome == 'W':
                         points += 3
                     elif outcome == 'D':
                         points += 1
-                        
-                # Normalize 15 maximum possible points over 5 matches to a 0.1 - 0.95 form scale
+
                 normalized_form = 0.10 + ((points / (total_matches * 3)) * 0.85)
                 return round(normalized_form, 3)
-                
+
         except Exception as e:
             logger.error(f"Error calculating real statistics for team {team_id}: {e}")
             return 0.50
 
+    def get_data_freshness(self, team_id: int, match_date: str) -> dict:
+        """
+        Reports how much of the form data behind get_recent_form_score is
+        actually live (football_data_org_live) vs stale 2022-2024
+        (api_football_2022_2024), so callers can treat them differently
+        instead of pretending both are equally reliable.
+        """
+        query = """
+            SELECT match_date, data_source
+            FROM historical_matches
+            WHERE (home_id = ? OR away_id = ?) AND match_date < ?
+            ORDER BY match_date DESC LIMIT 5
+        """
+        try:
+            with self.db.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (team_id, team_id, match_date))
+                rows = cursor.fetchall()
+
+                if not rows:
+                    return {"has_data": False, "live_ratio": 0.0, "sample_size": 0}
+
+                live_count = sum(1 for r in rows if r[1] == "football_data_org_live")
+                return {
+                    "has_data": True,
+                    "live_ratio": round(live_count / len(rows), 2),
+                    "sample_size": len(rows),
+                }
+        except Exception as e:
+            logger.error(f"Error checking data freshness for team {team_id}: {e}")
+            return {"has_data": False, "live_ratio": 0.0, "sample_size": 0}
+
     def get_league_scoring_baselines(self) -> dict:
-        """
-        Phase 3 Advanced Modeling: Computes baseline coefficients across 
-        historical records to normalize true Poisson distribution curves.
-        """
         query = "SELECT AVG(home_goals), AVG(away_goals) FROM historical_matches"
         try:
             with self.db.connect() as conn:
