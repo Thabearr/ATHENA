@@ -25,13 +25,8 @@ class AnalysisPipeline:
             return abs(hash(team_name)) % 1000
 
     def fetch_upcoming_fixtures(self, limit: int = 200) -> list:
-        """
-        Only ever returns real fixtures from the database. No fabricated
-        fallback fixtures — if the DB is empty, callers get an empty list
-        and a clear log message telling them to run the fixture loader.
-        """
         query = """
-            SELECT fixture_id, league, season, home_team, away_team, match_date
+            SELECT fixture_id, league, season, home_team, away_team, match_date, data_source
             FROM fixtures
             WHERE status NOT IN ('FT', 'AET', 'PEN')
             ORDER BY match_date ASC LIMIT ?
@@ -51,9 +46,7 @@ class AnalysisPipeline:
         if not results:
             logger.warning(
                 "No real fixtures found in the database. Not fabricating "
-                "placeholder matches — run the fixture loader first "
-                "(LiveAPILoader / LiveFixtureLoader) so this pipeline only "
-                "ever analyzes real fixtures."
+                "placeholder matches — run the fixture loader first."
             )
 
         return results
@@ -93,8 +86,10 @@ class AnalysisPipeline:
                     "away_team": away_team,
                     "upset_alert": analysis.get("upset_alert", False),
                     "risk_score": analysis.get("risk_score", 0.0),
+                    "stale_data": analysis.get("stale_data", False),
                     "edge": analysis.get("edge_differential", 0.05),
                     "verdict": analysis.get("recommended_analytical_verdict", "DC_1X"),
+                    "source": fix.get("data_source", "unknown"),
                 })
             except Exception as e:
                 logger.error(f"Error compiling prediction for {home_team} vs {away_team}: {e}")
