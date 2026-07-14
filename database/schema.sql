@@ -1,6 +1,6 @@
 -- ==========================================
 -- ATHENA Database Schema
--- Version: 0.3
+-- Version: 0.4
 -- ==========================================
 
 -- =========================
@@ -134,47 +134,6 @@ CREATE TABLE IF NOT EXISTS team_statistics (
 );
 
 -- =========================
--- Recommended Indexes
+-- Historical Matches (real finished results, used for form calculation)
 -- =========================
-CREATE INDEX IF NOT EXISTS idx_fixture_fixture_id
-ON fixtures(fixture_id);
-
-CREATE INDEX IF NOT EXISTS idx_results_fixture_id
-ON results(fixture_id);
-
-CREATE INDEX IF NOT EXISTS idx_predictions_fixture_id
-ON predictions(fixture_id);
-
-CREATE INDEX IF NOT EXISTS idx_team_statistics_lookup
-ON team_statistics(team_id, league_id, season);
--- ==========================================
--- League Standings
--- ==========================================
-
-CREATE TABLE IF NOT EXISTS standings (
-
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-    team_id INTEGER,
-
-    league_id INTEGER,
-
-    season INTEGER,
-
-    position INTEGER,
-
-    points INTEGER,
-
-    played INTEGER,
-
-    won INTEGER,
-
-    drawn INTEGER,
-
-    lost INTEGER,
-
-    goal_difference INTEGER,
-
-    UNIQUE(team_id, league_id, season)
-
-);
+CREATE TABLE IF NOT EXISTS historical_matches (
