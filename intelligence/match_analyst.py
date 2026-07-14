@@ -13,11 +13,6 @@ class MatchAnalyst:
         self.fatigue_eng = fatigue_engine
         self.injury_eng = injury_engine
         self.ref_eng = referee_engine
-        # Not used directly below — the old engine/risk_engine.RiskEngine class
-        # expects a Prediction dataclass object this pipeline doesn't build.
-        # Kept as a constructor param so run_analysis.py doesn't break; real
-        # risk scoring lives in _assess_upset_risk below using data this
-        # pipeline actually has.
         self.risk_eng = risk_engine
 
     def _calculate_poisson_probability(self, actual_goals: int, expected_goals: float) -> float:
@@ -26,16 +21,8 @@ class MatchAnalyst:
         return math.exp(-expected_goals) * (expected_goals ** actual_goals) / math.factorial(actual_goals)
 
     def _assess_upset_risk(self, prob_home_win: float, prob_away_win: float,
-                            fatigue_diff: float, referee_signal: dict) -> dict:
-        """
-        Honest risk assessment using only signals we have real data for:
-          - match closeness (from the Poisson probabilities just computed)
-          - fatigue differential (real rest-day calculation)
-          - referee signal (only counts once a real feed is connected)
-
-        Replaces the old fixture_id-modulo trick, and fixes the bug where
-        upset_alert was hardcoded False everywhere.
-        """
+                            fatigue_diff: float, referee_signal: dict,
+                            avg_live_ratio: float) -> dict:
         favorite_prob = max(prob_home_win, prob_away_win)
 
         risk = 0.0
@@ -54,10 +41,22 @@ class MatchAnalyst:
         if referee_signal.get("has_data") and referee_signal.get("high_volatility"):
             risk += 20
 
+        # Stale-data penalty: form built mostly from 2022-2024 API-Football
+        # data is a much weaker signal than live 2025-26 data. Flag it
+        # instead of silently trusting it the same amount.
+        if avg_live_ratio < 0.20:
+            risk += 30
+        elif avg_live_ratio < 0.60:
+            risk += 15
+
         risk = min(risk, 100)
         upset_alert = risk >= 55
 
-        return {"risk_score": round(risk, 1), "upset_alert": upset_alert}
+        return {
+            "risk_score": round(risk, 1),
+            "upset_alert": upset_alert,
+            "stale_data": avg_live_ratio < 0.60,
+        }
 
     def compile_master_fixture_prediction(self, fixture_context: dict) -> dict:
         home_team = fixture_context.get('home_team', 'Home')
@@ -71,6 +70,10 @@ class MatchAnalyst:
         form_service = getattr(self.form_eng, 'form_svc', None) or getattr(self.form_eng, 'form_service', None)
         home_raw = form_service.get_recent_form_score(home_id, match_date) if form_service else 0.50
         away_raw = form_service.get_recent_form_score(away_id, match_date) if form_service else 0.50
+
+        home_freshness = form_service.get_data_freshness(home_id, match_date) if form_service else {"live_ratio": 0.0}
+        away_freshness = form_service.get_data_freshness(away_id, match_date) if form_service else {"live_ratio": 0.0}
+        avg_live_ratio = (home_freshness.get("live_ratio", 0.0) + away_freshness.get("live_ratio", 0.0)) / 2
 
         fatigue = self.fatigue_eng.analyze_fixture_fatigue_clash(home_id, away_id, match_date, match_date, match_date)
         fatigue_diff = fatigue.get("fatigue_differential", 0.0)
@@ -125,9 +128,10 @@ class MatchAnalyst:
         prob_home_win_to_nil_no = 1.0 - prob_home_win_to_nil
         prob_away_win_to_nil_no = 1.0 - prob_away_win_to_nil
 
-        risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal)
+        risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio)
         risk_score = risk_assessment["risk_score"]
         upset_alert = risk_assessment["upset_alert"]
+        stale_data = risk_assessment["stale_data"]
 
         def result(verdict, edge):
             return {
@@ -135,6 +139,7 @@ class MatchAnalyst:
                 "edge_differential": edge,
                 "upset_alert": upset_alert,
                 "risk_score": risk_score,
+                "stale_data": stale_data,
             }
 
         if is_knockout:
@@ -142,8 +147,6 @@ class MatchAnalyst:
             edge = abs(prob_home_win - prob_away_win)
             return result(verdict, max(edge, 0.06))
 
-        # If this fixture is genuinely high risk, route to the safest market
-        # (Double Chance) instead of pretending confidence in a sharper pick.
         if upset_alert:
             prob_1x = prob_home_win + prob_draw
             prob_x2 = prob_away_win + prob_draw
