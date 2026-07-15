@@ -80,6 +80,30 @@ class TeamFormService:
             logger.error(f"Error checking data freshness for team {team_id}: {e}")
             return {"has_data": False, "live_ratio": 0.0, "sample_size": 0}
 
+    def get_last_match_date(self, team_id: int, before_date: str) -> str:
+        """
+        Returns this team's most recent real match_date strictly before
+        `before_date`, or None if we have no record of one. Used to feed
+        real rest-day calculations into FatigueEngine — returning None
+        rather than guessing means the fatigue engine can honestly report
+        "no data" instead of silently treating "no data" as "just played".
+        """
+        query = """
+            SELECT match_date
+            FROM historical_matches
+            WHERE (home_id = ? OR away_id = ?) AND match_date < ?
+            ORDER BY match_date DESC LIMIT 1
+        """
+        try:
+            with self.db.connect() as conn:
+                cursor = conn.cursor()
+                cursor.execute(query, (team_id, team_id, before_date))
+                row = cursor.fetchone()
+                return row[0] if row else None
+        except Exception as e:
+            logger.error(f"Error fetching last match date for team {team_id}: {e}")
+            return None
+
     def get_league_scoring_baselines(self) -> dict:
         query = "SELECT AVG(home_goals), AVG(away_goals) FROM historical_matches"
         try:
