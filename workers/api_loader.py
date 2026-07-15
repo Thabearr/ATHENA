@@ -61,16 +61,22 @@ class LiveAPILoader:
                 time.sleep(self.request_delay_seconds)
                 continue
 
-            for m in matches:
+           for m in matches:
                 try:
+                    home_id = m.get("homeTeam", {}).get("id")
+                    away_id = m.get("awayTeam", {}).get("id")
+
+                    if home_id is None or away_id is None:
+                        continue  # TBD/bye slot (e.g. early qualifying rounds) — not a real fixture yet
+
                     fixtures.append({
                         "fixture_id": FDO_ID_OFFSET + m["id"],
                         "league": m.get("competition", {}).get("name", code),
                         "season": (m.get("season", {}).get("startDate", "2025") or "2025")[:4],
                         "home_team": m["homeTeam"]["name"],
                         "away_team": m["awayTeam"]["name"],
-                        "home_team_id": FDO_ID_OFFSET + m["homeTeam"]["id"],
-                        "away_team_id": FDO_ID_OFFSET + m["awayTeam"]["id"],
+                        "home_team_id": FDO_ID_OFFSET + home_id,
+                        "away_team_id": FDO_ID_OFFSET + away_id,
                         "match_date": m.get("utcDate", ""),
                         "status": m.get("status", "SCHEDULED"),
                         "data_source": "football_data_org_live",
@@ -79,7 +85,6 @@ class LiveAPILoader:
                 except Exception as e:
                     logger.error(f"Malformed football-data.org match skipped: {e}")
                     continue
-
             time.sleep(self.request_delay_seconds)
 
         return fixtures
