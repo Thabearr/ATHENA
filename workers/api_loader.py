@@ -28,7 +28,7 @@ class LiveAPILoader:
     No fabricated fallback data. A league that fails is skipped and logged.
     """
 
-    def __init__(self, days_ahead: int = 7, request_delay_seconds: float = 1.0):
+    def __init__(self, days_ahead: int = 7, request_delay_seconds: float = 6.5):
         self.days_ahead = days_ahead
         self.request_delay_seconds = request_delay_seconds
         self.db = Database()
@@ -61,7 +61,7 @@ class LiveAPILoader:
                 time.sleep(self.request_delay_seconds)
                 continue
 
-           for m in matches:
+            for m in matches:
                 try:
                     home_id = m.get("homeTeam", {}).get("id")
                     away_id = m.get("awayTeam", {}).get("id")
@@ -85,6 +85,7 @@ class LiveAPILoader:
                 except Exception as e:
                     logger.error(f"Malformed football-data.org match skipped: {e}")
                     continue
+
             time.sleep(self.request_delay_seconds)
 
         return fixtures
