@@ -1,5 +1,6 @@
 import subprocess
 import json
+import time
 from datetime import date
 
 
@@ -20,15 +21,7 @@ class FootballProvider:
     # Internal CURL Request
     # --------------------------------------------------
 
-    def _curl_request(self, endpoint, params=None):
-
-        url = f"{self.BASE_URL}/{endpoint}"
-
-        if params:
-            query = "&".join(
-                f"{k}={v}" for k, v in params.items()
-            )
-            url += f"?{query}"
+    def _single_curl_attempt(self, url):
 
         command = [
 
@@ -40,15 +33,9 @@ class FootballProvider:
 
             "--http1.1",
 
-            "--compressed",
-
             "--connect-timeout", "20",
 
             "--max-time", "60",
-
-            "--retry", "3",
-
-            "--retry-delay", "2",
 
             "--header",
             f"x-apisports-key: {self.api_key}",
@@ -89,6 +76,28 @@ class FootballProvider:
             )
 
         return data
+
+    def _curl_request(self, endpoint, params=None, max_retries: int = 2):
+
+        url = f"{self.BASE_URL}/{endpoint}"
+
+        if params:
+            query = "&".join(
+                f"{k}={v}" for k, v in params.items()
+            )
+            url += f"?{query}"
+
+        last_error = None
+        for attempt in range(max_retries + 1):
+            try:
+                return self._single_curl_attempt(url)
+            except RuntimeError as e:
+                last_error = e
+                if attempt < max_retries:
+                    time.sleep(3)
+                continue
+
+        raise last_error
 
     # --------------------------------------------------
     # Status
