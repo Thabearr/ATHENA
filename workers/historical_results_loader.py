@@ -26,7 +26,7 @@ class HistoricalResultsLoader:
     from stale data instead of treating them the same.
     """
 
-    def __init__(self, days_back: int = 120, request_delay_seconds: float = 1.0):
+    def __init__(self, days_back: int = 120, request_delay_seconds: float = 6.5):
         self.days_back = days_back
         self.request_delay_seconds = request_delay_seconds
         self.db = Database()
@@ -59,7 +59,7 @@ class HistoricalResultsLoader:
                 time.sleep(self.request_delay_seconds)
                 continue
 
-           for m in matches:
+            for m in matches:
                 try:
                     home_id = m.get("homeTeam", {}).get("id")
                     away_id = m.get("awayTeam", {}).get("id")
