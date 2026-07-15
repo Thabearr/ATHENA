@@ -59,8 +59,14 @@ class HistoricalResultsLoader:
                 time.sleep(self.request_delay_seconds)
                 continue
 
-            for m in matches:
+           for m in matches:
                 try:
+                    home_id = m.get("homeTeam", {}).get("id")
+                    away_id = m.get("awayTeam", {}).get("id")
+
+                    if home_id is None or away_id is None:
+                        continue
+
                     score = m.get("score", {}).get("fullTime", {})
                     if score.get("home") is None or score.get("away") is None:
                         continue
@@ -79,8 +85,8 @@ class HistoricalResultsLoader:
                         """,
                         (
                             FDO_ID_OFFSET + m["id"],
-                            FDO_ID_OFFSET + m["homeTeam"]["id"],
-                            FDO_ID_OFFSET + m["awayTeam"]["id"],
+                            FDO_ID_OFFSET + home_id,
+                            FDO_ID_OFFSET + away_id,
                             score.get("home"),
                             score.get("away"),
                             m.get("utcDate", ""),
