@@ -41,9 +41,6 @@ class MatchAnalyst:
         if referee_signal.get("has_data") and referee_signal.get("high_volatility"):
             risk += 20
 
-        # Stale-data penalty: form built mostly from 2022-2024 API-Football
-        # data is a much weaker signal than live 2025-26 data. Flag it
-        # instead of silently trusting it the same amount.
         if avg_live_ratio < 0.20:
             risk += 30
         elif avg_live_ratio < 0.60:
@@ -75,7 +72,12 @@ class MatchAnalyst:
         away_freshness = form_service.get_data_freshness(away_id, match_date) if form_service else {"live_ratio": 0.0}
         avg_live_ratio = (home_freshness.get("live_ratio", 0.0) + away_freshness.get("live_ratio", 0.0)) / 2
 
-        fatigue = self.fatigue_eng.analyze_fixture_fatigue_clash(home_id, away_id, match_date, match_date, match_date)
+        home_last_date = form_service.get_last_match_date(home_id, match_date) if form_service else None
+        away_last_date = form_service.get_last_match_date(away_id, match_date) if form_service else None
+
+        fatigue = self.fatigue_eng.analyze_fixture_fatigue_clash(
+            home_id, away_id, match_date, home_last_date, away_last_date
+        )
         fatigue_diff = fatigue.get("fatigue_differential", 0.0)
 
         referee_signal = self.ref_eng.check_referee_anomaly(fixture_id)
