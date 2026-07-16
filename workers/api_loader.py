@@ -11,8 +11,6 @@ from database.database import Database
 
 logger = logging.getLogger("athena.api_loader")
 
-# Offset added to football-data.org match/team IDs before storing, so they
-# can never collide with API-Football's numeric IDs in the same tables.
 FDO_ID_OFFSET = 10_000_000
 
 # Your API-Football key is on the free tier, which is locked to seasons
@@ -20,16 +18,20 @@ FDO_ID_OFFSET = 10_000_000
 # to True if you ever upgrade to a plan that unlocks the current season.
 API_FOOTBALL_ENABLED = False
 
+# football-data.org status values that mean "this match is over" — mapped
+# to our own 'FT' so the existing analysis_pipeline filter
+# (WHERE status NOT IN ('FT','AET','PEN')) correctly excludes them.
+FDO_FINISHED_STATUSES = {"FINISHED", "AWARDED"}
+
 
 class LiveAPILoader:
     """
-    Pulls REAL upcoming fixtures from two sources:
+    Pulls REAL fixtures from two sources:
       - football-data.org: current 2025-26 season, for competitions in
         FOOTBALL_DATA_ORG_MAPPING. Tagged data_source='football_data_org_live'.
-      - API-Football: currently disabled (see API_FOOTBALL_ENABLED above) —
-        the free tier can't serve current-season data for any league, so
-        calling it every run just wastes requests and fills logs with
-        identical, expected errors.
+        Pulls the FULL date range (not just SCHEDULED) so finished matches
+        get their status updated to 'FT' instead of being stuck forever.
+      - API-Football: currently disabled (see API_FOOTBALL_ENABLED above).
 
     No fabricated fallback data. A league that fails is skipped and logged.
     """
@@ -56,11 +58,12 @@ class LiveAPILoader:
 
         for league_id, code in FOOTBALL_DATA_ORG_MAPPING.items():
             try:
+                # No status filter — pull everything in the date range so
+                # finished matches come back too and get their status updated.
                 matches = self.fdo_provider.get_matches(
                     competition_code=code,
                     date_from=date_from,
                     date_to=date_to,
-                    status="SCHEDULED",
                 )
             except Exception as e:
                 logger.error(f"football-data.org fetch failed for {code}: {e}")
@@ -75,6 +78,9 @@ class LiveAPILoader:
                     if home_id is None or away_id is None:
                         continue  # TBD/bye slot (e.g. early qualifying rounds) — not a real fixture yet
 
+                    raw_status = m.get("status", "SCHEDULED")
+                    our_status = "FT" if raw_status in FDO_FINISHED_STATUSES else "NS"
+
                     fixtures.append({
                         "fixture_id": FDO_ID_OFFSET + m["id"],
                         "league": m.get("competition", {}).get("name", code),
@@ -84,7 +90,7 @@ class LiveAPILoader:
                         "home_team_id": FDO_ID_OFFSET + home_id,
                         "away_team_id": FDO_ID_OFFSET + away_id,
                         "match_date": m.get("utcDate", ""),
-                        "status": m.get("status", "SCHEDULED"),
+                        "status": our_status,
                         "data_source": "football_data_org_live",
                         "season_label": "2025-26",
                     })
@@ -153,7 +159,7 @@ class LiveAPILoader:
         af_fixtures = self._fetch_from_api_football(date_from, date_to)
 
         logger.info(
-            f"Fetched {len(fdo_fixtures)} live fixtures from football-data.org "
+            f"Fetched {len(fdo_fixtures)} fixtures from football-data.org "
             f"and {len(af_fixtures)} fixtures from API-Football."
         )
 
