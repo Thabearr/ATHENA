@@ -32,6 +32,7 @@ class OpenFootballLoader:
         today_str = date.today().strftime("%Y-%m-%d")
         upcoming_count = 0
         historical_count = 0
+        skipped_count = 0
 
         with self.db.connect() as conn:
             cursor = conn.cursor()
@@ -52,6 +53,7 @@ class OpenFootballLoader:
                         team2 = m.get("team2")
                         match_date = m.get("date")
                         if not team1 or not team2 or not match_date:
+                            skipped_count += 1
                             continue
 
                         home_id = self._team_id(team1)
@@ -67,12 +69,18 @@ class OpenFootballLoader:
                                 (tid, tname, league_name),
                             )
 
-                        score = m.get("score", {})
-                        ft = score.get("ft") if score else None
+                        score = m.get("score")
+                        ft = None
+                        if isinstance(score, dict):
+                            ft = score.get("ft")
+                        elif isinstance(score, list) and len(score) == 2:
+                            # Some entries store the fulltime score as a bare
+                            # [home, away] list instead of {"ft": [...]}
+                            ft = score
 
                         fixture_id = OFB_ID_OFFSET + (abs(hash(f"{team1}-{team2}-{match_date}")) % 1_000_000_000)
 
-                        if ft and len(ft) == 2:
+                        if ft and isinstance(ft, list) and len(ft) == 2:
                             cursor.execute(
                                 """
                                 INSERT INTO historical_matches
@@ -102,18 +110,27 @@ class OpenFootballLoader:
                                  match_date, "openfootball_public_domain", OPENFOOTBALL_SEASON),
                             )
                             upcoming_count += 1
+                        else:
+                            skipped_count += 1
                     except Exception as e:
                         logger.error(f"Malformed openfootball match skipped: {e}")
+                        skipped_count += 1
                         continue
 
             conn.commit()
 
-        logger.info(f"openfootball: synced {upcoming_count} upcoming fixtures, {historical_count} historical results.")
-        return {"upcoming": upcoming_count, "historical": historical_count}
+        logger.info(
+            f"openfootball: synced {upcoming_count} upcoming fixtures, "
+            f"{historical_count} historical results, skipped {skipped_count}."
+        )
+        return {"upcoming": upcoming_count, "historical": historical_count, "skipped": skipped_count}
 
 
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO)
     loader = OpenFootballLoader()
     counts = loader.fetch_and_sync()
-    print(f"✅ openfootball: {counts['upcoming']} upcoming fixtures, {counts['historical']} historical results synced.")
+    print(
+        f"✅ openfootball: {counts['upcoming']} upcoming fixtures, "
+        f"{counts['historical']} historical results synced, {counts['skipped']} skipped."
+    )
