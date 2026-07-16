@@ -1,10 +1,18 @@
 import logging
 import re
+from datetime import datetime, timedelta
 from database.database import Database
 from intelligence.match_analyst import MatchAnalyst
 from services.team_form_service import TeamFormService
 
 logger = logging.getLogger("athena.analysis_pipeline")
+
+# Assume a match lasts at most this long (kickoff to full time + stoppage).
+# Anything older than this is treated as over, regardless of what the
+# 'status' column says — this protects against fixtures getting stuck
+# forever if a data source's date-range window moves past them before
+# their status ever gets updated to finished.
+MAX_MATCH_DURATION_HOURS = 3
 
 
 class AnalysisPipeline:
@@ -23,6 +31,24 @@ class AnalysisPipeline:
                 return row[0] if row else abs(hash(team_name)) % 1000
         except Exception:
             return abs(hash(team_name)) % 1000
+
+    def _parse_match_date(self, date_string: str):
+        if not date_string:
+            return None
+        try:
+            cleaned = date_string.strip()
+            if 'T' in cleaned:
+                if '+' in cleaned:
+                    cleaned = cleaned.split('+')[0]
+                if cleaned.endswith('Z'):
+                    cleaned = cleaned[:-1]
+                if '.' in cleaned:
+                    cleaned = cleaned.split('.')[0]
+                return datetime.strptime(cleaned, "%Y-%m-%dT%H:%M:%S")
+            else:
+                return datetime.strptime(cleaned.split()[0], "%Y-%m-%d")
+        except Exception:
+            return None
 
     def fetch_upcoming_fixtures(self, limit: int = 200) -> list:
         query = """
@@ -43,13 +69,29 @@ class AnalysisPipeline:
         except Exception as e:
             logger.error(f"Failed to fetch upcoming fixtures from DB: {e}")
 
-        if not results:
+        # Local safety net: drop anything whose kickoff has clearly already
+        # passed, even if its stored 'status' never got updated by a loader.
+        now = datetime.utcnow()
+        still_upcoming = []
+        for fix in results:
+            match_dt = self._parse_match_date(fix.get("match_date"))
+            if match_dt is None:
+                still_upcoming.append(fix)  # can't parse it — don't silently drop, just pass through
+                continue
+            if match_dt + timedelta(hours=MAX_MATCH_DURATION_HOURS) > now:
+                still_upcoming.append(fix)
+
+        dropped = len(results) - len(still_upcoming)
+        if dropped:
+            logger.info(f"Filtered out {dropped} fixture(s) whose kickoff has already passed.")
+
+        if not still_upcoming:
             logger.warning(
                 "No real fixtures found in the database. Not fabricating "
                 "placeholder matches — run the fixture loader first."
             )
 
-        return results
+        return still_upcoming
 
     def run_pipeline_snapshot(self, execution_limit: int = 150) -> list:
         upcoming = self.fetch_upcoming_fixtures(limit=execution_limit)
