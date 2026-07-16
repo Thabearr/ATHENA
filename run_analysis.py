@@ -1,6 +1,7 @@
 import sys
 import logging
 from workers.api_loader import LiveAPILoader
+from workers.openfootball_loader import OpenFootballLoader
 from services.statistics_service import StatisticsService
 from services.team_form_service import TeamFormService
 from intelligence.form import FormEngine
@@ -31,6 +32,15 @@ def main():
             loader.sync_fixtures_to_db(raw_fixtures)
         except TypeError:
             loader.sync_fixtures_to_db()
+
+        # openfootball: public-domain, current-season data for leagues that
+        # would otherwise fall back to stale 2022-2024 API-Football data
+        try:
+            ofb_loader = OpenFootballLoader()
+            ofb_counts = ofb_loader.fetch_and_sync()
+            print(f"   openfootball: {ofb_counts['upcoming']} live fixtures, {ofb_counts['historical']} live results synced.")
+        except Exception as e:
+            print(f"   openfootball sync skipped due to error: {e}")
         
         # Step 2: Initialize full analytical dependency stack
         stats_svc = StatisticsService()
