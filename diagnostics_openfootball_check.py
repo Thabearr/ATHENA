@@ -21,8 +21,8 @@ def main():
     summarize("Premier League 2025-26", provider.try_fetch("football.json", "2025-26/en.1.json"))
     summarize("World Cup 2026", provider.try_fetch("worldcup.json", "2026/worldcup.json"))
 
-    # Probing for continental cup / qualifying coverage — unconfirmed, testing candidate paths
-   candidates = [
+    # Probing the correct repo name for Champions League (incl. qualifiers)
+    candidates = [
         ("champions-league", "2025-26/cl.json"),
         ("champions-league", "2025-26/1-cl.json"),
         ("champions-league", "2025-26/cup.json"),
