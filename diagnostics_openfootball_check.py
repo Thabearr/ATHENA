@@ -22,11 +22,11 @@ def main():
     summarize("World Cup 2026", provider.try_fetch("worldcup.json", "2026/worldcup.json"))
 
     # Probing for continental cup / qualifying coverage — unconfirmed, testing candidate paths
-    candidates = [
-        ("champions-league.json", "2025-26/cl.json"),
-        ("champions-league.json", "2025-26/champions-league.json"),
-        ("europe", "champions-league/2025-26/cup.json"),
-        ("europe", "uefa/2025-26/champions-league.json"),
+   candidates = [
+        ("champions-league", "2025-26/cl.json"),
+        ("champions-league", "2025-26/1-cl.json"),
+        ("champions-league", "2025-26/cup.json"),
+        ("champions-league", "2025-26/el.json"),
     ]
     for repo, path in candidates:
         summarize(f"Probe: {repo}/{path}", provider.try_fetch(repo, path))
