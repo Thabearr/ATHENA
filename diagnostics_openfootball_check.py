@@ -2,31 +2,44 @@ from api.openfootball_provider import OpenFootballProvider
 
 
 def summarize(label, data):
-    print(f"\n--- {label} ---")
     if isinstance(data, dict) and "_error" in data:
-        print(f"NOT FOUND / ERROR: {data['_error']}")
+        print(f"{label}: NOT FOUND")
         return
     name = data.get("name", "?")
     matches = data.get("matches", [])
-    print(f"name: {name}")
-    print(f"match count: {len(matches)}")
+    print(f"{label}: FOUND — '{name}', {len(matches)} matches")
     if matches:
-        print(f"sample match: {matches[0]}")
+        print(f"    sample: {matches[0]}")
 
 
 def main():
     provider = OpenFootballProvider()
 
-    summarize("Premier League 2025-26", provider.try_fetch("football.json", "2025-26/en.1.json"))
-    summarize("World Cup 2026", provider.try_fetch("worldcup.json", "2026/worldcup.json"))
+    # Confirmed working, for reference
+    print("=== CONFIRMED WORKING (sanity check) ===")
+    summarize("Premier League 2025-26 (en.1)", provider.try_fetch("football.json", "2025-26/en.1.json"))
 
-    candidates = [
-        ("football.json", "2024-25/uefa.cl.json"),
-        ("football.json", "2025-26/uefa.cl.json"),
-        ("football.json", "2025-26/uefa.el.json"),
-    ]
-    for repo, path in candidates:
-        summarize(f"Probe: {repo}/{path}", provider.try_fetch(repo, path))
+    print("\n=== PROBING THE 14 CURRENTLY-STALE LEAGUES ===")
+    candidates = {
+        "Turkey": "tr.1",
+        "Belgium": "be.1",
+        "Switzerland": "ch.1",
+        "Scotland (guess 1)": "sco.1",
+        "Scotland (guess 2)": "gb-sct.1",
+        "Norway": "no.1",
+        "Sweden": "se.1",
+        "Denmark": "dk.1",
+        "Austria": "at.1",
+        "Greece": "gr.1",
+        "Czech Republic": "cz.1",
+        "Croatia": "hr.1",
+        "Serbia": "rs.1",
+        "Poland": "pl.1",
+        "Romania": "ro.1",
+    }
+
+    for label, code in candidates.items():
+        summarize(f"{label} ({code})", provider.try_fetch("football.json", f"2025-26/{code}.json"))
 
 
 if __name__ == "__main__":
