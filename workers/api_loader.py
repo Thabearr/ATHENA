@@ -15,15 +15,21 @@ logger = logging.getLogger("athena.api_loader")
 # can never collide with API-Football's numeric IDs in the same tables.
 FDO_ID_OFFSET = 10_000_000
 
+# Your API-Football key is on the free tier, which is locked to seasons
+# 2022-2024 — every current-season request fails identically. Flip this
+# to True if you ever upgrade to a plan that unlocks the current season.
+API_FOOTBALL_ENABLED = False
+
 
 class LiveAPILoader:
     """
     Pulls REAL upcoming fixtures from two sources:
       - football-data.org: current 2025-26 season, for competitions in
         FOOTBALL_DATA_ORG_MAPPING. Tagged data_source='football_data_org_live'.
-      - API-Football: every other SUPPORTED_LEAGUES league. Free tier there
-        is locked to 2022-2024, so these rows are tagged
-        data_source='api_football_2022_2024' — never presented as current.
+      - API-Football: currently disabled (see API_FOOTBALL_ENABLED above) —
+        the free tier can't serve current-season data for any league, so
+        calling it every run just wastes requests and fills logs with
+        identical, expected errors.
 
     No fabricated fallback data. A league that fails is skipped and logged.
     """
@@ -39,7 +45,7 @@ class LiveAPILoader:
         )
         self.af_provider = (
             FootballProvider(settings.FOOTBALL_API_KEY)
-            if settings.FOOTBALL_API_KEY else None
+            if settings.FOOTBALL_API_KEY and API_FOOTBALL_ENABLED else None
         )
 
     def _fetch_from_football_data_org(self, date_from, date_to):
@@ -91,11 +97,11 @@ class LiveAPILoader:
         return fixtures
 
     def _fetch_from_api_football(self, date_from, date_to):
-        fixtures = []
         if not self.af_provider:
-            logger.warning("FOOTBALL_API_KEY not set — skipping API-Football fixtures.")
-            return fixtures
+            logger.info("API-Football disabled (free tier can't serve current-season data) — skipping.")
+            return []
 
+        fixtures = []
         unmapped_leagues = [lid for lid in SUPPORTED_LEAGUES if lid not in FOOTBALL_DATA_ORG_MAPPING]
 
         for league_id in unmapped_leagues:
@@ -148,7 +154,7 @@ class LiveAPILoader:
 
         logger.info(
             f"Fetched {len(fdo_fixtures)} live fixtures from football-data.org "
-            f"and {len(af_fixtures)} 2022-2024 fixtures from API-Football."
+            f"and {len(af_fixtures)} fixtures from API-Football."
         )
 
         return fdo_fixtures + af_fixtures
@@ -178,12 +184,10 @@ class LiveAPILoader:
                             data_source=excluded.data_source,
                             season_label=excluded.season_label
                         """,
-                        (
-                            fx["fixture_id"], fx["league"], fx.get("season"),
-                            fx["home_team"], fx["away_team"], fx["match_date"],
-                            fx["status"], fx.get("data_source", "unknown"),
-                            fx.get("season_label", ""),
-                        ),
+                        (fx["fixture_id"], fx["league"], fx.get("season"),
+                         fx["home_team"], fx["away_team"], fx["match_date"],
+                         fx["status"], fx.get("data_source", "unknown"),
+                         fx.get("season_label", "")),
                     )
 
                     for side in ("home", "away"):
