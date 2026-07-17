@@ -7,6 +7,7 @@ Usage: python build_acca.py --days 2 --folds 20
 
 import sys
 import logging
+import asyncio
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -16,7 +17,7 @@ from rich.table import Table
 from rich.panel import Panel
 
 # Core imports
-from workers.api_loader import LiveAPILoader
+from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
 from workers.openfootball_loader import OpenFootballLoader
 from services.statistics_service import StatisticsService
 from services.team_form_service import TeamFormService
@@ -48,8 +49,8 @@ class AccaBuilder:
         self.min_edge = min_edge
         self.db = Database()
         
-        # Initialize loaders
-        self.api_loader = LiveAPILoader(days_ahead=self.days_ahead)
+        # Initialize data loaders
+        self.fotmob_scraper = FotMobAdvancedScraper()
         self.ofb_loader = OpenFootballLoader()
         
         # Initialize analysis stack
@@ -83,48 +84,82 @@ class AccaBuilder:
             return False
         return True
     
-    def _fetch_live_fixtures(self) -> list:
-        """Pull live fixtures from all sources within the time window."""
-        console.print(f"[cyan]📥 Fetching live fixtures for next {self.days_ahead} day(s)...[/cyan]")
+    async def _fetch_live_fixtures(self) -> list:
+        """Pull live fixtures from FotMob + OpenFootball sources."""
+        console.print(f"[cyan]📥 Fetching live fixtures from FotMob for next {self.days_ahead} day(s)...[/cyan]")
         
         try:
-            # Fetch from football-data.org (primary)
-            fdo_fixtures = self.api_loader.fetch_upcoming_fixtures()
+            # Fetch from FotMob (primary - no API key needed)
+            fotmob_fixtures = await self.fotmob_scraper.fetch_upcoming_matches(days_ahead=self.days_ahead)
+            
+            # Sync to DB
+            if fotmob_fixtures:
+                self.fotmob_scraper.sync_to_db(fotmob_fixtures)
             
             # Supplement with OpenFootball for coverage gaps
             try:
                 ofb_counts = self.ofb_loader.fetch_and_sync()
                 console.print(
-                    f"[green]✅ Synced {ofb_counts.get('upcoming', 0)} live fixtures, "
-                    f"{ofb_counts.get('historical', 0)} historical results[/green]"
+                    f"[green]✅ FotMob: {len(fotmob_fixtures)} fixtures | "
+                    f"OpenFootball: {ofb_counts.get('upcoming', 0)} upcoming, "
+                    f"{ofb_counts.get('historical', 0)} historical[/green]"
                 )
             except Exception as e:
                 logger.warning(f"OpenFootball sync skipped: {e}")
+                console.print(f"[green]✅ FotMob: {len(fotmob_fixtures)} fixtures[/green]")
             
-            console.print(f"[green]✅ Loaded {len(fdo_fixtures)} fixtures from live sources[/green]")
-            return fdo_fixtures
+            return fotmob_fixtures
         except Exception as e:
             console.print(f"[red]❌ Failed to fetch fixtures: {e}[/red]")
             return []
     
-    def _filter_by_timeframe(self, fixtures: list, days: int) -> list:
-        """Filter fixtures to only those within the next N days."""
-        cutoff = datetime.utcnow() + timedelta(days=days)
-        filtered = []
-        
-        for fx in fixtures:
-            try:
-                fx_date = datetime.fromisoformat(fx.get("match_date", "").replace("Z", "+00:00"))
-                if fx_date <= cutoff:
-                    filtered.append(fx)
-            except (ValueError, TypeError):
-                continue
-        
-        return filtered
+    def _get_fixtures_from_db(self, days: int) -> list:
+        """
+        Query database for fixtures within timeframe.
+        """
+        try:
+            with self.db.connect() as conn:
+                cursor = conn.cursor()
+                
+                now = datetime.utcnow()
+                cutoff = now + timedelta(days=days)
+                
+                cursor.execute("""
+                    SELECT 
+                        fixture_id, league, home_team, away_team, 
+                        match_date, status, data_source
+                    FROM fixtures
+                    WHERE status NOT IN ('FT', 'AET', 'PEN')
+                      AND match_date >= ? AND match_date <= ?
+                    ORDER BY match_date ASC
+                """, (now.isoformat(), cutoff.isoformat()))
+                
+                rows = cursor.fetchall()
+                fixtures = []
+                
+                for row in rows:
+                    fixtures.append({
+                        "fixture_id": row[0],
+                        "league": row[1],
+                        "home_team": row[2],
+                        "away_team": row[3],
+                        "match_date": row[4],
+                        "status": row[5],
+                        "data_source": row[6],
+                    })
+                
+                return fixtures
+        except Exception as e:
+            logger.warning(f"DB query failed: {e}")
+            return []
     
     def _analyze_fixtures(self, fixtures: list) -> list:
         """Run full analysis pipeline on all fixtures."""
-        console.print("[cyan]🔍 Running statistical analysis on all fixtures...[/cyan]")
+        if not fixtures:
+            console.print("[yellow]⚠️  No fixtures to analyze.[/yellow]")
+            return []
+        
+        console.print(f"[cyan]🔍 Running statistical analysis on {len(fixtures)} fixture(s)...[/cyan]")
         
         results = self.pipeline.run_pipeline_snapshot(execution_limit=150)
         
@@ -141,7 +176,7 @@ class AccaBuilder:
         ]
         
         console.print(
-            f"[cyan]📊 Analysis complete: {len(results)} fixtures analyzed, "
+            f"[cyan]📊 Analysis complete: {len(results)} analyzed, "
             f"{len(safe_matches)} high-confidence selections[/cyan]"
         )
         
@@ -154,17 +189,18 @@ class AccaBuilder:
         
         console.print("\n[bold cyan]═══ SAFE FIXTURE SELECTIONS ═══[/bold cyan]")
         table = Table(show_header=True, header_style="bold cyan")
-        table.add_column("Fixture", style="cyan")
-        table.add_column("Verdict", style="green")
-        table.add_column("Edge", style="yellow")
-        table.add_column("Risk", style="red")
-        table.add_column("Status", style="white")
+        table.add_column("Fixture", style="cyan", width=35)
+        table.add_column("Verdict", style="green", width=20)
+        table.add_column("Edge", style="yellow", width=8)
+        table.add_column("Risk", style="red", width=6)
+        table.add_column("Status", style="white", width=4)
         
-        for match in safe_matches[:20]:  # Show top 20
+        for match in safe_matches[:25]:  # Show top 25
             status = "🟢" if not match.get("upset_alert") else "🟡"
+            fixture_str = f"{match.get('fixture', '?')[:33]}"
             table.add_row(
-                match.get("fixture", "?"),
-                match.get("verdict", "?"),
+                fixture_str,
+                match.get("verdict", "?")[:18],
                 f"{match.get('edge', 0.0):.3f}",
                 f"{match.get('risk_score', 0.0):.0f}",
                 status
@@ -172,7 +208,7 @@ class AccaBuilder:
         
         console.print(table)
     
-    def build(self, days: int, fold_size: int) -> dict:
+    async def build(self, days: int, fold_size: int) -> dict:
         """Main orchestration: fetch → analyze → generate acca."""
         
         # Validation
@@ -183,23 +219,21 @@ class AccaBuilder:
             console.print("[red]❌ Fold size must be 1-50.[/red]")
             return {"success": False, "error": "Invalid fold size"}
         
-        # Step 1: Fetch live data
-        fixtures = self._fetch_live_fixtures()
-        if not fixtures:
-            return {"success": False, "error": "No fixtures available"}
+        # Step 1: Fetch live data from FotMob
+        fotmob_fixtures = await self._fetch_live_fixtures()
         
-        # Step 2: Filter by timeframe
-        windowed_fixtures = self._filter_by_timeframe(fixtures, days)
+        # Step 2: Get all fixtures from database (includes FotMob + OpenFootball + historical)
+        db_fixtures = self._get_fixtures_from_db(days)
         console.print(
-            f"[cyan]🎯 Timeframe filter: {len(windowed_fixtures)}/{len(fixtures)} "
-            f"fixtures within {days} day(s)[/cyan]"
+            f"[cyan]🎯 Database contains {len(db_fixtures)} fixtures "
+            f"within next {days} day(s)[/cyan]"
         )
         
-        if not windowed_fixtures:
+        if not db_fixtures:
             return {"success": False, "error": f"No fixtures found in next {days} day(s)"}
         
         # Step 3: Analyze all fixtures
-        safe_matches = self._analyze_fixtures(windowed_fixtures)
+        safe_matches = self._analyze_fixtures(db_fixtures)
         
         if len(safe_matches) < fold_size:
             console.print(
@@ -209,6 +243,7 @@ class AccaBuilder:
             if len(safe_matches) == 0:
                 return {"success": False, "error": "Insufficient safe fixtures for acca"}
             fold_size = len(safe_matches)  # Downsize gracefully
+            console.print(f"[yellow]📉 Downscaling to {fold_size}-fold acca[/yellow]")
         
         # Display available selections
         self._display_safe_selections(safe_matches)
@@ -258,16 +293,16 @@ class AccaBuilder:
         # Legs table
         table = Table(show_header=True, header_style="bold green")
         table.add_column("Leg", style="cyan", width=5)
-        table.add_column("Fixture", style="cyan")
-        table.add_column("Market", style="yellow")
-        table.add_column("Selection", style="green")
+        table.add_column("Fixture", style="cyan", width=35)
+        table.add_column("Market", style="yellow", width=25)
+        table.add_column("Selection", style="green", width=20)
         
         for idx, leg in enumerate(legs, 1):
             table.add_row(
                 f"{idx:02d}",
-                leg.get("fixture", "?"),
-                leg.get("market", "?"),
-                leg.get("selection", "?")
+                leg.get("fixture", "?")[:33],
+                leg.get("market", "?")[:23],
+                leg.get("selection", "?")[:18]
             )
         
         console.print(table)
@@ -296,7 +331,7 @@ def generate(
     console.print("="*70)
     
     builder = AccaBuilder(days_ahead=days, min_edge=min_edge)
-    acca = builder.build(days=days, fold_size=folds)
+    acca = asyncio.run(builder.build(days=days, fold_size=folds))
     builder.display_acca(acca)
 
 
@@ -314,7 +349,7 @@ def quick(
     console.print("="*70)
     
     builder = AccaBuilder(days_ahead=2, min_edge=0.05)
-    acca = builder.build(days=2, fold_size=folds)
+    acca = asyncio.run(builder.build(days=2, fold_size=folds))
     builder.display_acca(acca)
 
 
