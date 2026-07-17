@@ -7,7 +7,7 @@ Includes: fixtures, lineups, injuries, form, weather, odds, referee data.
 import asyncio
 import logging
 import json
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Optional
 import sqlite3
 
@@ -36,6 +36,33 @@ class FotMobAdvancedScraper:
         else:
             logger.warning("fotmob package not installed. Install with: pip install fotmob")
     
+    def _parse_datetime(self, dt_str: str) -> Optional[datetime]:
+        """
+        Parse datetime string from FotMob, handling both naive and timezone-aware formats.
+        Always returns timezone-aware datetime in UTC.
+        """
+        if not dt_str:
+            return None
+        
+        try:
+            # Try ISO format with timezone
+            dt = datetime.fromisoformat(dt_str.replace("Z", "+00:00"))
+            # Ensure it's timezone-aware
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            return dt
+        except (ValueError, TypeError):
+            try:
+                # Try without timezone
+                dt = datetime.fromisoformat(dt_str)
+                # Make it timezone-aware (assume UTC)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt
+            except (ValueError, TypeError):
+                logger.warning(f"Could not parse datetime: {dt_str}")
+                return None
+    
     async def fetch_upcoming_matches(self, days_ahead: int = 3) -> List[Dict]:
         """
         Fetch all upcoming matches within N days.
@@ -57,7 +84,9 @@ class FotMobAdvancedScraper:
             else:
                 leagues = todays_matches
             
-            cutoff_date = datetime.utcnow() + timedelta(days=days_ahead)
+            # Cutoff: now + N days, in UTC with timezone awareness
+            now_utc = datetime.now(timezone.utc)
+            cutoff_date = now_utc + timedelta(days=days_ahead)
             
             for league in leagues:
                 league_name = league.get("name", "Unknown")
@@ -66,10 +95,17 @@ class FotMobAdvancedScraper:
                 for match in matches:
                     try:
                         match_date_str = match.get("status", {}).get("utcTime", "")
-                        if match_date_str:
-                            match_date = datetime.fromisoformat(match_date_str.replace("Z", "+00:00"))
-                            if match_date > cutoff_date:
-                                continue  # Beyond our window
+                        
+                        # Parse match date with proper timezone handling
+                        match_date = self._parse_datetime(match_date_str)
+                        
+                        if not match_date:
+                            logger.debug(f"Could not parse date for match {match.get('id')}")
+                            continue
+                        
+                        # Filter by timeframe (NOW UTC-aware comparison)
+                        if match_date > cutoff_date:
+                            continue  # Beyond our window
                         
                         fixture_id = match.get("id")
                         home_team = match.get("home", {}).get("name")
@@ -87,7 +123,7 @@ class FotMobAdvancedScraper:
                             "match_date": match_date_str,
                             "status": "NS" if not match.get("status", {}).get("started") else "FT",
                             "data_source": "fotmob_advanced",
-                            "season_label": datetime.utcnow().year,
+                            "season_label": datetime.now(timezone.utc).year,
                         }
                         
                         # Fetch deep match data asynchronously
@@ -340,7 +376,7 @@ class FotMobAdvancedScraper:
                         json.dumps(match.get("head_to_head", {})),
                         json.dumps(match.get("home_form", {})),
                         json.dumps(match.get("away_form", {})),
-                        datetime.utcnow().isoformat()
+                        datetime.now(timezone.utc).isoformat()
                     ))
                 
                 conn.commit()
