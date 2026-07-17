@@ -65,7 +65,7 @@ table.add_column("Verdict", style="yellow", width=20)
 table.add_column("Edge", style="green", width=8)
 table.add_column("Risk", style="magenta", width=6)
 table.add_column("Upset?", style="red", width=7)
-table.add_column("Stale?", style="orange", width=7)
+table.add_column("Stale?", style="bright_black", width=7)
 table.add_column("Status", style="white", width=8)
 
 safe_count = 0
