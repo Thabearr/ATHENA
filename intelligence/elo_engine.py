@@ -26,14 +26,20 @@ class EloEngine:
         )
         row = cur.fetchone()
         if not row:
-            # Initialize new team with default 1500
+            # Insert a new team with default 1500 (shouldn't happen if seeding worked)
             self.conn.execute(
-                "UPDATE teams SET elo_rating = 1500, home_elo = 1500, away_elo = 1500, matches_processed = 0 WHERE team_id = ?",
+                "INSERT OR IGNORE INTO teams (team_id, elo_rating, home_elo, away_elo, matches_processed) VALUES (?, 1500, 1500, 1500, 0)",
                 (team_id,)
             )
             self.conn.commit()
             return {"elo": 1500, "home_elo": 1500, "away_elo": 1500, "matches": 0}
-        return dict(row)
+        # Return a dict with clean keys (elo, home_elo, away_elo, matches)
+        return {
+            "elo": row["elo_rating"],
+            "home_elo": row["home_elo"],
+            "away_elo": row["away_elo"],
+            "matches": row["matches_processed"]
+        }
 
     def _get_k_factor(self, matches_processed: int) -> int:
         """PDF Spec: K=32 normal, K=24 high volume, K=16 very high volume."""
@@ -86,7 +92,6 @@ class EloEngine:
         new_R_away = R_away + K_away * (S_away - E_away)
 
         # 6. Update Home/Away specific ELOs (per PDF)
-        # Home ELO updates only when playing at home, Away ELO updates only when playing away
         new_home_elo = home_rating["home_elo"] + K_home * (S_home - E_home)
         new_away_elo = away_rating["away_elo"] + K_away * (S_away - E_away)
 
@@ -120,19 +125,15 @@ class EloEngine:
         PDF Spec: Process chronologically so ratings build realistically.
         """
         print("[ELO] Starting historical backfill...")
-        cur = self.conn.execute("""
+        query = """
             SELECT fixture_id, home_id, away_id, home_goals, away_goals, match_date
             FROM historical_matches
             WHERE home_id IS NOT NULL AND away_id IS NOT NULL
             ORDER BY match_date ASC
-            LIMIT ?
-        """, (limit,)) if limit else self.conn.execute("""
-            SELECT fixture_id, home_id, away_id, home_goals, away_goals, match_date
-            FROM historical_matches
-            WHERE home_id IS NOT NULL AND away_id IS NOT NULL
-            ORDER BY match_date ASC
-        """)
-
+        """
+        if limit:
+            query += f" LIMIT {limit}"
+        cur = self.conn.execute(query)
         rows = cur.fetchall()
         total = len(rows)
         for idx, row in enumerate(rows):
@@ -177,7 +178,6 @@ if __name__ == "__main__":
         engine.process_historical_matches(args.limit)
     
     if args.update_fixture:
-        # Fetch fixture details from historical_matches
         cur = engine.conn.execute(
             "SELECT home_id, away_id, home_goals, away_goals, match_date FROM historical_matches WHERE fixture_id = ?",
             (args.update_fixture,)
