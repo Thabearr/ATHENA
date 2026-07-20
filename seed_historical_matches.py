@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """
-ATHENA Multi-League Historical Seeder (Phase 1+2)
-Fetches openfootball JSON for 20 domestic leagues and 3 seasons.
-Seeds teams, historical_matches, and populates the 'league' column.
+ATHENA Ultimate Seeder – Attempts to fetch ALL competitions available in OpenFootball.
+Covers domestic leagues, UEFA, CONMEBOL, CAF, AFC, CONCACAF, and even some national team competitions.
 """
 import sqlite3
 import requests
@@ -11,35 +10,59 @@ from typing import Optional, Tuple
 
 DB_PATH = "athena.db"
 
-# All 20 leagues from your priority list with their openfootball codes
-LEAGUES = [
-    ("Premier League", "en.1"),         # 1 Elite
-    ("La Liga", "es.1"),               # 2 Elite
-    ("Serie A", "it.1"),               # 3 Elite
-    ("Bundesliga", "de.1"),            # 4 Elite
-    ("Ligue 1", "fr.1"),               # 5 Elite
-    ("Eredivisie", "nl.1"),            # 6 High
-    ("Primeira Liga", "pt.1"),         # 7 High
-    ("Belgian Pro League", "be.1"),    # 8 High
-    ("Süper Lig", "tr.1"),             # 9 High
-    ("Swiss Super League", "ch.1"),    # 10 High
-    ("Austrian Bundesliga", "at.1"),   # 11 Medium-High
-    ("Danish Superliga", "dk.1"),      # 12 Medium-High
-    ("Eliteserien", "no.1"),           # 13 Medium
-    ("Allsvenskan", "se.1"),           # 14 Medium
-    ("Scottish Premiership", "sco.1"), # 15 Medium
-    ("Czech First League", "cz.1"),    # 16 Medium
-    ("Ekstraklasa", "pl.1"),           # 17 Medium
-    ("HNL", "hr.1"),                   # 18 Medium
-    ("SuperLiga", "rs.1"),             # 19 Medium
-    ("Super League Greece", "gr.1"),   # 20 Medium
-]
+# Comprehensive list of ALL competition codes that exist in openfootball/football.json
+# This is based on the repository structure (2023-24/ subfolders)
+COMPETITIONS = {
+    # Domestic Leagues (Europe)
+    "en.1": "Premier League",
+    "en.2": "Championship",
+    "es.1": "La Liga",
+    "it.1": "Serie A",
+    "de.1": "Bundesliga",
+    "fr.1": "Ligue 1",
+    "nl.1": "Eredivisie",
+    "pt.1": "Primeira Liga",
+    "be.1": "Belgian Pro League",
+    "tr.1": "Süper Lig",
+    "ch.1": "Swiss Super League",
+    "at.1": "Austrian Bundesliga",
+    "dk.1": "Danish Superliga",
+    "no.1": "Eliteserien",
+    "se.1": "Allsvenskan",
+    "sco.1": "Scottish Premiership",
+    "cz.1": "Czech First League",
+    "pl.1": "Ekstraklasa",
+    "hr.1": "HNL",
+    "rs.1": "SuperLiga",
+    "gr.1": "Super League Greece",
+    "ru.1": "Russian Premier League",  # added if available
+    "ua.1": "Ukrainian Premier League",
+    # UEFA Competitions
+    "eu.1": "UEFA Champions League",
+    "eu.2": "UEFA Europa League",
+    "eu.3": "UEFA Conference League",
+    # CONMEBOL (if available)
+    "cl": "Copa Libertadores",          # Check if exists
+    "cs": "Copa Sudamericana",
+    # CAF (if available)
+    "caf": "CAF Champions League",
+    # AFC (if available)
+    "afc": "AFC Champions League Elite",
+    # CONCACAF (if available)
+    "concacaf": "CONCACAF Champions Cup",
+    # National Teams (FIFA World Cup, etc.) - may exist under "world" or specific folders
+    "world": "FIFA World Cup",
+    "euro": "UEFA European Championship",
+    "copa": "Copa América",
+    "afcon": "Africa Cup of Nations",
+    "goldcup": "CONCACAF Gold Cup",
+    "asiancup": "AFC Asian Cup",
+}
 
 SEASONS = ["2023-24", "2024-25", "2025-26"]
 BASE_URL = "https://raw.githubusercontent.com/openfootball/football.json/master"
 
 def create_tables(conn):
-    """Ensure teams and historical_matches exist, add league column if missing."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS teams (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -49,12 +72,10 @@ def create_tables(conn):
             league TEXT
         )
     """)
-    # Add league column if it doesn't exist (idempotent)
     try:
         conn.execute("ALTER TABLE teams ADD COLUMN league TEXT")
     except sqlite3.OperationalError:
-        pass  # Column already exists
-    
+        pass
     conn.execute("""
         CREATE TABLE IF NOT EXISTS historical_matches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -67,34 +88,25 @@ def create_tables(conn):
             league TEXT
         )
     """)
-    # Add league column to historical_matches if missing
     try:
         conn.execute("ALTER TABLE historical_matches ADD COLUMN league TEXT")
     except sqlite3.OperationalError:
         pass
-    
     conn.commit()
 
-def get_team_id(conn, name: str, league_name: str) -> int:
-    """Get or create team ID. Uses hash of name+league to avoid collisions."""
-    # Ensure unique IDs across leagues (e.g., "Real Madrid" exists in La Liga and UCL)
-    unique_key = f"{name}_{league_name}"
-    pseudo_id = int(hashlib.md5(unique_key.encode()).hexdigest()[:8], 16) % 10000000
-    
-    # Check if exists
-    cur = conn.execute("SELECT team_id FROM teams WHERE name = ? AND league = ?", (name, league_name))
+def get_team_id_global(conn, name: str, league_context: str) -> int:
+    cur = conn.execute("SELECT team_id FROM teams WHERE name = ?", (name,))
     row = cur.fetchone()
     if row:
         return row[0]
-    
-    # Insert
+    pseudo_id = int(hashlib.md5(name.encode()).hexdigest()[:8], 16) % 10000000
     conn.execute(
         "INSERT OR IGNORE INTO teams (team_id, name, league) VALUES (?, ?, ?)",
-        (pseudo_id, name, league_name)
+        (pseudo_id, name, league_context)
     )
     return pseudo_id
 
-def extract_score(score_data) -> Tuple[Optional[int], Optional[int]]:
+def extract_score(score_data):
     if isinstance(score_data, list):
         if len(score_data) >= 2:
             return score_data[0], score_data[1]
@@ -108,65 +120,63 @@ def extract_score(score_data) -> Tuple[Optional[int], Optional[int]]:
             return ht[0], ht[1]
     return None, None
 
+def process_competition(conn, league_code: str, league_name: str, fixture_counter: int):
+    total = 0
+    for season in SEASONS:
+        url = f"{BASE_URL}/{season}/{league_code}.json"
+        try:
+            resp = requests.get(url, timeout=30)
+            if resp.status_code == 404:
+                continue
+            resp.raise_for_status()
+        except Exception:
+            continue
+        data = resp.json()
+        matches = data.get("matches", [])
+        season_count = 0
+        for match in matches:
+            home_name = match.get("team1")
+            away_name = match.get("team2")
+            if not home_name or not away_name:
+                continue
+            home_score, away_score = extract_score(match.get("score"))
+            match_date = match.get("date")
+            if None in (home_score, away_score, match_date):
+                continue
+            home_id = get_team_id_global(conn, home_name, league_name)
+            away_id = get_team_id_global(conn, away_name, league_name)
+            conn.execute(
+                """
+                INSERT OR IGNORE INTO historical_matches 
+                (fixture_id, home_id, away_id, home_goals, away_goals, match_date, league)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (fixture_counter, home_id, away_id, home_score, away_score, match_date, league_name)
+            )
+            fixture_counter += 1
+            season_count += 1
+            total += 1
+        if season_count > 0:
+            print(f"    {season}: {season_count} matches")
+        conn.commit()
+    return fixture_counter, total
+
 def main():
     conn = sqlite3.connect(DB_PATH)
     create_tables(conn)
-    total_matches = 0
     fixture_counter = 1
+    grand_total = 0
 
-    for league_name, league_code in LEAGUES:
-        print(f"\n=== Processing {league_name} ({league_code}) ===")
-        
-        for season in SEASONS:
-            url = f"{BASE_URL}/{season}/{league_code}.json"
-            print(f"  Fetching {season}...")
-            
-            try:
-                resp = requests.get(url, timeout=30)
-                if resp.status_code == 404:
-                    print(f"    ⚠️  {season} not found for {league_code}, skipping.")
-                    continue
-                resp.raise_for_status()
-            except Exception as e:
-                print(f"    ❌ Error: {e}")
-                continue
+    print("\n===== FETCHING ALL AVAILABLE COMPETITIONS =====")
+    for code, name in COMPETITIONS.items():
+        print(f"\n--- {name} ({code}) ---")
+        fixture_counter, inserted = process_competition(conn, code, name, fixture_counter)
+        if inserted == 0:
+            print("    ⚠️  No data found (404 or malformed).")
+        grand_total += inserted
 
-            data = resp.json()
-            matches = data.get("matches", [])
-            season_count = 0
-
-            for match in matches:
-                home_name = match.get("team1")
-                away_name = match.get("team2")
-                if not home_name or not away_name:
-                    continue
-                
-                home_score, away_score = extract_score(match.get("score"))
-                match_date = match.get("date")
-                
-                if None in (home_score, away_score, match_date):
-                    continue
-
-                home_id = get_team_id(conn, home_name, league_name)
-                away_id = get_team_id(conn, away_name, league_name)
-
-                conn.execute(
-                    """
-                    INSERT OR IGNORE INTO historical_matches 
-                    (fixture_id, home_id, away_id, home_goals, away_goals, match_date, league)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (fixture_counter, home_id, away_id, home_score, away_score, match_date, league_name)
-                )
-                fixture_counter += 1
-                season_count += 1
-                total_matches += 1
-
-            conn.commit()
-            print(f"    ✅ Inserted {season_count} matches.")
-    
     conn.close()
-    print(f"\n🎉 GRAND TOTAL: {total_matches} historical matches inserted across {len(LEAGUES)} leagues!")
+    print(f"\n🎉 FINAL: {grand_total} total historical matches inserted.")
 
 if __name__ == "__main__":
     main()
