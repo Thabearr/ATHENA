@@ -25,10 +25,8 @@ class MatchAnalyst:
         """
         Generate a deterministic but diverse team strength factor (0.8 to 1.2)
         based on team name hash when we have no historical data.
-        This ensures different teams get different probability distributions.
         """
         hash_val = int(hashlib.md5(team_name.encode()).hexdigest(), 16)
-        # Map hash to 0.8-1.2 range
         return 0.8 + ((hash_val % 41) / 100.0)
 
     def _assess_upset_risk(self, prob_home_win: float, prob_away_win: float,
@@ -93,11 +91,11 @@ class MatchAnalyst:
 
         referee_signal = self.ref_eng.check_referee_anomaly(fixture_id)
 
-        # When we have no form data (avg_live_ratio near 0), use team-based seeds for variety
+        # When we have no form data, use team-based seeds for variety
         if avg_live_ratio < 0.05:
             home_seed = self._get_team_strength_seed(home_team)
             away_seed = self._get_team_strength_seed(away_team)
-            home_raw = 0.45 + (home_seed - 1.0) * 0.1  # Adjust around 0.45-0.55
+            home_raw = 0.45 + (home_seed - 1.0) * 0.1
             away_raw = 0.45 + (away_seed - 1.0) * 0.1
 
         base_home_lambda = 1.45 + (home_raw - away_raw) - (fatigue_diff * 0.5)
@@ -167,10 +165,29 @@ class MatchAnalyst:
             edge = abs(prob_home_win - prob_away_win)
             return result(verdict, max(edge, 0.06))
 
+        # DIVERSIFY verdicts: even under upset_alert, offer varied markets
         if upset_alert:
+            # Use team seed hash to deterministically pick a market variety
+            team_hash = (int(hashlib.md5(home_team.encode()).hexdigest(), 16) + 
+                        int(hashlib.md5(away_team.encode()).hexdigest(), 16)) % 5
+            
             prob_1x = prob_home_win + prob_draw
             prob_x2 = prob_away_win + prob_draw
-            return result("DC_1X", prob_1x) if prob_1x >= prob_x2 else result("DC_X2", prob_x2)
+            
+            # Rotate through different markets based on team hash
+            if team_hash == 0:
+                return result("DC_1X", prob_1x) if prob_1x >= prob_x2 else result("DC_X2", prob_x2)
+            elif team_hash == 1:
+                return result("DNB_HOME", prob_home_win) if prob_home_win > prob_away_win else result("DNB_AWAY", prob_away_win)
+            elif team_hash == 2:
+                return result("GG_YES", prob_gg) if prob_gg > 0.55 else result("GG_NO", 1.0 - prob_gg)
+            elif team_hash == 3:
+                return result("OVER_15", prob_over_15) if prob_over_15 > 0.70 else result("UNDER_35", prob_under_35)
+            else:  # team_hash == 4
+                if lambda_val > mu_val:
+                    return result("HOME_OR_OVER_25", max(prob_home_win, prob_over_25))
+                else:
+                    return result("AWAY_OR_OVER_25", max(prob_away_win, prob_over_25))
 
         if prob_home_win_to_nil_no > 0.65 and prob_home_win > 0.55:
             return result("HOME_WIN_TO_NIL_NO", prob_home_win_to_nil_no)
