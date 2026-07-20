@@ -16,7 +16,7 @@ DB_PATH = "athena.db"
 SEASONS = [
     ("2023-24", "en.1"),   # Premier League 2023-24
     ("2024-25", "en.1"),   # Premier League 2024-25
-    ("2025-26", "en.1"),   # Premier League 2025-26 (if available)
+    ("2025-26", "en.1"),   # Premier League 2025-26
 ]
 
 BASE_URL = "https://raw.githubusercontent.com/openfootball/football.json/master"
@@ -60,6 +60,30 @@ def get_team_id(conn, name):
     )
     return pseudo_id
 
+def extract_score(score_data):
+    """
+    Extract home and away goals from score data.
+    Handles both formats:
+      - {"ft": [2, 1], "ht": [1, 0]}  (dict)
+      - [2, 1]                         (list)
+    """
+    # If it's a list, use it directly
+    if isinstance(score_data, list):
+        if len(score_data) >= 2:
+            return score_data[0], score_data[1]
+        return None, None
+    
+    # If it's a dict, try ft first, then ht
+    if isinstance(score_data, dict):
+        ft = score_data.get("ft")
+        if ft and isinstance(ft, list) and len(ft) >= 2:
+            return ft[0], ft[1]
+        ht = score_data.get("ht")
+        if ht and isinstance(ht, list) and len(ht) >= 2:
+            return ht[0], ht[1]
+    
+    return None, None
+
 def insert_match(conn, fixture_id, home_id, away_id, home_goals, away_goals, match_date):
     """Insert historical match, skip duplicates."""
     conn.execute(
@@ -95,18 +119,11 @@ def main():
         for match in matches:
             home_name = match.get("team1")
             away_name = match.get("team2")
-            score_data = match.get("score", {})
-            # Use full-time score if available, otherwise half-time
-            ft = score_data.get("ft")
-            if ft and len(ft) >= 2:
-                home_score, away_score = ft[0], ft[1]
-            else:
-                ht = score_data.get("ht")
-                if ht and len(ht) >= 2:
-                    home_score, away_score = ht[0], ht[1]
-                else:
-                    continue   # skip if no valid score
-
+            
+            # Extract score using the flexible function
+            score_data = match.get("score")
+            home_score, away_score = extract_score(score_data)
+            
             match_date = match.get("date")
 
             if not all([home_name, away_name, home_score is not None, away_score is not None, match_date]):
