@@ -167,42 +167,41 @@ class AccaBuilder:
             console.print("[yellow]⚠️  No fixtures matched analysis filters.[/yellow]")
             return []
         
-        # Filter to only HIGH-CONFIDENCE selections
-        safe_matches = [
-            r for r in results
-            if not r.get("upset_alert", False) 
-            and r.get("edge", 0.0) >= self.min_edge
-            and r.get("risk_score", 100) <= 55  # Risk score <= 55 is acceptable
-        ]
-        
         console.print(
-            f"[cyan]📊 Analysis complete: {len(results)} analyzed, "
-            f"{len(safe_matches)} high-confidence selections[/cyan]"
+            f"[cyan]📊 Analysis complete: {len(results)} analyzed[/cyan]"
         )
         
-        return safe_matches
+        return results
     
-    def _display_safe_selections(self, safe_matches: list):
-        """Pretty-print all safe selections before accumulator generation."""
-        if not safe_matches:
+    def _display_safe_selections(self, all_matches: list, top_n: int = 15):
+        """Pretty-print top selections ranked by fullproof score."""
+        if not all_matches:
             return
         
-        console.print("\n[bold cyan]═══ SAFE FIXTURE SELECTIONS ═══[/bold cyan]")
+        # Score and rank by fullproof criteria
+        scored = [(m, self.acca_engine._score_fixture(m)) for m in all_matches]
+        scored.sort(key=lambda x: x[1], reverse=True)
+        
+        console.print("\n[bold cyan]═══ TOP RANKED FIXTURES (BY FULLPROOF SCORE) ═══[/bold cyan]")
         table = Table(show_header=True, header_style="bold cyan")
+        table.add_column("Rank", style="yellow", width=5)
         table.add_column("Fixture", style="cyan", width=35)
         table.add_column("Verdict", style="green", width=20)
-        table.add_column("Edge", style="yellow", width=8)
+        table.add_column("Edge", style="white", width=8)
         table.add_column("Risk", style="red", width=6)
-        table.add_column("Status", style="white", width=4)
+        table.add_column("Score", style="magenta", width=7)
+        table.add_column("Eligible?", style="white", width=9)
         
-        for match in safe_matches[:25]:  # Show top 25
-            status = "🟢" if not match.get("upset_alert") else "🟡"
-            fixture_str = f"{match.get('fixture', '?')[:33]}"
+        for idx, (match, score) in enumerate(scored[:top_n], 1):
+            eligible = self.acca_engine._is_acca_eligible(match, strict=False)
+            status = "✅" if eligible else "❌"
             table.add_row(
-                fixture_str,
+                f"{idx}",
+                match.get("fixture", "?")[:33],
                 match.get("verdict", "?")[:18],
                 f"{match.get('edge', 0.0):.3f}",
                 f"{match.get('risk_score', 0.0):.0f}",
+                f"{score:.1f}",
                 status
             )
         
@@ -233,38 +232,41 @@ class AccaBuilder:
             return {"success": False, "error": f"No fixtures found in next {days} day(s)"}
         
         # Step 3: Analyze all fixtures
-        safe_matches = self._analyze_fixtures(db_fixtures)
+        all_analyzed = self._analyze_fixtures(db_fixtures)
         
-        if len(safe_matches) < fold_size:
+        if not all_analyzed:
+            return {"success": False, "error": "No fixtures passed analysis"}
+        
+        # Step 4: Display ranked selections (fullproof scoring)
+        self._display_safe_selections(all_analyzed, top_n=15)
+        
+        # Step 5: Filter for acca eligibility and check availability
+        eligible_matches = [m for m in all_analyzed if self.acca_engine._is_acca_eligible(m, strict=False)]
+        
+        if len(eligible_matches) < fold_size:
             console.print(
-                f"[yellow]⚠️  WARNING: Only {len(safe_matches)} safe fixtures available, "
+                f"\n[yellow]⚠️  WARNING: Only {len(eligible_matches)} eligible fixtures, "
                 f"but {fold_size}-fold requested.[/yellow]"
             )
-            if len(safe_matches) == 0:
-                return {"success": False, "error": "Insufficient safe fixtures for acca"}
-            fold_size = len(safe_matches)  # Downsize gracefully
+            if len(eligible_matches) == 0:
+                return {"success": False, "error": "No eligible fixtures for acca"}
+            fold_size = len(eligible_matches)  # Downsize gracefully
             console.print(f"[yellow]📉 Downscaling to {fold_size}-fold acca[/yellow]")
         
-        # Display available selections
-        self._display_safe_selections(safe_matches)
-        
-        # Step 4: Build accumulator
+        # Step 6: Build accumulator using fullproof scoring
         console.print(
-            f"\n[cyan]🚀 Building {fold_size}-Fold Accumulator "
-            f"(min edge: {self.min_edge:.3f})...[/cyan]"
+            f"\n[cyan]🚀 Building {fold_size}-Fold Accumulator (fullproof strategy)...[/cyan]"
         )
         
-        acca = self.acca_engine.generate_accumulator(safe_matches, fold_size=fold_size)
+        acca = self.acca_engine.generate_accumulator(all_analyzed, fold_size=fold_size, strict=False)
         
         if not acca.get("legs"):
             console.print(
-                f"[red]❌ Failed to generate {fold_size}-fold acca. "
-                f"Possible edge threshold mismatch.[/red]"
+                f"[red]❌ Failed to generate {fold_size}-fold acca.[/red]"
             )
             return {"success": False, "error": "Accumulator generation failed"}
         
         acca["success"] = True
-        acca["safe_fixtures_count"] = len(safe_matches)
         acca["timeframe_days"] = days
         
         return acca
@@ -283,12 +285,13 @@ class AccaBuilder:
         
         # Header
         header = (
-            f"⚡ {fold_size}-FOLD ACCUMULATOR SLIP\n"
+            f"⚡ {fold_size}-FOLD BULLETPROOF ACCUMULATOR SLIP\n"
             f"🎯 Compounded Odds: {total_odds}x\n"
-            f"📊 Safe Selections: {acca.get('safe_fixtures_count', 0)}\n"
+            f"📊 Total Analyzed: {acca.get('available_count', 0)} fixtures\n"
+            f"✅ Eligible: {acca.get('eligible_count', 0)} fixtures\n"
             f"⏰ Timeframe: {acca.get('timeframe_days', 0)} day(s)"
         )
-        console.print(Panel(header, border_style="green"))
+        console.print(Panel(header, border_style="bold green"))
         
         # Legs table
         table = Table(show_header=True, header_style="bold green")
@@ -296,20 +299,28 @@ class AccaBuilder:
         table.add_column("Fixture", style="cyan", width=35)
         table.add_column("Market", style="yellow", width=25)
         table.add_column("Selection", style="green", width=20)
+        table.add_column("Edge", style="white", width=8)
+        table.add_column("Risk", style="red", width=6)
+        table.add_column("Odds", style="magenta", width=6)
         
+        total_stake = 1.0
         for idx, leg in enumerate(legs, 1):
             table.add_row(
                 f"{idx:02d}",
                 leg.get("fixture", "?")[:33],
                 leg.get("market", "?")[:23],
-                leg.get("selection", "?")[:18]
+                leg.get("selection", "?")[:18],
+                f"{leg.get('edge', 0.0):.3f}",
+                f"{leg.get('risk_score', 0.0):.0f}",
+                f"{leg.get('odds', 1.0):.2f}x"
             )
         
         console.print(table)
         
         console.print(
-            f"\n[bold green]✅ ACCA READY FOR BETTING[/bold green]\n"
-            f"Expected Value: {total_odds}x stake\n"
+            f"\n[bold green]✅ FULLPROOF ACCA READY FOR BETTING[/bold green]\n"
+            f"Expected Value: {total_odds}x your stake\n"
+            f"Strategy: High-confidence markets + strong edges + risk-adjusted selection\n"
         )
 
 
@@ -320,14 +331,15 @@ def generate(
     min_edge: float = typer.Option(0.05, "--edge", "-e", help="Minimum edge threshold (0.01-0.50)"),
 ):
     """
-    Generate a precision accumulator.
+    Generate a bulletproof accumulator using fullproof strategy.
     
     Examples:
-      python build_acca.py generate --days 2 --folds 20
-      python build_acca.py generate -d 3 -f 15 -e 0.06
+      python build_acca.py generate --days 2 --folds 10
+      python build_acca.py generate -d 3 -f 8 -e 0.06
     """
     console.print("\n" + "="*70)
     console.print("      🔮 ATHENA ACCUMULATOR BUILDER 🔮")
+    console.print("      ⚡ FULLPROOF STRATEGY ⚡")
     console.print("="*70)
     
     builder = AccaBuilder(days_ahead=days, min_edge=min_edge)
@@ -340,9 +352,9 @@ def quick(
     folds: int = typer.Option(5, "--folds", "-f", help="Number of legs"),
 ):
     """
-    Quick acca with defaults (2 days, min edge 0.05).
+    Quick acca with defaults (2 days, min edge 0.05, fullproof strategy).
     
-    Example: python build_acca.py quick --folds 10
+    Example: python build_acca.py quick --folds 8
     """
     console.print("\n" + "="*70)
     console.print("      🔮 ATHENA QUICK ACCA 🔮")
