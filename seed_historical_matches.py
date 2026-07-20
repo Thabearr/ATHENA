@@ -9,6 +9,7 @@ import sqlite3
 import json
 import requests
 from datetime import datetime
+import hashlib
 
 DB_PATH = "athena.db"
 
@@ -44,12 +45,20 @@ def create_tables_if_needed(conn):
     """)
     conn.commit()
 
-def insert_team(conn, team_id, name):
-    """Insert team if not exists, return nothing."""
+def get_team_id(conn, name):
+    """Get team_id from teams table by name, or insert if new."""
+    cur = conn.execute("SELECT team_id FROM teams WHERE name = ?", (name,))
+    row = cur.fetchone()
+    if row:
+        return row[0]
+    
+    # Insert new team with a pseudo-ID (hash of name)
+    pseudo_id = int(hashlib.md5(name.encode()).hexdigest()[:8], 16) % 1000000
     conn.execute(
         "INSERT OR IGNORE INTO teams (team_id, name) VALUES (?, ?)",
-        (team_id, name)
+        (pseudo_id, name)
     )
+    return pseudo_id
 
 def insert_match(conn, fixture_id, home_id, away_id, home_goals, away_goals, match_date):
     """Insert historical match, skip duplicates."""
@@ -67,6 +76,7 @@ def main():
     create_tables_if_needed(conn)
 
     total_matches = 0
+    fixture_counter = 1
 
     for season, league_code in SEASONS:
         url = f"{BASE_URL}/{season}/{league_code}.json"
@@ -79,39 +89,43 @@ def main():
             continue
 
         data = resp.json()
-        # teams mapping: key = team name, value = team_id
-        teams_data = data.get("teams", [])
-        # Build a dict: team name -> team ID (from JSON)
-        team_name_to_id = {}
-        for t in teams_data:
-            t_id = t.get("id")
-            t_name = t.get("name")
-            if t_id and t_name:
-                team_name_to_id[t_name] = t_id
-                insert_team(conn, t_id, t_name)
-
         matches = data.get("matches", [])
+        
+        season_matches = 0
         for match in matches:
-            home_name = match.get("team1", {}).get("name")
-            away_name = match.get("team2", {}).get("name")
-            home_score = match.get("score1")
-            away_score = match.get("score2")
-            match_date = match.get("date")  # format YYYY-MM-DD
-            fixture_id = match.get("id")    # unique per match
+            home_name = match.get("team1")
+            away_name = match.get("team2")
+            score_data = match.get("score", {})
+            # Use full-time score if available, otherwise half-time
+            ft = score_data.get("ft")
+            if ft and len(ft) >= 2:
+                home_score, away_score = ft[0], ft[1]
+            else:
+                ht = score_data.get("ht")
+                if ht and len(ht) >= 2:
+                    home_score, away_score = ht[0], ht[1]
+                else:
+                    continue   # skip if no valid score
+
+            match_date = match.get("date")
 
             if not all([home_name, away_name, home_score is not None, away_score is not None, match_date]):
                 continue
 
-            home_id = team_name_to_id.get(home_name)
-            away_id = team_name_to_id.get(away_name)
-            if not home_id or not away_id:
-                continue   # skip if team not found (shouldn't happen)
+            # Get or create team IDs
+            home_id = get_team_id(conn, home_name)
+            away_id = get_team_id(conn, away_name)
+
+            # Generate a unique fixture_id
+            fixture_id = fixture_counter
+            fixture_counter += 1
 
             insert_match(conn, fixture_id, home_id, away_id, home_score, away_score, match_date)
+            season_matches += 1
             total_matches += 1
 
         conn.commit()
-        print(f"  ✅ Inserted matches for {season}")
+        print(f"  ✅ Inserted {season_matches} matches for {season}")
 
     conn.close()
     print(f"\n🎉 Done! Inserted {total_matches} historical matches into the database.")
