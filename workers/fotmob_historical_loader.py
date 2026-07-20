@@ -1,60 +1,50 @@
 #!/usr/bin/env python3
 """
-FotMob Historical Match Loader (v4 - Direct API, all seasons, all leagues)
-Uses requests to fetch match data from FotMob's public API.
-Fetches domestic leagues, UEFA competitions, and international tournaments.
-Seasons: tries from 2010/2011 to current, but you can adjust the start year.
+FotMob Historical Loader via Daily Match Scraping
+Uses fotmob.get_matches_by_date() to fetch all matches for each day since 2018.
+Filters by target leagues and inserts into historical_matches.
 """
 import sqlite3
-import requests
 import hashlib
+from fotmob import FotMob
+from datetime import datetime, timedelta
 import time
-from datetime import datetime
 
 DB_PATH = "athena.db"
-FOTMOB_API = "https://www.fotmob.com/api"
 
-# All competitions you listed with their FotMob league IDs
-# Domestic leagues (top tiers)
-DOMESTIC_LEAGUES = {
-    "Premier League": 47,
-    "La Liga": 87,
-    "Serie A": 55,
-    "Bundesliga": 54,
-    "Ligue 1": 53,
-    "Eredivisie": 23,
-    "Primeira Liga": 32,
-    "Belgian Pro League": 152,
-    "Süper Lig": 174,
-    "Swiss Super League": 158,
-    "Austrian Bundesliga": 189,
-    "Danish Superliga": 204,
-    "Eliteserien": 203,
-    "Allsvenskan": 173,
-    "Scottish Premiership": 179,
-    "Czech First League": 183,
-    "Ekstraklasa": 205,
-    "HNL": 188,
-    "SuperLiga": 187,
-    "Super League Greece": 186,
+# All target leagues (domestic + UEFA) – we need their FotMob league IDs
+TARGET_LEAGUE_IDS = {
+    47,  # Premier League
+    87,  # La Liga
+    55,  # Serie A
+    54,  # Bundesliga
+    53,  # Ligue 1
+    23,  # Eredivisie
+    32,  # Primeira Liga
+    152, # Belgian Pro League
+    174, # Süper Lig
+    158, # Swiss Super League
+    189, # Austrian Bundesliga
+    204, # Danish Superliga
+    203, # Eliteserien
+    173, # Allsvenskan
+    179, # Scottish Premiership
+    183, # Czech First League
+    205, # Ekstraklasa
+    188, # HNL
+    187, # SuperLiga
+    186, # Super League Greece
+    42,  # UEFA Champions League
+    44,  # UEFA Europa League
+    848, # UEFA Conference League
+    561, # FIFA World Cup
+    556, # UEFA EURO
+    573, # Copa América
+    577, # Africa Cup of Nations
+    578, # CONCACAF Gold Cup
+    574, # AFC Asian Cup
+    559, # CONMEBOL World Cup Qualifiers
 }
-
-# UEFA & international competitions
-INTERNATIONAL_COMPETITIONS = {
-    "UEFA Champions League": 42,
-    "UEFA Europa League": 44,
-    "UEFA Conference League": 848,
-    "FIFA World Cup": 561,
-    "UEFA EURO": 556,
-    "Copa América": 573,
-    "Africa Cup of Nations": 577,
-    "CONCACAF Gold Cup": 578,
-    "AFC Asian Cup": 574,
-    "CONMEBOL World Cup Qualifiers": 559,
-}
-
-# Combine all
-ALL_COMPETITIONS = {**DOMESTIC_LEAGUES, **INTERNATIONAL_COMPETITIONS}
 
 def create_tables_if_needed(conn):
     conn.execute("""
@@ -95,7 +85,6 @@ def get_team_id_global(conn, name: str, league_context: str) -> int:
     row = cur.fetchone()
     if row:
         return row[0]
-    # Create new team with hashed ID
     pseudo_id = int(hashlib.md5(name.encode()).hexdigest()[:8], 16) % 10000000
     conn.execute(
         "INSERT OR IGNORE INTO teams (team_id, name, league) VALUES (?, ?, ?)",
@@ -113,101 +102,98 @@ def insert_match(conn, fixture_id, home_id, away_id, home_goals, away_goals, mat
         (fixture_id, home_id, away_id, home_goals, away_goals, match_date, league_name)
     )
 
-def fetch_league_season_matches(league_id: int, season: str):
-    """Fetch matches for a given league and season using FotMob API."""
-    url = f"{FOTMOB_API}/leagues?id={league_id}&season={season}"
-    try:
-        resp = requests.get(url, timeout=30)
-        if resp.status_code != 200:
-            return None
-        data = resp.json()
-        # The response may have 'matches' or 'allMatches'
-        matches = data.get('matches') or data.get('allMatches') or []
-        return matches
-    except Exception:
-        return None
-
 def main():
     conn = sqlite3.connect(DB_PATH)
     create_tables_if_needed(conn)
+    fotmob = FotMob()
+
+    start_date = datetime(2018, 1, 1)
+    end_date = datetime.today()
+    delta = timedelta(days=1)
 
     total_inserted = 0
-    fixture_counter = 1000000  # avoid collisions
+    fixture_counter = 2000000  # avoid collisions
 
-    # Define season range: from 2010/2011 to 2026/2027 (adjust as needed)
-    start_year = 2010
-    current_year = 2026
-    seasons = [f"{y}/{y+1}" for y in range(start_year, current_year+1)]
-
-    for league_name, league_id in ALL_COMPETITIONS.items():
-        print(f"\n--- {league_name} (ID: {league_id}) ---")
-        for season in seasons:
-            print(f"  Fetching {season}...", end="", flush=True)
-            matches = fetch_league_season_matches(league_id, season)
+    current = start_date
+    while current <= end_date:
+        date_str = current.strftime("%Y-%m-%d")
+        print(f"Fetching matches for {date_str}...", end="", flush=True)
+        try:
+            matches = fotmob.get_matches_by_date(date_str)
             if not matches:
-                print(" No data.")
+                print(" No matches.")
+                current += delta
                 continue
 
-            season_count = 0
+            # matches is a list of match dicts, each has 'league' with 'id'
             for match in matches:
-                # Extract team names (could be string or dict)
-                home = match.get('home', {})
-                away = match.get('away', {})
-                home_name = home.get('name') if isinstance(home, dict) else home
-                away_name = away.get('name') if isinstance(away, dict) else away
+                league_id = match.get('league', {}).get('id')
+                if league_id not in TARGET_LEAGUE_IDS:
+                    continue
+
+                # Get match details for score
+                match_id = match.get('id')
+                if not match_id:
+                    continue
+
+                details = fotmob.get_match_details(match_id)
+                if not details:
+                    continue
+
+                # Extract teams
+                home = details.get('homeTeam', {})
+                away = details.get('awayTeam', {})
+                home_name = home.get('name')
+                away_name = away.get('name')
                 if not home_name or not away_name:
                     continue
 
-                # Status: only finished matches
-                status = match.get('status', {})
+                # Score
+                status = details.get('status', {})
                 if not status.get('finished', False):
                     continue
-
-                # Score extraction
-                score = match.get('score', {})
+                score = details.get('score', {})
                 home_score = score.get('fulltime', {}).get('home')
                 away_score = score.get('fulltime', {}).get('away')
                 if home_score is None or away_score is None:
-                    # Try alternative structure
+                    # try alternative
                     home_score = score.get('home')
                     away_score = score.get('away')
                     if home_score is None or away_score is None:
                         continue
 
-                match_date = match.get('date')
+                match_date = details.get('date')
                 if not match_date:
-                    continue
+                    # use the date from the match list
+                    match_date = match.get('date')
+                    if not match_date:
+                        continue
+
+                # Get league name from match list
+                league_name = match.get('league', {}).get('name', 'Unknown')
 
                 home_id = get_team_id_global(conn, home_name, league_name)
                 away_id = get_team_id_global(conn, away_name, league_name)
                 if not home_id or not away_id:
                     continue
 
-                # Use FotMob match ID if available
-                fotmob_id = match.get('id')
-                if fotmob_id:
-                    try:
-                        fixture_id = int(fotmob_id)
-                    except:
-                        fixture_id = fixture_counter
-                else:
-                    fixture_id = fixture_counter
-                    fixture_counter += 1
-
-                insert_match(conn, fixture_id, home_id, away_id, home_score, away_score, match_date, league_name)
-                season_count += 1
+                # Use FotMob match ID as fixture_id
+                fixture_id = int(match_id) if match_id else fixture_counter
                 fixture_counter += 1
 
+                insert_match(conn, fixture_id, home_id, away_id, home_score, away_score, match_date, league_name)
+                total_inserted += 1
+
             conn.commit()
-            if season_count > 0:
-                print(f" ✅ Inserted {season_count} matches.")
-                total_inserted += season_count
-            else:
-                print(" No finished matches.")
-            time.sleep(0.1)  # be gentle
+            print(f" Inserted some matches (total now: {total_inserted}).")
+        except Exception as e:
+            print(f" Error: {e}")
+
+        current += delta
+        time.sleep(0.1)  # be gentle
 
     conn.close()
-    print(f"\n🎉 TOTAL HISTORICAL MATCHES ADDED FROM FOTMOB: {total_inserted}")
+    print(f"\n🎉 TOTAL HISTORICAL MATCHES ADDED: {total_inserted}")
 
 if __name__ == "__main__":
     main()
