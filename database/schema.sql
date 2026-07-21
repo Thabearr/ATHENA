@@ -11,7 +11,12 @@ CREATE TABLE IF NOT EXISTS teams (
     team_id INTEGER UNIQUE,
     name TEXT NOT NULL,
     country TEXT,
-    league TEXT
+    league TEXT,
+    elo_rating INTEGER DEFAULT 1500,
+    home_elo INTEGER DEFAULT 1500,
+    away_elo INTEGER DEFAULT 1500,
+    matches_processed INTEGER DEFAULT 0,
+    last_update TEXT
 );
 
 -- =========================
@@ -133,6 +138,26 @@ CREATE TABLE IF NOT EXISTS historical_matches (
     home_goals INTEGER,
     away_goals INTEGER,
     match_date TEXT
+);
+
+-- =========================
+-- Managers & Derbies
+-- =========================
+CREATE TABLE IF NOT EXISTS derbies (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_a_id INTEGER NOT NULL,
+    team_b_id INTEGER NOT NULL,
+    derby_name TEXT,
+    intensity INTEGER DEFAULT 1, -- 1=Normal, 2=High, 3=Fierce
+    UNIQUE(team_a_id, team_b_id)
+);
+
+CREATE TABLE IF NOT EXISTS manager_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    team_id INTEGER NOT NULL,
+    manager_name TEXT NOT NULL,
+    start_date TEXT,
+    end_date TEXT
 );
 
 -- =========================

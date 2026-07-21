@@ -8,7 +8,7 @@ import requests
 import hashlib
 from typing import Optional, Tuple
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 # Comprehensive list of ALL competition codes that exist in openfootball/football.json
 # This is based on the repository structure (2023-24/ subfolders)
@@ -172,11 +172,11 @@ def main():
         print(f"\n--- {name} ({code}) ---")
         fixture_counter, inserted = process_competition(conn, code, name, fixture_counter)
         if inserted == 0:
-            print("    ⚠️  No data found (404 or malformed).")
+            print("    No data found (404 or malformed).")
         grand_total += inserted
 
     conn.close()
-    print(f"\n🎉 FINAL: {grand_total} total historical matches inserted.")
+    print(f"\nFINAL: {grand_total} total historical matches inserted.")
 
 if __name__ == "__main__":
     main()

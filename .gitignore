@@ -3,9 +3,8 @@ __pycache__/
 *.pyc
 *.db
 .env
-.venv/
-__pycache__/
-*.pyc
-athena.db
 logs/
 *.log
+output.txt
+*.sqlite3
+database/athena.db

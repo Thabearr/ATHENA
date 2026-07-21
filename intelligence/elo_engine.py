@@ -11,7 +11,7 @@ import json
 from datetime import datetime
 from typing import Dict, Optional, Tuple
 
-DB_PATH = "athena.db"  # CHANGE THIS to your actual SQLite path if different
+DB_PATH = "database/athena.db"  # CHANGE THIS to your actual SQLite path if different
 
 class EloEngine:
     def __init__(self, db_path: str = DB_PATH):

@@ -130,8 +130,8 @@ def process_league(conn, league_id: int, league_name: str, fixture_counter: int)
     print(f"\n--- {league_name} (ID: {league_id}) ---")
 
     # First, fetch the league to get the list of available seasons
-    # Use the current/latest season as a probe (e.g., 2024/2025)
-    probe_season = "2024/2025"
+    # Use the current/latest season as a probe (e.g., 2023/2024)
+    probe_season = "2023/2024"
     data = fetch_league_season(league_id, probe_season)
     if not data:
         print("  No data for probe season.")
@@ -221,7 +221,7 @@ def main():
         grand_total += inserted
 
     conn.close()
-    print(f"\n🎉 TOTAL HISTORICAL MATCHES ADDED: {grand_total}")
+    print(f"\nTOTAL HISTORICAL MATCHES ADDED: {grand_total}")
 
 if __name__ == "__main__":
     main()

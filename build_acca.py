@@ -31,6 +31,8 @@ from engine.risk_engine import RiskEngine
 from intelligence.match_analyst import MatchAnalyst
 from services.analysis_pipeline import AnalysisPipeline
 from intelligence.accumulator import AccumulatorEngine
+from intelligence.acca_filter import AccaFilter
+from services.kelly_calculator import KellyCalculator
 from database.database import Database
 
 # Logger setup
@@ -76,6 +78,8 @@ class AccaBuilder:
         )
         self.pipeline = AnalysisPipeline(self.analyst, self.form_svc)
         self.acca_engine = AccumulatorEngine(min_edge=self.min_edge)
+        self.acca_filter = AccaFilter()
+        self.kelly_calculator = KellyCalculator(safety_multiplier=0.25, max_exposure=0.05)
     
     def _validate_timeframe(self, days: int) -> bool:
         """Enforce max 3-day constraint."""
@@ -84,13 +88,13 @@ class AccaBuilder:
             return False
         return True
     
-    async def _fetch_live_fixtures(self) -> list:
+    def _fetch_live_fixtures(self) -> list:
         """Pull live fixtures from FotMob + OpenFootball sources."""
-        console.print(f"[cyan]📥 Fetching live fixtures from FotMob for next {self.days_ahead} day(s)...[/cyan]")
+        console.print(f"[cyan]Fetching live fixtures from FotMob for next {self.days_ahead} day(s)...[/cyan]")
         
         try:
-            # Fetch from FotMob (primary - no API key needed)
-            fotmob_fixtures = await self.fotmob_scraper.fetch_upcoming_matches(days_ahead=self.days_ahead)
+            # Fetch from FotMob (primary - bypass client, no API key needed)
+            fotmob_fixtures = self.fotmob_scraper.fetch_upcoming_matches(days_ahead=self.days_ahead)
             
             # Sync to DB
             if fotmob_fixtures:
@@ -100,17 +104,17 @@ class AccaBuilder:
             try:
                 ofb_counts = self.ofb_loader.fetch_and_sync()
                 console.print(
-                    f"[green]✅ FotMob: {len(fotmob_fixtures)} fixtures | "
+                    f"[green]FotMob: {len(fotmob_fixtures)} fixtures | "
                     f"OpenFootball: {ofb_counts.get('upcoming', 0)} upcoming, "
                     f"{ofb_counts.get('historical', 0)} historical[/green]"
                 )
             except Exception as e:
                 logger.warning(f"OpenFootball sync skipped: {e}")
-                console.print(f"[green]✅ FotMob: {len(fotmob_fixtures)} fixtures[/green]")
+                console.print(f"[green]FotMob: {len(fotmob_fixtures)} fixtures[/green]")
             
             return fotmob_fixtures
         except Exception as e:
-            console.print(f"[red]❌ Failed to fetch fixtures: {e}[/red]")
+            console.print(f"[red]Failed to fetch fixtures: {e}[/red]")
             return []
     
     def _get_fixtures_from_db(self, days: int) -> list:
@@ -207,7 +211,7 @@ class AccaBuilder:
         
         console.print(table)
     
-    async def build(self, days: int, fold_size: int) -> dict:
+    def build(self, days: int, fold_size: int) -> dict:
         """Main orchestration: fetch → analyze → generate acca."""
         
         # Validation
@@ -218,10 +222,11 @@ class AccaBuilder:
             console.print("[red]❌ Fold size must be 1-50.[/red]")
             return {"success": False, "error": "Invalid fold size"}
         
-        # Step 1: Fetch live data from FotMob
-        fotmob_fixtures = await self._fetch_live_fixtures()
+        # Step 1: Fetch live fixtures from FotMob (bypass client)
+        fotmob_fixtures = self._fetch_live_fixtures()
         
         # Step 2: Get all fixtures from database (includes FotMob + OpenFootball + historical)
+        console.print("[cyan]Fetching from DB...[/cyan]")
         db_fixtures = self._get_fixtures_from_db(days)
         console.print(
             f"[cyan]🎯 Database contains {len(db_fixtures)} fixtures "
@@ -232,7 +237,9 @@ class AccaBuilder:
             return {"success": False, "error": f"No fixtures found in next {days} day(s)"}
         
         # Step 3: Analyze all fixtures
+        console.print("[cyan]Analyzing fixtures...[/cyan]")
         all_analyzed = self._analyze_fixtures(db_fixtures)
+        console.print("[cyan]Analysis complete.[/cyan]")
         
         if not all_analyzed:
             return {"success": False, "error": "No fixtures passed analysis"}
@@ -240,8 +247,9 @@ class AccaBuilder:
         # Step 4: Display ranked selections (fullproof scoring)
         self._display_safe_selections(all_analyzed, top_n=15)
         
-        # Step 5: Filter for acca eligibility and check availability
-        eligible_matches = [m for m in all_analyzed if self.acca_engine._is_acca_eligible(m, strict=False)]
+        # Step 5: Filter for acca eligibility (Phase 4 Logic)
+        ranked_legs = self.acca_filter.filter_and_rank_legs(all_analyzed)
+        eligible_matches = self.acca_filter.build_filtered_acca(ranked_legs, target_size=fold_size)
         
         if len(eligible_matches) < fold_size:
             console.print(
@@ -255,16 +263,29 @@ class AccaBuilder:
         
         # Step 6: Build accumulator using fullproof scoring
         console.print(
-            f"\n[cyan]🚀 Building {fold_size}-Fold Accumulator (fullproof strategy)...[/cyan]"
+            f"\n[cyan]🚀 Building {fold_size}-Fold Accumulator (Phase 4 optimized)...[/cyan]"
         )
         
-        acca = self.acca_engine.generate_accumulator(all_analyzed, fold_size=fold_size, strict=False)
+        acca = self.acca_engine.generate_accumulator(eligible_matches, fold_size=fold_size, strict=False)
         
         if not acca.get("legs"):
             console.print(
                 f"[red]❌ Failed to generate {fold_size}-fold acca.[/red]"
             )
             return {"success": False, "error": "Accumulator generation failed"}
+        
+        # Step 7: Phase 4 Kelly Sizing and Correlation Scoring
+        total_odds = acca.get("total_estimated_odds", 1.0)
+        # Approximate probability based on implied odds and edge
+        avg_edge = sum(leg.get("edge", 0) for leg in acca.get("legs", [])) / max(1, len(acca.get("legs", [])))
+        implied_prob = 1.0 / total_odds if total_odds > 1 else 0.0
+        acca_win_prob = min(0.99, implied_prob + avg_edge)
+        
+        kelly_stake = self.kelly_calculator.calculate_acca_stake(acca_win_prob, total_odds)
+        diversification = self.acca_filter.correlation_analyzer.diversification_score(acca.get("legs", []))
+        
+        acca["kelly_stake_pct"] = kelly_stake * 100
+        acca["diversification_score"] = diversification
         
         acca["success"] = True
         acca["timeframe_days"] = days
@@ -289,7 +310,9 @@ class AccaBuilder:
             f"🎯 Compounded Odds: {total_odds}x\n"
             f"📊 Total Analyzed: {acca.get('available_count', 0)} fixtures\n"
             f"✅ Eligible: {acca.get('eligible_count', 0)} fixtures\n"
-            f"⏰ Timeframe: {acca.get('timeframe_days', 0)} day(s)"
+            f"⏰ Timeframe: {acca.get('timeframe_days', 0)} day(s)\n"
+            f"🛡️  Diversification Score: {acca.get('diversification_score', 0):.2f}/1.0\n"
+            f"💰 Kelly Stake Size: {acca.get('kelly_stake_pct', 0):.2f}% of Bankroll"
         )
         console.print(Panel(header, border_style="bold green"))
         
@@ -338,12 +361,12 @@ def generate(
       python build_acca.py generate -d 3 -f 8 -e 0.06
     """
     console.print("\n" + "="*70)
-    console.print("      🔮 ATHENA ACCUMULATOR BUILDER 🔮")
-    console.print("      ⚡ FULLPROOF STRATEGY ⚡")
+    console.print("      *** ATHENA ACCUMULATOR BUILDER ***")
+    console.print("      *** FULLPROOF STRATEGY ***")
     console.print("="*70)
     
     builder = AccaBuilder(days_ahead=days, min_edge=min_edge)
-    acca = asyncio.run(builder.build(days=days, fold_size=folds))
+    acca = builder.build(days=days, fold_size=folds)
     builder.display_acca(acca)
 
 
@@ -357,11 +380,11 @@ def quick(
     Example: python build_acca.py quick --folds 8
     """
     console.print("\n" + "="*70)
-    console.print("      🔮 ATHENA QUICK ACCA 🔮")
+    console.print("      *** ATHENA QUICK ACCA ***")
     console.print("="*70)
     
     builder = AccaBuilder(days_ahead=2, min_edge=0.05)
-    acca = asyncio.run(builder.build(days=2, fold_size=folds))
+    acca = builder.build(days=2, fold_size=folds)
     builder.display_acca(acca)
 
 

@@ -1,6 +1,8 @@
 import logging
 import math
 import hashlib
+import sqlite3
+import os
 
 logger = logging.getLogger("athena.match_analyst")
 
@@ -91,12 +93,34 @@ class MatchAnalyst:
 
         referee_signal = self.ref_eng.check_referee_anomaly(fixture_id)
 
-        # When we have no form data, use team-based seeds for variety
+        # Use ELO ratings instead of form data if available
+        home_elo = 1500
+        away_elo = 1500
+        db_path = "database/athena.db"
+        if os.path.exists(db_path):
+            try:
+                conn = sqlite3.connect(db_path)
+                cursor = conn.cursor()
+                cursor.execute("SELECT elo_rating FROM teams WHERE name = ?", (home_team,))
+                h_row = cursor.fetchone()
+                if h_row: home_elo = h_row[0]
+                
+                cursor.execute("SELECT elo_rating FROM teams WHERE name = ?", (away_team,))
+                a_row = cursor.fetchone()
+                if a_row: away_elo = a_row[0]
+                conn.close()
+            except Exception as e:
+                logger.error(f"Failed to fetch ELO: {e}")
+
         if avg_live_ratio < 0.05:
-            home_seed = self._get_team_strength_seed(home_team)
-            away_seed = self._get_team_strength_seed(away_team)
-            home_raw = 0.45 + (home_seed - 1.0) * 0.1
-            away_raw = 0.45 + (away_seed - 1.0) * 0.1
+            # Normalize ELO to a roughly 0.2 to 0.8 scale, where 1500 is 0.50
+            # A 200 point ELO diff is very large.
+            home_raw = 0.50 + ((home_elo - 1500) / 800.0)
+            away_raw = 0.50 + ((away_elo - 1500) / 800.0)
+            
+            # Ensure boundaries
+            home_raw = max(0.1, min(0.9, home_raw))
+            away_raw = max(0.1, min(0.9, away_raw))
 
         base_home_lambda = 1.45 + (home_raw - away_raw) - (fatigue_diff * 0.5)
         base_away_mu = 1.25 + (away_raw - home_raw) + (fatigue_diff * 0.5)

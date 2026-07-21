@@ -1,0 +1,49 @@
+name: ATHENA Daily Accumulator
+
+on:
+  schedule:
+    - cron: '0 7 * * *' # Run at 7:00 AM UTC every day
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  build-acca:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Generate Accumulator
+        env:
+          PYTHONPATH: .
+          PYTHONIOENCODING: utf-8
+        run: |
+          python build_acca.py generate --days 2 --folds 10 2>&1 | tee output.txt
+
+      - name: Send Email Notification
+        if: env.GMAIL_ADDRESS != ''
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+          PYTHONPATH: .
+          PYTHONIOENCODING: utf-8
+        run: |
+          python scripts/send_email.py
+
+      - name: Upload Output Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: athena-output
+          path: output.txt

@@ -15,15 +15,12 @@ alembic
 pydantic
 pytest
 joblib
-
 beautifulsoup4
 lxml
-
 rapidfuzz
-
 nltk
 textblob
-
 matplotlib
-
 tqdm
+curl_cffi
+fake_useragent
