@@ -56,7 +56,10 @@ CREATE TABLE IF NOT EXISTS predictions (
     probability REAL,
     confidence REAL,
     reliability REAL,
-    recommendation INTEGER
+    recommendation INTEGER,
+    actual_result TEXT,  -- 'WIN', 'LOSS', 'VOID', or NULL
+    edge REAL,
+    is_value_bet INTEGER DEFAULT 0
 );
 
 -- =========================
@@ -137,7 +140,13 @@ CREATE TABLE IF NOT EXISTS historical_matches (
     away_id INTEGER,
     home_goals INTEGER,
     away_goals INTEGER,
-    match_date TEXT
+    match_date TEXT,
+    home_pre_elo INTEGER,
+    away_pre_elo INTEGER,
+    home_xg REAL,
+    away_xg REAL,
+    home_possession INTEGER,
+    away_possession INTEGER
 );
 
 -- =========================
@@ -198,4 +207,37 @@ CREATE TABLE IF NOT EXISTS standings (
     lost INTEGER,
     goal_difference INTEGER,
     UNIQUE(team_id, league_id, season)
+);
+
+-- =========================
+-- Backtest Runs
+-- =========================
+CREATE TABLE IF NOT EXISTS backtest_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_date TEXT,
+    start_date TEXT,
+    end_date TEXT,
+    accas_generated INTEGER,
+    accas_won INTEGER,
+    accas_lost INTEGER,
+    accas_void INTEGER,
+    total_staked REAL,
+    total_returned REAL,
+    roi REAL,
+    win_rate REAL,
+    max_drawdown REAL
+);
+
+-- =========================
+-- Acca History (for tracking backtests and live)
+-- =========================
+CREATE TABLE IF NOT EXISTS acca_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    run_id INTEGER, -- NULL for live, links to backtest_runs for backtests
+    date_created TEXT,
+    fold_size INTEGER,
+    total_odds REAL,
+    stake_size REAL,
+    status TEXT, -- 'PENDING', 'WON', 'LOST'
+    return_amount REAL
 );

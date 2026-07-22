@@ -4,6 +4,8 @@ import hashlib
 import sqlite3
 import os
 
+from intelligence.ml_engine import MLEngine
+
 logger = logging.getLogger("athena.match_analyst")
 
 
@@ -17,6 +19,8 @@ class MatchAnalyst:
         self.injury_eng = injury_engine
         self.ref_eng = referee_engine
         self.risk_eng = risk_engine
+        
+        self.ml_eng = MLEngine()
 
     def _calculate_poisson_probability(self, actual_goals: int, expected_goals: float) -> float:
         if expected_goals <= 0:
@@ -94,23 +98,25 @@ class MatchAnalyst:
         referee_signal = self.ref_eng.check_referee_anomaly(fixture_id)
 
         # Use ELO ratings instead of form data if available
-        home_elo = 1500
-        away_elo = 1500
-        db_path = "database/athena.db"
-        if os.path.exists(db_path):
-            try:
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                cursor.execute("SELECT elo_rating FROM teams WHERE name = ?", (home_team,))
-                h_row = cursor.fetchone()
-                if h_row: home_elo = h_row[0]
-                
-                cursor.execute("SELECT elo_rating FROM teams WHERE name = ?", (away_team,))
-                a_row = cursor.fetchone()
-                if a_row: away_elo = a_row[0]
-                conn.close()
-            except Exception as e:
-                logger.error(f"Failed to fetch ELO: {e}")
+        home_elo = fixture_context.get('home_pre_elo', 1500)
+        away_elo = fixture_context.get('away_pre_elo', 1500)
+        
+        if 'home_pre_elo' not in fixture_context or 'away_pre_elo' not in fixture_context:
+            db_path = "database/athena.db"
+            if os.path.exists(db_path):
+                try:
+                    conn = sqlite3.connect(db_path)
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT elo_rating FROM teams WHERE team_id = ? OR name = ?", (home_id, home_team))
+                    h_row = cursor.fetchone()
+                    if h_row: home_elo = h_row[0]
+                    
+                    cursor.execute("SELECT elo_rating FROM teams WHERE team_id = ? OR name = ?", (away_id, away_team))
+                    a_row = cursor.fetchone()
+                    if a_row: away_elo = a_row[0]
+                    conn.close()
+                except Exception as e:
+                    logger.error(f"Failed to fetch ELO: {e}")
 
         if avg_live_ratio < 0.05:
             # Normalize ELO to a roughly 0.2 to 0.8 scale, where 1500 is 0.50
@@ -132,7 +138,6 @@ class MatchAnalyst:
         prob_home_win = 0.0
         prob_away_win = 0.0
         prob_draw = 0.0
-        prob_over_15 = 0.0
         prob_under_35 = 0.0
         prob_over_25 = 0.0
         prob_gg = 0.0
@@ -152,8 +157,7 @@ class MatchAnalyst:
                     prob_draw += p_score
 
                 total_goals = h + a
-                if total_goals > 1:
-                    prob_over_15 += p_score
+                # Over 1.5 baseline
                 if total_goals < 4:
                     prob_under_35 += p_score
                 if total_goals > 2:
@@ -169,6 +173,25 @@ class MatchAnalyst:
 
         prob_home_win_to_nil_no = 1.0 - prob_home_win_to_nil
         prob_away_win_to_nil_no = 1.0 - prob_away_win_to_nil
+
+        # --- ML ENGINE INTEGRATION ---
+        # Blend Poisson probabilities with ML probabilities if the model is ready
+        ml_preds = self.ml_eng.predict(home_id, away_id, home_elo, away_elo)
+        if ml_preds:
+            ml_p = ml_preds["probabilities"]
+            # 50/50 blend between heuristic Poisson and Random Forest
+            prob_home_win = (prob_home_win + ml_p["HOME_WIN"]) / 2
+            prob_away_win = (prob_away_win + ml_p["AWAY_WIN"]) / 2
+            prob_draw = (prob_draw + ml_p["DRAW"]) / 2
+            
+            # Use ML expected goals if available
+            ml_xg = ml_preds["expected_total_goals"]
+            expected_goals = (lambda_val + mu_val + ml_xg) / 2
+        else:
+            expected_goals = lambda_val + mu_val
+            
+        # Re-derive simple O/U from blended expected goals using Poisson CDF
+        prob_over_15 = 1.0 - (self._calculate_poisson_probability(0, expected_goals) + self._calculate_poisson_probability(1, expected_goals))
 
         risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio)
         risk_score = risk_assessment["risk_score"]

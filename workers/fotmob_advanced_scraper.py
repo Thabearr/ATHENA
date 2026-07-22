@@ -197,6 +197,32 @@ class FotMobAdvancedScraper:
                     details["home_form"] = self._extract_form(team_form[0])
                     details["away_form"] = self._extract_form(team_form[1])
 
+            # === MATCH STATS (xG, Possession) ===
+            stats_block = content.get("stats", {})
+            if stats_block:
+                periods = stats_block.get("Periods", {})
+                all_stats = periods.get("All", {}).get("stats", [])
+                for stat_category in all_stats:
+                    stats_array = stat_category.get("stats", [])
+                    for stat_item in stats_array:
+                        title = stat_item.get("title", "")
+                        if title == "Expected goals (xG)":
+                            vals = stat_item.get("stats", [None, None])
+                            if vals and len(vals) >= 2 and vals[0] is not None and vals[1] is not None:
+                                try:
+                                    details["home_xg"] = float(vals[0])
+                                    details["away_xg"] = float(vals[1])
+                                except (ValueError, TypeError):
+                                    pass
+                        elif title == "Ball possession":
+                            vals = stat_item.get("stats", [None, None])
+                            if vals and len(vals) >= 2 and vals[0] is not None and vals[1] is not None:
+                                try:
+                                    details["home_possession"] = int(str(vals[0]).replace('%', ''))
+                                    details["away_possession"] = int(str(vals[1]).replace('%', ''))
+                                except (ValueError, TypeError):
+                                    pass
+
         except Exception as e:
             logger.warning(f"Error enriching match {fixture_id}: {e}")
 
@@ -293,8 +319,13 @@ class FotMobAdvancedScraper:
                         weather TEXT,
                         referee TEXT,
                         head_to_head TEXT,
+                        head_to_head TEXT,
                         home_form TEXT,
                         away_form TEXT,
+                        home_xg REAL,
+                        away_xg REAL,
+                        home_possession INTEGER,
+                        away_possession INTEGER,
                         synced_at TEXT
                     )
                 """)
@@ -325,9 +356,10 @@ class FotMobAdvancedScraper:
                         cursor.execute("""
                             INSERT INTO fixture_extended
                                 (fixture_id, home_lineup, away_lineup, home_injuries,
-                                 away_injuries, live_odds, weather, referee,
-                                 head_to_head, home_form, away_form, synced_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 away_injuries, live_odds, weather, referee, 
+                                 head_to_head, home_form, away_form, home_xg, away_xg, 
+                                 home_possession, away_possession, synced_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(fixture_id) DO UPDATE SET
                                 home_lineup=excluded.home_lineup,
                                 away_lineup=excluded.away_lineup,
@@ -336,6 +368,13 @@ class FotMobAdvancedScraper:
                                 live_odds=excluded.live_odds,
                                 weather=excluded.weather,
                                 referee=excluded.referee,
+                                head_to_head=excluded.head_to_head,
+                                home_form=excluded.home_form,
+                                away_form=excluded.away_form,
+                                home_xg=excluded.home_xg,
+                                away_xg=excluded.away_xg,
+                                home_possession=excluded.home_possession,
+                                away_possession=excluded.away_possession,
                                 synced_at=excluded.synced_at
                         """, (
                             fixture_id,
@@ -349,6 +388,10 @@ class FotMobAdvancedScraper:
                             json.dumps(match.get("head_to_head", {})),
                             json.dumps(match.get("home_form", {})),
                             json.dumps(match.get("away_form", {})),
+                            match.get("home_xg"),
+                            match.get("away_xg"),
+                            match.get("home_possession"),
+                            match.get("away_possession"),
                             datetime.now(timezone.utc).isoformat(),
                         ))
 
