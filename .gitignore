@@ -8,3 +8,6 @@ logs/
 output.txt
 *.sqlite3
 database/athena.db
+.venv_linux/
+*.egg-info/
+backtest_output.txt

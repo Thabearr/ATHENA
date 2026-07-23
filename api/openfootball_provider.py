@@ -1,6 +1,8 @@
-import subprocess
+import requests
 import json
+import logging
 
+logger = logging.getLogger("athena.openfootball_provider")
 
 class OpenFootballProvider:
     """
@@ -16,35 +18,19 @@ class OpenFootballProvider:
     def _fetch_raw_json(self, repo: str, path: str):
         url = f"{self.RAW_BASE}/{repo}/master/{path}"
 
-        command = [
-            "/usr/bin/curl",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--http1.1",
-            "--connect-timeout", "20",
-            "--max-time", "60",
-            url,
-        ]
-
-        result = subprocess.run(command, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                "Curl failed.\n"
-                f"Exit Code: {result.returncode}\n"
-                f"STDOUT:\n{result.stdout}\n\n"
-                f"STDERR:\n{result.stderr}"
-            )
-
-        stripped = result.stdout.strip()
-        if stripped.startswith("404:") or stripped == "404: Not Found":
-            raise FileNotFoundError(f"No file at {url}")
-
         try:
-            return json.loads(result.stdout)
-        except Exception:
-            raise RuntimeError(f"Invalid JSON at {url}:\n\n{result.stdout[:300]}")
+            response = requests.get(url, timeout=20)
+            
+            if response.status_code == 404:
+                raise FileNotFoundError(f"No file at {url}")
+                
+            response.raise_for_status()
+            return response.json()
+            
+        except requests.exceptions.RequestException as e:
+            raise RuntimeError(f"Request failed for {url}: {e}")
+        except json.JSONDecodeError:
+            raise RuntimeError(f"Invalid JSON at {url}:\n\n{response.text[:300]}")
 
     def get_league_season(self, season: str, country_division_code: str) -> dict:
         """

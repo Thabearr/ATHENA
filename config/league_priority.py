@@ -49,11 +49,13 @@ TIER_3_LEAGUES = [
 
 def get_league_tier(league_name: str) -> int:
     """Returns the priority tier of the league (1 = highest, 3 = lowest)."""
-    if league_name in TIER_1_LEAGUES:
+    name_lower = league_name.lower()
+    
+    if any(t.lower() in name_lower for t in TIER_1_LEAGUES):
         return 1
-    if league_name in TIER_2_LEAGUES:
+    if any(t.lower() in name_lower for t in TIER_2_LEAGUES) or "europa" in name_lower:
         return 2
-    if league_name in TIER_3_LEAGUES:
+    if any(t.lower() in name_lower for t in TIER_3_LEAGUES) or "conference" in name_lower:
         return 3
     
     # Default to tier 4 for unclassified leagues

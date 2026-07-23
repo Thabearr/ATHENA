@@ -58,6 +58,18 @@ class AccumulatorEngine:
             "DC_12": ("Double Chance", "Home or Away"),
             
             # 2. Asian Handicap Options
+            "AH_HOME_MINUS_05": ("Asian Handicap", "Home -0.5"),
+            "AH_AWAY_PLUS_05": ("Asian Handicap", "Away +0.5"),
+            "AH_HOME_PLUS_05": ("Asian Handicap", "Home +0.5"),
+            "AH_AWAY_MINUS_05": ("Asian Handicap", "Away -0.5"),
+            "AH_HOME_MINUS_15": ("Asian Handicap", "Home -1.5"),
+            "AH_AWAY_PLUS_15": ("Asian Handicap", "Away +1.5"),
+            "AH_HOME_PLUS_15": ("Asian Handicap", "Home +1.5"),
+            "AH_AWAY_MINUS_15": ("Asian Handicap", "Away -1.5"),
+            "AH_HOME_PLUS_25": ("Asian Handicap", "Home +2.5"),
+            "AH_AWAY_PLUS_25": ("Asian Handicap", "Away +2.5"),
+            "AH_HOME_MINUS_25": ("Asian Handicap", "Home -2.5"),
+            "AH_AWAY_MINUS_25": ("Asian Handicap", "Away -2.5"),
             "ASIAN_HANDICAP_HOME_PLUS_1_5": ("Asian Handicap", "Home +1.5"),
             "ASIAN_HANDICAP_AWAY_PLUS_1_5": ("Asian Handicap", "Away +1.5"),
             
@@ -73,15 +85,17 @@ class AccumulatorEngine:
             # 5. Win Either Half Options
             "WIN_EITHER_HALF_HOME_YES": ("Home Team to Win Either Half", "Yes"),
             "WIN_EITHER_HALF_AWAY_YES": ("Away Team to Win Either Half", "Yes"),
-            "HOME_WIN_EITHER_HALF_NO": ("Home Team to Win Either Half", "No"),
-            "AWAY_WIN_EITHER_HALF_NO": ("Away Team to Win Either Half", "No"),
+            "WIN_EITHER_HALF_HOME_NO": ("Home Team to Win Either Half", "No"),
+            "WIN_EITHER_HALF_AWAY_NO": ("Away Team to Win Either Half", "No"),
             
-            # 6. Both Teams to Score
+            # 6. Both Teams to Score (GG/NG)
             "GG_YES": ("GG/NG", "Yes"),
             "GG_NO": ("GG/NG", "No"),
             
             # 7. Win to Nil Options
+            "HOME_WIN_TO_NIL_YES": ("Home Team to Win to Nil", "Yes"),
             "HOME_WIN_TO_NIL_NO": ("Home Team to Win to Nil", "No"),
+            "AWAY_WIN_TO_NIL_YES": ("Away Team to Win to Nil", "Yes"),
             "AWAY_WIN_TO_NIL_NO": ("Away Team to Win to Nil", "No"),
             
             # 8. 1X2 Early Settlement Tiers
@@ -95,8 +109,13 @@ class AccumulatorEngine:
             "DNB_AWAY": ("Draw No Bet", "Away"),
 
             # 10. Over/Under Lines
+            "OVER_05": ("Over/Under", "Over 0.5"),
             "OVER_15": ("Over/Under", "Over 1.5"),
-            "UNDER_35": ("Over/Under", "Under 3.5")
+            "OVER_25": ("Over/Under", "Over 2.5"),
+            "UNDER_25": ("Over/Under", "Under 2.5"),
+            "UNDER_35": ("Over/Under", "Under 3.5"),
+            "UNDER_45": ("Over/Under", "Under 4.5"),
+            "UNDER_55": ("Over/Under", "Under 5.5")
         }
         return mapping.get(verdict, ("Double Chance", "Home or Draw"))
 
@@ -131,52 +150,57 @@ class AccumulatorEngine:
 
     def _is_acca_eligible(self, fixture: dict, strict: bool = False) -> bool:
         """
-        Determine if a fixture is eligible for accumulator.
-        
-        strict=False: Allows upset_alert if edge is strong (>0.12)
-        strict=True: Only accepts upset_alert=False
+        Determine if a fixture is eligible for accumulator under strict risk rules.
+        Hedged safety markets (Double Chance, DNB, Over/Under lines, Handicaps, Combos)
+        explicitly hedge against upset alerts, making them foolproof even during upset alerts.
         """
         edge = fixture.get("edge", 0.0)
         upset_alert = fixture.get("upset_alert", False)
         risk_score = fixture.get("risk_score", 100)
+        verdict = fixture.get("verdict", "")
         
         # Minimum edge requirement
         if edge < self.min_edge:
             return False
-        
-        # If strict mode, no upset alerts
-        if strict and upset_alert:
+
+        hedged_safety_markets = {
+            "DC_1X", "DC_X2", "DC_12", "DNB_HOME", "DNB_AWAY",
+            "OVER_15", "UNDER_35", "OVER_05", "UNDER_45", "UNDER_55",
+            "AH_HOME_PLUS_15", "AH_AWAY_PLUS_15", "AH_HOME_PLUS_25", "AH_AWAY_PLUS_25",
+            "HOME_OR_OVER_25", "AWAY_OR_OVER_25", "DRAW_OR_OVER_25",
+            "TO_QUALIFY_HOME", "TO_QUALIFY_AWAY", "WIN_EITHER_HALF_HOME_YES", "WIN_EITHER_HALF_AWAY_YES"
+        }
+
+        # Straight 1X2 win bets are rejected on upset alerts in strict mode
+        if strict and upset_alert and verdict not in hedged_safety_markets:
             return False
         
-        # If non-strict: allow upset if edge is exceptional
-        if upset_alert and not strict:
-            if edge < 0.12:  # Require higher edge for upset alerts
-                return False
-        
-        # Risk score should be reasonable (allow up to 70 for strong edges)
-        if risk_score > 70 and edge < 0.10:
+        # Extremely high risk scores (>85) are rejected regardless of market
+        if risk_score > 85:
             return False
         
         return True
 
     def generate_accumulator(self, analyzed_fixtures: list, fold_size: int, strict: bool = False) -> dict:
         """
-        Generate accumulator by scoring and ranking fixtures.
-        
-        strict=False: Allows upset_alert matches with strong edges (fullproof but reasonable)
-        strict=True: Only perfect matches (very few legs)
+        Generate accumulator by scoring and ranking the pre-filtered fixtures
+        from AccaFilter. AccaFilter already handles risk, correlation, and
+        category diversity enforcement — this method only scores and orders.
         """
-        # Filter eligible fixtures
-        eligible = [f for f in analyzed_fixtures if self._is_acca_eligible(f, strict=strict)]
+        # Trust AccaFilter's pre-filtered output — it already handles strict mode
+        eligible = list(analyzed_fixtures)
         
         if len(eligible) < fold_size:
-            return {
-                "fold_size": fold_size,
-                "total_estimated_odds": 0.0,
-                "legs": [],
-                "eligible_count": len(eligible),
-                "available_count": len(eligible)
-            }
+            # Still generate with whatever we have instead of returning empty
+            if len(eligible) == 0:
+                return {
+                    "fold_size": fold_size,
+                    "total_estimated_odds": 0.0,
+                    "legs": [],
+                    "eligible_count": 0,
+                    "available_count": len(analyzed_fixtures)
+                }
+            fold_size = len(eligible)
         
         # Score all eligible fixtures
         scored = [(f, self._score_fixture(f)) for f in eligible]

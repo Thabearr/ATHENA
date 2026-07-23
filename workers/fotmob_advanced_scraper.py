@@ -57,7 +57,8 @@ class FotMobAdvancedScraper:
         all_matches = []
         now_utc = datetime.now(timezone.utc)
 
-        for day_offset in range(days_ahead):
+        # Fetch from yesterday up to days_ahead
+        for day_offset in range(-1, days_ahead):
             target_date = now_utc + timedelta(days=day_offset)
             date_str = target_date.strftime("%Y%m%d")
 
@@ -71,6 +72,12 @@ class FotMobAdvancedScraper:
 
             for league in leagues:
                 league_name = league.get("name", "Unknown")
+                
+                # Filter out Women's matches
+                league_name_lower = league_name.lower()
+                if "women" in league_name_lower or " (w) " in league_name_lower or league_name_lower.endswith(" (w)") or league_name_lower.endswith(" w"):
+                    continue
+
                 matches = league.get("matches", [])
 
                 for match in matches:
@@ -83,10 +90,13 @@ class FotMobAdvancedScraper:
                         if not match_date:
                             continue
 
-                        # Skip already-started/finished matches
+                        # Parse status info
                         status_info = match.get("status", {})
-                        if status_info.get("finished", False):
-                            continue
+                            
+                        # Check if cancelled or postponed
+                        status_str = status_info.get("reason", {}).get("short", "") or status_info.get("reason", {}).get("long", "")
+                        status_lower = status_str.lower()
+                        is_cancelled = status_info.get("cancelled", False) or status_lower in ["canc", "post", "ca", "pp", "tba", "aborted", "cancelled", "postponed"]
 
                         fixture_id = match.get("id")
                         home = match.get("home", {})
@@ -97,6 +107,16 @@ class FotMobAdvancedScraper:
                         if not all([fixture_id, home_team, away_team]):
                             continue
 
+                        # Get scores if available
+                        home_score = match.get("home", {}).get("score", "")
+                        away_score = match.get("away", {}).get("score", "")
+                        status_string = status_info.get("reason", {}).get("short", "")
+                        if not status_string:
+                            if status_info.get("finished"):
+                                status_string = "FT"
+                            elif status_info.get("started"):
+                                status_string = "Live"
+
                         # Build enriched fixture object
                         enriched = {
                             "fixture_id": fixture_id,
@@ -106,8 +126,11 @@ class FotMobAdvancedScraper:
                             "home_id": home.get("id"),
                             "away_team": away_team,
                             "away_id": away.get("id"),
+                            "home_score": home_score,
+                            "away_score": away_score,
+                            "status_string": status_string,
                             "match_date": match_date_str,
-                            "status": "NS" if not status_info.get("started") else "LIVE",
+                            "status": "CANC" if is_cancelled else ("NS" if not status_info.get("started") else "LIVE"),
                             "data_source": "fotmob_bypass",
                             "season_label": str(now_utc.year),
                             "tournament_stage": match.get("tournamentStage"),

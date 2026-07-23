@@ -3,10 +3,97 @@ import math
 import hashlib
 import sqlite3
 import os
+import json
 
 from intelligence.ml_engine import MLEngine
 
 logger = logging.getLogger("athena.match_analyst")
+
+
+# Global baseline probabilities for each market type.
+# These represent the "average" probability across all football matches.
+# Edge = fixture_prob - baseline gives VALUE ABOVE MARKET AVERAGE.
+MARKET_BASELINES = {
+
+    "DC_1X": 0.72,
+    "DC_X2": 0.62,
+    "DC_12": 0.74,
+    "OVER_05": 0.92,
+    "OVER_15": 0.78,
+    "OVER_25": 0.52,
+    "UNDER_25": 0.48,
+    "UNDER_35": 0.72,
+    "UNDER_45": 0.86,
+    "UNDER_55": 0.95,
+    "AH_HOME_PLUS_15": 0.82,
+    "AH_AWAY_PLUS_15": 0.82,
+    "AH_HOME_PLUS_25": 0.92,
+    "AH_AWAY_PLUS_25": 0.92,
+    "HOME_OR_OVER_25": 0.68,
+    "AWAY_OR_OVER_25": 0.58,
+    "DRAW_OR_OVER_25": 0.65,
+    "GG_YES": 0.48,
+    "GG_NO": 0.52,
+    "DNB_HOME": 0.44,
+    "DNB_AWAY": 0.36,
+    "WIN_EITHER_HALF_HOME_YES": 0.52,
+    "WIN_EITHER_HALF_AWAY_YES": 0.42,
+    "HOME_WIN_TO_NIL_YES": 0.22,
+    "HOME_WIN_TO_NIL_NO": 0.78,
+    "AWAY_WIN_TO_NIL_YES": 0.16,
+    "AWAY_WIN_TO_NIL_NO": 0.84,
+    "1X2_2UP_HOME": 0.44,
+    "1X2_2UP_AWAY": 0.36,
+    "1X2_1UP_HOME": 0.44,
+    "1X2_1UP_AWAY": 0.36,
+}
+
+# Load dynamic weights from evolution engine if available
+_WEIGHTS_PATH = os.path.join("config", "model_weights.json")
+try:
+    if os.path.exists(_WEIGHTS_PATH):
+        with open(_WEIGHTS_PATH, "r") as f:
+            _dynamic_weights = json.load(f)
+            if "MARKET_BASELINES" in _dynamic_weights:
+                MARKET_BASELINES.update(_dynamic_weights["MARKET_BASELINES"])
+except Exception as e:
+    logger.warning(f"Failed to load dynamic weights: {e}")
+
+# Market category grouping — used by AccaFilter to enforce diversity caps
+MARKET_CATEGORIES = {
+    "DC_1X": "DOUBLE_CHANCE",
+    "DC_X2": "DOUBLE_CHANCE",
+    "DC_12": "DOUBLE_CHANCE",
+    "OVER_05": "OVER_UNDER",
+    "OVER_15": "OVER_UNDER",
+    "OVER_25": "OVER_UNDER",
+    "UNDER_25": "OVER_UNDER",
+    "UNDER_35": "OVER_UNDER",
+    "UNDER_45": "OVER_UNDER",
+    "UNDER_55": "OVER_UNDER",
+    "AH_HOME_PLUS_15": "ASIAN_HANDICAP",
+    "AH_AWAY_PLUS_15": "ASIAN_HANDICAP",
+    "AH_HOME_PLUS_25": "ASIAN_HANDICAP",
+    "AH_AWAY_PLUS_25": "ASIAN_HANDICAP",
+    "HOME_OR_OVER_25": "COMBO",
+    "AWAY_OR_OVER_25": "COMBO",
+    "DRAW_OR_OVER_25": "COMBO",
+    "GG_YES": "BTTS",
+    "GG_NO": "BTTS",
+    "DNB_HOME": "DRAW_NO_BET",
+    "DNB_AWAY": "DRAW_NO_BET",
+    "WIN_EITHER_HALF_HOME_YES": "WIN_EITHER_HALF",
+    "WIN_EITHER_HALF_AWAY_YES": "WIN_EITHER_HALF",
+    "HOME_WIN_TO_NIL_YES": "WIN_TO_NIL",
+    "HOME_WIN_TO_NIL_NO": "WIN_TO_NIL",
+    "AWAY_WIN_TO_NIL_YES": "WIN_TO_NIL",
+    "AWAY_WIN_TO_NIL_NO": "WIN_TO_NIL",
+    "1X2_2UP_HOME": "EARLY_PAYOUT",
+    "1X2_2UP_AWAY": "EARLY_PAYOUT",
+    "1X2_1UP_HOME": "EARLY_PAYOUT",
+    "1X2_1UP_AWAY": "EARLY_PAYOUT",
+
+}
 
 
 class MatchAnalyst:
@@ -37,7 +124,7 @@ class MatchAnalyst:
 
     def _assess_upset_risk(self, prob_home_win: float, prob_away_win: float,
                             fatigue_diff: float, referee_signal: dict,
-                            avg_live_ratio: float) -> dict:
+                            avg_live_ratio: float, is_backtest: bool = False) -> dict:
         favorite_prob = max(prob_home_win, prob_away_win)
 
         risk = 0.0
@@ -56,10 +143,11 @@ class MatchAnalyst:
         if referee_signal.get("has_data") and referee_signal.get("high_volatility"):
             risk += 20
 
-        if avg_live_ratio < 0.20:
-            risk += 30
-        elif avg_live_ratio < 0.60:
-            risk += 15
+        if not is_backtest:
+            if avg_live_ratio < 0.20:
+                risk += 30
+            elif avg_live_ratio < 0.60:
+                risk += 15
 
         risk = min(risk, 100)
         upset_alert = risk >= 55
@@ -67,7 +155,7 @@ class MatchAnalyst:
         return {
             "risk_score": round(risk, 1),
             "upset_alert": upset_alert,
-            "stale_data": avg_live_ratio < 0.60,
+            "stale_data": avg_live_ratio < 0.60 and not is_backtest,
         }
 
     def compile_master_fixture_prediction(self, fixture_context: dict) -> dict:
@@ -157,7 +245,6 @@ class MatchAnalyst:
                     prob_draw += p_score
 
                 total_goals = h + a
-                # Over 1.5 baseline
                 if total_goals < 4:
                     prob_under_35 += p_score
                 if total_goals > 2:
@@ -171,12 +258,9 @@ class MatchAnalyst:
                 if a > 0 and h == 0:
                     prob_away_win_to_nil += p_score
 
-        prob_home_win_to_nil_no = 1.0 - prob_home_win_to_nil
-        prob_away_win_to_nil_no = 1.0 - prob_away_win_to_nil
-
         # --- ML ENGINE INTEGRATION ---
         # Blend Poisson probabilities with ML probabilities if the model is ready
-        ml_preds = self.ml_eng.predict(home_id, away_id, home_elo, away_elo)
+        ml_preds = self.ml_eng.predict(home_id, away_id, home_elo, away_elo, match_date=match_date)
         if ml_preds:
             ml_p = ml_preds["probabilities"]
             # 50/50 blend between heuristic Poisson and Random Forest
@@ -190,93 +274,20 @@ class MatchAnalyst:
         else:
             expected_goals = lambda_val + mu_val
             
-        # Re-derive simple O/U from blended expected goals using Poisson CDF
+        # Re-derive Over 1.5 from blended expected goals using Poisson CDF
         prob_over_15 = 1.0 - (self._calculate_poisson_probability(0, expected_goals) + self._calculate_poisson_probability(1, expected_goals))
 
-        risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio)
+        is_backtest = fixture_context.get('is_backtest', False)
+        risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio, is_backtest)
         risk_score = risk_assessment["risk_score"]
         upset_alert = risk_assessment["upset_alert"]
         stale_data = risk_assessment["stale_data"]
 
-        def result(verdict, edge):
-            return {
-                "recommended_analytical_verdict": verdict,
-                "edge_differential": edge,
-                "upset_alert": upset_alert,
-                "risk_score": risk_score,
-                "stale_data": stale_data,
-            }
-
-        if is_knockout:
-            verdict = "TO_QUALIFY_HOME" if prob_home_win >= prob_away_win else "TO_QUALIFY_AWAY"
-            edge = abs(prob_home_win - prob_away_win)
-            return result(verdict, max(edge, 0.06))
-
-        # DIVERSIFY verdicts: even under upset_alert, offer varied markets
-        if upset_alert:
-            # Use team seed hash to deterministically pick a market variety
-            team_hash = (int(hashlib.md5(home_team.encode()).hexdigest(), 16) + 
-                        int(hashlib.md5(away_team.encode()).hexdigest(), 16)) % 5
-            
-            prob_1x = prob_home_win + prob_draw
-            prob_x2 = prob_away_win + prob_draw
-            
-            # Rotate through different markets based on team hash
-            if team_hash == 0:
-                return result("DC_1X", prob_1x) if prob_1x >= prob_x2 else result("DC_X2", prob_x2)
-            elif team_hash == 1:
-                return result("DNB_HOME", prob_home_win) if prob_home_win > prob_away_win else result("DNB_AWAY", prob_away_win)
-            elif team_hash == 2:
-                return result("GG_YES", prob_gg) if prob_gg > 0.55 else result("GG_NO", 1.0 - prob_gg)
-            elif team_hash == 3:
-                return result("OVER_15", prob_over_15) if prob_over_15 > 0.70 else result("UNDER_35", prob_under_35)
-            else:  # team_hash == 4
-                if lambda_val > mu_val:
-                    return result("HOME_OR_OVER_25", max(prob_home_win, prob_over_25))
-                else:
-                    return result("AWAY_OR_OVER_25", max(prob_away_win, prob_over_25))
-
-        if prob_home_win_to_nil_no > 0.65 and prob_home_win > 0.55:
-            return result("HOME_WIN_TO_NIL_NO", prob_home_win_to_nil_no)
-        if prob_away_win_to_nil_no > 0.65 and prob_away_win > 0.55:
-            return result("AWAY_WIN_TO_NIL_NO", prob_away_win_to_nil_no)
-
-        if prob_home_win > 0.72:
-            return result("1X2_2UP_HOME", prob_home_win)
-        if prob_away_win > 0.72:
-            return result("1X2_2UP_AWAY", prob_away_win)
-        if prob_home_win > 0.62:
-            return result("1X2_1UP_HOME", prob_home_win)
-        if prob_away_win > 0.62:
-            return result("1X2_1UP_AWAY", prob_away_win)
-
-        if lambda_val > 1.85:
-            return result("WIN_EITHER_HALF_HOME_YES", 0.68)
-        if mu_val > 1.85:
-            return result("WIN_EITHER_HALF_AWAY_YES", 0.68)
-
-        prob_home_or_over_25 = max(prob_home_win, prob_over_25)
-        prob_away_or_over_25 = max(prob_away_win, prob_over_25)
-
-        if prob_home_or_over_25 > 0.75 and lambda_val > mu_val:
-            return result("HOME_OR_OVER_25", prob_home_or_over_25)
-        if prob_away_or_over_25 > 0.75 and mu_val > lambda_val:
-            return result("AWAY_OR_OVER_25", prob_away_or_over_25)
-
-        if prob_over_15 > 0.82:
-            return result("OVER_15", prob_over_15)
-        if prob_under_35 > 0.78:
-            return result("UNDER_35", prob_under_35)
-
-        if prob_home_win > 0.48:
-            return result("DNB_HOME", prob_home_win)
-        if prob_away_win > 0.48:
-            return result("DNB_AWAY", prob_away_win)
-
-        if prob_gg > 0.62:
-            return result("GG_YES", prob_gg)
-        if prob_gg < 0.38:
-            return result("GG_NO", 1.0 - prob_gg)
+        # --- COMPREHENSIVE MARKET PROBABILITY CALCULATIONS ---
+        prob_over_05 = 1.0 - score_matrix.get((0, 0), 0.0)
+        prob_under_25 = 1.0 - prob_over_25
+        prob_under_45 = sum(score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h + a <= 4)
+        prob_under_55 = sum(score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h + a <= 5)
 
         prob_home_plus_1_5 = prob_home_win + prob_draw + sum(
             score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h == 1
@@ -285,11 +296,172 @@ class MatchAnalyst:
             score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a == 1
         )
 
-        if prob_home_plus_1_5 > 0.80 and lambda_val < mu_val:
-            return result("ASIAN_HANDICAP_HOME_PLUS_1_5", prob_home_plus_1_5)
-        if prob_away_plus_1_5 > 0.80 and mu_val < lambda_val:
-            return result("ASIAN_HANDICAP_AWAY_PLUS_1_5", prob_away_plus_1_5)
+        prob_home_plus_2_5 = prob_home_win + prob_draw + sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h in [1, 2]
+        )
+        prob_away_plus_2_5 = prob_away_win + prob_draw + sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a in [1, 2]
+        )
+
+        # Combo probabilities (OR logic = P(A) + P(B) - P(A and B))
+        prob_draw_or_over_25 = prob_draw + prob_over_25 - sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h == a and h + a > 2
+        )
+        prob_home_or_over_25 = prob_home_win + prob_over_25 - sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h > a and h + a > 2
+        )
+        prob_away_or_over_25 = prob_away_win + prob_over_25 - sum(
+            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a > h and h + a > 2
+        )
+
+        prob_win_either_half_home = min(0.95, prob_home_win * 1.35)
+        prob_win_either_half_away = min(0.95, prob_away_win * 1.35)
 
         prob_1x = prob_home_win + prob_draw
         prob_x2 = prob_away_win + prob_draw
-        return result("DC_1X", prob_1x) if prob_1x >= prob_x2 else result("DC_X2", prob_x2)
+        prob_12 = prob_home_win + prob_away_win
+
+        # --- BUILD VIABLE MARKETS WITH TRUE EDGE-ABOVE-BASELINE ---
+        # Each market is only included if its fixture probability exceeds
+        # the global baseline, AND the probability meets a minimum threshold.
+        # Edge = fixture_prob - baseline. Higher edge = more value for THIS fixture.
+        
+        all_market_probs = {
+            "DC_1X": prob_1x,
+            "DC_X2": prob_x2,
+            "DC_12": prob_12,
+            "OVER_15": prob_over_15,
+            "OVER_25": prob_over_25,
+            "UNDER_25": prob_under_25,
+            "UNDER_35": prob_under_35,
+            "GG_YES": prob_gg,
+            "GG_NO": 1.0 - prob_gg,
+            "DNB_HOME": prob_home_win,
+            "DNB_AWAY": prob_away_win,
+            "WIN_EITHER_HALF_HOME_YES": prob_win_either_half_home,
+            "WIN_EITHER_HALF_AWAY_YES": prob_win_either_half_away,
+            "HOME_OR_OVER_25": prob_home_or_over_25,
+            "AWAY_OR_OVER_25": prob_away_or_over_25,
+            "DRAW_OR_OVER_25": prob_draw_or_over_25,
+            "HOME_WIN_TO_NIL_NO": 1.0 - prob_home_win_to_nil,
+            "AWAY_WIN_TO_NIL_NO": 1.0 - prob_away_win_to_nil,
+            "AH_HOME_PLUS_15": prob_home_plus_1_5,
+            "AH_AWAY_PLUS_15": prob_away_plus_1_5,
+            "AH_HOME_PLUS_25": prob_home_plus_2_5,
+            "AH_AWAY_PLUS_25": prob_away_plus_2_5,
+        }
+
+
+        # 1X2 Early Payout
+        if prob_home_win >= 0.48:
+            all_market_probs["1X2_2UP_HOME"] = prob_home_win
+        if prob_away_win >= 0.48:
+            all_market_probs["1X2_2UP_AWAY"] = prob_away_win
+
+        # --- ARCHETYPE ENGINE ---
+        # Classify the match state and boost specific variance-reducing markets
+        total_xg = expected_goals
+        elo_diff = abs(home_elo - away_elo)
+        
+        archetype_boosts = {}
+        
+        # 1. High Event / Chaos
+        if total_xg > 2.8 and 50 < elo_diff < 350:
+            archetype_boosts["AWAY_OR_OVER_25"] = 0.15
+            archetype_boosts["HOME_OR_OVER_25"] = 0.15
+            archetype_boosts["GG_YES"] = 0.10
+            
+        # 2. Heavy Dominance / Fast Starters
+        if lambda_val > 2.2 and home_elo > away_elo + 250:
+            archetype_boosts["1X2_2UP_HOME"] = 0.20
+        elif mu_val > 2.2 and away_elo > home_elo + 250:
+            archetype_boosts["1X2_2UP_AWAY"] = 0.20
+            
+        # 3. Heavy Dominance / Congested Schedule (Fatigue)
+        if elo_diff > 250 and fatigue_diff > 0.05:
+            if home_elo > away_elo:
+                archetype_boosts["HOME_WIN_EITHER_HALF"] = 0.18
+                archetype_boosts["HOME_WIN_TO_NIL_YES"] = 0.15
+            else:
+                archetype_boosts["AWAY_WIN_EITHER_HALF"] = 0.18
+                archetype_boosts["AWAY_WIN_TO_NIL_YES"] = 0.15
+                
+        # 4. Low Event / Tactical Stalemate
+        if total_xg < 2.2 and is_knockout:
+            archetype_boosts["UNDER_25"] = 0.20
+            archetype_boosts["UNDER_35"] = 0.15
+            archetype_boosts["DNB_HOME"] = 0.18
+            archetype_boosts["DNB_AWAY"] = 0.18
+            
+        # 5. Asymmetric Threat
+        if (home_elo > away_elo + 200) and mu_val < 0.6 and lambda_val > 1.8:
+            archetype_boosts["HOME_WIN_TO_NIL_YES"] = 0.20
+        elif (away_elo > home_elo + 200) and lambda_val < 0.6 and mu_val > 1.8:
+            archetype_boosts["AWAY_WIN_TO_NIL_YES"] = 0.20
+            
+        # 6. Smart Upset Pivoting ("The Milan Scenario")
+        # If ATHENA detects an upset trap against a heavy favorite, brilliantly pivot to the underdog.
+        if upset_alert:
+            if prob_home_win > prob_away_win:
+                # Home is heavily favored but vulnerable! Pivot to Away underdog options.
+                archetype_boosts["DC_X2"] = 0.25
+                archetype_boosts["AH_AWAY_PLUS_15"] = 0.20
+                archetype_boosts["AH_AWAY_PLUS_25"] = 0.15
+            else:
+                # Away is heavily favored but vulnerable! Pivot to Home underdog options.
+                archetype_boosts["DC_1X"] = 0.25
+                archetype_boosts["AH_HOME_PLUS_15"] = 0.20
+                archetype_boosts["AH_HOME_PLUS_25"] = 0.15
+
+        # Minimum probability threshold per fixture to be considered viable
+        MIN_PROB = 0.55
+
+        viable_markets = []
+        for verdict, prob in all_market_probs.items():
+            if prob < MIN_PROB:
+                continue
+
+            baseline = MARKET_BASELINES.get(verdict, 0.50)
+            edge_above_baseline = round(prob - baseline, 4)
+            
+            # Apply Archetype Boosts
+            boost = archetype_boosts.get(verdict, 0.0)
+            edge_above_baseline += boost
+
+            category = MARKET_CATEGORIES.get(verdict, "OTHER")
+
+            viable_markets.append({
+                "verdict": verdict,
+                "prob": round(prob, 4),
+                "edge": round(max(edge_above_baseline, 0.05), 4),  # Floor at 0.05 for acca filter
+                "edge_above_baseline": edge_above_baseline,
+                "category": category,
+            })
+
+        # Sort by edge above baseline descending — the market where THIS fixture
+        # offers the most value above the average match is ranked #1.
+        viable_markets.sort(key=lambda x: x["edge_above_baseline"], reverse=True)
+
+        # Fallback: if nothing passed the probability filter, pick the
+        # best Double Chance as a safety net
+        if not viable_markets:
+            best_dc = "DC_1X" if prob_1x >= prob_x2 else "DC_X2"
+            best_dc_prob = max(prob_1x, prob_x2)
+            viable_markets.append({
+                "verdict": best_dc,
+                "prob": round(best_dc_prob, 4),
+                "edge": 0.05,
+                "edge_above_baseline": 0.01,
+                "category": "DOUBLE_CHANCE",
+            })
+
+        best_market = viable_markets[0]
+
+        return {
+            "recommended_analytical_verdict": best_market["verdict"],
+            "edge_differential": best_market["edge"],
+            "upset_alert": upset_alert,
+            "risk_score": risk_score,
+            "stale_data": stale_data,
+            "viable_markets": viable_markets
+        }

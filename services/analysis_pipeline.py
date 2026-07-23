@@ -93,8 +93,11 @@ class AnalysisPipeline:
 
         return still_upcoming
 
-    def run_pipeline_snapshot(self, execution_limit: int = 150) -> list:
-        upcoming = self.fetch_upcoming_fixtures(limit=execution_limit)
+    def run_pipeline_snapshot(self, execution_limit: int = 150, override_fixtures: list = None) -> list:
+        if override_fixtures is not None:
+            upcoming = override_fixtures
+        else:
+            upcoming = self.fetch_upcoming_fixtures(limit=execution_limit)
 
         analyzed_batch = []
         youth_pattern = re.compile(r'\b[uU]\d{2}\b')
@@ -117,20 +120,27 @@ class AnalysisPipeline:
                 "home_id": self._resolve_team_id(home_team),
                 "away_id": self._resolve_team_id(away_team),
                 "match_date": fix.get("match_date", ""),
-                "is_knockout": any(k in league_name for k in ["cup", "champions league", "playoff", "knockout"]),
+                "is_knockout": any(k in league_name for k in ["cup", "champions league", "playoff", "knockout", "qualif", "conference"]),
             }
+            
+            if "home_pre_elo" in fix and fix["home_pre_elo"] is not None:
+                context_payload["home_pre_elo"] = fix["home_pre_elo"]
+                context_payload["away_pre_elo"] = fix["away_pre_elo"]
 
             try:
                 analysis = self.analyst.compile_master_fixture_prediction(context_payload)
                 analyzed_batch.append({
+                    "fixture_id": fix.get("fixture_id", 0),
                     "fixture": f"{home_team} vs {away_team}",
                     "home_team": home_team,
                     "away_team": away_team,
+                    "league": fix.get("league", "Unknown"),
                     "upset_alert": analysis.get("upset_alert", False),
                     "risk_score": analysis.get("risk_score", 0.0),
                     "stale_data": analysis.get("stale_data", False),
                     "edge": analysis.get("edge_differential", 0.05),
                     "verdict": analysis.get("recommended_analytical_verdict", "DC_1X"),
+                    "viable_markets": analysis.get("viable_markets", []),
                     "source": fix.get("data_source", "unknown"),
                 })
             except Exception as e:

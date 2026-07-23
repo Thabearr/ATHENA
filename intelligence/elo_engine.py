@@ -59,7 +59,7 @@ class EloEngine:
             rating_a += 50  # Home advantage boost
         return 1.0 / (1.0 + 10.0 ** ((rating_b - rating_a) / 400.0))
 
-    def update_elo(self, home_id: int, away_id: int, home_goals: int, away_goals: int, match_date: str):
+    def update_elo(self, home_id: int, away_id: int, home_goals: int, away_goals: int, match_date: str, fixture_id: int = None):
         """
         Update ELO ratings for both teams after a match.
         S = 1.0 (win), 0.5 (draw), 0.0 (loss)
@@ -116,8 +116,16 @@ class EloEngine:
             WHERE team_id = ?
         """, (int(new_R_away), away_rating["home_elo"], int(new_away_elo), match_date, away_id))
 
+        # 8. Update pre_elo in historical_matches if fixture_id provided
+        if fixture_id is not None:
+            self.conn.execute("""
+                UPDATE historical_matches
+                SET home_pre_elo = ?, away_pre_elo = ?
+                WHERE fixture_id = ?
+            """, (int(R_home), int(R_away), fixture_id))
+
         self.conn.commit()
-        print(f"[ELO] Updated {home_id} ({int(new_R_home)}) vs {away_id} ({int(new_R_away)})")
+        # print(f"[ELO] Updated {home_id} ({int(new_R_home)}) vs {away_id} ({int(new_R_away)})")
 
     def process_historical_matches(self, limit: Optional[int] = None):
         """
@@ -137,7 +145,9 @@ class EloEngine:
         rows = cur.fetchall()
         total = len(rows)
         for idx, row in enumerate(rows):
-            self.update_elo(row["home_id"], row["away_id"], row["home_goals"], row["away_goals"], row["match_date"])
+            self.update_elo(row["home_id"], row["away_id"], row["home_goals"], row["away_goals"], row["match_date"], row["fixture_id"])
+            if idx % 500 == 0:
+                print(f"Processed {idx}/{total} historical matches...")
             if idx % 50 == 0:
                 print(f"[ELO] Progress: {idx}/{total}")
 

@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ATHENA | Fullproof Engine</title>
+    <link rel="stylesheet" href="styles.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo-container">
+                <div class="logo-orb"></div>
+                <h1>ATHENA</h1>
+                <span class="version">v2.0</span>
+            </div>
+            <nav>
+                <a href="#" id="nav-dashboard"><i class="icon">📊</i> Dashboard</a>
+                <a href="#" id="nav-generate"><i class="icon">⚡</i> Acca Builder</a>
+                <a href="#" class="active" id="nav-fixtures"><i class="icon">📅</i> Fixtures</a>
+                <a href="#" id="nav-athenizer"><i class="icon">🔍</i> Athenizer</a>
+                <a href="#" id="nav-settings"><i class="icon">⚙️</i> Model Tuning</a>
+            </nav>
+            <div class="status-panel">
+                <div class="status-indicator"></div>
+                <span>Engine Online</span>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content">
+            <!-- Acca Builder View -->
+            <div id="view-generate" class="page-view active">
+                <header>
+                    <h2>Accumulator Builder</h2>
+                    <p>Generate high-confidence slips using the Fullproof strategy.</p>
+                </header>
+
+            <section class="controls glass-panel">
+                <div class="input-group">
+                    <label>Timeframe (Days)</label>
+                    <input type="number" id="input-days" value="1" min="1" max="7">
+                </div>
+                <div class="input-group">
+                    <label>Acca Folds</label>
+                    <input type="number" id="input-folds" value="20" min="1" max="50">
+                </div>
+                <div class="input-group" style="grid-column: 1 / -1;">
+                    <label>Leagues (Optional) - <span style="font-weight: normal; text-transform: none; color: var(--text-muted);">Select leagues or leave empty for all</span></label>
+                    <div id="league-checkboxes" class="league-list-clean">
+                        <!-- Populated by JS dynamically based on days -->
+                        <span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">Loading leagues...</span>
+                    </div>
+                </div>
+                <div class="input-group checkbox-group">
+                    <label>Strict Mode</label>
+                    <label class="switch">
+                        <input type="checkbox" id="input-strict" checked>
+                        <span class="slider round"></span>
+                    </label>
+                </div>
+                <button id="btn-generate" class="glow-button">Generate Slip</button>
+            </section>
+
+            <section class="results-area hidden" id="results-area">
+                <div class="results-header">
+                    <h3>Generated Slip</h3>
+                    <div class="stats-pills">
+                        <span class="pill">Edge: <strong id="stat-edge">0.00x</strong></span>
+                        <span class="pill">Legs: <strong id="stat-legs">0</strong></span>
+                    </div>
+                </div>
+                
+                <div class="table-container glass-panel" style="overflow-x: auto; margin-bottom: 1rem;">
+                    <table id="acca-table">
+                        <thead>
+                            <tr>
+                                <th>Match Date</th>
+                                <th>League</th>
+                                <th>Fixture</th>
+                                <th>Pick</th>
+                                <th>Edge</th>
+                            </tr>
+                        </thead>
+                        <tbody id="acca-body">
+                            <tr><td colspan="5" style="text-align: center;">Ready to generate.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                <div id="acca-generate-code-container" class="glass-panel hidden" style="margin-top: 1rem; padding: 1.5rem;">
+                    <h3 style="margin-bottom: 1rem;">Generate Booking Code</h3>
+                    <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Export this accumulator directly to a bookmaker.</p>
+                    <div class="controls" style="display: flex; gap: 1rem; align-items: flex-end; flex-wrap: wrap;">
+                        <div class="input-group" style="flex: 2; min-width: 200px;">
+                            <label>Bookmaker</label>
+                            <select id="input-export-bookie" class="clean-select" style="width: 100%;">
+                                <option value="sportybet">SportyBet</option>
+                                <option value="stake">Stake</option>
+                                <option value="1xbet">1xBet</option>
+                                <option value="22bet">22Bet</option>
+                                <option value="bet9ja">Bet9ja</option>
+                                <option value="footballdotcom">Football.com</option>
+                                <option value="betway">Betway</option>
+                                <option value="paripesa">Paripesa</option>
+                                <option value="sportpesa">Sportpesa</option>
+                                <option value="betpawa">Betpawa</option>
+                                <option value="bcdotgame">BC.Game</option>
+                                <option value="hollywoodbets">Hollywoodbets</option>
+                                <option value="afropari">Afropari</option>
+                                <option value="betano">Betano</option>
+                            </select>
+                        </div>
+                        <div class="input-group" style="flex: 1; min-width: 150px;">
+                            <label>&nbsp;</label>
+                            <button id="btn-export-code" class="glow-button" style="width: 100%; height: 42px;">Get Code</button>
+                        </div>
+                    </div>
+                    <div id="export-results" style="margin-top: 1rem;"></div>
+                </div>
+            </section>
+            </div>
+
+            <!-- Fixtures View -->
+            <div id="view-fixtures" class="page-view">
+                <header>
+                    <h2>Global Fixtures</h2>
+                    <p>Live schedule directly from the source.</p>
+                </header>
+                
+                <div class="date-selector" id="fixture-date-selector">
+                    <!-- Populated by JS (Today, Tomorrow, etc) -->
+                </div>
+
+                <div id="fixtures-container" class="fixtures-container">
+                    <div style="text-align: center; padding: 2rem; color: var(--text-muted);">Select a date above to load fixtures.</div>
+                </div>
+            </div>
+
+            <!-- Athenizer View -->
+            <div id="view-athenizer" class="page-view">
+                <header>
+                    <h2>Athenizer</h2>
+                    <p>Advanced betting slip manipulation tools.</p>
+                </header>
+                
+                <div class="athenizer-tabs">
+                    <button class="tab-btn active" data-target="tab-vet">Optimize</button>
+                    <button class="tab-btn" data-target="tab-split">Split Slip</button>
+                    <button class="tab-btn" data-target="tab-merge">Merge Slips</button>
+                </div>
+
+                <div class="glass-panel" style="margin-top: 1rem; overflow-x: hidden;">
+                    <!-- OPTIMIZE SLIP TAB -->
+                    <div id="tab-vet" class="athenizer-tab-content active">
+                        <h3>Optimize a Booking Code</h3>
+                        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Run ATHENA's risk engine against an existing slip to find weak links.</p>
+                        <div class="controls" style="display: flex; flex-direction: column; gap: 1rem;">
+                            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                                <div class="input-group" style="flex: 2; min-width: 200px;">
+                                    <label>Booking Code</label>
+                                    <input type="text" id="input-vet-code" placeholder="e.g. BC12345">
+                                </div>
+                                <div class="input-group" style="flex: 1; min-width: 150px;">
+                                    <label>Bookmaker</label>
+                                    <select id="input-vet-bookie" class="clean-select" style="width: 100%;">
+                                        <option value="sportybet">SportyBet</option>
+                                        <option value="stake">Stake</option>
+                                        <option value="1xbet">1xBet</option>
+                                        <option value="22bet">22Bet</option>
+                                        <option value="bet9ja">Bet9ja</option>
+                                        <option value="footballdotcom">Football.com</option>
+                                        <option value="betway">Betway</option>
+                                        <option value="paripesa">Paripesa</option>
+                                        <option value="sportpesa">Sportpesa</option>
+                                        <option value="betpawa">Betpawa</option>
+                                        <option value="bcdotgame">BC.Game</option>
+                                        <option value="hollywoodbets">Hollywoodbets</option>
+                                        <option value="afropari">Afropari</option>
+                                        <option value="betano">Betano</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button id="btn-vet-slip" class="glow-button" style="width: 100%; height: 48px; font-weight: bold; font-size: 1.1rem; margin-top: 0.5rem;">OPTIMIZE</button>
+                        </div>
+                        <div id="vet-results" class="results-box hidden"></div>
+                    </div>
+
+                    <!-- SPLIT SLIP TAB -->
+                    <div id="tab-split" class="athenizer-tab-content">
+                        <h3>Split a Slip</h3>
+                        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Break down a large accumulator into smaller, safer tickets.</p>
+                        <div class="controls" style="display: flex; flex-direction: column; gap: 1rem;">
+                            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                                <div class="input-group" style="flex: 2; min-width: 200px;">
+                                    <label>Booking Code</label>
+                                    <input type="text" id="input-split-code" placeholder="e.g. BC12345">
+                                </div>
+                                <div class="input-group" style="flex: 1; min-width: 150px;">
+                                    <label>Bookmaker</label>
+                                    <select id="input-split-bookie" class="clean-select" style="width: 100%;">
+                                        <option value="sportybet">SportyBet</option>
+                                        <option value="stake">Stake</option>
+                                        <option value="1xbet">1xBet</option>
+                                        <option value="22bet">22Bet</option>
+                                        <option value="bet9ja">Bet9ja</option>
+                                        <option value="footballdotcom">Football.com</option>
+                                        <option value="betway">Betway</option>
+                                        <option value="paripesa">Paripesa</option>
+                                        <option value="sportpesa">Sportpesa</option>
+                                        <option value="betpawa">Betpawa</option>
+                                        <option value="bcdotgame">BC.Game</option>
+                                        <option value="hollywoodbets">Hollywoodbets</option>
+                                        <option value="afropari">Afropari</option>
+                                        <option value="betano">Betano</option>
+                                    </select>
+                                </div>
+                                <div class="input-group" style="flex: 0.5; min-width: 80px;">
+                                    <label>Parts</label>
+                                    <input type="number" id="input-split-parts" value="2" min="2" max="5">
+                                </div>
+                            </div>
+                            <button id="btn-split-slip" class="glow-button" style="width: 100%; height: 48px; font-weight: bold; font-size: 1.1rem; margin-top: 0.5rem;">SPLIT</button>
+                        </div>
+                        <div id="split-results" class="results-box hidden"></div>
+                    </div>
+
+                    <!-- MERGE SLIPS TAB -->
+                    <div id="tab-merge" class="athenizer-tab-content">
+                        <h3>Merge Slips</h3>
+                        <p style="color: var(--text-muted); font-size: 0.85rem; margin-bottom: 1rem;">Combine multiple booking codes into a single mega-accumulator.</p>
+                        <div class="controls" style="display: flex; flex-direction: column; gap: 1rem;">
+                            <div style="display: flex; gap: 1rem; flex-wrap: wrap;">
+                                <div class="input-group" style="flex: 3; min-width: 250px;">
+                                    <label>Booking Codes (Comma Separated)</label>
+                                    <input type="text" id="input-merge-codes" placeholder="Code1, Code2, Code3...">
+                                </div>
+                                <div class="input-group" style="flex: 1; min-width: 150px;">
+                                    <label>Bookmaker</label>
+                                    <select id="input-merge-bookie" class="clean-select" style="width: 100%;">
+                                        <option value="sportybet">SportyBet</option>
+                                        <option value="stake">Stake</option>
+                                        <option value="1xbet">1xBet</option>
+                                        <option value="22bet">22Bet</option>
+                                        <option value="bet9ja">Bet9ja</option>
+                                        <option value="footballdotcom">Football.com</option>
+                                        <option value="betway">Betway</option>
+                                        <option value="paripesa">Paripesa</option>
+                                        <option value="sportpesa">Sportpesa</option>
+                                        <option value="betpawa">Betpawa</option>
+                                        <option value="bcdotgame">BC.Game</option>
+                                        <option value="hollywoodbets">Hollywoodbets</option>
+                                        <option value="afropari">Afropari</option>
+                                        <option value="betano">Betano</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <button id="btn-merge-slips" class="glow-button" style="width: 100%; height: 48px; font-weight: bold; font-size: 1.1rem; margin-top: 0.5rem;">MERGE</button>
+                        </div>
+                        <div id="merge-results" class="results-box hidden"></div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Model Tuning View -->
+            <div id="view-settings" class="page-view">
+                <header>
+                    <h2>Model Tuning</h2>
+                    <p>ATHENA's internal optimization parameters.</p>
+                </header>
+                <div class="glass-panel">
+                    <h3 style="color: var(--accent);">Evolution Engine Active</h3>
+                    <p style="color: var(--text-muted); margin-top: 1rem;">
+                        The self-optimization script is running in the background. It will automatically backtest failures and tweak internal weights to maximize the strike rate. 
+                        No manual tuning is required at this time.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Dashboard View -->
+            <div id="view-dashboard" class="page-view">
+                <header>
+                    <h2>Dashboard</h2>
+                    <p>High-level metrics and system health.</p>
+                </header>
+                <div class="glass-panel">
+                    <h3 style="color: var(--accent);">System Online</h3>
+                    <p style="color: var(--text-muted); margin-top: 1rem;">
+                        All engines operational. Ready to generate mathematical edges.
+                    </p>
+                </div>
+            </div>
+
+            <!-- Loading Overlay -->
+            <div id="loader" class="loader-overlay hidden">
+                <div class="spinner"></div>
+                <p>ATHENA is analyzing fixtures...</p>
+            </div>
+        </main>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,13 +1,58 @@
 from typing import List, Dict, Any
 from database.database import Database
 
+# Import market category mapping from match_analyst
+from intelligence.match_analyst import MARKET_CATEGORIES
+
+
 class CorrelationAnalyzer:
     """
-    Measures correlation between accumulator legs to ensure diversification.
+    Measures correlation between accumulator legs to ensure genuine diversification.
+    Uses market CATEGORY grouping (not individual market codes) so that e.g.
+    Over 1.5 and Under 3.5 are both counted under OVER_UNDER and capped together.
     """
+
+    # Hard caps: max legs per market category in ANY acca
+    # Designed for 20-fold: spread across at least 5 categories
+    CATEGORY_HARD_CAPS = {
+        "DOUBLE_CHANCE": 4,
+        "OVER_UNDER": 4,
+        "ASIAN_HANDICAP": 3,
+        "COMBO": 3,
+        "BTTS": 3,
+        "DRAW_NO_BET": 3,
+        "WIN_EITHER_HALF": 3,
+        "WIN_TO_NIL": 2,
+        "EARLY_PAYOUT": 2,
+        "TO_QUALIFY": 3,
+        "OTHER": 2,
+    }
 
     def __init__(self):
         self.db = Database()
+
+    def _get_category(self, verdict: str) -> str:
+        """Map a verdict code to its market category."""
+        return MARKET_CATEGORIES.get(verdict, "OTHER")
+
+    def _count_categories(self, legs: List[Dict[str, Any]]) -> Dict[str, int]:
+        """Count how many legs belong to each market category."""
+        counts = {}
+        for leg in legs:
+            verdict = leg.get('market') or leg.get('verdict', '')
+            cat = self._get_category(verdict)
+            counts[cat] = counts.get(cat, 0) + 1
+        return counts
+
+    def is_category_full(self, verdict: str, existing_legs: List[Dict[str, Any]]) -> bool:
+        """
+        Check if adding a leg with this verdict would exceed the hard cap
+        for its market category.
+        """
+        cat = self._get_category(verdict)
+        counts = self._count_categories(existing_legs)
+        cap = self.CATEGORY_HARD_CAPS.get(cat, 2)
+        return counts.get(cat, 0) >= cap
 
     def calculate_league_correlation(self, legs: List[Dict[str, Any]]) -> float:
         """
@@ -79,22 +124,22 @@ class CorrelationAnalyzer:
 
     def calculate_market_correlation(self, legs: List[Dict[str, Any]]) -> float:
         """
-        Penalty: -0.10 for similar markets (e.g., all OVER/UNDER).
+        Penalty based on market CATEGORY concentration.
+        The more concentrated in one category, the higher the penalty.
         """
         penalty = 0.0
-        markets = {}
-        
-        for leg in legs:
-            market = leg.get('market')
-            if market:
-                markets[market] = markets.get(market, 0) + 1
-                
-        # If more than half the acca is the same market type, apply penalty
+        cat_counts = self._count_categories(legs)
         total_legs = len(legs)
+        
         if total_legs > 1:
-            for count in markets.values():
-                if count > total_legs * 0.5:
-                    penalty -= 0.10
+            for cat, count in cat_counts.items():
+                cap = self.CATEGORY_HARD_CAPS.get(cat, 2)
+                if count > cap:
+                    # Over hard cap = severe penalty
+                    penalty -= 0.30 * (count - cap)
+                elif count > total_legs * 0.30:
+                    # More than 30% of acca in one category = moderate penalty
+                    penalty -= 0.10 * (count - int(total_legs * 0.30))
         
         return penalty
 
@@ -111,26 +156,63 @@ class CorrelationAnalyzer:
         
         total_penalty = league_penalty + team_penalty + market_penalty
         
-        final_score = max(0.0, base_score + total_penalty)
+        # Bonus for number of unique categories used
+        cat_counts = self._count_categories(legs)
+        unique_cats = len(cat_counts)
+        if unique_cats >= 5:
+            diversity_bonus = 0.15
+        elif unique_cats >= 4:
+            diversity_bonus = 0.10
+        elif unique_cats >= 3:
+            diversity_bonus = 0.05
+        else:
+            diversity_bonus = 0.0
+        
+        final_score = max(0.0, min(1.0, base_score + total_penalty + diversity_bonus))
         return final_score
 
-    def check_leg_correlation(self, new_leg: Dict[str, Any], existing_legs: List[Dict[str, Any]]) -> float:
+    def check_leg_correlation(self, new_leg: Dict[str, Any], existing_legs: List[Dict[str, Any]], skip_league: bool = False) -> float:
         """
         Calculates correlation (0-1) between a new leg and existing legs.
-        Returns a value > 0.65 if highly correlated.
+        Returns a value > threshold if highly correlated.
+        
+        Key change: uses category-based correlation instead of exact market match,
+        and enforces hard caps via is_category_full().
+        
+        skip_league: If True, ignores same-league penalty (used for single-competition accas).
         """
-        correlation = 0.0
+        new_verdict = new_leg.get('market') or new_leg.get('verdict', '')
         new_league = new_leg.get('league')
         new_home = new_leg.get('home_team')
         new_away = new_leg.get('away_team')
-        new_market = new_leg.get('market')
-        
+        new_category = self._get_category(new_verdict)
+
+        # Hard cap check — instant rejection
+        if self.is_category_full(new_verdict, existing_legs):
+            return 1.0  # Maximum correlation = blocked
+
+        correlation = 0.0
+
+        # Count how many existing legs share the same category
+        cat_count = 0
         for leg in existing_legs:
-            if leg.get('league') == new_league:
-                correlation += 0.3
+            leg_verdict = leg.get('market') or leg.get('verdict', '')
+            leg_category = self._get_category(leg_verdict)
+
+            if not skip_league and leg.get('league') == new_league:
+                correlation += 0.08  # Mild penalty for same league
+
             if leg.get('home_team') in [new_home, new_away] or leg.get('away_team') in [new_home, new_away]:
-                correlation += 0.5  # Very high if same team
-            if leg.get('market') == new_market:
-                correlation += 0.1
+                correlation += 0.5  # Very high if same team — always enforced
+
+            if leg_category == new_category:
+                cat_count += 1
+
+            # Exact same market type gets extra penalty
+            if leg_verdict == new_verdict:
+                correlation += 0.12
+
+        # Progressive category penalty: each additional same-category leg adds more
+        correlation += cat_count * 0.15
                 
         return min(1.0, correlation)

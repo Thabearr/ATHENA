@@ -1,5 +1,9 @@
 import logging
+import os
+import sys
 from datetime import date
+
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from config.openfootball_mapping import OPENFOOTBALL_LEAGUE_CODES, OPENFOOTBALL_SEASON
 from api.openfootball_provider import OpenFootballProvider
@@ -131,6 +135,6 @@ if __name__ == "__main__":
     loader = OpenFootballLoader()
     counts = loader.fetch_and_sync()
     print(
-        f"✅ openfootball: {counts['upcoming']} upcoming fixtures, "
+        f"SUCCESS: openfootball: {counts['upcoming']} upcoming fixtures, "
         f"{counts['historical']} historical results synced, {counts['skipped']} skipped."
     )

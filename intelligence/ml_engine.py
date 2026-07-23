@@ -30,22 +30,27 @@ class MLEngine:
     def is_ready(self) -> bool:
         return self.clf is not None and self.reg is not None
 
-    def _get_team_rolling_stats(self, team_id: int) -> dict:
+    def _get_team_rolling_stats(self, team_id: int, match_date: str = None) -> dict:
         """Fetch rolling average of xG, possession, GF, GA over the last 5 matches for a team."""
         with self.db.connect() as conn:
             conn.row_factory = sqlite3.Row
             cursor = conn.cursor()
             
-            # Get last 5 matches for this team where xg is not null
-            cursor.execute("""
+            query = """
                 SELECT home_id, away_id, home_goals, away_goals, 
                        home_xg, away_xg, home_possession, away_possession
                 FROM historical_matches
                 WHERE (home_id = ? OR away_id = ?)
                   AND home_xg IS NOT NULL
-                ORDER BY match_date DESC
-                LIMIT 5
-            """, (team_id, team_id))
+            """
+            params = [team_id, team_id]
+            
+            if match_date:
+                query += " AND match_date < ? "
+                params.append(match_date)
+                
+            query += " ORDER BY match_date DESC LIMIT 5"
+            cursor.execute(query, tuple(params))
             
             rows = cursor.fetchall()
             
@@ -77,7 +82,7 @@ class MLEngine:
                 'rolling_ga': np.mean(gas)
             }
 
-    def predict(self, home_id: int, away_id: int, home_elo: int, away_elo: int) -> dict:
+    def predict(self, home_id: int, away_id: int, home_elo: int, away_elo: int, match_date: str = None) -> dict:
         """
         Predict probabilities using the ML model.
         Returns dict with 1X2 probabilities and expected total goals.
@@ -85,8 +90,8 @@ class MLEngine:
         if not self.is_ready():
             return None
             
-        home_stats = self._get_team_rolling_stats(home_id)
-        away_stats = self._get_team_rolling_stats(away_id)
+        home_stats = self._get_team_rolling_stats(home_id, match_date)
+        away_stats = self._get_team_rolling_stats(away_id, match_date)
         
         # Construct feature vector exactly as trained
         # 'home_pre_elo', 'away_pre_elo', 'elo_diff',

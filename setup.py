@@ -6,6 +6,7 @@ setup(
     description="Fullproof Strategy Engine for Football Accumulator Prediction",
     author="ATHENA Project",
     packages=find_packages(),
+    py_modules=["build_acca"],
     include_package_data=True,
     install_requires=[
         "requests",

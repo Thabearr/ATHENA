@@ -6,6 +6,10 @@ Usage: python build_acca.py --days 2 --folds 20
 """
 
 import sys
+# Force UTF-8 encoding for Windows terminals to prevent emoji crashes
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
+
 import logging
 import asyncio
 from datetime import datetime, timedelta
@@ -15,6 +19,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
+from rich import box
 
 # Core imports
 from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
@@ -47,7 +52,7 @@ class AccaBuilder:
     """Orchestrates acca generation pipeline."""
     
     def __init__(self, days_ahead: int = 3, min_edge: float = 0.05):
-        self.days_ahead = min(days_ahead, 3)  # Enforce 3-day max
+        self.days_ahead = min(days_ahead, 7)  # Enforce 7-day max
         self.min_edge = min_edge
         self.db = Database()
         
@@ -82,9 +87,9 @@ class AccaBuilder:
         self.kelly_calculator = KellyCalculator(safety_multiplier=0.25, max_exposure=0.05)
     
     def _validate_timeframe(self, days: int) -> bool:
-        """Enforce max 3-day constraint."""
-        if days < 1 or days > 3:
-            console.print(f"[red]❌ Invalid timeframe: {days} days. Must be 1-3 days.[/red]")
+        """Enforce max 7-day constraint."""
+        if days < 1 or days > 7:
+            console.print(f"[red]❌ Invalid timeframe: {days} days. Must be 1-7 days.[/red]")
             return False
         return True
     
@@ -133,7 +138,7 @@ class AccaBuilder:
                         fixture_id, league, home_team, away_team, 
                         match_date, status, data_source
                     FROM fixtures
-                    WHERE status NOT IN ('FT', 'AET', 'PEN')
+                    WHERE status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'POST', 'CA', 'PP', 'TBA', 'ABANDONED')
                       AND match_date >= ? AND match_date <= ?
                     ORDER BY match_date ASC
                 """, (now.isoformat(), cutoff.isoformat()))
@@ -165,7 +170,7 @@ class AccaBuilder:
         
         console.print(f"[cyan]🔍 Running statistical analysis on {len(fixtures)} fixture(s)...[/cyan]")
         
-        results = self.pipeline.run_pipeline_snapshot(execution_limit=150)
+        results = self.pipeline.run_pipeline_snapshot(execution_limit=150, override_fixtures=fixtures)
         
         if not results:
             console.print("[yellow]⚠️  No fixtures matched analysis filters.[/yellow]")
@@ -211,7 +216,7 @@ class AccaBuilder:
         
         console.print(table)
     
-    def build(self, days: int, fold_size: int) -> dict:
+    def build(self, days: int, fold_size: int, strict: bool = True, league: str = None) -> dict:
         """Main orchestration: fetch → analyze → generate acca."""
         
         # Validation
@@ -235,6 +240,25 @@ class AccaBuilder:
         
         if not db_fixtures:
             return {"success": False, "error": f"No fixtures found in next {days} day(s)"}
+            
+        if league:
+            league_keywords = [kw.strip().lower() for kw in league.split(",")]
+            db_fixtures = [
+                f for f in db_fixtures 
+                if f.get("league", "").lower() in league_keywords
+            ]
+            console.print(f"[cyan]🎯 League filter ({league}): {len(db_fixtures)} fixtures remaining[/cyan]")
+            if not db_fixtures:
+                return {"success": False, "error": f"No fixtures found for league: {league}"}
+        else:
+            PRIORITY_LEAGUES = ["premier league", "laliga", "bundesliga", "ligue 1", "champions league", "europa league", "europa conference league", "major league soccer"]
+            db_fixtures = [
+                f for f in db_fixtures 
+                if f.get("league", "").lower() in PRIORITY_LEAGUES
+            ]
+            console.print(f"[cyan]🎯 Priority League filter (Default): {len(db_fixtures)} fixtures remaining[/cyan]")
+            if not db_fixtures:
+                return {"success": False, "error": f"No priority league fixtures found. Please manually select leagues from the list."}
         
         # Step 3: Analyze all fixtures
         console.print("[cyan]Analyzing fixtures...[/cyan]")
@@ -249,7 +273,42 @@ class AccaBuilder:
         
         # Step 5: Filter for acca eligibility (Phase 4 Logic)
         ranked_legs = self.acca_filter.filter_and_rank_legs(all_analyzed)
-        eligible_matches = self.acca_filter.build_filtered_acca(ranked_legs, target_size=fold_size)
+        single_league_mode = bool(league)
+        eligible_matches = self.acca_filter.build_filtered_acca(ranked_legs, target_size=fold_size, single_league=single_league_mode)
+        
+        if not strict and len(eligible_matches) < fold_size:
+            # Pad with next best matches to hit fold_size
+            used_fixtures = {m.get('fixture', '') for m in eligible_matches}
+            used_teams = set()
+            for m in eligible_matches:
+                used_teams.add(m.get('home_team', ''))
+                used_teams.add(m.get('away_team', ''))
+            
+            remaining = [
+                m for m in all_analyzed 
+                if m.get('fixture', '') not in used_fixtures
+                and m.get('home_team', '') not in used_teams
+                and m.get('away_team', '') not in used_teams
+            ]
+            
+            # Sort remaining by edge (best value first)
+            remaining.sort(key=lambda x: x.get('edge', 0), reverse=True)
+            
+            needed = fold_size - len(eligible_matches)
+            # Add remaining without creating team duplicates
+            added = 0
+            for m in remaining:
+                if added >= needed:
+                    break
+                home = m.get('home_team', '')
+                away = m.get('away_team', '')
+                if home not in used_teams and away not in used_teams:
+                    eligible_matches.append(m)
+                    used_teams.add(home)
+                    used_teams.add(away)
+                    added += 1
+            
+            console.print(f"[yellow]⚠️  Strict mode OFF: Added {added} additional fixtures to meet fold size.[/yellow]")
         
         if len(eligible_matches) < fold_size:
             console.print(
@@ -266,7 +325,7 @@ class AccaBuilder:
             f"\n[cyan]🚀 Building {fold_size}-Fold Accumulator (Phase 4 optimized)...[/cyan]"
         )
         
-        acca = self.acca_engine.generate_accumulator(eligible_matches, fold_size=fold_size, strict=False)
+        acca = self.acca_engine.generate_accumulator(eligible_matches, fold_size=fold_size, strict=strict)
         
         if not acca.get("legs"):
             console.print(
@@ -349,16 +408,18 @@ class AccaBuilder:
 
 @app.command()
 def generate(
-    days: int = typer.Option(2, "--days", "-d", help="Days ahead (1-3)"),
+    days: int = typer.Option(2, "--days", "-d", help="Days ahead (1-7)"),
     folds: int = typer.Option(5, "--folds", "-f", help="Number of legs in acca (1-50)"),
     min_edge: float = typer.Option(0.05, "--edge", "-e", help="Minimum edge threshold (0.01-0.50)"),
+    strict: bool = typer.Option(True, "--strict/--no-strict", help="Use strict fullproof filtering"),
+    league: str = typer.Option(None, "--league", "-l", help="Filter by league name"),
 ):
     """
     Generate a bulletproof accumulator using fullproof strategy.
     
     Examples:
       python build_acca.py generate --days 2 --folds 10
-      python build_acca.py generate -d 3 -f 8 -e 0.06
+      python build_acca.py generate -d 3 -f 8 -e 0.06 --no-strict --league "Europa"
     """
     console.print("\n" + "="*70)
     console.print("      *** ATHENA ACCUMULATOR BUILDER ***")
@@ -366,7 +427,7 @@ def generate(
     console.print("="*70)
     
     builder = AccaBuilder(days_ahead=days, min_edge=min_edge)
-    acca = builder.build(days=days, fold_size=folds)
+    acca = builder.build(days=days, fold_size=folds, strict=strict, league=league)
     builder.display_acca(acca)
 
 
@@ -387,6 +448,67 @@ def quick(
     acca = builder.build(days=2, fold_size=folds)
     builder.display_acca(acca)
 
+
+@app.command()
+def backtest(
+    days_back: int = typer.Option(1, "--days", "-d", help="Days in the past to backtest"),
+    folds: int = typer.Option(20, "--folds", "-f", help="Number of legs to generate"),
+    strict: bool = typer.Option(True, "--strict/--no-strict", help="Use strict fullproof filtering")
+):
+    """Run ATHENA against historical fixtures and grade the accumulator slip."""
+    console.print(f"\n[bold cyan]⚡ ATHENA BACKTEST ENGINE ({days_back} DAYS AGO)[/bold cyan]")
+    
+    from intelligence.backtester import Backtester
+    tester = Backtester()
+    
+    with console.status(f"[bold green]Running simulation for {days_back} days ago...[/bold green]"):
+        result = tester.run_backtest(days_ago=days_back, fold_size=folds, strict=strict)
+        
+    if not result.get("success"):
+        console.print(f"[bold red]Backtest Failed:[/bold red] {result.get('error')}")
+        return
+        
+    table = Table(title=f"BACKTEST RESULTS ({result['date']}) - {folds} FOLDS", box=box.HEAVY_EDGE, border_style="cyan")
+    table.add_column("#", style="dim", width=3)
+    table.add_column("Fixture", style="white")
+    table.add_column("Market", style="yellow")
+    table.add_column("Actual Score", style="cyan")
+    table.add_column("Grade", style="bold")
+    
+    for idx, leg in enumerate(result["legs"], 1):
+        grade = leg["grade"]
+        if grade == "WIN":
+            grade_str = "[bold green]✅ WIN[/bold green]"
+        elif grade == "LOSS":
+            grade_str = "[bold red]❌ LOSS[/bold red]"
+        else:
+            grade_str = "[bold yellow]➖ VOID[/bold yellow]"
+            
+        table.add_row(
+            f"{idx:02d}",
+            leg.get("fixture", "?")[:30],
+            leg.get("market", "?"),
+            leg.get("actual_score", "?"),
+            grade_str
+        )
+        
+    console.print(table)
+    
+    total_legs = len(result["legs"])
+    strike_rate = result["strike_rate"] * 100
+    
+    console.print("\n[bold cyan]📊 BACKTEST SUMMARY[/bold cyan]")
+    console.print(f"Total Legs: {total_legs}")
+    console.print(f"Wins: [green]{result['wins']}[/green]")
+    console.print(f"Losses: [red]{result['losses']}[/red]")
+    console.print(f"Voids: [yellow]{result['voids']}[/yellow]")
+    color = 'green' if strike_rate > 70 else 'red'
+    console.print(f"Strike Rate: [bold {color}]{strike_rate:.1f}%[/]")
+    
+    if result["losses"] > 0:
+        console.print("[red]❌ Accumulator Failed[/red]")
+    else:
+        console.print("[green]✅ ACCUMULATOR WON! 💰[/green]")
 
 if __name__ == "__main__":
     app()
