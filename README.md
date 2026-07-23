@@ -105,11 +105,19 @@ ATHENA/
 ```bash
 git clone <your-private-repo-url>
 cd ATHENA
-python -m venv .venv
-.venv\Scripts\activate      # Windows
-# source .venv/bin/activate  # macOS/Linux
+```
 
-# Install the package and CLI
+**For Windows:**
+```bash
+python -m venv .venv
+.\.venv\Scripts\activate
+pip install -e .
+```
+
+**For Linux / macOS:**
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -e .
 ```
 
