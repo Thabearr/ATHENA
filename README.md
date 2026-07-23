@@ -114,10 +114,10 @@ python -m venv .venv
 pip install -e .
 ```
 
-**For Linux / macOS:**
+**For Linux / macOS (or WSL):**
 ```bash
-python3 -m venv .venv
-source .venv/bin/activate
+python3 -m venv .venv_linux
+source .venv_linux/bin/activate
 pip install -e .
 ```
 
