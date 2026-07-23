@@ -108,7 +108,9 @@ cd ATHENA
 python -m venv .venv
 .venv\Scripts\activate      # Windows
 # source .venv/bin/activate  # macOS/Linux
-pip install -r requirements.txt
+
+# Install the package and CLI
+pip install -e .
 ```
 
 ### Seed the Database
@@ -126,8 +128,17 @@ python tools/train_model.py
 
 ### Generate Today's Accumulator
 
+The CLI lets you easily pick the timeframe (days) and fold count (number of slips).
+
 ```bash
-python build_acca.py generate --days 2 --folds 10
+# Just today's matches, 20 folds
+athena generate --days 1 --folds 20
+
+# Today & tomorrow, 10 folds
+athena generate --days 2 --folds 10
+
+# Max coverage: Next 3 days, 50 folds
+athena generate --days 3 --folds 50
 ```
 
 ---

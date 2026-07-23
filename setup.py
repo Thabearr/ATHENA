@@ -1,0 +1,43 @@
+from setuptools import setup, find_packages
+
+setup(
+    name="athena-betting",
+    version="1.0.0",
+    description="Fullproof Strategy Engine for Football Accumulator Prediction",
+    author="ATHENA Project",
+    packages=find_packages(),
+    include_package_data=True,
+    install_requires=[
+        "requests",
+        "httpx",
+        "aiohttp",
+        "pandas",
+        "numpy",
+        "scipy",
+        "scikit-learn",
+        "python-dotenv",
+        "PyYAML",
+        "rich",
+        "typer",
+        "loguru",
+        "SQLAlchemy",
+        "alembic",
+        "pydantic",
+        "pytest",
+        "joblib",
+        "beautifulsoup4",
+        "lxml",
+        "rapidfuzz",
+        "nltk",
+        "textblob",
+        "matplotlib",
+        "tqdm",
+        "curl_cffi",
+        "fake_useragent"
+    ],
+    entry_points={
+        "console_scripts": [
+            "athena=build_acca:app",
+        ],
+    },
+)
