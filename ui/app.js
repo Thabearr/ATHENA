@@ -1,4 +1,6 @@
 document.addEventListener("DOMContentLoaded", () => {
+    const API_BASE = "http://127.0.0.1:8500";
+    const REQUEST_TIMEOUT_MS = 20000;
     const btnGenerate = document.getElementById("btn-generate");
     const loader = document.getElementById("loader");
     const resultsArea = document.getElementById("results-area");
@@ -22,6 +24,45 @@ document.addEventListener("DOMContentLoaded", () => {
         navLinks[activeNavId].classList.add("active");
     };
 
+    const escapeHtml = (value) => {
+        const text = String(value ?? "");
+        return text
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+    };
+
+    const fetchJSON = async (path, options = {}) => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+        try {
+            const response = await fetch(`${API_BASE}${path}`, {
+                ...options,
+                signal: controller.signal
+            });
+
+            const data = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                let message = data.detail || data.message || "Request failed";
+                if (typeof message === "object") {
+                    message = JSON.stringify(message);
+                }
+                throw new Error(message);
+            }
+
+            return data;
+        } catch (error) {
+            if (error.name === "AbortError") {
+                throw new Error("Request timed out. Please try again.");
+            }
+            throw error;
+        } finally {
+            clearTimeout(timeoutId);
+        }
+    };
+
     Object.keys(navLinks).forEach(id => {
         document.getElementById(id).addEventListener("click", (e) => {
             e.preventDefault();
@@ -29,27 +70,58 @@ document.addEventListener("DOMContentLoaded", () => {
         });
     });
 
+    const navShortcutMap = {
+        "1": "nav-dashboard",
+        "2": "nav-generate",
+        "3": "nav-fixtures",
+        "4": "nav-athenizer",
+        "5": "nav-settings",
+    };
+
+    document.addEventListener("keydown", (event) => {
+        if (!event.altKey) {
+            return;
+        }
+        const navId = navShortcutMap[event.key];
+        if (!navId) {
+            return;
+        }
+        event.preventDefault();
+        switchView(navId);
+        if (navId === "nav-fixtures") {
+            loadAllFixtures();
+        }
+        document.getElementById(navId).focus();
+    });
+
     // Check backend status
-    fetch("http://127.0.0.1:8500/api/status")
-        .then(res => res.json())
+    fetchJSON("/api/status")
         .then(data => console.log("Backend Status:", data))
         .catch(err => console.error("Backend not running:", err));
 
     // Dynamic Leagues Loader
-    const MAJOR_LEAGUES = ["Premier League", "LaLiga", "Bundesliga", "Ligue 1", "Champions League", "Europa League", "Europa Conference League"];
+    const leaguesByDaysCache = new Map();
+    let leaguesLoadTimer = null;
 
     const loadLeagues = async (days) => {
+        const normalizedDays = Number.parseInt(days, 10) || 1;
         const container = document.getElementById("league-checkboxes");
-        container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">Loading leagues for next ${days} days...</span>`;
+        if (leaguesByDaysCache.has(normalizedDays)) {
+            container.innerHTML = leaguesByDaysCache.get(normalizedDays);
+            return;
+        }
+        container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">Loading leagues for next ${normalizedDays} days...</span>`;
         try {
-            const res = await fetch(`http://127.0.0.1:8500/api/leagues?days=${days}`);
-            const data = await res.json();
+            const data = await fetchJSON(`/api/leagues?days=${normalizedDays}`);
             if (data.leagues && data.leagues.length > 0) {
                 // Show ALL available leagues, but do not check any by default.
                 // The backend will handle priority leagues if none are selected.
-                container.innerHTML = data.leagues.map(l => {
-                    return `<label class="league-checkbox" style="display: inline-block; margin-right: 1rem; margin-bottom: 0.5rem;"><input type="checkbox" value="${l}"> ${l}</label>`;
+                const leaguesMarkup = data.leagues.map(l => {
+                    const safeLeague = escapeHtml(l);
+                    return `<label class="league-checkbox" style="display: inline-block; margin-right: 1rem; margin-bottom: 0.5rem;"><input type="checkbox" value="${safeLeague}"> ${safeLeague}</label>`;
                 }).join("");
+                leaguesByDaysCache.set(normalizedDays, leaguesMarkup);
+                container.innerHTML = leaguesMarkup;
             } else {
                 container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">No leagues found for this timeframe.</span>`;
             }
@@ -59,7 +131,9 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     document.getElementById("input-days").addEventListener("change", (e) => {
-        loadLeagues(e.target.value);
+        const value = e.target.value;
+        clearTimeout(leaguesLoadTimer);
+        leaguesLoadTimer = setTimeout(() => loadLeagues(value), 180);
     });
 
     let currentAccaData = null;
@@ -80,34 +154,29 @@ document.addEventListener("DOMContentLoaded", () => {
             resBox.innerHTML = `<span style="color: var(--text-muted);">Contacting ${bookie} servers...</span>`;
             
             try {
-                const response = await fetch("http://127.0.0.1:8500/api/export_code", {
+                const data = await fetchJSON("/api/export_code", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ bookmaker: bookie, acca_data: currentAccaData })
                 });
-
-                if (!response.ok) {
-                    const errData = await response.json();
-                    throw new Error(errData.detail || "Export failed");
-                }
-                
-                const data = await response.json();
                 const bookieName = document.getElementById("input-export-bookie").options[document.getElementById("input-export-bookie").selectedIndex].text;
                 const isUrl = data.code.startsWith("http://") || data.code.startsWith("https://");
+                const safeCode = escapeHtml(data.code);
+                const safeBookieName = escapeHtml(bookieName);
                 
                 resBox.innerHTML = `
                     <div style="padding: 1.25rem; background: rgba(0, 200, 81, 0.08); border: 1.5px solid var(--success); border-radius: 8px; text-align: center; margin-top: 1rem; box-shadow: 0 4px 15px rgba(0, 200, 81, 0.15);">
-                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px;">Generated ${bookieName} ${isUrl ? 'Bet Slip Link' : 'Booking Code'}</div>
+                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px;">Generated ${safeBookieName} ${isUrl ? 'Bet Slip Link' : 'Booking Code'}</div>
                         
                         <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 0.75rem 0;">
-                            <input id="generated-code-input" type="text" readonly value="${data.code}" style="width: 100%; max-width: 480px; padding: 0.6rem 1rem; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 1.1rem; font-weight: bold; color: #00e676; background: rgba(0,0,0,0.5); border: 1px solid var(--success); border-radius: 6px; text-align: center; user-select: all; outline: none;" />
+                            <input id="generated-code-input" type="text" readonly value="${safeCode}" style="width: 100%; max-width: 480px; padding: 0.6rem 1rem; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 1.1rem; font-weight: bold; color: #00e676; background: rgba(0,0,0,0.5); border: 1px solid var(--success); border-radius: 6px; text-align: center; user-select: all; outline: none;" />
                         </div>
                         
                         <div style="display: flex; justify-content: center; gap: 0.75rem; margin-top: 0.75rem;">
                             <button id="btn-copy-code" style="padding: 0.5rem 1.25rem; font-weight: bold; background: var(--success); color: #000; border: none; border-radius: 5px; cursor: pointer; transition: all 0.2s ease;">
                                 📋 Copy ${isUrl ? 'Link' : 'Code'}
                             </button>
-                            ${isUrl ? `<a href="${data.code}" target="_blank" style="padding: 0.5rem 1.25rem; font-weight: bold; background: rgba(255,255,255,0.1); color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; cursor: pointer;">🌐 Open in ${bookieName}</a>` : ''}
+                            ${isUrl ? `<a href="${safeCode}" target="_blank" rel="noopener noreferrer" style="padding: 0.5rem 1.25rem; font-weight: bold; background: rgba(255,255,255,0.1); color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; cursor: pointer;">🌐 Open in ${safeBookieName}</a>` : ''}
                         </div>
                     </div>
                 `;
@@ -148,6 +217,8 @@ document.addEventListener("DOMContentLoaded", () => {
 
     // --- FIXTURES LOGIC (FOTMOB STYLE) ---
     let globalFixtures = [];
+    let fixturesLoaded = false;
+    let fixturesInFlight = false;
 
     const renderDateSelector = () => {
         const selector = document.getElementById("fixture-date-selector");
@@ -195,13 +266,18 @@ document.addEventListener("DOMContentLoaded", () => {
 
         let html = "";
         for (const [league, matches] of Object.entries(grouped)) {
+            const safeLeague = escapeHtml(league || "Unknown League");
             html += `<div class="league-group">
-                        <h3><span style="font-size: 0.9em; filter: grayscale(1);">🌐</span> ${league}</h3>`;
+                        <h3><span style="font-size: 0.9em; filter: grayscale(1);">🌐</span> ${safeLeague}</h3>`;
             
             matches.forEach(m => {
                 const timeStr = m.status_string || new Date(m.match_date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
                 const homeLogo = `https://images.fotmob.com/image_resources/logo/teamlogo/${m.home_id}.png`;
                 const awayLogo = `https://images.fotmob.com/image_resources/logo/teamlogo/${m.away_id}.png`;
+                const safeHomeTeam = escapeHtml(m.home_team || "Home");
+                const safeAwayTeam = escapeHtml(m.away_team || "Away");
+                const homeInitials = safeHomeTeam.substring(0, 2).toUpperCase();
+                const awayInitials = safeAwayTeam.substring(0, 2).toUpperCase();
                 
                 let scoreText = "";
                 if (m.home_score !== undefined && m.home_score !== null && m.home_score !== "") {
@@ -213,12 +289,12 @@ document.addEventListener("DOMContentLoaded", () => {
                         <div class="match-time">${timeStr}</div>
                         <div class="match-teams">
                             <div class="team-row">
-                                <img src="${homeLogo}" class="team-logo-placeholder" onerror="this.outerHTML='<div style=\\'width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #000; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; margin-right: 8px;\\'>${m.home_team.substring(0,2).toUpperCase()}</div>'">
-                                <span class="team-name">${m.home_team}</span>
+                                <img src="${homeLogo}" class="team-logo-placeholder" onerror="this.outerHTML='<div style=\\'width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #000; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; margin-right: 8px;\\'>${homeInitials}</div>'">
+                                <span class="team-name">${safeHomeTeam}</span>
                             </div>
                             <div class="team-row">
-                                <img src="${awayLogo}" class="team-logo-placeholder" onerror="this.outerHTML='<div style=\\'width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #000; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; margin-right: 8px;\\'>${m.away_team.substring(0,2).toUpperCase()}</div>'">
-                                <span class="team-name">${m.away_team}</span>
+                                <img src="${awayLogo}" class="team-logo-placeholder" onerror="this.outerHTML='<div style=\\'width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #000; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; margin-right: 8px;\\'>${awayInitials}</div>'">
+                                <span class="team-name">${safeAwayTeam}</span>
                             </div>
                         </div>
                         ${scoreText}
@@ -231,26 +307,34 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const loadAllFixtures = async () => {
+        if (fixturesLoaded || fixturesInFlight) {
+            return;
+        }
+        fixturesInFlight = true;
         const container = document.getElementById("fixtures-container");
         container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--text-muted);">Loading live schedule... <div class="spinner" style="margin: 10px auto; width: 24px; height: 24px;"></div></div>`;
         try {
             // Fetch 7 days of fixtures at once
-            const res = await fetch(`http://127.0.0.1:8500/api/fixtures?days=7`);
-            const data = await res.json();
+            const data = await fetchJSON("/api/fixtures?days=7");
             if (data.fixtures) {
                 globalFixtures = data.fixtures;
+                fixturesLoaded = true;
                 // Render today's fixtures by default
                 const todayStr = new Date().toISOString().split('T')[0];
                 renderFixturesForDate(todayStr);
             }
         } catch(e) {
             container.innerHTML = `<div style="text-align: center; padding: 2rem; color: #ff4444;">Error loading schedule.</div>`;
+        } finally {
+            fixturesInFlight = false;
         }
     };
 
     // Initialize Fixtures view when clicking the nav
     document.getElementById("nav-fixtures").addEventListener("click", () => {
-        renderDateSelector();
+        if (!document.querySelector(".date-btn")) {
+            renderDateSelector();
+        }
         loadAllFixtures();
     });
 
@@ -274,24 +358,22 @@ document.addEventListener("DOMContentLoaded", () => {
     });
 
     const runVet = async () => {
-        const code = document.getElementById("input-vet-code").value;
+        const code = document.getElementById("input-vet-code").value.trim();
         const bookie = document.getElementById("input-vet-bookie").value;
         const results = document.getElementById("vet-results");
         
         if (!code) return alert("Please enter a booking code.");
 
         results.classList.remove("hidden");
-        results.innerHTML = `<p style="color: var(--text-muted);">Vetting ${bookie} slip: <strong>${code}</strong>...</p>
+        results.innerHTML = `<p style="color: var(--text-muted);">Vetting ${escapeHtml(bookie)} slip: <strong>${escapeHtml(code)}</strong>...</p>
                              <div class="spinner" style="width: 20px; height: 20px; margin-top: 10px;"></div>`;
         
         try {
-            const res = await fetch(`http://127.0.0.1:8500/api/athenizer/vet`, {
+            const data = await fetchJSON("/api/athenizer/vet", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bookmaker: bookie, booking_code: code })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Failed to process booking code.");
 
             let html = `<p style="color: var(--accent); font-weight: bold; margin-bottom: 1rem;">ATHENA Approval: ${data.athena_approval}</p>`;
             html += `<table style="width:100%; text-align: left; background: rgba(0,0,0,0.2); border-radius: 8px;">
@@ -317,7 +399,7 @@ document.addEventListener("DOMContentLoaded", () => {
     };
 
     const runSplit = async () => {
-        const code = document.getElementById("input-split-code").value;
+        const code = document.getElementById("input-split-code").value.trim();
         const bookie = document.getElementById("input-split-bookie").value;
         const parts = document.getElementById("input-split-parts").value;
         const results = document.getElementById("split-results");
@@ -328,13 +410,11 @@ document.addEventListener("DOMContentLoaded", () => {
         results.innerHTML = `<p style="color: var(--text-muted);">Splitting slip...</p><div class="spinner" style="width: 20px; height: 20px;"></div>`;
         
         try {
-            const res = await fetch(`http://127.0.0.1:8500/api/athenizer/split`, {
+            const data = await fetchJSON("/api/athenizer/split", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ bookmaker: bookie, booking_code: code, split_count: parseInt(parts) })
             });
-            const data = await res.json();
-            if (!res.ok) throw new Error(data.detail || "Failed to split.");
 
             let html = `<p style="color: var(--accent); font-weight: bold; margin-bottom: 1rem;">Successfully split into ${data.splits.length} parts.</p>`;
             data.splits.forEach((split, index) => {
@@ -355,12 +435,49 @@ document.addEventListener("DOMContentLoaded", () => {
     document.getElementById("btn-vet-slip").addEventListener("click", runVet);
     document.getElementById("btn-split-slip").addEventListener("click", runSplit);
     
-    // Merge placeholder
-    document.getElementById("btn-merge-slips").addEventListener("click", () => {
+    const runMerge = async () => {
+        const codes = document.getElementById("input-merge-codes").value
+            .split(",")
+            .map(code => code.trim())
+            .filter(Boolean);
+        const bookie = document.getElementById("input-merge-bookie").value;
         const results = document.getElementById("merge-results");
         results.classList.remove("hidden");
-        results.innerHTML = `<p style="color: #ff4444;">Merge capability is under construction.</p>`;
-    });
+        
+        if (codes.length < 2) {
+            results.innerHTML = `<p style="color: #ff4444;">Enter at least two booking codes, separated by commas.</p>`;
+            return;
+        }
+
+        results.innerHTML = `<p style="color: var(--text-muted);">Merging ${codes.length} booking codes...</p><div class="spinner" style="width: 20px; height: 20px;"></div>`;
+
+        try {
+            const data = await fetchJSON("/api/athenizer/merge", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ bookmaker: bookie, booking_codes: codes })
+            });
+
+            let html = `
+                <p style="color: var(--accent); font-weight: bold; margin-bottom: 1rem;">
+                    Merged ${data.codes_merged} slips into ${data.legs.length} unique legs (Est. odds: ${data.total_estimated_odds}x).
+                </p>
+                <div style="max-height: 280px; overflow-y: auto; border: 1px solid var(--glass-border); border-radius: 8px; padding: 0.75rem;">
+            `;
+            data.legs.forEach(leg => {
+                html += `<div style="font-size: 0.9rem; padding: 0.45rem 0; border-bottom: 1px solid rgba(255,255,255,0.06);">
+                            <strong>${escapeHtml(leg.fixture)}</strong> — ${escapeHtml(leg.market)}: ${escapeHtml(leg.selection)}
+                            <span style="color: var(--accent);">(${leg.odds ?? "-"})</span>
+                         </div>`;
+            });
+            html += `</div>`;
+            results.innerHTML = html;
+        } catch (e) {
+            results.innerHTML = `<p style="color: #ff4444;">Error: ${escapeHtml(e.message)}</p>`;
+        }
+    };
+
+    document.getElementById("btn-merge-slips").addEventListener("click", runMerge);
 
     const recentSlips = [];
     const renderRecentSlips = () => {
@@ -392,22 +509,13 @@ document.addEventListener("DOMContentLoaded", () => {
         accaBody.innerHTML = "";
 
         try {
-            const response = await fetch("http://127.0.0.1:8500/api/generate", {
+            const data = await fetchJSON("/api/generate", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({ days, folds, strict, league })
             });
-
-            if (!response.ok) {
-                const errData = await response.json();
-                let errMsg = errData.detail || "Generation failed";
-                if (typeof errMsg === 'object') errMsg = JSON.stringify(errMsg);
-                throw new Error(errMsg);
-            }
-
-            const data = await response.json();
             currentAccaData = data;
             
             recentSlips.unshift({

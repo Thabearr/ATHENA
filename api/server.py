@@ -1,6 +1,6 @@
 import os
 import sys
-import os
+import time
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from fastapi import FastAPI, HTTPException, Query
@@ -24,6 +24,22 @@ app.include_router(athenizer_router)
 
 from typing import Optional
 
+_CACHE_TTL_SECONDS = 300
+_fixtures_cache = {}
+
+
+def _get_cached_fixtures(days: int):
+    cache_key = f"days:{days}"
+    now = time.time()
+    cached = _fixtures_cache.get(cache_key)
+    if cached and now - cached["timestamp"] < _CACHE_TTL_SECONDS:
+        return cached["data"]
+
+    scraper = FotMobAdvancedScraper()
+    matches = scraper.fetch_upcoming_matches(days_ahead=days)
+    _fixtures_cache[cache_key] = {"timestamp": now, "data": matches}
+    return matches
+
 class GenerateRequest(BaseModel):
     days: int = 1
     folds: int = 20
@@ -45,8 +61,7 @@ def get_status():
 def get_available_leagues(days: int = Query(1, ge=1, le=14)):
     """Fetch unique leagues available in the upcoming days."""
     try:
-        scraper = FotMobAdvancedScraper()
-        matches = scraper.fetch_upcoming_matches(days_ahead=days)
+        matches = _get_cached_fixtures(days)
         
         # Extract unique leagues
         leagues = sorted(list(set([m['league'] for m in matches if m.get('league')])))
@@ -58,8 +73,7 @@ def get_available_leagues(days: int = Query(1, ge=1, le=14)):
 def get_upcoming_fixtures(days: int = Query(1, ge=1, le=14)):
     """Fetch raw upcoming fixtures for the next N days."""
     try:
-        scraper = FotMobAdvancedScraper()
-        matches = scraper.fetch_upcoming_matches(days_ahead=days)
+        matches = _get_cached_fixtures(days)
         return {"fixtures": matches}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
