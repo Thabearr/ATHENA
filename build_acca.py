@@ -55,6 +55,7 @@ class AccaBuilder:
         self.days_ahead = min(days_ahead, 7)  # Enforce 7-day max
         self.min_edge = min_edge
         self.db = Database()
+        self.db.initialize()
         
         # Initialize data loaders
         self.fotmob_scraper = FotMobAdvancedScraper()

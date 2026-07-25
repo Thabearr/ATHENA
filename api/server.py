@@ -78,6 +78,8 @@ def generate_acca(req: GenerateRequest):
         if not acca.get("success"):
             raise HTTPException(status_code=400, detail=acca.get("error", "Generation failed"))
         return acca
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -95,6 +97,8 @@ def export_booking_code(req: ExportRequest):
         if not code or "NO_LEGS" in code or "UNSUPPORTED" in code:
             raise HTTPException(status_code=400, detail=code)
         return {"success": True, "code": code}
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
