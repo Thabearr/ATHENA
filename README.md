@@ -36,7 +36,7 @@ Unlike simple odds-comparison tools, ATHENA runs a **multi-engine intelligence p
 - **10+ Analytical Engines** running in parallel: Form, Fatigue, Motivation, Weather, Injuries, Referee, H2H, Venue, League Strength, Correlation
 - **Smart Accumulator Builder** with configurable fold count, minimum edge thresholds, and market diversity
 - **Risk Assessment System** with upset alerts, stale-data warnings, and confidence scoring
-- **Sleek Desktop UI** powered by FastAPI, Vue/JS, and Pywebview for local interactive generation
+- **Sleek Desktop UI** powered by FastAPI, Vanilla JS, and Pywebview for local interactive generation
 - **Daily Automation** via GitHub Actions with HTML email notifications
 
 ---
@@ -151,6 +151,11 @@ The easiest way to generate accumulators and interact with the engine is via the
 ```bash
 python run_desktop.py
 ```
+
+Desktop notes:
+- Fixture and league responses are cached server-side for faster repeated navigation.
+- Athenizer now supports **Optimize**, **Split**, and **Merge** booking-code workflows.
+- Navigation keyboard shortcuts are available with `Alt+1..5`.
 
 ### Generate Accumulators via CLI
 

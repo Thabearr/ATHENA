@@ -94,3 +94,33 @@ class BettingService:
         # Simplistic split for now
         chunk_size = max(1, len(legs) // split_count)
         return [legs[i:i + chunk_size] for i in range(0, len(legs), chunk_size)]
+
+    def merge_slips(self, slips: list[dict]) -> dict:
+        """Merge multiple vetted slips into one de-duplicated ticket."""
+        merged_legs = []
+        seen = set()
+
+        for slip in slips:
+            for leg in slip.get("legs", []):
+                key = (
+                    leg.get("fixture"),
+                    leg.get("market"),
+                    leg.get("selection"),
+                )
+                if key in seen:
+                    continue
+                seen.add(key)
+                merged_legs.append(leg)
+
+        total_odds = 1.0
+        for leg in merged_legs:
+            odds = leg.get("odds")
+            if isinstance(odds, (int, float)) and odds > 0:
+                total_odds *= odds
+
+        return {
+            "bookmaker": slips[0].get("bookmaker") if slips else "",
+            "codes_merged": len(slips),
+            "legs": merged_legs,
+            "total_estimated_odds": round(total_odds, 2) if merged_legs else 0.0
+        }
