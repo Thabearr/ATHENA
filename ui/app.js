@@ -104,14 +104,15 @@ document.addEventListener("DOMContentLoaded", () => {
     let leaguesLoadTimer = null;
 
     const loadLeagues = async (days) => {
+        const normalizedDays = Number.parseInt(days, 10) || 1;
         const container = document.getElementById("league-checkboxes");
-        if (leaguesByDaysCache.has(days)) {
-            container.innerHTML = leaguesByDaysCache.get(days);
+        if (leaguesByDaysCache.has(normalizedDays)) {
+            container.innerHTML = leaguesByDaysCache.get(normalizedDays);
             return;
         }
-        container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">Loading leagues for next ${days} days...</span>`;
+        container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">Loading leagues for next ${normalizedDays} days...</span>`;
         try {
-            const data = await fetchJSON(`/api/leagues?days=${days}`);
+            const data = await fetchJSON(`/api/leagues?days=${normalizedDays}`);
             if (data.leagues && data.leagues.length > 0) {
                 // Show ALL available leagues, but do not check any by default.
                 // The backend will handle priority leagues if none are selected.
@@ -119,7 +120,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     const safeLeague = escapeHtml(l);
                     return `<label class="league-checkbox" style="display: inline-block; margin-right: 1rem; margin-bottom: 0.5rem;"><input type="checkbox" value="${safeLeague}"> ${safeLeague}</label>`;
                 }).join("");
-                leaguesByDaysCache.set(days, leaguesMarkup);
+                leaguesByDaysCache.set(normalizedDays, leaguesMarkup);
                 container.innerHTML = leaguesMarkup;
             } else {
                 container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">No leagues found for this timeframe.</span>`;
@@ -364,7 +365,7 @@ document.addEventListener("DOMContentLoaded", () => {
         if (!code) return alert("Please enter a booking code.");
 
         results.classList.remove("hidden");
-        results.innerHTML = `<p style="color: var(--text-muted);">Vetting ${bookie} slip: <strong>${code}</strong>...</p>
+        results.innerHTML = `<p style="color: var(--text-muted);">Vetting ${escapeHtml(bookie)} slip: <strong>${escapeHtml(code)}</strong>...</p>
                              <div class="spinner" style="width: 20px; height: 20px; margin-top: 10px;"></div>`;
         
         try {
