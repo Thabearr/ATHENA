@@ -114,13 +114,7 @@ class MatchAnalyst:
             return 1.0 if actual_goals == 0 else 0.0
         return math.exp(-expected_goals) * (expected_goals ** actual_goals) / math.factorial(actual_goals)
 
-    def _get_team_strength_seed(self, team_name: str) -> float:
-        """
-        Generate a deterministic but diverse team strength factor (0.8 to 1.2)
-        based on team name hash when we have no historical data.
-        """
-        hash_val = int(hashlib.md5(team_name.encode()).hexdigest(), 16)
-        return 0.8 + ((hash_val % 41) / 100.0)
+
 
     def _assess_upset_risk(self, prob_home_win: float, prob_away_win: float,
                             fatigue_diff: float, referee_signal: dict,
@@ -271,6 +265,12 @@ class MatchAnalyst:
             # Use ML expected goals if available
             ml_xg = ml_preds["expected_total_goals"]
             expected_goals = (lambda_val + mu_val + ml_xg) / 2
+            
+            # Blend explicit ML market classifiers if they exist
+            if ml_preds.get("btts_yes") is not None:
+                prob_gg = (prob_gg + ml_preds["btts_yes"]) / 2
+            if ml_preds.get("over_25") is not None:
+                prob_over_25 = (prob_over_25 + ml_preds["over_25"]) / 2
         else:
             expected_goals = lambda_val + mu_val
             
@@ -278,10 +278,18 @@ class MatchAnalyst:
         prob_over_15 = 1.0 - (self._calculate_poisson_probability(0, expected_goals) + self._calculate_poisson_probability(1, expected_goals))
 
         is_backtest = fixture_context.get('is_backtest', False)
+        stale_data = avg_live_ratio < 0.60 and not is_backtest
+        
+        # Default heuristic risk
         risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio, is_backtest)
         risk_score = risk_assessment["risk_score"]
         upset_alert = risk_assessment["upset_alert"]
-        stale_data = risk_assessment["stale_data"]
+        
+        # Override with Confidence Meta-Model if available
+        if ml_preds and ml_preds.get("reliability_score") is not None:
+            reliability = ml_preds["reliability_score"]
+            risk_score = (1.0 - reliability) * 100
+            upset_alert = reliability < 0.50 # Adjusted ML confidence threshold to align with 50% base rate
 
         # --- COMPREHENSIVE MARKET PROBABILITY CALCULATIONS ---
         prob_over_05 = 1.0 - score_matrix.get((0, 0), 0.0)
@@ -295,6 +303,12 @@ class MatchAnalyst:
         prob_away_plus_1_5 = prob_away_win + prob_draw + sum(
             score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a == 1
         )
+        
+        # Blend explicit ML Handicap classifiers if they exist
+        if ml_preds and ml_preds.get("ah_home_plus_15") is not None:
+            prob_home_plus_1_5 = (prob_home_plus_1_5 + ml_preds["ah_home_plus_15"]) / 2
+        if ml_preds and ml_preds.get("ah_away_plus_15") is not None:
+            prob_away_plus_1_5 = (prob_away_plus_1_5 + ml_preds["ah_away_plus_15"]) / 2
 
         prob_home_plus_2_5 = prob_home_win + prob_draw + sum(
             score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h in [1, 2]
@@ -355,8 +369,10 @@ class MatchAnalyst:
         # 1X2 Early Payout
         if prob_home_win >= 0.48:
             all_market_probs["1X2_2UP_HOME"] = prob_home_win
+            all_market_probs["1X2_1UP_HOME"] = prob_home_win
         if prob_away_win >= 0.48:
             all_market_probs["1X2_2UP_AWAY"] = prob_away_win
+            all_market_probs["1X2_1UP_AWAY"] = prob_away_win
 
         # --- ARCHETYPE ENGINE ---
         # Classify the match state and boost specific variance-reducing markets
@@ -370,12 +386,15 @@ class MatchAnalyst:
             archetype_boosts["AWAY_OR_OVER_25"] = 0.15
             archetype_boosts["HOME_OR_OVER_25"] = 0.15
             archetype_boosts["GG_YES"] = 0.10
+            archetype_boosts["OVER_25"] = 0.15
             
         # 2. Heavy Dominance / Fast Starters
         if lambda_val > 2.2 and home_elo > away_elo + 250:
             archetype_boosts["1X2_2UP_HOME"] = 0.20
+            archetype_boosts["1X2_1UP_HOME"] = 0.25
         elif mu_val > 2.2 and away_elo > home_elo + 250:
             archetype_boosts["1X2_2UP_AWAY"] = 0.20
+            archetype_boosts["1X2_1UP_AWAY"] = 0.25
             
         # 3. Heavy Dominance / Congested Schedule (Fatigue)
         if elo_diff > 250 and fatigue_diff > 0.05:
@@ -387,8 +406,8 @@ class MatchAnalyst:
                 archetype_boosts["AWAY_WIN_TO_NIL_YES"] = 0.15
                 
         # 4. Low Event / Tactical Stalemate
-        if total_xg < 2.2 and is_knockout:
-            archetype_boosts["UNDER_25"] = 0.20
+        if total_xg < 2.2:
+            archetype_boosts["UNDER_25"] = 0.25
             archetype_boosts["UNDER_35"] = 0.15
             archetype_boosts["DNB_HOME"] = 0.18
             archetype_boosts["DNB_AWAY"] = 0.18
@@ -405,12 +424,14 @@ class MatchAnalyst:
             if prob_home_win > prob_away_win:
                 # Home is heavily favored but vulnerable! Pivot to Away underdog options.
                 archetype_boosts["DC_X2"] = 0.25
-                archetype_boosts["AH_AWAY_PLUS_15"] = 0.20
+                archetype_boosts["DNB_AWAY"] = 0.20
+                archetype_boosts["AH_AWAY_PLUS_15"] = 0.25
                 archetype_boosts["AH_AWAY_PLUS_25"] = 0.15
             else:
                 # Away is heavily favored but vulnerable! Pivot to Home underdog options.
                 archetype_boosts["DC_1X"] = 0.25
-                archetype_boosts["AH_HOME_PLUS_15"] = 0.20
+                archetype_boosts["DNB_HOME"] = 0.20
+                archetype_boosts["AH_HOME_PLUS_15"] = 0.25
                 archetype_boosts["AH_HOME_PLUS_25"] = 0.15
 
         # Minimum probability threshold per fixture to be considered viable
@@ -454,6 +475,12 @@ class MatchAnalyst:
                 "edge_above_baseline": 0.01,
                 "category": "DOUBLE_CHANCE",
             })
+            
+        # Model F: Confidence Meta-Model Hard Filter
+        # If the ML Meta-Model flags this as an Upset Risk (Reliability < 50%),
+        # we set upset_alert to True. The AccaFilter will reject this fixture in strict mode,
+        # but we preserve the viable markets so that fallback (no-strict) mode works properly.
+        # (Removed the early return that was overriding the verdict to NO_BET)
 
         best_market = viable_markets[0]
 

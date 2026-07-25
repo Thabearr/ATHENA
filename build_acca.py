@@ -251,14 +251,9 @@ class AccaBuilder:
             if not db_fixtures:
                 return {"success": False, "error": f"No fixtures found for league: {league}"}
         else:
-            PRIORITY_LEAGUES = ["premier league", "laliga", "bundesliga", "ligue 1", "champions league", "europa league", "europa conference league", "major league soccer"]
-            db_fixtures = [
-                f for f in db_fixtures 
-                if f.get("league", "").lower() in PRIORITY_LEAGUES
-            ]
-            console.print(f"[cyan]🎯 Priority League filter (Default): {len(db_fixtures)} fixtures remaining[/cyan]")
+            console.print(f"[cyan]🎯 All Leagues Mode: {len(db_fixtures)} fixtures loaded (will be prioritized by Tier hierarchy)[/cyan]")
             if not db_fixtures:
-                return {"success": False, "error": f"No priority league fixtures found. Please manually select leagues from the list."}
+                return {"success": False, "error": f"No fixtures found."}
         
         # Step 3: Analyze all fixtures
         console.print("[cyan]Analyzing fixtures...[/cyan]")
@@ -276,39 +271,9 @@ class AccaBuilder:
         single_league_mode = bool(league)
         eligible_matches = self.acca_filter.build_filtered_acca(ranked_legs, target_size=fold_size, single_league=single_league_mode)
         
-        if not strict and len(eligible_matches) < fold_size:
-            # Pad with next best matches to hit fold_size
-            used_fixtures = {m.get('fixture', '') for m in eligible_matches}
-            used_teams = set()
-            for m in eligible_matches:
-                used_teams.add(m.get('home_team', ''))
-                used_teams.add(m.get('away_team', ''))
-            
-            remaining = [
-                m for m in all_analyzed 
-                if m.get('fixture', '') not in used_fixtures
-                and m.get('home_team', '') not in used_teams
-                and m.get('away_team', '') not in used_teams
-            ]
-            
-            # Sort remaining by edge (best value first)
-            remaining.sort(key=lambda x: x.get('edge', 0), reverse=True)
-            
-            needed = fold_size - len(eligible_matches)
-            # Add remaining without creating team duplicates
-            added = 0
-            for m in remaining:
-                if added >= needed:
-                    break
-                home = m.get('home_team', '')
-                away = m.get('away_team', '')
-                if home not in used_teams and away not in used_teams:
-                    eligible_matches.append(m)
-                    used_teams.add(home)
-                    used_teams.add(away)
-                    added += 1
-            
-            console.print(f"[yellow]⚠️  Strict mode OFF: Added {added} additional fixtures to meet fold size.[/yellow]")
+        # Removed the arbitrary non-strict padding block here.
+        # AccaFilter now handles graceful fallback automatically by sorting and selecting
+        # from Tier 1 -> Tier 4 sequentially until target fold_size is met.
         
         if len(eligible_matches) < fold_size:
             console.print(

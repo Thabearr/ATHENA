@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+import logging
 from database.database import Database
 
 # Import market category mapping from match_analyst
@@ -118,7 +119,7 @@ class CorrelationAnalyzer:
                             intensity = derby[0]
                             penalty -= 0.15 * intensity
             except Exception as e:
-                pass
+                logging.getLogger("athena.correlation_analyzer").error(f"Failed to calculate derby correlation: {e}")
         
         return penalty
 

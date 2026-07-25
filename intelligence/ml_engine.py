@@ -14,15 +14,37 @@ class MLEngine:
         self.db = Database()
         self.clf = None
         self.reg = None
+        self.btts_clf = None
+        self.o25_clf = None
+        self.conf_clf = None
+        self.ah_home_clf = None
+        self.ah_away_clf = None
         self._load_models()
         
     def _load_models(self):
         clf_path = os.path.join(MODEL_DIR, 'outcome_model.joblib')
         reg_path = os.path.join(MODEL_DIR, 'goals_model.joblib')
+        btts_path = os.path.join(MODEL_DIR, 'btts_model.joblib')
+        o25_path = os.path.join(MODEL_DIR, 'over25_model.joblib')
+        conf_path = os.path.join(MODEL_DIR, 'confidence_model.joblib')
         
         if os.path.exists(clf_path) and os.path.exists(reg_path):
             self.clf = joblib.load(clf_path)
             self.reg = joblib.load(reg_path)
+            if os.path.exists(btts_path):
+                self.btts_clf = joblib.load(btts_path)
+            if os.path.exists(o25_path):
+                self.o25_clf = joblib.load(o25_path)
+            if os.path.exists(conf_path):
+                self.conf_clf = joblib.load(conf_path)
+                
+            ah_home_path = os.path.join(MODEL_DIR, 'ah_home_model.joblib')
+            ah_away_path = os.path.join(MODEL_DIR, 'ah_away_model.joblib')
+            if os.path.exists(ah_home_path):
+                self.ah_home_clf = joblib.load(ah_home_path)
+            if os.path.exists(ah_away_path):
+                self.ah_away_clf = joblib.load(ah_away_path)
+                
             logger.info("Loaded ML models successfully.")
         else:
             logger.warning("ML models not found. Run tools/train_model.py to train them. Falling back to heuristic only.")
@@ -144,7 +166,47 @@ class MLEngine:
                 
         expected_goals = self.reg.predict(X)[0]
         
+        btts_prob = None
+        if self.btts_clf:
+            btts_probs = self.btts_clf.predict_proba(X)[0]
+            for i, c in enumerate(self.btts_clf.classes_):
+                if c == 1:
+                    btts_prob = btts_probs[i]
+                    
+        o25_prob = None
+        if self.o25_clf:
+            o25_probs = self.o25_clf.predict_proba(X)[0]
+            for i, c in enumerate(self.o25_clf.classes_):
+                if c == 1:
+                    o25_prob = o25_probs[i]
+                    
+        reliability_score = None
+        if self.conf_clf:
+            conf_probs = self.conf_clf.predict_proba(X)[0]
+            for i, c in enumerate(self.conf_clf.classes_):
+                if c == 1:
+                    reliability_score = conf_probs[i]
+                    
+        ah_home_prob = None
+        if self.ah_home_clf:
+            ah_probs = self.ah_home_clf.predict_proba(X)[0]
+            for i, c in enumerate(self.ah_home_clf.classes_):
+                if c == 1:
+                    ah_home_prob = ah_probs[i]
+                    
+        ah_away_prob = None
+        if self.ah_away_clf:
+            ah_probs = self.ah_away_clf.predict_proba(X)[0]
+            for i, c in enumerate(self.ah_away_clf.classes_):
+                if c == 1:
+                    ah_away_prob = ah_probs[i]
+        
         return {
             "probabilities": prob_dict,
-            "expected_total_goals": expected_goals
+            "expected_total_goals": expected_goals,
+            "btts_yes": btts_prob,
+            "over_25": o25_prob,
+            "reliability_score": reliability_score,
+            "ah_home_plus_15": ah_home_prob,
+            "ah_away_plus_15": ah_away_prob
         }

@@ -13,7 +13,7 @@ import requests
 import time
 from datetime import datetime, timedelta
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 # All target league IDs (domestic + UEFA)
 TARGET_LEAGUE_IDS = {

@@ -2,6 +2,8 @@ from typing import List, Dict, Any
 from intelligence.correlation_analyzer import CorrelationAnalyzer
 from intelligence.match_analyst import MARKET_CATEGORIES
 from config.league_priority import get_league_tier
+from services.nlp_engine import NLPEngine
+from loguru import logger
 
 
 class AccaFilter:
@@ -15,6 +17,7 @@ class AccaFilter:
 
     def __init__(self):
         self.correlation_analyzer = CorrelationAnalyzer()
+        self.nlp_engine = NLPEngine()
 
     def filter_and_rank_legs(self, analyzed_matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
@@ -87,7 +90,38 @@ class AccaFilter:
             if league_counts.get(league, 0) >= max_per_league:
                 continue
 
-            # 3. Get viable markets for this fixture
+            # 3. Real-time NLP Web Search for late-breaking news
+            try:
+                nlp_data = self.nlp_engine.analyze_fixture(home_team, away_team)
+                
+                # Check for critical injuries/absences that ruin predictability
+                if nlp_data.get("absence_risk", 0) >= 20:
+                    logger.warning(f"🚨 NLP FATAL RISK: {home_team} vs {away_team} flagged for heavy injuries. Skipping fixture.")
+                    continue
+                # Apply Contextual Penalties (Fatigue & Pressure)
+                fatigue = nlp_data.get("fatigue_score", 0)
+                pressure = nlp_data.get("pressure_score", 0)
+                if fatigue > 10:
+                    leg['risk_score'] = leg.get('risk_score', 0) + fatigue
+                    logger.warning(f"⚠️ NLP Fatigue flagged for {home_team} vs {away_team} (+{fatigue} risk)")
+                if pressure > 10:
+                    leg['risk_score'] = leg.get('risk_score', 0) + (pressure / 2)
+                    
+                # Apply Contextual Boosts (Motivation)
+                motivation = nlp_data.get("motivation_score", 0)
+                if motivation > 5:
+                    leg['risk_score'] = max(0, leg.get('risk_score', 0) - (motivation / 2))
+                    logger.info(f"🔥 NLP Motivation Boost for {home_team} vs {away_team} (-{motivation/2} risk)")
+
+                # We can store the nlp_edge to boost market edge later
+                # We boost edge further if highly motivated
+                nlp_edge_boost = nlp_data.get("nlp_edge", 0.0) + (motivation * 0.01)
+                
+            except Exception as e:
+                logger.error(f"NLP Engine failed for {home_team} vs {away_team}: {e}")
+                nlp_edge_boost = 0.0
+
+            # 4. Get viable markets for this fixture
             viable_markets = leg.get('viable_markets', [])
             if not viable_markets:
                 viable_markets = [{'verdict': leg.get('verdict'), 'edge': leg.get('edge', 0.05), 'category': 'OTHER'}]
@@ -103,8 +137,10 @@ class AccaFilter:
                 # Primary: how close to cap (lower = more room = preferred)
                 fill_ratio = current_count / max(cap, 1)
                 # Secondary: edge above baseline (higher = preferred, so negate)
-                edge = m.get('edge_above_baseline', m.get('edge', 0.0))
-                return (fill_ratio, -edge)
+                # Apply the real-time NLP edge boost to the edge
+                base_edge = m.get('edge_above_baseline', m.get('edge', 0.0))
+                total_edge = base_edge + nlp_edge_boost
+                return (fill_ratio, -total_edge)
 
             sorted_markets = sorted(viable_markets, key=market_diversity_key)
 

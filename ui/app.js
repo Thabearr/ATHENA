@@ -51,7 +51,7 @@ document.addEventListener("DOMContentLoaded", () => {
                     return `<label class="league-checkbox" style="display: inline-block; margin-right: 1rem; margin-bottom: 0.5rem;"><input type="checkbox" value="${l}"> ${l}</label>`;
                 }).join("");
             } else {
-                container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">No leagues found.</span>`;
+                container.innerHTML = `<span style="color: var(--text-muted); font-size: 0.8rem; padding: 1rem;">No leagues found for this timeframe.</span>`;
             }
         } catch (e) {
             container.innerHTML = `<span style="color: #ff4444; font-size: 0.8rem; padding: 1rem;">Error loading leagues.</span>`;
@@ -213,11 +213,11 @@ document.addEventListener("DOMContentLoaded", () => {
                         <div class="match-time">${timeStr}</div>
                         <div class="match-teams">
                             <div class="team-row">
-                                <img src="${homeLogo}" class="team-logo-placeholder" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\'></svg>'">
+                                <img src="${homeLogo}" class="team-logo-placeholder" onerror="this.outerHTML='<div style=\\'width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #000; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; margin-right: 8px;\\'>${m.home_team.substring(0,2).toUpperCase()}</div>'">
                                 <span class="team-name">${m.home_team}</span>
                             </div>
                             <div class="team-row">
-                                <img src="${awayLogo}" class="team-logo-placeholder" onerror="this.src='data:image/svg+xml;utf8,<svg xmlns=\\'http://www.w3.org/2000/svg\\'></svg>'">
+                                <img src="${awayLogo}" class="team-logo-placeholder" onerror="this.outerHTML='<div style=\\'width: 20px; height: 20px; border-radius: 50%; background: var(--accent); color: #000; display: inline-flex; align-items: center; justify-content: center; font-size: 10px; font-weight: bold; margin-right: 8px;\\'>${m.away_team.substring(0,2).toUpperCase()}</div>'">
                                 <span class="team-name">${m.away_team}</span>
                             </div>
                         </div>
@@ -362,6 +362,19 @@ document.addEventListener("DOMContentLoaded", () => {
         results.innerHTML = `<p style="color: #ff4444;">Merge capability is under construction.</p>`;
     });
 
+    const recentSlips = [];
+    const renderRecentSlips = () => {
+        const container = document.getElementById("dashboard-recent-slips");
+        if (recentSlips.length === 0) return;
+        
+        container.innerHTML = recentSlips.map(s => `
+            <div style="background: rgba(0,0,0,0.2); padding: 1rem; border-radius: 8px; margin-bottom: 0.5rem; border: 1px solid var(--glass-border);">
+                <span style="color: var(--text-muted); font-size: 0.85rem;">${s.time}</span> - 
+                <strong>${s.legs} Fold</strong> @ <span style="color: var(--accent);">${s.odds ? s.odds.toFixed(2) + 'x' : 'N/A'}</span>
+            </div>
+        `).join("");
+    };
+
     // Generate Acca Logic
     btnGenerate.addEventListener("click", async () => {
         const days = parseInt(document.getElementById("input-days").value);
@@ -397,8 +410,18 @@ document.addEventListener("DOMContentLoaded", () => {
             const data = await response.json();
             currentAccaData = data;
             
+            recentSlips.unshift({
+                time: new Date().toLocaleTimeString(),
+                odds: data.total_estimated_odds,
+                legs: data.legs ? data.legs.length : 0
+            });
+            if (recentSlips.length > 10) recentSlips.pop();
+            renderRecentSlips();
+            
             // Populate Results
-            statEdge.innerText = data.total_edge ? data.total_edge.toFixed(2) + "x" : "N/A";
+            statEdge.innerText = data.total_estimated_odds ? data.total_estimated_odds.toFixed(2) + "x" : "N/A";
+            document.getElementById("stat-stake").innerText = data.kelly_stake_pct ? data.kelly_stake_pct.toFixed(1) + "%" : "0.0%";
+            document.getElementById("stat-risk").innerText = data.diversification_score ? data.diversification_score.toFixed(2) : "0.00";
             statLegs.innerText = data.legs ? data.legs.length : "0";
 
             if (data.legs && data.legs.length > 0) {
@@ -419,14 +442,26 @@ document.addEventListener("DOMContentLoaded", () => {
                     tdSelection.style.color = "var(--accent)";
                     tdSelection.style.fontWeight = "bold";
 
+                    const tdOdds = document.createElement("td");
+                    tdOdds.innerText = leg.odds ? leg.odds.toFixed(2) + "x" : "-";
+
                     const tdEdge = document.createElement("td");
-                    tdEdge.innerText = leg.edge ? leg.edge.toFixed(2) + "x" : "-";
+                    tdEdge.innerText = leg.edge ? "+" + (leg.edge * 100).toFixed(1) + "%" : "-";
+
+                    const tdRisk = document.createElement("td");
+                    let rColor = "var(--success)";
+                    let rNum = leg.risk_score || 0;
+                    if (rNum > 30) rColor = "#ffeb3b";
+                    if (rNum > 60) rColor = "#ff4444";
+                    tdRisk.innerHTML = `<span style="background: ${rColor}; color: #000; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.85em;">${rNum.toFixed(0)}</span>`;
 
                     tr.appendChild(tdMatchDate);
                     tr.appendChild(tdLeague);
                     tr.appendChild(tdFixture);
                     tr.appendChild(tdSelection);
+                    tr.appendChild(tdOdds);
                     tr.appendChild(tdEdge);
+                    tr.appendChild(tdRisk);
                     accaBody.appendChild(tr);
                 });
                 
@@ -434,7 +469,7 @@ document.addEventListener("DOMContentLoaded", () => {
             } else {
                 const tr = document.createElement("tr");
                 const td = document.createElement("td");
-                td.colSpan = 5;
+                td.colSpan = 7;
                 td.innerText = "No eligible fixtures found matching criteria.";
                 td.style.textAlign = "center";
                 tr.appendChild(td);
@@ -443,7 +478,9 @@ document.addEventListener("DOMContentLoaded", () => {
 
             resultsArea.classList.remove("hidden");
         } catch (error) {
-            alert("Error: " + error.message);
+            accaBody.innerHTML = `<tr><td colspan="7" style="text-align: center; color: #ff4444; padding: 2rem;">Error: ${error.message}</td></tr>`;
+            resultsArea.classList.remove("hidden");
+            document.getElementById("acca-generate-code-container").classList.add("hidden");
         } finally {
             loader.classList.add("hidden");
         }

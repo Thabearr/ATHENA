@@ -21,7 +21,7 @@
                 <a href="#" id="nav-generate"><i class="icon">⚡</i> Acca Builder</a>
                 <a href="#" class="active" id="nav-fixtures"><i class="icon">📅</i> Fixtures</a>
                 <a href="#" id="nav-athenizer"><i class="icon">🔍</i> Athenizer</a>
-                <a href="#" id="nav-settings"><i class="icon">⚙️</i> Model Tuning</a>
+                <a href="#" id="nav-settings"><i class="icon">⚙️</i> Engine Status</a>
             </nav>
             <div class="status-panel">
                 <div class="status-indicator"></div>
@@ -32,7 +32,7 @@
         <!-- Main Content -->
         <main class="content">
             <!-- Acca Builder View -->
-            <div id="view-generate" class="page-view active">
+            <div id="view-generate" class="page-view">
                 <header>
                     <h2>Accumulator Builder</h2>
                     <p>Generate high-confidence slips using the Fullproof strategy.</p>
@@ -68,7 +68,9 @@
                 <div class="results-header">
                     <h3>Generated Slip</h3>
                     <div class="stats-pills">
-                        <span class="pill">Edge: <strong id="stat-edge">0.00x</strong></span>
+                        <span class="pill">Odds: <strong id="stat-edge">0.00x</strong></span>
+                        <span class="pill">Stake: <strong id="stat-stake">0.0%</strong></span>
+                        <span class="pill">Risk: <strong id="stat-risk">0.00</strong></span>
                         <span class="pill">Legs: <strong id="stat-legs">0</strong></span>
                     </div>
                 </div>
@@ -81,11 +83,13 @@
                                 <th>League</th>
                                 <th>Fixture</th>
                                 <th>Pick</th>
+                                <th>Odds</th>
                                 <th>Edge</th>
+                                <th>Risk</th>
                             </tr>
                         </thead>
                         <tbody id="acca-body">
-                            <tr><td colspan="5" style="text-align: center;">Ready to generate.</td></tr>
+                            <tr><td colspan="7" style="text-align: center;">Ready to generate.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -264,10 +268,10 @@
                 </div>
             </div>
 
-            <!-- Model Tuning View -->
+            <!-- Engine Status View -->
             <div id="view-settings" class="page-view">
                 <header>
-                    <h2>Model Tuning</h2>
+                    <h2>Engine Status</h2>
                     <p>ATHENA's internal optimization parameters.</p>
                 </header>
                 <div class="glass-panel">
@@ -285,11 +289,18 @@
                     <h2>Dashboard</h2>
                     <p>High-level metrics and system health.</p>
                 </header>
-                <div class="glass-panel">
+                <div class="glass-panel" style="margin-bottom: 2rem;">
                     <h3 style="color: var(--accent);">System Online</h3>
                     <p style="color: var(--text-muted); margin-top: 1rem;">
                         All engines operational. Ready to generate mathematical edges.
                     </p>
+                </div>
+                
+                <div class="glass-panel">
+                    <h3 style="color: var(--accent);">Recent Slips (Session)</h3>
+                    <div id="dashboard-recent-slips" style="margin-top: 1rem; max-height: 400px; overflow-y: auto;">
+                        <p style="color: var(--text-muted); font-style: italic;">No slips generated yet.</p>
+                    </div>
                 </div>
             </div>
 

@@ -33,7 +33,7 @@ async def run_sync():
             return
         
         # Connect to root database
-        conn = sqlite3.connect('athena.db')
+        conn = sqlite3.connect('database/athena.db')
         cursor = conn.cursor()
         
         # Ensure baseline schema exists

@@ -3,7 +3,7 @@ from datetime import datetime
 
 def seed_data():
     # Connect directly to the main database in the root folder
-    conn = sqlite3.connect('athena.db')
+    conn = sqlite3.connect('database/athena.db')
     cursor = conn.cursor()
     
     # Clear the old filtered data to ensure a clean test run

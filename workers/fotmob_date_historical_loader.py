@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 import time
 from fotmob import FotMob
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 # All target leagues (domestic + UEFA) – add/remove as needed
 TARGET_LEAGUE_IDS = {

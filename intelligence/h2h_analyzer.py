@@ -8,7 +8,7 @@ import sqlite3
 import argparse
 from typing import Dict, List, Optional, Tuple
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 class H2HAnalyzer:
     def __init__(self, db_path: str = DB_PATH):

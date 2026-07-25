@@ -8,7 +8,7 @@ Weaker leagues get a negative adjustment, stronger leagues get positive (rare).
 import sqlite3
 import argparse
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 # Base league strength factors (based on UEFA coefficients + historical performance)
 # Premier League = baseline 1.00

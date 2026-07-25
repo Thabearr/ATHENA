@@ -7,7 +7,7 @@ Stores adjustment factors in the teams table.
 import sqlite3
 import argparse
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 def compute_adjustments(db_path: str = DB_PATH):
     conn = sqlite3.connect(db_path)

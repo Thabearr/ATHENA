@@ -24,3 +24,7 @@ matplotlib
 tqdm
 curl_cffi
 fake_useragent
+fastapi
+uvicorn
+pywebview
+googlesearch-python

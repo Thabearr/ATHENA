@@ -10,7 +10,7 @@ import requests
 import time
 from datetime import datetime
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 
 # All target leagues (domestic + UEFA) – same as before
 TARGET_LEAGUES = {

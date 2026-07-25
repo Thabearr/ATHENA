@@ -11,7 +11,7 @@ import hashlib
 import time
 from datetime import datetime
 
-DB_PATH = "athena.db"
+DB_PATH = "database/athena.db"
 FOTMOB_API = "https://www.fotmob.com/api"
 
 # All competitions you listed with their FotMob league IDs
@@ -188,7 +188,7 @@ def main():
                 if fotmob_id:
                     try:
                         fixture_id = int(fotmob_id)
-                    except:
+                    except (ValueError, TypeError):
                         fixture_id = fixture_counter
                 else:
                     fixture_id = fixture_counter
