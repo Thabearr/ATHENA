@@ -28,6 +28,7 @@ Unlike simple odds-comparison tools, ATHENA runs a **multi-engine intelligence p
 ### Key Capabilities
 
 - **10,000+ Historical Matches** seeded from 25+ leagues across Europe, South America, Africa, and Asia
+- **Live NLP Context Engine** using real-time Google Search data to gauge team fatigue, pressure, and motivation based on current news cycles
 - **ELO Rating System** with chronological backfill — every match is rated using only data available *before* kick-off
 - **Expected Goals (xG) & Possession** scraped from FotMob's live API via anti-detection bypass
 - **Random Forest ML Models** trained on rolling 5-match team form, xG differentials, and ELO gaps
@@ -35,6 +36,7 @@ Unlike simple odds-comparison tools, ATHENA runs a **multi-engine intelligence p
 - **10+ Analytical Engines** running in parallel: Form, Fatigue, Motivation, Weather, Injuries, Referee, H2H, Venue, League Strength, Correlation
 - **Smart Accumulator Builder** with configurable fold count, minimum edge thresholds, and market diversity
 - **Risk Assessment System** with upset alerts, stale-data warnings, and confidence scoring
+- **Sleek Desktop UI** powered by FastAPI, Vue/JS, and Pywebview for local interactive generation
 - **Daily Automation** via GitHub Actions with HTML email notifications
 
 ---
@@ -70,7 +72,15 @@ ATHENA/
 ├── services/
 │   ├── analysis_pipeline.py   # Orchestrates the full analysis flow
 │   ├── team_form_service.py   # Rolling form calculations
-│   └── prediction_tracker.py  # Tracks prediction accuracy over time
+│   ├── prediction_tracker.py  # Tracks prediction accuracy over time
+│   └── nlp_engine.py          # Google search and NLP context scoring
+├── api/
+│   └── server.py              # FastAPI backend for the Desktop UI
+├── ui/
+│   ├── app.js                 # Frontend logic for accumulator building
+│   ├── index.html             # Main desktop UI layout
+│   └── styles.css             # UI styling
+├── run_desktop.py             # Desktop entry point (Pywebview + FastAPI)
 ├── database/
 │   ├── schema.sql             # Full database schema
 │   ├── database.py            # SQLite connection manager
@@ -134,19 +144,24 @@ python scripts/backfill_xg.py       # Enrich with xG & possession from FotMob
 python tools/train_model.py
 ```
 
-### Generate Today's Accumulator
+### Run the Desktop Interface
 
-The CLI lets you easily pick the timeframe (days) and fold count (number of slips).
+The easiest way to generate accumulators and interact with the engine is via the new Desktop UI:
+
+```bash
+python run_desktop.py
+```
+
+### Generate Accumulators via CLI
+
+You can also run the engine entirely from the terminal:
 
 ```bash
 # Just today's matches, 20 folds
-athena generate --days 1 --folds 20
+python build_acca.py --days 1 --folds 20 --no-strict
 
-# Today & tomorrow, 10 folds
-athena generate --days 2 --folds 10
-
-# Max coverage: Next 3 days, 50 folds
-athena generate --days 3 --folds 50
+# Target a specific league, 5 folds
+python build_acca.py --days 2 --folds 5 --league "Premier League"
 ```
 
 ---
@@ -234,10 +249,11 @@ This project is protected under a **proprietary license**. See [LICENSE](LICENSE
 - [x] Phase 4: FotMob Live Data Integration
 - [x] Phase 5: ELO System & Backtesting Framework
 - [x] Phase 6: Machine Learning (Random Forest) & xG Integration
-- [ ] Phase 7: Live Dashboard (Web UI)
-- [ ] Phase 8: Automated Betting API Integration
-- [ ] Phase 9: Telegram/Discord Bot for Alerts
-- [ ] Phase 10: Model V2 (XGBoost / Neural Network)
+- [x] Phase 7: Live Dashboard (Desktop Web UI)
+- [x] Phase 8: NLP Live Context Engine (Google Search Sentiment)
+- [ ] Phase 9: Automated Betting API Integration
+- [ ] Phase 10: Telegram/Discord Bot for Alerts
+- [ ] Phase 11: Model V2 (XGBoost / Neural Network)
 
 ---
 
