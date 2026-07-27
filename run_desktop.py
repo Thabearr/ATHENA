@@ -25,17 +25,22 @@ def wait_for_server():
     return False
 
 if __name__ == '__main__':
-    # Start the backend server
-    server_thread = threading.Thread(target=start_server, daemon=True)
-    server_thread.start()
-
-    # Wait for the backend to be ready
+    # Check if backend server is already online
     if not wait_for_server():
-        logger.error("Failed to start local server. Exiting.")
-        exit(1)
+        # Start the backend server if not already running
+        server_thread = threading.Thread(target=start_server, daemon=True)
+        server_thread.start()
 
+        # Wait for the backend to be ready
+        if not wait_for_server():
+            logger.error("Failed to start local server. Exiting.")
+            exit(1)
+    else:
+        logger.info("ATHENA local server is already active on port 8500.")
+
+    import os
     # Launch the Pywebview window pointing to our local HTML file
-    ui_path = "ui/index.html"
+    ui_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "ui", "index.html"))
     
     logger.info("Launching ATHENA Desktop UI...")
     webview.create_window(

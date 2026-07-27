@@ -12,10 +12,11 @@ class BookieAutomator:
         return hashlib.md5(raw.encode()).hexdigest().upper()
 
     def generate_code_sportybet(self, legs: List[Dict]) -> str:
-        logger.info(f"Generating SportyBet booking code for {len(legs)} legs...")
-        time.sleep(0.5)
+        logger.info(f"Generating SportyBet booking slip summary for {len(legs)} legs...")
+        # Note: SportyBet server-side booking code registration requires an authenticated mobile session.
+        # We provide a formatted code tag alongside the match selections.
         checksum = self._generate_checksum(legs)
-        return f"BC{checksum[:6]}"
+        return f"SB-{checksum[:6]}"
 
     def generate_code_stake(self, legs: List[Dict]) -> str:
         logger.info(f"Generating Stake share link for {len(legs)} legs...")

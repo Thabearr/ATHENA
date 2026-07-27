@@ -22,6 +22,13 @@ document.addEventListener("DOMContentLoaded", () => {
         
         document.getElementById(activeNavId).classList.add("active");
         navLinks[activeNavId].classList.add("active");
+
+        if (activeNavId === "nav-generate" && typeof loadLeagues === "function") {
+            loadLeagues(document.getElementById("input-days")?.value || 1);
+        } else if (activeNavId === "nav-fixtures") {
+            if (typeof renderDateSelector === "function") renderDateSelector();
+            if (typeof loadAllFixtures === "function") loadAllFixtures();
+        }
     };
 
     const escapeHtml = (value) => {
@@ -67,6 +74,9 @@ document.addEventListener("DOMContentLoaded", () => {
         document.getElementById(id).addEventListener("click", (e) => {
             e.preventDefault();
             switchView(id);
+            if (id === "nav-fixtures" && typeof loadAllFixtures === "function") {
+                loadAllFixtures();
+            }
         });
     });
 
@@ -103,7 +113,7 @@ document.addEventListener("DOMContentLoaded", () => {
     const leaguesByDaysCache = new Map();
     let leaguesLoadTimer = null;
 
-    const loadLeagues = async (days) => {
+    async function loadLeagues(days) {
         const normalizedDays = Number.parseInt(days, 10) || 1;
         const container = document.getElementById("league-checkboxes");
         if (leaguesByDaysCache.has(normalizedDays)) {
@@ -135,6 +145,9 @@ document.addEventListener("DOMContentLoaded", () => {
         clearTimeout(leaguesLoadTimer);
         leaguesLoadTimer = setTimeout(() => loadLeagues(value), 180);
     });
+
+    // Auto-load available leagues on initial load
+    loadLeagues(document.getElementById("input-days")?.value || 1);
 
     let currentAccaData = null;
 
@@ -220,7 +233,7 @@ document.addEventListener("DOMContentLoaded", () => {
     let fixturesLoaded = false;
     let fixturesInFlight = false;
 
-    const renderDateSelector = () => {
+    function renderDateSelector() {
         const selector = document.getElementById("fixture-date-selector");
         let html = "";
         const today = new Date();
@@ -240,9 +253,9 @@ document.addEventListener("DOMContentLoaded", () => {
                 renderFixturesForDate(e.target.dataset.date);
             });
         });
-    };
+    }
 
-    const renderFixturesForDate = (targetDateStr) => {
+    function renderFixturesForDate(targetDateStr) {
         const container = document.getElementById("fixtures-container");
         
         // Filter matches for this date
@@ -304,9 +317,9 @@ document.addEventListener("DOMContentLoaded", () => {
             html += `</div>`;
         }
         container.innerHTML = html;
-    };
+    }
 
-    const loadAllFixtures = async () => {
+    async function loadAllFixtures() {
         if (fixturesLoaded || fixturesInFlight) {
             return;
         }
@@ -554,7 +567,9 @@ document.addEventListener("DOMContentLoaded", () => {
                     tdOdds.innerText = leg.odds ? leg.odds.toFixed(2) + "x" : "-";
 
                     const tdEdge = document.createElement("td");
-                    tdEdge.innerText = leg.edge ? "+" + (leg.edge * 100).toFixed(1) + "%" : "-";
+                    const edgePp = leg.reasoning_verdicts ? leg.reasoning_verdicts.find(v => v.status === "SELECTED") : null;
+                    const displayEdge = edgePp ? `${edgePp.edge_pp >= 0 ? '+' : ''}${edgePp.edge_pp}pp` : (leg.edge ? "+" + (leg.edge * 100).toFixed(1) + "%" : "-");
+                    tdEdge.innerHTML = `<span style="color: var(--success); font-weight: bold;">${displayEdge}</span>`;
 
                     const tdRisk = document.createElement("td");
                     let rColor = "var(--success)";
@@ -571,6 +586,28 @@ document.addEventListener("DOMContentLoaded", () => {
                     tr.appendChild(tdEdge);
                     tr.appendChild(tdRisk);
                     accaBody.appendChild(tr);
+
+                    // Add Reasoning Trace Row if available
+                    if (leg.reasoning_verdicts && leg.reasoning_verdicts.length > 0) {
+                        const traceTr = document.createElement("tr");
+                        const traceTd = document.createElement("td");
+                        traceTd.colSpan = 7;
+                        traceTd.style.background = "rgba(0,0,0,0.3)";
+                        traceTd.style.padding = "0.5rem 1rem";
+                        traceTd.style.fontSize = "0.8rem";
+                        traceTd.style.borderBottom = "1px solid rgba(255,255,255,0.08)";
+
+                        let traceHtml = `<div style="color: var(--text-muted); margin-bottom: 0.25rem;"><strong>🧠 Fixture Reasoner Trace (Shin De-vig + Wilson CI):</strong></div>`;
+                        leg.reasoning_verdicts.forEach(v => {
+                            let statusBadge = v.status === "SELECTED" ? "🟢 SELECTED" : v.status === "DISCOUNTED" ? "🟡 DISCOUNTED" : "🔴 REJECTED";
+                            traceHtml += `<div style="margin-left: 0.5rem; color: ${v.status === 'SELECTED' ? '#00e676' : 'var(--text-muted)'}; margin-bottom: 2px;">
+                                ${statusBadge} ${escapeHtml(v.reason)}
+                            </div>`;
+                        });
+                        traceTd.innerHTML = traceHtml;
+                        traceTr.appendChild(traceTd);
+                        accaBody.appendChild(traceTr);
+                    }
                 });
                 
                 document.getElementById("acca-generate-code-container").classList.remove("hidden");

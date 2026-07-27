@@ -74,8 +74,8 @@ class FotMobAdvancedScraper:
                 league_name = league.get("name", "Unknown")
                 
                 # Filter out Women's matches
-                league_name_lower = league_name.lower()
-                if "women" in league_name_lower or " (w) " in league_name_lower or league_name_lower.endswith(" (w)") or league_name_lower.endswith(" w"):
+                from services.gender_filter import is_womens_fixture
+                if is_womens_fixture(league_name, "", ""):
                     continue
 
                 matches = league.get("matches", [])
@@ -105,6 +105,9 @@ class FotMobAdvancedScraper:
                         away_team = away.get("longName") or away.get("name", "Unknown")
 
                         if not all([fixture_id, home_team, away_team]):
+                            continue
+
+                        if is_womens_fixture(league_name, home_team, away_team):
                             continue
 
                         # Get scores if available

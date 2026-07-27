@@ -118,7 +118,8 @@ class AccaBuilder:
                 logger.warning(f"OpenFootball sync skipped: {e}")
                 console.print(f"[green]FotMob: {len(fotmob_fixtures)} fixtures[/green]")
             
-            return fotmob_fixtures
+            from services.gender_filter import filter_mens_fixtures_only
+            return filter_mens_fixtures_only(fotmob_fixtures)
         except Exception as e:
             console.print(f"[red]Failed to fetch fixtures: {e}[/red]")
             return []

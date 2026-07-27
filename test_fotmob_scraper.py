@@ -7,13 +7,15 @@ import asyncio
 import logging
 from datetime import datetime
 
+import pytest
+
 from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
-async def test_fotmob():
+async def run_fotmob_test():
     """Test FotMob scraper data extraction."""
     print("\n" + "="*70)
     print("      🧪 TESTING FOTMOB ADVANCED SCRAPER 🧪")
@@ -61,4 +63,4 @@ async def test_fotmob():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_fotmob())
+    asyncio.run(run_fotmob_test())

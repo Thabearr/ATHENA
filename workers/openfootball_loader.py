@@ -60,6 +60,11 @@ class OpenFootballLoader:
                             skipped_count += 1
                             continue
 
+                        from services.gender_filter import is_womens_fixture
+                        if is_womens_fixture(league_name, team1, team2):
+                            skipped_count += 1
+                            continue
+
                         home_id = self._team_id(team1)
                         away_id = self._team_id(team2)
 

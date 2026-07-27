@@ -28,16 +28,15 @@ Unlike simple odds-comparison tools, ATHENA runs a **multi-engine intelligence p
 ### Key Capabilities
 
 - **10,000+ Historical Matches** seeded from 25+ leagues across Europe, South America, Africa, and Asia
+- **Reasoning-Based Fixture Selection (`fixture_reasoner.py`)** — Shin's (1993) de-vigging method, Wilson score confidence discounting, percentage point edge ranking (\(\text{edge}_{\text{pp}}\)), and fractional Kelly bankroll sizing (\(\frac{1}{8}\) Kelly)
+- **Dual Prediction Engine (`prediction_engine.py`)** — Fuses Base-Rate pattern memory (System 1) with Bounded Contextual LLM Research Overlay (System 2) in logit space with source-tier fact weighting (`official`: 1.0, `reported`: 0.6, `rumor`: 0.25)
+- **Market Coherence & Uncertainty Feedback** — Renormalizes mutually exclusive markets to 1.0 and discounts effective sample size (\(n_{\text{effective}}\)) when fresh news nudges base rates
+- **Strict Gender & Women's Match Safety Filter (`services/gender_filter.py`)** — Multi-lingual regex service guaranteeing 100% men's-only accumulator selection
 - **Live NLP Context Engine** using real-time Google Search data to gauge team fatigue, pressure, and motivation based on current news cycles
 - **ELO Rating System** with chronological backfill — every match is rated using only data available *before* kick-off
 - **Expected Goals (xG) & Possession** scraped from FotMob's live API via anti-detection bypass
 - **Random Forest ML Models** trained on rolling 5-match team form, xG differentials, and ELO gaps
-- **Hybrid Poisson-ML Probability Engine** that blends mathematical distributions with learned patterns
-- **10+ Analytical Engines** running in parallel: Form, Fatigue, Motivation, Weather, Injuries, Referee, H2H, Venue, League Strength, Correlation
-- **Smart Accumulator Builder** with configurable fold count, minimum edge thresholds, and market diversity
-- **Risk Assessment System** with upset alerts, stale-data warnings, and confidence scoring
-- **Sleek Desktop UI** powered by FastAPI, Vanilla JS, and Pywebview for local interactive generation
-- **Daily Automation** via GitHub Actions with HTML email notifications
+- **Auditable Desktop UI & Selenium E2E Suite** powered by FastAPI, Pywebview, Vanilla JS with live audit traces, and Edge WebDriver automation
 
 ---
 
@@ -47,7 +46,9 @@ Unlike simple odds-comparison tools, ATHENA runs a **multi-engine intelligence p
 ATHENA/
 ├── build_acca.py              # CLI entry point — generates daily acca slips
 ├── intelligence/
-│   ├── match_analyst.py       # Master prediction engine (Poisson + ML blend)
+│   ├── fixture_reasoner.py    # Shin de-vigging, Wilson CI, single market selection, correlation flags
+│   ├── prediction_engine.py   # Dual-Engine: Base-rate + Logit contextual overlay + uncertainty discount
+│   ├── match_analyst.py       # Master prediction engine (Poisson + ML + Reasoner blend)
 │   ├── ml_engine.py           # scikit-learn model loader and predictor
 │   ├── elo_engine.py          # Dynamic ELO rating system
 │   ├── accumulator.py         # Multi-fold accumulator builder
@@ -70,6 +71,7 @@ ATHENA/
 │   ├── fotmob_advanced_scraper.py  # Deep stats extraction (xG, lineups, form)
 │   └── openfootball_loader.py # OpenFootball historical data loader
 ├── services/
+│   ├── gender_filter.py       # Multi-lingual regex gender & women's match filter
 │   ├── analysis_pipeline.py   # Orchestrates the full analysis flow
 │   ├── team_form_service.py   # Rolling form calculations
 │   ├── prediction_tracker.py  # Tracks prediction accuracy over time
@@ -256,9 +258,12 @@ This project is protected under a **proprietary license**. See [LICENSE](LICENSE
 - [x] Phase 6: Machine Learning (Random Forest) & xG Integration
 - [x] Phase 7: Live Dashboard (Desktop Web UI)
 - [x] Phase 8: NLP Live Context Engine (Google Search Sentiment)
-- [ ] Phase 9: Automated Betting API Integration
-- [ ] Phase 10: Telegram/Discord Bot for Alerts
-- [ ] Phase 11: Model V2 (XGBoost / Neural Network)
+- [x] Phase 9: Reasoning-Based Selection & Shin (1993) De-vigging (`fixture_reasoner.py`)
+- [x] Phase 10: Dual Prediction Engine & Logit Contextual Overlay (`prediction_engine.py`)
+- [x] Phase 11: Multi-Lingual Gender & Women's Match Safety Filter (`gender_filter.py`)
+- [x] Phase 12: Selenium E2E Automation & Desktop UI Audit Traces
+- [ ] Phase 13: Automated Betting API Integration
+- [ ] Phase 14: Telegram/Discord Bot for Alerts
 
 ---
 

@@ -482,6 +482,42 @@ class MatchAnalyst:
         # but we preserve the viable markets so that fallback (no-strict) mode works properly.
         # (Removed the early return that was overriding the verdict to NO_BET)
 
+        # --- REASONING ENGINE INTEGRATION (Shin De-vig, Wilson CI, Single Market Winner) ---
+        from intelligence.fixture_reasoner import FixtureOption, FixtureReasoner
+        
+        reasoner_options = []
+        # Map markets to odds & effective sample sizes
+        # 1X2
+        h_odds = round(1.0 / max(0.01, prob_home_win), 2)
+        d_odds = round(1.0 / max(0.01, prob_draw), 2)
+        a_odds = round(1.0 / max(0.01, prob_away_win), 2)
+        n_eff = 800 if not stale_data else 300
+        
+        reasoner_options.extend([
+            FixtureOption("1X2", "Home Win", model_prob=prob_home_win, odds=h_odds, n_effective=n_eff),
+            FixtureOption("1X2", "Draw", model_prob=prob_draw, odds=d_odds, n_effective=n_eff),
+            FixtureOption("1X2", "Away Win", model_prob=prob_away_win, odds=a_odds, n_effective=n_eff),
+        ])
+        
+        # Over/Under 2.5
+        o25_odds = round(1.0 / max(0.01, prob_over_25), 2)
+        u25_odds = round(1.0 / max(0.01, prob_under_25), 2)
+        reasoner_options.extend([
+            FixtureOption("Over/Under 2.5", "Over 2.5", model_prob=prob_over_25, odds=o25_odds, n_effective=n_eff, correlation_tag="goals_high"),
+            FixtureOption("Over/Under 2.5", "Under 2.5", model_prob=prob_under_25, odds=u25_odds, n_effective=n_eff),
+        ])
+        
+        # BTTS
+        gg_odds = round(1.0 / max(0.01, prob_gg), 2)
+        ng_odds = round(1.0 / max(0.01, 1.0 - prob_gg), 2)
+        reasoner_options.extend([
+            FixtureOption("BTTS", "BTTS Yes", model_prob=prob_gg, odds=gg_odds, n_effective=n_eff, correlation_tag="goals_high"),
+            FixtureOption("BTTS", "BTTS No", model_prob=1.0 - prob_gg, odds=ng_odds, n_effective=n_eff),
+        ])
+
+        reasoner = FixtureReasoner(min_edge_pp=2.0, kelly_fraction_used=1/8, devig_method="shin")
+        reasoner_results = reasoner.analyze(reasoner_options)
+
         best_market = viable_markets[0]
 
         return {
@@ -490,5 +526,17 @@ class MatchAnalyst:
             "upset_alert": upset_alert,
             "risk_score": risk_score,
             "stale_data": stale_data,
-            "viable_markets": viable_markets
+            "viable_markets": viable_markets,
+            "reasoning_verdicts": [
+                {
+                    "label": v.option.label,
+                    "market": v.option.market,
+                    "status": v.status,
+                    "edge_pp": round(v.edge_pp, 2),
+                    "fair_prob": round(v.fair_prob, 4),
+                    "kelly_stake_pct": round(v.kelly_stake_pct, 2),
+                    "reason": v.reason
+                }
+                for v in reasoner_results
+            ]
         }

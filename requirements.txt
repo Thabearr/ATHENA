@@ -12,8 +12,9 @@ typer
 loguru
 SQLAlchemy
 alembic
-pydantic
+pydantic>=2.7.0
 pytest
+pytest-asyncio
 joblib
 beautifulsoup4
 lxml
@@ -28,3 +29,5 @@ fastapi
 uvicorn
 pywebview
 googlesearch-python
+playwright
+

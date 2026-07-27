@@ -22,6 +22,27 @@ app.add_middleware(
 
 app.include_router(athenizer_router)
 
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
+
+ui_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'ui'))
+if os.path.exists(ui_dir):
+    app.mount("/ui", StaticFiles(directory=ui_dir, html=True), name="ui")
+
+    @app.get("/styles.css")
+    def get_css():
+        return FileResponse(os.path.join(ui_dir, "styles.css"))
+
+    @app.get("/app.js")
+    def get_js():
+        return FileResponse(os.path.join(ui_dir, "app.js"))
+
+    @app.get("/")
+    def read_root():
+        return FileResponse(os.path.join(ui_dir, "index.html"))
+
+
+
 from typing import Optional
 
 _CACHE_TTL_SECONDS = 300
