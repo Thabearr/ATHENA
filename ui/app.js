@@ -1,6 +1,6 @@
 document.addEventListener("DOMContentLoaded", () => {
     const API_BASE = "http://127.0.0.1:8500";
-    const REQUEST_TIMEOUT_MS = 20000;
+    const REQUEST_TIMEOUT_MS = 300000; // 5 mins
     const btnGenerate = document.getElementById("btn-generate");
     const loader = document.getElementById("loader");
     const resultsArea = document.getElementById("results-area");
@@ -224,7 +224,7 @@ document.addEventListener("DOMContentLoaded", () => {
         const selector = document.getElementById("fixture-date-selector");
         let html = "";
         const today = new Date();
-        for (let i = 0; i < 7; i++) {
+        for (let i = 0; i < 4; i++) {
             let d = new Date(today);
             d.setDate(today.getDate() + i);
             let label = i === 0 ? "Today" : i === 1 ? "Tomorrow" : d.toLocaleDateString('en-US', {weekday: 'short', month: 'short', day: 'numeric'});
@@ -314,8 +314,8 @@ document.addEventListener("DOMContentLoaded", () => {
         const container = document.getElementById("fixtures-container");
         container.innerHTML = `<div style="text-align: center; padding: 2rem; color: var(--text-muted);">Loading live schedule... <div class="spinner" style="margin: 10px auto; width: 24px; height: 24px;"></div></div>`;
         try {
-            // Fetch 7 days of fixtures at once
-            const data = await fetchJSON("/api/fixtures?days=7");
+            // Fetch 3 days of fixtures at once to prevent rate-limit timeouts
+            const data = await fetchJSON("/api/fixtures?days=3");
             if (data.fixtures) {
                 globalFixtures = data.fixtures;
                 fixturesLoaded = true;
