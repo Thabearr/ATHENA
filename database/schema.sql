@@ -150,6 +150,32 @@ CREATE TABLE IF NOT EXISTS historical_matches (
 );
 
 -- =========================
+-- Half-Time Observations
+-- Additive, source-specific evidence. Existing full-time scores remain
+-- authoritative in historical_matches and are never replaced here.
+-- =========================
+CREATE TABLE IF NOT EXISTS half_time_observations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fixture_identity TEXT NOT NULL,
+    home_team TEXT,
+    away_team TEXT,
+    kickoff_time TEXT,
+    full_time_home_goals INTEGER,
+    full_time_away_goals INTEGER,
+    half_time_home_goals INTEGER,
+    half_time_away_goals INTEGER,
+    source TEXT NOT NULL,
+    observed_at TEXT,
+    source_fixture_id TEXT,
+    half_time_score_provenance TEXT NOT NULL DEFAULT 'MISSING',
+    validation_status TEXT NOT NULL,
+    rejection_reasons TEXT NOT NULL DEFAULT '[]',
+    league TEXT,
+    season TEXT,
+    UNIQUE(fixture_identity, source)
+);
+
+-- =========================
 -- Managers & Derbies
 -- =========================
 CREATE TABLE IF NOT EXISTS derbies (
@@ -189,6 +215,9 @@ ON historical_matches(home_id);
 
 CREATE INDEX IF NOT EXISTS idx_historical_matches_away
 ON historical_matches(away_id);
+
+CREATE INDEX IF NOT EXISTS idx_half_time_observations_fixture
+ON half_time_observations(fixture_identity);
 
 -- ==========================================
 -- League Standings
