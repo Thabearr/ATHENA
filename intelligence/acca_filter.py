@@ -31,7 +31,7 @@ class AccaFilter:
         for match in analyzed_matches:
             if match.get("decision_status") != DecisionStatus.BET.value:
                 continue
-            if not match.get("viable_markets"):
+            if not match.get("accumulator_eligible_selection"):
                 continue
 
             # 1. Baseline delta < 0.05
@@ -89,11 +89,11 @@ class AccaFilter:
             home_team = leg.get('home_team')
             away_team = leg.get('away_team')
             league = leg.get('league')
-            viable_markets = leg.get('viable_markets') or []
+            priced_market = leg.get("accumulator_eligible_selection")
 
-            # A fixture with no validated candidate is NO BET. Do not invent a
-            # fallback verdict merely to fill the accumulator.
-            if not viable_markets:
+            # Only the exact selection that passed bookmaker pricing may enter
+            # the accumulator. Analytical alternatives remain audit-only.
+            if not isinstance(priced_market, dict):
                 continue
 
             # 1. Same team in multiple legs — always block
@@ -135,28 +135,10 @@ class AccaFilter:
                 logger.error(f"NLP Engine failed for {home_team} vs {away_team}: {e}")
                 nlp_edge_boost = 0.0
 
-            # 4. Get viable markets for this fixture
-            # 4. Sort viable markets by:
-            #    a) Category underrepresentation (least legs in current acca first)
-            #    b) Global-baseline delta (highest first)
-            #    This is the KEY diversity mechanism.
-            def market_diversity_key(m):
-                cat = m.get('category', MARKET_CATEGORIES.get(m.get('verdict', ''), 'OTHER'))
-                current_count = category_counts.get(cat, 0)
-                cap = self.correlation_analyzer.CATEGORY_HARD_CAPS.get(cat, 2)
-                # Primary: how close to cap (lower = more room = preferred)
-                fill_ratio = current_count / max(cap, 1)
-                # Secondary: edge above baseline (higher = preferred, so negate)
-                # Apply the real-time NLP edge boost to the edge
-                base_edge = m.get('edge_above_baseline', m.get('edge', 0.0))
-                total_edge = base_edge + nlp_edge_boost
-                return (fill_ratio, -total_edge)
-
-            sorted_markets = sorted(viable_markets, key=market_diversity_key)
-
-            # 5. Try each market option in diversity-prioritized order
+            # 4. Validate the one priced selection. Diversity may reject it,
+            # but must never substitute a different unpriced market.
             leg_accepted = False
-            for market_option in sorted_markets:
+            for market_option in (priced_market,):
                 verdict = market_option['verdict']
                 cat = market_option.get('category', MARKET_CATEGORIES.get(verdict, 'OTHER'))
                 market_delta = market_option.get('edge')
@@ -170,9 +152,15 @@ class AccaFilter:
                 test_leg = leg.copy()
                 test_leg['verdict'] = verdict
                 test_leg['market'] = verdict
+                test_leg['market_id'] = market_option.get('market_id')
+                test_leg['outcome_id'] = market_option.get('outcome_id')
+                test_leg['line'] = market_option.get('line')
+                test_leg['display_label'] = market_option.get(
+                    'display_label'
+                )
                 test_leg['edge'] = market_delta
                 test_leg['edge_is_bookmaker_value'] = market_option.get(
-                    'is_bookmaker_edge',
+                    'edge_is_bookmaker_value',
                     False,
                 )
                 test_leg['edge_method'] = market_option.get('edge_method')

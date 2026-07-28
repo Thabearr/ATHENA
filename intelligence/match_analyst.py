@@ -27,7 +27,11 @@ from domain.model_status import (
     ModelStatus,
     get_model_status,
 )
-from domain.pricing import parse_bookmaker_quotes, price_selection
+from domain.pricing import (
+    DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    parse_bookmaker_quotes,
+    price_selection,
+)
 from intelligence.ml_engine import MLEngine
 
 logger = logging.getLogger("athena.match_analyst")
@@ -386,6 +390,7 @@ def build_viable_market_candidates(
             "edge_above_baseline": baseline_delta,
             "edge_method": "global_baseline_delta",
             "is_bookmaker_edge": False,
+            "edge_is_bookmaker_value": False,
             "probability_method": probability_method,
             "category": MARKET_CATEGORIES.get(verdict, "OTHER"),
             "market_id": selection.market_id.value,
@@ -462,7 +467,13 @@ class MatchAnalyst:
             "stale_data": avg_live_ratio < 0.60 and not is_backtest,
         }
 
-    def compile_master_fixture_prediction(self, fixture_context: dict) -> dict:
+    def compile_master_fixture_prediction(
+        self,
+        fixture_context: dict,
+        *,
+        quote_current_time: Optional[datetime] = None,
+        max_quote_age_seconds: int = DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    ) -> dict:
         home_team = fixture_context.get('home_team') or 'Home'
         away_team = fixture_context.get('away_team') or 'Away'
         home_id = (
@@ -679,7 +690,11 @@ class MatchAnalyst:
         stale_data = avg_live_ratio < 0.60 and not is_backtest
 
         bookmaker_odds_context = fixture_context.get("bookmaker_odds")
-        bookmaker_quotes = parse_bookmaker_quotes(bookmaker_odds_context)
+        bookmaker_quotes = parse_bookmaker_quotes(
+            bookmaker_odds_context,
+            current_time=quote_current_time,
+            max_quote_age_seconds=max_quote_age_seconds,
+        )
         bookmaker_odds_available = bool(bookmaker_quotes)
         freshness_status = EvidenceStatus.AVAILABLE
         freshness_notes = None
@@ -1047,6 +1062,7 @@ class MatchAnalyst:
                 "recommended_analytical_verdict": None,
                 "edge_differential": None,
                 "edge_is_bookmaker_value": False,
+                "accumulator_eligible_selection": None,
                 "upset_alert": upset_alert,
                 "risk_score": risk_score,
                 "stale_data": stale_data,
@@ -1087,6 +1103,7 @@ class MatchAnalyst:
                 "kelly_stake_pct": round(pricing.kelly_stake_pct, 4),
                 "edge_method": pricing.method,
                 "is_bookmaker_edge": True,
+                "edge_is_bookmaker_value": True,
             })
 
         pricing_checks_pass = (
@@ -1132,12 +1149,18 @@ class MatchAnalyst:
         no_bet_reasons = (
             decision_reasons if decision_status == DecisionStatus.NO_BET else []
         )
+        accumulator_eligible_selection = (
+            dict(best_market)
+            if decision_status == DecisionStatus.BET
+            else None
+        )
+        edge_is_bookmaker_value = pricing is not None
 
         return {
             "decision_status": decision_status.value,
             "recommended_analytical_verdict": best_market["verdict"],
             "edge_differential": best_market["edge"],
-            "edge_is_bookmaker_value": False,
+            "edge_is_bookmaker_value": edge_is_bookmaker_value,
             "bookmaker_odds": best_market["bookmaker_odds"],
             "bookmaker_probability": best_market.get(
                 "bookmaker_probability"
@@ -1148,6 +1171,9 @@ class MatchAnalyst:
             "risk_score": risk_score,
             "stale_data": stale_data,
             "viable_markets": viable_markets,
+            "accumulator_eligible_selection": (
+                accumulator_eligible_selection
+            ),
             "reasoning_verdicts": [{
                 "label": best_market["display_label"],
                 "market_id": best_market["market_id"],

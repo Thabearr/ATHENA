@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.encoders import jsonable_encoder
@@ -96,6 +97,7 @@ class CanonicalMarketRegistryTests(unittest.TestCase):
 
 
 class ExportSelectionPreservationTests(unittest.TestCase):
+    QUOTE_NOW = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
     EXPECTED_SELECTIONS = {
         "fixture-home": {
             "fixture": "Alpha FC vs Beta FC",
@@ -191,6 +193,10 @@ class ExportSelectionPreservationTests(unittest.TestCase):
                     "line": self.EXPECTED_SELECTIONS[fixture_id]["line"],
                     "bookmaker_odds": 2.0,
                     "source": "test_bookmaker",
+                    "quote_snapshot_id": f"snapshot-{fixture_id}",
+                    "observed_at": (
+                        self.QUOTE_NOW - timedelta(minutes=1)
+                    ).isoformat(),
                     "is_genuine": True,
                     "is_current": True,
                 },
@@ -213,7 +219,9 @@ class ExportSelectionPreservationTests(unittest.TestCase):
                     self.assertEqual(leg[field_name], expected_value)
 
     def test_mixed_slip_survives_json_api_and_export_preparation(self):
-        accumulator = AccumulatorEngine().generate_accumulator(
+        accumulator = AccumulatorEngine(
+            current_time_provider=lambda: self.QUOTE_NOW,
+        ).generate_accumulator(
             self._analyzed_fixtures(),
             fold_size=8,
         )

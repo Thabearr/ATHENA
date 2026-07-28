@@ -163,6 +163,9 @@ class AnalysisPipeline:
                     ),
                     "verdict": analysis.get("recommended_analytical_verdict"),
                     "viable_markets": analysis.get("viable_markets", []),
+                    "accumulator_eligible_selection": analysis.get(
+                        "accumulator_eligible_selection"
+                    ),
                     "no_bet_reasons": analysis.get("no_bet_reasons", []),
                     "evidence_report": analysis.get("evidence_report"),
                     "source": fix.get("data_source", "unknown"),
