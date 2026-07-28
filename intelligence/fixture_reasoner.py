@@ -27,16 +27,22 @@ class FixtureOption:
     market: str                  # mutually-exclusive group, e.g. "1X2"
     label: str                   # e.g. "Home Win"
     model_prob: float            # calibrated model probability (0-1)
-    odds: float                  # decimal odds offered
+    bookmaker_odds: Optional[float] = None  # genuine current decimal odds
     n_effective: Optional[int] = None      # effective sample size behind model_prob
     correlation_tag: Optional[str] = None  # cross-market correlation group
+
+    @property
+    def model_fair_odds(self) -> Optional[float]:
+        if self.model_prob <= 0:
+            return None
+        return 1.0 / self.model_prob
 
 @dataclass
 class OptionVerdict:
     option: FixtureOption
-    fair_prob: float
-    edge_pp: float               # edge in percentage points
-    kelly_stake_pct: float       # recommended stake, % of bankroll
+    fair_prob: Optional[float]
+    edge_pp: Optional[float]      # edge in percentage points
+    kelly_stake_pct: Optional[float]  # recommended stake, % of bankroll
     ci_low: Optional[float]
     ci_high: Optional[float]
     status: str                  # "SELECTED" / "REJECTED" / "DISCOUNTED"
@@ -139,12 +145,41 @@ class FixtureReasoner:
             markets.setdefault(opt.market, []).append(opt)
 
         for market, opts in markets.items():
-            fair_probs = self._devig([o.odds for o in opts])
+            if any(
+                o.bookmaker_odds is None
+                or o.bookmaker_odds <= 1.0
+                for o in opts
+            ):
+                for opt in opts:
+                    lo, hi = wilson_interval(opt.model_prob, opt.n_effective)
+                    verdicts.append(OptionVerdict(
+                        option=opt,
+                        fair_prob=None,
+                        edge_pp=None,
+                        kelly_stake_pct=None,
+                        ci_low=lo,
+                        ci_high=hi,
+                        status="ANALYTICAL_CANDIDATE",
+                        reason=(
+                            f"{opt.label}: model probability is available, but "
+                            "pricing validation is pending because a complete "
+                            "genuine current bookmaker market was not provided."
+                        ),
+                    ))
+                continue
+
+            fair_probs = self._devig(
+                [o.bookmaker_odds for o in opts]
+            )
             market_verdicts = []
 
             for opt, fair_p in zip(opts, fair_probs):
                 edge = edge_percentage_points(opt.model_prob, fair_p)
-                stake = kelly_fraction(opt.model_prob, opt.odds, self.kelly_fraction_used)
+                stake = kelly_fraction(
+                    opt.model_prob,
+                    opt.bookmaker_odds,
+                    self.kelly_fraction_used,
+                )
                 lo, hi = wilson_interval(opt.model_prob, opt.n_effective)
 
                 # Discount: if we can't verify the probability's confidence
@@ -233,18 +268,18 @@ class FixtureReasoner:
 
 if __name__ == "__main__":
     fixture = [
-        FixtureOption("1X2", "Home Win", model_prob=0.53, odds=2.10, n_effective=800),
-        FixtureOption("1X2", "Draw", model_prob=0.22, odds=3.40, n_effective=800),
-        FixtureOption("1X2", "Away Win", model_prob=0.25, odds=3.60, n_effective=800),
+        FixtureOption("1X2", "Home Win", model_prob=0.53, bookmaker_odds=2.10, n_effective=800),
+        FixtureOption("1X2", "Draw", model_prob=0.22, bookmaker_odds=3.40, n_effective=800),
+        FixtureOption("1X2", "Away Win", model_prob=0.25, bookmaker_odds=3.60, n_effective=800),
 
-        FixtureOption("Over/Under 2.5", "Over 2.5", model_prob=0.58, odds=1.90,
+        FixtureOption("Over/Under 2.5", "Over 2.5", model_prob=0.58, bookmaker_odds=1.90,
                       n_effective=500, correlation_tag="goals_high"),
-        FixtureOption("Over/Under 2.5", "Under 2.5", model_prob=0.42, odds=2.00,
+        FixtureOption("Over/Under 2.5", "Under 2.5", model_prob=0.42, bookmaker_odds=2.00,
                       n_effective=500),
 
-        FixtureOption("BTTS", "BTTS Yes", model_prob=0.57, odds=1.85,
+        FixtureOption("BTTS", "BTTS Yes", model_prob=0.57, bookmaker_odds=1.85,
                       n_effective=900, correlation_tag="goals_high"),
-        FixtureOption("BTTS", "BTTS No", model_prob=0.43, odds=2.05, n_effective=900),
+        FixtureOption("BTTS", "BTTS No", model_prob=0.43, bookmaker_odds=2.05, n_effective=900),
     ]
     reasoner = FixtureReasoner(min_edge_pp=2.0, kelly_fraction_used=1/8, devig_method="shin")
     results = reasoner.analyze(fixture)

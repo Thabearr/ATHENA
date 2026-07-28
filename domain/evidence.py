@@ -82,12 +82,15 @@ class MarketEvaluation:
     model_status: ModelStatus
     probability: Optional[float]
     probability_method: Optional[str]
-    required_inputs: Sequence[str]
+    probability_inputs: Sequence[str]
+    pricing_inputs: Sequence[str]
     missing_inputs: Sequence[str]
     rejection_reasons: Sequence[str]
     selected: bool
     bookmaker_odds: Optional[float] = None
     edge_pp: Optional[float] = None
+    kelly_stake_pct: Optional[float] = None
+    model_fair_odds: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -97,12 +100,15 @@ class MarketEvaluation:
             "model_status": self.model_status.value,
             "probability": self.probability,
             "probability_method": self.probability_method,
-            "required_inputs": list(self.required_inputs),
+            "probability_inputs": list(self.probability_inputs),
+            "pricing_inputs": list(self.pricing_inputs),
             "missing_inputs": list(self.missing_inputs),
             "rejection_reasons": list(self.rejection_reasons),
             "selected": self.selected,
             "bookmaker_odds": self.bookmaker_odds,
             "edge_pp": self.edge_pp,
+            "kelly_stake_pct": self.kelly_stake_pct,
+            "model_fair_odds": self.model_fair_odds,
         }
 
 

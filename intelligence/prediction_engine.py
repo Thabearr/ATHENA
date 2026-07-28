@@ -169,9 +169,9 @@ if __name__ == "__main__":
     print()
 
     fixture = [
-        FixtureOption("1X2", "Home Win", model_prob=fused["Home Win"], odds=2.10, n_effective=n_effective),
-        FixtureOption("1X2", "Draw", model_prob=fused["Draw"], odds=3.40, n_effective=n_effective),
-        FixtureOption("1X2", "Away Win", model_prob=fused["Away Win"], odds=3.60, n_effective=n_effective),
+        FixtureOption("1X2", "Home Win", model_prob=fused["Home Win"], bookmaker_odds=2.10, n_effective=n_effective),
+        FixtureOption("1X2", "Draw", model_prob=fused["Draw"], bookmaker_odds=3.40, n_effective=n_effective),
+        FixtureOption("1X2", "Away Win", model_prob=fused["Away Win"], bookmaker_odds=3.60, n_effective=n_effective),
     ]
 
     reasoner = FixtureReasoner(min_edge_pp=2.0, kelly_fraction_used=1/8)

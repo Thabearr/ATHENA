@@ -153,8 +153,19 @@ class AnalysisPipeline:
                         "edge_is_bookmaker_value",
                         False,
                     ),
+                    "bookmaker_odds": analysis.get("bookmaker_odds"),
+                    "bookmaker_probability": analysis.get(
+                        "bookmaker_probability"
+                    ),
+                    "edge_pp": analysis.get("edge_pp"),
+                    "kelly_stake_pct": analysis.get(
+                        "kelly_stake_pct"
+                    ),
                     "verdict": analysis.get("recommended_analytical_verdict"),
                     "viable_markets": analysis.get("viable_markets", []),
+                    "accumulator_eligible_selection": analysis.get(
+                        "accumulator_eligible_selection"
+                    ),
                     "no_bet_reasons": analysis.get("no_bet_reasons", []),
                     "evidence_report": analysis.get("evidence_report"),
                     "source": fix.get("data_source", "unknown"),

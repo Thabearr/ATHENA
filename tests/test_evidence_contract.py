@@ -1,13 +1,24 @@
 import unittest
+from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from domain.markets import DecisionStatus, MarketId
+from domain.markets import (
+    MARKET_REGISTRY,
+    DecisionStatus,
+    MarketId,
+    OutcomeId,
+    make_selection,
+    resolve_legacy_selection,
+)
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.pricing import parse_bookmaker_quotes, price_selection
 from intelligence.match_analyst import (
     MatchAnalyst,
     build_viable_market_candidates,
 )
+from intelligence.fixture_reasoner import FixtureOption, FixtureReasoner
+from intelligence.acca_filter import AccaFilter
 from services.analysis_pipeline import AnalysisPipeline
 
 
@@ -52,6 +63,8 @@ class StubRefereeEngine:
 
 
 class EvidenceContractTests(unittest.TestCase):
+    QUOTE_NOW = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+
     def _analyst(
         self,
         *,
@@ -93,6 +106,37 @@ class EvidenceContractTests(unittest.TestCase):
         return self._analyst(**analyst_kwargs).compile_master_fixture_prediction(
             self._fixture_context()
         )
+
+    @staticmethod
+    def _quotes_for_selection(
+        selection,
+        odds=4.0,
+        *,
+        line=None,
+        source="test_bookmaker",
+        snapshot_id="snapshot-1",
+        observed_at=None,
+    ):
+        quote_line = selection.line if line is None else line
+        observed = observed_at or (
+            EvidenceContractTests.QUOTE_NOW - timedelta(minutes=1)
+        )
+        return [
+            {
+                "market_id": selection.market_id.value,
+                "outcome_id": outcome.value,
+                "line": quote_line,
+                "bookmaker_odds": odds,
+                "source": source,
+                "quote_snapshot_id": snapshot_id,
+                "observed_at": observed.isoformat(),
+                "is_genuine": True,
+                "is_current": True,
+            }
+            for outcome in MARKET_REGISTRY[
+                selection.market_id
+            ].supported_outcomes
+        ]
 
     @staticmethod
     def _evidence_by_field(result):
@@ -176,6 +220,307 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertTrue(
             all(evaluation["edge_pp"] is None for evaluation in evaluations)
         )
+        self.assertEqual(
+            result["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
+        )
+        self.assertTrue(
+            all(
+                evaluation["kelly_stake_pct"] is None
+                for evaluation in evaluations
+            )
+        )
+
+    def test_reciprocal_probability_is_only_model_fair_odds(self):
+        result = self._compile()
+        verdict = result["reasoning_verdicts"][0]
+
+        self.assertAlmostEqual(
+            verdict["model_fair_odds"],
+            1.0 / verdict["model_probability"],
+            places=3,
+        )
+        self.assertIsNone(verdict["bookmaker_odds"])
+        self.assertIsNone(verdict["edge_pp"])
+        self.assertIsNone(verdict["kelly_stake_pct"])
+
+        reasoned = FixtureReasoner().analyze([
+            FixtureOption("1X2", "Home Win", model_prob=0.60),
+            FixtureOption("1X2", "Draw", model_prob=0.20),
+            FixtureOption("1X2", "Away Win", model_prob=0.20),
+        ])
+        self.assertTrue(
+            all(
+                item.status == DecisionStatus.ANALYTICAL_CANDIDATE.value
+                for item in reasoned
+            )
+        )
+        self.assertTrue(all(item.fair_prob is None for item in reasoned))
+        self.assertTrue(all(item.edge_pp is None for item in reasoned))
+        self.assertTrue(
+            all(item.kelly_stake_pct is None for item in reasoned)
+        )
+        self.assertAlmostEqual(
+            reasoned[0].option.model_fair_odds,
+            1.0 / 0.60,
+        )
+
+    def test_exact_complete_pricing_is_required_for_bet(self):
+        analytical = self._compile()
+        selection = resolve_legacy_selection(
+            analytical["recommended_analytical_verdict"]
+        )
+        context = self._fixture_context()
+        context["bookmaker_odds"] = self._quotes_for_selection(selection)
+
+        priced = self._analyst().compile_master_fixture_prediction(
+            context,
+            quote_current_time=self.QUOTE_NOW,
+        )
+
+        self.assertEqual(priced["decision_status"], DecisionStatus.BET.value)
+        candidate = priced["viable_markets"][0]
+        self.assertEqual(candidate["market_id"], selection.market_id.value)
+        self.assertEqual(candidate["outcome_id"], selection.outcome_id.value)
+        self.assertEqual(candidate["line"], selection.line)
+        self.assertIsNotNone(candidate["edge_pp"])
+        self.assertIsNotNone(candidate["kelly_stake_pct"])
+        self.assertTrue(candidate["edge_is_bookmaker_value"])
+        self.assertTrue(priced["edge_is_bookmaker_value"])
+        self.assertEqual(
+            priced["accumulator_eligible_selection"]["verdict"],
+            candidate["verdict"],
+        )
+
+    def test_odds_for_another_market_cannot_price_selected_market(self):
+        analytical = self._compile()
+        selected = resolve_legacy_selection(
+            analytical["recommended_analytical_verdict"]
+        )
+        other_market = (
+            MarketId.BTTS
+            if selected.market_id != MarketId.BTTS
+            else MarketId.MATCH_RESULT
+        )
+        other = type(selected)(
+            market_id=other_market,
+            outcome_id=MARKET_REGISTRY[other_market].supported_outcomes[0],
+            line=None,
+            display_label="Other",
+            selection_display_name="Other",
+        )
+        context = self._fixture_context()
+        context["bookmaker_odds"] = self._quotes_for_selection(other)
+
+        result = self._analyst().compile_master_fixture_prediction(
+            context,
+            quote_current_time=self.QUOTE_NOW,
+        )
+
+        self.assertEqual(
+            result["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
+        )
+        self.assertIsNone(result["viable_markets"][0]["bookmaker_odds"])
+        self.assertIsNone(result["viable_markets"][0]["edge_pp"])
+        self.assertFalse(
+            result["viable_markets"][0]["edge_is_bookmaker_value"]
+        )
+        self.assertFalse(result["edge_is_bookmaker_value"])
+        self.assertIsNone(result["accumulator_eligible_selection"])
+
+    def test_wrong_line_cannot_price_selected_market(self):
+        selection = make_selection(
+            MarketId.TOTAL_GOALS,
+            OutcomeId.UNDER,
+            line=3.5,
+        )
+        quotes = parse_bookmaker_quotes(
+            self._quotes_for_selection(
+                selection,
+                line=selection.line + 1.0,
+            ),
+            current_time=self.QUOTE_NOW,
+        )
+        pricing, reason = price_selection(selection, 0.70, quotes)
+
+        self.assertIsNone(pricing)
+        self.assertIn("exact market, outcome, and line", reason)
+
+    def test_cross_bookmaker_outcomes_cannot_form_one_market(self):
+        selection = make_selection(
+            MarketId.MATCH_RESULT,
+            OutcomeId.HOME,
+        )
+        raw_quotes = self._quotes_for_selection(selection)
+        for index, quote in enumerate(raw_quotes):
+            quote["source"] = f"bookmaker-{index}"
+        quotes = parse_bookmaker_quotes(
+            raw_quotes,
+            current_time=self.QUOTE_NOW,
+        )
+
+        pricing, reason = price_selection(selection, 0.70, quotes)
+
+        self.assertIsNone(pricing)
+        self.assertIn("market is incomplete", reason)
+
+    def test_cross_snapshot_outcomes_cannot_form_one_market(self):
+        selection = make_selection(
+            MarketId.MATCH_RESULT,
+            OutcomeId.HOME,
+        )
+        raw_quotes = self._quotes_for_selection(selection)
+        for index, quote in enumerate(raw_quotes):
+            quote["quote_snapshot_id"] = f"snapshot-{index}"
+        quotes = parse_bookmaker_quotes(
+            raw_quotes,
+            current_time=self.QUOTE_NOW,
+        )
+
+        pricing, reason = price_selection(selection, 0.70, quotes)
+
+        self.assertIsNone(pricing)
+        self.assertIn("market is incomplete", reason)
+
+    def test_complete_single_bookmaker_snapshot_can_be_devigged(self):
+        selection = make_selection(
+            MarketId.MATCH_RESULT,
+            OutcomeId.HOME,
+        )
+        quotes = parse_bookmaker_quotes(
+            self._quotes_for_selection(selection),
+            current_time=self.QUOTE_NOW,
+        )
+
+        pricing, reason = price_selection(selection, 0.70, quotes)
+
+        self.assertEqual(reason, "")
+        self.assertIsNotNone(pricing)
+        self.assertEqual(
+            pricing.bookmaker_quote.source,
+            "test_bookmaker",
+        )
+        self.assertEqual(
+            pricing.bookmaker_quote.quote_snapshot_id,
+            "snapshot-1",
+        )
+
+    def test_duplicate_outcomes_across_sources_do_not_overwrite(self):
+        selection = make_selection(
+            MarketId.MATCH_RESULT,
+            OutcomeId.HOME,
+        )
+        raw_quotes = self._quotes_for_selection(selection)
+        home, draw, away = raw_quotes
+        source_a = [home.copy(), draw.copy()]
+        source_b = [home.copy(), away.copy()]
+        for quote in source_a:
+            quote["source"] = "bookmaker-a"
+        for quote in source_b:
+            quote["source"] = "bookmaker-b"
+        quotes = parse_bookmaker_quotes(
+            source_a + source_b,
+            current_time=self.QUOTE_NOW,
+        )
+
+        pricing, reason = price_selection(selection, 0.70, quotes)
+
+        self.assertIsNone(pricing)
+        self.assertIn("market is incomplete", reason)
+
+    def test_quote_freshness_requires_observed_at_within_max_age(self):
+        selection = make_selection(MarketId.BTTS, OutcomeId.YES)
+        stale_raw = self._quotes_for_selection(
+            selection,
+            observed_at=self.QUOTE_NOW - timedelta(minutes=30),
+        )
+        stale_quotes = parse_bookmaker_quotes(
+            stale_raw,
+            current_time=self.QUOTE_NOW,
+            max_quote_age_seconds=600,
+        )
+        missing_timestamp = self._quotes_for_selection(selection)
+        for quote in missing_timestamp:
+            quote.pop("observed_at")
+        missing_quotes = parse_bookmaker_quotes(
+            missing_timestamp,
+            current_time=self.QUOTE_NOW,
+        )
+
+        self.assertEqual(stale_quotes, ())
+        self.assertEqual(missing_quotes, ())
+
+    def test_model_requirements_separate_probability_and_pricing(self):
+        for definition in MODEL_STATUS_REGISTRY.values():
+            self.assertNotIn(
+                "bookmaker_odds",
+                definition.probability_inputs,
+            )
+            if definition.selectable:
+                self.assertEqual(
+                    definition.pricing_inputs,
+                    ("bookmaker_odds",),
+                )
+
+    def test_accumulator_filter_preserves_exact_priced_selection(self):
+        priced_selection = {
+            "verdict": "HOME_WIN",
+            "market_id": MarketId.MATCH_RESULT.value,
+            "outcome_id": OutcomeId.HOME.value,
+            "line": None,
+            "category": "MATCH_RESULT",
+            "edge": 0.10,
+            "edge_above_baseline": 0.10,
+            "edge_is_bookmaker_value": True,
+            "edge_method": "multiplicative_devig",
+            "prob": 0.70,
+            "probability_method": "test_probability",
+            "bookmaker_odds": 2.0,
+            "bookmaker_quote": {"exact": True},
+            "edge_pp": 20.0,
+            "kelly_stake_pct": 2.0,
+        }
+        unpriced_diversity_preference = {
+            "verdict": "DC_X2",
+            "category": "DOUBLE_CHANCE",
+            "edge": 0.50,
+            "edge_above_baseline": 0.50,
+            "edge_is_bookmaker_value": False,
+            "bookmaker_odds": None,
+        }
+        fixture = {
+            "fixture_id": "priced-selection",
+            "fixture": "Alpha FC vs Beta FC",
+            "home_team": "Alpha FC",
+            "away_team": "Beta FC",
+            "league": "Test League",
+            "risk_score": 10.0,
+            "decision_status": DecisionStatus.BET.value,
+            "accumulator_eligible_selection": priced_selection,
+            "viable_markets": [
+                priced_selection,
+                unpriced_diversity_preference,
+            ],
+        }
+        acca_filter = AccaFilter()
+        acca_filter.nlp_engine = SimpleNamespace(
+            analyze_fixture=lambda *args, **kwargs: {}
+        )
+
+        result = acca_filter.build_filtered_acca(
+            [fixture],
+            target_size=1,
+        )
+
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["verdict"], "HOME_WIN")
+        self.assertEqual(
+            result[0]["market_id"],
+            MarketId.MATCH_RESULT.value,
+        )
+        self.assertEqual(result[0]["outcome_id"], OutcomeId.HOME.value)
+        self.assertTrue(result[0]["edge_is_bookmaker_value"])
 
     def test_disabled_markets_are_reported_but_never_selected(self):
         result = self._compile()
@@ -269,6 +614,44 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(
             analyzed[0]["evidence_report"]["fixture_id"],
             "fixture-evidence-1",
+        )
+        self.assertFalse(analyzed[0]["edge_is_bookmaker_value"])
+
+    def test_pipeline_preserves_bookmaker_edge_and_eligible_selection(self):
+        eligible = {
+            "verdict": "HOME_WIN",
+            "market_id": MarketId.MATCH_RESULT.value,
+            "outcome_id": OutcomeId.HOME.value,
+            "line": None,
+        }
+        pipeline = object.__new__(AnalysisPipeline)
+        pipeline.analyst = SimpleNamespace(
+            compile_master_fixture_prediction=lambda context: {
+                "decision_status": DecisionStatus.BET.value,
+                "edge_differential": 0.10,
+                "edge_is_bookmaker_value": True,
+                "recommended_analytical_verdict": "HOME_WIN",
+                "viable_markets": [eligible],
+                "accumulator_eligible_selection": eligible,
+            }
+        )
+        pipeline._resolve_team_id = lambda team_name: 101
+
+        analyzed = pipeline.run_pipeline_snapshot(
+            execution_limit=1,
+            override_fixtures=[{
+                "fixture_id": "pipeline-priced",
+                "home_team": "Alpha FC",
+                "away_team": "Beta FC",
+                "league": "Test League",
+                "match_date": "2026-07-29T15:00:00",
+            }],
+        )
+
+        self.assertTrue(analyzed[0]["edge_is_bookmaker_value"])
+        self.assertEqual(
+            analyzed[0]["accumulator_eligible_selection"],
+            eligible,
         )
 
 

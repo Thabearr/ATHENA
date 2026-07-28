@@ -4,6 +4,7 @@ Balances edge confidence with practical betting constraints.
 """
 
 import logging
+from datetime import datetime, timezone
 from typing import List, Dict
 
 from domain.markets import (
@@ -12,6 +13,11 @@ from domain.markets import (
     resolve_legacy_selection,
     serialize_leg,
     serialize_selection,
+)
+from domain.pricing import (
+    DEFAULT_MAX_QUOTE_AGE_SECONDS,
+    parse_bookmaker_quotes,
+    quote_matches_selection,
 )
 
 logger = logging.getLogger("athena.accumulator")
@@ -26,8 +32,19 @@ class AccumulatorEngine:
     4. Risk-adjusted selection (allows some upset alerts if edge is exceptional)
     """
     
-    def __init__(self, min_edge: float = 0.05):
+    def __init__(
+        self,
+        min_edge: float = 0.05,
+        *,
+        max_quote_age_seconds: int = DEFAULT_MAX_QUOTE_AGE_SECONDS,
+        current_time_provider=None,
+    ):
         self.min_edge = min_edge
+        self.max_quote_age_seconds = max_quote_age_seconds
+        self.current_time_provider = (
+            current_time_provider
+            or (lambda: datetime.now(timezone.utc))
+        )
         # Markets ranked by historical reliability (proven in betting)
         self.market_reliability = {
             "TO_QUALIFY_HOME": 0.95,      # Knockout - very predictable
@@ -184,14 +201,44 @@ class AccumulatorEngine:
                 continue
 
             bookmaker_odds = fix.get("bookmaker_odds")
+            raw_quote = fix.get("bookmaker_quote")
+            try:
+                validated_quotes = parse_bookmaker_quotes(
+                    [raw_quote] if isinstance(raw_quote, dict) else [],
+                    current_time=self.current_time_provider(),
+                    max_quote_age_seconds=self.max_quote_age_seconds,
+                )
+                exact_quote = (
+                    validated_quotes[0] if validated_quotes else None
+                )
+                canonical_selection = resolve_legacy_selection(verdict)
+            except (MarketRegistryError, TypeError, ValueError):
+                exact_quote = None
             if (
                 not isinstance(bookmaker_odds, (int, float))
                 or isinstance(bookmaker_odds, bool)
                 or bookmaker_odds <= 1.0
+                or exact_quote is None
+                or not exact_quote.is_genuine
+                or not exact_quote.is_current
+                or not quote_matches_selection(
+                    exact_quote,
+                    canonical_selection,
+                )
+                or abs(
+                    exact_quote.bookmaker_odds - float(bookmaker_odds)
+                ) > 1e-9
+                or fix.get("edge_is_bookmaker_value") is not True
+                or not isinstance(fix.get("edge_pp"), (int, float))
+                or not isinstance(
+                    fix.get("kelly_stake_pct"),
+                    (int, float),
+                )
             ):
                 reason = (
                     f"{fix.get('fixture', 'Unknown fixture')}: no validated "
-                    "current bookmaker odds were provided."
+                    "current bookmaker odds matching the exact market, "
+                    "outcome, and line were provided."
                 )
                 logger.warning(reason)
                 rejected_reasons.append(reason)
@@ -231,6 +278,10 @@ class AccumulatorEngine:
                     False,
                 ),
                 "edge_method": fix.get("edge_method"),
+                "edge_pp": round(float(fix["edge_pp"]), 4),
+                "kelly_stake_pct": round(
+                    float(fix["kelly_stake_pct"]), 4
+                ),
                 "estimated_probability": fix.get("estimated_probability"),
                 "probability_method": fix.get("probability_method"),
                 "evidence_report": fix.get("evidence_report"),
