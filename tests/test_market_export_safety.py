@@ -16,6 +16,7 @@ from domain.markets import (
     serialize_selection,
     validate_selection,
 )
+from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
 from intelligence.accumulator import AccumulatorEngine
 from intelligence.match_analyst import build_viable_market_candidates
 from workers.bookie_automator import BookieAutomator
@@ -95,6 +96,17 @@ class CanonicalMarketRegistryTests(unittest.TestCase):
         self.assertEqual(payload["display_label"], "Under 3.5")
         self.assertTrue(payload["settlement_semantics"])
 
+    def test_disabled_selection_can_still_be_serialized_for_audit(self):
+        payload = serialize_selection(
+            resolve_legacy_selection("WIN_EITHER_HALF_HOME_YES")
+        )
+
+        self.assertEqual(
+            payload["market_id"],
+            MarketId.HOME_WIN_EITHER_HALF.value,
+        )
+        self.assertEqual(payload["outcome_id"], OutcomeId.YES.value)
+
 
 class ExportSelectionPreservationTests(unittest.TestCase):
     QUOTE_NOW = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
@@ -141,12 +153,12 @@ class ExportSelectionPreservationTests(unittest.TestCase):
             "line": 1.5,
             "display_label": "Away +1.5",
         },
-        "fixture-half": {
+        "fixture-combo": {
             "fixture": "Nu FC vs Xi FC",
-            "market_id": MarketId.HOME_WIN_EITHER_HALF.value,
+            "market_id": MarketId.HOME_OR_OVER_2_5.value,
             "outcome_id": OutcomeId.YES.value,
             "line": None,
-            "display_label": "Home Team to Win Either Half Yes",
+            "display_label": "Home Team or Over 2.5 Yes",
         },
         "fixture-nil": {
             "fixture": "Omicron FC vs Pi FC",
@@ -165,12 +177,7 @@ class ExportSelectionPreservationTests(unittest.TestCase):
             ("fixture-under", "Eta FC", "Theta FC", "UNDER_35"),
             ("fixture-x2", "Iota FC", "Kappa FC", "DC_X2"),
             ("fixture-ah", "Lambda FC", "Mu FC", "AH_AWAY_PLUS_15"),
-            (
-                "fixture-half",
-                "Nu FC",
-                "Xi FC",
-                "WIN_EITHER_HALF_HOME_YES",
-            ),
+            ("fixture-combo", "Nu FC", "Xi FC", "HOME_OR_OVER_25"),
             ("fixture-nil", "Omicron FC", "Pi FC", "HOME_WIN_TO_NIL_NO"),
         ]
         return [
@@ -301,6 +308,147 @@ class ExportSelectionPreservationTests(unittest.TestCase):
         )
 
 
+class AccumulatorCapabilityGateTests(unittest.TestCase):
+    CURRENT_TIME = datetime(2026, 7, 28, 12, 0, tzinfo=timezone.utc)
+
+    def _priced_fixture(
+        self,
+        market_id,
+        outcome_id,
+        *,
+        line=None,
+        fixture_id="capability-fixture",
+    ):
+        return {
+            "fixture_id": fixture_id,
+            "fixture": "Alpha FC vs Beta FC",
+            "home_team": "Alpha FC",
+            "away_team": "Beta FC",
+            "market_id": market_id.value,
+            "outcome_id": outcome_id.value,
+            "line": line,
+            "edge": 0.10,
+            "risk_score": 10.0,
+            "bookmaker_odds": 2.0,
+            "bookmaker_quote": {
+                "market_id": market_id.value,
+                "outcome_id": outcome_id.value,
+                "line": line,
+                "bookmaker_odds": 2.0,
+                "source": "test_bookmaker",
+                "quote_snapshot_id": f"snapshot-{fixture_id}",
+                "observed_at": (
+                    self.CURRENT_TIME - timedelta(minutes=1)
+                ).isoformat(),
+                "is_genuine": True,
+                "is_current": True,
+            },
+            "edge_is_bookmaker_value": True,
+            "edge_pp": 10.0,
+            "kelly_stake_pct": 1.0,
+        }
+
+    def _generate(self, fixture):
+        return AccumulatorEngine(
+            current_time_provider=lambda: self.CURRENT_TIME,
+        ).generate_accumulator([fixture], fold_size=1)
+
+    def test_every_disabled_market_is_rejected_from_direct_input(self):
+        disabled_selections = (
+            (
+                MarketId.HOME_WIN_EITHER_HALF,
+                OutcomeId.YES,
+                "home-either-half",
+            ),
+            (
+                MarketId.AWAY_WIN_EITHER_HALF,
+                OutcomeId.YES,
+                "away-either-half",
+            ),
+            (MarketId.DRAW_NO_BET, OutcomeId.HOME, "dnb-home"),
+            (MarketId.DRAW_NO_BET, OutcomeId.AWAY, "dnb-away"),
+            (MarketId.MATCH_RESULT_1UP, OutcomeId.HOME, "one-up"),
+            (MarketId.MATCH_RESULT_2UP, OutcomeId.AWAY, "two-up"),
+        )
+        tested_markets = {
+            market_id for market_id, _, _ in disabled_selections
+        }
+        registry_disabled = {
+            market_id
+            for market_id, definition in MODEL_STATUS_REGISTRY.items()
+            if definition.status == ModelStatus.DISABLED
+        }
+        self.assertEqual(tested_markets, registry_disabled)
+
+        for market_id, outcome_id, fixture_id in disabled_selections:
+            with self.subTest(
+                market_id=market_id,
+                outcome_id=outcome_id,
+            ):
+                result = self._generate(
+                    self._priced_fixture(
+                        market_id,
+                        outcome_id,
+                        fixture_id=fixture_id,
+                    )
+                )
+
+                self.assertEqual(result["decision_status"], "NO_BET")
+                self.assertEqual(result["legs"], [])
+                self.assertIn(
+                    "disabled for accumulator use",
+                    result["no_bet_reasons"][0],
+                )
+
+    def test_integer_and_quarter_handicap_lines_are_rejected(self):
+        for line in (-2.0, -1.0, 0.0, 1.0, 2.0, -0.75, -0.25, 0.25, 0.75):
+            with self.subTest(line=line):
+                result = self._generate(
+                    self._priced_fixture(
+                        MarketId.ASIAN_HANDICAP,
+                        OutcomeId.AWAY,
+                        line=line,
+                        fixture_id=f"unsupported-ah-{line}",
+                    )
+                )
+
+                self.assertEqual(result["decision_status"], "NO_BET")
+                self.assertEqual(result["legs"], [])
+                self.assertIn(
+                    "only exact half-goal lines",
+                    result["no_bet_reasons"][0],
+                )
+
+    def test_supported_half_goal_handicaps_are_accepted(self):
+        for index, line in enumerate(
+            (-2.5, -1.5, -0.5, 0.5, 1.5, 2.5)
+        ):
+            outcome_id = (
+                OutcomeId.HOME if index % 2 == 0 else OutcomeId.AWAY
+            )
+            with self.subTest(line=line, outcome_id=outcome_id):
+                result = self._generate(
+                    self._priced_fixture(
+                        MarketId.ASIAN_HANDICAP,
+                        outcome_id,
+                        line=line,
+                        fixture_id=f"supported-ah-{index}",
+                    )
+                )
+
+                self.assertEqual(result["decision_status"], "BET")
+                self.assertEqual(len(result["legs"]), 1)
+                self.assertEqual(
+                    result["legs"][0]["market_id"],
+                    MarketId.ASIAN_HANDICAP.value,
+                )
+                self.assertEqual(
+                    result["legs"][0]["outcome_id"],
+                    outcome_id.value,
+                )
+                self.assertEqual(result["legs"][0]["line"], line)
+
+
 class NoBetFallbackTests(unittest.TestCase):
     def test_baseline_delta_is_not_floored_or_given_a_fallback(self):
         no_candidates = build_viable_market_candidates(
@@ -377,60 +525,6 @@ class NoBetFallbackTests(unittest.TestCase):
             "no validated current bookmaker odds",
             result["no_bet_reasons"][0],
         )
-
-    def test_home_and_away_dnb_cannot_enter_accumulator(self):
-        current_time = datetime(
-            2026,
-            7,
-            28,
-            12,
-            0,
-            tzinfo=timezone.utc,
-        )
-        for verdict, outcome in (
-            ("DNB_HOME", OutcomeId.HOME),
-            ("DNB_AWAY", OutcomeId.AWAY),
-        ):
-            with self.subTest(verdict=verdict):
-                result = AccumulatorEngine(
-                    current_time_provider=lambda: current_time,
-                ).generate_accumulator(
-                    [{
-                        "fixture_id": f"disabled-{verdict}",
-                        "fixture": "Alpha FC vs Beta FC",
-                        "home_team": "Alpha FC",
-                        "away_team": "Beta FC",
-                        "verdict": verdict,
-                        "edge": 0.10,
-                        "risk_score": 10.0,
-                        "bookmaker_odds": 2.0,
-                        "bookmaker_quote": {
-                            "market_id": MarketId.DRAW_NO_BET.value,
-                            "outcome_id": outcome.value,
-                            "line": None,
-                            "bookmaker_odds": 2.0,
-                            "source": "test_bookmaker",
-                            "quote_snapshot_id": "dnb-disabled",
-                            "observed_at": (
-                                current_time - timedelta(minutes=1)
-                            ).isoformat(),
-                            "is_genuine": True,
-                            "is_current": True,
-                        },
-                        "edge_is_bookmaker_value": True,
-                        "edge_pp": 10.0,
-                        "kelly_stake_pct": 1.0,
-                    }],
-                    fold_size=1,
-                )
-
-                self.assertEqual(result["decision_status"], "NO_BET")
-                self.assertEqual(result["legs"], [])
-                self.assertIn(
-                    "Draw No Bet is disabled",
-                    result["no_bet_reasons"][0],
-                )
-
 
 if __name__ == "__main__":
     unittest.main()
