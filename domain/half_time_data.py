@@ -42,6 +42,9 @@ class HalfTimeObservation:
     source: str
     observed_at: Optional[datetime] = None
     source_fixture_id: Optional[str] = None
+    stored_full_time_home_goals: Optional[int] = None
+    stored_full_time_away_goals: Optional[int] = None
+    authoritative_full_time_source: Optional[str] = None
     half_time_score_provenance: ScoreProvenance = ScoreProvenance.MISSING
     league: Optional[str] = None
     season: Optional[str] = None
@@ -79,6 +82,16 @@ class HalfTimeObservation:
             ("full-time away goals", self.full_time_away_goals, True),
             ("half-time home goals", self.half_time_home_goals, False),
             ("half-time away goals", self.half_time_away_goals, False),
+            (
+                "stored full-time home goals",
+                self.stored_full_time_home_goals,
+                False,
+            ),
+            (
+                "stored full-time away goals",
+                self.stored_full_time_away_goals,
+                False,
+            ),
         )
         valid_scores = {}
         for label, value, required in score_fields:
@@ -141,6 +154,30 @@ class HalfTimeObservation:
                 "half-time away goals cannot exceed full-time away goals"
             )
 
+        if self.authoritative_full_time_source:
+            for side in ("home", "away"):
+                stored_label = f"stored full-time {side} goals"
+                authoritative_label = f"full-time {side} goals"
+                stored_value = getattr(
+                    self,
+                    f"stored_full_time_{side}_goals",
+                )
+                authoritative_value = getattr(
+                    self,
+                    f"full_time_{side}_goals",
+                )
+                if (
+                    valid_scores.get(stored_label)
+                    and valid_scores.get(authoritative_label)
+                    and stored_value != authoritative_value
+                ):
+                    reasons.append(
+                        f"stored full-time {side} goals ({stored_value}) "
+                        "conflict with authoritative "
+                        f"{self.authoritative_full_time_source} value "
+                        f"({authoritative_value})"
+                    )
+
         if reasons:
             status = HalfTimeValidationStatus.INVALID
         elif half_time_missing:
@@ -168,6 +205,15 @@ class HalfTimeObservation:
                 self.observed_at.isoformat() if self.observed_at else None
             ),
             "source_fixture_id": self.source_fixture_id,
+            "stored_full_time_home_goals": (
+                self.stored_full_time_home_goals
+            ),
+            "stored_full_time_away_goals": (
+                self.stored_full_time_away_goals
+            ),
+            "authoritative_full_time_source": (
+                self.authoritative_full_time_source
+            ),
             "half_time_score_provenance": (
                 self.half_time_score_provenance.value
                 if isinstance(
@@ -250,6 +296,9 @@ class HalfTimeCoverageReport:
     fixtures_with_valid_half_time_scores: int
     fixtures_missing_half_time_scores: int
     invalid_observations: int
+    total_source_observations: int
+    invalid_source_observations: int
+    conflicting_fixtures: Tuple[str, ...]
     coverage_percentage: float
     coverage_by_league: dict
     coverage_by_season: dict
@@ -272,6 +321,11 @@ class HalfTimeCoverageReport:
                 self.fixtures_missing_half_time_scores
             ),
             "invalid_observations": self.invalid_observations,
+            "total_source_observations": self.total_source_observations,
+            "invalid_source_observations": (
+                self.invalid_source_observations
+            ),
+            "conflicting_fixtures": list(self.conflicting_fixtures),
             "coverage_percentage": self.coverage_percentage,
             "coverage_by_league": self.coverage_by_league,
             "coverage_by_season": self.coverage_by_season,
@@ -321,7 +375,11 @@ def _observation_order_key(observation: HalfTimeObservation) -> tuple:
 def deduplicate_observations(
     observations: Iterable[HalfTimeObservation],
 ) -> Tuple[HalfTimeObservation, ...]:
-    """Select one observation per fixture/source without input-order effects."""
+    """Select one record per fixture/source deterministically.
+
+    The latest ``observed_at`` wins. Ties prefer VALID, then MISSING, then
+    INVALID, followed by a stable serialized-payload tie-breaker.
+    """
     selected = {}
     for observation in observations:
         if not isinstance(observation, HalfTimeObservation):
@@ -338,6 +396,7 @@ def deduplicate_observations(
 def _select_one_observation_per_fixture(
     observations: Iterable[HalfTimeObservation],
 ) -> Tuple[HalfTimeObservation, ...]:
+    """Use the same documented ordering for fixture-level coverage."""
     selected = {}
     for observation in deduplicate_observations(observations):
         current = selected.get(observation.fixture_identity)
@@ -385,14 +444,43 @@ def audit_half_time_coverage(
     observations: Iterable[HalfTimeObservation],
     thresholds: ReadinessThresholds = ReadinessThresholds(),
 ) -> HalfTimeCoverageReport:
-    selected = _select_one_observation_per_fixture(observations)
+    source_observations = deduplicate_observations(observations)
+    selected = _select_one_observation_per_fixture(source_observations)
     overall = _bucket(selected)
+    source_quality = _bucket(source_observations)
     coverage_ratio = overall.valid / overall.total if overall.total else 0.0
-    invalid_ratio = overall.invalid / overall.total if overall.total else 0.0
+    invalid_ratio = (
+        source_quality.invalid / source_quality.total
+        if source_quality.total
+        else 0.0
+    )
 
     coverage_by_league = _grouped_coverage(selected, "league")
     coverage_by_season = _grouped_coverage(selected, "season")
-    source_breakdown = _grouped_coverage(selected, "source")
+    source_breakdown = _grouped_coverage(source_observations, "source")
+
+    half_time_scores_by_fixture = {}
+    for observation in source_observations:
+        if observation.validation_status != HalfTimeValidationStatus.VALID:
+            continue
+        half_time_scores_by_fixture.setdefault(
+            observation.fixture_identity,
+            set(),
+        ).add(
+            (
+                observation.half_time_home_goals,
+                observation.half_time_away_goals,
+            )
+        )
+    conflicting_fixtures = tuple(
+        sorted(
+            fixture_identity
+            for fixture_identity, score_pairs in (
+                half_time_scores_by_fixture.items()
+            )
+            if len(score_pairs) > 1
+        )
+    )
 
     valid_observed_times = sorted(
         (
@@ -411,10 +499,17 @@ def audit_half_time_coverage(
     if overall.total == 0:
         readiness = ResearchReadiness.NO_DATA
         readiness_reasons.append("No historical fixture observations exist.")
+    elif conflicting_fixtures:
+        readiness = ResearchReadiness.DATA_INVALID
+        readiness_reasons.append(
+            "Conflicting observed half-time scores exist for fixtures: "
+            + ", ".join(conflicting_fixtures)
+            + "."
+        )
     elif invalid_ratio > thresholds.maximum_invalid_record_percentage:
         readiness = ResearchReadiness.DATA_INVALID
         readiness_reasons.append(
-            "Invalid-record percentage exceeds the configured maximum."
+            "Invalid source-record percentage exceeds the configured maximum."
         )
     else:
         if overall.valid < thresholds.minimum_valid_observations:
@@ -450,6 +545,9 @@ def audit_half_time_coverage(
         fixtures_with_valid_half_time_scores=overall.valid,
         fixtures_missing_half_time_scores=overall.missing,
         invalid_observations=overall.invalid,
+        total_source_observations=source_quality.total,
+        invalid_source_observations=source_quality.invalid,
+        conflicting_fixtures=conflicting_fixtures,
         coverage_percentage=overall.coverage_percentage,
         coverage_by_league=coverage_by_league,
         coverage_by_season=coverage_by_season,
