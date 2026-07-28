@@ -4,8 +4,29 @@ import hashlib
 import sqlite3
 import os
 import json
+from datetime import datetime, timezone
+from typing import Any, Mapping, Optional, Sequence
 
-from domain.markets import DecisionStatus
+from domain.evidence import (
+    DataQualitySummary,
+    EvidenceItem,
+    EvidenceStatus,
+    FixtureEvidenceReport,
+    MarketEvaluation,
+    evidence_items_by_field,
+)
+from domain.markets import (
+    MARKET_REGISTRY,
+    DecisionStatus,
+    MarketId,
+    MarketRegistryError,
+    resolve_legacy_selection,
+)
+from domain.model_status import (
+    MODEL_STATUS_REGISTRY,
+    ModelStatus,
+    get_model_status,
+)
 from intelligence.ml_engine import MLEngine
 
 logger = logging.getLogger("athena.match_analyst")
@@ -121,6 +142,205 @@ MARKET_PROBABILITY_METHODS = {
 }
 
 
+def _is_number(value: Any) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(float(value))
+    )
+
+
+def _valid_bookmaker_odds(value: Any) -> bool:
+    return _is_number(value) and float(value) > 1.0
+
+
+def build_market_evaluations(
+    market_probabilities: Mapping[str, float],
+    viable_markets: Sequence[dict],
+    evidence_items: Sequence[EvidenceItem],
+    *,
+    selected_verdict: Optional[str] = None,
+    bookmaker_odds: Optional[Mapping[str, Any]] = None,
+    edge_pp_by_verdict: Optional[Mapping[str, Any]] = None,
+    min_probability: float = 0.55,
+) -> list:
+    """Build an auditable evaluation list without changing model decisions."""
+    evidence_by_field = evidence_items_by_field(evidence_items)
+    viable_by_verdict = {
+        candidate["verdict"]: candidate for candidate in viable_markets
+    }
+    odds_by_verdict = bookmaker_odds or {}
+    reported_markets = set()
+    evaluations = []
+
+    for verdict, raw_probability in market_probabilities.items():
+        try:
+            selection = resolve_legacy_selection(verdict)
+        except MarketRegistryError:
+            continue
+
+        model_definition = get_model_status(selection.market_id)
+        reported_markets.add(selection.market_id)
+        probability = (
+            round(float(raw_probability), 4)
+            if _is_number(raw_probability)
+            else None
+        )
+        candidate = viable_by_verdict.get(verdict)
+        odds_value = odds_by_verdict.get(verdict)
+        canonical_odds = (
+            round(float(odds_value), 4)
+            if _valid_bookmaker_odds(odds_value)
+            else None
+        )
+
+        missing_inputs = []
+        for required_input in model_definition.required_inputs:
+            evidence = evidence_by_field.get(required_input)
+            if (
+                evidence is None
+                or evidence.status != EvidenceStatus.AVAILABLE
+            ):
+                missing_inputs.append(required_input)
+        if canonical_odds is None and "bookmaker_odds" not in missing_inputs:
+            missing_inputs.append("bookmaker_odds")
+
+        selected = bool(
+            selected_verdict == verdict
+            and model_definition.selectable
+            and candidate is not None
+        )
+        rejection_reasons = []
+        if not model_definition.selectable:
+            rejection_reasons.append(model_definition.reason)
+            selected = False
+        elif probability is None:
+            rejection_reasons.append(
+                "No probability was produced for this market outcome."
+            )
+        elif candidate is None:
+            if verdict not in MARKET_PROBABILITY_METHODS:
+                rejection_reasons.append(
+                    "Probability is reportable, but this outcome is not "
+                    "enabled in the current selection candidate set."
+                )
+            elif probability < min_probability:
+                rejection_reasons.append(
+                    "Probability did not clear the minimum analytical "
+                    f"threshold of {min_probability:.2f}."
+                )
+            else:
+                rejection_reasons.append(
+                    "Market did not clear the positive global-baseline "
+                    "delta threshold."
+                )
+        elif not selected:
+            if selected_verdict:
+                rejection_reasons.append(
+                    "A higher-ranked eligible market was selected."
+                )
+            else:
+                rejection_reasons.append(
+                    "No market was selected for this fixture."
+                )
+
+        edge_value = None
+        if canonical_odds is not None and edge_pp_by_verdict:
+            candidate_edge = edge_pp_by_verdict.get(verdict)
+            if _is_number(candidate_edge):
+                edge_value = round(float(candidate_edge), 4)
+
+        evaluations.append(
+            MarketEvaluation(
+                market_id=selection.market_id,
+                outcome_id=selection.outcome_id,
+                line=selection.line,
+                model_status=model_definition.status,
+                probability=probability,
+                probability_method=(
+                    candidate.get("probability_method")
+                    if candidate
+                    else MARKET_PROBABILITY_METHODS.get(verdict)
+                    or model_definition.probability_method
+                ),
+                required_inputs=model_definition.required_inputs,
+                missing_inputs=missing_inputs,
+                rejection_reasons=rejection_reasons,
+                selected=selected,
+                bookmaker_odds=canonical_odds,
+                edge_pp=edge_value,
+            )
+        )
+
+    for market_id, model_definition in MODEL_STATUS_REGISTRY.items():
+        if market_id in reported_markets:
+            continue
+        evaluations.append(
+            MarketEvaluation(
+                market_id=market_id,
+                outcome_id=MARKET_REGISTRY[
+                    market_id
+                ].supported_outcomes[0],
+                line=None,
+                model_status=model_definition.status,
+                probability=None,
+                probability_method=model_definition.probability_method,
+                required_inputs=model_definition.required_inputs,
+                missing_inputs=[
+                    field
+                    for field in model_definition.required_inputs
+                    if (
+                        evidence_by_field.get(field) is None
+                        or evidence_by_field[field].status
+                        != EvidenceStatus.AVAILABLE
+                    )
+                ],
+                rejection_reasons=[
+                    model_definition.reason
+                    if model_definition.status
+                    in {ModelStatus.DISABLED, ModelStatus.UNSUPPORTED}
+                    else "No probability was produced for this market."
+                ],
+                selected=False,
+                bookmaker_odds=None,
+                edge_pp=None,
+            )
+        )
+
+    evaluations.sort(
+        key=lambda evaluation: (
+            evaluation.market_id.value,
+            evaluation.outcome_id.value,
+            evaluation.line is None,
+            evaluation.line or 0.0,
+        )
+    )
+    return evaluations
+
+
+def build_fixture_evidence_report(
+    fixture_context: Mapping[str, Any],
+    evidence_items: Sequence[EvidenceItem],
+    market_evaluations: Sequence[MarketEvaluation],
+    final_decision: DecisionStatus,
+    decision_reasons: Sequence[str],
+) -> dict:
+    """Serialize one deterministic evidence report with an actual generation time."""
+    report = FixtureEvidenceReport(
+        fixture_id=fixture_context.get("fixture_id"),
+        home_team=str(fixture_context.get("home_team") or "Home"),
+        away_team=str(fixture_context.get("away_team") or "Away"),
+        match_date=fixture_context.get("match_date"),
+        generated_at=datetime.now(timezone.utc).isoformat(),
+        evidence_items=evidence_items,
+        data_quality=DataQualitySummary.from_items(evidence_items),
+        market_evaluations=market_evaluations,
+        final_decision=final_decision,
+        decision_reasons=decision_reasons,
+    )
+    return report.to_dict()
+
+
 def build_viable_market_candidates(
     market_probabilities: dict,
     archetype_boosts: dict,
@@ -135,6 +355,14 @@ def build_viable_market_candidates(
     candidates = []
     for verdict, probability in market_probabilities.items():
         if probability < min_probability:
+            continue
+        try:
+            model_definition = get_model_status(
+                resolve_legacy_selection(verdict).market_id
+            )
+        except MarketRegistryError:
+            continue
+        if not model_definition.selectable:
             continue
         probability_method = MARKET_PROBABILITY_METHODS.get(verdict)
         if not probability_method:
@@ -224,21 +452,84 @@ class MatchAnalyst:
         }
 
     def compile_master_fixture_prediction(self, fixture_context: dict) -> dict:
-        home_team = fixture_context.get('home_team', 'Home')
-        away_team = fixture_context.get('away_team', 'Away')
-        home_id = fixture_context.get('home_id', 1)
-        away_id = fixture_context.get('away_id', 2)
+        home_team = fixture_context.get('home_team') or 'Home'
+        away_team = fixture_context.get('away_team') or 'Away'
+        home_id = (
+            fixture_context.get('home_id')
+            if fixture_context.get('home_id') is not None
+            else 1
+        )
+        away_id = (
+            fixture_context.get('away_id')
+            if fixture_context.get('away_id') is not None
+            else 2
+        )
         match_date = fixture_context.get('match_date')
-        fixture_id = fixture_context.get('fixture_id', 0)
-        is_knockout = fixture_context.get('is_knockout', False)
+        fixture_id = (
+            fixture_context.get('fixture_id')
+            if fixture_context.get('fixture_id') is not None
+            else 0
+        )
+        is_knockout = bool(fixture_context.get('is_knockout', False))
+        is_backtest = bool(fixture_context.get('is_backtest', False))
 
         form_service = getattr(self.form_eng, 'form_svc', None) or getattr(self.form_eng, 'form_service', None)
-        home_raw = form_service.get_recent_form_score(home_id, match_date) if form_service else 0.50
-        away_raw = form_service.get_recent_form_score(away_id, match_date) if form_service else 0.50
+        home_form_value = (
+            form_service.get_recent_form_score(home_id, match_date)
+            if form_service
+            else None
+        )
+        away_form_value = (
+            form_service.get_recent_form_score(away_id, match_date)
+            if form_service
+            else None
+        )
+        home_form_defaulted = not _is_number(home_form_value)
+        away_form_defaulted = not _is_number(away_form_value)
+        home_raw = (
+            float(home_form_value) if not home_form_defaulted else 0.50
+        )
+        away_raw = (
+            float(away_form_value) if not away_form_defaulted else 0.50
+        )
 
-        home_freshness = form_service.get_data_freshness(home_id, match_date) if form_service else {"live_ratio": 0.0}
-        away_freshness = form_service.get_data_freshness(away_id, match_date) if form_service else {"live_ratio": 0.0}
-        avg_live_ratio = (home_freshness.get("live_ratio", 0.0) + away_freshness.get("live_ratio", 0.0)) / 2
+        home_freshness = (
+            form_service.get_data_freshness(home_id, match_date)
+            if form_service
+            else None
+        )
+        away_freshness = (
+            form_service.get_data_freshness(away_id, match_date)
+            if form_service
+            else None
+        )
+        home_live_ratio = (
+            home_freshness.get("live_ratio")
+            if isinstance(home_freshness, dict)
+            else None
+        )
+        away_live_ratio = (
+            away_freshness.get("live_ratio")
+            if isinstance(away_freshness, dict)
+            else None
+        )
+        freshness_defaulted = not (
+            _is_number(home_live_ratio) and _is_number(away_live_ratio)
+        )
+        if freshness_defaulted:
+            home_live_ratio = (
+                float(home_live_ratio)
+                if _is_number(home_live_ratio)
+                else 0.0
+            )
+            away_live_ratio = (
+                float(away_live_ratio)
+                if _is_number(away_live_ratio)
+                else 0.0
+            )
+        avg_live_ratio = (
+            float(home_live_ratio) + float(away_live_ratio)
+        ) / 2
 
         home_last_date = form_service.get_last_match_date(home_id, match_date) if form_service else None
         away_last_date = form_service.get_last_match_date(away_id, match_date) if form_service else None
@@ -246,15 +537,35 @@ class MatchAnalyst:
         fatigue = self.fatigue_eng.analyze_fixture_fatigue_clash(
             home_id, away_id, match_date, home_last_date, away_last_date
         )
-        fatigue_diff = fatigue.get("fatigue_differential", 0.0)
+        fatigue_value = (
+            fatigue.get("fatigue_differential")
+            if isinstance(fatigue, dict)
+            else None
+        )
+        fatigue_defaulted = not _is_number(fatigue_value)
+        fatigue_diff = (
+            float(fatigue_value) if not fatigue_defaulted else 0.0
+        )
 
         referee_signal = self.ref_eng.check_referee_anomaly(fixture_id)
+        if not isinstance(referee_signal, dict):
+            referee_signal = {}
 
         # Use ELO ratings instead of form data if available
-        home_elo = fixture_context.get('home_pre_elo', 1500)
-        away_elo = fixture_context.get('away_pre_elo', 1500)
+        home_elo_context = fixture_context.get('home_pre_elo')
+        away_elo_context = fixture_context.get('away_pre_elo')
+        home_elo_available = _is_number(home_elo_context)
+        away_elo_available = _is_number(away_elo_context)
+        home_elo = (
+            float(home_elo_context) if home_elo_available else 1500
+        )
+        away_elo = (
+            float(away_elo_context) if away_elo_available else 1500
+        )
+        home_elo_source = "fixture_context"
+        away_elo_source = "fixture_context"
         
-        if 'home_pre_elo' not in fixture_context or 'away_pre_elo' not in fixture_context:
+        if not home_elo_available or not away_elo_available:
             db_path = "database/athena.db"
             if os.path.exists(db_path):
                 try:
@@ -262,11 +573,17 @@ class MatchAnalyst:
                     cursor = conn.cursor()
                     cursor.execute("SELECT elo_rating FROM teams WHERE team_id = ? OR name = ?", (home_id, home_team))
                     h_row = cursor.fetchone()
-                    if h_row: home_elo = h_row[0]
+                    if h_row and _is_number(h_row[0]):
+                        home_elo = float(h_row[0])
+                        home_elo_available = True
+                        home_elo_source = "athena_database"
                     
                     cursor.execute("SELECT elo_rating FROM teams WHERE team_id = ? OR name = ?", (away_id, away_team))
                     a_row = cursor.fetchone()
-                    if a_row: away_elo = a_row[0]
+                    if a_row and _is_number(a_row[0]):
+                        away_elo = float(a_row[0])
+                        away_elo_available = True
+                        away_elo_source = "athena_database"
                     conn.close()
                 except Exception as e:
                     logger.error(f"Failed to fetch ELO: {e}")
@@ -348,8 +665,217 @@ class MatchAnalyst:
         # Re-derive Over 1.5 from blended expected goals using Poisson CDF
         prob_over_15 = 1.0 - (self._calculate_poisson_probability(0, expected_goals) + self._calculate_poisson_probability(1, expected_goals))
 
-        is_backtest = fixture_context.get('is_backtest', False)
         stale_data = avg_live_ratio < 0.60 and not is_backtest
+
+        bookmaker_odds_context = fixture_context.get("bookmaker_odds")
+        bookmaker_odds = (
+            dict(bookmaker_odds_context)
+            if isinstance(bookmaker_odds_context, Mapping)
+            else {}
+        )
+        bookmaker_odds_available = any(
+            _valid_bookmaker_odds(value)
+            for value in bookmaker_odds.values()
+        )
+        freshness_status = EvidenceStatus.AVAILABLE
+        freshness_notes = None
+        if freshness_defaulted:
+            freshness_status = EvidenceStatus.DEFAULTED
+            freshness_notes = (
+                "Missing live-data freshness was replaced by a 0.0 ratio."
+            )
+        elif stale_data:
+            freshness_status = EvidenceStatus.STALE
+            freshness_notes = (
+                "Average live-data ratio is below the 0.60 freshness threshold."
+            )
+
+        evidence_items = []
+
+        def record_evidence(
+            source,
+            field,
+            value,
+            status,
+            notes=None,
+            observed_at=None,
+        ):
+            evidence_items.append(
+                EvidenceItem(
+                    source=source,
+                    field=field,
+                    value=value,
+                    status=status,
+                    observed_at=observed_at,
+                    notes=notes,
+                )
+            )
+
+        available = EvidenceStatus.AVAILABLE
+        defaulted = EvidenceStatus.DEFAULTED
+        missing = EvidenceStatus.MISSING
+        input_specs = (
+            (
+                "fixture_id",
+                fixture_id,
+                available
+                if fixture_context.get("fixture_id") is not None
+                else defaulted,
+                "Missing fixture identity was replaced by 0.",
+            ),
+            (
+                "home_team",
+                home_team,
+                available if fixture_context.get("home_team") else defaulted,
+                "Missing home team was replaced by 'Home'.",
+            ),
+            (
+                "away_team",
+                away_team,
+                available if fixture_context.get("away_team") else defaulted,
+                "Missing away team was replaced by 'Away'.",
+            ),
+            (
+                "home_id",
+                home_id,
+                available
+                if fixture_context.get("home_id") is not None
+                else defaulted,
+                "Missing home team ID was replaced by 1.",
+            ),
+            (
+                "away_id",
+                away_id,
+                available
+                if fixture_context.get("away_id") is not None
+                else defaulted,
+                "Missing away team ID was replaced by 2.",
+            ),
+            (
+                "match_date",
+                match_date,
+                available if match_date else missing,
+                "Match date was not provided.",
+            ),
+            (
+                "fixture_data_source",
+                fixture_context.get("data_source"),
+                available if fixture_context.get("data_source") else missing,
+                "Fixture data source was not identified.",
+            ),
+            (
+                "is_knockout",
+                is_knockout,
+                available
+                if fixture_context.get("is_knockout") is not None
+                else defaulted,
+                "Missing knockout flag was replaced by False.",
+            ),
+            (
+                "is_backtest",
+                is_backtest,
+                available
+                if fixture_context.get("is_backtest") is not None
+                else defaulted,
+                "Missing backtest flag was replaced by False.",
+            ),
+        )
+        for field, value, status, fallback_note in input_specs:
+            record_evidence(
+                "fixture_context",
+                field,
+                value,
+                status,
+                fallback_note if status != available else None,
+            )
+
+        for field, value, was_defaulted, observed_at in (
+            (
+                "home_form",
+                home_form_value,
+                home_form_defaulted,
+                home_last_date,
+            ),
+            (
+                "away_form",
+                away_form_value,
+                away_form_defaulted,
+                away_last_date,
+            ),
+        ):
+            record_evidence(
+                "team_form_service",
+                field,
+                0.50 if was_defaulted else float(value),
+                defaulted if was_defaulted else available,
+                (
+                    f"Missing {field.replace('_', ' ')} was replaced by 0.50."
+                    if was_defaulted
+                    else None
+                ),
+                str(observed_at) if observed_at is not None else None,
+            )
+
+        for field, value, source, is_available in (
+            ("home_elo", home_elo, home_elo_source, home_elo_available),
+            ("away_elo", away_elo, away_elo_source, away_elo_available),
+        ):
+            record_evidence(
+                source,
+                field,
+                value,
+                available if is_available else defaulted,
+                (
+                    None
+                    if is_available
+                    else f"Missing {field.replace('_', ' ')} was replaced by 1500."
+                ),
+            )
+
+        record_evidence(
+            "team_form_service",
+            "live_data_freshness",
+            round(avg_live_ratio, 4),
+            freshness_status,
+            freshness_notes,
+        )
+        record_evidence(
+            "fatigue_engine",
+            "fatigue",
+            fatigue_diff,
+            defaulted if fatigue_defaulted else available,
+            (
+                "Missing fatigue differential was replaced by 0.0."
+                if fatigue_defaulted
+                else None
+            ),
+        )
+        referee_available = bool(referee_signal.get("has_data"))
+        record_evidence(
+            "referee_engine",
+            "referee_data",
+            referee_signal if referee_available else None,
+            available if referee_available else missing,
+            None if referee_available else "No referee evidence was available.",
+        )
+        record_evidence(
+            "ml_engine",
+            "ml_predictions",
+            True if ml_preds else None,
+            available if ml_preds else missing,
+            None if ml_preds else "No ML prediction was available.",
+        )
+        record_evidence(
+            "fixture_context",
+            "bookmaker_odds",
+            bookmaker_odds if bookmaker_odds_available else None,
+            available if bookmaker_odds_available else missing,
+            (
+                None
+                if bookmaker_odds_available
+                else "No validated current bookmaker odds were provided."
+            ),
+        )
         
         # Default heuristic risk
         risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio, is_backtest)
@@ -434,6 +960,17 @@ class MatchAnalyst:
             "AH_AWAY_PLUS_25": prob_away_plus_2_5,
         }
 
+        evaluation_market_probs = {
+            "HOME_WIN": prob_home_win,
+            "DRAW": prob_draw,
+            "AWAY_WIN": prob_away_win,
+            "OVER_05": prob_over_05,
+            **all_market_probs,
+            "UNDER_45": prob_under_45,
+            "UNDER_55": prob_under_55,
+            "HOME_WIN_TO_NIL_YES": prob_home_win_to_nil,
+            "AWAY_WIN_TO_NIL_YES": prob_away_win_to_nil,
+        }
 
         # Early-payout markets are intentionally not modeled here. Reusing the
         # full-time win probability ignores the bookmaker's lead-path and
@@ -484,10 +1021,25 @@ class MatchAnalyst:
             archetype_boosts,
             min_probability=MIN_PROB,
         )
+        selected_verdict = (
+            viable_markets[0]["verdict"] if viable_markets else None
+        )
+        market_evaluations = build_market_evaluations(
+            evaluation_market_probs,
+            viable_markets,
+            evidence_items,
+            selected_verdict=selected_verdict,
+            bookmaker_odds=bookmaker_odds,
+            min_probability=MIN_PROB,
+        )
 
         # Candidates are sorted by baseline delta, which is not bookmaker value.
 
         if not viable_markets:
+            no_bet_reasons = [
+                "No market cleared the minimum probability and "
+                "positive baseline-delta thresholds."
+            ]
             return {
                 "decision_status": DecisionStatus.NO_BET.value,
                 "recommended_analytical_verdict": None,
@@ -498,10 +1050,14 @@ class MatchAnalyst:
                 "stale_data": stale_data,
                 "viable_markets": [],
                 "reasoning_verdicts": [],
-                "no_bet_reasons": [
-                    "No market cleared the minimum probability and "
-                    "positive baseline-delta thresholds."
-                ],
+                "no_bet_reasons": no_bet_reasons,
+                "evidence_report": build_fixture_evidence_report(
+                    fixture_context,
+                    evidence_items,
+                    market_evaluations,
+                    DecisionStatus.NO_BET,
+                    no_bet_reasons,
+                ),
             }
             
         # Model F: Confidence Meta-Model Hard Filter
@@ -546,6 +1102,15 @@ class MatchAnalyst:
         reasoner_results = reasoner.analyze(reasoner_options)
 
         best_market = viable_markets[0]
+        decision_reasons = [
+            f"{best_market['verdict']} ranked first among markets that "
+            "cleared the analytical selection thresholds."
+        ]
+        if not bookmaker_odds_available:
+            decision_reasons.append(
+                "Bookmaker odds were unavailable, so bookmaker edge_pp "
+                "remains unknown."
+            )
 
         return {
             "decision_status": DecisionStatus.BET.value,
@@ -567,5 +1132,12 @@ class MatchAnalyst:
                     "reason": v.reason
                 }
                 for v in reasoner_results
-            ]
+            ],
+            "evidence_report": build_fixture_evidence_report(
+                fixture_context,
+                evidence_items,
+                market_evaluations,
+                DecisionStatus.BET,
+                decision_reasons,
+            ),
         }
