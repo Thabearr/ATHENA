@@ -50,12 +50,10 @@ _PRICING_INPUTS = ("bookmaker_odds",)
 MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     MarketId.MATCH_RESULT: MarketModelStatus(
         status=ModelStatus.ACTIVE,
-        probability_method=(
-            "poisson_score_matrix_with_optional_ml_classifier_blend"
-        ),
+        probability_method="normalized_independent_poisson_score_matrix",
         reason=(
-            "Regulation-time result probabilities are derived from the score "
-            "matrix and may be blended with available ML probabilities."
+            "Regulation-time result probabilities are derived from one "
+            "normalized adaptive independent-Poisson score matrix."
         ),
         probability_inputs=_PROBABILITY_INPUTS,
         pricing_inputs=_PRICING_INPUTS,
@@ -63,12 +61,11 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.ASIAN_HANDICAP: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method=(
-            "score_matrix_handicap_probability_with_optional_ml_blend"
-        ),
+        probability_method="normalized_score_matrix_handicap_cover",
         reason=(
-            "Supported handicap lines are derived from the truncated score "
-            "matrix; selected classifiers may be blended when available."
+            "Supported non-integer handicap cover probabilities are derived "
+            "from the normalized matrix; push-aware unsupported lines remain "
+            "unavailable."
         ),
         probability_inputs=_PROBABILITY_INPUTS,
         pricing_inputs=_PRICING_INPUTS,
@@ -76,12 +73,10 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.TOTAL_GOALS: MarketModelStatus(
         status=ModelStatus.ACTIVE,
-        probability_method=(
-            "poisson_score_matrix_total_goals_with_optional_ml_blend"
-        ),
+        probability_method="normalized_score_matrix_total_goals",
         reason=(
-            "Goal-line probabilities are derived from the Poisson score "
-            "matrix, with explicit optional ML blending where implemented."
+            "Goal-line probabilities are summed directly from the normalized "
+            "adaptive independent-Poisson score matrix."
         ),
         probability_inputs=_PROBABILITY_INPUTS,
         pricing_inputs=_PRICING_INPUTS,
@@ -89,7 +84,7 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.DRAW_OR_OVER_2_5: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method="score_matrix_union_probability",
+        probability_method="normalized_score_matrix_union_probability",
         reason=(
             "The result-or-total probability is derived as a score-matrix "
             "union and remains experimental pending calibration."
@@ -100,7 +95,7 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.AWAY_OR_OVER_2_5: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method="score_matrix_union_probability",
+        probability_method="normalized_score_matrix_union_probability",
         reason=(
             "The result-or-total probability is derived as a score-matrix "
             "union and remains experimental pending calibration."
@@ -111,7 +106,7 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.HOME_OR_OVER_2_5: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method="score_matrix_union_probability",
+        probability_method="normalized_score_matrix_union_probability",
         reason=(
             "The result-or-total probability is derived as a score-matrix "
             "union and remains experimental pending calibration."
@@ -144,9 +139,7 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.DOUBLE_CHANCE: MarketModelStatus(
         status=ModelStatus.ACTIVE,
-        probability_method=(
-            "derived_from_full_time_score_matrix_probabilities"
-        ),
+        probability_method="normalized_score_matrix_result_sum",
         reason=(
             "Each covered outcome is the explicit sum of regulation-time "
             "score-matrix result probabilities."
@@ -157,12 +150,10 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.BTTS: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method=(
-            "score_matrix_btts_probability_with_optional_ml_blend"
-        ),
+        probability_method="normalized_score_matrix_btts",
         reason=(
-            "Both-teams-to-score probability is score-matrix derived and may "
-            "use an optional classifier blend; calibration is still required."
+            "Both-teams-to-score probability is derived from the normalized "
+            "matrix; calibration is still required."
         ),
         probability_inputs=_PROBABILITY_INPUTS,
         pricing_inputs=_PRICING_INPUTS,
@@ -181,9 +172,9 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.HOME_WIN_TO_NIL: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method="score_matrix_win_to_nil_probability",
+        probability_method="normalized_score_matrix_win_to_nil",
         reason=(
-            "The event is derived directly from the truncated score matrix "
+            "The event is derived directly from the normalized score matrix "
             "and remains experimental pending calibration."
         ),
         probability_inputs=_PROBABILITY_INPUTS,
@@ -192,9 +183,9 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
     ),
     MarketId.AWAY_WIN_TO_NIL: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
-        probability_method="score_matrix_win_to_nil_probability",
+        probability_method="normalized_score_matrix_win_to_nil",
         reason=(
-            "The event is derived directly from the truncated score matrix "
+            "The event is derived directly from the normalized score matrix "
             "and remains experimental pending calibration."
         ),
         probability_inputs=_PROBABILITY_INPUTS,

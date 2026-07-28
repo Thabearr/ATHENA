@@ -322,7 +322,7 @@ class NoBetFallbackTests(unittest.TestCase):
         )
         self.assertEqual(
             candidates[0]["probability_method"],
-            "derived_from_full_time_score_matrix_probabilities",
+            "normalized_score_matrix_result_sum",
         )
 
     def test_empty_accumulator_is_an_explicit_no_bet(self):

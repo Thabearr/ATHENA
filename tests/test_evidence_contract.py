@@ -205,6 +205,70 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(freshness["status"], "STALE")
         self.assertEqual(freshness["value"], 0.20)
 
+    def test_score_matrix_audit_is_attached_additively(self):
+        result = self._compile()
+        report = result["evidence_report"]
+        audit = report["score_matrix_audit"]
+        evidence = self._evidence_by_field(result)["score_matrix"]
+
+        self.assertIsInstance(audit, dict)
+        self.assertEqual(evidence["status"], "AVAILABLE")
+        self.assertEqual(evidence["value"], audit)
+        self.assertGreaterEqual(audit["max_home_goal_index"], 0)
+        self.assertGreaterEqual(audit["max_away_goal_index"], 0)
+        self.assertLessEqual(
+            audit["omitted_tail_mass"],
+            audit["tail_tolerance"],
+        )
+        self.assertEqual(
+            audit["normalization_method"],
+            "divide_by_retained_mass",
+        )
+        self.assertGreaterEqual(audit["home_expected_goals"], 0.0)
+        self.assertGreaterEqual(audit["away_expected_goals"], 0.0)
+
+    def test_serialized_score_market_probabilities_preserve_identities(self):
+        result = self._compile()
+        evaluations = {
+            (
+                evaluation["market_id"],
+                evaluation["outcome_id"],
+                evaluation["line"],
+            ): evaluation["probability"]
+            for evaluation in result["evidence_report"][
+                "market_evaluations"
+            ]
+        }
+        home = evaluations[(MarketId.MATCH_RESULT.value, "HOME", None)]
+        draw = evaluations[(MarketId.MATCH_RESULT.value, "DRAW", None)]
+        away = evaluations[(MarketId.MATCH_RESULT.value, "AWAY", None)]
+        btts_yes = evaluations[(MarketId.BTTS.value, "YES", None)]
+        btts_no = evaluations[(MarketId.BTTS.value, "NO", None)]
+
+        self.assertAlmostEqual(home + draw + away, 1.0, places=14)
+        self.assertAlmostEqual(btts_yes + btts_no, 1.0, places=14)
+        self.assertAlmostEqual(
+            evaluations[
+                (MarketId.DOUBLE_CHANCE.value, "HOME_OR_DRAW", None)
+            ],
+            home + draw,
+            places=14,
+        )
+        self.assertAlmostEqual(
+            evaluations[
+                (MarketId.DOUBLE_CHANCE.value, "DRAW_OR_AWAY", None)
+            ],
+            draw + away,
+            places=14,
+        )
+        self.assertAlmostEqual(
+            evaluations[
+                (MarketId.DOUBLE_CHANCE.value, "HOME_OR_AWAY", None)
+            ],
+            home + away,
+            places=14,
+        )
+
     def test_missing_bookmaker_odds_leaves_edge_pp_null(self):
         result = self._compile()
         evaluations = result["evidence_report"]["market_evaluations"]
