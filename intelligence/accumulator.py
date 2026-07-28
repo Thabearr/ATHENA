@@ -9,11 +9,14 @@ from typing import List, Dict
 
 from domain.markets import (
     DecisionStatus,
+    MarketId,
     MarketRegistryError,
+    make_selection,
     resolve_legacy_selection,
     serialize_leg,
     serialize_selection,
 )
+from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
 from domain.pricing import (
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
     parse_bookmaker_quotes,
@@ -84,6 +87,36 @@ class AccumulatorEngine:
             selection["market_display_name"],
             selection["outcome_display_name"],
         )
+
+    @staticmethod
+    def _capability_rejection_reason(
+        canonical_selection,
+        prepared_fixture: dict,
+    ):
+        """Return why a canonical selection cannot enter an accumulator."""
+        model_status = MODEL_STATUS_REGISTRY[
+            canonical_selection.market_id
+        ]
+        if model_status.status in {
+            ModelStatus.DISABLED,
+            ModelStatus.UNSUPPORTED,
+        }:
+            return (
+                f"{prepared_fixture['market_display_name']} is "
+                f"{model_status.status.value.lower()} for accumulator use: "
+                f"{model_status.reason}"
+            )
+
+        if canonical_selection.market_id == MarketId.ASIAN_HANDICAP:
+            line = canonical_selection.line
+            if line is None or abs(line) % 1.0 != 0.5:
+                return (
+                    "Asian Handicap accumulator legs support only exact "
+                    "half-goal lines; integer and quarter-goal lines are "
+                    "unsupported."
+                )
+
+        return None
 
     def _score_fixture(self, fixture: dict) -> float:
         """
@@ -190,11 +223,33 @@ class AccumulatorEngine:
             verdict = fix.get("verdict")
             try:
                 prepared_fixture = serialize_leg(fix)
+                canonical_selection = make_selection(
+                    prepared_fixture["market_id"],
+                    prepared_fixture["outcome_id"],
+                    line=prepared_fixture["line"],
+                    display_label=prepared_fixture["display_label"],
+                    selection_display_name=prepared_fixture[
+                        "outcome_display_name"
+                    ],
+                )
             except MarketRegistryError as exc:
                 reason = (
                     f"{fix.get('fixture', 'Unknown fixture')}: unsupported "
                     f"selection identifier or invalid canonical identity "
                     f"({exc})."
+                )
+                logger.warning(reason)
+                rejected_reasons.append(reason)
+                continue
+
+            capability_rejection = self._capability_rejection_reason(
+                canonical_selection,
+                prepared_fixture,
+            )
+            if capability_rejection:
+                reason = (
+                    f"{fix.get('fixture', 'Unknown fixture')}: "
+                    f"{capability_rejection}"
                 )
                 logger.warning(reason)
                 rejected_reasons.append(reason)
@@ -211,7 +266,6 @@ class AccumulatorEngine:
                 exact_quote = (
                     validated_quotes[0] if validated_quotes else None
                 )
-                canonical_selection = resolve_legacy_selection(verdict)
             except (MarketRegistryError, TypeError, ValueError):
                 exact_quote = None
             if (

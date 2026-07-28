@@ -32,6 +32,7 @@ from domain.pricing import (
     parse_bookmaker_quotes,
     price_selection,
 )
+from domain.score_matrix import build_score_matrix
 from intelligence.ml_engine import MLEngine
 
 logger = logging.getLogger("athena.match_analyst")
@@ -124,26 +125,24 @@ MARKET_CATEGORIES = {
 
 
 MARKET_PROBABILITY_METHODS = {
-    "DC_1X": "derived_from_full_time_score_matrix_probabilities",
-    "DC_X2": "derived_from_full_time_score_matrix_probabilities",
-    "DC_12": "derived_from_full_time_score_matrix_probabilities",
-    "OVER_15": "poisson_total_goals_cdf_with_optional_ml_xg_blend",
-    "OVER_25": "score_matrix_with_optional_ml_classifier_blend",
-    "UNDER_25": "complement_of_over_2_5_probability",
-    "UNDER_35": "truncated_poisson_score_matrix",
-    "GG_YES": "score_matrix_with_optional_ml_classifier_blend",
-    "GG_NO": "complement_of_btts_yes_probability",
-    "DNB_HOME": "full_time_home_win_probability_proxy",
-    "DNB_AWAY": "full_time_away_win_probability_proxy",
-    "HOME_OR_OVER_25": "score_matrix_union_probability",
-    "AWAY_OR_OVER_25": "score_matrix_union_probability",
-    "DRAW_OR_OVER_25": "score_matrix_union_probability",
-    "HOME_WIN_TO_NIL_NO": "complement_of_score_matrix_win_to_nil",
-    "AWAY_WIN_TO_NIL_NO": "complement_of_score_matrix_win_to_nil",
-    "AH_HOME_PLUS_15": "score_matrix_with_optional_ml_classifier_blend",
-    "AH_AWAY_PLUS_15": "score_matrix_with_optional_ml_classifier_blend",
-    "AH_HOME_PLUS_25": "score_matrix_handicap_probability",
-    "AH_AWAY_PLUS_25": "score_matrix_handicap_probability",
+    "DC_1X": "normalized_score_matrix_result_sum",
+    "DC_X2": "normalized_score_matrix_result_sum",
+    "DC_12": "normalized_score_matrix_result_sum",
+    "OVER_15": "normalized_score_matrix_total_goals",
+    "OVER_25": "normalized_score_matrix_total_goals",
+    "UNDER_25": "normalized_score_matrix_total_goals",
+    "UNDER_35": "normalized_score_matrix_total_goals",
+    "GG_YES": "normalized_score_matrix_btts",
+    "GG_NO": "normalized_score_matrix_btts",
+    "HOME_OR_OVER_25": "normalized_score_matrix_union_probability",
+    "AWAY_OR_OVER_25": "normalized_score_matrix_union_probability",
+    "DRAW_OR_OVER_25": "normalized_score_matrix_union_probability",
+    "HOME_WIN_TO_NIL_NO": "normalized_score_matrix_win_to_nil_complement",
+    "AWAY_WIN_TO_NIL_NO": "normalized_score_matrix_win_to_nil_complement",
+    "AH_HOME_PLUS_15": "normalized_score_matrix_handicap_cover",
+    "AH_AWAY_PLUS_15": "normalized_score_matrix_handicap_cover",
+    "AH_HOME_PLUS_25": "normalized_score_matrix_handicap_cover",
+    "AH_AWAY_PLUS_25": "normalized_score_matrix_handicap_cover",
 }
 
 
@@ -184,7 +183,7 @@ def build_market_evaluations(
         model_definition = get_model_status(selection.market_id)
         reported_markets.add(selection.market_id)
         probability = (
-            round(float(raw_probability), 4)
+            float(raw_probability)
             if _is_number(raw_probability)
             else None
         )
@@ -266,7 +265,7 @@ def build_market_evaluations(
                 edge_pp=edge_value,
                 kelly_stake_pct=kelly_value,
                 model_fair_odds=(
-                    round(1.0 / probability, 4)
+                    1.0 / probability
                     if probability and probability > 0
                     else None
                 ),
@@ -331,6 +330,7 @@ def build_fixture_evidence_report(
     market_evaluations: Sequence[MarketEvaluation],
     final_decision: DecisionStatus,
     decision_reasons: Sequence[str],
+    score_matrix_audit: Optional[Mapping[str, Any]] = None,
 ) -> dict:
     """Serialize one deterministic evidence report with an actual generation time."""
     report = FixtureEvidenceReport(
@@ -344,6 +344,7 @@ def build_fixture_evidence_report(
         market_evaluations=market_evaluations,
         final_decision=final_decision,
         decision_reasons=decision_reasons,
+        score_matrix_audit=score_matrix_audit,
     )
     return report.to_dict()
 
@@ -375,20 +376,21 @@ def build_viable_market_candidates(
             continue
 
         baseline = MARKET_BASELINES.get(verdict, 0.50)
-        baseline_delta = round(
-            probability - baseline + archetype_boosts.get(verdict, 0.0),
-            4,
-        )
+        baseline_delta = float(probability) - baseline
         if baseline_delta <= 0:
             continue
+        ranking_boost = float(archetype_boosts.get(verdict, 0.0))
+        ranking_score = baseline_delta + ranking_boost
 
         candidates.append({
             "verdict": verdict,
-            "prob": round(probability, 4),
+            "prob": float(probability),
             # Compatibility field: this is not genuine bookmaker edge.
             "edge": baseline_delta,
             "edge_above_baseline": baseline_delta,
             "edge_method": "global_baseline_delta",
+            "ranking_boost": ranking_boost,
+            "ranking_score": ranking_score,
             "is_bookmaker_edge": False,
             "edge_is_bookmaker_value": False,
             "probability_method": probability_method,
@@ -397,7 +399,7 @@ def build_viable_market_candidates(
             "outcome_id": selection.outcome_id.value,
             "line": selection.line,
             "display_label": selection.display_label,
-            "model_fair_odds": round(1.0 / probability, 4),
+            "model_fair_odds": 1.0 / probability,
             "bookmaker_odds": None,
             "edge_pp": None,
             "kelly_stake_pct": None,
@@ -405,7 +407,7 @@ def build_viable_market_candidates(
         })
 
     candidates.sort(
-        key=lambda candidate: candidate["edge_above_baseline"],
+        key=lambda candidate: candidate["ranking_score"],
         reverse=True,
     )
     return candidates
@@ -626,66 +628,30 @@ class MatchAnalyst:
         lambda_val = max(0.05, round(base_home_lambda, 3))
         mu_val = max(0.05, round(base_away_mu, 3))
 
-        score_matrix = {}
-        prob_home_win = 0.0
-        prob_away_win = 0.0
-        prob_draw = 0.0
-        prob_under_35 = 0.0
-        prob_over_25 = 0.0
-        prob_gg = 0.0
-        prob_home_win_to_nil = 0.0
-        prob_away_win_to_nil = 0.0
-
-        for h in range(6):
-            for a in range(6):
-                p_score = self._calculate_poisson_probability(h, lambda_val) * self._calculate_poisson_probability(a, mu_val)
-                score_matrix[(h, a)] = p_score
-
-                if h > a:
-                    prob_home_win += p_score
-                elif a > h:
-                    prob_away_win += p_score
-                else:
-                    prob_draw += p_score
-
-                total_goals = h + a
-                if total_goals < 4:
-                    prob_under_35 += p_score
-                if total_goals > 2:
-                    prob_over_25 += p_score
-
-                if h >= 1 and a >= 1:
-                    prob_gg += p_score
-
-                if h > 0 and a == 0:
-                    prob_home_win_to_nil += p_score
-                if a > 0 and h == 0:
-                    prob_away_win_to_nil += p_score
+        score_distribution = build_score_matrix(lambda_val, mu_val)
+        score_matrix_audit = score_distribution.audit_dict()
+        prob_home_win = score_distribution.home_win
+        prob_away_win = score_distribution.away_win
+        prob_draw = score_distribution.draw
+        prob_under_35 = score_distribution.under(3.5)
+        prob_over_25 = score_distribution.over(2.5)
+        prob_gg = score_distribution.btts_yes
+        prob_home_win_to_nil = score_distribution.home_win_to_nil
+        prob_away_win_to_nil = score_distribution.away_win_to_nil
 
         # --- ML ENGINE INTEGRATION ---
-        # Blend Poisson probabilities with ML probabilities if the model is ready
+        # ML output remains a separately evidenced ranking/risk signal. It must
+        # not mutate probabilities derived from the normalized score matrix.
         ml_preds = self.ml_eng.predict(home_id, away_id, home_elo, away_elo, match_date=match_date)
         if ml_preds:
-            ml_p = ml_preds["probabilities"]
-            # 50/50 blend between heuristic Poisson and Random Forest
-            prob_home_win = (prob_home_win + ml_p["HOME_WIN"]) / 2
-            prob_away_win = (prob_away_win + ml_p["AWAY_WIN"]) / 2
-            prob_draw = (prob_draw + ml_p["DRAW"]) / 2
-            
-            # Use ML expected goals if available
             ml_xg = ml_preds["expected_total_goals"]
-            expected_goals = (lambda_val + mu_val + ml_xg) / 2
-            
-            # Blend explicit ML market classifiers if they exist
-            if ml_preds.get("btts_yes") is not None:
-                prob_gg = (prob_gg + ml_preds["btts_yes"]) / 2
-            if ml_preds.get("over_25") is not None:
-                prob_over_25 = (prob_over_25 + ml_preds["over_25"]) / 2
+            ranking_expected_goals = (
+                (lambda_val + mu_val + ml_xg) / 2
+            )
         else:
-            expected_goals = lambda_val + mu_val
-            
-        # Re-derive Over 1.5 from blended expected goals using Poisson CDF
-        prob_over_15 = 1.0 - (self._calculate_poisson_probability(0, expected_goals) + self._calculate_poisson_probability(1, expected_goals))
+            ranking_expected_goals = lambda_val + mu_val
+
+        prob_over_15 = score_distribution.over(1.5)
 
         stale_data = avg_live_ratio < 0.60 and not is_backtest
 
@@ -896,6 +862,13 @@ class MatchAnalyst:
                 else "No validated current bookmaker odds were provided."
             ),
         )
+        record_evidence(
+            "normalized_score_matrix",
+            "score_matrix",
+            score_matrix_audit,
+            available,
+            "Independent-Poisson matrix normalized after adaptive tail truncation.",
+        )
         
         # Default heuristic risk
         risk_assessment = self._assess_upset_risk(prob_home_win, prob_away_win, fatigue_diff, referee_signal, avg_live_ratio, is_backtest)
@@ -909,45 +882,35 @@ class MatchAnalyst:
             upset_alert = reliability < 0.50 # Adjusted ML confidence threshold to align with 50% base rate
 
         # --- COMPREHENSIVE MARKET PROBABILITY CALCULATIONS ---
-        prob_over_05 = 1.0 - score_matrix.get((0, 0), 0.0)
-        prob_under_25 = 1.0 - prob_over_25
-        prob_under_45 = sum(score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h + a <= 4)
-        prob_under_55 = sum(score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h + a <= 5)
+        prob_over_05 = score_distribution.over(0.5)
+        prob_under_25 = score_distribution.under(2.5)
+        prob_under_45 = score_distribution.under(4.5)
+        prob_under_55 = score_distribution.under(5.5)
 
-        prob_home_plus_1_5 = prob_home_win + prob_draw + sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h == 1
+        prob_home_plus_1_5 = score_distribution.asian_handicap_cover(
+            "HOME",
+            1.5,
         )
-        prob_away_plus_1_5 = prob_away_win + prob_draw + sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a == 1
+        prob_away_plus_1_5 = score_distribution.asian_handicap_cover(
+            "AWAY",
+            1.5,
         )
-        
-        # Blend explicit ML Handicap classifiers if they exist
-        if ml_preds and ml_preds.get("ah_home_plus_15") is not None:
-            prob_home_plus_1_5 = (prob_home_plus_1_5 + ml_preds["ah_home_plus_15"]) / 2
-        if ml_preds and ml_preds.get("ah_away_plus_15") is not None:
-            prob_away_plus_1_5 = (prob_away_plus_1_5 + ml_preds["ah_away_plus_15"]) / 2
-
-        prob_home_plus_2_5 = prob_home_win + prob_draw + sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a - h in [1, 2]
+        prob_home_plus_2_5 = score_distribution.asian_handicap_cover(
+            "HOME",
+            2.5,
         )
-        prob_away_plus_2_5 = prob_away_win + prob_draw + sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h - a in [1, 2]
+        prob_away_plus_2_5 = score_distribution.asian_handicap_cover(
+            "AWAY",
+            2.5,
         )
 
-        # Combo probabilities (OR logic = P(A) + P(B) - P(A and B))
-        prob_draw_or_over_25 = prob_draw + prob_over_25 - sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h == a and h + a > 2
-        )
-        prob_home_or_over_25 = prob_home_win + prob_over_25 - sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if h > a and h + a > 2
-        )
-        prob_away_or_over_25 = prob_away_win + prob_over_25 - sum(
-            score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a > h and h + a > 2
-        )
+        prob_draw_or_over_25 = score_distribution.result_or_over("DRAW")
+        prob_home_or_over_25 = score_distribution.result_or_over("HOME")
+        prob_away_or_over_25 = score_distribution.result_or_over("AWAY")
 
-        prob_1x = prob_home_win + prob_draw
-        prob_x2 = prob_away_win + prob_draw
-        prob_12 = prob_home_win + prob_away_win
+        prob_1x = score_distribution.double_chance_home_or_draw
+        prob_x2 = score_distribution.double_chance_draw_or_away
+        prob_12 = score_distribution.double_chance_home_or_away
 
         # --- BUILD CANDIDATES WITH A GLOBAL-BASELINE DELTA ---
         # Each market is only included if its fixture probability exceeds
@@ -963,7 +926,7 @@ class MatchAnalyst:
             "UNDER_25": prob_under_25,
             "UNDER_35": prob_under_35,
             "GG_YES": prob_gg,
-            "GG_NO": 1.0 - prob_gg,
+            "GG_NO": score_distribution.btts_no,
             "DNB_HOME": prob_home_win,
             "DNB_AWAY": prob_away_win,
             # Win-either-half is intentionally disabled until ATHENA has a
@@ -972,8 +935,12 @@ class MatchAnalyst:
             "HOME_OR_OVER_25": prob_home_or_over_25,
             "AWAY_OR_OVER_25": prob_away_or_over_25,
             "DRAW_OR_OVER_25": prob_draw_or_over_25,
-            "HOME_WIN_TO_NIL_NO": 1.0 - prob_home_win_to_nil,
-            "AWAY_WIN_TO_NIL_NO": 1.0 - prob_away_win_to_nil,
+            "HOME_WIN_TO_NIL_NO": score_distribution.sum_where(
+                lambda home, away: not (home > 0 and away == 0)
+            ),
+            "AWAY_WIN_TO_NIL_NO": score_distribution.sum_where(
+                lambda home, away: not (away > 0 and home == 0)
+            ),
             "AH_HOME_PLUS_15": prob_home_plus_1_5,
             "AH_AWAY_PLUS_15": prob_away_plus_1_5,
             "AH_HOME_PLUS_25": prob_home_plus_2_5,
@@ -998,7 +965,7 @@ class MatchAnalyst:
 
         # --- ARCHETYPE ENGINE ---
         # Classify the match state and boost specific variance-reducing markets
-        total_xg = expected_goals
+        total_xg = ranking_expected_goals
         elo_diff = abs(home_elo - away_elo)
         
         archetype_boosts = {}
@@ -1075,6 +1042,7 @@ class MatchAnalyst:
                     market_evaluations,
                     DecisionStatus.NO_BET,
                     no_bet_reasons,
+                    score_matrix_audit=score_matrix_audit,
                 ),
             }
             
@@ -1197,5 +1165,6 @@ class MatchAnalyst:
                 market_evaluations,
                 decision_status,
                 decision_reasons,
+                score_matrix_audit=score_matrix_audit,
             ),
         }

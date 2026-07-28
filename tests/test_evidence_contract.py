@@ -11,7 +11,11 @@ from domain.markets import (
     make_selection,
     resolve_legacy_selection,
 )
-from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.model_status import (
+    MODEL_STATUS_REGISTRY,
+    MissingInputPolicy,
+    ModelStatus,
+)
 from domain.pricing import parse_bookmaker_quotes, price_selection
 from intelligence.match_analyst import (
     MatchAnalyst,
@@ -204,6 +208,70 @@ class EvidenceContractTests(unittest.TestCase):
 
         self.assertEqual(freshness["status"], "STALE")
         self.assertEqual(freshness["value"], 0.20)
+
+    def test_score_matrix_audit_is_attached_additively(self):
+        result = self._compile()
+        report = result["evidence_report"]
+        audit = report["score_matrix_audit"]
+        evidence = self._evidence_by_field(result)["score_matrix"]
+
+        self.assertIsInstance(audit, dict)
+        self.assertEqual(evidence["status"], "AVAILABLE")
+        self.assertEqual(evidence["value"], audit)
+        self.assertGreaterEqual(audit["max_home_goal_index"], 0)
+        self.assertGreaterEqual(audit["max_away_goal_index"], 0)
+        self.assertLessEqual(
+            audit["omitted_tail_mass"],
+            audit["tail_tolerance"],
+        )
+        self.assertEqual(
+            audit["normalization_method"],
+            "divide_by_retained_mass",
+        )
+        self.assertGreaterEqual(audit["home_expected_goals"], 0.0)
+        self.assertGreaterEqual(audit["away_expected_goals"], 0.0)
+
+    def test_serialized_score_market_probabilities_preserve_identities(self):
+        result = self._compile()
+        evaluations = {
+            (
+                evaluation["market_id"],
+                evaluation["outcome_id"],
+                evaluation["line"],
+            ): evaluation["probability"]
+            for evaluation in result["evidence_report"][
+                "market_evaluations"
+            ]
+        }
+        home = evaluations[(MarketId.MATCH_RESULT.value, "HOME", None)]
+        draw = evaluations[(MarketId.MATCH_RESULT.value, "DRAW", None)]
+        away = evaluations[(MarketId.MATCH_RESULT.value, "AWAY", None)]
+        btts_yes = evaluations[(MarketId.BTTS.value, "YES", None)]
+        btts_no = evaluations[(MarketId.BTTS.value, "NO", None)]
+
+        self.assertAlmostEqual(home + draw + away, 1.0, places=14)
+        self.assertAlmostEqual(btts_yes + btts_no, 1.0, places=14)
+        self.assertAlmostEqual(
+            evaluations[
+                (MarketId.DOUBLE_CHANCE.value, "HOME_OR_DRAW", None)
+            ],
+            home + draw,
+            places=14,
+        )
+        self.assertAlmostEqual(
+            evaluations[
+                (MarketId.DOUBLE_CHANCE.value, "DRAW_OR_AWAY", None)
+            ],
+            draw + away,
+            places=14,
+        )
+        self.assertAlmostEqual(
+            evaluations[
+                (MarketId.DOUBLE_CHANCE.value, "HOME_OR_AWAY", None)
+            ],
+            home + away,
+            places=14,
+        )
 
     def test_missing_bookmaker_odds_leaves_edge_pp_null(self):
         result = self._compile()
@@ -536,6 +604,7 @@ class EvidenceContractTests(unittest.TestCase):
             {
                 MarketId.HOME_WIN_EITHER_HALF.value,
                 MarketId.AWAY_WIN_EITHER_HALF.value,
+                MarketId.DRAW_NO_BET.value,
                 MarketId.MATCH_RESULT_1UP.value,
                 MarketId.MATCH_RESULT_2UP.value,
             },
@@ -549,10 +618,54 @@ class EvidenceContractTests(unittest.TestCase):
                 {
                     "WIN_EITHER_HALF_HOME_YES": 0.90,
                     "1X2_1UP_HOME": 0.90,
+                    "DNB_HOME": 0.90,
+                    "DNB_AWAY": 0.90,
                 },
                 {},
             ),
             [],
+        )
+        dnb_status = MODEL_STATUS_REGISTRY[MarketId.DRAW_NO_BET]
+        self.assertIsNone(dnb_status.probability_method)
+        self.assertEqual(
+            dnb_status.missing_input_policy,
+            MissingInputPolicy.REJECT_MARKET,
+        )
+
+    def test_home_and_away_dnb_remain_visible_but_never_viable(self):
+        result = self._compile()
+        dnb_evaluations = [
+            evaluation
+            for evaluation in result["evidence_report"][
+                "market_evaluations"
+            ]
+            if evaluation["market_id"] == MarketId.DRAW_NO_BET.value
+        ]
+
+        self.assertEqual(
+            {evaluation["outcome_id"] for evaluation in dnb_evaluations},
+            {OutcomeId.HOME.value, OutcomeId.AWAY.value},
+        )
+        self.assertTrue(
+            all(
+                evaluation["model_status"] == ModelStatus.DISABLED.value
+                for evaluation in dnb_evaluations
+            )
+        )
+        self.assertTrue(
+            all(
+                evaluation["probability_method"] is None
+                for evaluation in dnb_evaluations
+            )
+        )
+        self.assertTrue(
+            all(not evaluation["selected"] for evaluation in dnb_evaluations)
+        )
+        self.assertFalse(
+            any(
+                market["verdict"] in {"DNB_HOME", "DNB_AWAY"}
+                for market in result["viable_markets"]
+            )
         )
 
     def test_no_bet_evidence_includes_explicit_decision_reasons(self):

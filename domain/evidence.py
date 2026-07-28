@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from domain.markets import DecisionStatus, MarketId, OutcomeId
 from domain.model_status import ModelStatus
@@ -124,6 +124,7 @@ class FixtureEvidenceReport:
     market_evaluations: Sequence[MarketEvaluation]
     final_decision: DecisionStatus
     decision_reasons: Sequence[str]
+    score_matrix_audit: Optional[Mapping[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -142,6 +143,11 @@ class FixtureEvidenceReport:
             ],
             "final_decision": self.final_decision.value,
             "decision_reasons": list(self.decision_reasons),
+            "score_matrix_audit": (
+                dict(self.score_matrix_audit)
+                if self.score_matrix_audit is not None
+                else None
+            ),
         }
 
 
