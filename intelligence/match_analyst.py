@@ -5,6 +5,7 @@ import sqlite3
 import os
 import json
 
+from domain.markets import DecisionStatus
 from intelligence.ml_engine import MLEngine
 
 logger = logging.getLogger("athena.match_analyst")
@@ -94,6 +95,76 @@ MARKET_CATEGORIES = {
     "1X2_1UP_AWAY": "EARLY_PAYOUT",
 
 }
+
+
+MARKET_PROBABILITY_METHODS = {
+    "DC_1X": "derived_from_full_time_score_matrix_probabilities",
+    "DC_X2": "derived_from_full_time_score_matrix_probabilities",
+    "DC_12": "derived_from_full_time_score_matrix_probabilities",
+    "OVER_15": "poisson_total_goals_cdf_with_optional_ml_xg_blend",
+    "OVER_25": "score_matrix_with_optional_ml_classifier_blend",
+    "UNDER_25": "complement_of_over_2_5_probability",
+    "UNDER_35": "truncated_poisson_score_matrix",
+    "GG_YES": "score_matrix_with_optional_ml_classifier_blend",
+    "GG_NO": "complement_of_btts_yes_probability",
+    "DNB_HOME": "full_time_home_win_probability_proxy",
+    "DNB_AWAY": "full_time_away_win_probability_proxy",
+    "HOME_OR_OVER_25": "score_matrix_union_probability",
+    "AWAY_OR_OVER_25": "score_matrix_union_probability",
+    "DRAW_OR_OVER_25": "score_matrix_union_probability",
+    "HOME_WIN_TO_NIL_NO": "complement_of_score_matrix_win_to_nil",
+    "AWAY_WIN_TO_NIL_NO": "complement_of_score_matrix_win_to_nil",
+    "AH_HOME_PLUS_15": "score_matrix_with_optional_ml_classifier_blend",
+    "AH_AWAY_PLUS_15": "score_matrix_with_optional_ml_classifier_blend",
+    "AH_HOME_PLUS_25": "score_matrix_handicap_probability",
+    "AH_AWAY_PLUS_25": "score_matrix_handicap_probability",
+}
+
+
+def build_viable_market_candidates(
+    market_probabilities: dict,
+    archetype_boosts: dict,
+    min_probability: float = 0.55,
+) -> list:
+    """Build candidates without inventing edge or a fallback selection.
+
+    The returned delta is explicitly a comparison with a global historical
+    baseline. It is not bookmaker-implied edge and must not be represented as
+    such. Bookmaker value calculation remains a separate stabilization task.
+    """
+    candidates = []
+    for verdict, probability in market_probabilities.items():
+        if probability < min_probability:
+            continue
+        probability_method = MARKET_PROBABILITY_METHODS.get(verdict)
+        if not probability_method:
+            continue
+
+        baseline = MARKET_BASELINES.get(verdict, 0.50)
+        baseline_delta = round(
+            probability - baseline + archetype_boosts.get(verdict, 0.0),
+            4,
+        )
+        if baseline_delta <= 0:
+            continue
+
+        candidates.append({
+            "verdict": verdict,
+            "prob": round(probability, 4),
+            # Compatibility field: this is not genuine bookmaker edge.
+            "edge": baseline_delta,
+            "edge_above_baseline": baseline_delta,
+            "edge_method": "global_baseline_delta",
+            "is_bookmaker_edge": False,
+            "probability_method": probability_method,
+            "category": MARKET_CATEGORIES.get(verdict, "OTHER"),
+        })
+
+    candidates.sort(
+        key=lambda candidate: candidate["edge_above_baseline"],
+        reverse=True,
+    )
+    return candidates
 
 
 class MatchAnalyst:
@@ -328,17 +399,14 @@ class MatchAnalyst:
             score_matrix.get((h, a), 0.0) for h in range(6) for a in range(6) if a > h and h + a > 2
         )
 
-        prob_win_either_half_home = min(0.95, prob_home_win * 1.35)
-        prob_win_either_half_away = min(0.95, prob_away_win * 1.35)
-
         prob_1x = prob_home_win + prob_draw
         prob_x2 = prob_away_win + prob_draw
         prob_12 = prob_home_win + prob_away_win
 
-        # --- BUILD VIABLE MARKETS WITH TRUE EDGE-ABOVE-BASELINE ---
+        # --- BUILD CANDIDATES WITH A GLOBAL-BASELINE DELTA ---
         # Each market is only included if its fixture probability exceeds
         # the global baseline, AND the probability meets a minimum threshold.
-        # Edge = fixture_prob - baseline. Higher edge = more value for THIS fixture.
+        # This delta is not bookmaker-implied edge or evidence of betting value.
         
         all_market_probs = {
             "DC_1X": prob_1x,
@@ -352,8 +420,9 @@ class MatchAnalyst:
             "GG_NO": 1.0 - prob_gg,
             "DNB_HOME": prob_home_win,
             "DNB_AWAY": prob_away_win,
-            "WIN_EITHER_HALF_HOME_YES": prob_win_either_half_home,
-            "WIN_EITHER_HALF_AWAY_YES": prob_win_either_half_away,
+            # Win-either-half is intentionally disabled until ATHENA has a
+            # valid half-by-half score model. Full-time win probability * 1.35
+            # is not a defensible probability calculation.
             "HOME_OR_OVER_25": prob_home_or_over_25,
             "AWAY_OR_OVER_25": prob_away_or_over_25,
             "DRAW_OR_OVER_25": prob_draw_or_over_25,
@@ -366,13 +435,9 @@ class MatchAnalyst:
         }
 
 
-        # 1X2 Early Payout
-        if prob_home_win >= 0.48:
-            all_market_probs["1X2_2UP_HOME"] = prob_home_win
-            all_market_probs["1X2_1UP_HOME"] = prob_home_win
-        if prob_away_win >= 0.48:
-            all_market_probs["1X2_2UP_AWAY"] = prob_away_win
-            all_market_probs["1X2_1UP_AWAY"] = prob_away_win
+        # Early-payout markets are intentionally not modeled here. Reusing the
+        # full-time win probability ignores the bookmaker's lead-path and
+        # settlement rules, so those selections remain unavailable for now.
 
         # --- ARCHETYPE ENGINE ---
         # Classify the match state and boost specific variance-reducing markets
@@ -388,37 +453,14 @@ class MatchAnalyst:
             archetype_boosts["GG_YES"] = 0.10
             archetype_boosts["OVER_25"] = 0.15
             
-        # 2. Heavy Dominance / Fast Starters
-        if lambda_val > 2.2 and home_elo > away_elo + 250:
-            archetype_boosts["1X2_2UP_HOME"] = 0.20
-            archetype_boosts["1X2_1UP_HOME"] = 0.25
-        elif mu_val > 2.2 and away_elo > home_elo + 250:
-            archetype_boosts["1X2_2UP_AWAY"] = 0.20
-            archetype_boosts["1X2_1UP_AWAY"] = 0.25
-            
-        # 3. Heavy Dominance / Congested Schedule (Fatigue)
-        if elo_diff > 250 and fatigue_diff > 0.05:
-            if home_elo > away_elo:
-                archetype_boosts["HOME_WIN_EITHER_HALF"] = 0.18
-                archetype_boosts["HOME_WIN_TO_NIL_YES"] = 0.15
-            else:
-                archetype_boosts["AWAY_WIN_EITHER_HALF"] = 0.18
-                archetype_boosts["AWAY_WIN_TO_NIL_YES"] = 0.15
-                
-        # 4. Low Event / Tactical Stalemate
+        # 2. Low Event / Tactical Stalemate
         if total_xg < 2.2:
             archetype_boosts["UNDER_25"] = 0.25
             archetype_boosts["UNDER_35"] = 0.15
             archetype_boosts["DNB_HOME"] = 0.18
             archetype_boosts["DNB_AWAY"] = 0.18
             
-        # 5. Asymmetric Threat
-        if (home_elo > away_elo + 200) and mu_val < 0.6 and lambda_val > 1.8:
-            archetype_boosts["HOME_WIN_TO_NIL_YES"] = 0.20
-        elif (away_elo > home_elo + 200) and lambda_val < 0.6 and mu_val > 1.8:
-            archetype_boosts["AWAY_WIN_TO_NIL_YES"] = 0.20
-            
-        # 6. Smart Upset Pivoting ("The Milan Scenario")
+        # 3. Smart Upset Pivoting ("The Milan Scenario")
         # If ATHENA detects an upset trap against a heavy favorite, brilliantly pivot to the underdog.
         if upset_alert:
             if prob_home_win > prob_away_win:
@@ -437,50 +479,35 @@ class MatchAnalyst:
         # Minimum probability threshold per fixture to be considered viable
         MIN_PROB = 0.55
 
-        viable_markets = []
-        for verdict, prob in all_market_probs.items():
-            if prob < MIN_PROB:
-                continue
+        viable_markets = build_viable_market_candidates(
+            all_market_probs,
+            archetype_boosts,
+            min_probability=MIN_PROB,
+        )
 
-            baseline = MARKET_BASELINES.get(verdict, 0.50)
-            edge_above_baseline = round(prob - baseline, 4)
-            
-            # Apply Archetype Boosts
-            boost = archetype_boosts.get(verdict, 0.0)
-            edge_above_baseline += boost
+        # Candidates are sorted by baseline delta, which is not bookmaker value.
 
-            category = MARKET_CATEGORIES.get(verdict, "OTHER")
-
-            viable_markets.append({
-                "verdict": verdict,
-                "prob": round(prob, 4),
-                "edge": round(max(edge_above_baseline, 0.05), 4),  # Floor at 0.05 for acca filter
-                "edge_above_baseline": edge_above_baseline,
-                "category": category,
-            })
-
-        # Sort by edge above baseline descending — the market where THIS fixture
-        # offers the most value above the average match is ranked #1.
-        viable_markets.sort(key=lambda x: x["edge_above_baseline"], reverse=True)
-
-        # Fallback: if nothing passed the probability filter, pick the
-        # best Double Chance as a safety net
         if not viable_markets:
-            best_dc = "DC_1X" if prob_1x >= prob_x2 else "DC_X2"
-            best_dc_prob = max(prob_1x, prob_x2)
-            viable_markets.append({
-                "verdict": best_dc,
-                "prob": round(best_dc_prob, 4),
-                "edge": 0.05,
-                "edge_above_baseline": 0.01,
-                "category": "DOUBLE_CHANCE",
-            })
+            return {
+                "decision_status": DecisionStatus.NO_BET.value,
+                "recommended_analytical_verdict": None,
+                "edge_differential": None,
+                "edge_is_bookmaker_value": False,
+                "upset_alert": upset_alert,
+                "risk_score": risk_score,
+                "stale_data": stale_data,
+                "viable_markets": [],
+                "reasoning_verdicts": [],
+                "no_bet_reasons": [
+                    "No market cleared the minimum probability and "
+                    "positive baseline-delta thresholds."
+                ],
+            }
             
         # Model F: Confidence Meta-Model Hard Filter
         # If the ML Meta-Model flags this as an Upset Risk (Reliability < 50%),
-        # we set upset_alert to True. The AccaFilter will reject this fixture in strict mode,
-        # but we preserve the viable markets so that fallback (no-strict) mode works properly.
-        # (Removed the early return that was overriding the verdict to NO_BET)
+        # we set upset_alert to True. AccaFilter may reject the fixture in strict
+        # mode; no market is created when the validated candidate list is empty.
 
         # --- REASONING ENGINE INTEGRATION (Shin De-vig, Wilson CI, Single Market Winner) ---
         from intelligence.fixture_reasoner import FixtureOption, FixtureReasoner
@@ -521,8 +548,10 @@ class MatchAnalyst:
         best_market = viable_markets[0]
 
         return {
+            "decision_status": DecisionStatus.BET.value,
             "recommended_analytical_verdict": best_market["verdict"],
             "edge_differential": best_market["edge"],
+            "edge_is_bookmaker_value": False,
             "upset_alert": upset_alert,
             "risk_score": risk_score,
             "stale_data": stale_data,

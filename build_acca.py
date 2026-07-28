@@ -21,6 +21,8 @@ from rich.table import Table
 from rich.panel import Panel
 from rich import box
 
+from domain.markets import DecisionStatus
+
 # Core imports
 from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
 from workers.openfootball_loader import OpenFootballLoader
@@ -283,7 +285,26 @@ class AccaBuilder:
                 f"but {fold_size}-fold requested.[/yellow]"
             )
             if len(eligible_matches) == 0:
-                return {"success": False, "error": "No eligible fixtures for acca"}
+                no_bet_reasons = sorted({
+                    reason
+                    for match in all_analyzed
+                    for reason in match.get("no_bet_reasons", [])
+                })
+                return {
+                    "success": True,
+                    "decision_status": DecisionStatus.NO_BET.value,
+                    "no_bet_reasons": no_bet_reasons or [
+                        "No fixture had a market that passed the accumulator "
+                        "eligibility checks."
+                    ],
+                    "requested_fold_size": fold_size,
+                    "fold_size": 0,
+                    "total_estimated_odds": 0.0,
+                    "legs": [],
+                    "eligible_count": 0,
+                    "available_count": len(all_analyzed),
+                    "timeframe_days": days,
+                }
             fold_size = len(eligible_matches)  # Downsize gracefully
             console.print(f"[yellow]📉 Downscaling to {fold_size}-fold acca[/yellow]")
         
@@ -295,10 +316,9 @@ class AccaBuilder:
         acca = self.acca_engine.generate_accumulator(eligible_matches, fold_size=fold_size, strict=strict)
         
         if not acca.get("legs"):
-            console.print(
-                f"[red]❌ Failed to generate {fold_size}-fold acca.[/red]"
-            )
-            return {"success": False, "error": "Accumulator generation failed"}
+            acca["success"] = True
+            acca["timeframe_days"] = days
+            return acca
         
         # Step 7: Phase 4 Kelly Sizing and Correlation Scoring
         total_odds = acca.get("total_estimated_odds", 1.0)

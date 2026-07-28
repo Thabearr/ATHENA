@@ -6,6 +6,14 @@ Balances edge confidence with practical betting constraints.
 import logging
 from typing import List, Dict
 
+from domain.markets import (
+    DecisionStatus,
+    MarketRegistryError,
+    resolve_legacy_selection,
+    serialize_leg,
+    serialize_selection,
+)
+
 logger = logging.getLogger("athena.accumulator")
 
 
@@ -49,75 +57,16 @@ class AccumulatorEngine:
 
     def map_verdict_to_market_string(self, verdict: str, home_team: str, away_team: str) -> tuple:
         """
-        Map verdict to (market, selection) tuple.
-        """
-        mapping = {
-            # 1. Double Chance Options
-            "DC_1X": ("Double Chance", "Home or Draw"),
-            "DC_X2": ("Double Chance", "Draw or Away"),
-            "DC_12": ("Double Chance", "Home or Away"),
-            
-            # 2. Asian Handicap Options
-            "AH_HOME_MINUS_05": ("Asian Handicap", "Home -0.5"),
-            "AH_AWAY_PLUS_05": ("Asian Handicap", "Away +0.5"),
-            "AH_HOME_PLUS_05": ("Asian Handicap", "Home +0.5"),
-            "AH_AWAY_MINUS_05": ("Asian Handicap", "Away -0.5"),
-            "AH_HOME_MINUS_15": ("Asian Handicap", "Home -1.5"),
-            "AH_AWAY_PLUS_15": ("Asian Handicap", "Away +1.5"),
-            "AH_HOME_PLUS_15": ("Asian Handicap", "Home +1.5"),
-            "AH_AWAY_MINUS_15": ("Asian Handicap", "Away -1.5"),
-            "AH_HOME_PLUS_25": ("Asian Handicap", "Home +2.5"),
-            "AH_AWAY_PLUS_25": ("Asian Handicap", "Away +2.5"),
-            "AH_HOME_MINUS_25": ("Asian Handicap", "Home -2.5"),
-            "AH_AWAY_MINUS_25": ("Asian Handicap", "Away -2.5"),
-            "ASIAN_HANDICAP_HOME_PLUS_1_5": ("Asian Handicap", "Home +1.5"),
-            "ASIAN_HANDICAP_AWAY_PLUS_1_5": ("Asian Handicap", "Away +1.5"),
-            
-            # 3. Combo Options
-            "HOME_OR_OVER_25": ("Home Team or Over 2.5", "Yes"),
-            "AWAY_OR_OVER_25": ("Away or Over 2.5", "Yes"),
-            "DRAW_OR_OVER_25": ("Draw or Over 2.5", "Yes"),
-            
-            # 4. Knockout To Qualify Options
-            "TO_QUALIFY_HOME": ("To Qualify", "Home"),
-            "TO_QUALIFY_AWAY": ("To Qualify", "Away"),
-            
-            # 5. Win Either Half Options
-            "WIN_EITHER_HALF_HOME_YES": ("Home Team to Win Either Half", "Yes"),
-            "WIN_EITHER_HALF_AWAY_YES": ("Away Team to Win Either Half", "Yes"),
-            "WIN_EITHER_HALF_HOME_NO": ("Home Team to Win Either Half", "No"),
-            "WIN_EITHER_HALF_AWAY_NO": ("Away Team to Win Either Half", "No"),
-            
-            # 6. Both Teams to Score (GG/NG)
-            "GG_YES": ("GG/NG", "Yes"),
-            "GG_NO": ("GG/NG", "No"),
-            
-            # 7. Win to Nil Options
-            "HOME_WIN_TO_NIL_YES": ("Home Team to Win to Nil", "Yes"),
-            "HOME_WIN_TO_NIL_NO": ("Home Team to Win to Nil", "No"),
-            "AWAY_WIN_TO_NIL_YES": ("Away Team to Win to Nil", "Yes"),
-            "AWAY_WIN_TO_NIL_NO": ("Away Team to Win to Nil", "No"),
-            
-            # 8. 1X2 Early Settlement Tiers
-            "1X2_1UP_HOME": ("1X2 - 1UP", "Home"),
-            "1X2_1UP_AWAY": ("1X2 - 1UP", "Away"),
-            "1X2_2UP_HOME": ("1X2 - 2UP", "Home"),
-            "1X2_2UP_AWAY": ("1X2 - 2UP", "Away"),
-            
-            # 9. Draw No Bet Options
-            "DNB_HOME": ("Draw No Bet", "Home"),
-            "DNB_AWAY": ("Draw No Bet", "Away"),
+        Map a registered legacy verdict to its display tuple.
 
-            # 10. Over/Under Lines
-            "OVER_05": ("Over/Under", "Over 0.5"),
-            "OVER_15": ("Over/Under", "Over 1.5"),
-            "OVER_25": ("Over/Under", "Over 2.5"),
-            "UNDER_25": ("Over/Under", "Under 2.5"),
-            "UNDER_35": ("Over/Under", "Under 3.5"),
-            "UNDER_45": ("Over/Under", "Under 4.5"),
-            "UNDER_55": ("Over/Under", "Under 5.5")
-        }
-        return mapping.get(verdict, ("Double Chance", "Home or Draw"))
+        Unknown verdicts fail loudly instead of silently becoming a Double
+        Chance Home-or-Draw selection.
+        """
+        selection = serialize_selection(resolve_legacy_selection(verdict))
+        return (
+            selection["market_display_name"],
+            selection["outcome_display_name"],
+        )
 
     def _score_fixture(self, fixture: dict) -> float:
         """
@@ -188,13 +137,18 @@ class AccumulatorEngine:
         category diversity enforcement — this method only scores and orders.
         """
         # Trust AccaFilter's pre-filtered output — it already handles strict mode
+        requested_fold_size = fold_size
         eligible = list(analyzed_fixtures)
         
         if len(eligible) < fold_size:
-            # Still generate with whatever we have instead of returning empty
             if len(eligible) == 0:
                 return {
-                    "fold_size": fold_size,
+                    "decision_status": DecisionStatus.NO_BET.value,
+                    "no_bet_reasons": [
+                        "No fixture had a validated market selection."
+                    ],
+                    "fold_size": 0,
+                    "requested_fold_size": requested_fold_size,
                     "total_estimated_odds": 0.0,
                     "legs": [],
                     "eligible_count": 0,
@@ -211,29 +165,96 @@ class AccumulatorEngine:
         top_fixtures = [f for f, _ in scored[:fold_size]]
         
         legs = []
+        rejected_reasons = []
         compounded_odds = 1.0
         
         for idx, fix in enumerate(top_fixtures):
-            market, selection = self.map_verdict_to_market_string(
-                fix["verdict"], fix["home_team"], fix["away_team"]
-            )
-            
-            # Calculate leg odds based on edge (higher edge = shorter odds, more confident)
-            # Formula: base 1.20 + (edge * 0.3) to create realistic odds
-            leg_odds = round(1.20 + (fix["edge"] * 0.3), 2)
+            verdict = fix.get("verdict")
+            try:
+                prepared_fixture = serialize_leg(fix)
+            except MarketRegistryError as exc:
+                reason = (
+                    f"{fix.get('fixture', 'Unknown fixture')}: unsupported "
+                    f"selection identifier or invalid canonical identity "
+                    f"({exc})."
+                )
+                logger.warning(reason)
+                rejected_reasons.append(reason)
+                continue
+
+            bookmaker_odds = fix.get("bookmaker_odds")
+            if (
+                not isinstance(bookmaker_odds, (int, float))
+                or isinstance(bookmaker_odds, bool)
+                or bookmaker_odds <= 1.0
+            ):
+                reason = (
+                    f"{fix.get('fixture', 'Unknown fixture')}: no validated "
+                    "current bookmaker odds were provided."
+                )
+                logger.warning(reason)
+                rejected_reasons.append(reason)
+                continue
+
+            leg_odds = round(float(bookmaker_odds), 4)
             compounded_odds *= leg_odds
             
             legs.append({
+                "fixture_id": fix.get("fixture_id"),
                 "fixture": fix["fixture"],
-                "market": market,
-                "selection": selection,
+                "home_team": fix.get("home_team"),
+                "away_team": fix.get("away_team"),
+                "league": fix.get("league"),
+                "match_date": fix.get("match_date"),
+                "verdict": verdict,
+                "market_id": prepared_fixture["market_id"],
+                "outcome_id": prepared_fixture["outcome_id"],
+                "line": prepared_fixture["line"],
+                "display_label": prepared_fixture["display_label"],
+                "market_family": prepared_fixture["market_family"],
+                "market_display_name": prepared_fixture[
+                    "market_display_name"
+                ],
+                "outcome_display_name": prepared_fixture[
+                    "outcome_display_name"
+                ],
+                "settlement_semantics": prepared_fixture[
+                    "settlement_semantics"
+                ],
+                # Compatibility labels for existing UI consumers.
+                "market": prepared_fixture["market_display_name"],
+                "selection": prepared_fixture["outcome_display_name"],
                 "edge": round(fix["edge"], 3),
+                "edge_is_bookmaker_value": fix.get(
+                    "edge_is_bookmaker_value",
+                    False,
+                ),
+                "edge_method": fix.get("edge_method"),
+                "estimated_probability": fix.get("estimated_probability"),
+                "probability_method": fix.get("probability_method"),
                 "risk_score": round(fix["risk_score"], 1),
                 "odds": leg_odds,
+                "odds_source": "bookmaker",
             })
+
+        if not legs:
+            return {
+                "decision_status": DecisionStatus.NO_BET.value,
+                "no_bet_reasons": rejected_reasons
+                or ["No fixture had a validated market selection."],
+                "fold_size": 0,
+                "requested_fold_size": requested_fold_size,
+                "total_estimated_odds": 0.0,
+                "legs": [],
+                "eligible_count": len(eligible),
+                "available_count": len(analyzed_fixtures),
+            }
         
         return {
-            "fold_size": fold_size,
+            "decision_status": DecisionStatus.BET.value,
+            "no_bet_reasons": [],
+            "fold_size": len(legs),
+            "requested_fold_size": requested_fold_size,
             "total_estimated_odds": round(compounded_odds, 2),
             "legs": legs,
             "eligible_count": len(eligible),

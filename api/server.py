@@ -9,6 +9,7 @@ from pydantic import BaseModel
 from build_acca import AccaBuilder
 from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
 from api.athenizer import router as athenizer_router
+from api.export import router as export_router
 
 app = FastAPI(title="ATHENA Desktop API")
 
@@ -21,6 +22,7 @@ app.add_middleware(
 )
 
 app.include_router(athenizer_router)
+app.include_router(export_router)
 
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
@@ -113,25 +115,6 @@ def generate_acca(req: GenerateRequest):
         if not acca.get("success"):
             raise HTTPException(status_code=400, detail=acca.get("error", "Generation failed"))
         return acca
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-class ExportRequest(BaseModel):
-    bookmaker: str
-    acca_data: dict
-
-@app.post("/api/export_code")
-def export_booking_code(req: ExportRequest):
-    """Trigger the Playwright automator to generate a booking code."""
-    try:
-        from workers.bookie_automator import BookieAutomator
-        automator = BookieAutomator()
-        code = automator.generate_booking_code(req.bookmaker, req.acca_data)
-        if not code or "NO_LEGS" in code or "UNSUPPORTED" in code:
-            raise HTTPException(status_code=400, detail=code)
-        return {"success": True, "code": code}
     except HTTPException:
         raise
     except Exception as e:
