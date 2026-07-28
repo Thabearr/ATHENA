@@ -151,7 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
     let currentAccaData = null;
 
-    // Export Acca Logic
+    // Export preparation creates only an internal ATHENA slip reference.
     const btnExportCode = document.getElementById("btn-export-code");
     if (btnExportCode) {
         btnExportCode.addEventListener("click", async () => {
@@ -163,64 +163,64 @@ document.addEventListener("DOMContentLoaded", () => {
                 return;
             }
             
-            btnExportCode.textContent = "Generating...";
-            resBox.innerHTML = `<span style="color: var(--text-muted);">Contacting ${bookie} servers...</span>`;
+            btnExportCode.textContent = "Preparing...";
+            resBox.innerHTML = `<span style="color: var(--text-muted);">Validating slip selections locally...</span>`;
             
             try {
-                const data = await fetchJSON("/api/export_code", {
+                const data = await fetchJSON("/api/export", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ bookmaker: bookie, acca_data: currentAccaData })
                 });
                 const bookieName = document.getElementById("input-export-bookie").options[document.getElementById("input-export-bookie").selectedIndex].text;
-                const isUrl = data.code.startsWith("http://") || data.code.startsWith("https://");
-                const safeCode = escapeHtml(data.code);
+                const safeReference = escapeHtml(data.slip_reference || "");
+                const safeMessage = escapeHtml(data.message || "");
                 const safeBookieName = escapeHtml(bookieName);
                 
                 resBox.innerHTML = `
-                    <div style="padding: 1.25rem; background: rgba(0, 200, 81, 0.08); border: 1.5px solid var(--success); border-radius: 8px; text-align: center; margin-top: 1rem; box-shadow: 0 4px 15px rgba(0, 200, 81, 0.15);">
-                        <div style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px;">Generated ${safeBookieName} ${isUrl ? 'Bet Slip Link' : 'Booking Code'}</div>
+                    <div style="padding: 1.25rem; background: rgba(255, 193, 7, 0.08); border: 1.5px solid #ffc107; border-radius: 8px; text-align: center; margin-top: 1rem;">
+                        <div style="font-size: 0.85rem; color: #ffc107; margin-bottom: 0.5rem; text-transform: uppercase; letter-spacing: 1px;">${safeBookieName} integration unavailable</div>
                         
                         <div style="display: flex; align-items: center; justify-content: center; gap: 0.5rem; margin: 0.75rem 0;">
-                            <input id="generated-code-input" type="text" readonly value="${safeCode}" style="width: 100%; max-width: 480px; padding: 0.6rem 1rem; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 1.1rem; font-weight: bold; color: #00e676; background: rgba(0,0,0,0.5); border: 1px solid var(--success); border-radius: 6px; text-align: center; user-select: all; outline: none;" />
+                            <input id="generated-reference-input" type="text" readonly value="${safeReference}" style="width: 100%; max-width: 480px; padding: 0.6rem 1rem; font-family: 'JetBrains Mono', 'Fira Code', monospace; font-size: 1.1rem; font-weight: bold; color: #ffc107; background: rgba(0,0,0,0.5); border: 1px solid #ffc107; border-radius: 6px; text-align: center; user-select: all; outline: none;" />
                         </div>
+                        <div style="font-size: 0.8rem; color: var(--text-muted); margin-bottom: 0.75rem;">Internal slip reference only. ${safeMessage}</div>
                         
                         <div style="display: flex; justify-content: center; gap: 0.75rem; margin-top: 0.75rem;">
-                            <button id="btn-copy-code" style="padding: 0.5rem 1.25rem; font-weight: bold; background: var(--success); color: #000; border: none; border-radius: 5px; cursor: pointer; transition: all 0.2s ease;">
-                                📋 Copy ${isUrl ? 'Link' : 'Code'}
+                            <button id="btn-copy-reference" style="padding: 0.5rem 1.25rem; font-weight: bold; background: #ffc107; color: #000; border: none; border-radius: 5px; cursor: pointer; transition: all 0.2s ease;">
+                                Copy Internal Reference
                             </button>
-                            ${isUrl ? `<a href="${safeCode}" target="_blank" rel="noopener noreferrer" style="padding: 0.5rem 1.25rem; font-weight: bold; background: rgba(255,255,255,0.1); color: #fff; text-decoration: none; border: 1px solid rgba(255,255,255,0.2); border-radius: 5px; cursor: pointer;">🌐 Open in ${safeBookieName}</a>` : ''}
                         </div>
                     </div>
                 `;
 
-                const btnCopy = document.getElementById("btn-copy-code");
+                const btnCopy = document.getElementById("btn-copy-reference");
                 if (btnCopy) {
                     btnCopy.addEventListener("click", () => {
-                        const copyInput = document.getElementById("generated-code-input");
+                        const copyInput = document.getElementById("generated-reference-input");
                         copyInput.select();
                         copyInput.setSelectionRange(0, 99999);
-                        navigator.clipboard.writeText(data.code).then(() => {
+                        navigator.clipboard.writeText(data.slip_reference).then(() => {
                             btnCopy.textContent = "✓ Copied!";
                             btnCopy.style.background = "#ffffff";
                             btnCopy.style.color = "#000000";
                             setTimeout(() => {
-                                btnCopy.textContent = `📋 Copy ${isUrl ? 'Link' : 'Code'}`;
-                                btnCopy.style.background = "var(--success)";
+                                btnCopy.textContent = "Copy Internal Reference";
+                                btnCopy.style.background = "#ffc107";
                                 btnCopy.style.color = "#000000";
                             }, 2000);
                         }).catch(() => {
                             // Fallback
                             document.execCommand("copy");
                             btnCopy.textContent = "✓ Copied!";
-                            setTimeout(() => { btnCopy.textContent = `📋 Copy ${isUrl ? 'Link' : 'Code'}`; }, 2000);
+                            setTimeout(() => { btnCopy.textContent = "Copy Internal Reference"; }, 2000);
                         });
                     });
                 }
             } catch (error) {
                 resBox.innerHTML = `<span style="color: #ff4444;">Error: ${error.message}</span>`;
             } finally {
-                btnExportCode.textContent = "Get Code";
+                btnExportCode.textContent = "Prepare Export";
             }
         });
     }
@@ -615,10 +615,14 @@ document.addEventListener("DOMContentLoaded", () => {
                 const tr = document.createElement("tr");
                 const td = document.createElement("td");
                 td.colSpan = 7;
-                td.innerText = "No eligible fixtures found matching criteria.";
+                const noBetReasons = Array.isArray(data.no_bet_reasons) && data.no_bet_reasons.length
+                    ? data.no_bet_reasons.join(" ")
+                    : "No eligible fixtures found matching criteria.";
+                td.innerText = `NO BET: ${noBetReasons}`;
                 td.style.textAlign = "center";
                 tr.appendChild(td);
                 accaBody.appendChild(tr);
+                document.getElementById("acca-generate-code-container").classList.add("hidden");
             }
 
             resultsArea.classList.remove("hidden");

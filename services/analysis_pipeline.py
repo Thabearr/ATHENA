@@ -1,6 +1,7 @@
 import logging
 import re
 from datetime import datetime, timedelta
+from domain.markets import DecisionStatus
 from database.database import Database
 from intelligence.match_analyst import MatchAnalyst
 from services.team_form_service import TeamFormService
@@ -135,12 +136,22 @@ class AnalysisPipeline:
                     "home_team": home_team,
                     "away_team": away_team,
                     "league": fix.get("league", "Unknown"),
+                    "match_date": fix.get("match_date", ""),
+                    "decision_status": analysis.get(
+                        "decision_status",
+                        DecisionStatus.NO_BET.value,
+                    ),
                     "upset_alert": analysis.get("upset_alert", False),
                     "risk_score": analysis.get("risk_score", 0.0),
                     "stale_data": analysis.get("stale_data", False),
-                    "edge": analysis.get("edge_differential", 0.05),
-                    "verdict": analysis.get("recommended_analytical_verdict", "DC_1X"),
+                    "edge": analysis.get("edge_differential"),
+                    "edge_is_bookmaker_value": analysis.get(
+                        "edge_is_bookmaker_value",
+                        False,
+                    ),
+                    "verdict": analysis.get("recommended_analytical_verdict"),
                     "viable_markets": analysis.get("viable_markets", []),
+                    "no_bet_reasons": analysis.get("no_bet_reasons", []),
                     "source": fix.get("data_source", "unknown"),
                 })
             except Exception as e:

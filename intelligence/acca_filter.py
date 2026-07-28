@@ -1,4 +1,5 @@
 from typing import List, Dict, Any
+from domain.markets import DecisionStatus
 from intelligence.correlation_analyzer import CorrelationAnalyzer
 from intelligence.match_analyst import MARKET_CATEGORIES
 from config.league_priority import get_league_tier
@@ -22,13 +23,20 @@ class AccaFilter:
     def filter_and_rank_legs(self, analyzed_matches: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Disqualify invalid legs and sort the remaining ones.
-        Ranking now prioritizes edge_above_baseline (true value) over raw edge.
+        Ranking uses the explicitly labeled global-baseline delta. This is not
+        bookmaker-implied betting value.
         """
         valid_legs = []
         
         for match in analyzed_matches:
-            # 1. Edge < 0.05 (marginal value)
-            if match.get('edge', 0.0) < 0.05:
+            if match.get("decision_status") == DecisionStatus.NO_BET.value:
+                continue
+            if not match.get("viable_markets"):
+                continue
+
+            # 1. Baseline delta < 0.05
+            edge = match.get('edge')
+            if not isinstance(edge, (int, float)) or edge < 0.05:
                 continue
                 
             # 2. Risk score > 85 (extreme risk)
@@ -81,6 +89,12 @@ class AccaFilter:
             home_team = leg.get('home_team')
             away_team = leg.get('away_team')
             league = leg.get('league')
+            viable_markets = leg.get('viable_markets') or []
+
+            # A fixture with no validated candidate is NO BET. Do not invent a
+            # fallback verdict merely to fill the accumulator.
+            if not viable_markets:
+                continue
 
             # 1. Same team in multiple legs — always block
             if home_team in team_set or away_team in team_set:
@@ -122,13 +136,9 @@ class AccaFilter:
                 nlp_edge_boost = 0.0
 
             # 4. Get viable markets for this fixture
-            viable_markets = leg.get('viable_markets', [])
-            if not viable_markets:
-                viable_markets = [{'verdict': leg.get('verdict'), 'edge': leg.get('edge', 0.05), 'category': 'OTHER'}]
-
             # 4. Sort viable markets by:
             #    a) Category underrepresentation (least legs in current acca first)
-            #    b) Edge above baseline (highest first)
+            #    b) Global-baseline delta (highest first)
             #    This is the KEY diversity mechanism.
             def market_diversity_key(m):
                 cat = m.get('category', MARKET_CATEGORIES.get(m.get('verdict', ''), 'OTHER'))
@@ -149,6 +159,9 @@ class AccaFilter:
             for market_option in sorted_markets:
                 verdict = market_option['verdict']
                 cat = market_option.get('category', MARKET_CATEGORIES.get(verdict, 'OTHER'))
+                market_delta = market_option.get('edge')
+                if not isinstance(market_delta, (int, float)):
+                    continue
 
                 # Check hard category cap
                 if self.correlation_analyzer.is_category_full(verdict, final_acca):
@@ -157,7 +170,19 @@ class AccaFilter:
                 test_leg = leg.copy()
                 test_leg['verdict'] = verdict
                 test_leg['market'] = verdict
-                test_leg['edge'] = market_option.get('edge', 0.05)
+                test_leg['edge'] = market_delta
+                test_leg['edge_is_bookmaker_value'] = market_option.get(
+                    'is_bookmaker_edge',
+                    False,
+                )
+                test_leg['edge_method'] = market_option.get('edge_method')
+                test_leg['estimated_probability'] = market_option.get('prob')
+                test_leg['probability_method'] = market_option.get(
+                    'probability_method'
+                )
+                test_leg['bookmaker_odds'] = market_option.get(
+                    'bookmaker_odds'
+                )
                 test_leg['market_category'] = cat
 
                 # Check correlation
