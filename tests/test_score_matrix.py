@@ -179,6 +179,80 @@ class NormalizedScoreMatrixTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     build_score_matrix(1.0, invalid)
 
+    def test_handicap_half_goal_lines_match_score_matrix_sums(self):
+        for side in ("HOME", "AWAY"):
+            for line in (-2.5, -1.5, -0.5, 0.5, 1.5, 2.5):
+                if side == "HOME":
+                    expected = self.matrix.sum_where(
+                        lambda home, away, handicap=line: (
+                            home + handicap > away
+                        )
+                    )
+                else:
+                    expected = self.matrix.sum_where(
+                        lambda home, away, handicap=line: (
+                            away + handicap > home
+                        )
+                    )
+                with self.subTest(side=side, line=line):
+                    self.assertAlmostEqual(
+                        self.matrix.asian_handicap_cover(side, line),
+                        expected,
+                        places=15,
+                    )
+
+    def test_handicap_integer_lines_are_rejected(self):
+        for line in (-2, -1, 0, 1, 2):
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):
+                    self.matrix.asian_handicap_cover("HOME", line)
+
+    def test_handicap_quarter_lines_are_rejected(self):
+        for line in (-1.75, -1.25, -0.75, -0.25, 0.25, 0.75, 1.25, 1.75):
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):
+                    self.matrix.asian_handicap_cover("AWAY", line)
+
+    def test_handicap_invalid_numeric_values_are_rejected(self):
+        for line in (
+            float("nan"),
+            float("inf"),
+            float("-inf"),
+            True,
+            False,
+        ):
+            with self.subTest(line=line):
+                with self.assertRaises(ValueError):
+                    self.matrix.asian_handicap_cover("HOME", line)
+
+    def test_ranking_boost_cannot_rescue_negative_baseline_delta(self):
+        candidates = build_viable_market_candidates(
+            {"DC_1X": 0.70},
+            {"DC_1X": 0.50},
+        )
+
+        self.assertEqual(candidates, [])
+
+    def test_ranking_boost_can_reorder_eligible_candidates(self):
+        probabilities = {
+            "DC_1X": 0.74,
+            "DC_X2": 0.65,
+        }
+        unboosted = build_viable_market_candidates(probabilities, {})
+        boosted = build_viable_market_candidates(
+            probabilities,
+            {"DC_1X": 0.02},
+        )
+
+        self.assertEqual(
+            [candidate["verdict"] for candidate in unboosted],
+            ["DC_X2", "DC_1X"],
+        )
+        self.assertEqual(
+            [candidate["verdict"] for candidate in boosted],
+            ["DC_1X", "DC_X2"],
+        )
+
     def test_ranking_boost_does_not_change_model_probability_or_edge(self):
         unboosted = build_viable_market_candidates(
             {"DC_1X": 0.73},

@@ -9,6 +9,7 @@ from typing import List, Dict
 
 from domain.markets import (
     DecisionStatus,
+    MarketId,
     MarketRegistryError,
     resolve_legacy_selection,
     serialize_leg,
@@ -195,6 +196,19 @@ class AccumulatorEngine:
                     f"{fix.get('fixture', 'Unknown fixture')}: unsupported "
                     f"selection identifier or invalid canonical identity "
                     f"({exc})."
+                )
+                logger.warning(reason)
+                rejected_reasons.append(reason)
+                continue
+
+            if (
+                prepared_fixture["market_id"]
+                == MarketId.DRAW_NO_BET.value
+            ):
+                reason = (
+                    f"{fix.get('fixture', 'Unknown fixture')}: Draw No Bet "
+                    "is disabled until draw-push-aware probability and value "
+                    "semantics are implemented."
                 )
                 logger.warning(reason)
                 rejected_reasons.append(reason)

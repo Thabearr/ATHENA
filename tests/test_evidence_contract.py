@@ -11,7 +11,11 @@ from domain.markets import (
     make_selection,
     resolve_legacy_selection,
 )
-from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.model_status import (
+    MODEL_STATUS_REGISTRY,
+    MissingInputPolicy,
+    ModelStatus,
+)
 from domain.pricing import parse_bookmaker_quotes, price_selection
 from intelligence.match_analyst import (
     MatchAnalyst,
@@ -600,6 +604,7 @@ class EvidenceContractTests(unittest.TestCase):
             {
                 MarketId.HOME_WIN_EITHER_HALF.value,
                 MarketId.AWAY_WIN_EITHER_HALF.value,
+                MarketId.DRAW_NO_BET.value,
                 MarketId.MATCH_RESULT_1UP.value,
                 MarketId.MATCH_RESULT_2UP.value,
             },
@@ -613,10 +618,54 @@ class EvidenceContractTests(unittest.TestCase):
                 {
                     "WIN_EITHER_HALF_HOME_YES": 0.90,
                     "1X2_1UP_HOME": 0.90,
+                    "DNB_HOME": 0.90,
+                    "DNB_AWAY": 0.90,
                 },
                 {},
             ),
             [],
+        )
+        dnb_status = MODEL_STATUS_REGISTRY[MarketId.DRAW_NO_BET]
+        self.assertIsNone(dnb_status.probability_method)
+        self.assertEqual(
+            dnb_status.missing_input_policy,
+            MissingInputPolicy.REJECT_MARKET,
+        )
+
+    def test_home_and_away_dnb_remain_visible_but_never_viable(self):
+        result = self._compile()
+        dnb_evaluations = [
+            evaluation
+            for evaluation in result["evidence_report"][
+                "market_evaluations"
+            ]
+            if evaluation["market_id"] == MarketId.DRAW_NO_BET.value
+        ]
+
+        self.assertEqual(
+            {evaluation["outcome_id"] for evaluation in dnb_evaluations},
+            {OutcomeId.HOME.value, OutcomeId.AWAY.value},
+        )
+        self.assertTrue(
+            all(
+                evaluation["model_status"] == ModelStatus.DISABLED.value
+                for evaluation in dnb_evaluations
+            )
+        )
+        self.assertTrue(
+            all(
+                evaluation["probability_method"] is None
+                for evaluation in dnb_evaluations
+            )
+        )
+        self.assertTrue(
+            all(not evaluation["selected"] for evaluation in dnb_evaluations)
+        )
+        self.assertFalse(
+            any(
+                market["verdict"] in {"DNB_HOME", "DNB_AWAY"}
+                for market in result["viable_markets"]
+            )
         )
 
     def test_no_bet_evidence_includes_explicit_decision_reasons(self):

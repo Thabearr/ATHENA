@@ -191,15 +191,20 @@ class ScoreMatrix:
         )
 
     def asian_handicap_cover(self, side: str, line: float) -> float:
-        """Return cover probability for supported non-integer handicap lines."""
+        """Return cover probability for exact half-goal handicap lines."""
         normalized_side = str(side).strip().upper()
         if normalized_side not in {"HOME", "AWAY"}:
             raise ValueError("side must be HOME or AWAY")
-        validated_line = _validate_finite_non_negative(abs(line), "line")
+        if (
+            isinstance(line, bool)
+            or not isinstance(line, (int, float))
+            or not math.isfinite(float(line))
+        ):
+            raise ValueError("line must be a finite numeric half-goal line")
         signed_line = float(line)
-        if signed_line.is_integer():
+        if abs(signed_line) % 1.0 != 0.5:
             raise ValueError(
-                "Push-aware integer Asian Handicap lines are unsupported"
+                "Only exact half-goal Asian Handicap lines are supported"
             )
         if normalized_side == "HOME":
             return self.sum_where(

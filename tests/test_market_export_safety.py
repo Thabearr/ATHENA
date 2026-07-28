@@ -378,6 +378,59 @@ class NoBetFallbackTests(unittest.TestCase):
             result["no_bet_reasons"][0],
         )
 
+    def test_home_and_away_dnb_cannot_enter_accumulator(self):
+        current_time = datetime(
+            2026,
+            7,
+            28,
+            12,
+            0,
+            tzinfo=timezone.utc,
+        )
+        for verdict, outcome in (
+            ("DNB_HOME", OutcomeId.HOME),
+            ("DNB_AWAY", OutcomeId.AWAY),
+        ):
+            with self.subTest(verdict=verdict):
+                result = AccumulatorEngine(
+                    current_time_provider=lambda: current_time,
+                ).generate_accumulator(
+                    [{
+                        "fixture_id": f"disabled-{verdict}",
+                        "fixture": "Alpha FC vs Beta FC",
+                        "home_team": "Alpha FC",
+                        "away_team": "Beta FC",
+                        "verdict": verdict,
+                        "edge": 0.10,
+                        "risk_score": 10.0,
+                        "bookmaker_odds": 2.0,
+                        "bookmaker_quote": {
+                            "market_id": MarketId.DRAW_NO_BET.value,
+                            "outcome_id": outcome.value,
+                            "line": None,
+                            "bookmaker_odds": 2.0,
+                            "source": "test_bookmaker",
+                            "quote_snapshot_id": "dnb-disabled",
+                            "observed_at": (
+                                current_time - timedelta(minutes=1)
+                            ).isoformat(),
+                            "is_genuine": True,
+                            "is_current": True,
+                        },
+                        "edge_is_bookmaker_value": True,
+                        "edge_pp": 10.0,
+                        "kelly_stake_pct": 1.0,
+                    }],
+                    fold_size=1,
+                )
+
+                self.assertEqual(result["decision_status"], "NO_BET")
+                self.assertEqual(result["legs"], [])
+                self.assertIn(
+                    "Draw No Bet is disabled",
+                    result["no_bet_reasons"][0],
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -134,8 +134,6 @@ MARKET_PROBABILITY_METHODS = {
     "UNDER_35": "normalized_score_matrix_total_goals",
     "GG_YES": "normalized_score_matrix_btts",
     "GG_NO": "normalized_score_matrix_btts",
-    "DNB_HOME": "full_time_home_win_probability_proxy",
-    "DNB_AWAY": "full_time_away_win_probability_proxy",
     "HOME_OR_OVER_25": "normalized_score_matrix_union_probability",
     "AWAY_OR_OVER_25": "normalized_score_matrix_union_probability",
     "DRAW_OR_OVER_25": "normalized_score_matrix_union_probability",
@@ -378,11 +376,11 @@ def build_viable_market_candidates(
             continue
 
         baseline = MARKET_BASELINES.get(verdict, 0.50)
-        baseline_delta = round(probability - baseline, 4)
-        ranking_boost = round(archetype_boosts.get(verdict, 0.0), 4)
-        ranking_score = round(baseline_delta + ranking_boost, 4)
-        if ranking_score <= 0:
+        baseline_delta = float(probability) - baseline
+        if baseline_delta <= 0:
             continue
+        ranking_boost = float(archetype_boosts.get(verdict, 0.0))
+        ranking_score = baseline_delta + ranking_boost
 
         candidates.append({
             "verdict": verdict,

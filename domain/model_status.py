@@ -63,9 +63,9 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
         status=ModelStatus.EXPERIMENTAL,
         probability_method="normalized_score_matrix_handicap_cover",
         reason=(
-            "Supported non-integer handicap cover probabilities are derived "
-            "from the normalized matrix; push-aware unsupported lines remain "
-            "unavailable."
+            "Only exact half-goal Asian Handicap cover probabilities are "
+            "derived from the normalized matrix; integer, quarter-goal, and "
+            "push-aware settlements remain unavailable."
         ),
         probability_inputs=_PROBABILITY_INPUTS,
         pricing_inputs=_PRICING_INPUTS,
@@ -160,15 +160,15 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.DRAW_NO_BET: MarketModelStatus(
-        status=ModelStatus.EXPERIMENTAL,
-        probability_method="full_time_win_probability_proxy",
+        status=ModelStatus.DISABLED,
+        probability_method=None,
         reason=(
-            "The current probability is a full-time win proxy and does not "
-            "yet model the draw-as-push payoff directly."
+            "Disabled until ATHENA implements draw-push-aware probability and "
+            "value semantics; the full-time-win proxy is not selectable."
         ),
-        probability_inputs=_PROBABILITY_INPUTS,
-        pricing_inputs=_PRICING_INPUTS,
-        missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
+        probability_inputs=(),
+        pricing_inputs=(),
+        missing_input_policy=MissingInputPolicy.REJECT_MARKET,
     ),
     MarketId.HOME_WIN_TO_NIL: MarketModelStatus(
         status=ModelStatus.EXPERIMENTAL,
