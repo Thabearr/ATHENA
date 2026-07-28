@@ -2,12 +2,21 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from domain.markets import DecisionStatus, MarketId
+from domain.markets import (
+    MARKET_REGISTRY,
+    DecisionStatus,
+    MarketId,
+    OutcomeId,
+    make_selection,
+    resolve_legacy_selection,
+)
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.pricing import parse_bookmaker_quotes, price_selection
 from intelligence.match_analyst import (
     MatchAnalyst,
     build_viable_market_candidates,
 )
+from intelligence.fixture_reasoner import FixtureOption, FixtureReasoner
 from services.analysis_pipeline import AnalysisPipeline
 
 
@@ -95,6 +104,24 @@ class EvidenceContractTests(unittest.TestCase):
         )
 
     @staticmethod
+    def _quotes_for_selection(selection, odds=4.0, *, line=None):
+        quote_line = selection.line if line is None else line
+        return [
+            {
+                "market_id": selection.market_id.value,
+                "outcome_id": outcome.value,
+                "line": quote_line,
+                "bookmaker_odds": odds,
+                "source": "test_bookmaker",
+                "is_genuine": True,
+                "is_current": True,
+            }
+            for outcome in MARKET_REGISTRY[
+                selection.market_id
+            ].supported_outcomes
+        ]
+
+    @staticmethod
     def _evidence_by_field(result):
         return {
             item["field"]: item
@@ -176,6 +203,124 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertTrue(
             all(evaluation["edge_pp"] is None for evaluation in evaluations)
         )
+        self.assertEqual(
+            result["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
+        )
+        self.assertTrue(
+            all(
+                evaluation["kelly_stake_pct"] is None
+                for evaluation in evaluations
+            )
+        )
+
+    def test_reciprocal_probability_is_only_model_fair_odds(self):
+        result = self._compile()
+        verdict = result["reasoning_verdicts"][0]
+
+        self.assertAlmostEqual(
+            verdict["model_fair_odds"],
+            1.0 / verdict["model_probability"],
+            places=3,
+        )
+        self.assertIsNone(verdict["bookmaker_odds"])
+        self.assertIsNone(verdict["edge_pp"])
+        self.assertIsNone(verdict["kelly_stake_pct"])
+
+        reasoned = FixtureReasoner().analyze([
+            FixtureOption("1X2", "Home Win", model_prob=0.60),
+            FixtureOption("1X2", "Draw", model_prob=0.20),
+            FixtureOption("1X2", "Away Win", model_prob=0.20),
+        ])
+        self.assertTrue(
+            all(
+                item.status == DecisionStatus.ANALYTICAL_CANDIDATE.value
+                for item in reasoned
+            )
+        )
+        self.assertTrue(all(item.fair_prob is None for item in reasoned))
+        self.assertTrue(all(item.edge_pp is None for item in reasoned))
+        self.assertTrue(
+            all(item.kelly_stake_pct is None for item in reasoned)
+        )
+        self.assertAlmostEqual(
+            reasoned[0].option.model_fair_odds,
+            1.0 / 0.60,
+        )
+
+    def test_exact_complete_pricing_is_required_for_bet(self):
+        analytical = self._compile()
+        selection = resolve_legacy_selection(
+            analytical["recommended_analytical_verdict"]
+        )
+        context = self._fixture_context()
+        context["bookmaker_odds"] = self._quotes_for_selection(selection)
+
+        priced = self._analyst().compile_master_fixture_prediction(context)
+
+        self.assertEqual(priced["decision_status"], DecisionStatus.BET.value)
+        candidate = priced["viable_markets"][0]
+        self.assertEqual(candidate["market_id"], selection.market_id.value)
+        self.assertEqual(candidate["outcome_id"], selection.outcome_id.value)
+        self.assertEqual(candidate["line"], selection.line)
+        self.assertIsNotNone(candidate["edge_pp"])
+        self.assertIsNotNone(candidate["kelly_stake_pct"])
+
+    def test_odds_for_another_market_cannot_price_selected_market(self):
+        analytical = self._compile()
+        selected = resolve_legacy_selection(
+            analytical["recommended_analytical_verdict"]
+        )
+        other_market = (
+            MarketId.BTTS
+            if selected.market_id != MarketId.BTTS
+            else MarketId.MATCH_RESULT
+        )
+        other = type(selected)(
+            market_id=other_market,
+            outcome_id=MARKET_REGISTRY[other_market].supported_outcomes[0],
+            line=None,
+            display_label="Other",
+            selection_display_name="Other",
+        )
+        context = self._fixture_context()
+        context["bookmaker_odds"] = self._quotes_for_selection(other)
+
+        result = self._analyst().compile_master_fixture_prediction(context)
+
+        self.assertEqual(
+            result["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
+        )
+        self.assertIsNone(result["viable_markets"][0]["bookmaker_odds"])
+        self.assertIsNone(result["viable_markets"][0]["edge_pp"])
+
+    def test_wrong_line_cannot_price_selected_market(self):
+        selection = make_selection(
+            MarketId.TOTAL_GOALS,
+            OutcomeId.UNDER,
+            line=3.5,
+        )
+        quotes = parse_bookmaker_quotes(self._quotes_for_selection(
+            selection,
+            line=selection.line + 1.0,
+        ))
+        pricing, reason = price_selection(selection, 0.70, quotes)
+
+        self.assertIsNone(pricing)
+        self.assertIn("exact market, outcome, and line", reason)
+
+    def test_model_requirements_separate_probability_and_pricing(self):
+        for definition in MODEL_STATUS_REGISTRY.values():
+            self.assertNotIn(
+                "bookmaker_odds",
+                definition.probability_inputs,
+            )
+            if definition.selectable:
+                self.assertEqual(
+                    definition.pricing_inputs,
+                    ("bookmaker_odds",),
+                )
 
     def test_disabled_markets_are_reported_but_never_selected(self):
         result = self._compile()

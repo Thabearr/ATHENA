@@ -80,6 +80,7 @@ class MarketFamily(str, Enum):
 
 
 class DecisionStatus(str, Enum):
+    ANALYTICAL_CANDIDATE = "ANALYTICAL_CANDIDATE"
     BET = "BET"
     NO_BET = "NO_BET"
 

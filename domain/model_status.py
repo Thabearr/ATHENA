@@ -24,7 +24,8 @@ class MarketModelStatus:
     status: ModelStatus
     probability_method: Optional[str]
     reason: str
-    required_inputs: Tuple[str, ...]
+    probability_inputs: Tuple[str, ...]
+    pricing_inputs: Tuple[str, ...]
     missing_input_policy: MissingInputPolicy
 
     @property
@@ -35,15 +36,15 @@ class MarketModelStatus:
         }
 
 
-_SCORE_INPUTS = (
+_PROBABILITY_INPUTS = (
     "home_form",
     "away_form",
     "home_elo",
     "away_elo",
     "fatigue",
     "live_data_freshness",
-    "bookmaker_odds",
 )
+_PRICING_INPUTS = ("bookmaker_odds",)
 
 
 MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
@@ -56,7 +57,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Regulation-time result probabilities are derived from the score "
             "matrix and may be blended with available ML probabilities."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.ASIAN_HANDICAP: MarketModelStatus(
@@ -68,7 +70,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Supported handicap lines are derived from the truncated score "
             "matrix; selected classifiers may be blended when available."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.TOTAL_GOALS: MarketModelStatus(
@@ -80,7 +83,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Goal-line probabilities are derived from the Poisson score "
             "matrix, with explicit optional ML blending where implemented."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.DRAW_OR_OVER_2_5: MarketModelStatus(
@@ -90,7 +94,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "The result-or-total probability is derived as a score-matrix "
             "union and remains experimental pending calibration."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.AWAY_OR_OVER_2_5: MarketModelStatus(
@@ -100,7 +105,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "The result-or-total probability is derived as a score-matrix "
             "union and remains experimental pending calibration."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.HOME_OR_OVER_2_5: MarketModelStatus(
@@ -110,7 +116,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "The result-or-total probability is derived as a score-matrix "
             "union and remains experimental pending calibration."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.HOME_WIN_EITHER_HALF: MarketModelStatus(
@@ -120,7 +127,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Disabled until ATHENA has a defensible half-by-half probability "
             "model."
         ),
-        required_inputs=(),
+        probability_inputs=(),
+        pricing_inputs=(),
         missing_input_policy=MissingInputPolicy.REJECT_MARKET,
     ),
     MarketId.AWAY_WIN_EITHER_HALF: MarketModelStatus(
@@ -130,7 +138,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Disabled until ATHENA has a defensible half-by-half probability "
             "model."
         ),
-        required_inputs=(),
+        probability_inputs=(),
+        pricing_inputs=(),
         missing_input_policy=MissingInputPolicy.REJECT_MARKET,
     ),
     MarketId.DOUBLE_CHANCE: MarketModelStatus(
@@ -142,7 +151,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Each covered outcome is the explicit sum of regulation-time "
             "score-matrix result probabilities."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.BTTS: MarketModelStatus(
@@ -154,7 +164,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Both-teams-to-score probability is score-matrix derived and may "
             "use an optional classifier blend; calibration is still required."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.DRAW_NO_BET: MarketModelStatus(
@@ -164,7 +175,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "The current probability is a full-time win proxy and does not "
             "yet model the draw-as-push payoff directly."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.HOME_WIN_TO_NIL: MarketModelStatus(
@@ -174,7 +186,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "The event is derived directly from the truncated score matrix "
             "and remains experimental pending calibration."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.AWAY_WIN_TO_NIL: MarketModelStatus(
@@ -184,7 +197,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "The event is derived directly from the truncated score matrix "
             "and remains experimental pending calibration."
         ),
-        required_inputs=_SCORE_INPUTS,
+        probability_inputs=_PROBABILITY_INPUTS,
+        pricing_inputs=_PRICING_INPUTS,
         missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
     ),
     MarketId.MATCH_RESULT_1UP: MarketModelStatus(
@@ -194,7 +208,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Disabled because early-payout settlement requires provider rules "
             "and a lead-path probability model."
         ),
-        required_inputs=(),
+        probability_inputs=(),
+        pricing_inputs=(),
         missing_input_policy=MissingInputPolicy.REJECT_MARKET,
     ),
     MarketId.MATCH_RESULT_2UP: MarketModelStatus(
@@ -204,7 +219,8 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
             "Disabled because early-payout settlement requires provider rules "
             "and a lead-path probability model."
         ),
-        required_inputs=(),
+        probability_inputs=(),
+        pricing_inputs=(),
         missing_input_policy=MissingInputPolicy.REJECT_MARKET,
     ),
 }

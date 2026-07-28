@@ -27,6 +27,7 @@ from domain.model_status import (
     ModelStatus,
     get_model_status,
 )
+from domain.pricing import parse_bookmaker_quotes, price_selection
 from intelligence.ml_engine import MLEngine
 
 logger = logging.getLogger("athena.match_analyst")
@@ -160,8 +161,6 @@ def build_market_evaluations(
     evidence_items: Sequence[EvidenceItem],
     *,
     selected_verdict: Optional[str] = None,
-    bookmaker_odds: Optional[Mapping[str, Any]] = None,
-    edge_pp_by_verdict: Optional[Mapping[str, Any]] = None,
     min_probability: float = 0.55,
 ) -> list:
     """Build an auditable evaluation list without changing model decisions."""
@@ -169,7 +168,6 @@ def build_market_evaluations(
     viable_by_verdict = {
         candidate["verdict"]: candidate for candidate in viable_markets
     }
-    odds_by_verdict = bookmaker_odds or {}
     reported_markets = set()
     evaluations = []
 
@@ -187,22 +185,17 @@ def build_market_evaluations(
             else None
         )
         candidate = viable_by_verdict.get(verdict)
-        odds_value = odds_by_verdict.get(verdict)
-        canonical_odds = (
-            round(float(odds_value), 4)
-            if _valid_bookmaker_odds(odds_value)
-            else None
-        )
+        canonical_odds = candidate.get("bookmaker_odds") if candidate else None
 
         missing_inputs = []
-        for required_input in model_definition.required_inputs:
+        for required_input in model_definition.probability_inputs:
             evidence = evidence_by_field.get(required_input)
             if (
                 evidence is None
                 or evidence.status != EvidenceStatus.AVAILABLE
             ):
                 missing_inputs.append(required_input)
-        if canonical_odds is None and "bookmaker_odds" not in missing_inputs:
+        if canonical_odds is None:
             missing_inputs.append("bookmaker_odds")
 
         selected = bool(
@@ -244,11 +237,8 @@ def build_market_evaluations(
                     "No market was selected for this fixture."
                 )
 
-        edge_value = None
-        if canonical_odds is not None and edge_pp_by_verdict:
-            candidate_edge = edge_pp_by_verdict.get(verdict)
-            if _is_number(candidate_edge):
-                edge_value = round(float(candidate_edge), 4)
+        edge_value = candidate.get("edge_pp") if candidate else None
+        kelly_value = candidate.get("kelly_stake_pct") if candidate else None
 
         evaluations.append(
             MarketEvaluation(
@@ -263,12 +253,19 @@ def build_market_evaluations(
                     else MARKET_PROBABILITY_METHODS.get(verdict)
                     or model_definition.probability_method
                 ),
-                required_inputs=model_definition.required_inputs,
+                probability_inputs=model_definition.probability_inputs,
+                pricing_inputs=model_definition.pricing_inputs,
                 missing_inputs=missing_inputs,
                 rejection_reasons=rejection_reasons,
                 selected=selected,
                 bookmaker_odds=canonical_odds,
                 edge_pp=edge_value,
+                kelly_stake_pct=kelly_value,
+                model_fair_odds=(
+                    round(1.0 / probability, 4)
+                    if probability and probability > 0
+                    else None
+                ),
             )
         )
 
@@ -285,10 +282,14 @@ def build_market_evaluations(
                 model_status=model_definition.status,
                 probability=None,
                 probability_method=model_definition.probability_method,
-                required_inputs=model_definition.required_inputs,
+                probability_inputs=model_definition.probability_inputs,
+                pricing_inputs=model_definition.pricing_inputs,
                 missing_inputs=[
                     field
-                    for field in model_definition.required_inputs
+                    for field in (
+                        model_definition.probability_inputs
+                        + model_definition.pricing_inputs
+                    )
                     if (
                         evidence_by_field.get(field) is None
                         or evidence_by_field[field].status
@@ -304,6 +305,8 @@ def build_market_evaluations(
                 selected=False,
                 bookmaker_odds=None,
                 edge_pp=None,
+                kelly_stake_pct=None,
+                model_fair_odds=None,
             )
         )
 
@@ -357,9 +360,8 @@ def build_viable_market_candidates(
         if probability < min_probability:
             continue
         try:
-            model_definition = get_model_status(
-                resolve_legacy_selection(verdict).market_id
-            )
+            selection = resolve_legacy_selection(verdict)
+            model_definition = get_model_status(selection.market_id)
         except MarketRegistryError:
             continue
         if not model_definition.selectable:
@@ -386,6 +388,15 @@ def build_viable_market_candidates(
             "is_bookmaker_edge": False,
             "probability_method": probability_method,
             "category": MARKET_CATEGORIES.get(verdict, "OTHER"),
+            "market_id": selection.market_id.value,
+            "outcome_id": selection.outcome_id.value,
+            "line": selection.line,
+            "display_label": selection.display_label,
+            "model_fair_odds": round(1.0 / probability, 4),
+            "bookmaker_odds": None,
+            "edge_pp": None,
+            "kelly_stake_pct": None,
+            "bookmaker_quote": None,
         })
 
     candidates.sort(
@@ -668,15 +679,8 @@ class MatchAnalyst:
         stale_data = avg_live_ratio < 0.60 and not is_backtest
 
         bookmaker_odds_context = fixture_context.get("bookmaker_odds")
-        bookmaker_odds = (
-            dict(bookmaker_odds_context)
-            if isinstance(bookmaker_odds_context, Mapping)
-            else {}
-        )
-        bookmaker_odds_available = any(
-            _valid_bookmaker_odds(value)
-            for value in bookmaker_odds.values()
-        )
+        bookmaker_quotes = parse_bookmaker_quotes(bookmaker_odds_context)
+        bookmaker_odds_available = bool(bookmaker_quotes)
         freshness_status = EvidenceStatus.AVAILABLE
         freshness_notes = None
         if freshness_defaulted:
@@ -868,7 +872,8 @@ class MatchAnalyst:
         record_evidence(
             "fixture_context",
             "bookmaker_odds",
-            bookmaker_odds if bookmaker_odds_available else None,
+            [quote.to_dict() for quote in bookmaker_quotes]
+            if bookmaker_odds_available else None,
             available if bookmaker_odds_available else missing,
             (
                 None
@@ -1021,21 +1026,18 @@ class MatchAnalyst:
             archetype_boosts,
             min_probability=MIN_PROB,
         )
-        selected_verdict = (
-            viable_markets[0]["verdict"] if viable_markets else None
-        )
-        market_evaluations = build_market_evaluations(
-            evaluation_market_probs,
-            viable_markets,
-            evidence_items,
-            selected_verdict=selected_verdict,
-            bookmaker_odds=bookmaker_odds,
-            min_probability=MIN_PROB,
-        )
+        selected_verdict = viable_markets[0]["verdict"] if viable_markets else None
 
         # Candidates are sorted by baseline delta, which is not bookmaker value.
 
         if not viable_markets:
+            market_evaluations = build_market_evaluations(
+                evaluation_market_probs,
+                viable_markets,
+                evidence_items,
+                selected_verdict=None,
+                min_probability=MIN_PROB,
+            )
             no_bet_reasons = [
                 "No market cleared the minimum probability and "
                 "positive baseline-delta thresholds."
@@ -1065,79 +1067,109 @@ class MatchAnalyst:
         # we set upset_alert to True. AccaFilter may reject the fixture in strict
         # mode; no market is created when the validated candidate list is empty.
 
-        # --- REASONING ENGINE INTEGRATION (Shin De-vig, Wilson CI, Single Market Winner) ---
-        from intelligence.fixture_reasoner import FixtureOption, FixtureReasoner
-        
-        reasoner_options = []
-        # Map markets to odds & effective sample sizes
-        # 1X2
-        h_odds = round(1.0 / max(0.01, prob_home_win), 2)
-        d_odds = round(1.0 / max(0.01, prob_draw), 2)
-        a_odds = round(1.0 / max(0.01, prob_away_win), 2)
-        n_eff = 800 if not stale_data else 300
-        
-        reasoner_options.extend([
-            FixtureOption("1X2", "Home Win", model_prob=prob_home_win, odds=h_odds, n_effective=n_eff),
-            FixtureOption("1X2", "Draw", model_prob=prob_draw, odds=d_odds, n_effective=n_eff),
-            FixtureOption("1X2", "Away Win", model_prob=prob_away_win, odds=a_odds, n_effective=n_eff),
-        ])
-        
-        # Over/Under 2.5
-        o25_odds = round(1.0 / max(0.01, prob_over_25), 2)
-        u25_odds = round(1.0 / max(0.01, prob_under_25), 2)
-        reasoner_options.extend([
-            FixtureOption("Over/Under 2.5", "Over 2.5", model_prob=prob_over_25, odds=o25_odds, n_effective=n_eff, correlation_tag="goals_high"),
-            FixtureOption("Over/Under 2.5", "Under 2.5", model_prob=prob_under_25, odds=u25_odds, n_effective=n_eff),
-        ])
-        
-        # BTTS
-        gg_odds = round(1.0 / max(0.01, prob_gg), 2)
-        ng_odds = round(1.0 / max(0.01, 1.0 - prob_gg), 2)
-        reasoner_options.extend([
-            FixtureOption("BTTS", "BTTS Yes", model_prob=prob_gg, odds=gg_odds, n_effective=n_eff, correlation_tag="goals_high"),
-            FixtureOption("BTTS", "BTTS No", model_prob=1.0 - prob_gg, odds=ng_odds, n_effective=n_eff),
-        ])
-
-        reasoner = FixtureReasoner(min_edge_pp=2.0, kelly_fraction_used=1/8, devig_method="shin")
-        reasoner_results = reasoner.analyze(reasoner_options)
-
         best_market = viable_markets[0]
+        best_selection = resolve_legacy_selection(best_market["verdict"])
+        pricing, pricing_reason = price_selection(
+            best_selection,
+            best_market["prob"],
+            bookmaker_quotes,
+        )
+        if pricing is not None:
+            best_market.update({
+                "bookmaker_odds": round(
+                    pricing.bookmaker_quote.bookmaker_odds, 4
+                ),
+                "bookmaker_quote": pricing.bookmaker_quote.to_dict(),
+                "bookmaker_probability": round(
+                    pricing.bookmaker_probability, 4
+                ),
+                "edge_pp": round(pricing.edge_pp, 4),
+                "kelly_stake_pct": round(pricing.kelly_stake_pct, 4),
+                "edge_method": pricing.method,
+                "is_bookmaker_edge": True,
+            })
+
+        pricing_checks_pass = (
+            pricing is not None
+            and pricing.edge_pp >= 2.0
+            and risk_score <= 85
+            and avg_live_ratio >= 0.40
+        )
+        if pricing is None:
+            decision_status = DecisionStatus.ANALYTICAL_CANDIDATE
+        elif pricing_checks_pass:
+            decision_status = DecisionStatus.BET
+        else:
+            decision_status = DecisionStatus.NO_BET
+
         decision_reasons = [
             f"{best_market['verdict']} ranked first among markets that "
             "cleared the analytical selection thresholds."
         ]
-        if not bookmaker_odds_available:
+        if pricing is None:
+            decision_reasons.append(pricing_reason)
+        elif pricing.edge_pp < 2.0:
             decision_reasons.append(
-                "Bookmaker odds were unavailable, so bookmaker edge_pp "
-                "remains unknown."
+                "The de-vigged bookmaker edge did not clear the 2.0pp "
+                "eligibility threshold."
+            )
+        if risk_score > 85:
+            decision_reasons.append(
+                "The fixture failed the configured maximum risk score of 85."
+            )
+        if avg_live_ratio < 0.40:
+            decision_reasons.append(
+                "The fixture failed the configured minimum data freshness of 0.40."
             )
 
+        market_evaluations = build_market_evaluations(
+            evaluation_market_probs,
+            viable_markets,
+            evidence_items,
+            selected_verdict=selected_verdict,
+            min_probability=MIN_PROB,
+        )
+        no_bet_reasons = (
+            decision_reasons if decision_status == DecisionStatus.NO_BET else []
+        )
+
         return {
-            "decision_status": DecisionStatus.BET.value,
+            "decision_status": decision_status.value,
             "recommended_analytical_verdict": best_market["verdict"],
             "edge_differential": best_market["edge"],
             "edge_is_bookmaker_value": False,
+            "bookmaker_odds": best_market["bookmaker_odds"],
+            "bookmaker_probability": best_market.get(
+                "bookmaker_probability"
+            ),
+            "edge_pp": best_market["edge_pp"],
+            "kelly_stake_pct": best_market["kelly_stake_pct"],
             "upset_alert": upset_alert,
             "risk_score": risk_score,
             "stale_data": stale_data,
             "viable_markets": viable_markets,
-            "reasoning_verdicts": [
-                {
-                    "label": v.option.label,
-                    "market": v.option.market,
-                    "status": v.status,
-                    "edge_pp": round(v.edge_pp, 2),
-                    "fair_prob": round(v.fair_prob, 4),
-                    "kelly_stake_pct": round(v.kelly_stake_pct, 2),
-                    "reason": v.reason
-                }
-                for v in reasoner_results
-            ],
+            "reasoning_verdicts": [{
+                "label": best_market["display_label"],
+                "market_id": best_market["market_id"],
+                "outcome_id": best_market["outcome_id"],
+                "line": best_market["line"],
+                "status": decision_status.value,
+                "model_probability": best_market["prob"],
+                "model_fair_odds": best_market["model_fair_odds"],
+                "bookmaker_odds": best_market["bookmaker_odds"],
+                "bookmaker_probability": best_market.get(
+                    "bookmaker_probability"
+                ),
+                "edge_pp": best_market["edge_pp"],
+                "kelly_stake_pct": best_market["kelly_stake_pct"],
+                "reason": decision_reasons[-1],
+            }],
+            "no_bet_reasons": no_bet_reasons,
             "evidence_report": build_fixture_evidence_report(
                 fixture_context,
                 evidence_items,
                 market_evaluations,
-                DecisionStatus.BET,
+                decision_status,
                 decision_reasons,
             ),
         }

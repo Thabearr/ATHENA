@@ -29,7 +29,7 @@ class AccaFilter:
         valid_legs = []
         
         for match in analyzed_matches:
-            if match.get("decision_status") == DecisionStatus.NO_BET.value:
+            if match.get("decision_status") != DecisionStatus.BET.value:
                 continue
             if not match.get("viable_markets"):
                 continue
@@ -182,6 +182,13 @@ class AccaFilter:
                 )
                 test_leg['bookmaker_odds'] = market_option.get(
                     'bookmaker_odds'
+                )
+                test_leg['bookmaker_quote'] = market_option.get(
+                    'bookmaker_quote'
+                )
+                test_leg['edge_pp'] = market_option.get('edge_pp')
+                test_leg['kelly_stake_pct'] = market_option.get(
+                    'kelly_stake_pct'
                 )
                 test_leg['market_category'] = cat
 

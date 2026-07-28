@@ -181,6 +181,22 @@ class ExportSelectionPreservationTests(unittest.TestCase):
                 "edge": 0.10,
                 "risk_score": 10.0,
                 "bookmaker_odds": 2.0,
+                "bookmaker_quote": {
+                    "market_id": self.EXPECTED_SELECTIONS[
+                        fixture_id
+                    ]["market_id"],
+                    "outcome_id": self.EXPECTED_SELECTIONS[
+                        fixture_id
+                    ]["outcome_id"],
+                    "line": self.EXPECTED_SELECTIONS[fixture_id]["line"],
+                    "bookmaker_odds": 2.0,
+                    "source": "test_bookmaker",
+                    "is_genuine": True,
+                    "is_current": True,
+                },
+                "edge_is_bookmaker_value": True,
+                "edge_pp": 5.0,
+                "kelly_stake_pct": 1.0,
             }
             for fixture_id, home_team, away_team, verdict in verdicts
         ]

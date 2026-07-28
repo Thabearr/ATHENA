@@ -13,6 +13,7 @@ from domain.markets import (
     serialize_leg,
     serialize_selection,
 )
+from domain.pricing import BookmakerQuote, quote_matches_selection
 
 logger = logging.getLogger("athena.accumulator")
 
@@ -184,14 +185,41 @@ class AccumulatorEngine:
                 continue
 
             bookmaker_odds = fix.get("bookmaker_odds")
+            raw_quote = fix.get("bookmaker_quote")
+            try:
+                exact_quote = (
+                    BookmakerQuote.from_mapping(raw_quote)
+                    if isinstance(raw_quote, dict)
+                    else None
+                )
+                canonical_selection = resolve_legacy_selection(verdict)
+            except (MarketRegistryError, TypeError, ValueError):
+                exact_quote = None
             if (
                 not isinstance(bookmaker_odds, (int, float))
                 or isinstance(bookmaker_odds, bool)
                 or bookmaker_odds <= 1.0
+                or exact_quote is None
+                or not exact_quote.is_genuine
+                or not exact_quote.is_current
+                or not quote_matches_selection(
+                    exact_quote,
+                    canonical_selection,
+                )
+                or abs(
+                    exact_quote.bookmaker_odds - float(bookmaker_odds)
+                ) > 1e-9
+                or fix.get("edge_is_bookmaker_value") is not True
+                or not isinstance(fix.get("edge_pp"), (int, float))
+                or not isinstance(
+                    fix.get("kelly_stake_pct"),
+                    (int, float),
+                )
             ):
                 reason = (
                     f"{fix.get('fixture', 'Unknown fixture')}: no validated "
-                    "current bookmaker odds were provided."
+                    "current bookmaker odds matching the exact market, "
+                    "outcome, and line were provided."
                 )
                 logger.warning(reason)
                 rejected_reasons.append(reason)
@@ -231,6 +259,10 @@ class AccumulatorEngine:
                     False,
                 ),
                 "edge_method": fix.get("edge_method"),
+                "edge_pp": round(float(fix["edge_pp"]), 4),
+                "kelly_stake_pct": round(
+                    float(fix["kelly_stake_pct"]), 4
+                ),
                 "estimated_probability": fix.get("estimated_probability"),
                 "probability_method": fix.get("probability_method"),
                 "evidence_report": fix.get("evidence_report"),
