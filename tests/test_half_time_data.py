@@ -401,7 +401,7 @@ class HalfTimeCoverageTests(unittest.TestCase):
 
 
 class SourceCapabilityTests(unittest.TestCase):
-    def test_no_source_claims_confirmed_half_time_support(self):
+    def test_only_implemented_source_claims_half_time_support(self):
         confirmed = [
             source
             for source, capabilities in SOURCE_CAPABILITY_REGISTRY.items()
@@ -411,7 +411,18 @@ class SourceCapabilityTests(unittest.TestCase):
             )
         ]
 
-        self.assertEqual(confirmed, [])
+        self.assertEqual(confirmed, ["football_data_org_live"])
+        football_data = SOURCE_CAPABILITY_REGISTRY[
+            "football_data_org_live"
+        ]
+        self.assertEqual(
+            football_data.freshness_metadata,
+            CapabilityAvailability.CONFIRMED,
+        )
+        self.assertEqual(
+            football_data.event_timestamps,
+            CapabilityAvailability.NOT_CAPTURED,
+        )
         self.assertEqual(
             SOURCE_CAPABILITY_REGISTRY[
                 "fotmob_unofficial"
