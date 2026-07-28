@@ -121,8 +121,12 @@ class AnalysisPipeline:
                 "home_id": self._resolve_team_id(home_team),
                 "away_id": self._resolve_team_id(away_team),
                 "match_date": fix.get("match_date", ""),
+                "data_source": fix.get("data_source"),
                 "is_knockout": any(k in league_name for k in ["cup", "champions league", "playoff", "knockout", "qualif", "conference"]),
             }
+
+            if fix.get("bookmaker_odds") is not None:
+                context_payload["bookmaker_odds"] = fix["bookmaker_odds"]
             
             if "home_pre_elo" in fix and fix["home_pre_elo"] is not None:
                 context_payload["home_pre_elo"] = fix["home_pre_elo"]
@@ -152,6 +156,7 @@ class AnalysisPipeline:
                     "verdict": analysis.get("recommended_analytical_verdict"),
                     "viable_markets": analysis.get("viable_markets", []),
                     "no_bet_reasons": analysis.get("no_bet_reasons", []),
+                    "evidence_report": analysis.get("evidence_report"),
                     "source": fix.get("data_source", "unknown"),
                 })
             except Exception as e:

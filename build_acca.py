@@ -301,6 +301,11 @@ class AccaBuilder:
                     "fold_size": 0,
                     "total_estimated_odds": 0.0,
                     "legs": [],
+                    "evidence_reports": [
+                        match["evidence_report"]
+                        for match in all_analyzed
+                        if match.get("evidence_report")
+                    ],
                     "eligible_count": 0,
                     "available_count": len(all_analyzed),
                     "timeframe_days": days,

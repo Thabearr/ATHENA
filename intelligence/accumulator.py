@@ -151,6 +151,7 @@ class AccumulatorEngine:
                     "requested_fold_size": requested_fold_size,
                     "total_estimated_odds": 0.0,
                     "legs": [],
+                    "evidence_reports": [],
                     "eligible_count": 0,
                     "available_count": len(analyzed_fixtures)
                 }
@@ -232,6 +233,7 @@ class AccumulatorEngine:
                 "edge_method": fix.get("edge_method"),
                 "estimated_probability": fix.get("estimated_probability"),
                 "probability_method": fix.get("probability_method"),
+                "evidence_report": fix.get("evidence_report"),
                 "risk_score": round(fix["risk_score"], 1),
                 "odds": leg_odds,
                 "odds_source": "bookmaker",
@@ -246,6 +248,11 @@ class AccumulatorEngine:
                 "requested_fold_size": requested_fold_size,
                 "total_estimated_odds": 0.0,
                 "legs": [],
+                "evidence_reports": [
+                    fix["evidence_report"]
+                    for fix in top_fixtures
+                    if fix.get("evidence_report")
+                ],
                 "eligible_count": len(eligible),
                 "available_count": len(analyzed_fixtures),
             }
