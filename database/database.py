@@ -26,6 +26,30 @@ class Database:
             self._migrate_add_column(connection, "fixtures", "season_label", "TEXT")
             self._migrate_add_column(connection, "historical_matches", "data_source", "TEXT")
             self._migrate_add_column(connection, "historical_matches", "season_label", "TEXT")
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_status",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_fingerprint",
+                "TEXT",
+            )
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_reason",
+                "TEXT",
+            )
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_observed_at",
+                "TEXT",
+            )
         finally:
             connection.close()
 

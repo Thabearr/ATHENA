@@ -1,6 +1,13 @@
+import argparse
 import logging
+import sys
 import time
 from datetime import date, datetime, timedelta
+from pathlib import Path
+
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+if str(REPOSITORY_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from config.settings import settings
 from config.supported_leagues import SUPPORTED_LEAGUES, season_for_league
@@ -383,9 +390,40 @@ class HistoricalResultsLoader:
         }
 
 
-if __name__ == "__main__":
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Load historical full-time results and explicit half-time "
+            "evidence into ATHENA."
+        )
+    )
+    parser.add_argument(
+        "--days-back",
+        type=int,
+        default=120,
+        help="Number of historical calendar days to request.",
+    )
+    parser.add_argument(
+        "--request-delay-seconds",
+        type=float,
+        default=6.5,
+        help="Delay between provider competition requests.",
+    )
+    return parser
+
+
+def main(argv=None) -> int:
+    args = build_parser().parse_args(argv)
     logging.basicConfig(level=logging.INFO)
-    loader = HistoricalResultsLoader(days_back=120)
+    loader = HistoricalResultsLoader(
+        days_back=args.days_back,
+        request_delay_seconds=args.request_delay_seconds,
+    )
     counts = loader.load()
     print(f"✅ Loaded {counts['football_data_org_live']} live results and "
           f"{counts['api_football_2022_2024']} 2022-2024 results into historical_matches.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

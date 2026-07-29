@@ -64,6 +64,31 @@ class HalfTimeObservationTests(unittest.TestCase):
         )
         self.assertEqual(observation.rejection_reasons, ())
 
+    def test_persisted_conflict_cannot_promote_invalid_observation(self):
+        observation = self._observation(
+            half_time_home_goals=-1,
+            conflict_status=True,
+            conflict_fingerprint="a" * 64,
+            conflict_reason="materially different source evidence",
+        )
+
+        self.assertEqual(
+            observation.validation_status,
+            HalfTimeValidationStatus.INVALID,
+        )
+        self.assertTrue(
+            any(
+                "must be non-negative" in reason
+                for reason in observation.rejection_reasons
+            )
+        )
+        self.assertTrue(
+            any(
+                "unresolved persisted source conflict" in reason
+                for reason in observation.rejection_reasons
+            )
+        )
+
     def test_missing_half_time_scores_remain_missing(self):
         observation = self._observation(
             half_time_home_goals=None,
@@ -476,6 +501,10 @@ class HalfTimeCoverageDatabaseTests(unittest.TestCase):
 
         self.assertIn("half_time_home_goals", half_time_columns)
         self.assertIn("half_time_away_goals", half_time_columns)
+        self.assertIn("conflict_status", half_time_columns)
+        self.assertIn("conflict_fingerprint", half_time_columns)
+        self.assertIn("conflict_reason", half_time_columns)
+        self.assertIn("conflict_observed_at", half_time_columns)
         self.assertNotIn("half_time_home_goals", historical_columns)
         self.assertNotIn("half_time_away_goals", historical_columns)
 

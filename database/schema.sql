@@ -172,6 +172,10 @@ CREATE TABLE IF NOT EXISTS half_time_observations (
     rejection_reasons TEXT NOT NULL DEFAULT '[]',
     league TEXT,
     season TEXT,
+    conflict_status INTEGER NOT NULL DEFAULT 0,
+    conflict_fingerprint TEXT,
+    conflict_reason TEXT,
+    conflict_observed_at TEXT,
     UNIQUE(fixture_identity, source)
 );
 

@@ -8,6 +8,7 @@ from unittest.mock import ANY, Mock, patch
 from database.database import Database
 from domain.half_time_data import (
     HalfTimeValidationStatus,
+    ResearchReadiness,
     audit_half_time_coverage,
 )
 from domain.markets import MarketId
@@ -232,6 +233,59 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
                 1,
             )
 
+    def test_loader_upgrades_historical_only_database(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "legacy.db"
+            connection = sqlite3.connect(database_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE historical_matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fixture_id INTEGER UNIQUE,
+                        home_id INTEGER,
+                        away_id INTEGER,
+                        home_goals INTEGER,
+                        away_goals INTEGER,
+                        match_date TEXT
+                    )
+                    """
+                )
+                connection.commit()
+                self.assertIsNone(
+                    connection.execute(
+                        """
+                        SELECT name
+                        FROM sqlite_master
+                        WHERE type = 'table'
+                          AND name = 'half_time_observations'
+                        """
+                    ).fetchone()
+                )
+            finally:
+                connection.close()
+
+            loader, _ = self._loader(
+                database_path,
+                [self._payload()],
+            )
+            counts = self._load(loader)
+            observations = self._observation_rows(database_path)
+            historical = self._historical_rows(database_path)
+
+            self.assertEqual(counts["football_data_org_live"], 1)
+            self.assertEqual(len(historical), 1)
+            self.assertEqual(len(observations), 1)
+            self.assertEqual(
+                observations[0]["validation_status"],
+                "VALID",
+            )
+            self.assertEqual(observations[0]["conflict_status"], 0)
+            self.assertIn(
+                "conflict_fingerprint",
+                observations[0],
+            )
+
     def test_half_time_persistence_failure_does_not_block_full_time(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "persistence-error.db"
@@ -435,6 +489,36 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
                 counts["football_data_org_half_time_unchanged"],
                 0,
             )
+            self.assertEqual(row["conflict_status"], 1)
+            self.assertEqual(len(row["conflict_fingerprint"]), 64)
+            self.assertLessEqual(len(row["conflict_reason"]), 240)
+
+            reopened = load_observations_from_database(
+                str(database_path)
+            )
+            report = audit_half_time_coverage(reopened)
+            expected_identity = str(
+                FDO_ID_OFFSET + self.PROVIDER_MATCH_ID
+            )
+
+            self.assertTrue(reopened[0].conflict_status)
+            self.assertEqual(
+                reopened[0].validation_status,
+                HalfTimeValidationStatus.INVALID,
+            )
+            self.assertIn(
+                expected_identity,
+                report.conflicting_fixtures,
+            )
+            self.assertEqual(
+                report.fixtures_with_valid_half_time_scores,
+                0,
+            )
+            self.assertEqual(report.invalid_source_observations, 1)
+            self.assertEqual(
+                report.readiness,
+                ResearchReadiness.DATA_INVALID,
+            )
 
     def test_untimestamped_conflict_preserves_existing_observation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -465,6 +549,103 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
             self.assertIsNone(row["observed_at"])
             self.assertEqual(
                 counts["football_data_org_half_time_conflicts"],
+                1,
+            )
+            self.assertEqual(row["conflict_status"], 1)
+            self.assertEqual(len(row["conflict_fingerprint"]), 64)
+
+    def test_repeated_conflict_is_idempotent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "idempotent-conflict.db"
+            self._initialize_database(database_path)
+            loader, provider = self._loader(
+                database_path,
+                [self._payload(half_time=(1, 0))],
+            )
+            self._load(loader)
+            conflict_payload = self._payload(half_time=(0, 0))
+            provider.get_matches.return_value = [conflict_payload]
+            first_counts = self._load(loader)
+            first_row = self._observation_rows(database_path)[0]
+
+            provider.get_matches.return_value = [conflict_payload]
+            second_counts = self._load(loader)
+            second_row = self._observation_rows(database_path)[0]
+
+            self.assertEqual(first_row, second_row)
+            self.assertEqual(
+                first_counts["football_data_org_half_time_conflicts"],
+                1,
+            )
+            self.assertEqual(
+                second_counts["football_data_org_half_time_conflicts"],
+                1,
+            )
+
+    def test_newer_valid_observation_resolves_conflict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "resolved-conflict.db"
+            self._initialize_database(database_path)
+            loader, provider = self._loader(
+                database_path,
+                [self._payload(half_time=(1, 0))],
+            )
+            self._load(loader)
+            provider.get_matches.return_value = [
+                self._payload(half_time=(0, 0))
+            ]
+            self._load(loader)
+            provider.get_matches.return_value = [
+                self._payload(
+                    half_time=(0, 0),
+                    last_updated="2026-07-29T12:30:00Z",
+                )
+            ]
+
+            self._load(loader)
+            row = self._observation_rows(database_path)[0]
+            observation = load_observations_from_database(
+                str(database_path)
+            )[0]
+
+            self.assertEqual(row["half_time_home_goals"], 0)
+            self.assertEqual(row["half_time_away_goals"], 0)
+            self.assertEqual(row["conflict_status"], 0)
+            self.assertIsNone(row["conflict_fingerprint"])
+            self.assertIsNone(row["conflict_reason"])
+            self.assertEqual(
+                observation.validation_status,
+                HalfTimeValidationStatus.VALID,
+            )
+
+    def test_older_observation_cannot_clear_persisted_conflict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "older-conflict.db"
+            self._initialize_database(database_path)
+            loader, provider = self._loader(
+                database_path,
+                [self._payload(half_time=(1, 0))],
+            )
+            self._load(loader)
+            provider.get_matches.return_value = [
+                self._payload(half_time=(0, 0))
+            ]
+            self._load(loader)
+            conflicted_row = self._observation_rows(database_path)[0]
+            provider.get_matches.return_value = [
+                self._payload(
+                    half_time=(0, 1),
+                    last_updated="2026-07-27T12:30:00Z",
+                )
+            ]
+
+            counts = self._load(loader)
+            row = self._observation_rows(database_path)[0]
+
+            self.assertEqual(row, conflicted_row)
+            self.assertEqual(row["conflict_status"], 1)
+            self.assertEqual(
+                counts["football_data_org_half_time_unchanged"],
                 1,
             )
 

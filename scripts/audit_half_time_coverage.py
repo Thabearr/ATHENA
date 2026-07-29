@@ -34,6 +34,15 @@ def _parse_datetime(value) -> Optional[datetime]:
         return None
 
 
+def _stored_value(row, column_name: str, default=None):
+    return row[column_name] if column_name in row.keys() else default
+
+
+def _stored_conflict_status(row) -> bool:
+    value = _stored_value(row, "conflict_status", 0)
+    return str(value).strip().lower() in {"1", "true"}
+
+
 def _table_exists(connection: sqlite3.Connection, table_name: str) -> bool:
     row = connection.execute(
         """
@@ -267,6 +276,15 @@ def _observation_from_authoritative_fixture(
         ],
         league=stored["league"] or authoritative["league"],
         season=stored["season"] or authoritative["season"],
+        conflict_status=_stored_conflict_status(stored),
+        conflict_fingerprint=_stored_value(
+            stored,
+            "conflict_fingerprint",
+        ),
+        conflict_reason=_stored_value(stored, "conflict_reason"),
+        conflict_observed_at=_parse_datetime(
+            _stored_value(stored, "conflict_observed_at")
+        ),
     )
 
 
@@ -291,6 +309,15 @@ def _observation_from_unmatched_storage(stored) -> HalfTimeObservation:
         ],
         league=stored["league"],
         season=stored["season"],
+        conflict_status=_stored_conflict_status(stored),
+        conflict_fingerprint=_stored_value(
+            stored,
+            "conflict_fingerprint",
+        ),
+        conflict_reason=_stored_value(stored, "conflict_reason"),
+        conflict_observed_at=_parse_datetime(
+            _stored_value(stored, "conflict_observed_at")
+        ),
     )
 
 

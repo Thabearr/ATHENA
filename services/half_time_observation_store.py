@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from datetime import datetime, timezone
 from enum import Enum
@@ -16,7 +17,7 @@ class ObservationWriteResult(str, Enum):
     CONFLICT = "CONFLICT"
 
 
-_COLUMNS = (
+_BASE_COLUMNS = (
     "fixture_identity",
     "home_team",
     "away_team",
@@ -33,6 +34,18 @@ _COLUMNS = (
     "rejection_reasons",
     "league",
     "season",
+)
+
+_CONFLICT_COLUMNS = (
+    "conflict_status",
+    "conflict_fingerprint",
+    "conflict_reason",
+    "conflict_observed_at",
+)
+
+_COLUMNS = _BASE_COLUMNS + _CONFLICT_COLUMNS
+_MATERIAL_COLUMNS = tuple(
+    column for column in _BASE_COLUMNS if column != "observed_at"
 )
 
 
@@ -123,6 +136,39 @@ class HalfTimeObservationStore:
             ),
             "league": observation.league,
             "season": observation.season,
+            "conflict_status": int(observation.conflict_status),
+            "conflict_fingerprint": observation.conflict_fingerprint,
+            "conflict_reason": observation.conflict_reason,
+            "conflict_observed_at": _serialize_datetime(
+                observation.conflict_observed_at,
+                require_timezone=True,
+            ),
+        }
+
+    @staticmethod
+    def _conflict_metadata(incoming: dict) -> dict:
+        material_payload = {
+            column: incoming[column]
+            for column in _MATERIAL_COLUMNS
+        }
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                material_payload,
+                ensure_ascii=True,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        reason = (
+            "Materially different source observation received at the same "
+            "or unknown provider version; fingerprint="
+            f"{fingerprint[:16]}."
+        )[:240]
+        return {
+            "conflict_status": 1,
+            "conflict_fingerprint": fingerprint,
+            "conflict_reason": reason,
+            "conflict_observed_at": incoming["observed_at"],
         }
 
     @staticmethod
@@ -134,8 +180,7 @@ class HalfTimeObservationStore:
         incoming_time = _parse_aware_datetime(incoming["observed_at"])
         materially_different = any(
             existing[column] != incoming[column]
-            for column in _COLUMNS
-            if column != "observed_at"
+            for column in _MATERIAL_COLUMNS
         )
 
         if incoming_time is not None:
@@ -186,8 +231,39 @@ class HalfTimeObservationStore:
             return ObservationWriteResult.UNCHANGED
         if existing is not None:
             write_result = self._write_result(existing, incoming)
+            if write_result == ObservationWriteResult.CONFLICT:
+                conflict_metadata = self._conflict_metadata(incoming)
+                if any(
+                    existing[column] != conflict_metadata[column]
+                    for column in _CONFLICT_COLUMNS
+                ):
+                    cursor.execute(
+                        """
+                        UPDATE half_time_observations
+                        SET conflict_status = ?,
+                            conflict_fingerprint = ?,
+                            conflict_reason = ?,
+                            conflict_observed_at = ?
+                        WHERE fixture_identity = ? AND source = ?
+                        """,
+                        (
+                            conflict_metadata["conflict_status"],
+                            conflict_metadata["conflict_fingerprint"],
+                            conflict_metadata["conflict_reason"],
+                            conflict_metadata["conflict_observed_at"],
+                            incoming["fixture_identity"],
+                            incoming["source"],
+                        ),
+                    )
+                return ObservationWriteResult.CONFLICT
             if write_result != ObservationWriteResult.UPDATED:
                 return write_result
+            if (
+                existing["conflict_status"]
+                and incoming["validation_status"] != "VALID"
+            ):
+                for column in _CONFLICT_COLUMNS:
+                    incoming[column] = existing[column]
 
         placeholders = ", ".join("?" for _ in _COLUMNS)
         updates = ", ".join(
