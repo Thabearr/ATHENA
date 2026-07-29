@@ -29,6 +29,8 @@ _HALF_TIME_DIAGNOSTIC_KEYS = (
     "football_data_org_half_time_missing",
     "football_data_org_half_time_invalid",
     "football_data_org_half_time_unchanged",
+    "football_data_org_half_time_conflicts",
+    "football_data_org_half_time_persistence_errors",
 )
 
 
@@ -139,6 +141,15 @@ class HistoricalResultsLoader:
             self._half_time_diagnostics[
                 "football_data_org_half_time_unchanged"
             ] += 1
+        elif write_result == ObservationWriteResult.CONFLICT:
+            self._half_time_diagnostics[
+                "football_data_org_half_time_conflicts"
+            ] += 1
+            logger.warning(
+                "Conflicting football-data.org half-time evidence for "
+                "fixture %s was not persisted.",
+                fixture_identity,
+            )
         if observation.validation_status == HalfTimeValidationStatus.INVALID:
             logger.warning(
                 "Invalid football-data.org half-time evidence for fixture %s: %s",
@@ -182,14 +193,38 @@ class HistoricalResultsLoader:
                     if not isinstance(half_time, dict):
                         half_time = {}
 
-                    self._capture_football_data_half_time(
-                        cursor,
-                        m,
-                        fixture_identity=fixture_identity,
-                        competition_code=code,
-                        full_time=full_time,
-                        half_time=half_time,
+                    cursor.execute(
+                        "SAVEPOINT football_data_org_half_time_write"
                     )
+                    try:
+                        self._capture_football_data_half_time(
+                            cursor,
+                            m,
+                            fixture_identity=fixture_identity,
+                            competition_code=code,
+                            full_time=full_time,
+                            half_time=half_time,
+                        )
+                    except Exception as error:
+                        cursor.execute(
+                            "ROLLBACK TO football_data_org_half_time_write"
+                        )
+                        cursor.execute(
+                            "RELEASE football_data_org_half_time_write"
+                        )
+                        self._half_time_diagnostics[
+                            "football_data_org_half_time_persistence_errors"
+                        ] += 1
+                        logger.error(
+                            "football-data.org half-time evidence could not "
+                            "be persisted for fixture %s: %s",
+                            fixture_identity,
+                            error,
+                        )
+                    else:
+                        cursor.execute(
+                            "RELEASE football_data_org_half_time_write"
+                        )
 
                     home_id = m.get("homeTeam", {}).get("id")
                     away_id = m.get("awayTeam", {}).get("id")
@@ -302,9 +337,11 @@ class HistoricalResultsLoader:
         date_from = (date.today() - timedelta(days=self.days_back)).strftime("%Y-%m-%d")
         date_to = date.today().strftime("%Y-%m-%d")
 
+        self.db.initialize()
         conn = self.db.connect()
         try:
             cursor = conn.cursor()
+            cursor.execute("BEGIN")
             fdo_count = self._load_football_data_org(cursor, date_from, date_to)
             af_count = self._load_api_football(cursor, date_from, date_to)
             conn.commit()
@@ -319,7 +356,7 @@ class HistoricalResultsLoader:
         )
         logger.info(
             "football-data.org half-time evidence: valid=%s, missing=%s, "
-            "invalid=%s, unchanged=%s.",
+            "invalid=%s, unchanged=%s, conflicts=%s, persistence_errors=%s.",
             self._half_time_diagnostics[
                 "football_data_org_half_time_valid"
             ],
@@ -331,6 +368,12 @@ class HistoricalResultsLoader:
             ],
             self._half_time_diagnostics[
                 "football_data_org_half_time_unchanged"
+            ],
+            self._half_time_diagnostics[
+                "football_data_org_half_time_conflicts"
+            ],
+            self._half_time_diagnostics[
+                "football_data_org_half_time_persistence_errors"
             ],
         )
         return {

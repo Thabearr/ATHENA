@@ -204,6 +204,70 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
                 counts["football_data_org_half_time_unchanged"],
                 0,
             )
+            self.assertEqual(
+                counts["football_data_org_half_time_conflicts"],
+                0,
+            )
+            self.assertEqual(
+                counts[
+                    "football_data_org_half_time_persistence_errors"
+                ],
+                0,
+            )
+
+    def test_loader_initializes_schema_before_writing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "uninitialized.db"
+            loader, _ = self._loader(
+                database_path,
+                [self._payload()],
+            )
+
+            counts = self._load(loader)
+
+            self.assertEqual(len(self._historical_rows(database_path)), 1)
+            self.assertEqual(len(self._observation_rows(database_path)), 1)
+            self.assertEqual(
+                counts["football_data_org_half_time_valid"],
+                1,
+            )
+
+    def test_half_time_persistence_failure_does_not_block_full_time(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "persistence-error.db"
+            self._initialize_database(database_path)
+            loader, _ = self._loader(
+                database_path,
+                [self._payload()],
+            )
+            real_upsert = loader.half_time_store.upsert
+
+            def persist_then_fail(cursor, observation):
+                real_upsert(cursor, observation)
+                raise RuntimeError("mock persistence failure")
+
+            loader.half_time_store = Mock()
+            loader.half_time_store.upsert.side_effect = persist_then_fail
+
+            with self.assertLogs(
+                "athena.historical_results_loader",
+                level="ERROR",
+            ) as captured:
+                counts = self._load(loader)
+
+            self.assertEqual(len(self._historical_rows(database_path)), 1)
+            self.assertEqual(self._observation_rows(database_path), [])
+            self.assertEqual(counts["football_data_org_live"], 1)
+            self.assertEqual(
+                counts[
+                    "football_data_org_half_time_persistence_errors"
+                ],
+                1,
+            )
+            self.assertIn(
+                "mock persistence failure",
+                "\n".join(captured.output),
+            )
 
     def test_missing_or_naive_last_updated_remains_null(self):
         for last_updated in (None, "2026-07-28T12:30:00"):
@@ -341,6 +405,69 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
             )
             self.assertEqual(provider.get_matches.call_count, 2)
 
+    def test_same_timestamp_conflict_preserves_existing_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "same-timestamp-conflict.db"
+            self._initialize_database(database_path)
+            loader, provider = self._loader(
+                database_path,
+                [self._payload(half_time=(1, 0))],
+            )
+            self._load(loader)
+            provider.get_matches.return_value = [
+                self._payload(half_time=(0, 0))
+            ]
+
+            counts = self._load(loader)
+            row = self._observation_rows(database_path)[0]
+
+            self.assertEqual(row["half_time_home_goals"], 1)
+            self.assertEqual(row["half_time_away_goals"], 0)
+            self.assertEqual(
+                row["observed_at"],
+                "2026-07-28T12:30:00+00:00",
+            )
+            self.assertEqual(
+                counts["football_data_org_half_time_conflicts"],
+                1,
+            )
+            self.assertEqual(
+                counts["football_data_org_half_time_unchanged"],
+                0,
+            )
+
+    def test_untimestamped_conflict_preserves_existing_observation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database_path = Path(directory) / "untimestamped-conflict.db"
+            self._initialize_database(database_path)
+            loader, provider = self._loader(
+                database_path,
+                [
+                    self._payload(
+                        half_time=(1, 0),
+                        last_updated=None,
+                    )
+                ],
+            )
+            self._load(loader)
+            provider.get_matches.return_value = [
+                self._payload(
+                    half_time=(0, 0),
+                    last_updated=None,
+                )
+            ]
+
+            counts = self._load(loader)
+            row = self._observation_rows(database_path)[0]
+
+            self.assertEqual(row["half_time_home_goals"], 1)
+            self.assertEqual(row["half_time_away_goals"], 0)
+            self.assertIsNone(row["observed_at"])
+            self.assertEqual(
+                counts["football_data_org_half_time_conflicts"],
+                1,
+            )
+
     def test_older_or_untimestamped_payload_cannot_replace_newer(self):
         with tempfile.TemporaryDirectory() as directory:
             database_path = Path(directory) / "stale.db"
@@ -379,7 +506,7 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
             )
             self.assertEqual(
                 untimestamped_counts[
-                    "football_data_org_half_time_unchanged"
+                    "football_data_org_half_time_conflicts"
                 ],
                 1,
             )

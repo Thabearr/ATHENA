@@ -6,16 +6,14 @@ import json
 from datetime import datetime, timezone
 from enum import Enum
 
-from domain.half_time_data import (
-    HalfTimeObservation,
-    HalfTimeValidationStatus,
-)
+from domain.half_time_data import HalfTimeObservation
 
 
 class ObservationWriteResult(str, Enum):
     INSERTED = "INSERTED"
     UPDATED = "UPDATED"
     UNCHANGED = "UNCHANGED"
+    CONFLICT = "CONFLICT"
 
 
 _COLUMNS = (
@@ -66,14 +64,6 @@ def _parse_aware_datetime(value):
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         return None
     return parsed.astimezone(timezone.utc)
-
-
-def _quality_rank(status) -> int:
-    return {
-        HalfTimeValidationStatus.INVALID.value: 0,
-        HalfTimeValidationStatus.MISSING.value: 1,
-        HalfTimeValidationStatus.VALID.value: 2,
-    }.get(str(status), -1)
 
 
 def _serialize_score(value):
@@ -136,26 +126,36 @@ class HalfTimeObservationStore:
         }
 
     @staticmethod
-    def _should_replace(existing: dict, incoming: dict) -> bool:
+    def _write_result(
+        existing: dict,
+        incoming: dict,
+    ) -> ObservationWriteResult:
         existing_time = _parse_aware_datetime(existing["observed_at"])
         incoming_time = _parse_aware_datetime(incoming["observed_at"])
+        materially_different = any(
+            existing[column] != incoming[column]
+            for column in _COLUMNS
+            if column != "observed_at"
+        )
 
         if incoming_time is not None:
             if existing_time is None:
-                return True
+                return ObservationWriteResult.UPDATED
             if incoming_time > existing_time:
-                return True
+                return ObservationWriteResult.UPDATED
             if incoming_time < existing_time:
-                return False
-            return _quality_rank(
-                incoming["validation_status"]
-            ) > _quality_rank(existing["validation_status"])
+                return ObservationWriteResult.UNCHANGED
+            return (
+                ObservationWriteResult.CONFLICT
+                if materially_different
+                else ObservationWriteResult.UNCHANGED
+            )
 
-        if existing["observed_at"]:
-            return False
-        return _quality_rank(
-            incoming["validation_status"]
-        ) > _quality_rank(existing["validation_status"])
+        return (
+            ObservationWriteResult.CONFLICT
+            if materially_different
+            else ObservationWriteResult.UNCHANGED
+        )
 
     def upsert(
         self,
@@ -184,11 +184,10 @@ class HalfTimeObservationStore:
 
         if existing == incoming:
             return ObservationWriteResult.UNCHANGED
-        if existing is not None and not self._should_replace(
-            existing,
-            incoming,
-        ):
-            return ObservationWriteResult.UNCHANGED
+        if existing is not None:
+            write_result = self._write_result(existing, incoming)
+            if write_result != ObservationWriteResult.UPDATED:
+                return write_result
 
         placeholders = ", ".join("?" for _ in _COLUMNS)
         updates = ", ".join(
