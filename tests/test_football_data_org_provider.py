@@ -12,7 +12,7 @@ class FootballDataOrgProviderPortabilityTests(unittest.TestCase):
         windows_curl = r"C:\Windows\System32\curl.exe"
 
         with patch(
-            "api.football_data_org_provider.shutil.which",
+            "api.curl_json_client.shutil.which",
             side_effect=lambda candidate: (
                 windows_curl if candidate == "curl.exe" else None
             ),
@@ -29,7 +29,7 @@ class FootballDataOrgProviderPortabilityTests(unittest.TestCase):
         linux_curl = "/usr/local/bin/curl"
 
         with patch(
-            "api.football_data_org_provider.shutil.which",
+            "api.curl_json_client.shutil.which",
             return_value=linux_curl,
         ) as which:
             provider = FootballDataOrgProvider(self.API_KEY)
@@ -39,10 +39,10 @@ class FootballDataOrgProviderPortabilityTests(unittest.TestCase):
 
     def test_missing_curl_raises_safe_clear_error(self):
         with patch(
-            "api.football_data_org_provider.shutil.which",
+            "api.curl_json_client.shutil.which",
             return_value=None,
         ), patch(
-            "api.football_data_org_provider.subprocess.run"
+            "api.curl_json_client.subprocess.run"
         ) as run:
             with self.assertRaises(RuntimeError) as captured:
                 FootballDataOrgProvider(self.API_KEY)
@@ -56,15 +56,15 @@ class FootballDataOrgProviderPortabilityTests(unittest.TestCase):
         resolved_curl = r"C:\Tools\curl.exe"
         completed = Mock(
             returncode=0,
-            stdout=json.dumps({"competitions": []}),
-            stderr="",
+            stdout=json.dumps({"competitions": []}).encode("utf-8"),
+            stderr=b"",
         )
 
         with patch(
-            "api.football_data_org_provider.shutil.which",
+            "api.curl_json_client.shutil.which",
             return_value=resolved_curl,
         ), patch(
-            "api.football_data_org_provider.subprocess.run",
+            "api.curl_json_client.subprocess.run",
             return_value=completed,
         ) as run:
             provider = FootballDataOrgProvider(self.API_KEY)
@@ -112,17 +112,20 @@ class FootballDataOrgProviderPortabilityTests(unittest.TestCase):
         )
 
         with patch(
-            "api.football_data_org_provider.shutil.which",
+            "api.curl_json_client.shutil.which",
             return_value="/mock/curl",
         ), patch(
-            "api.football_data_org_provider.subprocess.run"
+            "api.curl_json_client.subprocess.run"
         ) as run:
             provider = FootballDataOrgProvider(self.API_KEY)
 
         with patch.object(
             provider,
             "_single_curl_attempt",
-            side_effect=[rate_limited, successful],
+            side_effect=[
+                json.loads(rate_limited),
+                json.loads(successful),
+            ],
         ) as attempt, patch(
             "api.football_data_org_provider.time.sleep"
         ) as sleep:

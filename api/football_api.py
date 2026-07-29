@@ -1,7 +1,10 @@
-import subprocess
-import json
 import time
 from datetime import date
+
+from api.curl_json_client import (
+    CurlJsonClient,
+    bounded_sanitized_excerpt,
+)
 
 
 class FootballProvider:
@@ -16,63 +19,26 @@ class FootballProvider:
             )
 
         self.api_key = api_key.strip()
+        self.curl_client = CurlJsonClient()
+        self.curl_executable = self.curl_client.executable
 
     # --------------------------------------------------
     # Internal CURL Request
     # --------------------------------------------------
 
     def _single_curl_attempt(self, url):
-
-        command = [
-
-            "/usr/bin/curl",
-
-            "--silent",
-            "--show-error",
-            "--location",
-
-            "--http1.1",
-
-            "--connect-timeout", "20",
-
-            "--max-time", "60",
-
-            "--header",
-            f"x-apisports-key: {self.api_key}",
-
+        data = self.curl_client.request_json(
             url,
-
-        ]
-
-        result = subprocess.run(
-            command,
-            capture_output=True,
-            text=True,
+            headers={"x-apisports-key": self.api_key},
         )
 
-        if result.returncode != 0:
-
-            raise RuntimeError(
-                "Curl failed.\n"
-                f"Exit Code: {result.returncode}\n"
-                f"STDOUT:\n{result.stdout}\n\n"
-                f"STDERR:\n{result.stderr}"
+        if isinstance(data, dict) and data.get("errors"):
+            message = bounded_sanitized_excerpt(
+                data["errors"],
+                sensitive_values=(self.api_key,),
             )
-
-        try:
-
-            data = json.loads(result.stdout)
-
-        except Exception:
-
             raise RuntimeError(
-                f"Invalid JSON returned:\n\n{result.stdout}"
-            )
-
-        if data.get("errors"):
-
-            raise RuntimeError(
-                f"API Error: {data['errors']}"
+                f"API Error: {message}"
             )
 
         return data
