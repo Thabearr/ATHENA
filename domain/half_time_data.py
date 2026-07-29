@@ -48,6 +48,10 @@ class HalfTimeObservation:
     half_time_score_provenance: ScoreProvenance = ScoreProvenance.MISSING
     league: Optional[str] = None
     season: Optional[str] = None
+    conflict_status: bool = False
+    conflict_fingerprint: Optional[str] = None
+    conflict_reason: Optional[str] = None
+    conflict_observed_at: Optional[datetime] = None
     validation_status: HalfTimeValidationStatus = field(init=False)
     rejection_reasons: Tuple[str, ...] = field(init=False)
 
@@ -178,6 +182,33 @@ class HalfTimeObservation:
                         f"({authoritative_value})"
                     )
 
+        conflict_status = self.conflict_status
+        if not isinstance(conflict_status, bool):
+            if conflict_status in (0, 1):
+                conflict_status = bool(conflict_status)
+                object.__setattr__(
+                    self,
+                    "conflict_status",
+                    conflict_status,
+                )
+            else:
+                reasons.append("conflict status must be boolean")
+                conflict_status = False
+        if conflict_status:
+            conflict_reason = str(
+                self.conflict_reason
+                or "materially different source evidence was received"
+            ).strip()[:240]
+            object.__setattr__(
+                self,
+                "conflict_reason",
+                conflict_reason,
+            )
+            reasons.append(
+                "unresolved persisted source conflict: "
+                + conflict_reason
+            )
+
         if reasons:
             status = HalfTimeValidationStatus.INVALID
         elif half_time_missing:
@@ -224,6 +255,14 @@ class HalfTimeObservation:
             ),
             "league": self.league,
             "season": self.season,
+            "conflict_status": self.conflict_status,
+            "conflict_fingerprint": self.conflict_fingerprint,
+            "conflict_reason": self.conflict_reason,
+            "conflict_observed_at": (
+                self.conflict_observed_at.isoformat()
+                if self.conflict_observed_at
+                else None
+            ),
             "validation_status": self.validation_status.value,
             "rejection_reasons": list(self.rejection_reasons),
         }
@@ -474,11 +513,18 @@ def audit_half_time_coverage(
         )
     conflicting_fixtures = tuple(
         sorted(
-            fixture_identity
-            for fixture_identity, score_pairs in (
-                half_time_scores_by_fixture.items()
-            )
-            if len(score_pairs) > 1
+            {
+                fixture_identity
+                for fixture_identity, score_pairs in (
+                    half_time_scores_by_fixture.items()
+                )
+                if len(score_pairs) > 1
+            }
+            | {
+                observation.fixture_identity
+                for observation in source_observations
+                if observation.conflict_status
+            }
         )
     )
 

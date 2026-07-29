@@ -62,18 +62,27 @@ SOURCE_CAPABILITY_REGISTRY: Dict[str, SourceCapabilities] = {
     "football_data_org_live": SourceCapabilities(
         source="football_data_org_live",
         full_time_score=CapabilityAvailability.CONFIRMED,
-        half_time_score=CapabilityAvailability.NOT_CAPTURED,
+        half_time_score=CapabilityAvailability.CONFIRMED,
         event_timestamps=CapabilityAvailability.NOT_CAPTURED,
         reliable_fixture_identity=CapabilityAvailability.CONFIRMED,
         historical_coverage=CapabilityAvailability.CONFIRMED,
-        freshness_metadata=CapabilityAvailability.NOT_CAPTURED,
+        freshness_metadata=CapabilityAvailability.CONFIRMED,
         evidence=(
-            "workers/historical_results_loader.py: score.fullTime",
+            (
+                "workers/historical_results_loader.py: score.fullTime, "
+                "score.halfTime, lastUpdated"
+            ),
+            (
+                "services/half_time_observation_store.py: validated "
+                "half_time_observations persistence"
+            ),
             "workers/api_loader.py: match id and utcDate",
         ),
         notes=(
-            "Current repository code stores provider match IDs and full-time "
-            "scores only. utcDate is kickoff time, not freshness metadata."
+            "The historical loader validates and stores explicit half-time "
+            "scores from the existing finished-match payload. Provider "
+            "lastUpdated is captured only when timezone-aware; utcDate remains "
+            "kickoff time and no event timeline is captured."
         ),
     ),
     "api_football_2022_2024": SourceCapabilities(

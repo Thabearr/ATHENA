@@ -16,7 +16,8 @@ class Database:
     def initialize(self):
         Path("database").mkdir(exist_ok=True)
 
-        with self.connect() as connection:
+        connection = self.connect()
+        try:
             schema = Path("database/schema.sql").read_text()
             connection.executescript(schema)
             connection.commit()
@@ -25,6 +26,32 @@ class Database:
             self._migrate_add_column(connection, "fixtures", "season_label", "TEXT")
             self._migrate_add_column(connection, "historical_matches", "data_source", "TEXT")
             self._migrate_add_column(connection, "historical_matches", "season_label", "TEXT")
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_status",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_fingerprint",
+                "TEXT",
+            )
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_reason",
+                "TEXT",
+            )
+            self._migrate_add_column(
+                connection,
+                "half_time_observations",
+                "conflict_observed_at",
+                "TEXT",
+            )
+        finally:
+            connection.close()
 
     def _migrate_add_column(self, connection, table, column, col_type):
         try:

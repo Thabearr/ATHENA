@@ -1,7 +1,10 @@
-import subprocess
-import json
 import re
 import time
+
+from api.curl_json_client import (
+    CurlJsonClient,
+    bounded_sanitized_excerpt,
+)
 
 
 class FootballDataOrgProvider:
@@ -12,32 +15,14 @@ class FootballDataOrgProvider:
         if not api_key:
             raise RuntimeError("FOOTBALL_DATA_ORG_API_KEY not found in environment.")
         self.api_key = api_key.strip()
+        self.curl_client = CurlJsonClient()
+        self.curl_executable = self.curl_client.executable
 
     def _single_curl_attempt(self, url):
-        command = [
-            "/usr/bin/curl",
-            "--silent",
-            "--show-error",
-            "--location",
-            "--http1.1",
-            "--compressed",
-            "--connect-timeout", "20",
-            "--max-time", "60",
-            "--header", f"X-Auth-Token: {self.api_key}",
+        return self.curl_client.request_json(
             url,
-        ]
-
-        result = subprocess.run(command, capture_output=True, text=True)
-
-        if result.returncode != 0:
-            raise RuntimeError(
-                "Curl failed.\n"
-                f"Exit Code: {result.returncode}\n"
-                f"STDOUT:\n{result.stdout}\n\n"
-                f"STDERR:\n{result.stderr}"
-            )
-
-        return result.stdout
+            headers={"X-Auth-Token": self.api_key},
+        )
 
     def _curl_request(self, path, params=None, max_retries: int = 3):
         url = f"{self.BASE_URL}{path}"
@@ -49,16 +34,13 @@ class FootballDataOrgProvider:
         attempts = 0
         while True:
             attempts += 1
-            raw = self._single_curl_attempt(url)
-
-            try:
-                data = json.loads(raw)
-            except Exception:
-                raise RuntimeError(f"Invalid JSON returned:\n\n{raw}")
+            data = self._single_curl_attempt(url)
 
             if isinstance(data, dict) and data.get("errorCode") == 429:
                 if attempts > max_retries:
-                    raise RuntimeError(f"Rate limited after {max_retries} retries: {data}")
+                    raise RuntimeError(
+                        f"Rate limited after {max_retries} retries."
+                    )
 
                 match = re.search(r"Wait (\d+) seconds", data.get("message", ""))
                 wait_seconds = int(match.group(1)) if match else 10
@@ -66,7 +48,11 @@ class FootballDataOrgProvider:
                 continue
 
             if isinstance(data, dict) and data.get("errorCode"):
-                raise RuntimeError(f"API Error: {data.get('message', data)}")
+                message = bounded_sanitized_excerpt(
+                    data.get("message", "Unknown provider error"),
+                    sensitive_values=(self.api_key,),
+                )
+                raise RuntimeError(f"API Error: {message}")
 
             return data
 
