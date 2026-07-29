@@ -1,6 +1,7 @@
 import subprocess
 import json
 import re
+import shutil
 import time
 
 
@@ -12,10 +13,22 @@ class FootballDataOrgProvider:
         if not api_key:
             raise RuntimeError("FOOTBALL_DATA_ORG_API_KEY not found in environment.")
         self.api_key = api_key.strip()
+        self.curl_executable = self._resolve_curl_executable()
+
+    @staticmethod
+    def _resolve_curl_executable():
+        for candidate in ("curl", "curl.exe"):
+            executable = shutil.which(candidate)
+            if executable:
+                return executable
+        raise RuntimeError(
+            "The curl executable could not be found on PATH. "
+            "Install curl or add it to PATH before using football-data.org."
+        )
 
     def _single_curl_attempt(self, url):
         command = [
-            "/usr/bin/curl",
+            self.curl_executable,
             "--silent",
             "--show-error",
             "--location",
@@ -27,7 +40,12 @@ class FootballDataOrgProvider:
             url,
         ]
 
-        result = subprocess.run(command, capture_output=True, text=True)
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            shell=False,
+        )
 
         if result.returncode != 0:
             raise RuntimeError(
