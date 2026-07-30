@@ -491,6 +491,10 @@ class FootballDataUkImporterTests(unittest.TestCase):
                     for row in historical
                 )
             )
+            self.assertEqual(
+                {row["league_code"] for row in historical},
+                {"E0"},
+            )
 
     def test_fixture_identity_is_deterministic_sha256(self):
         arguments = {
@@ -546,6 +550,7 @@ class FootballDataUkImporterTests(unittest.TestCase):
             self.assertEqual(first.historical_inserted, 1)
             self.assertEqual(second.historical_inserted, 0)
             self.assertEqual(second.historical_unchanged, 1)
+            self.assertEqual(second.metadata_backfilled, 0)
             self.assertEqual(second.half_time_unchanged, 1)
             self.assertEqual(
                 len(
@@ -603,6 +608,7 @@ class FootballDataUkImporterTests(unittest.TestCase):
             self.assertEqual(first.historical_inserted, 1)
             self.assertEqual(second.historical_unchanged, 0)
             self.assertEqual(second.historical_conflicts, 1)
+            self.assertEqual(second.metadata_backfilled, 0)
             self.assertEqual(stored_match["home_goals"], 2)
             self.assertEqual(stored_match["away_goals"], 1)
             self.assertEqual(len(durable_conflicts), 1)
@@ -704,6 +710,128 @@ class FootballDataUkImporterTests(unittest.TestCase):
                     "historical_match_conflicts",
                 ),
                 [],
+            )
+            migrated = self._database_rows(
+                database_path,
+                "historical_matches",
+            )[0]
+            self.assertEqual(migrated["league_code"], "E0")
+
+    def test_missing_half_time_keeps_csv_league_in_audit(self):
+        missing_half_time = self._row(
+            HTHG="",
+            HTAG="",
+            HTR="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            self._cache_file(
+                importer.download_directory,
+                self._csv_bytes([missing_half_time]),
+            )
+
+            diagnostics = importer.run()
+            observations = load_observations_from_database(
+                importer.database_path
+            )
+            report = audit_half_time_coverage(observations)
+
+            self.assertEqual(diagnostics.half_time_missing, 1)
+            self.assertEqual(len(observations), 1)
+            self.assertEqual(
+                observations[0].validation_status,
+                HalfTimeValidationStatus.MISSING,
+            )
+            self.assertEqual(observations[0].league, "E0")
+            self.assertEqual(
+                report.coverage_by_league["E0"]["missing"],
+                1,
+            )
+            self.assertNotIn("UNKNOWN", report.coverage_by_league)
+            self.assertEqual(
+                report.fixtures_with_unknown_league_metadata,
+                0,
+            )
+
+    def test_identical_fixture_backfills_missing_league_idempotently(self):
+        missing_half_time = self._row(
+            HTHG="",
+            HTAG="",
+            HTR="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            self._cache_file(
+                importer.download_directory,
+                self._csv_bytes([missing_half_time]),
+            )
+            importer.run()
+
+            connection = sqlite3.connect(importer.database_path)
+            try:
+                connection.execute(
+                    "UPDATE historical_matches SET league_code = NULL"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            backfill = importer.run()
+            repeated = importer.run()
+            stored = self._database_rows(
+                Path(importer.database_path),
+                "historical_matches",
+            )[0]
+
+            self.assertEqual(backfill.metadata_backfilled, 1)
+            self.assertEqual(backfill.historical_conflicts, 0)
+            self.assertEqual(backfill.historical_unchanged, 0)
+            self.assertEqual(stored["league_code"], "E0")
+            self.assertEqual(repeated.metadata_backfilled, 0)
+            self.assertEqual(repeated.historical_unchanged, 1)
+            self.assertEqual(repeated.historical_conflicts, 0)
+
+    def test_absent_div_remains_explicit_unknown_metadata(self):
+        without_div = self._row(
+            Div="",
+            HTHG="",
+            HTAG="",
+            HTR="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            self._cache_file(
+                importer.download_directory,
+                self._csv_bytes([without_div]),
+            )
+
+            importer.run()
+            stored = self._database_rows(
+                Path(importer.database_path),
+                "historical_matches",
+            )[0]
+            observations = load_observations_from_database(
+                importer.database_path
+            )
+            report = audit_half_time_coverage(observations)
+
+            self.assertIsNone(stored["league_code"])
+            self.assertIsNone(observations[0].league)
+            self.assertEqual(report.coverage_by_league, {})
+            self.assertEqual(
+                report.fixtures_with_unknown_league_metadata,
+                1,
+            )
+            self.assertEqual(
+                report.unknown_league_fixtures,
+                (str(stored["fixture_id"]),),
+            )
+            self.assertTrue(
+                any(
+                    "League metadata is missing for 1 historical fixtures"
+                    in reason
+                    for reason in report.readiness_reasons
+                )
             )
 
     def test_material_conflict_is_preserved_and_visible_to_audit(self):

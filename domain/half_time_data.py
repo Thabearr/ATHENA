@@ -347,6 +347,8 @@ class HalfTimeCoverageReport:
     readiness: ResearchReadiness
     readiness_reasons: Tuple[str, ...]
     thresholds: ReadinessThresholds
+    fixtures_with_unknown_league_metadata: int = 0
+    unknown_league_fixtures: Tuple[str, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -365,6 +367,12 @@ class HalfTimeCoverageReport:
                 self.invalid_source_observations
             ),
             "conflicting_fixtures": list(self.conflicting_fixtures),
+            "fixtures_with_unknown_league_metadata": (
+                self.fixtures_with_unknown_league_metadata
+            ),
+            "unknown_league_fixtures": list(
+                self.unknown_league_fixtures
+            ),
             "coverage_percentage": self.coverage_percentage,
             "coverage_by_league": self.coverage_by_league,
             "coverage_by_season": self.coverage_by_season,
@@ -494,7 +502,22 @@ def audit_half_time_coverage(
         else 0.0
     )
 
-    coverage_by_league = _grouped_coverage(selected, "league")
+    known_league_observations = tuple(
+        observation
+        for observation in selected
+        if str(observation.league or "").strip()
+    )
+    unknown_league_fixtures = tuple(
+        sorted(
+            observation.fixture_identity
+            for observation in selected
+            if not str(observation.league or "").strip()
+        )
+    )
+    coverage_by_league = _grouped_coverage(
+        known_league_observations,
+        "league",
+    )
     coverage_by_season = _grouped_coverage(selected, "season")
     source_breakdown = _grouped_coverage(source_observations, "source")
 
@@ -566,6 +589,11 @@ def audit_half_time_coverage(
             readiness_reasons.append(
                 "Overall half-time coverage is below the configured minimum."
             )
+        if unknown_league_fixtures:
+            readiness_reasons.append(
+                "League metadata is missing for "
+                f"{len(unknown_league_fixtures)} historical fixtures."
+            )
         below_league_threshold = [
             league
             for league, bucket in coverage_by_league.items()
@@ -594,6 +622,10 @@ def audit_half_time_coverage(
         total_source_observations=source_quality.total,
         invalid_source_observations=source_quality.invalid,
         conflicting_fixtures=conflicting_fixtures,
+        fixtures_with_unknown_league_metadata=len(
+            unknown_league_fixtures
+        ),
+        unknown_league_fixtures=unknown_league_fixtures,
         coverage_percentage=overall.coverage_percentage,
         coverage_by_league=coverage_by_league,
         coverage_by_season=coverage_by_season,

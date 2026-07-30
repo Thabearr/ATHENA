@@ -146,7 +146,8 @@ CREATE TABLE IF NOT EXISTS historical_matches (
     home_xg REAL,
     away_xg REAL,
     home_possession INTEGER,
-    away_possession INTEGER
+    away_possession INTEGER,
+    league_code TEXT
 );
 
 -- =========================
