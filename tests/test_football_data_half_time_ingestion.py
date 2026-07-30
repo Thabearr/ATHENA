@@ -747,7 +747,10 @@ class FootballDataHalfTimeIngestionTests(unittest.TestCase):
 
         self.assertEqual(
             confirmed_half_time_sources,
-            {"football_data_org_live"},
+            {
+                "football_data_org_live",
+                "football_data_uk_csv",
+            },
         )
         football_data = SOURCE_CAPABILITY_REGISTRY[
             "football_data_org_live"
