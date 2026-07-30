@@ -204,6 +204,74 @@ def _load_stored_observations(
     return observations_by_fixture
 
 
+def _load_historical_conflicts(
+    connection: sqlite3.Connection,
+) -> dict:
+    if not _table_exists(connection, "historical_match_conflicts"):
+        return {}
+
+    conflicts_by_fixture = {}
+    rows = connection.execute(
+        """
+        SELECT
+            fixture_id,
+            conflict_fingerprint,
+            conflict_reason
+        FROM historical_match_conflicts
+        WHERE resolved = 0
+        ORDER BY CAST(fixture_id AS TEXT), conflict_fingerprint
+        """
+    )
+    for row in rows:
+        conflicts_by_fixture.setdefault(
+            str(row["fixture_id"]),
+            [],
+        ).append(row)
+    return conflicts_by_fixture
+
+
+def _combined_conflict_metadata(
+    stored,
+    historical_conflicts,
+) -> tuple:
+    reasons = []
+    fingerprints = []
+    conflict_observed_at = None
+
+    if stored is not None and _stored_conflict_status(stored):
+        stored_reason = _stored_value(stored, "conflict_reason")
+        if stored_reason:
+            reasons.append(str(stored_reason))
+        stored_fingerprint = _stored_value(
+            stored,
+            "conflict_fingerprint",
+        )
+        if stored_fingerprint:
+            fingerprints.append(str(stored_fingerprint))
+        conflict_observed_at = _parse_datetime(
+            _stored_value(stored, "conflict_observed_at")
+        )
+
+    for conflict in historical_conflicts:
+        reason = conflict["conflict_reason"]
+        fingerprint = conflict["conflict_fingerprint"]
+        if reason:
+            reasons.append(str(reason))
+        if fingerprint:
+            fingerprints.append(str(fingerprint))
+
+    if not reasons and not fingerprints:
+        return False, None, None, conflict_observed_at
+
+    return (
+        True,
+        ",".join(sorted(set(fingerprints)))[:512] or None,
+        "; ".join(sorted(set(reasons)))[:512]
+        or "unresolved historical full-time conflict",
+        conflict_observed_at,
+    )
+
+
 def _select_authoritative_fixtures(
     historical_rows: Iterable[sqlite3.Row],
     result_rows: Iterable[sqlite3.Row],
@@ -220,7 +288,14 @@ def _select_authoritative_fixtures(
 def _observation_from_authoritative_fixture(
     authoritative,
     stored=None,
+    historical_conflicts=(),
 ) -> HalfTimeObservation:
+    (
+        conflict_status,
+        conflict_fingerprint,
+        conflict_reason,
+        conflict_observed_at,
+    ) = _combined_conflict_metadata(stored, historical_conflicts)
     if stored is None:
         return HalfTimeObservation(
             fixture_identity=str(
@@ -246,6 +321,10 @@ def _observation_from_authoritative_fixture(
             half_time_score_provenance=ScoreProvenance.MISSING,
             league=authoritative["league"],
             season=authoritative["season"],
+            conflict_status=conflict_status,
+            conflict_fingerprint=conflict_fingerprint,
+            conflict_reason=conflict_reason,
+            conflict_observed_at=conflict_observed_at,
         )
 
     return HalfTimeObservation(
@@ -276,15 +355,10 @@ def _observation_from_authoritative_fixture(
         ],
         league=stored["league"] or authoritative["league"],
         season=stored["season"] or authoritative["season"],
-        conflict_status=_stored_conflict_status(stored),
-        conflict_fingerprint=_stored_value(
-            stored,
-            "conflict_fingerprint",
-        ),
-        conflict_reason=_stored_value(stored, "conflict_reason"),
-        conflict_observed_at=_parse_datetime(
-            _stored_value(stored, "conflict_observed_at")
-        ),
+        conflict_status=conflict_status,
+        conflict_fingerprint=conflict_fingerprint,
+        conflict_reason=conflict_reason,
+        conflict_observed_at=conflict_observed_at,
     )
 
 
@@ -342,6 +416,9 @@ def load_observations_from_database(
         historical_rows = _load_historical_rows(connection)
         result_rows = _load_finished_result_rows(connection)
         stored_by_fixture = _load_stored_observations(connection)
+        historical_conflicts_by_fixture = _load_historical_conflicts(
+            connection
+        )
     finally:
         connection.close()
 
@@ -356,9 +433,16 @@ def load_observations_from_database(
     for fixture_identity in fixture_identities:
         authoritative = authoritative_by_fixture.get(fixture_identity)
         stored_rows = stored_by_fixture.get(fixture_identity, ())
+        historical_conflicts = historical_conflicts_by_fixture.get(
+            fixture_identity,
+            (),
+        )
         if authoritative is not None and not stored_rows:
             observations.append(
-                _observation_from_authoritative_fixture(authoritative)
+                _observation_from_authoritative_fixture(
+                    authoritative,
+                    historical_conflicts=historical_conflicts,
+                )
             )
             continue
 
@@ -367,6 +451,7 @@ def load_observations_from_database(
                 observation = _observation_from_authoritative_fixture(
                     authoritative,
                     stored,
+                    historical_conflicts,
                 )
             else:
                 observation = _observation_from_unmatched_storage(stored)

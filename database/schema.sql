@@ -150,6 +150,27 @@ CREATE TABLE IF NOT EXISTS historical_matches (
 );
 
 -- =========================
+-- Historical Match Conflicts
+-- Additive evidence for immutable CSV rows that disagree with an existing
+-- authoritative historical_matches row. Raw provider payloads are not stored.
+-- =========================
+CREATE TABLE IF NOT EXISTS historical_match_conflicts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    fixture_id INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    conflict_fingerprint TEXT NOT NULL,
+    conflict_reason TEXT NOT NULL,
+    incoming_home_id INTEGER,
+    incoming_away_id INTEGER,
+    incoming_home_goals INTEGER,
+    incoming_away_goals INTEGER,
+    incoming_match_date TEXT,
+    incoming_season_label TEXT,
+    resolved INTEGER NOT NULL DEFAULT 0,
+    UNIQUE(fixture_id, source, conflict_fingerprint)
+);
+
+-- =========================
 -- Half-Time Observations
 -- Additive, source-specific evidence. Existing full-time scores remain
 -- authoritative in historical_matches and are never replaced here.
@@ -219,6 +240,9 @@ ON historical_matches(home_id);
 
 CREATE INDEX IF NOT EXISTS idx_historical_matches_away
 ON historical_matches(away_id);
+
+CREATE INDEX IF NOT EXISTS idx_historical_match_conflicts_fixture
+ON historical_match_conflicts(fixture_id);
 
 CREATE INDEX IF NOT EXISTS idx_half_time_observations_fixture
 ON half_time_observations(fixture_identity);

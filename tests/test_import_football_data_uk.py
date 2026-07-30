@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 from domain.half_time_data import (
     HalfTimeValidationStatus,
@@ -28,8 +29,11 @@ from scripts.audit_half_time_coverage import (
 from scripts.import_football_data_uk import (
     OFFICIAL_BASE_URL,
     SOURCE,
+    FileAcquisitionError,
     FootballDataUkImporter,
+    build_parser,
     deterministic_fixture_identity,
+    main,
     official_csv_url,
     season_to_archive_code,
 )
@@ -170,8 +174,58 @@ class FootballDataUkImporterTests(unittest.TestCase):
             self.assertIn("--database", result.stdout)
             self.assertIn("--download-directory", result.stdout)
             self.assertIn("--dry-run", result.stdout)
+            self.assertIn("--request-timeout", result.stdout)
             self.assertFalse(database_path.exists())
             self.assertFalse(download_directory.exists())
+
+    def test_direct_script_cli_help_has_no_side_effects(self):
+        result = subprocess.run(
+            [
+                sys.executable,
+                "scripts/import_football_data_uk.py",
+                "--help",
+            ],
+            cwd=self.REPOSITORY_ROOT,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            shell=False,
+        )
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("--request-timeout", result.stdout)
+        self.assertNotIn("ModuleNotFoundError", result.stderr)
+
+    def test_request_timeout_is_parsed_and_validated(self):
+        parser = build_parser()
+        arguments = parser.parse_args(
+            [
+                "--seasons",
+                "2024-25",
+                "--request-timeout",
+                "2.5",
+            ]
+        )
+        self.assertEqual(arguments.request_timeout, 2.5)
+
+        for invalid in ("0", "-1", "nan", "inf"):
+            with self.subTest(invalid=invalid):
+                with self.assertRaises(SystemExit):
+                    parser.parse_args(
+                        [
+                            "--seasons",
+                            "2024-25",
+                            "--request-timeout",
+                            invalid,
+                        ]
+                    )
+
+        with self.assertRaisesRegex(ValueError, "finite positive"):
+            FootballDataUkImporter(
+                seasons=("2024-25",),
+                request_timeout_seconds=float("nan"),
+            )
 
     def test_official_urls_and_archive_season_codes(self):
         self.assertEqual(season_to_archive_code("2020-21"), "2021")
@@ -209,6 +263,156 @@ class FootballDataUkImporterTests(unittest.TestCase):
             self.assertEqual(
                 request.full_url,
                 f"{OFFICIAL_BASE_URL}/2425/E0.csv",
+            )
+            self.assertEqual(
+                download.call_args.kwargs["timeout"],
+                60.0,
+            )
+
+    def test_one_unavailable_file_does_not_stop_other_imports(self):
+        content = self._csv_bytes([self._row(Div="D1")])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            importer = FootballDataUkImporter(
+                seasons=("2024-25",),
+                leagues=("E0", "D1"),
+                database_path=str(root / "athena.db"),
+                download_directory=str(root / "downloads"),
+            )
+            unavailable = HTTPError(
+                official_csv_url("2024-25", "E0"),
+                404,
+                "Not Found",
+                None,
+                None,
+            )
+            with patch(
+                "scripts.import_football_data_uk.urlopen",
+                side_effect=[
+                    unavailable,
+                    _MockResponse(content),
+                ],
+            ):
+                diagnostics = importer.run()
+
+            self.assertEqual(diagnostics.files_requested, 2)
+            self.assertEqual(diagnostics.files_unavailable, 1)
+            self.assertEqual(diagnostics.files_downloaded, 1)
+            self.assertEqual(diagnostics.historical_inserted, 1)
+            self.assertEqual(
+                [item["status"] for item in diagnostics.file_details],
+                ["unavailable", "downloaded"],
+            )
+            self.assertTrue(
+                all(
+                    item["official_url"].startswith(OFFICIAL_BASE_URL)
+                    for item in diagnostics.file_details
+                )
+            )
+
+    def test_one_failed_file_does_not_stop_other_imports(self):
+        content = self._csv_bytes([self._row(Div="D1")])
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            importer = FootballDataUkImporter(
+                seasons=("2024-25",),
+                leagues=("E0", "D1"),
+                database_path=str(root / "athena.db"),
+                download_directory=str(root / "downloads"),
+            )
+            with patch(
+                "scripts.import_football_data_uk.urlopen",
+                side_effect=[
+                    URLError("temporary timeout"),
+                    URLError("temporary timeout"),
+                    _MockResponse(content),
+                ],
+            ) as download:
+                diagnostics = importer.run()
+
+            self.assertEqual(download.call_count, 3)
+            self.assertEqual(diagnostics.files_failed, 1)
+            self.assertEqual(diagnostics.files_downloaded, 1)
+            self.assertEqual(diagnostics.historical_inserted, 1)
+            self.assertEqual(
+                [item["status"] for item in diagnostics.file_details],
+                ["failed", "downloaded"],
+            )
+
+    def test_all_downloads_failing_returns_nonzero(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            arguments = [
+                "--seasons",
+                "2024-25",
+                "--leagues",
+                "E0",
+                "D1",
+                "--database",
+                str(root / "athena.db"),
+                "--download-directory",
+                str(root / "downloads"),
+            ]
+            errors = [
+                HTTPError(
+                    official_csv_url("2024-25", league),
+                    404,
+                    "Not Found",
+                    None,
+                    None,
+                )
+                for league in ("E0", "D1")
+            ]
+            with patch(
+                "scripts.import_football_data_uk.urlopen",
+                side_effect=errors,
+            ):
+                exit_code = main(arguments)
+
+            self.assertEqual(exit_code, 1)
+            self.assertFalse((root / "athena.db").exists())
+
+    def test_invalid_download_is_not_cached_and_temp_is_removed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            destination = importer._cache_path("2024-25", "E0")
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            temporary = destination.with_suffix(".csv.tmp")
+            temporary.write_text("stale partial", encoding="utf-8")
+
+            with patch(
+                "scripts.import_football_data_uk.urlopen",
+                return_value=_MockResponse(
+                    b"<!doctype html><html>error page</html>"
+                ),
+            ):
+                with self.assertRaises(FileAcquisitionError):
+                    importer._download("2024-25", "E0")
+
+            self.assertFalse(destination.exists())
+            self.assertFalse(temporary.exists())
+
+    def test_corrupt_cache_is_rejected_and_safely_redownloaded(self):
+        content = self._csv_bytes([self._row()])
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            destination = self._cache_file(
+                importer.download_directory,
+                b"<html>cached error</html>",
+            )
+
+            with patch(
+                "scripts.import_football_data_uk.urlopen",
+                return_value=_MockResponse(content),
+            ) as download:
+                diagnostics = importer.run()
+
+            self.assertEqual(download.call_count, 1)
+            self.assertEqual(destination.read_bytes(), content)
+            self.assertEqual(diagnostics.files_downloaded, 1)
+            self.assertIn(
+                "corrupt cache rejected",
+                diagnostics.file_details[0]["diagnostic"],
             )
 
     def test_valid_missing_invalid_and_malformed_rows_are_isolated(self):
@@ -360,6 +564,146 @@ class FootballDataUkImporterTests(unittest.TestCase):
                     )
                 ),
                 1,
+            )
+
+    def test_full_time_conflict_is_durable_and_invalidates_audit(self):
+        first_row = self._row(HTHG="", HTAG="", HTR="")
+        conflicting_row = self._row(
+            FTHG="3",
+            FTAG="1",
+            FTR="H",
+            HTHG="",
+            HTAG="",
+            HTR="",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            cache_path = self._cache_file(
+                importer.download_directory,
+                self._csv_bytes([first_row]),
+            )
+            first = importer.run()
+            cache_path.write_bytes(self._csv_bytes([conflicting_row]))
+
+            second = importer.run()
+            stored_match = self._database_rows(
+                Path(importer.database_path),
+                "historical_matches",
+            )[0]
+            durable_conflicts = self._database_rows(
+                Path(importer.database_path),
+                "historical_match_conflicts",
+            )
+
+            reopened_observations = load_observations_from_database(
+                importer.database_path
+            )
+            report = audit_half_time_coverage(reopened_observations)
+
+            self.assertEqual(first.historical_inserted, 1)
+            self.assertEqual(second.historical_unchanged, 0)
+            self.assertEqual(second.historical_conflicts, 1)
+            self.assertEqual(stored_match["home_goals"], 2)
+            self.assertEqual(stored_match["away_goals"], 1)
+            self.assertEqual(len(durable_conflicts), 1)
+            self.assertEqual(
+                len(durable_conflicts[0]["conflict_fingerprint"]),
+                64,
+            )
+            self.assertLessEqual(
+                len(durable_conflicts[0]["conflict_reason"]),
+                240,
+            )
+            self.assertIn(
+                str(stored_match["fixture_id"]),
+                report.conflicting_fixtures,
+            )
+            self.assertEqual(
+                report.fixtures_with_valid_half_time_scores,
+                0,
+            )
+            self.assertEqual(
+                report.readiness,
+                ResearchReadiness.DATA_INVALID,
+            )
+
+            cache_path.write_bytes(self._csv_bytes([conflicting_row]))
+            repeated = importer.run()
+            repeated_conflicts = self._database_rows(
+                Path(importer.database_path),
+                "historical_match_conflicts",
+            )
+            self.assertEqual(repeated.historical_conflicts, 1)
+            self.assertEqual(len(repeated_conflicts), 1)
+
+    def test_legacy_database_is_migrated_before_import(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database_path = root / "legacy.db"
+            connection = sqlite3.connect(database_path)
+            try:
+                connection.execute(
+                    """
+                    CREATE TABLE historical_matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fixture_id INTEGER UNIQUE,
+                        home_id INTEGER,
+                        away_id INTEGER,
+                        home_goals INTEGER,
+                        away_goals INTEGER,
+                        match_date TEXT,
+                        home_pre_elo INTEGER,
+                        away_pre_elo INTEGER,
+                        home_xg REAL,
+                        away_xg REAL,
+                        home_possession INTEGER,
+                        away_possession INTEGER
+                    )
+                    """
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            importer = FootballDataUkImporter(
+                seasons=("2024-25",),
+                leagues=("E0",),
+                database_path=str(database_path),
+                download_directory=str(root / "downloads"),
+            )
+            self._cache_file(
+                importer.download_directory,
+                self._csv_bytes([self._row()]),
+            )
+
+            diagnostics = importer.run()
+
+            self.assertEqual(diagnostics.historical_inserted, 1)
+            self.assertEqual(diagnostics.half_time_inserted, 1)
+            self.assertEqual(
+                len(
+                    self._database_rows(
+                        database_path,
+                        "historical_matches",
+                    )
+                ),
+                1,
+            )
+            self.assertEqual(
+                len(
+                    self._database_rows(
+                        database_path,
+                        "half_time_observations",
+                    )
+                ),
+                1,
+            )
+            self.assertEqual(
+                self._database_rows(
+                    database_path,
+                    "historical_match_conflicts",
+                ),
+                [],
             )
 
     def test_material_conflict_is_preserved_and_visible_to_audit(self):

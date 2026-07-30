@@ -548,7 +548,7 @@ def audit_half_time_coverage(
     elif conflicting_fixtures:
         readiness = ResearchReadiness.DATA_INVALID
         readiness_reasons.append(
-            "Conflicting observed half-time scores exist for fixtures: "
+            "Unresolved conflicting source evidence exists for fixtures: "
             + ", ".join(conflicting_fixtures)
             + "."
         )
