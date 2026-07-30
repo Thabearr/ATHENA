@@ -85,6 +85,31 @@ SOURCE_CAPABILITY_REGISTRY: Dict[str, SourceCapabilities] = {
             "kickoff time and no event timeline is captured."
         ),
     ),
+    "football_data_uk_csv": SourceCapabilities(
+        source="football_data_uk_csv",
+        full_time_score=CapabilityAvailability.CONFIRMED,
+        half_time_score=CapabilityAvailability.CONFIRMED,
+        event_timestamps=CapabilityAvailability.NOT_CAPTURED,
+        reliable_fixture_identity=CapabilityAvailability.CONFIRMED,
+        historical_coverage=CapabilityAvailability.CONFIRMED,
+        freshness_metadata=CapabilityAvailability.NOT_CAPTURED,
+        evidence=(
+            (
+                "scripts/import_football_data_uk.py: Div, Date, Time, "
+                "HomeTeam, AwayTeam, FTHG, FTAG, HTHG, HTAG"
+            ),
+            (
+                "scripts/import_football_data_uk.py: deterministic SHA-256 "
+                "fixture identity and HalfTimeObservationStore persistence"
+            ),
+        ),
+        notes=(
+            "The importer stores official historical CSV full-time scores and "
+            "explicit half-time score pairs. Missing half-time scores remain "
+            "missing. The files do not provide observation freshness or a "
+            "goal-event timeline."
+        ),
+    ),
     "api_football_2022_2024": SourceCapabilities(
         source="api_football_2022_2024",
         full_time_score=CapabilityAvailability.CONFIRMED,

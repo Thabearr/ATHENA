@@ -11,3 +11,4 @@ database/athena.db
 .venv_linux/
 *.egg-info/
 backtest_output.txt
+.cache/football-data-uk/
