@@ -7,6 +7,7 @@ eligibility for production recommendations.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
@@ -23,6 +24,9 @@ from domain.half_time_data import (
 DEFAULT_TRAIN_SEASONS = ("2020-21", "2021-22", "2022-23", "2023-24")
 DEFAULT_VALIDATION_SEASONS = ("2024-25",)
 DEFAULT_TEST_SEASONS = ("2025-26",)
+_FOOTBALL_SEASON_PATTERN = re.compile(
+    r"^(?P<start>[0-9]{4})-(?P<end>[0-9]{2})$"
+)
 
 
 class ResearchLabelError(ValueError):
@@ -39,6 +43,33 @@ class HalfOutcome(str, Enum):
     HOME = "HOME"
     DRAW = "DRAW"
     AWAY = "AWAY"
+
+
+def parse_football_season(season: str) -> int:
+    """Validate ``YYYY-YY`` and return its chronological starting year.
+
+    The ending component must be the two-digit representation of the year
+    immediately following the four-digit starting year. Raw strings are
+    validated rather than ordered lexicographically.
+    """
+    if not isinstance(season, str):
+        raise ResearchLabelError(
+            "Football season must use YYYY-YY, for example 2025-26"
+        )
+    match = _FOOTBALL_SEASON_PATTERN.fullmatch(season)
+    if match is None:
+        raise ResearchLabelError(
+            f"Football season must use YYYY-YY: {season!r}"
+        )
+    start_year = int(match.group("start"))
+    end_year = int(match.group("end"))
+    expected_end = (start_year + 1) % 100
+    if end_year != expected_end:
+        raise ResearchLabelError(
+            "Football season ending year must immediately follow its "
+            f"starting year: {season!r}"
+        )
+    return start_year
 
 
 class LabelExclusionReason(str, Enum):
@@ -99,16 +130,24 @@ class TemporalSplitConfig:
             "validation_seasons",
             "test_seasons",
         ):
-            raw_values = getattr(self, field_name)
-            values = tuple(str(value or "").strip() for value in raw_values)
-            if any(not value for value in values):
-                raise ResearchLabelError("Split seasons must be non-empty")
+            values = tuple(getattr(self, field_name))
+            if not values:
+                split_name = field_name.removesuffix("_seasons").upper()
+                raise ResearchLabelError(
+                    f"{split_name} must contain at least one season"
+                )
+            chronological = tuple(
+                (parse_football_season(value), value) for value in values
+            )
             if len(set(values)) != len(values):
                 raise ResearchLabelError(
                     f"Duplicate season in {field_name.replace('_', ' ')}"
                 )
-            normalized[field_name] = values
-            object.__setattr__(self, field_name, values)
+            ordered = tuple(
+                value for _, value in sorted(chronological)
+            )
+            normalized[field_name] = ordered
+            object.__setattr__(self, field_name, ordered)
 
         memberships = {}
         for split, field_name in (
@@ -124,6 +163,28 @@ class TemporalSplitConfig:
         if overlaps:
             raise ResearchLabelError(
                 "Season split definitions overlap: " + ", ".join(overlaps)
+            )
+
+        train_keys = tuple(
+            parse_football_season(value)
+            for value in normalized["train_seasons"]
+        )
+        validation_keys = tuple(
+            parse_football_season(value)
+            for value in normalized["validation_seasons"]
+        )
+        test_keys = tuple(
+            parse_football_season(value)
+            for value in normalized["test_seasons"]
+        )
+        if not (
+            max(train_keys) < min(validation_keys)
+            and max(validation_keys) < min(test_keys)
+        ):
+            raise ResearchLabelError(
+                "Temporal splits must be chronological and non-interleaved: "
+                "every TRAIN season must precede every VALIDATION season, "
+                "and every VALIDATION season must precede every TEST season"
             )
 
     def split_for(self, season: str) -> ResearchSplit:
@@ -431,4 +492,5 @@ __all__ = [
     "build_win_either_half_labels",
     "derive_win_either_half_label",
     "label_exclusion_reasons",
+    "parse_football_season",
 ]

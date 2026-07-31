@@ -33,6 +33,7 @@ from domain.win_either_half_research import (
     build_win_either_half_labels,
     derive_win_either_half_label,
     label_exclusion_reasons,
+    parse_football_season,
 )
 from scripts.audit_half_time_coverage import load_observations_from_database
 from scripts.export_win_either_half_research_dataset import (
@@ -415,6 +416,15 @@ class WinEitherHalfResearchTests(unittest.TestCase):
         self.assertEqual(dataset.labels[0].source, "source-b")
 
     def test_default_temporal_splits_assign_every_eligible_row_once(self):
+        self.assertEqual(parse_football_season("2020-21"), 2020)
+        self.assertEqual(parse_football_season("2025-26"), 2025)
+        config = TemporalSplitConfig()
+        self.assertEqual(
+            config.train_seasons,
+            ("2020-21", "2021-22", "2022-23", "2023-24"),
+        )
+        self.assertEqual(config.validation_seasons, ("2024-25",))
+        self.assertEqual(config.test_seasons, ("2025-26",))
         dataset = build_win_either_half_labels(self._sample_observations())
         counts = {split: 0 for split in ResearchSplit}
         for label in dataset.labels:
@@ -439,17 +449,152 @@ class WinEitherHalfResearchTests(unittest.TestCase):
                 (self._observation(season="2019-20"),)
             )
 
-    def test_explicit_temporal_split_override_is_honoured(self):
+    def test_valid_chronological_temporal_split_override_is_honoured(self):
         config = TemporalSplitConfig(
-            train_seasons=("2025-26",),
-            validation_seasons=("2024-25",),
-            test_seasons=("2023-24",),
+            train_seasons=("2022-23", "2020-21", "2021-22"),
+            validation_seasons=("2023-24",),
+            test_seasons=("2024-25",),
         )
         dataset = build_win_either_half_labels(
-            (self._observation(season="2025-26"),),
+            (self._observation(season="2022-23"),),
             split_config=config,
         )
         self.assertEqual(dataset.labels[0].split, ResearchSplit.TRAIN)
+        self.assertEqual(
+            config.train_seasons,
+            ("2020-21", "2021-22", "2022-23"),
+        )
+
+    def test_reversed_temporal_splits_fail(self):
+        with self.assertRaisesRegex(ResearchLabelError, "chronological"):
+            TemporalSplitConfig(
+                train_seasons=("2025-26",),
+                validation_seasons=("2024-25",),
+                test_seasons=("2023-24",),
+            )
+
+    def test_interleaved_temporal_splits_fail(self):
+        with self.assertRaisesRegex(ResearchLabelError, "non-interleaved"):
+            TemporalSplitConfig(
+                train_seasons=("2020-21", "2022-23"),
+                validation_seasons=("2021-22",),
+                test_seasons=("2023-24",),
+            )
+
+    def test_malformed_football_season_labels_fail(self):
+        for season in (
+            "2025",
+            "25-26",
+            "2025/26",
+            "2025-2026",
+            "abcd-ef",
+        ):
+            with self.subTest(season=season):
+                with self.assertRaisesRegex(ResearchLabelError, "YYYY-YY"):
+                    parse_football_season(season)
+
+    def test_non_consecutive_football_season_ending_year_fails(self):
+        for season in ("2020-22", "2025-25", "1999-01"):
+            with self.subTest(season=season):
+                with self.assertRaisesRegex(
+                    ResearchLabelError,
+                    "immediately follow",
+                ):
+                    parse_football_season(season)
+
+    def test_every_temporal_split_must_be_non_empty(self):
+        cases = (
+            ((), ("2024-25",), ("2025-26",), "TRAIN"),
+            (("2023-24",), (), ("2025-26",), "VALIDATION"),
+            (("2023-24",), ("2024-25",), (), "TEST"),
+        )
+        for train, validation, test, split_name in cases:
+            with self.subTest(split=split_name):
+                with self.assertRaisesRegex(ResearchLabelError, split_name):
+                    TemporalSplitConfig(
+                        train_seasons=train,
+                        validation_seasons=validation,
+                        test_seasons=test,
+                    )
+
+    def test_unordered_equivalent_season_inputs_canonicalize_identically(self):
+        ordered = TemporalSplitConfig(
+            train_seasons=("2020-21", "2021-22", "2022-23"),
+            validation_seasons=("2023-24",),
+            test_seasons=("2024-25",),
+        )
+        unordered = TemporalSplitConfig(
+            train_seasons=("2022-23", "2020-21", "2021-22"),
+            validation_seasons=("2023-24",),
+            test_seasons=("2024-25",),
+        )
+        self.assertEqual(ordered, unordered)
+        self.assertEqual(ordered.to_dict(), unordered.to_dict())
+
+    def test_manifest_is_identical_for_unordered_equivalent_season_inputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database, cache, baseline, _, _, _, _ = self._manifest_fixture(root)
+            observations = load_observations_from_database(str(database))
+            ordered_config = TemporalSplitConfig()
+            unordered_config = TemporalSplitConfig(
+                train_seasons=(
+                    "2023-24",
+                    "2021-22",
+                    "2020-21",
+                    "2022-23",
+                ),
+                validation_seasons=("2024-25",),
+                test_seasons=("2025-26",),
+            )
+            current = verify_stage_2_evidence(
+                baseline,
+                database_path=database,
+                cache_directory=cache,
+            )
+            manifests = []
+            for config in (ordered_config, unordered_config):
+                dataset = build_win_either_half_labels(
+                    observations,
+                    split_config=config,
+                )
+                labels, exclusions = render_dataset_csv(dataset)
+                manifests.append(
+                    build_research_manifest(
+                        dataset,
+                        labels_bytes=labels,
+                        exclusions_bytes=exclusions,
+                        labels_relative_name="labels-v1.csv",
+                        exclusions_relative_name="exclusions-v1.csv",
+                        stage_2_baseline=baseline,
+                        current_evidence=current,
+                        generator_code_state=deepcopy(self.CODE_STATE),
+                        generated_at_utc="2026-07-31T00:00:00Z",
+                    )
+                )
+            self.assertEqual(manifests[0], manifests[1])
+
+    def test_cli_rejects_reversed_explicit_season_overrides(self):
+        stderr = io.StringIO()
+        with patch(
+            "scripts.export_win_either_half_research_dataset.load_baseline"
+        ) as load_baseline_mock:
+            with redirect_stderr(stderr):
+                result = main(
+                    [
+                        "--check",
+                        "unused.json",
+                        "--train-seasons",
+                        "2025-26",
+                        "--validation-seasons",
+                        "2024-25",
+                        "--test-seasons",
+                        "2023-24",
+                    ]
+                )
+        self.assertEqual(result, 1)
+        self.assertIn("chronological", stderr.getvalue())
+        load_baseline_mock.assert_not_called()
 
     def test_database_insertion_order_produces_identical_csv_and_hashes(self):
         with tempfile.TemporaryDirectory() as directory:

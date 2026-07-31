@@ -27,10 +27,14 @@ scores remain missing and are never inferred.
 
 The default whole-season partitions are TRAIN for 2020-21 through 2023-24,
 VALIDATION for 2024-25, and TEST for 2025-26. CLI overrides must remain
-disjoint and must assign every eligible season exactly once. Random splitting
-is forbidden because it can mix later football conditions into earlier
-research and weaken temporal evaluation. The test season remains untouched
-for final evaluation.
+disjoint and must assign every eligible season exactly once. Every split must
+contain at least one season, season labels must use `YYYY-YY` with a consecutive
+ending year, every TRAIN season must precede every VALIDATION season, and every
+VALIDATION season must precede every TEST season. Seasons supplied within a
+split are canonicalized into chronological order. Reversed or interleaved
+overrides are rejected. Random splitting is forbidden because it can mix later
+football conditions into earlier research and weaken temporal evaluation. The
+test season remains untouched for final evaluation.
 
 Every FT, HT, derived second-half, half-outcome, and Win Either Half target
 column is post-match information. None may be used as a pre-match model
