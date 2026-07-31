@@ -1,0 +1,729 @@
+{
+  "audit": {
+    "conflicting_fixtures": [],
+    "coverage_by_league": {
+      "B1": {
+        "coverage_percentage": 99.730167,
+        "invalid": 0,
+        "missing": 5,
+        "total": 1853,
+        "valid": 1848
+      },
+      "BL1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 63,
+        "valid": 63
+      },
+      "CL": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 13,
+        "valid": 13
+      },
+      "D1": {
+        "coverage_percentage": 99.945534,
+        "invalid": 0,
+        "missing": 1,
+        "total": 1836,
+        "valid": 1835
+      },
+      "DED": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 54,
+        "valid": 54
+      },
+      "E0": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 2280,
+        "valid": 2280
+      },
+      "F1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 2058,
+        "valid": 2058
+      },
+      "FL1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 63,
+        "valid": 63
+      },
+      "G1": {
+        "coverage_percentage": 99.930021,
+        "invalid": 0,
+        "missing": 1,
+        "total": 1429,
+        "valid": 1428
+      },
+      "I1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 2280,
+        "valid": 2280
+      },
+      "N1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 1836,
+        "valid": 1836
+      },
+      "P1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 1836,
+        "valid": 1836
+      },
+      "PD": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 90,
+        "valid": 90
+      },
+      "PL": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 71,
+        "valid": 71
+      },
+      "PPL": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 65,
+        "valid": 65
+      },
+      "SA": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 80,
+        "valid": 80
+      },
+      "SC0": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 1368,
+        "valid": 1368
+      },
+      "SP1": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 2280,
+        "valid": 2280
+      },
+      "T1": {
+        "coverage_percentage": 98.571429,
+        "invalid": 0,
+        "missing": 31,
+        "total": 2170,
+        "valid": 2139
+      },
+      "WC": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 104,
+        "valid": 104
+      }
+    },
+    "coverage_by_season": {
+      "2020-21": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 3632,
+        "valid": 3632
+      },
+      "2021-22": {
+        "coverage_percentage": 99.944321,
+        "invalid": 0,
+        "missing": 2,
+        "total": 3592,
+        "valid": 3590
+      },
+      "2022-23": {
+        "coverage_percentage": 99.127743,
+        "invalid": 0,
+        "missing": 31,
+        "total": 3554,
+        "valid": 3523
+      },
+      "2023-24": {
+        "coverage_percentage": 99.943246,
+        "invalid": 0,
+        "missing": 2,
+        "total": 3524,
+        "valid": 3522
+      },
+      "2024-25": {
+        "coverage_percentage": 99.913768,
+        "invalid": 0,
+        "missing": 3,
+        "total": 3479,
+        "valid": 3476
+      },
+      "2025-26": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 4048,
+        "valid": 4048
+      }
+    },
+    "coverage_percentage": 99.82592,
+    "earliest_valid_observation": "2026-05-30T20:20:41+00:00",
+    "fixtures_missing_half_time_scores": 38,
+    "fixtures_with_unknown_league_metadata": 0,
+    "fixtures_with_valid_half_time_scores": 21791,
+    "invalid_observations": 0,
+    "invalid_source_observations": 0,
+    "latest_valid_observation": "2026-07-29T05:20:05+00:00",
+    "readiness": "READY_FOR_RESEARCH",
+    "readiness_reasons": [],
+    "source_breakdown": {
+      "football_data_org_live": {
+        "coverage_percentage": 100.0,
+        "invalid": 0,
+        "missing": 0,
+        "total": 603,
+        "valid": 603
+      },
+      "football_data_uk_csv": {
+        "coverage_percentage": 99.820974,
+        "invalid": 0,
+        "missing": 38,
+        "total": 21226,
+        "valid": 21188
+      }
+    },
+    "thresholds": {
+      "maximum_invalid_record_percentage": 0.02,
+      "minimum_league_coverage": 0.6,
+      "minimum_overall_coverage": 0.8,
+      "minimum_valid_observations": 1000
+    },
+    "total_historical_fixtures_inspected": 21829,
+    "total_source_observations": 21829,
+    "unknown_league_fixtures": []
+  },
+  "baseline_name": "half-time-ready-for-research",
+  "code": {
+    "evidence_git_head_sha": "7089c0c11c2ca725dd38f6345e210c9fa4f8747d",
+    "tracked_worktree_clean": true
+  },
+  "database": {
+    "logical_evidence_sha256": "f79b9aa54f1d3a34fd6115d7a1cf1aa746e561a35073afb67d1dad97220011ba",
+    "schema_sha256": "fe5e29a6f0e9de427db1780f480689d1a23c732ba73779eb737af906a778161b"
+  },
+  "football_data_uk_cache": {
+    "file_count": 66,
+    "files": [
+      {
+        "byte_size": 138909,
+        "league": "B1",
+        "relative_path": "2021_B1.csv",
+        "season": "2020-21",
+        "sha256": "6e74a3f376c67b18bc40175aaf4d87b553ed8d10335ec48e6c0d805fd0117687"
+      },
+      {
+        "byte_size": 139075,
+        "league": "D1",
+        "relative_path": "2021_D1.csv",
+        "season": "2020-21",
+        "sha256": "48ec5d53d2452b6ebdbc07bd78a836d6a4686f99fc020439ee3292e685315e61"
+      },
+      {
+        "byte_size": 175815,
+        "league": "E0",
+        "relative_path": "2021_E0.csv",
+        "season": "2020-21",
+        "sha256": "5afe63f69401457b8354eaacee24f9a3e520b3c3af6329564a9783e20d789c62"
+      },
+      {
+        "byte_size": 170539,
+        "league": "F1",
+        "relative_path": "2021_F1.csv",
+        "season": "2020-21",
+        "sha256": "124560ab39a1c256eb6ee5ad2dd1eed250c9780d0cbb34525d9abee41fbf7f70"
+      },
+      {
+        "byte_size": 107072,
+        "league": "G1",
+        "relative_path": "2021_G1.csv",
+        "season": "2020-21",
+        "sha256": "311c5af3fe0e8b0edc6c7be2667f31927a9086e8f904a82f1097868ba070698a"
+      },
+      {
+        "byte_size": 170667,
+        "league": "I1",
+        "relative_path": "2021_I1.csv",
+        "season": "2020-21",
+        "sha256": "c09196fa18877547442807d375317299947abdd6d51a5e0df044cc6026e13f36"
+      },
+      {
+        "byte_size": 138587,
+        "league": "N1",
+        "relative_path": "2021_N1.csv",
+        "season": "2020-21",
+        "sha256": "65d532e1ea878954043454422ba2c770d05909691b219f39fcc6e9c4c4037657"
+      },
+      {
+        "byte_size": 139013,
+        "league": "P1",
+        "relative_path": "2021_P1.csv",
+        "season": "2020-21",
+        "sha256": "c6bb505a2a2a3f5a71f5d37cbe9f717fb683d706b66170b6b3bef7947a5252cb"
+      },
+      {
+        "byte_size": 105286,
+        "league": "SC0",
+        "relative_path": "2021_SC0.csv",
+        "season": "2020-21",
+        "sha256": "0456d91665fccef8a7b4cce781b9a56a0df451d43dc1f67f0d623ac90aa26817"
+      },
+      {
+        "byte_size": 171721,
+        "league": "SP1",
+        "relative_path": "2021_SP1.csv",
+        "season": "2020-21",
+        "sha256": "b4137db923101f464e8403c4973acbfaf7d71724ce93b4336fad580e894d9591"
+      },
+      {
+        "byte_size": 191916,
+        "league": "T1",
+        "relative_path": "2021_T1.csv",
+        "season": "2020-21",
+        "sha256": "f50a1ca815964b11f818a3ca35035f57969e5b3b04e267ad508e8b9282920cfd"
+      },
+      {
+        "byte_size": 138528,
+        "league": "B1",
+        "relative_path": "2122_B1.csv",
+        "season": "2021-22",
+        "sha256": "1fbc0221c0c017c34ff480268b153959576b0c707dffbeaf3141819a7d8d4363"
+      },
+      {
+        "byte_size": 139177,
+        "league": "D1",
+        "relative_path": "2122_D1.csv",
+        "season": "2021-22",
+        "sha256": "034d0e1296e944dddf25e3c91b85ef5bd1ad25661b89d73878f5c73bfea4b9fc"
+      },
+      {
+        "byte_size": 175363,
+        "league": "E0",
+        "relative_path": "2122_E0.csv",
+        "season": "2021-22",
+        "sha256": "335afcbabeb2939fa10ab39ba3e8215072d0b577cb8d0705c1e44c56e934e703"
+      },
+      {
+        "byte_size": 171274,
+        "league": "F1",
+        "relative_path": "2122_F1.csv",
+        "season": "2021-22",
+        "sha256": "9e9eaefb8704264f8d55a718a119d940de4af7d7b4217ac4097b957406e16213"
+      },
+      {
+        "byte_size": 107981,
+        "league": "G1",
+        "relative_path": "2122_G1.csv",
+        "season": "2021-22",
+        "sha256": "073d2d32a6ef02098cf58cdf214acc29616f3c798186500b42b8417a300e77c0"
+      },
+      {
+        "byte_size": 171204,
+        "league": "I1",
+        "relative_path": "2122_I1.csv",
+        "season": "2021-22",
+        "sha256": "6a9555d5a90e652a883fd2862a52545c06e264016cd770347c067a6d7c993170"
+      },
+      {
+        "byte_size": 138801,
+        "league": "N1",
+        "relative_path": "2122_N1.csv",
+        "season": "2021-22",
+        "sha256": "1798f02c9e2d55d399503bce4adf82d9cb31969caab01de8a4ac0632947b692a"
+      },
+      {
+        "byte_size": 139055,
+        "league": "P1",
+        "relative_path": "2122_P1.csv",
+        "season": "2021-22",
+        "sha256": "c4477c4f40da93fbba978fa52b76dc962df3a998a464f9c5ae5462d1b36e3a63"
+      },
+      {
+        "byte_size": 105588,
+        "league": "SC0",
+        "relative_path": "2122_SC0.csv",
+        "season": "2021-22",
+        "sha256": "5814849157392d05df1bd8220a468649434d1e816e9385d65eca2dede98c5dd1"
+      },
+      {
+        "byte_size": 172174,
+        "league": "SP1",
+        "relative_path": "2122_SP1.csv",
+        "season": "2021-22",
+        "sha256": "2d9e619700712823d15716c07715133f8c3b1a09046930dcfc785a38633dee2e"
+      },
+      {
+        "byte_size": 173920,
+        "league": "T1",
+        "relative_path": "2122_T1.csv",
+        "season": "2021-22",
+        "sha256": "d945315d283f2c3b48e8ff67d9ac460ccc2c817ad719e0448000db995b5ab9ce"
+      },
+      {
+        "byte_size": 135378,
+        "league": "B1",
+        "relative_path": "2223_B1.csv",
+        "season": "2022-23",
+        "sha256": "46737ea78b45a1fa6827b733a884c78f2610f37961781336ea7aa6dbfd64dcb4"
+      },
+      {
+        "byte_size": 139302,
+        "league": "D1",
+        "relative_path": "2223_D1.csv",
+        "season": "2022-23",
+        "sha256": "b716517b25033ce8e0243e967aa961876425a4c41e97c8aa8fa59f2aca061341"
+      },
+      {
+        "byte_size": 176180,
+        "league": "E0",
+        "relative_path": "2223_E0.csv",
+        "season": "2022-23",
+        "sha256": "8442792d3b614c94ea3cf381bd2736805889cc1713169035368fff19c3d02380"
+      },
+      {
+        "byte_size": 171165,
+        "league": "F1",
+        "relative_path": "2223_F1.csv",
+        "season": "2022-23",
+        "sha256": "18ea07d922e8b6360b81189637efd5aaf44779765db856bff208d5b1acf69b2f"
+      },
+      {
+        "byte_size": 108399,
+        "league": "G1",
+        "relative_path": "2223_G1.csv",
+        "season": "2022-23",
+        "sha256": "2b24e7a37d96ce56cae2e3e728b3d8f29cf12dfaa9188a10f239331d776e4495"
+      },
+      {
+        "byte_size": 171573,
+        "league": "I1",
+        "relative_path": "2223_I1.csv",
+        "season": "2022-23",
+        "sha256": "9960837f37a97ae700f876c87b85a8b7a2f5a5d05a53077830c21b9db8880c45"
+      },
+      {
+        "byte_size": 139065,
+        "league": "N1",
+        "relative_path": "2223_N1.csv",
+        "season": "2022-23",
+        "sha256": "a52a916c302ab414705fdcbba2077c301f9f0baefd3d519ea5434a2a5f5c4e8f"
+      },
+      {
+        "byte_size": 139035,
+        "league": "P1",
+        "relative_path": "2223_P1.csv",
+        "season": "2022-23",
+        "sha256": "acb35c152f1198de9d02cdea622bc815e1438bae00d1822e0fe48a787405a84a"
+      },
+      {
+        "byte_size": 105939,
+        "league": "SC0",
+        "relative_path": "2223_SC0.csv",
+        "season": "2022-23",
+        "sha256": "d716ef774542bb04701e1ac03eedf677cfa02422a0974b030824b3002c011730"
+      },
+      {
+        "byte_size": 172199,
+        "league": "SP1",
+        "relative_path": "2223_SP1.csv",
+        "season": "2022-23",
+        "sha256": "53348112526b5165539df240be350083989bb258f30c0ff7cacbc0165ca7e4b3"
+      },
+      {
+        "byte_size": 147535,
+        "league": "T1",
+        "relative_path": "2223_T1.csv",
+        "season": "2022-23",
+        "sha256": "129aacfe9576679cd287a63c401823b7df4ecd8bddb7eeb1ed0fcd22c867e0e3"
+      },
+      {
+        "byte_size": 136827,
+        "league": "B1",
+        "relative_path": "2324_B1.csv",
+        "season": "2023-24",
+        "sha256": "379d10bd92cecba6349f043f0661e3548e16d8053b234a7cace7493acfb72144"
+      },
+      {
+        "byte_size": 135825,
+        "league": "D1",
+        "relative_path": "2324_D1.csv",
+        "season": "2023-24",
+        "sha256": "1de8bc12a133dbbf71bc6ffda62082642f087f61b1b7c15ae9f2d320876fb07e"
+      },
+      {
+        "byte_size": 172196,
+        "league": "E0",
+        "relative_path": "2324_E0.csv",
+        "season": "2023-24",
+        "sha256": "b2e057b0ed959f198b0f63d2391c01239f3608e6de5db68edab3f88e04d07ff3"
+      },
+      {
+        "byte_size": 135000,
+        "league": "F1",
+        "relative_path": "2324_F1.csv",
+        "season": "2023-24",
+        "sha256": "ca0a4bf51d5b1ccfd0e1558ea41de6bb829df6c96c759888a87248d296d5adb7"
+      },
+      {
+        "byte_size": 105713,
+        "league": "G1",
+        "relative_path": "2324_G1.csv",
+        "season": "2023-24",
+        "sha256": "2eccea871c9f845ce4078642f35730a6e8db83683a6d49472e9f204dd972813a"
+      },
+      {
+        "byte_size": 167015,
+        "league": "I1",
+        "relative_path": "2324_I1.csv",
+        "season": "2023-24",
+        "sha256": "343a89db026fe4204ebeabd663cdfee8d02a45457828fc1cb63fa630ca170723"
+      },
+      {
+        "byte_size": 135643,
+        "league": "N1",
+        "relative_path": "2324_N1.csv",
+        "season": "2023-24",
+        "sha256": "bbef260d01917668069697c60e5179571600ddca6f3cc353b81d46143697dad4"
+      },
+      {
+        "byte_size": 135008,
+        "league": "P1",
+        "relative_path": "2324_P1.csv",
+        "season": "2023-24",
+        "sha256": "681e132bee3948b432436e907a935ea8fc4a8ccace86dad67d61be0159035758"
+      },
+      {
+        "byte_size": 103688,
+        "league": "SC0",
+        "relative_path": "2324_SC0.csv",
+        "season": "2023-24",
+        "sha256": "ed2dcf1bb0bdb12e911f0b8435038a85448be27d4fa368202c85be5e8036c341"
+      },
+      {
+        "byte_size": 168164,
+        "league": "SP1",
+        "relative_path": "2324_SP1.csv",
+        "season": "2023-24",
+        "sha256": "5323f596c7ed318e4bce95557a369d809d98501fa499ea5f41350cd45cf3c7d9"
+      },
+      {
+        "byte_size": 169459,
+        "league": "T1",
+        "relative_path": "2324_T1.csv",
+        "season": "2023-24",
+        "sha256": "17097f7d31bad40f830dc6f0f85090e9f76876e6812ec14997bc80423a05924b"
+      },
+      {
+        "byte_size": 158659,
+        "league": "B1",
+        "relative_path": "2425_B1.csv",
+        "season": "2024-25",
+        "sha256": "fcc3ec3a7bdd57ec42df76bb03aa1858ee18be88886a379f42b4c7b2e7f5d0eb"
+      },
+      {
+        "byte_size": 156414,
+        "league": "D1",
+        "relative_path": "2425_D1.csv",
+        "season": "2024-25",
+        "sha256": "a295c58033cfe6393cbbc28f7db85671839b960c5f1153fd3678e20ad2adb92e"
+      },
+      {
+        "byte_size": 197110,
+        "league": "E0",
+        "relative_path": "2425_E0.csv",
+        "season": "2024-25",
+        "sha256": "d0c8ce4a96d886cf60cf101f570f4a3893844226f91c7bd769eb568c49edbfa4"
+      },
+      {
+        "byte_size": 154703,
+        "league": "F1",
+        "relative_path": "2425_F1.csv",
+        "season": "2024-25",
+        "sha256": "fe6ae6a0c30d05f0ac88e0fc4a31452c7203e2b444703dfa941e22f38f20ab63"
+      },
+      {
+        "byte_size": 117759,
+        "league": "G1",
+        "relative_path": "2425_G1.csv",
+        "season": "2024-25",
+        "sha256": "b0d0e4a3dc9054083763f205c808720c51cd55034282303e8a9f1d60be8321c9"
+      },
+      {
+        "byte_size": 191722,
+        "league": "I1",
+        "relative_path": "2425_I1.csv",
+        "season": "2024-25",
+        "sha256": "79d87a5b18771e066ac7419b7876bfd9771a68ca117a9712375d6bc9685abee3"
+      },
+      {
+        "byte_size": 155460,
+        "league": "N1",
+        "relative_path": "2425_N1.csv",
+        "season": "2024-25",
+        "sha256": "7f97f0a7fd1f9b2cff6ac09588cdc14fd07f19950cb75e821fa58ab41e541d0a"
+      },
+      {
+        "byte_size": 153596,
+        "league": "P1",
+        "relative_path": "2425_P1.csv",
+        "season": "2024-25",
+        "sha256": "e3cceff81e471c59e72c1f60f81b2e62df21d1a58af167062d4915484da00255"
+      },
+      {
+        "byte_size": 118635,
+        "league": "SC0",
+        "relative_path": "2425_SC0.csv",
+        "season": "2024-25",
+        "sha256": "a7e7c7512a04784c8c8d9a82a3bb24a3c67c9a6afa533a661d8fbbbbec293118"
+      },
+      {
+        "byte_size": 192863,
+        "league": "SP1",
+        "relative_path": "2425_SP1.csv",
+        "season": "2024-25",
+        "sha256": "c086e96d6a53f6e6c0fce4e35db0d1728c773b4362323da0161a34769e315a36"
+      },
+      {
+        "byte_size": 173297,
+        "league": "T1",
+        "relative_path": "2425_T1.csv",
+        "season": "2024-25",
+        "sha256": "fd91680cc815f356c94fdd733078431ca771707305994ec49c5f1270cf9c9f5c"
+      },
+      {
+        "byte_size": 158888,
+        "league": "B1",
+        "relative_path": "2526_B1.csv",
+        "season": "2025-26",
+        "sha256": "7ba1d75b2f23ab6bf36952fa61b62e80905e2d38fa059ad389106772aebaf481"
+      },
+      {
+        "byte_size": 159944,
+        "league": "D1",
+        "relative_path": "2526_D1.csv",
+        "season": "2025-26",
+        "sha256": "618301a4b39918225a8ccc57f0f839d675e1abd92fa3a3ccd9a67acd7c79dd7f"
+      },
+      {
+        "byte_size": 203438,
+        "league": "E0",
+        "relative_path": "2526_E0.csv",
+        "season": "2025-26",
+        "sha256": "3e3a8352f9ada6789c508d6ca184424421fed56a30400904a4a327c583407e62"
+      },
+      {
+        "byte_size": 158471,
+        "league": "F1",
+        "relative_path": "2526_F1.csv",
+        "season": "2025-26",
+        "sha256": "898b7ddcd373cfe955ae353b1a98cf7f1c8757ca10b69d53039f4e098e88f192"
+      },
+      {
+        "byte_size": 117010,
+        "league": "G1",
+        "relative_path": "2526_G1.csv",
+        "season": "2025-26",
+        "sha256": "0f77e72cb9db8f5dcd298d16f20551a82d018b478fc12a67e065241f05810830"
+      },
+      {
+        "byte_size": 196217,
+        "league": "I1",
+        "relative_path": "2526_I1.csv",
+        "season": "2025-26",
+        "sha256": "709ae279617d16af226312bcceac941e71241745ddaf950bdac2b83afad4fcbb"
+      },
+      {
+        "byte_size": 158364,
+        "league": "N1",
+        "relative_path": "2526_N1.csv",
+        "season": "2025-26",
+        "sha256": "dfb092a866e0df4b4c8fde7778d47f41a4307f5c5ac5a6f55d2276e45c80e604"
+      },
+      {
+        "byte_size": 157715,
+        "league": "P1",
+        "relative_path": "2526_P1.csv",
+        "season": "2025-26",
+        "sha256": "f1353dc7404bfa0d27daa3ca6c164bb450ec20558ee02fffb7160fae182213dc"
+      },
+      {
+        "byte_size": 118594,
+        "league": "SC0",
+        "relative_path": "2526_SC0.csv",
+        "season": "2025-26",
+        "sha256": "be3c45e08f09a327e3fd5289dd0b362b200f430ed5845cb18df1aca7e3ced2ee"
+      },
+      {
+        "byte_size": 197653,
+        "league": "SP1",
+        "relative_path": "2526_SP1.csv",
+        "season": "2025-26",
+        "sha256": "4ca2e285f3ee0702f6bc55fcaa4f5a15cb3aef6220735a1d15398131e21d63f5"
+      },
+      {
+        "byte_size": 158392,
+        "league": "T1",
+        "relative_path": "2526_T1.csv",
+        "season": "2025-26",
+        "sha256": "d35e97d42b53ca870b13683da3998aa2758eeb43280fbe71d5d935bae47cdd23"
+      }
+    ],
+    "manifest_sha256": "1640f2964d34655e01407dd1a7a36b81b3f24f28d22e40f45568ba81ee84560e"
+  },
+  "generated_at_utc": "2026-07-31T07:51:42Z",
+  "market_safety": {
+    "away_win_either_half": "DISABLED",
+    "home_win_either_half": "DISABLED"
+  },
+  "schema_version": 1,
+  "sources": {
+    "football_data_org_live": {
+      "coverage_percentage": 100.0,
+      "invalid": 0,
+      "local_file_identity": "persisted_database_evidence_only",
+      "missing": 0,
+      "source_file_sha256": null,
+      "total": 603,
+      "valid": 603
+    },
+    "football_data_uk_csv": {
+      "coverage_percentage": 99.820974,
+      "invalid": 0,
+      "local_file_identity": "football_data_uk_cache_manifest",
+      "missing": 38,
+      "source_file_sha256": null,
+      "total": 21226,
+      "valid": 21188
+    }
+  }
+}
