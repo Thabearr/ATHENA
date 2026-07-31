@@ -1,0 +1,284 @@
+{
+  "breakdowns": {
+    "by_league": {
+      "B1": {
+        "away_yes": 870,
+        "both_teams_won_a_half": 348,
+        "home_yes": 1058,
+        "rows": 1848
+      },
+      "BL1": {
+        "away_yes": 33,
+        "both_teams_won_a_half": 13,
+        "home_yes": 36,
+        "rows": 63
+      },
+      "CL": {
+        "away_yes": 9,
+        "both_teams_won_a_half": 4,
+        "home_yes": 7,
+        "rows": 13
+      },
+      "D1": {
+        "away_yes": 869,
+        "both_teams_won_a_half": 370,
+        "home_yes": 1069,
+        "rows": 1835
+      },
+      "DED": {
+        "away_yes": 24,
+        "both_teams_won_a_half": 8,
+        "home_yes": 27,
+        "rows": 54
+      },
+      "E0": {
+        "away_yes": 1108,
+        "both_teams_won_a_half": 441,
+        "home_yes": 1307,
+        "rows": 2280
+      },
+      "F1": {
+        "away_yes": 1000,
+        "both_teams_won_a_half": 394,
+        "home_yes": 1157,
+        "rows": 2058
+      },
+      "FL1": {
+        "away_yes": 28,
+        "both_teams_won_a_half": 12,
+        "home_yes": 33,
+        "rows": 63
+      },
+      "G1": {
+        "away_yes": 636,
+        "both_teams_won_a_half": 233,
+        "home_yes": 770,
+        "rows": 1428
+      },
+      "I1": {
+        "away_yes": 1103,
+        "both_teams_won_a_half": 446,
+        "home_yes": 1268,
+        "rows": 2280
+      },
+      "N1": {
+        "away_yes": 869,
+        "both_teams_won_a_half": 346,
+        "home_yes": 1059,
+        "rows": 1836
+      },
+      "P1": {
+        "away_yes": 858,
+        "both_teams_won_a_half": 324,
+        "home_yes": 1036,
+        "rows": 1836
+      },
+      "PD": {
+        "away_yes": 34,
+        "both_teams_won_a_half": 15,
+        "home_yes": 58,
+        "rows": 90
+      },
+      "PL": {
+        "away_yes": 27,
+        "both_teams_won_a_half": 13,
+        "home_yes": 42,
+        "rows": 71
+      },
+      "PPL": {
+        "away_yes": 26,
+        "both_teams_won_a_half": 12,
+        "home_yes": 37,
+        "rows": 65
+      },
+      "SA": {
+        "away_yes": 41,
+        "both_teams_won_a_half": 14,
+        "home_yes": 42,
+        "rows": 80
+      },
+      "SC0": {
+        "away_yes": 621,
+        "both_teams_won_a_half": 254,
+        "home_yes": 807,
+        "rows": 1368
+      },
+      "SP1": {
+        "away_yes": 988,
+        "both_teams_won_a_half": 419,
+        "home_yes": 1353,
+        "rows": 2280
+      },
+      "T1": {
+        "away_yes": 964,
+        "both_teams_won_a_half": 423,
+        "home_yes": 1272,
+        "rows": 2139
+      },
+      "WC": {
+        "away_yes": 45,
+        "both_teams_won_a_half": 15,
+        "home_yes": 60,
+        "rows": 104
+      }
+    },
+    "by_season": {
+      "2020-21": {
+        "away_yes": 1774,
+        "both_teams_won_a_half": 669,
+        "home_yes": 1967,
+        "rows": 3632
+      },
+      "2021-22": {
+        "away_yes": 1696,
+        "both_teams_won_a_half": 686,
+        "home_yes": 2052,
+        "rows": 3590
+      },
+      "2022-23": {
+        "away_yes": 1595,
+        "both_teams_won_a_half": 629,
+        "home_yes": 2071,
+        "rows": 3523
+      },
+      "2023-24": {
+        "away_yes": 1612,
+        "both_teams_won_a_half": 676,
+        "home_yes": 2042,
+        "rows": 3522
+      },
+      "2024-25": {
+        "away_yes": 1661,
+        "both_teams_won_a_half": 694,
+        "home_yes": 2028,
+        "rows": 3476
+      },
+      "2025-26": {
+        "away_yes": 1815,
+        "both_teams_won_a_half": 750,
+        "home_yes": 2338,
+        "rows": 4048
+      }
+    },
+    "by_split": {
+      "TEST": {
+        "away_yes": 1815,
+        "both_teams_won_a_half": 750,
+        "home_yes": 2338,
+        "rows": 4048
+      },
+      "TRAIN": {
+        "away_yes": 6677,
+        "both_teams_won_a_half": 2660,
+        "home_yes": 8132,
+        "rows": 14267
+      },
+      "VALIDATION": {
+        "away_yes": 1661,
+        "both_teams_won_a_half": 694,
+        "home_yes": 2028,
+        "rows": 3476
+      }
+    }
+  },
+  "column_roles": {
+    "post_match_only_never_features": [
+      "full_time_home_goals",
+      "full_time_away_goals",
+      "half_time_home_goals",
+      "half_time_away_goals",
+      "second_half_home_goals",
+      "second_half_away_goals",
+      "first_half_outcome",
+      "second_half_outcome",
+      "home_win_first_half",
+      "away_win_first_half",
+      "home_win_second_half",
+      "away_win_second_half",
+      "home_win_either_half_yes",
+      "away_win_either_half_yes",
+      "both_teams_won_a_half"
+    ],
+    "purpose": "LABEL_DATASET_NOT_FEATURE_MATRIX"
+  },
+  "dataset_name": "win-either-half-labels-v1",
+  "exclusion_reasons": {
+    "MISSING_HALF_TIME_SCORE": 38,
+    "UNOBSERVED_PROVENANCE": 38
+  },
+  "files": {
+    "exclusions": {
+      "byte_size": 8443,
+      "relative_name": "exclusions-v1.csv",
+      "rows": 38,
+      "sha256": "c7ae1cf616b1f116300e3627ebe7e087b30bae4da5947370684b15a52f6fec00"
+    },
+    "labels": {
+      "byte_size": 4660442,
+      "relative_name": "labels-v1.csv",
+      "rows": 21791,
+      "sha256": "679883c66095f34cffaee20955a8d511fe18886fdb4e935c062180de6f48d524"
+    }
+  },
+  "generated_at_utc": "2026-07-31T20:30:04Z",
+  "generator": {
+    "generator_git_head_sha": "fdd16e834e42fed19108d1c8db54955826903de3",
+    "tracked_worktree_clean": true
+  },
+  "labels": {
+    "away_no": 11638,
+    "away_yes": 10153,
+    "both_teams_won_a_half": 4104,
+    "home_no": 9293,
+    "home_yes": 12498
+  },
+  "market_safety": {
+    "away_win_either_half": "DISABLED",
+    "home_win_either_half": "DISABLED"
+  },
+  "schema_version": 1,
+  "selection": {
+    "eligible_labels": 21791,
+    "excluded_fixtures": 38,
+    "selected_fixtures": 21829
+  },
+  "splits": {
+    "test": {
+      "away_yes": 1815,
+      "both_teams_won_a_half": 750,
+      "home_yes": 2338,
+      "rows": 4048,
+      "seasons": [
+        "2025-26"
+      ]
+    },
+    "train": {
+      "away_yes": 6677,
+      "both_teams_won_a_half": 2660,
+      "home_yes": 8132,
+      "rows": 14267,
+      "seasons": [
+        "2020-21",
+        "2021-22",
+        "2022-23",
+        "2023-24"
+      ]
+    },
+    "validation": {
+      "away_yes": 1661,
+      "both_teams_won_a_half": 694,
+      "home_yes": 2028,
+      "rows": 3476,
+      "seasons": [
+        "2024-25"
+      ]
+    }
+  },
+  "stage_2_baseline": {
+    "baseline_name": "half-time-ready-for-research",
+    "cache_manifest_sha256": "1640f2964d34655e01407dd1a7a36b81b3f24f28d22e40f45568ba81ee84560e",
+    "evidence_git_head_sha": "7089c0c11c2ca725dd38f6345e210c9fa4f8747d",
+    "logical_evidence_sha256": "f79b9aa54f1d3a34fd6115d7a1cf1aa746e561a35073afb67d1dad97220011ba",
+    "schema_sha256": "fe5e29a6f0e9de427db1780f480689d1a23c732ba73779eb737af906a778161b"
+  }
+}
