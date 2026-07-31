@@ -514,9 +514,9 @@
       "sha256": "68547ae9670703c59d68367d8fa1ef067e7410d8beb842ad0aec2151f0777e7b"
     }
   },
-  "generated_at_utc": "2026-07-31T22:23:57Z",
+  "generated_at_utc": "2026-07-31T23:37:23Z",
   "generator": {
-    "generator_git_head_sha": "665d1796e7999b0baa5615020090f0402c9a8bc6",
+    "generator_git_head_sha": "6b57a51092255d5e4c5ba1f37584c854b1fd2ca9",
     "tracked_worktree_clean": true
   },
   "market_safety": {
