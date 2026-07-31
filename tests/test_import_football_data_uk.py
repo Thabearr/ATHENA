@@ -536,6 +536,44 @@ class FootballDataUkImporterTests(unittest.TestCase):
             int(expected[:16], 16) & ((1 << 63) - 1),
         )
 
+        parsed = FootballDataUkImporter._parse_row(
+            self._row(
+                HomeTeam="Alpha FC",
+                AwayTeam="Beta FC",
+            ),
+            requested_season="2024-25",
+            requested_league="E0",
+        )
+        self.assertEqual(parsed.fixture_id, first_id)
+        self.assertEqual(parsed.source_fixture_id, first_fingerprint)
+        self.assertEqual(parsed.league, "E0")
+
+    def test_blank_div_uses_requested_league_only_for_legacy_identity(self):
+        row = self._row(Div="")
+        parsed = FootballDataUkImporter._parse_row(
+            row,
+            requested_season="2024-25",
+            requested_league="e0",
+        )
+        expected_id, expected_fingerprint = deterministic_fixture_identity(
+            season="2024-25",
+            league="E0",
+            match_date="2024-08-10",
+            match_time="15:00",
+            home_team=row["HomeTeam"],
+            away_team=row["AwayTeam"],
+        )
+
+        self.assertEqual(parsed.fixture_id, expected_id)
+        self.assertEqual(parsed.source_fixture_id, expected_fingerprint)
+        self.assertIsNone(parsed.league)
+        self.assertIsNotNone(parsed.observation)
+        self.assertIsNone(parsed.observation.league)
+        self.assertEqual(
+            parsed.observation.source_fixture_id,
+            expected_fingerprint,
+        )
+
     def test_repeated_import_is_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
             importer = self._importer(directory)
@@ -791,6 +829,66 @@ class FootballDataUkImporterTests(unittest.TestCase):
             self.assertEqual(repeated.historical_unchanged, 1)
             self.assertEqual(repeated.historical_conflicts, 0)
 
+    def test_known_div_backfills_all_38_missing_half_time_fixtures(self):
+        rows = [
+            self._row(
+                HomeTeam=f"Missing Home {index}",
+                AwayTeam=f"Missing Away {index}",
+                HTHG="",
+                HTAG="",
+                HTR="",
+            )
+            for index in range(38)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            importer = self._importer(directory)
+            self._cache_file(
+                importer.download_directory,
+                self._csv_bytes(rows),
+            )
+            importer.run()
+
+            connection = sqlite3.connect(importer.database_path)
+            try:
+                connection.execute(
+                    "UPDATE historical_matches SET league_code = NULL"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            backfill = importer.run()
+            repeated = importer.run()
+            historical = self._database_rows(
+                Path(importer.database_path),
+                "historical_matches",
+            )
+            report = audit_half_time_coverage(
+                load_observations_from_database(importer.database_path)
+            )
+
+            self.assertEqual(backfill.metadata_backfilled, 38)
+            self.assertEqual(backfill.historical_conflicts, 0)
+            self.assertEqual(repeated.metadata_backfilled, 0)
+            self.assertEqual(repeated.historical_unchanged, 38)
+            self.assertEqual(len(historical), 38)
+            self.assertEqual(
+                {row["league_code"] for row in historical},
+                {"E0"},
+            )
+            self.assertEqual(
+                report.fixtures_missing_half_time_scores,
+                38,
+            )
+            self.assertEqual(
+                report.coverage_by_league["E0"]["missing"],
+                38,
+            )
+            self.assertEqual(
+                report.fixtures_with_unknown_league_metadata,
+                0,
+            )
+
     def test_absent_div_remains_explicit_unknown_metadata(self):
         without_div = self._row(
             Div="",
@@ -832,6 +930,142 @@ class FootballDataUkImporterTests(unittest.TestCase):
                     in reason
                     for reason in report.readiness_reasons
                 )
+            )
+            self.assertEqual(
+                report.readiness,
+                ResearchReadiness.INSUFFICIENT_DATA,
+            )
+
+    def test_legacy_blank_div_identity_reimports_without_duplicate(self):
+        blank_div_row = self._row(
+            Div="",
+            HTHG="",
+            HTAG="",
+            HTR="",
+        )
+        parsed = FootballDataUkImporter._parse_row(
+            blank_div_row,
+            requested_season="2024-25",
+            requested_league="E0",
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database_path = root / "legacy-blank-div.db"
+            connection = sqlite3.connect(database_path)
+            try:
+                connection.executescript(
+                    """
+                    CREATE TABLE teams (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        team_id INTEGER UNIQUE,
+                        name TEXT NOT NULL,
+                        league TEXT
+                    );
+                    CREATE TABLE historical_matches (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT,
+                        fixture_id INTEGER UNIQUE,
+                        home_id INTEGER,
+                        away_id INTEGER,
+                        home_goals INTEGER,
+                        away_goals INTEGER,
+                        match_date TEXT,
+                        home_pre_elo INTEGER,
+                        away_pre_elo INTEGER,
+                        home_xg REAL,
+                        away_xg REAL,
+                        home_possession INTEGER,
+                        away_possession INTEGER,
+                        data_source TEXT,
+                        season_label TEXT
+                    );
+                    """
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO teams (team_id, name, league)
+                    VALUES (?, ?, 'trusted_existing_league')
+                    """,
+                    (
+                        (parsed.home_team_id, parsed.home_team),
+                        (parsed.away_team_id, parsed.away_team),
+                    ),
+                )
+                connection.execute(
+                    """
+                    INSERT INTO historical_matches (
+                        fixture_id, home_id, away_id, home_goals,
+                        away_goals, match_date, data_source, season_label
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        parsed.fixture_id,
+                        parsed.home_team_id,
+                        parsed.away_team_id,
+                        parsed.full_time_home_goals,
+                        parsed.full_time_away_goals,
+                        parsed.match_date,
+                        SOURCE,
+                        parsed.season,
+                    ),
+                )
+                connection.commit()
+            finally:
+                connection.close()
+
+            importer = FootballDataUkImporter(
+                seasons=("2024-25",),
+                leagues=("E0",),
+                database_path=str(database_path),
+                download_directory=str(root / "downloads"),
+            )
+            self._cache_file(
+                importer.download_directory,
+                self._csv_bytes([blank_div_row]),
+            )
+
+            first = importer.run()
+            second = importer.run()
+            historical = self._database_rows(
+                database_path,
+                "historical_matches",
+            )
+            conflicts = self._database_rows(
+                database_path,
+                "historical_match_conflicts",
+            )
+            teams = self._database_rows(database_path, "teams")
+            observations = load_observations_from_database(
+                str(database_path)
+            )
+            report = audit_half_time_coverage(observations)
+
+            self.assertEqual(first.historical_inserted, 0)
+            self.assertEqual(first.historical_unchanged, 1)
+            self.assertEqual(first.historical_conflicts, 0)
+            self.assertEqual(second.historical_inserted, 0)
+            self.assertEqual(second.historical_unchanged, 1)
+            self.assertEqual(second.historical_conflicts, 0)
+            self.assertEqual(len(historical), 1)
+            self.assertEqual(historical[0]["fixture_id"], parsed.fixture_id)
+            self.assertIsNone(historical[0]["league_code"])
+            self.assertEqual(conflicts, [])
+            self.assertEqual(
+                {team["league"] for team in teams},
+                {"trusted_existing_league"},
+            )
+            self.assertEqual(len(observations), 1)
+            self.assertIsNone(observations[0].league)
+            self.assertEqual(
+                report.fixtures_with_unknown_league_metadata,
+                1,
+            )
+            self.assertEqual(
+                report.unknown_league_fixtures,
+                (str(parsed.fixture_id),),
+            )
+            self.assertEqual(
+                report.readiness,
+                ResearchReadiness.INSUFFICIENT_DATA,
             )
 
     def test_material_conflict_is_preserved_and_visible_to_audit(self):

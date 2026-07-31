@@ -516,9 +516,17 @@ class FootballDataUkImporter:
         ):
             raise RowImportError("HTR conflicts with half-time scores")
 
+        # requested_league is acquisition context used only to preserve the
+        # legacy identity when Div is blank. It is not observed league
+        # metadata and must not be persisted as evidence.
+        identity_league = (
+            league
+            if league is not None
+            else normalize_league(requested_league)
+        )
         fixture_id, source_fixture_id = deterministic_fixture_identity(
             season=requested_season,
-            league=league,
+            league=identity_league,
             match_date=match_date,
             match_time=raw_time,
             home_team=home_team,
