@@ -12,3 +12,4 @@ database/athena.db
 *.egg-info/
 backtest_output.txt
 .cache/football-data-uk/
+.cache/athena-research/
