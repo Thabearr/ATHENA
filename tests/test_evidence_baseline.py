@@ -1,4 +1,5 @@
 import hashlib
+import io
 import json
 import os
 import sqlite3
@@ -7,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
@@ -20,8 +22,10 @@ from scripts.freeze_evidence_baseline import (
     database_schema_sha256,
     load_baseline,
     main,
+    get_code_state,
     validate_expectations,
     validate_ready_baseline,
+    verify_revision_relationship,
     write_baseline_atomic,
 )
 
@@ -29,7 +33,7 @@ from scripts.freeze_evidence_baseline import (
 class EvidenceBaselineTests(unittest.TestCase):
     REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
     CODE_STATE = {
-        "git_head_sha": "a" * 40,
+        "evidence_git_head_sha": "a" * 40,
         "tracked_worktree_clean": True,
     }
 
@@ -160,6 +164,41 @@ class EvidenceBaselineTests(unittest.TestCase):
         (nested / "2324_D1.csv").write_bytes(b"x,y\n3,4\n")
         (nested / "unmapped.csv").write_bytes(b"z\n5\n")
 
+    def _git(self, repository: Path, *arguments: str) -> str:
+        result = subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            timeout=30,
+            shell=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout.strip()
+
+    def _create_git_repository(self, repository: Path) -> str:
+        repository.mkdir(parents=True)
+        self._git(repository, "init")
+        self._git(repository, "config", "user.name", "ATHENA Tests")
+        self._git(
+            repository,
+            "config",
+            "user.email",
+            "athena-tests@example.invalid",
+        )
+        (repository / "artifacts").mkdir()
+        (repository / "artifacts" / "baseline.json").write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        (repository / "tracked.txt").write_text(
+            "evidence code state\n",
+            encoding="utf-8",
+        )
+        self._git(repository, "add", "artifacts/baseline.json", "tracked.txt")
+        self._git(repository, "commit", "-m", "evidence revision")
+        return self._git(repository, "rev-parse", "HEAD")
+
     def _build(
         self,
         database_path: Path,
@@ -189,7 +228,7 @@ class EvidenceBaselineTests(unittest.TestCase):
                 "fixtures_missing_half_time_scores": 38,
             },
             "code": {
-                "git_head_sha": "a" * 40,
+                "evidence_git_head_sha": "a" * 40,
                 "tracked_worktree_clean": True,
             },
             "football_data_uk_cache": {"file_count": 66},
@@ -445,6 +484,248 @@ class EvidenceBaselineTests(unittest.TestCase):
             ):
                 self.assertEqual(main(arguments), 1)
 
+    def test_exact_evidence_head_verification_passes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            head = self._create_git_repository(repository)
+            code = {
+                "evidence_git_head_sha": head,
+                "tracked_worktree_clean": True,
+            }
+
+            result = verify_revision_relationship(
+                code,
+                get_code_state(repository),
+                check_path=Path(directory) / "outside.json",
+                repository_root=repository,
+            )
+
+            self.assertEqual(result["mode"], "exact_evidence_revision")
+
+    def test_artifact_only_descendant_verification_passes_and_is_reported(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            evidence_head = self._create_git_repository(repository)
+            cache = repository / "cache"
+            database = repository / "athena.db"
+            baseline_path = repository / "artifacts" / "baseline.json"
+            self._create_cache(cache)
+            self._create_database(database)
+            artifact = build_evidence_baseline(
+                database_path=database,
+                cache_directory=cache,
+                baseline_name="test-baseline",
+                code_state={
+                    "evidence_git_head_sha": evidence_head,
+                    "tracked_worktree_clean": True,
+                },
+                generated_at_utc="2026-07-31T00:00:00Z",
+            )
+            write_baseline_atomic(baseline_path, artifact, force=True)
+            self._git(repository, "add", "artifacts/baseline.json")
+            self._git(repository, "commit", "-m", "add evidence baseline")
+
+            output = io.StringIO()
+            with redirect_stdout(output):
+                return_code = main(
+                    [
+                        "--database",
+                        str(database),
+                        "--cache-directory",
+                        str(cache),
+                        "--check",
+                        str(baseline_path),
+                    ],
+                    repository_root=repository,
+                )
+
+            self.assertEqual(return_code, 0)
+            self.assertIn(
+                "accepted artifact-only descendant relationship",
+                output.getvalue(),
+            )
+
+    def test_artifact_only_descendant_with_additional_tracked_change_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            evidence_head = self._create_git_repository(repository)
+            baseline_path = repository / "artifacts" / "baseline.json"
+            baseline_path.write_text('{"baseline": true}\n', encoding="utf-8")
+            (repository / "tracked.txt").write_text(
+                "code changed too\n",
+                encoding="utf-8",
+            )
+            self._git(repository, "add", "artifacts/baseline.json", "tracked.txt")
+            self._git(repository, "commit", "-m", "baseline and code drift")
+
+            with self.assertRaisesRegex(BaselineError, "other than"):
+                verify_revision_relationship(
+                    {
+                        "evidence_git_head_sha": evidence_head,
+                        "tracked_worktree_clean": True,
+                    },
+                    get_code_state(repository),
+                    check_path=baseline_path,
+                    repository_root=repository,
+                )
+
+    def test_descendant_changing_only_another_tracked_file_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            evidence_head = self._create_git_repository(repository)
+            (repository / "tracked.txt").write_text(
+                "only code changed\n",
+                encoding="utf-8",
+            )
+            self._git(repository, "add", "tracked.txt")
+            self._git(repository, "commit", "-m", "code drift")
+
+            with self.assertRaisesRegex(BaselineError, "other than"):
+                verify_revision_relationship(
+                    {
+                        "evidence_git_head_sha": evidence_head,
+                        "tracked_worktree_clean": True,
+                    },
+                    get_code_state(repository),
+                    check_path=repository / "artifacts" / "baseline.json",
+                    repository_root=repository,
+                )
+
+    def test_non_ancestor_revision_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            common_head = self._create_git_repository(repository)
+            default_branch = self._git(
+                repository,
+                "branch",
+                "--show-current",
+            )
+            self._git(repository, "checkout", "-b", "evidence-side")
+            (repository / "tracked.txt").write_text(
+                "side evidence\n",
+                encoding="utf-8",
+            )
+            self._git(repository, "commit", "-am", "side evidence")
+            non_ancestor = self._git(repository, "rev-parse", "HEAD")
+            self._git(repository, "checkout", default_branch)
+            self.assertEqual(
+                self._git(repository, "rev-parse", "HEAD"),
+                common_head,
+            )
+            (repository / "artifacts" / "baseline.json").write_text(
+                '{"baseline": true}\n',
+                encoding="utf-8",
+            )
+            self._git(repository, "commit", "-am", "current baseline")
+
+            with self.assertRaisesRegex(BaselineError, "not an ancestor"):
+                verify_revision_relationship(
+                    {
+                        "evidence_git_head_sha": non_ancestor,
+                        "tracked_worktree_clean": True,
+                    },
+                    get_code_state(repository),
+                    check_path=repository / "artifacts" / "baseline.json",
+                    repository_root=repository,
+                )
+
+    def test_outside_repository_baseline_cannot_use_descendant_acceptance(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            repository = root / "repository"
+            evidence_head = self._create_git_repository(repository)
+            baseline_path = repository / "artifacts" / "baseline.json"
+            baseline_path.write_text('{"baseline": true}\n', encoding="utf-8")
+            self._git(repository, "commit", "-am", "add baseline")
+            outside = root / "outside.json"
+            outside.write_text("{}\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(BaselineError, "inside the repository"):
+                verify_revision_relationship(
+                    {
+                        "evidence_git_head_sha": evidence_head,
+                        "tracked_worktree_clean": True,
+                    },
+                    get_code_state(repository),
+                    check_path=outside,
+                    repository_root=repository,
+                )
+
+    def test_symlinked_baseline_path_is_rejected_for_descendant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            evidence_head = self._create_git_repository(repository)
+            baseline_path = repository / "artifacts" / "baseline.json"
+            baseline_path.write_text('{"baseline": true}\n', encoding="utf-8")
+            self._git(repository, "commit", "-am", "add baseline")
+
+            with patch(
+                "scripts.freeze_evidence_baseline._path_is_symlink",
+                side_effect=lambda path: path == baseline_path,
+            ):
+                with self.assertRaisesRegex(BaselineError, "symlinked"):
+                    verify_revision_relationship(
+                        {
+                            "evidence_git_head_sha": evidence_head,
+                            "tracked_worktree_clean": True,
+                        },
+                        get_code_state(repository),
+                        check_path=baseline_path,
+                        repository_root=repository,
+                    )
+
+    def test_dirty_tracked_worktree_fails_revision_verification(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repository = Path(directory) / "repository"
+            evidence_head = self._create_git_repository(repository)
+            (repository / "tracked.txt").write_text(
+                "uncommitted tracked change\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(BaselineError, "worktree is dirty"):
+                verify_revision_relationship(
+                    {
+                        "evidence_git_head_sha": evidence_head,
+                        "tracked_worktree_clean": True,
+                    },
+                    get_code_state(repository),
+                    check_path=repository / "artifacts" / "baseline.json",
+                    repository_root=repository,
+                )
+
+    def test_non_revision_evidence_checks_remain_strict(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "cache"
+            database = root / "athena.db"
+            self._create_cache(cache)
+            self._create_database(database)
+            stored = self._build(database, cache)
+            current = deepcopy(stored)
+            current["code"]["evidence_git_head_sha"] = "b" * 40
+            current["database"]["logical_evidence_sha256"] = "logical-drift"
+            current["database"]["schema_sha256"] = "schema-drift"
+            current["audit"]["readiness"] = "DATA_INVALID"
+            current["sources"] = {"changed": {}}
+            current["football_data_uk_cache"]["manifest_sha256"] = "cache-drift"
+            current["market_safety"]["home_win_either_half"] = "ACTIVE"
+
+            differences = compare_baselines(
+                stored,
+                current,
+                allow_revision_difference=True,
+            )
+
+            self.assertIn("logical evidence fingerprint differs", differences)
+            self.assertIn("database schema fingerprint differs", differences)
+            self.assertTrue(
+                any(item.startswith("audit totals/readiness differ") for item in differences)
+            )
+            self.assertIn("source totals differ", differences)
+            self.assertIn("cache manifest fingerprint differs", differences)
+            self.assertIn("market safety state differs", differences)
+
     def test_require_ready_safety_gates(self):
         ready = self._ready_artifact()
         validate_ready_baseline(ready)
@@ -514,6 +795,53 @@ class EvidenceBaselineTests(unittest.TestCase):
                 self.assertIn("--require-ready", result.stdout)
                 self.assertIn("--expect-cache-files", result.stdout)
                 self.assertNotIn("ModuleNotFoundError", result.stderr)
+
+    def _assert_entrypoint_generates_and_checks(self, command_prefix):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            cache = root / "cache"
+            database = root / "athena.db"
+            baseline = root / "baseline.json"
+            self._create_cache(cache)
+            self._create_database(database)
+            common = [
+                "--database",
+                str(database),
+                "--cache-directory",
+                str(cache),
+            ]
+            generation = subprocess.run(
+                [*command_prefix, *common, "--output", str(baseline)],
+                cwd=self.REPOSITORY_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+                shell=False,
+            )
+            self.assertEqual(generation.returncode, 0, generation.stderr)
+            self.assertTrue(baseline.is_file())
+            verification = subprocess.run(
+                [*command_prefix, *common, "--check", str(baseline)],
+                cwd=self.REPOSITORY_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=60,
+                shell=False,
+            )
+            self.assertEqual(verification.returncode, 0, verification.stderr)
+            self.assertIn("Evidence baseline verified", verification.stdout)
+
+    def test_module_entrypoint_performs_real_generation_and_check(self):
+        self._assert_entrypoint_generates_and_checks(
+            [sys.executable, "-m", "scripts.freeze_evidence_baseline"]
+        )
+
+    def test_direct_script_entrypoint_performs_real_generation_and_check(self):
+        self._assert_entrypoint_generates_and_checks(
+            [sys.executable, "scripts/freeze_evidence_baseline.py"]
+        )
 
 
 if __name__ == "__main__":

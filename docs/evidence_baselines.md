@@ -18,19 +18,39 @@ complete historical coverage, or that a betting market is safe to enable.
 Database files, raw cached CSVs, credentials, absolute paths, and raw provider
 payloads remain untracked and are never embedded in the artifact.
 
-After this tooling is merged, generate the real local baseline from a clean
-tracked worktree:
+## Baseline lifecycle
+
+First merge the tooling PR. From a clean `main`, generate the real local
+baseline. The clean Git revision at that moment is the evidence revision `H`
+and is recorded in the artifact as `code.evidence_git_head_sha`:
 
 ```powershell
 python -m scripts.freeze_evidence_baseline --database database/athena.db --cache-directory .cache/football-data-uk --output artifacts/evidence-baselines/half-time-ready-for-research.json --require-ready --expect-total-fixtures 21829 --expect-valid-half-time 21791 --expect-missing-half-time 38 --expect-cache-files 66
 ```
 
 Generation refuses to overwrite an existing artifact unless `--force` is
-provided. To verify the same evidence later:
+provided. Open a follow-up PR that commits only the generated baseline
+artifact. Do not commit the database or cached CSV files. After that
+artifact-only commit is merged, verify the same evidence with:
 
 ```powershell
 python -m scripts.freeze_evidence_baseline --database database/athena.db --cache-directory .cache/football-data-uk --check artifacts/evidence-baselines/half-time-ready-for-research.json
 ```
+
+A commit cannot contain its own Git SHA because adding that SHA changes the
+commit content and therefore produces a different SHA. The artifact therefore
+records the clean parent code state `H`, not the later commit that adds the
+artifact. Check mode accepts either exact execution at `H` or a proven
+artifact-only descendant: `H` must be an ancestor of the current clean HEAD,
+and the checked artifact must be the only tracked path changed since `H`.
+The actual `--check` path must be a non-symlinked path inside the repository;
+an artifact path stored in JSON is never trusted for this decision. Successful
+use of this descendant rule is reported explicitly.
+
+Any later code, schema, test, documentation, configuration, or other tracked
+change makes that relationship fail. Verify from the original baseline state,
+or intentionally produce a new versioned baseline against the new clean
+evidence revision.
 
 `--require-ready` checks the existing research-readiness result, invalid and
 conflict counts, league metadata completeness, tracked Git cleanliness, and

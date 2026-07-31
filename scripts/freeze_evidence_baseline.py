@@ -243,9 +243,12 @@ def build_cache_manifest(cache_directory: Path) -> dict:
     }
 
 
-def _run_git(arguments: list, repository_root: Path) -> str:
+def _run_git_process(
+    arguments: list,
+    repository_root: Path,
+) -> subprocess.CompletedProcess:
     try:
-        result = subprocess.run(
+        return subprocess.run(
             ["git", "-C", str(repository_root), *arguments],
             capture_output=True,
             check=False,
@@ -253,9 +256,17 @@ def _run_git(arguments: list, repository_root: Path) -> str:
         )
     except FileNotFoundError as error:
         raise BaselineError("Git executable could not be found") from error
+
+
+def _bounded_git_error(result: subprocess.CompletedProcess) -> str:
     stderr = result.stderr.decode("utf-8", errors="replace").strip()
+    return " ".join(stderr.split())[:240]
+
+
+def _run_git(arguments: list, repository_root: Path) -> str:
+    result = _run_git_process(arguments, repository_root)
     if result.returncode != 0:
-        detail = " ".join(stderr.split())[:240]
+        detail = _bounded_git_error(result)
         raise BaselineError(
             "Git repository state could not be determined"
             + (f": {detail}" if detail else "")
@@ -272,8 +283,166 @@ def get_code_state(repository_root: Path = REPOSITORY_ROOT) -> dict:
     if not re.fullmatch(r"[0-9a-fA-F]{40}", head):
         raise BaselineError("Git HEAD did not resolve to a full SHA")
     return {
-        "git_head_sha": head.lower(),
+        "evidence_git_head_sha": head.lower(),
         "tracked_worktree_clean": not bool(status),
+    }
+
+
+def _validated_full_git_sha(value, label: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{40}", value
+    ):
+        raise BaselineError(f"{label} is not a full Git SHA")
+    return value.lower()
+
+
+def _git_commit_exists(commit_sha: str, repository_root: Path) -> bool:
+    result = _run_git_process(
+        ["cat-file", "-e", f"{commit_sha}^{{commit}}"],
+        repository_root,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode in (1, 128):
+        return False
+    detail = _bounded_git_error(result)
+    raise BaselineError(
+        "Git commit existence could not be determined"
+        + (f": {detail}" if detail else "")
+    )
+
+
+def _git_is_ancestor(
+    ancestor_sha: str,
+    descendant_sha: str,
+    repository_root: Path,
+) -> bool:
+    result = _run_git_process(
+        ["merge-base", "--is-ancestor", ancestor_sha, descendant_sha],
+        repository_root,
+    )
+    if result.returncode == 0:
+        return True
+    if result.returncode == 1:
+        return False
+    detail = _bounded_git_error(result)
+    raise BaselineError(
+        "Git ancestry could not be determined"
+        + (f": {detail}" if detail else "")
+    )
+
+
+def _git_changed_paths(
+    base_sha: str,
+    head_sha: str,
+    repository_root: Path,
+) -> set:
+    result = _run_git_process(
+        ["diff", "--name-only", "-z", base_sha, head_sha, "--"],
+        repository_root,
+    )
+    if result.returncode != 0:
+        detail = _bounded_git_error(result)
+        raise BaselineError(
+            "Git changed paths could not be determined"
+            + (f": {detail}" if detail else "")
+        )
+    decoded = result.stdout.decode("utf-8", errors="strict")
+    return {path for path in decoded.split("\0") if path}
+
+
+def _repository_relative_artifact_path(
+    artifact_path: Path,
+    repository_root: Path,
+) -> str:
+    repository = Path(os.path.abspath(repository_root))
+    candidate = Path(os.path.abspath(artifact_path))
+    try:
+        relative = candidate.relative_to(repository)
+    except ValueError as error:
+        raise BaselineError(
+            "Artifact-only descendant verification requires the checked "
+            "baseline to be inside the repository"
+        ) from error
+
+    current = repository
+    for component in relative.parts:
+        current = current / component
+        if _path_is_symlink(current):
+            raise BaselineError(
+                "Artifact-only descendant verification rejects symlinked "
+                "baseline paths"
+            )
+
+    try:
+        resolved_repository = repository.resolve(strict=True)
+        resolved_candidate = candidate.resolve(strict=True)
+        resolved_candidate.relative_to(resolved_repository)
+    except (OSError, ValueError) as error:
+        raise BaselineError(
+            "Checked baseline could not be resolved safely inside the "
+            "repository"
+        ) from error
+    return relative.as_posix()
+
+
+def _path_is_symlink(path: Path) -> bool:
+    return path.is_symlink()
+
+
+def verify_revision_relationship(
+    stored_code: dict,
+    current_code: dict,
+    *,
+    check_path: Path,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> dict:
+    """Verify exact revision or a single artifact-only descendant."""
+    evidence_sha = _validated_full_git_sha(
+        stored_code.get("evidence_git_head_sha"),
+        "Stored evidence Git revision",
+    )
+    current_sha = _validated_full_git_sha(
+        current_code.get("evidence_git_head_sha"),
+        "Current Git revision",
+    )
+    if not current_code.get("tracked_worktree_clean"):
+        raise BaselineError("Tracked worktree is dirty")
+    if evidence_sha == current_sha:
+        return {
+            "mode": "exact_evidence_revision",
+            "message": "current HEAD exactly matches the evidence revision",
+        }
+
+    if not _git_commit_exists(evidence_sha, repository_root):
+        raise BaselineError(
+            "Stored evidence Git revision does not exist in this repository"
+        )
+    if not _git_is_ancestor(evidence_sha, current_sha, repository_root):
+        raise BaselineError(
+            "Stored evidence Git revision is not an ancestor of current HEAD"
+        )
+    relative_artifact = _repository_relative_artifact_path(
+        check_path,
+        repository_root,
+    )
+    changed_paths = _git_changed_paths(
+        evidence_sha,
+        current_sha,
+        repository_root,
+    )
+    if changed_paths != {relative_artifact}:
+        rendered = ", ".join(sorted(changed_paths)) or "none"
+        raise BaselineError(
+            "Artifact-only descendant verification found tracked changes "
+            f"other than the checked baseline path (changed: {rendered})"
+        )
+    return {
+        "mode": "artifact_only_descendant",
+        "message": (
+            "accepted artifact-only descendant relationship from evidence "
+            f"revision {evidence_sha} to current HEAD {current_sha}"
+        ),
     }
 
 
@@ -316,6 +485,7 @@ def build_evidence_baseline(
     baseline_name: str = DEFAULT_BASELINE_NAME,
     code_state: Optional[dict] = None,
     generated_at_utc: Optional[str] = None,
+    repository_root: Path = REPOSITORY_ROOT,
 ) -> dict:
     observations = tuple(
         load_observations_from_database(str(database_path))
@@ -324,7 +494,11 @@ def build_evidence_baseline(
     return {
         "audit": audit,
         "baseline_name": str(baseline_name),
-        "code": code_state if code_state is not None else get_code_state(),
+        "code": (
+            code_state
+            if code_state is not None
+            else get_code_state(repository_root)
+        ),
         "database": {
             "logical_evidence_sha256": logical_evidence_sha256(
                 observations
@@ -453,15 +627,22 @@ def load_baseline(path: Path) -> dict:
     return artifact
 
 
-def compare_baselines(stored: dict, current: dict) -> list:
+def compare_baselines(
+    stored: dict,
+    current: dict,
+    *,
+    allow_revision_difference: bool = False,
+) -> list:
     differences = []
     if stored.get("schema_version") != current.get("schema_version"):
         differences.append("baseline schema version differs")
     if stored.get("baseline_name") != current.get("baseline_name"):
         differences.append("baseline name differs")
-    if stored.get("code", {}).get("git_head_sha") != current.get(
-        "code", {}
-    ).get("git_head_sha"):
+    if (
+        not allow_revision_difference
+        and stored.get("code", {}).get("evidence_git_head_sha")
+        != current.get("code", {}).get("evidence_git_head_sha")
+    ):
         differences.append("Git revision differs")
     if stored.get("code", {}).get("tracked_worktree_clean") != current.get(
         "code", {}
@@ -536,7 +717,11 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main(argv: Optional[Iterable[str]] = None) -> int:
+def main(
+    argv: Optional[Iterable[str]] = None,
+    *,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.check is not None and args.force:
@@ -561,6 +746,7 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
             database_path=args.database,
             cache_directory=args.cache_directory,
             baseline_name=baseline_name,
+            repository_root=repository_root,
         )
         validate_expectations(
             artifact,
@@ -572,13 +758,29 @@ def main(argv: Optional[Iterable[str]] = None) -> int:
         if args.require_ready:
             validate_ready_baseline(artifact)
         if stored is not None:
-            differences = compare_baselines(stored, artifact)
+            revision = verify_revision_relationship(
+                stored.get("code", {}),
+                artifact.get("code", {}),
+                check_path=args.check,
+                repository_root=repository_root,
+            )
+            differences = compare_baselines(
+                stored,
+                artifact,
+                allow_revision_difference=(
+                    revision["mode"] == "artifact_only_descendant"
+                ),
+            )
             if differences:
                 print("Evidence baseline verification failed:", file=sys.stderr)
                 for difference in differences:
                     print(f"  - {difference}", file=sys.stderr)
                 return 1
             print(f"Evidence baseline verified: {args.check}")
+            if revision["mode"] == "artifact_only_descendant":
+                print(
+                    "Revision verification: " + revision["message"]
+                )
             return 0
         write_baseline_atomic(args.output, artifact, force=args.force)
         print(f"Evidence baseline written: {args.output}")
