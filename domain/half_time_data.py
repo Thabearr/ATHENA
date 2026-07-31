@@ -440,10 +440,17 @@ def deduplicate_observations(
     return tuple(selected[key] for key in sorted(selected))
 
 
-def _select_one_observation_per_fixture(
+def select_one_observation_per_fixture(
     observations: Iterable[HalfTimeObservation],
 ) -> Tuple[HalfTimeObservation, ...]:
-    """Use the same documented ordering for fixture-level coverage."""
+    """Select one deterministic observation for each fixture.
+
+    Records are first deduplicated by fixture and source. The same ordering
+    used by the coverage audit then prefers the latest observation, followed
+    by VALID, MISSING and INVALID status, with a canonical payload tie-breaker.
+    Consumers that need fixture-level evidence must reuse this helper rather
+    than implement independent source precedence.
+    """
     selected = {}
     for observation in deduplicate_observations(observations):
         current = selected.get(observation.fixture_identity)
@@ -452,6 +459,13 @@ def _select_one_observation_per_fixture(
         ) > _observation_order_key(current):
             selected[observation.fixture_identity] = observation
     return tuple(selected[key] for key in sorted(selected))
+
+
+def _select_one_observation_per_fixture(
+    observations: Iterable[HalfTimeObservation],
+) -> Tuple[HalfTimeObservation, ...]:
+    """Backward-compatible alias for the public fixture selector."""
+    return select_one_observation_per_fixture(observations)
 
 
 def _bucket(observations: Iterable[HalfTimeObservation]) -> CoverageBucket:
@@ -492,7 +506,7 @@ def audit_half_time_coverage(
     thresholds: ReadinessThresholds = ReadinessThresholds(),
 ) -> HalfTimeCoverageReport:
     source_observations = deduplicate_observations(observations)
-    selected = _select_one_observation_per_fixture(source_observations)
+    selected = select_one_observation_per_fixture(source_observations)
     overall = _bucket(selected)
     source_quality = _bucket(source_observations)
     coverage_ratio = overall.valid / overall.total if overall.total else 0.0
@@ -652,4 +666,5 @@ __all__ = [
     "ScoreProvenance",
     "audit_half_time_coverage",
     "deduplicate_observations",
+    "select_one_observation_per_fixture",
 ]
