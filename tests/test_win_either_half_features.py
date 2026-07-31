@@ -719,7 +719,7 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
                 self.assertIn("--labels-input", result.stdout)
                 self.assertIn("--expect-rows", result.stdout)
 
-    def test_both_markets_disabled_and_no_production_outputs_tracked(self):
+    def test_both_markets_disabled_and_no_row_level_outputs_tracked(self):
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
             ModelStatus.DISABLED,
@@ -738,10 +738,9 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
             shell=False,
             check=True,
         ).stdout.splitlines()
-        self.assertNotIn(
-            "artifacts/research-manifests/win-either-half-features-v1.json",
-            tracked,
-        )
+        # A small, verified feature manifest is intentionally eligible for a
+        # follow-up artifact-only commit. Row-level datasets and databases are
+        # never eligible for tracking.
         self.assertFalse(any(path.endswith("features-v1.csv") for path in tracked))
         self.assertFalse(any(path.endswith("athena.db") for path in tracked))
 
