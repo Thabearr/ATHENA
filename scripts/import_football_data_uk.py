@@ -91,7 +91,7 @@ class FileAcquisitionError(RuntimeError):
 class ParsedFixture:
     fixture_id: int
     source_fixture_id: str
-    league: str
+    league: Optional[str]
     season: str
     home_team: str
     away_team: str
@@ -117,6 +117,7 @@ class ImportDiagnostics:
     historical_inserted: int = 0
     historical_unchanged: int = 0
     historical_conflicts: int = 0
+    metadata_backfilled: int = 0
     half_time_valid: int = 0
     half_time_missing: int = 0
     half_time_invalid: int = 0
@@ -184,17 +185,18 @@ def _positive_63_bit_identity(fingerprint: str) -> int:
 def deterministic_fixture_identity(
     *,
     season: str,
-    league: str,
+    league: Optional[str],
     match_date: str,
     match_time: str,
     home_team: str,
     away_team: str,
 ) -> tuple[int, str]:
+    canonical_league = normalize_league(league) if league else ""
     fingerprint = _sha256_hex(
         (
             SOURCE,
             season,
-            normalize_league(league),
+            canonical_league,
             match_date,
             match_time,
             home_team.casefold(),
@@ -479,7 +481,8 @@ class FootballDataUkImporter:
         requested_season: str,
         requested_league: str,
     ) -> ParsedFixture:
-        league = normalize_league(row.get("Div") or requested_league)
+        raw_league = str(row.get("Div") or "").strip()
+        league = normalize_league(raw_league) if raw_league else None
         home_team = str(row.get("HomeTeam") or "").strip()
         away_team = str(row.get("AwayTeam") or "").strip()
         if not home_team or not away_team:
@@ -513,9 +516,17 @@ class FootballDataUkImporter:
         ):
             raise RowImportError("HTR conflicts with half-time scores")
 
+        # requested_league is acquisition context used only to preserve the
+        # legacy identity when Div is blank. It is not observed league
+        # metadata and must not be persisted as evidence.
+        identity_league = (
+            league
+            if league is not None
+            else normalize_league(requested_league)
+        )
         fixture_id, source_fixture_id = deterministic_fixture_identity(
             season=requested_season,
-            league=league,
+            league=identity_league,
             match_date=match_date,
             match_time=raw_time,
             home_team=home_team,
@@ -585,7 +596,7 @@ class FootballDataUkImporter:
         *,
         team_id: int,
         team_name: str,
-        league: str,
+        league: Optional[str],
     ) -> None:
         cursor.execute(
             """
@@ -593,7 +604,7 @@ class FootballDataUkImporter:
             VALUES (?, ?, ?)
             ON CONFLICT(team_id) DO UPDATE SET
                 name = excluded.name,
-                league = excluded.league
+                league = COALESCE(excluded.league, teams.league)
             """,
             (team_id, team_name, league),
         )
@@ -608,6 +619,7 @@ class FootballDataUkImporter:
             parsed.match_date,
             SOURCE,
             parsed.season,
+            parsed.league,
         )
 
     @staticmethod
@@ -643,7 +655,8 @@ class FootballDataUkImporter:
                 away_goals,
                 match_date,
                 data_source,
-                season_label
+                season_label,
+                league_code
             FROM historical_matches
             WHERE fixture_id = ?
             """,
@@ -655,16 +668,39 @@ class FootballDataUkImporter:
                 """
                 INSERT INTO historical_matches (
                     fixture_id, home_id, away_id, home_goals, away_goals,
-                    match_date, data_source, season_label
+                    match_date, data_source, season_label, league_code
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (parsed.fixture_id, *incoming),
             )
             diagnostics.historical_inserted += 1
             return
 
-        if tuple(existing) == incoming:
+        existing_material = tuple(existing[:-1])
+        incoming_material = incoming[:-1]
+        existing_league = existing[-1]
+        incoming_league = incoming[-1]
+        if existing_material == incoming_material:
+            if (
+                not str(existing_league or "").strip()
+                and incoming_league is not None
+            ):
+                cursor.execute(
+                    """
+                    UPDATE historical_matches
+                    SET league_code = ?
+                    WHERE fixture_id = ?
+                      AND (
+                          league_code IS NULL
+                          OR TRIM(league_code) = ''
+                      )
+                    """,
+                    (incoming_league, parsed.fixture_id),
+                )
+                if cursor.rowcount == 1:
+                    diagnostics.metadata_backfilled += 1
+                    return
             diagnostics.historical_unchanged += 1
             return
 

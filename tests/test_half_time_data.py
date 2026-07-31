@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from domain.half_time_data import (
+    CoverageBucket,
     HalfTimeObservation,
     HalfTimeValidationStatus,
     ReadinessThresholds,
@@ -265,6 +266,59 @@ class HalfTimeCoverageTests(unittest.TestCase):
         )
         self.assertEqual(forward["fixtures_missing_half_time_scores"], 1)
 
+    def test_league_and_season_totals_remain_internally_consistent(self):
+        observations = (
+            self._observation(
+                "fixture-1",
+                league="E0",
+                season="2024-25",
+            ),
+            self._observation(
+                "fixture-2",
+                valid=False,
+                league="E0",
+                season="2024-25",
+            ),
+            self._observation(
+                "fixture-3",
+                league="D1",
+                season="2025-26",
+            ),
+        )
+
+        report = audit_half_time_coverage(observations)
+
+        self.assertEqual(
+            sum(
+                bucket["total"]
+                for bucket in report.coverage_by_league.values()
+            )
+            + report.fixtures_with_unknown_league_metadata,
+            report.total_historical_fixtures_inspected,
+        )
+        self.assertEqual(
+            sum(
+                bucket["total"]
+                for bucket in report.coverage_by_season.values()
+            ),
+            report.total_historical_fixtures_inspected,
+        )
+        self.assertNotIn("UNKNOWN", report.coverage_by_league)
+
+    def test_imported_dataset_coverage_keeps_missing_denominator(self):
+        bucket = CoverageBucket(
+            total=21829,
+            valid=21791,
+            missing=38,
+            invalid=0,
+        )
+
+        self.assertEqual(bucket.coverage_percentage, 99.82592)
+        self.assertEqual(
+            bucket.valid + bucket.missing + bucket.invalid,
+            bucket.total,
+        )
+
     def test_dataset_below_threshold_is_insufficient(self):
         report = audit_half_time_coverage(
             (self._observation("fixture-1"),),
@@ -407,6 +461,42 @@ class HalfTimeCoverageTests(unittest.TestCase):
             ),
         )
 
+        self.assertEqual(
+            report.readiness,
+            ResearchReadiness.READY_FOR_RESEARCH,
+        )
+        self.assertEqual(
+            MODEL_STATUS_REGISTRY[
+                MarketId.HOME_WIN_EITHER_HALF
+            ].status,
+            ModelStatus.DISABLED,
+        )
+        self.assertEqual(
+            MODEL_STATUS_REGISTRY[
+                MarketId.AWAY_WIN_EITHER_HALF
+            ].status,
+            ModelStatus.DISABLED,
+        )
+
+    def test_default_thresholds_allow_ready_with_known_league_metadata(self):
+        observations = tuple(
+            self._observation(
+                f"fixture-{index}",
+                league="E0",
+            )
+            for index in range(1000)
+        )
+
+        report = audit_half_time_coverage(observations)
+
+        self.assertEqual(
+            report.thresholds.minimum_valid_observations,
+            1000,
+        )
+        self.assertEqual(
+            report.thresholds.minimum_league_coverage,
+            0.60,
+        )
         self.assertEqual(
             report.readiness,
             ResearchReadiness.READY_FOR_RESEARCH,

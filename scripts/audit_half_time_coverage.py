@@ -106,8 +106,10 @@ def _load_historical_rows(connection: sqlite3.Connection) -> list:
         away_team_fields.append("f.away_team")
         league_fields.append("f.league")
         season_fields.append("CAST(f.season AS TEXT)")
+    if "league_code" in historical_columns:
+        league_fields.insert(0, "hm.league_code")
     if "league" in historical_columns:
-        league_fields.insert(0, "hm.league")
+        league_fields.append("hm.league")
     if "season_label" in historical_columns:
         season_fields.insert(0, "hm.season_label")
 
@@ -493,6 +495,10 @@ def render_human_readable(report: dict) -> str:
                 if report["conflicting_fixtures"]
                 else "None"
             )
+        ),
+        (
+            "Fixtures with unknown league metadata: "
+            f"{report['fixtures_with_unknown_league_metadata']}"
         ),
         f"Coverage: {report['coverage_percentage']:.2f}%",
         f"Readiness: {report['readiness']}",
