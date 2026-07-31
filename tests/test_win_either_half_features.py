@@ -28,6 +28,7 @@ from scripts.audit_half_time_coverage import load_observations_from_database
 from scripts.export_win_either_half_feature_dataset import (
     FeatureExportError,
     build_feature_manifest,
+    canonical_json_sha256,
     compare_feature_manifests,
     load_verified_label_matches,
     main,
@@ -447,6 +448,31 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
                     fixture["labels_path"], drifted, config
                 )
 
+    def test_label_manifest_logical_hash_ignores_json_representation(self):
+        value = {
+            "name": "Atlético",
+            "nested": {"enabled": False, "count": 3},
+        }
+        representations = (
+            json.dumps(value, ensure_ascii=False, indent=2) + "\n",
+            json.dumps(value, ensure_ascii=False, separators=(",", ":")),
+            '{"nested":{"count":3,"enabled":false},"name":"Atlético"}',
+            (json.dumps(value, ensure_ascii=False, indent=2) + "\n").replace(
+                "\n", "\r\n"
+            ),
+        )
+        logical_hashes = {
+            canonical_json_sha256(json.loads(representation))
+            for representation in representations
+        }
+        self.assertEqual(len(logical_hashes), 1)
+        changed = deepcopy(value)
+        changed["nested"]["count"] = 4
+        self.assertNotEqual(
+            canonical_json_sha256(value),
+            canonical_json_sha256(changed),
+        )
+
     def test_stage_2_evidence_and_label_manifest_drift_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             fixture = self._frozen_fixture(Path(directory))
@@ -506,14 +532,15 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
             )
             dataset = build_pre_match_feature_dataset(matches)
             feature_bytes = render_feature_csv(dataset)
-            manifest_bytes = fixture["label_manifest_path"].read_bytes()
             manifest = build_feature_manifest(
                 dataset,
                 feature_bytes=feature_bytes,
                 feature_relative_name="features.csv",
                 baseline=fixture["baseline"],
                 label_manifest=fixture["label_manifest"],
-                label_manifest_sha256=hashlib.sha256(manifest_bytes).hexdigest(),
+                label_manifest_logical_sha256=canonical_json_sha256(
+                    fixture["label_manifest"]
+                ),
                 label_csv_identity=label_identity,
                 generator_code_state=deepcopy(self.CODE_STATE),
                 generated_at_utc="2026-07-31T00:00:00Z",
@@ -553,10 +580,54 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
                     manifest=manifest,
                 )
 
+    def test_feature_manifest_is_identical_for_lf_and_crlf_label_json(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture = self._frozen_fixture(Path(directory))
+            config = validate_label_manifest_contract(
+                fixture["label_manifest"],
+                baseline=fixture["baseline"],
+                current_evidence=fixture["current"],
+            )
+            matches, label_identity = load_verified_label_matches(
+                fixture["labels_path"], fixture["label_manifest"], config
+            )
+            dataset = build_pre_match_feature_dataset(matches)
+            feature_bytes = render_feature_csv(dataset)
+            pretty = json.dumps(
+                fixture["label_manifest"], ensure_ascii=False, indent=2
+            )
+            parsed_lf = json.loads(pretty + "\n")
+            parsed_crlf = json.loads(pretty.replace("\n", "\r\n") + "\r\n")
+
+            def build(label_manifest):
+                return build_feature_manifest(
+                    dataset,
+                    feature_bytes=feature_bytes,
+                    feature_relative_name="features.csv",
+                    baseline=fixture["baseline"],
+                    label_manifest=label_manifest,
+                    label_manifest_logical_sha256=canonical_json_sha256(
+                        label_manifest
+                    ),
+                    label_csv_identity=label_identity,
+                    generator_code_state=deepcopy(self.CODE_STATE),
+                    generated_at_utc="2026-07-31T00:00:00Z",
+                )
+
+            self.assertEqual(build(parsed_lf), build(parsed_crlf))
+
     def _assert_real_entrypoint(self, command_prefix):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             fixture = self._frozen_fixture(root / "frozen", get_code_state())
+            label_manifest_text = json.dumps(
+                fixture["label_manifest"],
+                ensure_ascii=False,
+                indent=2,
+            ).replace("\n", "\r\n") + "\r\n"
+            fixture["label_manifest_path"].write_bytes(
+                label_manifest_text.encode("utf-8")
+            )
             features = root / "features.csv"
             feature_manifest = root / "features-manifest.json"
             common = [
@@ -593,6 +664,31 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
             )
             self.assertEqual(verification.returncode, 0, verification.stderr)
             self.assertIn("Feature manifest verified", verification.stdout)
+
+            drifted = deepcopy(fixture["label_manifest"])
+            drifted["semantic_test_marker"] = "changed"
+            fixture["label_manifest_path"].write_bytes(
+                (
+                    json.dumps(drifted, ensure_ascii=False, indent=2).replace(
+                        "\n", "\r\n"
+                    )
+                    + "\r\n"
+                ).encode("utf-8")
+            )
+            rejected = subprocess.run(
+                [*command_prefix, *common, "--check", str(feature_manifest)],
+                cwd=self.REPOSITORY_ROOT,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                timeout=90,
+                shell=False,
+            )
+            self.assertNotEqual(rejected.returncode, 0)
+            self.assertIn(
+                "Stage 3 label identity differs",
+                rejected.stderr,
+            )
 
     def test_direct_script_generation_and_check(self):
         self._assert_real_entrypoint(

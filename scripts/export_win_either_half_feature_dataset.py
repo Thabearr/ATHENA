@@ -81,6 +81,18 @@ def _sha256(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def canonical_json_sha256(value) -> str:
+    """Return a platform-independent SHA-256 for a parsed JSON value."""
+    canonical = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return _sha256(canonical)
+
+
 def _read_bytes(path: Path, label: str) -> bytes:
     try:
         return path.read_bytes()
@@ -300,7 +312,7 @@ def build_feature_manifest(
     feature_relative_name: str,
     baseline: dict,
     label_manifest: dict,
-    label_manifest_sha256: str,
+    label_manifest_logical_sha256: str,
     label_csv_identity: dict,
     generator_code_state: dict,
     generated_at_utc: Optional[str] = None,
@@ -349,7 +361,9 @@ def build_feature_manifest(
             "generator_git_head_sha": label_manifest.get(
                 "generator", {}
             ).get("generator_git_head_sha"),
-            "label_manifest_sha256": label_manifest_sha256,
+            "label_manifest_logical_sha256": (
+                label_manifest_logical_sha256
+            ),
             "labels_csv": dict(label_csv_identity),
         },
         "temporal_safety": {
@@ -542,10 +556,6 @@ def main(
             cache_directory=args.cache_directory,
             repository_root=repository_root,
         )
-        label_manifest_bytes = _read_bytes(
-            args.label_manifest,
-            "Stage 3 label manifest",
-        )
         label_manifest = load_research_manifest(args.label_manifest)
         split_config = validate_label_manifest_contract(
             label_manifest,
@@ -583,7 +593,9 @@ def main(
             feature_relative_name=feature_name,
             baseline=baseline,
             label_manifest=label_manifest,
-            label_manifest_sha256=_sha256(label_manifest_bytes),
+            label_manifest_logical_sha256=canonical_json_sha256(
+                label_manifest
+            ),
             label_csv_identity=label_csv_identity,
             generator_code_state=generator_code,
         )

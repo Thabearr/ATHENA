@@ -11,6 +11,12 @@ manifest, and the local `labels-v1.csv`. The labels file must match the
 manifest's SHA-256, byte size, row count, season assignments, and split counts.
 SQLite is opened read-only, and no network request is made.
 
+The Stage 3 label manifest is fingerprinted as canonical logical JSON: parsed
+JSON is serialized as compact, sorted-key UTF-8 before hashing. Its identity is
+therefore independent of LF versus CRLF checkout newlines, indentation, and
+object-key order. The labels CSV deliberately retains its exact raw-byte
+SHA-256 and byte-size contract.
+
 ## Temporal cutoff
 
 For a target fixture at time `T`, historical state contains only allowed-split
