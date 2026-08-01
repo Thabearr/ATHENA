@@ -602,6 +602,24 @@ def _fit_candidate(
     return _FittedCandidate(configuration, estimator, prevalence)
 
 
+def fit_benchmark_candidate(
+    configuration: ModelConfiguration,
+    *,
+    train_imputed: np.ndarray,
+    train_scaled: np.ndarray,
+    train_targets: np.ndarray,
+    target_name: str,
+):
+    """Fit one declared benchmark candidate under the Stage 4A safety policy."""
+    return _fit_candidate(
+        configuration,
+        train_imputed=train_imputed,
+        train_scaled=train_scaled,
+        train_targets=train_targets,
+        target_name=target_name,
+    )
+
+
 def select_validation_winner(candidate_summaries: Sequence[Mapping]) -> str:
     if not candidate_summaries:
         raise BenchmarkError("At least one candidate is required")
@@ -865,6 +883,7 @@ __all__ = [
     "canonicalize_probabilities",
     "default_model_configurations",
     "fit_train_preprocessor",
+    "fit_benchmark_candidate",
     "pre_match_feature_names",
     "probability_metrics",
     "run_baseline_benchmarks",
