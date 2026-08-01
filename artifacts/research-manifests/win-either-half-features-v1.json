@@ -1,0 +1,586 @@
+{
+  "dataset_name": "win-either-half-features-v1",
+  "feature_schema": [
+    {
+      "description": "Canonical fixture identity.",
+      "formula": "Copied from the frozen label row.",
+      "name": "fixture_identity",
+      "role": "IDENTIFIER"
+    },
+    {
+      "description": "UTC target kickoff used for the strict temporal cutoff.",
+      "formula": "Copied from the frozen label row and normalized to UTC.",
+      "name": "kickoff_utc",
+      "role": "SPLIT_METADATA"
+    },
+    {
+      "description": "League code.",
+      "formula": "Frozen label metadata.",
+      "name": "league",
+      "role": "SPLIT_METADATA"
+    },
+    {
+      "description": "Football season.",
+      "formula": "Frozen label metadata.",
+      "name": "season",
+      "role": "SPLIT_METADATA"
+    },
+    {
+      "description": "Frozen temporal split.",
+      "formula": "Frozen label metadata.",
+      "name": "split",
+      "role": "SPLIT_METADATA"
+    },
+    {
+      "description": "Target home team.",
+      "formula": "Frozen label identity.",
+      "name": "home_team",
+      "role": "IDENTIFIER"
+    },
+    {
+      "description": "Target away team.",
+      "formula": "Frozen label identity.",
+      "name": "away_team",
+      "role": "IDENTIFIER"
+    },
+    {
+      "description": "Number of strictly earlier allowed-split team fixtures.",
+      "formula": "count(prior team fixtures with kickoff < target kickoff)",
+      "name": "home_team_prior_overall_matches",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Number of strictly earlier team fixtures at home venue.",
+      "formula": "count(prior team fixtures at venue=home)",
+      "name": "home_team_prior_relevant_venue_matches",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Elapsed days since the latest strictly earlier fixture; blank without history.",
+      "formula": "(target kickoff - latest prior kickoff) / 86400 seconds",
+      "name": "home_team_days_since_previous_fixture",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Explicit indicator that no allowed prior fixture exists.",
+      "formula": "1 when prior overall count is 0, otherwise 0",
+      "name": "home_team_no_prior_history",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Explicit missingness indicator for days since previous fixture.",
+      "formula": "1 when days-since is unavailable, otherwise 0",
+      "name": "home_team_days_since_previous_missing",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 5 prior overall fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "home_team_overall_w5_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 5 prior overall fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 5 prior overall fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 5 prior overall fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 5 prior overall fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 5 prior overall fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 5 prior overall fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 5 prior overall fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w5_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 10 prior overall fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "home_team_overall_w10_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 10 prior overall fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 10 prior overall fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 10 prior overall fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 10 prior overall fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 10 prior overall fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 10 prior overall fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 10 prior overall fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "home_team_overall_w10_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 5 prior home fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "home_team_home_w5_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 5 prior home fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 5 prior home fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 5 prior home fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 5 prior home fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 5 prior home fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 5 prior home fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 5 prior home fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w5_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 10 prior home fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "home_team_home_w10_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 10 prior home fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 10 prior home fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 10 prior home fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 10 prior home fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 10 prior home fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 10 prior home fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 10 prior home fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "home_team_home_w10_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Number of strictly earlier allowed-split team fixtures.",
+      "formula": "count(prior team fixtures with kickoff < target kickoff)",
+      "name": "away_team_prior_overall_matches",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Number of strictly earlier team fixtures at away venue.",
+      "formula": "count(prior team fixtures at venue=away)",
+      "name": "away_team_prior_relevant_venue_matches",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Elapsed days since the latest strictly earlier fixture; blank without history.",
+      "formula": "(target kickoff - latest prior kickoff) / 86400 seconds",
+      "name": "away_team_days_since_previous_fixture",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Explicit indicator that no allowed prior fixture exists.",
+      "formula": "1 when prior overall count is 0, otherwise 0",
+      "name": "away_team_no_prior_history",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Explicit missingness indicator for days since previous fixture.",
+      "formula": "1 when days-since is unavailable, otherwise 0",
+      "name": "away_team_days_since_previous_missing",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 5 prior overall fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "away_team_overall_w5_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 5 prior overall fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 5 prior overall fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 5 prior overall fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 5 prior overall fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 5 prior overall fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 5 prior overall fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 5 prior overall fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w5_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 10 prior overall fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "away_team_overall_w10_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 10 prior overall fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 10 prior overall fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 10 prior overall fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 10 prior overall fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 10 prior overall fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 10 prior overall fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 10 prior overall fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "away_team_overall_w10_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 5 prior away fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "away_team_away_w5_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 5 prior away fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 5 prior away fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 5 prior away fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 5 prior away fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 5 prior away fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 5 prior away fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 5 prior away fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w5_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "observation count over up to 10 prior away fixtures.",
+      "formula": "count(actual contributors)",
+      "name": "away_team_away_w10_observation_count",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals for per match over up to 10 prior away fixtures.",
+      "formula": "sum(goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "goals against per match over up to 10 prior away fixtures.",
+      "formula": "sum(goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals for per match over up to 10 prior away fixtures.",
+      "formula": "sum(first_half_goals_for) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_first_half_goals_for_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half goals against per match over up to 10 prior away fixtures.",
+      "formula": "sum(first_half_goals_against) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_first_half_goals_against_per_match",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "first half win rate over up to 10 prior away fixtures.",
+      "formula": "sum(first_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_first_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "second half win rate over up to 10 prior away fixtures.",
+      "formula": "sum(second_half_win) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_second_half_win_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "win either half yes rate over up to 10 prior away fixtures.",
+      "formula": "sum(win_either_half_yes) / actual contributor count; blank when count=0",
+      "name": "away_team_away_w10_win_either_half_yes_rate",
+      "role": "PRE_MATCH_FEATURE"
+    },
+    {
+      "description": "Frozen post-match research target; prohibited as a feature.",
+      "formula": "Attached only after all pre-match features are calculated.",
+      "name": "home_win_either_half_yes",
+      "role": "TARGET_ONLY"
+    },
+    {
+      "description": "Frozen post-match research target; prohibited as a feature.",
+      "formula": "Attached only after all pre-match features are calculated.",
+      "name": "away_win_either_half_yes",
+      "role": "TARGET_ONLY"
+    },
+    {
+      "description": "Frozen post-match research target; prohibited as a feature.",
+      "formula": "Attached only after all pre-match features are calculated.",
+      "name": "both_teams_won_a_half",
+      "role": "TARGET_ONLY"
+    }
+  ],
+  "files": {
+    "features": {
+      "byte_size": 8032209,
+      "relative_name": "features-v1.csv",
+      "rows": 21791,
+      "sha256": "68547ae9670703c59d68367d8fa1ef067e7410d8beb842ad0aec2151f0777e7b"
+    }
+  },
+  "generated_at_utc": "2026-07-31T23:37:23Z",
+  "generator": {
+    "generator_git_head_sha": "6b57a51092255d5e4c5ba1f37584c854b1fd2ca9",
+    "tracked_worktree_clean": true
+  },
+  "market_safety": {
+    "away_win_either_half": "DISABLED",
+    "home_win_either_half": "DISABLED"
+  },
+  "schema_version": 1,
+  "splits": {
+    "test": {
+      "rows": 4048,
+      "seasons": [
+        "2025-26"
+      ]
+    },
+    "train": {
+      "rows": 14267,
+      "seasons": [
+        "2020-21",
+        "2021-22",
+        "2022-23",
+        "2023-24"
+      ]
+    },
+    "validation": {
+      "rows": 3476,
+      "seasons": [
+        "2024-25"
+      ]
+    }
+  },
+  "stage_2_evidence": {
+    "baseline_name": "half-time-ready-for-research",
+    "cache_manifest_sha256": "1640f2964d34655e01407dd1a7a36b81b3f24f28d22e40f45568ba81ee84560e",
+    "evidence_git_head_sha": "7089c0c11c2ca725dd38f6345e210c9fa4f8747d",
+    "logical_evidence_sha256": "f79b9aa54f1d3a34fd6115d7a1cf1aa746e561a35073afb67d1dad97220011ba",
+    "schema_sha256": "fe5e29a6f0e9de427db1780f480689d1a23c732ba73779eb737af906a778161b"
+  },
+  "stage_3_labels": {
+    "dataset_name": "win-either-half-labels-v1",
+    "generator_git_head_sha": "fdd16e834e42fed19108d1c8db54955826903de3",
+    "label_manifest_logical_sha256": "c79739294de4350da608da56ee78d44fae51c8ab9697669fcc97de03d549481a",
+    "labels_csv": {
+      "byte_size": 4660442,
+      "rows": 21791,
+      "sha256": "679883c66095f34cffaee20955a8d511fe18886fdb4e935c062180de6f48d524"
+    }
+  },
+  "temporal_safety": {
+    "cutoff": "historical kickoff strictly less than target kickoff",
+    "same_timestamp_policy": "excluded from each other's history",
+    "split_history": {
+      "TEST": [
+        "TRAIN",
+        "VALIDATION",
+        "TEST"
+      ],
+      "TRAIN": [
+        "TRAIN"
+      ],
+      "VALIDATION": [
+        "TRAIN",
+        "VALIDATION"
+      ]
+    },
+    "target_attachment": "after pre-match feature calculation"
+  }
+}
