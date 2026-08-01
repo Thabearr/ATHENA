@@ -54,6 +54,28 @@ CALIBRATION_SELECTION_RULE = (
     "Brier score; then lower declared calibration complexity; then lexical "
     "candidate identifier"
 )
+EVALUATION_ROLE_SCOPES = {
+    "CALIBRATION_FIT_OOF": "CALIBRATION_FIT_SAMPLE",
+    "VALIDATION_SELECTION": "SELECTION_SAMPLE",
+    "FINAL_TEST": "INDEPENDENT_FINAL_TEST",
+}
+EVALUATION_ROLE_SPLITS = {
+    "CALIBRATION_FIT_OOF": "TRAIN",
+    "VALIDATION_SELECTION": "VALIDATION",
+    "FINAL_TEST": "TEST",
+}
+FROZEN_STAGE_4_BASE_CONFIGURATION = ModelConfiguration(
+    identifier="logistic_l2_c0.1_v1",
+    family="logistic_regression",
+    complexity_rank=2,
+    parameters=(
+        ("C", 0.1),
+        ("max_iter", 2000),
+        ("random_state", DEFAULT_RANDOM_SEED),
+        ("solver", "lbfgs"),
+    ),
+    preprocessing="train_median_imputation_and_standard_scaling",
+)
 
 
 class CalibrationError(ValueError):
@@ -120,6 +142,45 @@ def default_calibration_configurations(
         ),
     )
     return tuple(sorted(values, key=lambda value: value.identifier))
+
+
+def validate_frozen_base_configurations(
+    configurations: Mapping[str, ModelConfiguration],
+) -> None:
+    if set(configurations) != set(TARGETS):
+        raise CalibrationError("Frozen Stage 4A target configuration set drifted")
+    expected = FROZEN_STAGE_4_BASE_CONFIGURATION.to_dict()
+    for target in TARGETS:
+        configuration = configurations.get(target)
+        if not isinstance(configuration, ModelConfiguration):
+            raise CalibrationError(
+                f"Frozen Stage 4A base configuration drifted: {target}"
+            )
+        if configuration.to_dict() != expected:
+            raise CalibrationError(
+                f"Frozen Stage 4A base configuration drifted: {target}"
+            )
+
+
+def validate_calibration_configurations(
+    configurations: Sequence[CalibrationConfiguration],
+) -> Tuple[CalibrationConfiguration, ...]:
+    supplied = tuple(configurations)
+    if any(not isinstance(value, CalibrationConfiguration) for value in supplied):
+        raise CalibrationError("Frozen calibration candidate configuration set drifted")
+    identifiers = [value.identifier for value in supplied]
+    if len(set(identifiers)) != len(identifiers):
+        raise CalibrationError("Calibration candidate identifiers must be unique")
+    expected = default_calibration_configurations(DEFAULT_RANDOM_SEED)
+    expected_by_identifier = {value.identifier: value.to_dict() for value in expected}
+    supplied_by_identifier = {
+        value.identifier: value.to_dict()
+        for value in supplied
+        if isinstance(value, CalibrationConfiguration)
+    }
+    if supplied_by_identifier != expected_by_identifier or len(supplied) != len(expected):
+        raise CalibrationError("Frozen calibration candidate configuration set drifted")
+    return tuple(sorted(supplied, key=lambda value: value.identifier))
 
 
 def _binary_targets(rows: Sequence[Mapping], target: str) -> np.ndarray:
@@ -373,44 +434,54 @@ def _metric_deltas(candidate: Mapping, identity: Mapping) -> dict:
     }
 
 
+def _unavailable_subgroup_metrics(targets, reason: str) -> dict:
+    row_count = len(targets)
+    positive_count = sum(targets)
+    return {
+        "evaluation_reason": reason,
+        "evaluation_status": "UNAVAILABLE",
+        "metrics": {
+            "average_precision": None,
+            "brier_score": None,
+            "calibration": {
+                "actual_bin_count": 0,
+                "bins": [],
+                "expected_calibration_error": None,
+                "intercept": None,
+                "reason": reason,
+                "slope": None,
+                "status": "UNAVAILABLE",
+            },
+            "log_loss": None,
+            "positive_count": positive_count,
+            "prevalence": (
+                canonical_float(positive_count / row_count) if row_count else None
+            ),
+            "probability_diagnostics": {
+                "count_nan_or_infinite": None,
+                "count_outside_unit_interval": None,
+                "maximum": None,
+                "mean": None,
+                "minimum": None,
+            },
+            "roc_auc": None,
+            "row_count": row_count,
+            "threshold_diagnostics": {
+                threshold: {
+                    "precision": None,
+                    "qualifying_predictions": None,
+                    "recall": None,
+                }
+                for threshold in ("0.50", "0.60", "0.70")
+            },
+        },
+        "metric_reasons": [reason],
+    }
+
+
 def _subgroup_metrics(targets, probabilities) -> dict:
     if not len(targets):
-        return {
-            "metrics": {
-                "average_precision": None,
-                "brier_score": None,
-                "calibration": {
-                    "actual_bin_count": 0,
-                    "bins": [],
-                    "expected_calibration_error": None,
-                    "intercept": None,
-                    "reason": "INSUFFICIENT_ROWS",
-                    "slope": None,
-                    "status": "UNAVAILABLE",
-                },
-                "log_loss": None,
-                "positive_count": 0,
-                "prevalence": None,
-                "probability_diagnostics": {
-                    "count_nan_or_infinite": 0,
-                    "count_outside_unit_interval": 0,
-                    "maximum": None,
-                    "mean": None,
-                    "minimum": None,
-                },
-                "roc_auc": None,
-                "row_count": 0,
-                "threshold_diagnostics": {
-                    threshold: {
-                        "precision": None,
-                        "qualifying_predictions": 0,
-                        "recall": None,
-                    }
-                    for threshold in ("0.50", "0.60", "0.70")
-                },
-            },
-            "metric_reasons": ["INSUFFICIENT_ROWS"],
-        }
+        return _unavailable_subgroup_metrics(targets, "INSUFFICIENT_ROWS")
     metrics = probability_metrics(targets, probabilities)
     reasons = []
     if len(set(targets)) < 2:
@@ -422,13 +493,19 @@ def _subgroup_metrics(targets, probabilities) -> dict:
         reason = metrics["calibration"].get("reason")
         if reason and reason not in reasons:
             reasons.append(reason)
-    return {"metric_reasons": sorted(reasons), "metrics": metrics}
+    return {
+        "evaluation_reason": None,
+        "evaluation_status": "AVAILABLE",
+        "metric_reasons": sorted(reasons),
+        "metrics": metrics,
+    }
 
 
 def _subgroup_record(
     *,
     target: str,
     dimension: str,
+    evaluation_role: str,
     group: str,
     rows: Sequence[Mapping],
 ) -> dict:
@@ -446,11 +523,18 @@ def _subgroup_record(
     identity = _subgroup_metrics(
         targets, [row["model_probability"] for row in rows]
     )
-    selected = _subgroup_metrics(
-        targets, [row["calibrated_probability"] for row in rows]
-    )
+    if evaluation_role == "CALIBRATION_FIT_OOF":
+        selected = _unavailable_subgroup_metrics(
+            targets, "CALIBRATION_FIT_SAMPLE"
+        )
+    else:
+        selected = _subgroup_metrics(
+            targets, [row["calibrated_probability"] for row in rows]
+        )
     return {
         "dimension": dimension,
+        "evaluation_role": evaluation_role,
+        "evaluation_scope": EVALUATION_ROLE_SCOPES[evaluation_role],
         "group": group,
         "identity": identity,
         "metric_deltas": _metric_deltas(
@@ -462,68 +546,96 @@ def _subgroup_record(
         "selected_calibration": selected,
         "support_reason": support_reason,
         "support_status": support_status,
+        "split": EVALUATION_ROLE_SPLITS[evaluation_role],
         "target_name": target,
     }
 
 
-def build_subgroup_evaluations(prediction_rows: Sequence[Mapping]) -> list:
+def build_subgroup_evaluations(
+    prediction_rows: Sequence[Mapping],
+    *,
+    frozen_leagues: Sequence[str] | None = None,
+) -> list:
+    for row in prediction_rows:
+        role = row.get("prediction_role")
+        if role not in EVALUATION_ROLE_SCOPES:
+            raise CalibrationError("Prediction evaluation role is missing or unsupported")
+        if row.get("split") != EVALUATION_ROLE_SPLITS[role]:
+            raise CalibrationError("Prediction evaluation role and split differ")
     records = []
+    league_values = sorted(
+        set(frozen_leagues)
+        if frozen_leagues is not None
+        else {row["league"] for row in prediction_rows}
+    )
     for target in TARGETS:
         target_rows = tuple(row for row in prediction_rows if row["target_name"] == target)
-        dimensions = {
-            "split": [
-                (split, tuple(row for row in target_rows if row["split"] == split))
-                for split in SPLITS
-            ],
-            "season": [
-                (season, tuple(row for row in target_rows if row["season"] == season))
+        for role, split in EVALUATION_ROLE_SPLITS.items():
+            role_rows = tuple(
+                row for row in target_rows if row["prediction_role"] == role
+            )
+            role_seasons = tuple(
+                season
                 for season in (*TRAIN_SEASONS, *VALIDATION_SEASONS, *TEST_SEASONS)
-            ],
-            "league": [
-                (league, tuple(row for row in target_rows if row["league"] == league))
-                for league in sorted({row["league"] for row in target_rows})
-            ],
-            "league_and_season": [
-                (
-                    f"{league}|{season}",
-                    tuple(
-                        row
-                        for row in target_rows
-                        if row["league"] == league and row["season"] == season
-                    ),
-                )
-                for league, season in sorted(
-                    {(row["league"], row["season"]) for row in target_rows}
-                )
-            ],
-            "model_probability_band": [
-                (
-                    name,
-                    tuple(
-                        row
-                        for row in target_rows
-                        if row["model_probability"] >= lower
-                        and (
-                            row["model_probability"] <= upper
-                            if inclusive_upper
-                            else row["model_probability"] < upper
-                        )
-                    ),
-                )
-                for name, lower, upper, inclusive_upper in PROBABILITY_BANDS
-            ],
-        }
-        for dimension, groups in dimensions.items():
-            for group, rows in groups:
-                records.append(
-                    _subgroup_record(
-                        target=target,
-                        dimension=dimension,
-                        group=group,
-                        rows=rows,
+                if any(row["season"] == season for row in role_rows)
+            )
+            dimensions = {
+                "evaluation_role": [(role, role_rows)],
+                "split_and_league": [
+                    (
+                        f"{split}|{league}",
+                        tuple(row for row in role_rows if row["league"] == league),
                     )
-                )
-    records.sort(key=lambda row: (row["target_name"], row["dimension"], row["group"]))
+                    for league in league_values
+                ],
+                "split_and_model_probability_band": [
+                    (
+                        f"{split}|{name}",
+                        tuple(
+                            row
+                            for row in role_rows
+                            if row["model_probability"] >= lower
+                            and (
+                                row["model_probability"] <= upper
+                                if inclusive_upper
+                                else row["model_probability"] < upper
+                            )
+                        ),
+                    )
+                    for name, lower, upper, inclusive_upper in PROBABILITY_BANDS
+                ],
+                "league_and_season": [
+                    (
+                        f"{league}|{season}",
+                        tuple(
+                            row
+                            for row in role_rows
+                            if row["league"] == league and row["season"] == season
+                        ),
+                    )
+                    for league in league_values
+                    for season in role_seasons
+                ],
+            }
+            for dimension, groups in dimensions.items():
+                for group, rows in groups:
+                    records.append(
+                        _subgroup_record(
+                            target=target,
+                            dimension=dimension,
+                            evaluation_role=role,
+                            group=group,
+                            rows=rows,
+                        )
+                    )
+    records.sort(
+        key=lambda row: (
+            row["target_name"],
+            row["evaluation_role"],
+            row["dimension"],
+            row["group"],
+        )
+    )
     return records
 
 
@@ -552,6 +664,9 @@ def run_calibration_research(
     calibration_configurations: Sequence[CalibrationConfiguration] | None = None,
     random_seed: int = DEFAULT_RANDOM_SEED,
 ) -> dict:
+    if random_seed != DEFAULT_RANDOM_SEED:
+        raise CalibrationError("Frozen Stage 4A random seed drifted")
+    validate_frozen_base_configurations(selected_model_configurations)
     supplied_rows = tuple(feature_rows)
     if not supplied_rows:
         raise CalibrationError("Feature dataset is empty")
@@ -582,25 +697,17 @@ def run_calibration_research(
     }
     if len(frozen) != len(rows) * len(TARGETS):
         raise CalibrationError("Frozen Stage 4A prediction accounting differs")
-    configurations = tuple(
-        sorted(
-            calibration_configurations or default_calibration_configurations(random_seed),
-            key=lambda value: value.identifier,
-        )
+    configurations = validate_calibration_configurations(
+        calibration_configurations
+        if calibration_configurations is not None
+        else default_calibration_configurations(DEFAULT_RANDOM_SEED)
     )
-    if len({value.identifier for value in configurations}) != len(configurations):
-        raise CalibrationError("Calibration candidate identifiers must be unique")
 
     target_results = {}
     fitted_state = {}
     protocol_events = []
     for target in TARGETS:
-        base_configuration = selected_model_configurations.get(target)
-        if (
-            base_configuration is None
-            or base_configuration.identifier != "logistic_l2_c0.1_v1"
-        ):
-            raise CalibrationError(f"Frozen Stage 4A selected model drifted: {target}")
+        base_configuration = selected_model_configurations[target]
         oof = build_expanding_oof_predictions(
             split_rows["TRAIN"], feature_names, base_configuration, target
         )
@@ -738,12 +845,16 @@ def run_calibration_research(
     prediction_rows.sort(
         key=lambda row: (row["target_name"], SPLITS.index(row["split"]), row["fixture_identity"])
     )
-    subgroup_rows = build_subgroup_evaluations(prediction_rows)
+    subgroup_rows = build_subgroup_evaluations(
+        prediction_rows,
+        frozen_leagues=tuple(sorted({row["league"] for row in rows})),
+    )
     return {
         "calibration": {
             "calibration_configurations": [value.to_dict() for value in configurations],
             "canonical_decimal_places": CANONICAL_DECIMAL_PLACES,
             "model_probability_bands": [value[0] for value in PROBABILITY_BANDS],
+            "evaluation_role_scopes": dict(EVALUATION_ROLE_SCOPES),
             "platt_logit_epsilon": PLATT_LOGIT_EPSILON,
             "protocol_events": protocol_events,
             "random_seed": random_seed,
@@ -761,7 +872,10 @@ __all__ = [
     "CALIBRATION_SELECTION_RULE",
     "CalibrationConfiguration",
     "CalibrationError",
+    "EVALUATION_ROLE_SCOPES",
+    "EVALUATION_ROLE_SPLITS",
     "FittedCalibrator",
+    "FROZEN_STAGE_4_BASE_CONFIGURATION",
     "ISOTONIC_MIN_UNIQUE_PREDICTIONS",
     "OOF_TARGET_SEASONS",
     "PLATT_LOGIT_EPSILON",
@@ -777,4 +891,6 @@ __all__ = [
     "fit_calibrator",
     "run_calibration_research",
     "select_calibration_winner",
+    "validate_calibration_configurations",
+    "validate_frozen_base_configurations",
 ]

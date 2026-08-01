@@ -7,6 +7,7 @@ import tempfile
 import unittest
 import warnings
 from copy import deepcopy
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
@@ -25,9 +26,11 @@ from domain.win_either_half_benchmarks import (
 )
 from domain.win_either_half_calibration import (
     CALIBRATION_SELECTION_RULE,
+    EVALUATION_ROLE_SCOPES,
     PLATT_LOGIT_EPSILON,
     PROBABILITY_BANDS,
     SUBGROUP_MINIMUM_ROWS,
+    CalibrationConfiguration,
     CalibrationError,
     build_expanding_oof_predictions,
     build_subgroup_evaluations,
@@ -239,7 +242,7 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
 
     def test_frozen_stage_4_model_is_enforced(self):
         rows = self._rows()
-        with self.assertRaisesRegex(CalibrationError, "selected model drifted"):
+        with self.assertRaisesRegex(CalibrationError, "base configuration drifted"):
             run_calibration_research(
                 rows,
                 self.FEATURE_NAMES,
@@ -249,6 +252,113 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
                 },
                 frozen_predictions=self._frozen_predictions(rows),
             )
+
+    def test_every_frozen_base_configuration_field_is_enforced(self):
+        rows = self._rows()
+        original = self._base_configuration()
+
+        def parameters(**changes):
+            values = original.parameter_dict()
+            values.update(changes)
+            return tuple(sorted(values.items()))
+
+        drifted = {
+            "C": replace(original, parameters=parameters(C=0.2)),
+            "complexity_rank": replace(original, complexity_rank=3),
+            "extra_parameter": replace(
+                original, parameters=parameters(unexpected=True)
+            ),
+            "family": replace(original, family="decision_tree"),
+            "solver": replace(original, parameters=parameters(solver="liblinear")),
+            "max_iter": replace(original, parameters=parameters(max_iter=1999)),
+            "missing_parameter": replace(
+                original,
+                parameters=tuple(
+                    (key, value)
+                    for key, value in original.parameters
+                    if key != "solver"
+                ),
+            ),
+            "preprocessing": replace(original, preprocessing="train_median_imputation"),
+            "random_state": replace(original, parameters=parameters(random_state=1730)),
+        }
+        for field, configuration in drifted.items():
+            with self.subTest(field=field), self.assertRaisesRegex(
+                CalibrationError, "base configuration drifted"
+            ):
+                run_calibration_research(
+                    rows,
+                    self.FEATURE_NAMES,
+                    selected_model_configurations={
+                        target: configuration for target in self.TARGETS
+                    },
+                    frozen_predictions=self._frozen_predictions(rows),
+                )
+
+        for name, configurations in (
+            ("missing_target", {self.TARGETS[0]: original}),
+            (
+                "extra_target",
+                {
+                    **{target: original for target in self.TARGETS},
+                    "unexpected_target": original,
+                },
+            ),
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                CalibrationError, "target configuration set drifted"
+            ):
+                run_calibration_research(
+                    rows,
+                    self.FEATURE_NAMES,
+                    selected_model_configurations=configurations,
+                    frozen_predictions=self._frozen_predictions(rows),
+                )
+
+    def test_calibration_candidate_set_and_parameters_are_exact(self):
+        rows = self._rows()
+        defaults = list(default_calibration_configurations())
+
+        def run(configurations):
+            return run_calibration_research(
+                rows,
+                self.FEATURE_NAMES,
+                selected_model_configurations={
+                    target: self._base_configuration() for target in self.TARGETS
+                },
+                frozen_predictions=self._frozen_predictions(rows),
+                calibration_configurations=configurations,
+            )
+
+        without_identity = [value for value in defaults if value.family != "identity"]
+        extra = defaults + [
+            CalibrationConfiguration("extra", "identity", 0, ())
+        ]
+        platt = next(value for value in defaults if value.family == "platt_logit")
+        altered_parameters = platt.parameter_dict()
+        altered_parameters["epsilon"] = 1e-5
+        altered_epsilon = [
+            replace(platt, parameters=tuple(sorted(altered_parameters.items())))
+            if value.identifier == platt.identifier
+            else value
+            for value in defaults
+        ]
+        altered_complexity = [
+            replace(platt, complexity_rank=9)
+            if value.identifier == platt.identifier
+            else value
+            for value in defaults
+        ]
+        for name, configurations in (
+            ("missing_identity", without_identity),
+            ("extra_candidate", extra),
+            ("platt_epsilon", altered_epsilon),
+            ("calibration_complexity", altered_complexity),
+        ):
+            with self.subTest(name=name), self.assertRaisesRegex(
+                CalibrationError, "candidate configuration set drifted"
+            ):
+                run(configurations)
 
     def test_identity_platt_and_isotonic_semantics(self):
         configurations = {
@@ -385,26 +495,30 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
         predictions = result["prediction_rows"]
         subgroups = result["subgroup_rows"]
         for target in self.TARGETS:
-            split_groups = [
+            role_groups = [
                 row
                 for row in subgroups
-                if row["target_name"] == target and row["dimension"] == "split"
+                if row["target_name"] == target
+                and row["dimension"] == "evaluation_role"
             ]
             self.assertEqual(
-                sum(row["row_count"] for row in split_groups),
+                sum(row["row_count"] for row in role_groups),
                 sum(row["target_name"] == target for row in predictions),
             )
             self.assertTrue(
-                all(row["support_status"] == "LOW_SUPPORT" for row in split_groups)
+                all(row["support_status"] == "LOW_SUPPORT" for row in role_groups)
             )
             self.assertTrue(
-                all(row["support_reason"] == "INSUFFICIENT_ROWS" for row in split_groups)
+                all(row["support_reason"] == "INSUFFICIENT_ROWS" for row in role_groups)
             )
         band_groups = [
-            row for row in subgroups if row["dimension"] == "model_probability_band"
+            row
+            for row in subgroups
+            if row["dimension"] == "split_and_model_probability_band"
+            and row["evaluation_role"] == "FINAL_TEST"
         ]
         self.assertEqual(
-            {row["group"] for row in band_groups},
+            {row["group"].split("|", 1)[1] for row in band_groups},
             {band[0] for band in PROBABILITY_BANDS},
         )
         self.assertEqual(SUBGROUP_MINIMUM_ROWS, 100)
@@ -415,6 +529,7 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
                 "fixture_identity": f"single-{index}",
                 "league": "E0",
                 "model_probability": 0.6,
+                "prediction_role": "CALIBRATION_FIT_OOF",
                 "season": "2020-21",
                 "split": "TRAIN",
                 "target_name": self.TARGETS[0],
@@ -427,12 +542,97 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
             row
             for row in single
             if row["target_name"] == self.TARGETS[0]
-            and row["dimension"] == "split"
-            and row["group"] == "TRAIN"
+            and row["dimension"] == "evaluation_role"
+            and row["group"] == "CALIBRATION_FIT_OOF"
         )
         self.assertIn("SINGLE_CLASS", train_group["identity"]["metric_reasons"])
         self.assertIsNone(train_group["identity"]["metrics"]["roc_auc"])
         self.assertIsNone(train_group["identity"]["metrics"]["average_precision"])
+
+    def test_evaluation_roles_separate_fit_selection_and_final_test_evidence(self):
+        result = self._run()
+        subgroups = result["subgroup_rows"]
+        self.assertTrue(subgroups)
+        self.assertTrue(
+            all(
+                row["evaluation_scope"]
+                == EVALUATION_ROLE_SCOPES[row["evaluation_role"]]
+                for row in subgroups
+            )
+        )
+        self.assertFalse(
+            any(row["evaluation_scope"] == "ALL_PERIODS_DESCRIPTIVE" for row in subgroups)
+        )
+        for target in self.TARGETS:
+            role_rows = {
+                row["evaluation_role"]: row
+                for row in subgroups
+                if row["target_name"] == target
+                and row["dimension"] == "evaluation_role"
+            }
+            self.assertEqual(set(role_rows), set(EVALUATION_ROLE_SCOPES))
+            fit_sample = role_rows["CALIBRATION_FIT_OOF"]
+            self.assertEqual(
+                fit_sample["selected_calibration"]["evaluation_status"],
+                "UNAVAILABLE",
+            )
+            self.assertEqual(
+                fit_sample["selected_calibration"]["evaluation_reason"],
+                "CALIBRATION_FIT_SAMPLE",
+            )
+            self.assertEqual(
+                fit_sample["selected_calibration"]["metric_reasons"],
+                ["CALIBRATION_FIT_SAMPLE"],
+            )
+            self.assertEqual(
+                fit_sample["identity"]["evaluation_status"], "AVAILABLE"
+            )
+            self.assertEqual(
+                role_rows["VALIDATION_SELECTION"]["evaluation_scope"],
+                "SELECTION_SAMPLE",
+            )
+            self.assertEqual(
+                role_rows["FINAL_TEST"]["evaluation_scope"],
+                "INDEPENDENT_FINAL_TEST",
+            )
+
+    def test_final_test_leagues_and_fixed_bands_account_for_every_row(self):
+        result = self._run()
+        subgroups = build_subgroup_evaluations(
+            result["prediction_rows"], frozen_leagues=("D1", "E0", "X0")
+        )
+        for target in self.TARGETS:
+            league_rows = [
+                row
+                for row in subgroups
+                if row["target_name"] == target
+                and row["evaluation_role"] == "FINAL_TEST"
+                and row["dimension"] == "split_and_league"
+            ]
+            band_rows = [
+                row
+                for row in subgroups
+                if row["target_name"] == target
+                and row["evaluation_role"] == "FINAL_TEST"
+                and row["dimension"] == "split_and_model_probability_band"
+            ]
+            self.assertEqual(sum(row["row_count"] for row in league_rows), 6)
+            missing_frozen_league = next(
+                row for row in league_rows if row["group"] == "TEST|X0"
+            )
+            self.assertEqual(missing_frozen_league["row_count"], 0)
+            self.assertEqual(
+                missing_frozen_league["support_status"], "UNAVAILABLE"
+            )
+            self.assertEqual(sum(row["row_count"] for row in band_rows), 6)
+            self.assertEqual(len(band_rows), len(PROBABILITY_BANDS))
+            self.assertTrue(
+                all(
+                    row["support_status"] == "UNAVAILABLE"
+                    for row in band_rows
+                    if row["row_count"] == 0
+                )
+            )
 
     def test_real_committed_stage_4_ancestry_and_selected_models_are_exact(self):
         load = lambda path: json.loads(

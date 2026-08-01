@@ -31,6 +31,7 @@ from domain.win_either_half_benchmarks import (  # noqa: E402
 )
 from domain.win_either_half_calibration import (  # noqa: E402
     CALIBRATION_SELECTION_RULE,
+    FROZEN_STAGE_4_BASE_CONFIGURATION,
     CalibrationError,
     default_calibration_configurations,
     run_calibration_research,
@@ -83,6 +84,9 @@ CALIBRATED_PREDICTION_COLUMNS = (
 )
 SUBGROUP_COLUMNS = (
     "target_name",
+    "evaluation_role",
+    "evaluation_scope",
+    "split",
     "dimension",
     "group",
     "support_status",
@@ -91,7 +95,11 @@ SUBGROUP_COLUMNS = (
     "positive_count",
     "negative_count",
     "identity_metrics_json",
+    "identity_evaluation_status",
+    "identity_evaluation_reason",
     "selected_calibration_metrics_json",
+    "selected_calibration_evaluation_status",
+    "selected_calibration_evaluation_reason",
     "metric_deltas_json",
     "identity_metric_reasons_json",
     "selected_metric_reasons_json",
@@ -208,6 +216,7 @@ def verify_stage_4_manifest_contract(
     ):
         raise CalibrationExportError("Stage 4A market safety drifted")
     validate_market_safety(benchmark_manifest)
+    selected_model_configurations(benchmark_manifest)
     return tuple(predictor_names), expected_splits
 
 
@@ -363,9 +372,9 @@ def selected_model_configurations(
     for target in TARGETS:
         identifier = benchmark_manifest.get("selected_models", {}).get(target)
         raw = configurations.get(identifier)
-        if raw is None or raw.get("family") != "logistic_regression":
+        if raw != FROZEN_STAGE_4_BASE_CONFIGURATION.to_dict():
             raise CalibrationExportError(
-                f"Frozen Stage 4A configuration is unavailable: {target}"
+                f"Frozen Stage 4A base configuration drifted: {target}"
             )
         result[target] = ModelConfiguration(
             identifier=identifier,
@@ -415,7 +424,11 @@ def render_subgroups(rows: Sequence[Mapping]) -> bytes:
         writer.writerow(
             {
                 "dimension": row["dimension"],
+                "evaluation_role": row["evaluation_role"],
+                "evaluation_scope": row["evaluation_scope"],
                 "group": row["group"],
+                "identity_evaluation_reason": identity["evaluation_reason"] or "",
+                "identity_evaluation_status": identity["evaluation_status"],
                 "identity_metric_reasons_json": _canonical_json_bytes(
                     identity["metric_reasons"]
                 ).decode("utf-8"),
@@ -431,11 +444,18 @@ def render_subgroups(rows: Sequence[Mapping]) -> bytes:
                 "selected_calibration_metrics_json": _canonical_json_bytes(
                     selected["metrics"]
                 ).decode("utf-8"),
+                "selected_calibration_evaluation_reason": (
+                    selected["evaluation_reason"] or ""
+                ),
+                "selected_calibration_evaluation_status": selected[
+                    "evaluation_status"
+                ],
                 "selected_metric_reasons_json": _canonical_json_bytes(
                     selected["metric_reasons"]
                 ).decode("utf-8"),
                 "support_reason": row["support_reason"] or "",
                 "support_status": row["support_status"],
+                "split": row["split"],
                 "target_name": row["target_name"],
             }
         )
@@ -552,6 +572,9 @@ def build_calibration_manifest(
             ),
         },
         "subgroup_policy": {
+            "evaluation_role_scopes": dict(
+                calibration["evaluation_role_scopes"]
+            ),
             "minimum_supported_rows": calibration["subgroup_minimum_rows"],
             "model_probability_bands": list(
                 calibration["model_probability_bands"]

@@ -17,12 +17,16 @@ safety must match their committed manifests.
 
 Home and Away are independent targets. Both retain the frozen
 `logistic_l2_c0.1_v1` base configuration: `lbfgs`, `C=0.1`, `max_iter=2000`,
-random seed 1729, TRAIN-median imputation, and TRAIN mean/population-standard-
-deviation scaling. Stage 4B does not reselect or tune the base model.
+random seed 1729, complexity rank 2, family `logistic_regression`, and
+`train_median_imputation_and_standard_scaling`. The complete configuration,
+including every field and parameter, must match exactly for both targets;
+missing, extra, or altered values fail before fitting. Stage 4B does not
+reselect or tune the base model.
 
 ## Expanding temporal calibration fit
 
-Calibration parameters use only leakage-safe out-of-fold TRAIN probabilities:
+Calibration parameters use only leakage-safe out-of-fold TRAIN base-model
+probabilities:
 
 - fit 2020-21, predict 2021-22;
 - fit 2020-21 through 2021-22, predict 2022-23;
@@ -38,6 +42,15 @@ base model is fitted on all frozen TRAIN rows and predicts VALIDATION. Each
 target selects a calibrator independently on VALIDATION. Both selections are
 frozen before TEST is transformed or evaluated. TEST never changes fitting,
 selection, parameters, probability bands, subgroup rules, or thresholds.
+
+“OOF” describes the base-model predictions. The selected calibrator is itself
+fitted on the combined 2021-22 through 2023-24 OOF rows. Consequently, its
+performance on those same rows is calibration-fit-sample evidence, not
+out-of-sample calibrated performance. ATHENA keeps those rows for audit and
+retains their identity/base-model OOF metrics, but reports selected-calibration
+TRAIN subgroup evaluation as `UNAVAILABLE` with reason
+`CALIBRATION_FIT_SAMPLE`. VALIDATION is explicitly selection-sample evidence.
+FINAL_TEST is the only independent final calibration evaluation.
 
 ## Calibration candidates
 
@@ -63,7 +76,9 @@ The selection rule is fixed before evaluation:
 4. lexical candidate identifier.
 
 Identity always participates. Accuracy and threshold diagnostics never select a
-calibrator.
+calibrator. The candidate set and every parameter are exact frozen contracts;
+omissions, duplicates, additions, or parameter and complexity drift fail before
+calibration fitting.
 
 ## Metrics and numerical policy
 
@@ -96,8 +111,17 @@ their row and outcome accounting while mathematically unavailable ROC-AUC,
 average precision, or calibration coefficients remain null with explicit
 reasons.
 
-The exporter evaluates identity and the selected calibrator by split, season,
-league, league-and-season, and these fixed Stage 4A model-probability bands:
+Every subgroup row includes both an evaluation role and scope:
+
+- `CALIBRATION_FIT_OOF` / `CALIBRATION_FIT_SAMPLE`;
+- `VALIDATION_SELECTION` / `SELECTION_SAMPLE`;
+- `FINAL_TEST` / `INDEPENDENT_FINAL_TEST`.
+
+No subgroup silently combines these roles. The exporter reports evaluation
+role, split-and-league, split-and-model-probability-band, and
+league-and-season dimensions. TEST includes every frozen league and every one
+of these five fixed Stage 4A model-probability bands, including explicit
+zero-row groups:
 
 - `[0.0,0.2)`
 - `[0.2,0.4)`
