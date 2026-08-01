@@ -385,7 +385,12 @@ def load_provider_mappings(
     if not isinstance(value, list):
         raise PricingExportError("Provider mapping file must contain a JSON list")
     try:
-        mappings = tuple(ProviderSelectionMapping.from_mapping(row) for row in value)
+        mappings_list = []
+        for row in value:
+            if not isinstance(row, Mapping):
+                raise PricingExportError("Provider mapping row must be an object")
+            mappings_list.append(ProviderSelectionMapping.from_mapping(row))
+        mappings = tuple(mappings_list)
         for mapping in mappings:
             if (mapping.fixture_identifier, mapping.market_id) not in fixture_catalog:
                 raise PricingEvidenceError(

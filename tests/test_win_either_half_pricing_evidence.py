@@ -452,6 +452,27 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
         with self.assertRaises(PricingEvidenceError):
             canonical_decimal_text(Decimal("1E+10000"))
 
+    def test_direct_record_odds_are_normalized_or_rejected_without_crashing(self):
+        yes = self._record(OutcomeId.YES)
+        no = self._record(OutcomeId.NO)
+        for supplied_odds in (1.8, "1.8"):
+            with self.subTest(supplied_odds=supplied_odds):
+                changed = ResearchQuoteRecord(
+                    **{**yes.__dict__, "decimal_odds": supplied_odds}
+                )
+                result = validate_complete_snapshot((changed, no))
+                self.assertEqual(result.status, EvidenceStatus.ACCEPTED)
+                self.assertIsNotNone(result.snapshot)
+                self.assertIsInstance(result.snapshot.yes_odds, Decimal)
+                self.assertEqual(result.snapshot.yes_odds, Decimal("1.8"))
+
+        unsupported = ResearchQuoteRecord(
+            **{**yes.__dict__, "decimal_odds": object()}
+        )
+        result = validate_complete_snapshot((unsupported, no))
+        self.assertEqual(result.status, EvidenceStatus.REJECTED)
+        self.assertIn(EvidenceReason.INVALID_ODDS, result.reasons)
+
     def test_accepted_rejected_and_unavailable_counts_are_separate(self):
         complete = [self._quote(OutcomeId.YES), self._quote(OutcomeId.NO)]
         incomplete = self._quote(OutcomeId.YES, quote_snapshot_id="snapshot-2")
@@ -958,6 +979,13 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
                 with self.subTest(rows=rows):
                     with self.assertRaises(PricingExportError):
                         load(rows)
+
+            for row in (1, "mapping", None, True, []):
+                with self.subTest(non_object_row=row):
+                    with self.assertRaisesRegex(
+                        PricingExportError, "Provider mapping row must be an object"
+                    ):
+                        load([row])
 
     def test_direct_and_module_help_are_offline(self):
         commands = (

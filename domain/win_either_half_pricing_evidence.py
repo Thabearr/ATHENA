@@ -164,7 +164,7 @@ def _decimal_odds(value: Any) -> Optional[Decimal]:
         with localcontext(PRICING_DECIMAL_CONTEXT) as context:
             parsed = context.create_decimal(parsed)
             parsed.quantize(CANONICAL_QUANTUM, context=context)
-    except (DecimalException, InvalidOperation, ValueError):
+    except (DecimalException, InvalidOperation, TypeError, ValueError):
         return None
     if not parsed.is_finite() or parsed <= Decimal("1"):
         return None
@@ -682,10 +682,19 @@ def validate_complete_snapshot(
 
     yes = outcomes[OutcomeId.YES][0]
     no = outcomes[OutcomeId.NO][0]
+    yes_odds = _decimal_odds(yes.decimal_odds)
+    no_odds = _decimal_odds(no.decimal_odds)
+    if yes_odds is None or no_odds is None:
+        return SnapshotValidationResult(
+            EvidenceStatus.REJECTED,
+            (EvidenceReason.INVALID_ODDS,),
+            records,
+            None,
+        )
     try:
         with localcontext(PRICING_DECIMAL_CONTEXT):
-            yes_raw = Decimal(1) / yes.decimal_odds
-            no_raw = Decimal(1) / no.decimal_odds
+            yes_raw = Decimal(1) / yes_odds
+            no_raw = Decimal(1) / no_odds
             overround = yes_raw + no_raw
             if not overround.is_finite() or overround <= 0:
                 raise ArithmeticError
@@ -704,7 +713,13 @@ def validate_complete_snapshot(
                 CANONICAL_TOLERANCE
             ):
                 raise ArithmeticError
-    except (ArithmeticError, DecimalException, InvalidOperation, ZeroDivisionError):
+    except (
+        ArithmeticError,
+        DecimalException,
+        InvalidOperation,
+        TypeError,
+        ZeroDivisionError,
+    ):
         return SnapshotValidationResult(
             EvidenceStatus.REJECTED,
             (EvidenceReason.NON_FINITE_RESULT,),
@@ -720,8 +735,8 @@ def validate_complete_snapshot(
         fixture_kickoff=yes.fixture_kickoff,
         decision_at=yes.decision_at,
         evaluation_role=yes.evaluation_role,
-        yes_odds=yes.decimal_odds,
-        no_odds=no.decimal_odds,
+        yes_odds=yes_odds,
+        no_odds=no_odds,
         yes_raw_implied_probability=canonical_decimal(yes_raw),
         no_raw_implied_probability=canonical_decimal(no_raw),
         overround=canonical_decimal(overround),
