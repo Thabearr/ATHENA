@@ -37,6 +37,10 @@ jobs:
 
       - name: Run tests
         run: python -m pytest tests -q
+        env:
+          # Keep subprocess `python -m ...` checks rooted in the checkout even
+          # when a hosted runner enables Python's safe-path mode.
+          PYTHONPATH: ${{ github.workspace }}
 
       - name: Validate Python syntax
         run: >-
