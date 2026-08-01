@@ -1,0 +1,285 @@
+{
+  "dataset_name": "win-either-half-baseline-benchmarks-v1",
+  "dependencies": {
+    "numpy": "2.5.1",
+    "python": "3.12.0",
+    "scikit_learn": "1.9.0",
+    "scipy": "1.18.0",
+    "threadpoolctl": "3.6.0"
+  },
+  "feature_columns": [
+    "home_team_prior_overall_matches",
+    "home_team_prior_relevant_venue_matches",
+    "home_team_days_since_previous_fixture",
+    "home_team_no_prior_history",
+    "home_team_days_since_previous_missing",
+    "home_team_overall_w5_observation_count",
+    "home_team_overall_w5_goals_for_per_match",
+    "home_team_overall_w5_goals_against_per_match",
+    "home_team_overall_w5_first_half_goals_for_per_match",
+    "home_team_overall_w5_first_half_goals_against_per_match",
+    "home_team_overall_w5_first_half_win_rate",
+    "home_team_overall_w5_second_half_win_rate",
+    "home_team_overall_w5_win_either_half_yes_rate",
+    "home_team_overall_w10_observation_count",
+    "home_team_overall_w10_goals_for_per_match",
+    "home_team_overall_w10_goals_against_per_match",
+    "home_team_overall_w10_first_half_goals_for_per_match",
+    "home_team_overall_w10_first_half_goals_against_per_match",
+    "home_team_overall_w10_first_half_win_rate",
+    "home_team_overall_w10_second_half_win_rate",
+    "home_team_overall_w10_win_either_half_yes_rate",
+    "home_team_home_w5_observation_count",
+    "home_team_home_w5_goals_for_per_match",
+    "home_team_home_w5_goals_against_per_match",
+    "home_team_home_w5_first_half_goals_for_per_match",
+    "home_team_home_w5_first_half_goals_against_per_match",
+    "home_team_home_w5_first_half_win_rate",
+    "home_team_home_w5_second_half_win_rate",
+    "home_team_home_w5_win_either_half_yes_rate",
+    "home_team_home_w10_observation_count",
+    "home_team_home_w10_goals_for_per_match",
+    "home_team_home_w10_goals_against_per_match",
+    "home_team_home_w10_first_half_goals_for_per_match",
+    "home_team_home_w10_first_half_goals_against_per_match",
+    "home_team_home_w10_first_half_win_rate",
+    "home_team_home_w10_second_half_win_rate",
+    "home_team_home_w10_win_either_half_yes_rate",
+    "away_team_prior_overall_matches",
+    "away_team_prior_relevant_venue_matches",
+    "away_team_days_since_previous_fixture",
+    "away_team_no_prior_history",
+    "away_team_days_since_previous_missing",
+    "away_team_overall_w5_observation_count",
+    "away_team_overall_w5_goals_for_per_match",
+    "away_team_overall_w5_goals_against_per_match",
+    "away_team_overall_w5_first_half_goals_for_per_match",
+    "away_team_overall_w5_first_half_goals_against_per_match",
+    "away_team_overall_w5_first_half_win_rate",
+    "away_team_overall_w5_second_half_win_rate",
+    "away_team_overall_w5_win_either_half_yes_rate",
+    "away_team_overall_w10_observation_count",
+    "away_team_overall_w10_goals_for_per_match",
+    "away_team_overall_w10_goals_against_per_match",
+    "away_team_overall_w10_first_half_goals_for_per_match",
+    "away_team_overall_w10_first_half_goals_against_per_match",
+    "away_team_overall_w10_first_half_win_rate",
+    "away_team_overall_w10_second_half_win_rate",
+    "away_team_overall_w10_win_either_half_yes_rate",
+    "away_team_away_w5_observation_count",
+    "away_team_away_w5_goals_for_per_match",
+    "away_team_away_w5_goals_against_per_match",
+    "away_team_away_w5_first_half_goals_for_per_match",
+    "away_team_away_w5_first_half_goals_against_per_match",
+    "away_team_away_w5_first_half_win_rate",
+    "away_team_away_w5_second_half_win_rate",
+    "away_team_away_w5_win_either_half_yes_rate",
+    "away_team_away_w10_observation_count",
+    "away_team_away_w10_goals_for_per_match",
+    "away_team_away_w10_goals_against_per_match",
+    "away_team_away_w10_first_half_goals_for_per_match",
+    "away_team_away_w10_first_half_goals_against_per_match",
+    "away_team_away_w10_first_half_win_rate",
+    "away_team_away_w10_second_half_win_rate",
+    "away_team_away_w10_win_either_half_yes_rate"
+  ],
+  "files": {
+    "benchmark_summary": {
+      "byte_size": 165692,
+      "relative_name": "benchmarks-v1.json",
+      "sha256": "e6c2157f137a7d243f38d3a55a087e9b2ab9cb2536ab2a1544e1125362c9253f"
+    },
+    "predictions": {
+      "byte_size": 5063993,
+      "relative_name": "predictions-v1.csv",
+      "rows": 43582,
+      "sha256": "02790fdb2c4549adb27d3a086d522491215ac7a2b9889375208cae96f32873a1"
+    }
+  },
+  "generated_at_utc": "2026-08-01T02:39:55Z",
+  "generator": {
+    "generator_git_head_sha": "3c06c76be881c3904bc1f74de607c7a06d90333a",
+    "tracked_worktree_clean": true
+  },
+  "market_safety": {
+    "away_win_either_half": "DISABLED",
+    "home_win_either_half": "DISABLED"
+  },
+  "model_configurations": [
+    {
+      "complexity_rank": 0,
+      "family": "constant_prevalence",
+      "identifier": "constant_train_prevalence_v1",
+      "parameters": {},
+      "preprocessing": "none"
+    },
+    {
+      "complexity_rank": 3,
+      "family": "decision_tree",
+      "identifier": "decision_tree_depth4_leaf50_v1",
+      "parameters": {
+        "max_depth": 4,
+        "min_samples_leaf": 50,
+        "random_state": 1729
+      },
+      "preprocessing": "train_median_imputation"
+    },
+    {
+      "complexity_rank": 2,
+      "family": "logistic_regression",
+      "identifier": "logistic_l2_c0.1_v1",
+      "parameters": {
+        "C": 0.1,
+        "max_iter": 2000,
+        "random_state": 1729,
+        "solver": "lbfgs"
+      },
+      "preprocessing": "train_median_imputation_and_standard_scaling"
+    },
+    {
+      "complexity_rank": 2,
+      "family": "logistic_regression",
+      "identifier": "logistic_l2_c10_v1",
+      "parameters": {
+        "C": 10.0,
+        "max_iter": 2000,
+        "random_state": 1729,
+        "solver": "lbfgs"
+      },
+      "preprocessing": "train_median_imputation_and_standard_scaling"
+    },
+    {
+      "complexity_rank": 2,
+      "family": "logistic_regression",
+      "identifier": "logistic_l2_c1_v1",
+      "parameters": {
+        "C": 1.0,
+        "max_iter": 2000,
+        "random_state": 1729,
+        "solver": "lbfgs"
+      },
+      "preprocessing": "train_median_imputation_and_standard_scaling"
+    },
+    {
+      "complexity_rank": 1,
+      "family": "logistic_regression",
+      "identifier": "logistic_unregularized_v1",
+      "parameters": {
+        "C": 1000000000000.0,
+        "max_iter": 2000,
+        "random_state": 1729,
+        "solver": "lbfgs"
+      },
+      "preprocessing": "train_median_imputation_and_standard_scaling"
+    }
+  ],
+  "numerical_reproducibility": {
+    "artifact_binding": "bound_to_recorded_numerical_runtime",
+    "canonical_decimal_places": 12,
+    "canonical_probability_quantum": 1e-12,
+    "runtime": {
+      "libraries": [
+        {
+          "architecture": "Haswell",
+          "internal_api": "openblas",
+          "num_threads": 1,
+          "prefix": "libscipy_openblas",
+          "threading_layer": "pthreads",
+          "user_api": "blas",
+          "version": "0.3.31.dev"
+        },
+        {
+          "architecture": "Haswell",
+          "internal_api": "openblas",
+          "num_threads": 1,
+          "prefix": "libscipy_openblas",
+          "threading_layer": "pthreads",
+          "user_api": "blas",
+          "version": "0.3.33.112.0"
+        },
+        {
+          "architecture": null,
+          "internal_api": "openmp",
+          "num_threads": 1,
+          "prefix": "vcomp",
+          "threading_layer": null,
+          "user_api": "openmp",
+          "version": null
+        }
+      ],
+      "machine_architecture": "AMD64",
+      "numpy_version": "2.5.1",
+      "platform_system": "Windows",
+      "python_implementation": "CPython",
+      "python_version": "3.12.0",
+      "scikit_learn_version": "1.9.0",
+      "scipy_version": "1.18.0",
+      "thread_limit": 1,
+      "threadpoolctl_version": "3.6.0"
+    },
+    "thread_limit": 1
+  },
+  "preprocessing": {
+    "fit_split": "TRAIN",
+    "imputation": "per-feature TRAIN median",
+    "scaling": "per-feature TRAIN mean and population standard deviation"
+  },
+  "random_seeds": {
+    "model_and_diagnostics": 1729
+  },
+  "schema_version": 1,
+  "selected_models": {
+    "away_win_either_half_yes": "logistic_l2_c0.1_v1",
+    "home_win_either_half_yes": "logistic_l2_c0.1_v1"
+  },
+  "selection_rule": "lowest VALIDATION log loss; then lowest VALIDATION Brier score; then lower declared complexity rank; then lexical model identifier",
+  "splits": {
+    "test": {
+      "rows": 4048,
+      "seasons": [
+        "2025-26"
+      ]
+    },
+    "train": {
+      "rows": 14267,
+      "seasons": [
+        "2020-21",
+        "2021-22",
+        "2022-23",
+        "2023-24"
+      ]
+    },
+    "validation": {
+      "rows": 3476,
+      "seasons": [
+        "2024-25"
+      ]
+    }
+  },
+  "stage_2_evidence": {
+    "baseline_name": "half-time-ready-for-research",
+    "cache_manifest_sha256": "1640f2964d34655e01407dd1a7a36b81b3f24f28d22e40f45568ba81ee84560e",
+    "evidence_git_head_sha": "7089c0c11c2ca725dd38f6345e210c9fa4f8747d",
+    "logical_evidence_sha256": "f79b9aa54f1d3a34fd6115d7a1cf1aa746e561a35073afb67d1dad97220011ba",
+    "schema_sha256": "fe5e29a6f0e9de427db1780f480689d1a23c732ba73779eb737af906a778161b"
+  },
+  "stage_3_features": {
+    "dataset_name": "win-either-half-features-v1",
+    "feature_csv": {
+      "byte_size": 8032209,
+      "rows": 21791,
+      "sha256": "68547ae9670703c59d68367d8fa1ef067e7410d8beb842ad0aec2151f0777e7b"
+    },
+    "feature_manifest_logical_sha256": "490fbb682bc3e8d5bad605fc704aab14b0b45bf85b4c37586974e7655752aefd",
+    "generator_git_head_sha": "6b57a51092255d5e4c5ba1f37584c854b1fd2ca9"
+  },
+  "stage_3_labels": {
+    "dataset_name": "win-either-half-labels-v1",
+    "generator_git_head_sha": "fdd16e834e42fed19108d1c8db54955826903de3",
+    "label_manifest_logical_sha256": "c79739294de4350da608da56ee78d44fae51c8ab9697669fcc97de03d549481a"
+  },
+  "targets": [
+    "home_win_either_half_yes",
+    "away_win_either_half_yes"
+  ]
+}

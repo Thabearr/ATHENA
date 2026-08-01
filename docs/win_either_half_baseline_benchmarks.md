@@ -134,10 +134,24 @@ canonicalization removes meaningless final-bit variation, but ATHENA does not
 claim that different platforms, architectures, dependency builds, or BLAS
 implementations are mathematically identical.
 
+## Frozen Stage 4A interpretation
+
+The committed Stage 4A manifest freezes the verified benchmark and prediction
+file identities without committing their row-level contents. Under the
+preregistered validation rule, both independent targets selected
+`logistic_l2_c0.1_v1`. Its validation margins over `logistic_l2_c1_v1` are
+small and must not be overinterpreted.
+
+On TEST, the selected baselines remain better than the TRAIN-prevalence
+constant baseline, but calibration deteriorates, especially for the home
+target. This is evidence for further research, not approval of a probability
+model. It does not demonstrate bookmaker value, select a betting threshold, or
+authorize either Win Either Half market.
+
 ## Local generation and verification
 
-After this tooling PR is merged, generate ignored row-level outputs and the
-future small manifest from a clean worktree:
+The frozen artifact was generated from a clean worktree with the command below.
+The row-level outputs remain ignored:
 
 ```powershell
 python -m scripts.export_win_either_half_baseline_benchmarks --database database/athena.db --cache-directory .cache/football-data-uk --baseline artifacts/evidence-baselines/half-time-ready-for-research.json --label-manifest artifacts/research-manifests/win-either-half-labels-v1.json --feature-manifest artifacts/research-manifests/win-either-half-features-v1.json --feature-csv .cache/athena-research/win-either-half/features-v1.csv --benchmark-output .cache/athena-research/win-either-half/benchmarks-v1.json --predictions-output .cache/athena-research/win-either-half/predictions-v1.csv --manifest-output artifacts/research-manifests/win-either-half-benchmarks-v1.json --expect-total-rows 21791 --expect-train-rows 14267 --expect-validation-rows 3476 --expect-test-rows 4048
@@ -150,10 +164,11 @@ python -m scripts.export_win_either_half_baseline_benchmarks --database database
 ```
 
 The JSON summary and predictions CSV are UTF-8 with LF line endings and remain
-under `.cache/athena-research/`. No model binary is written. The future manifest
-fingerprints inputs, outputs, configurations, dependencies, selections, and
-market safety, but it does not prove causal validity, generalization to future
-seasons, calibration quality, bookmaker value, or production readiness.
+under `.cache/athena-research/`. No model binary is written. The committed
+manifest fingerprints inputs, outputs, configurations, dependencies,
+selections, and market safety, but it does not prove causal validity,
+generalization to future seasons, calibration quality, bookmaker value, or
+production readiness.
 
 Predictive performance alone cannot establish value: genuine exact-selection
 bookmaker prices and a separate pricing evaluation would still be required.
