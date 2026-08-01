@@ -9,18 +9,28 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import warnings
 from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
+
+import numpy as np
+from sklearn.exceptions import ConvergenceWarning
+from sklearn.linear_model import LogisticRegression
 
 from database.database import Database
 from domain.markets import MarketId
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
 from domain.win_either_half_benchmarks import (
     BenchmarkError,
+    CANONICAL_DECIMAL_PLACES,
+    CANONICAL_QUANTUM,
+    ModelConfiguration,
+    NUMERICAL_THREAD_LIMIT,
     SELECTION_RULE,
     TARGETS,
+    canonicalize_probabilities,
     default_model_configurations,
     fit_train_preprocessor,
     pre_match_feature_names,
@@ -39,6 +49,7 @@ from scripts.export_win_either_half_baseline_benchmarks import (
     dependency_versions,
     load_verified_feature_rows,
     main,
+    numerical_runtime_fingerprint,
     render_benchmark_summary,
     render_prediction_csv,
     verify_frozen_manifest_contracts,
@@ -305,6 +316,145 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
         with self.assertRaises(BenchmarkError):
             probability_metrics([0, 1], [0.2, 1.1])
 
+    def test_calibration_bins_preserve_probability_ties(self):
+        constant = probability_metrics([0, 1, 1, 0], [0.25] * 4)
+        calibration = constant["calibration"]
+        self.assertEqual(calibration["actual_bin_count"], 1)
+        self.assertEqual(len(calibration["bins"]), 1)
+        self.assertEqual(
+            calibration["expected_calibration_error"],
+            abs(0.25 - 0.5),
+        )
+
+        targets = np.asarray([0, 1, 0, 1, 1, 0, 1, 0, 1, 1, 0, 1])
+        probabilities = np.asarray([0.1] * 4 + [0.3] * 3 + [0.9] * 5)
+        repeated = probability_metrics(targets, probabilities)["calibration"]
+        self.assertEqual(repeated["actual_bin_count"], 3)
+        for probability in np.unique(probabilities):
+            containing = [
+                value
+                for value in repeated["bins"]
+                if value["probability_minimum"]
+                <= probability
+                <= value["probability_maximum"]
+            ]
+            self.assertEqual(len(containing), 1)
+
+    def test_calibration_bins_are_balanced_and_reorder_invariant(self):
+        targets = np.asarray([index % 2 for index in range(101)])
+        probabilities = np.linspace(0.01, 0.99, num=101)
+        original = probability_metrics(targets, probabilities)["calibration"]
+        counts = [value["count"] for value in original["bins"]]
+        self.assertLessEqual(max(counts) - min(counts), 1)
+        order = np.asarray(list(reversed(range(len(targets)))))
+        reordered = probability_metrics(
+            targets[order], probabilities[order]
+        )["calibration"]
+        self.assertEqual(original, reordered)
+
+    def test_logistic_candidate_convergence_warning_fails_closed(self):
+        configuration = ModelConfiguration(
+            identifier="forced_non_converged_logistic",
+            family="logistic_regression",
+            complexity_rank=1,
+            parameters=(
+                ("C", 1.0),
+                ("max_iter", 2000),
+                ("random_state", 1729),
+                ("solver", "lbfgs"),
+            ),
+            preprocessing="train_median_imputation_and_standard_scaling",
+        )
+        original_fit = LogisticRegression.fit
+
+        def warning_fit(estimator, values, targets):
+            fitted = original_fit(estimator, values, targets)
+            warnings.warn("forced", ConvergenceWarning)
+            return fitted
+
+        with patch(
+            "domain.win_either_half_benchmarks.LogisticRegression.fit",
+            new=warning_fit,
+        ), patch(
+            "domain.win_either_half_benchmarks.select_validation_winner"
+        ) as selection:
+            with self.assertRaisesRegex(
+                BenchmarkError,
+                "home_win_either_half_yes: forced_non_converged_logistic",
+            ):
+                run_baseline_benchmarks(
+                    self._rows(),
+                    self.FEATURE_NAMES,
+                    model_configurations=(configuration,),
+                )
+            selection.assert_not_called()
+
+    def test_calibration_diagnostic_non_convergence_is_explicit(self):
+        original_fit = LogisticRegression.fit
+
+        def warning_fit(estimator, values, targets):
+            fitted = original_fit(estimator, values, targets)
+            warnings.warn("forced", ConvergenceWarning)
+            return fitted
+
+        targets = [0, 0, 1, 1, 0, 1]
+        probabilities = [0.1, 0.2, 0.65, 0.8, 0.35, 0.7]
+        with patch(
+            "domain.win_either_half_benchmarks.LogisticRegression.fit",
+            new=warning_fit,
+        ):
+            diagnostic = probability_metrics(targets, probabilities)[
+                "calibration"
+            ]
+        self.assertEqual(diagnostic["status"], "UNAVAILABLE")
+        self.assertEqual(diagnostic["reason"], "NON_CONVERGENCE")
+        self.assertIsNone(diagnostic["intercept"])
+        self.assertIsNone(diagnostic["slope"])
+        available = probability_metrics(targets, probabilities)["calibration"]
+        self.assertEqual(available["status"], "AVAILABLE")
+
+    def test_canonical_probability_precision_and_selection_tolerance(self):
+        base = np.asarray([0.2345678901234, 0.7654321098764])
+        sub_precision = base + np.asarray([1e-14, -1e-14])
+        above_precision = base + np.asarray([2e-12, -2e-12])
+        np.testing.assert_array_equal(
+            canonicalize_probabilities(base),
+            canonicalize_probabilities(sub_precision),
+        )
+        self.assertFalse(
+            np.array_equal(
+                canonicalize_probabilities(base),
+                canonicalize_probabilities(above_precision),
+            )
+        )
+        self.assertEqual(CANONICAL_DECIMAL_PLACES, 12)
+        self.assertEqual(CANONICAL_QUANTUM, 1e-12)
+
+        def candidate(name, log_loss_value):
+            return {
+                "complexity_rank": 1,
+                "metrics": {
+                    "validation": {
+                        "brier_score": 0.2,
+                        "log_loss": log_loss_value,
+                    }
+                },
+                "model_identifier": name,
+            }
+
+        self.assertEqual(
+            select_validation_winner(
+                (candidate("a", 0.3 + 1e-14), candidate("b", 0.3))
+            ),
+            "a",
+        )
+        self.assertEqual(
+            select_validation_winner(
+                (candidate("a", 0.3 + 2e-12), candidate("b", 0.3))
+            ),
+            "b",
+        )
+
     def test_split_counts_targets_and_independence_are_preserved(self):
         result = run_baseline_benchmarks(
             self._rows(),
@@ -385,6 +535,65 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
         ]["0.50"]["precision"] = 0.0
         self.assertEqual(select_validation_winner(changed_thresholds), "a")
         self.assertIn("VALIDATION log loss", SELECTION_RULE)
+
+    def test_metrics_use_the_serialized_canonical_probabilities(self):
+        result = run_baseline_benchmarks(self._rows(), self.FEATURE_NAMES)
+        content = render_prediction_csv(result["prediction_rows"])
+        self.assertNotIn(b"\r\n", content)
+        serialized_rows = list(
+            csv.DictReader(io.StringIO(content.decode("utf-8")))
+        )
+        for target in TARGETS:
+            for split in ("TRAIN", "VALIDATION", "TEST"):
+                rows = [
+                    row
+                    for row in serialized_rows
+                    if row["target_name"] == target and row["split"] == split
+                ]
+                metrics = probability_metrics(
+                    [int(row["target_value"]) for row in rows],
+                    [float(row["predicted_probability"]) for row in rows],
+                )
+                self.assertEqual(
+                    metrics,
+                    result["benchmark"]["targets"][target][
+                        "selected_evaluation"
+                    ][split.lower()],
+                )
+
+    def test_numerical_runtime_fingerprint_is_bounded_and_machine_readable(self):
+        loaded = [
+            {
+                "architecture": "test-arch",
+                "filepath": "C:/Users/private/library.dll",
+                "internal_api": "openblas",
+                "num_threads": 1,
+                "prefix": "libopenblas",
+                "threading_layer": "pthreads",
+                "user_api": "blas",
+                "version": "1.0",
+            }
+        ]
+        with patch(
+            "scripts.export_win_either_half_baseline_benchmarks.threadpool_info",
+            return_value=loaded,
+        ):
+            runtime = numerical_runtime_fingerprint()
+        self.assertEqual(runtime["thread_limit"], NUMERICAL_THREAD_LIMIT)
+        for key in (
+            "python_version",
+            "python_implementation",
+            "platform_system",
+            "machine_architecture",
+            "numpy_version",
+            "scipy_version",
+            "scikit_learn_version",
+            "threadpoolctl_version",
+            "libraries",
+        ):
+            self.assertIn(key, runtime)
+        self.assertNotIn("filepath", runtime["libraries"][0])
+        self.assertNotIn("C:/Users", json.dumps(runtime))
 
     @staticmethod
     def _create_cache(cache: Path):
@@ -708,6 +917,10 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
                 predictor_names=predictors,
                 generator_code_state=deepcopy(self.CODE_STATE),
                 dependencies={"python": "test", "scikit_learn": "test"},
+                numerical_runtime={
+                    "python_version": "test",
+                    "thread_limit": NUMERICAL_THREAD_LIMIT,
+                },
                 generated_at_utc="2026-08-01T00:00:00Z",
             )
             self.assertEqual(manifest["selection_rule"], SELECTION_RULE)
@@ -722,6 +935,16 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
             self.assertEqual(
                 manifest["market_safety"]["home_win_either_half"], "DISABLED"
             )
+            self.assertEqual(
+                manifest["numerical_reproducibility"]["thread_limit"],
+                NUMERICAL_THREAD_LIMIT,
+            )
+            self.assertEqual(
+                manifest["numerical_reproducibility"][
+                    "canonical_decimal_places"
+                ],
+                CANONICAL_DECIMAL_PLACES,
+            )
             later = deepcopy(manifest)
             later["generated_at_utc"] = "2030-01-01T00:00:00Z"
             self.assertEqual(compare_benchmark_manifests(manifest, later), [])
@@ -732,6 +955,14 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
             self.assertIn(
                 "Stage 3 feature identity differs",
                 compare_benchmark_manifests(manifest, drifted),
+            )
+            runtime_drifted = deepcopy(manifest)
+            runtime_drifted["numerical_reproducibility"]["runtime"][
+                "python_version"
+            ] = "different"
+            self.assertIn(
+                "numerical runtime contract differs",
+                compare_benchmark_manifests(manifest, runtime_drifted),
             )
 
     def test_no_network_and_frozen_files_remain_unchanged(self):

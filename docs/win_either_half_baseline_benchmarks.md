@@ -66,6 +66,13 @@ Each target is benchmarked independently with random seed 1729:
 Candidate identifiers, parameters, preprocessing, dependency versions, and
 random seeds are machine-readable in the future manifest.
 
+Any `ConvergenceWarning` from a benchmark logistic candidate fails the run and
+the candidate cannot participate in validation selection. Reaching the
+configured maximum iteration count is treated the same way. Calibration
+intercept/slope fitting is optional diagnostic work: if it does not converge,
+both coefficients are null and its machine-readable status is `UNAVAILABLE`
+with reason `NON_CONVERGENCE`.
+
 ## Selection and metrics
 
 The selection rule is fixed before evaluation:
@@ -91,7 +98,11 @@ Thresholds 0.50, 0.60, and 0.70 report qualifying count, precision, and recall.
 They are descriptive only and never select a candidate or become a production
 decision rule.
 
-Equal-frequency calibration bins report predicted mean and observed rate.
+Calibration uses deterministic, approximately equal-frequency bins. A group of
+identical predicted probabilities is never split between bins, so ties can
+reduce the actual bin count below the requested ten. A constant prediction
+vector therefore produces exactly one bin. Each bin reports predicted mean and
+observed rate, and the actual bin count is recorded.
 Expected calibration error is:
 
 `sum(bin_count / total * abs(predicted_mean - observed_rate))`
@@ -100,6 +111,28 @@ Calibration intercept and slope are reported when both classes and varying
 logits make them mathematically available. These are diagnostics, not fitted
 probability calibration. Platt scaling, isotonic regression, and any other
 calibration fitting belong to a later phase.
+
+## Numerical reproducibility contract
+
+Model fitting, probability prediction, and calibration-diagnostic fitting run
+under a `threadpoolctl` numerical thread limit of 1. Probabilities are
+canonicalized to 12 decimal places before metrics, validation selection, and
+CSV serialization. Reported metric floats use the same precision. Thus the
+metrics are calculated from the exact canonical probabilities written to the
+prediction CSV, and differences below this declared precision cannot change a
+winner. Differences at or above the precision remain observable.
+
+The future manifest records the precision and thread policy plus Python version
+and implementation, operating-system family, machine architecture, NumPy,
+SciPy, scikit-learn and threadpoolctl versions, and deterministically sorted
+normalized BLAS/OpenMP runtime information. Library filesystem paths are never
+recorded. Verification fails with a specific numerical-runtime error if that
+contract changes.
+
+The artifact is intentionally bound to its recorded numerical runtime. Decimal
+canonicalization removes meaningless final-bit variation, but ATHENA does not
+claim that different platforms, architectures, dependency builds, or BLAS
+implementations are mathematically identical.
 
 ## Local generation and verification
 

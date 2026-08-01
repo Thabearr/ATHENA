@@ -7,10 +7,12 @@ and TEST is transformed and evaluated only after both target winners are fixed.
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import Iterable, Mapping, Sequence, Tuple
 
 import numpy as np
+from sklearn.exceptions import ConvergenceWarning
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score,
@@ -19,6 +21,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.tree import DecisionTreeClassifier
+from threadpoolctl import threadpool_limits
 
 
 TARGETS = (
@@ -44,6 +47,9 @@ SPLIT_ORDER = {name: index for index, name in enumerate(SPLITS)}
 DESCRIPTIVE_THRESHOLDS = (0.50, 0.60, 0.70)
 DEFAULT_RANDOM_SEED = 1729
 CALIBRATION_BIN_COUNT = 10
+CANONICAL_DECIMAL_PLACES = 12
+CANONICAL_QUANTUM = 10.0 ** -CANONICAL_DECIMAL_PLACES
+NUMERICAL_THREAD_LIMIT = 1
 SELECTION_RULE = (
     "lowest VALIDATION log loss; then lowest VALIDATION Brier score; "
     "then lower declared complexity rank; then lexical model identifier"
@@ -52,6 +58,39 @@ SELECTION_RULE = (
 
 class BenchmarkError(ValueError):
     """Raised when a benchmark input violates the frozen research contract."""
+
+
+def canonical_float(value: float) -> float:
+    """Round a reported float to the Stage 4A canonical decimal precision."""
+    numeric = round(float(value), CANONICAL_DECIMAL_PLACES)
+    return 0.0 if numeric == 0.0 else numeric
+
+
+def canonicalize_probabilities(probabilities: Sequence[float]) -> np.ndarray:
+    """Validate and quantize probability values before metrics or serialization."""
+    values = np.asarray(probabilities, dtype=float)
+    if not np.isfinite(values).all():
+        raise BenchmarkError("Predicted probabilities must be finite")
+    if ((values < 0.0) | (values > 1.0)).any():
+        raise BenchmarkError("Predicted probabilities must be in [0, 1]")
+    canonical = np.round(values, decimals=CANONICAL_DECIMAL_PLACES)
+    return np.clip(canonical, 0.0, 1.0)
+
+
+def canonicalize_report_value(value):
+    """Recursively canonicalize floating-point values in machine-readable output."""
+    if isinstance(value, (float, np.floating)):
+        return canonical_float(value)
+    if isinstance(value, dict):
+        return {
+            key: canonicalize_report_value(nested)
+            for key, nested in value.items()
+        }
+    if isinstance(value, list):
+        return [canonicalize_report_value(nested) for nested in value]
+    if isinstance(value, tuple):
+        return tuple(canonicalize_report_value(nested) for nested in value)
+    return value
 
 
 @dataclass(frozen=True)
@@ -250,12 +289,12 @@ class TrainOnlyPreprocessor:
         return imputed, scaled, report
 
     def state_fingerprint_payload(self) -> dict:
-        return {
+        return canonicalize_report_value({
             "feature_names": list(self.feature_names),
             "means": list(self.means),
             "medians": list(self.medians),
             "scales": list(self.scales),
-        }
+        })
 
 
 def fit_train_preprocessor(
@@ -296,14 +335,43 @@ def _calibration_bins(
     probabilities: np.ndarray,
     bin_count: int = CALIBRATION_BIN_COUNT,
 ) -> Tuple[list, float]:
-    order = np.argsort(probabilities, kind="mergesort")
+    if bin_count <= 0:
+        raise BenchmarkError("Calibration bin count must be positive")
+    unique_probabilities = np.unique(probabilities)
+    actual_bin_count = min(bin_count, len(unique_probabilities))
+    grouped_positions = [
+        np.flatnonzero(probabilities == probability)
+        for probability in unique_probabilities
+    ]
+    group_counts = np.asarray(
+        [len(positions) for positions in grouped_positions], dtype=int
+    )
+    cumulative_counts = np.cumsum(group_counts)
+    boundaries = []
+    previous_boundary = 0
+    group_total = len(grouped_positions)
+    for bin_index in range(1, actual_bin_count):
+        target_count = len(probabilities) * bin_index / actual_bin_count
+        minimum_boundary = previous_boundary + 1
+        maximum_boundary = group_total - (actual_bin_count - bin_index)
+        boundary = min(
+            range(minimum_boundary, maximum_boundary + 1),
+            key=lambda candidate: (
+                abs(cumulative_counts[candidate - 1] - target_count),
+                candidate,
+            ),
+        )
+        boundaries.append(boundary)
+        previous_boundary = boundary
+    boundaries.append(group_total)
+
     bins = []
     weighted_error = 0.0
-    for index, positions in enumerate(np.array_split(order, min(bin_count, len(order)))):
-        if not len(positions):
-            continue
-        predicted_mean = float(np.mean(probabilities[positions]))
-        observed_rate = float(np.mean(targets[positions]))
+    start = 0
+    for index, boundary in enumerate(boundaries):
+        positions = np.concatenate(grouped_positions[start:boundary])
+        predicted_mean = canonical_float(np.mean(probabilities[positions]))
+        observed_rate = canonical_float(np.mean(targets[positions]))
         count = int(len(positions))
         weighted_error += count * abs(predicted_mean - observed_rate)
         bins.append(
@@ -311,10 +379,17 @@ def _calibration_bins(
                 "bin": index + 1,
                 "count": count,
                 "observed_rate": observed_rate,
+                "probability_maximum": canonical_float(
+                    np.max(probabilities[positions])
+                ),
+                "probability_minimum": canonical_float(
+                    np.min(probabilities[positions])
+                ),
                 "predicted_mean": predicted_mean,
             }
         )
-    return bins, weighted_error / len(targets)
+        start = boundary
+    return bins, canonical_float(weighted_error / len(targets))
 
 
 def _calibration_intercept_slope(
@@ -323,11 +398,21 @@ def _calibration_intercept_slope(
     random_seed: int,
 ) -> dict:
     if len(np.unique(targets)) < 2:
-        return {"intercept": None, "slope": None}
+        return {
+            "intercept": None,
+            "reason": "SINGLE_CLASS",
+            "slope": None,
+            "status": "UNAVAILABLE",
+        }
     clipped = np.clip(probabilities, 1e-12, 1.0 - 1e-12)
     logits = np.log(clipped / (1.0 - clipped))
     if float(np.std(logits)) == 0.0:
-        return {"intercept": None, "slope": None}
+        return {
+            "intercept": None,
+            "reason": "CONSTANT_PREDICTION",
+            "slope": None,
+            "status": "UNAVAILABLE",
+        }
     try:
         diagnostic = LogisticRegression(
             C=1e12,
@@ -335,12 +420,33 @@ def _calibration_intercept_slope(
             max_iter=2000,
             random_state=random_seed,
         )
-        diagnostic.fit(logits.reshape(-1, 1), targets)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            with threadpool_limits(limits=NUMERICAL_THREAD_LIMIT):
+                diagnostic.fit(logits.reshape(-1, 1), targets)
+        non_converged = any(
+            issubclass(warning.category, ConvergenceWarning)
+            for warning in caught
+        ) or bool(np.any(np.asarray(diagnostic.n_iter_) >= diagnostic.max_iter))
+        if non_converged:
+            return {
+                "intercept": None,
+                "reason": "NON_CONVERGENCE",
+                "slope": None,
+                "status": "UNAVAILABLE",
+            }
     except (ValueError, FloatingPointError):
-        return {"intercept": None, "slope": None}
+        return {
+            "intercept": None,
+            "reason": "FIT_ERROR",
+            "slope": None,
+            "status": "UNAVAILABLE",
+        }
     return {
-        "intercept": float(diagnostic.intercept_[0]),
-        "slope": float(diagnostic.coef_[0][0]),
+        "intercept": canonical_float(diagnostic.intercept_[0]),
+        "reason": None,
+        "slope": canonical_float(diagnostic.coef_[0][0]),
+        "status": "AVAILABLE",
     }
 
 
@@ -351,13 +457,16 @@ def probability_metrics(
     random_seed: int = DEFAULT_RANDOM_SEED,
 ) -> dict:
     observed = np.asarray(targets, dtype=int)
-    predicted = np.asarray(probabilities, dtype=float)
-    if len(observed) == 0 or len(observed) != len(predicted):
+    raw_predicted = np.asarray(probabilities, dtype=float)
+    if len(observed) == 0 or len(observed) != len(raw_predicted):
         raise BenchmarkError("Metric inputs must have the same non-zero length")
-    non_finite = int((~np.isfinite(predicted)).sum())
-    outside = int(((predicted < 0.0) | (predicted > 1.0)).sum())
+    non_finite = int((~np.isfinite(raw_predicted)).sum())
+    outside = int(
+        ((raw_predicted < 0.0) | (raw_predicted > 1.0)).sum()
+    )
     if non_finite or outside:
         raise BenchmarkError("Predicted probabilities must be finite and in [0, 1]")
+    predicted = canonicalize_probabilities(raw_predicted)
     if not set(np.unique(observed)).issubset({0, 1}):
         raise BenchmarkError("Targets must be binary")
     positive_count = int(observed.sum())
@@ -369,25 +478,33 @@ def probability_metrics(
         true_positives = int(observed[qualifies].sum())
         thresholds[f"{threshold:.2f}"] = {
             "precision": (
-                true_positives / qualifying_count if qualifying_count else None
+                canonical_float(true_positives / qualifying_count)
+                if qualifying_count
+                else None
             ),
             "qualifying_predictions": qualifying_count,
             "recall": (
-                true_positives / positive_count if positive_count else None
+                canonical_float(true_positives / positive_count)
+                if positive_count
+                else None
             ),
         }
     both_classes = len(np.unique(observed)) == 2
     return {
         "average_precision": (
-            float(average_precision_score(observed, predicted))
+            canonical_float(average_precision_score(observed, predicted))
             if positive_count
             else None
         ),
-        "brier_score": float(brier_score_loss(observed, predicted)),
+        "brier_score": canonical_float(brier_score_loss(observed, predicted)),
         "calibration": {
-            "binning": "equal-frequency by stable predicted-probability order",
+            "actual_bin_count": len(bins),
+            "binning": (
+                "approximately equal-frequency contiguous probability bins; "
+                "identical probabilities are never split"
+            ),
             "bins": bins,
-            "expected_calibration_error": float(ece),
+            "expected_calibration_error": canonical_float(ece),
             "expected_calibration_error_formula": (
                 "sum(bin_count / total * abs(predicted_mean - observed_rate))"
             ),
@@ -395,18 +512,22 @@ def probability_metrics(
                 observed, predicted, random_seed
             ),
         },
-        "log_loss": float(log_loss(observed, predicted, labels=[0, 1])),
+        "log_loss": canonical_float(
+            log_loss(observed, predicted, labels=[0, 1])
+        ),
         "positive_count": positive_count,
-        "prevalence": positive_count / len(observed),
+        "prevalence": canonical_float(positive_count / len(observed)),
         "probability_diagnostics": {
             "count_nan_or_infinite": non_finite,
             "count_outside_unit_interval": outside,
-            "maximum": float(np.max(predicted)),
-            "mean": float(np.mean(predicted)),
-            "minimum": float(np.min(predicted)),
+            "maximum": canonical_float(np.max(predicted)),
+            "mean": canonical_float(np.mean(predicted)),
+            "minimum": canonical_float(np.min(predicted)),
         },
         "roc_auc": (
-            float(roc_auc_score(observed, predicted)) if both_classes else None
+            canonical_float(roc_auc_score(observed, predicted))
+            if both_classes
+            else None
         ),
         "row_count": len(observed),
         "threshold_diagnostics": thresholds,
@@ -425,13 +546,17 @@ class _FittedCandidate:
         scaled: np.ndarray,
     ) -> np.ndarray:
         if self.configuration.family == "constant_prevalence":
-            return np.full(len(imputed), self.train_prevalence, dtype=float)
+            return canonicalize_probabilities(
+                np.full(len(imputed), self.train_prevalence, dtype=float)
+            )
         matrix = (
             scaled
             if "standard_scaling" in self.configuration.preprocessing
             else imputed
         )
-        return np.asarray(self.estimator.predict_proba(matrix)[:, 1], dtype=float)
+        with threadpool_limits(limits=NUMERICAL_THREAD_LIMIT):
+            probabilities = self.estimator.predict_proba(matrix)[:, 1]
+        return canonicalize_probabilities(probabilities)
 
 
 def _fit_candidate(
@@ -440,17 +565,38 @@ def _fit_candidate(
     train_imputed: np.ndarray,
     train_scaled: np.ndarray,
     train_targets: np.ndarray,
+    target_name: str,
 ) -> _FittedCandidate:
-    prevalence = float(np.mean(train_targets))
+    prevalence = canonical_float(np.mean(train_targets))
     if configuration.family == "constant_prevalence":
         return _FittedCandidate(configuration, None, prevalence)
     parameters = configuration.parameter_dict()
     if configuration.family == "logistic_regression":
         estimator = LogisticRegression(**parameters)
-        estimator.fit(train_scaled, train_targets)
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ConvergenceWarning)
+            with threadpool_limits(limits=NUMERICAL_THREAD_LIMIT):
+                estimator.fit(train_scaled, train_targets)
+        warned = any(
+            issubclass(warning.category, ConvergenceWarning)
+            for warning in caught
+        )
+        configured_maximum = parameters.get("max_iter")
+        reached_maximum = (
+            configured_maximum is not None
+            and bool(
+                np.any(np.asarray(estimator.n_iter_) >= configured_maximum)
+            )
+        )
+        if warned or reached_maximum:
+            raise BenchmarkError(
+                "Logistic candidate did not converge for target "
+                f"{target_name}: {configuration.identifier}"
+            )
     elif configuration.family == "decision_tree":
         estimator = DecisionTreeClassifier(**parameters)
-        estimator.fit(train_imputed, train_targets)
+        with threadpool_limits(limits=NUMERICAL_THREAD_LIMIT):
+            estimator.fit(train_imputed, train_targets)
     else:
         raise BenchmarkError(f"Unsupported model family: {configuration.family}")
     return _FittedCandidate(configuration, estimator, prevalence)
@@ -462,8 +608,12 @@ def select_validation_winner(candidate_summaries: Sequence[Mapping]) -> str:
     ordered = sorted(
         candidate_summaries,
         key=lambda value: (
-            value["metrics"]["validation"]["log_loss"],
-            value["metrics"]["validation"]["brier_score"],
+            canonical_float(
+                value["metrics"]["validation"]["log_loss"]
+            ),
+            canonical_float(
+                value["metrics"]["validation"]["brier_score"]
+            ),
             value["complexity_rank"],
             value["model_identifier"],
         ),
@@ -565,6 +715,7 @@ def run_baseline_benchmarks(
                 train_imputed=train_imputed,
                 train_scaled=train_scaled,
                 train_targets=train_targets[target],
+                target_name=target,
             )
             fitted_candidates[configuration.identifier] = fitted
             train_probabilities = fitted.predict(train_imputed, train_scaled)
@@ -678,6 +829,12 @@ def run_baseline_benchmarks(
             "probability_threshold_policy": (
                 "0.50, 0.60 and 0.70 are descriptive only and never select a model"
             ),
+            "numerical_reproducibility": {
+                "artifact_binding": "bound_to_recorded_numerical_runtime",
+                "canonical_decimal_places": CANONICAL_DECIMAL_PLACES,
+                "canonical_probability_quantum": CANONICAL_QUANTUM,
+                "thread_limit": NUMERICAL_THREAD_LIMIT,
+            },
             "protocol_events": protocol_events,
             "random_seed": random_seed,
             "selection_metric": "VALIDATION log loss",
@@ -694,13 +851,18 @@ def run_baseline_benchmarks(
 __all__ = [
     "BenchmarkError",
     "CALIBRATION_BIN_COUNT",
+    "CANONICAL_DECIMAL_PLACES",
+    "CANONICAL_QUANTUM",
     "DEFAULT_RANDOM_SEED",
     "DESCRIPTIVE_THRESHOLDS",
     "ModelConfiguration",
+    "NUMERICAL_THREAD_LIMIT",
     "SELECTION_RULE",
     "SPLITS",
     "TARGETS",
     "TrainOnlyPreprocessor",
+    "canonical_float",
+    "canonicalize_probabilities",
     "default_model_configurations",
     "fit_train_preprocessor",
     "pre_match_feature_names",

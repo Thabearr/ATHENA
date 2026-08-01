@@ -20,13 +20,17 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Iterable, Mapping, Optional, Sequence
 
+from threadpoolctl import threadpool_info, threadpool_limits
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from domain.win_either_half_benchmarks import (  # noqa: E402
     BenchmarkError,
+    CANONICAL_DECIMAL_PLACES,
     DEFAULT_RANDOM_SEED,
+    NUMERICAL_THREAD_LIMIT,
     SELECTION_RULE,
     SPLITS,
     TARGETS,
@@ -289,7 +293,8 @@ def render_prediction_csv(rows: Sequence[Mapping]) -> bytes:
     for row in rows:
         rendered = dict(row)
         rendered["predicted_probability"] = format(
-            float(rendered["predicted_probability"]), ".17g"
+            float(rendered["predicted_probability"]),
+            f".{CANONICAL_DECIMAL_PLACES}f",
         )
         writer.writerow(rendered)
     return stream.getvalue().encode("utf-8")
@@ -301,6 +306,7 @@ def dependency_versions() -> dict:
         ("numpy", "numpy"),
         ("scikit-learn", "scikit_learn"),
         ("scipy", "scipy"),
+        ("threadpoolctl", "threadpoolctl"),
     ):
         try:
             versions[key] = importlib.metadata.version(distribution)
@@ -309,6 +315,41 @@ def dependency_versions() -> dict:
                 f"Required dependency version unavailable: {distribution}"
             ) from error
     return versions
+
+
+def numerical_runtime_fingerprint() -> dict:
+    """Return stable runtime details that bound numerical artifact verification."""
+    normalized_libraries = []
+    with threadpool_limits(limits=NUMERICAL_THREAD_LIMIT):
+        loaded_libraries = threadpool_info()
+    for library in loaded_libraries:
+        normalized_libraries.append(
+            {
+                "architecture": library.get("architecture"),
+                "internal_api": library.get("internal_api"),
+                "num_threads": library.get("num_threads"),
+                "prefix": library.get("prefix"),
+                "threading_layer": library.get("threading_layer"),
+                "user_api": library.get("user_api"),
+                "version": library.get("version"),
+            }
+        )
+    normalized_libraries.sort(
+        key=lambda value: _canonical_json_bytes(value)
+    )
+    versions = dependency_versions()
+    return {
+        "libraries": normalized_libraries,
+        "machine_architecture": platform.machine(),
+        "numpy_version": versions["numpy"],
+        "platform_system": platform.system(),
+        "python_implementation": platform.python_implementation(),
+        "python_version": versions["python"],
+        "scikit_learn_version": versions["scikit_learn"],
+        "scipy_version": versions["scipy"],
+        "thread_limit": NUMERICAL_THREAD_LIMIT,
+        "threadpoolctl_version": versions["threadpoolctl"],
+    }
 
 
 def build_benchmark_manifest(
@@ -326,6 +367,7 @@ def build_benchmark_manifest(
     predictor_names: Sequence[str],
     generator_code_state: Mapping,
     dependencies: Mapping,
+    numerical_runtime: Mapping,
     generated_at_utc: Optional[str] = None,
 ) -> dict:
     selected_models = {
@@ -363,6 +405,10 @@ def build_benchmark_manifest(
         },
         "market_safety": dict(feature_manifest.get("market_safety", {})),
         "model_configurations": benchmark["model_configurations"],
+        "numerical_reproducibility": {
+            **dict(benchmark["numerical_reproducibility"]),
+            "runtime": dict(numerical_runtime),
+        },
         "preprocessing": {
             "fit_split": benchmark["preprocessing"]["fit_split"],
             "imputation": benchmark["preprocessing"]["imputation"],
@@ -416,6 +462,14 @@ def compare_benchmark_manifests(
     allow_generator_revision_difference: bool = False,
 ) -> list:
     differences = []
+    stored_numerical = dict(stored.get("numerical_reproducibility", {}))
+    current_numerical = dict(current.get("numerical_reproducibility", {}))
+    stored_runtime = stored_numerical.pop("runtime", None)
+    current_runtime = current_numerical.pop("runtime", None)
+    if stored_numerical != current_numerical:
+        differences.append("canonical numerical precision or thread policy differs")
+    if stored_runtime != current_runtime:
+        differences.append("numerical runtime contract differs")
     for key, label in (
         ("schema_version", "manifest schema version differs"),
         ("dataset_name", "dataset name differs"),
@@ -693,6 +747,7 @@ def main(
             predictor_names=predictor_names,
             generator_code_state=code_state,
             dependencies=dependency_versions(),
+            numerical_runtime=numerical_runtime_fingerprint(),
         )
         validate_market_safety(current_manifest)
         if stored_manifest is not None:

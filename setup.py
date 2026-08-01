@@ -16,6 +16,7 @@ setup(
         "numpy",
         "scipy",
         "scikit-learn",
+        "threadpoolctl",
         "python-dotenv",
         "PyYAML",
         "rich",
