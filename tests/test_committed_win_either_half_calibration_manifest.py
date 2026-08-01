@@ -75,9 +75,17 @@ class CommittedWinEitherHalfCalibrationManifestTests(unittest.TestCase):
         )
 
     def test_manifest_file_and_frozen_ancestry_are_exact(self):
-        self.assertEqual(self.manifest_path.stat().st_size, 6176)
+        committed_bytes = subprocess.run(
+            ["git", "show", f"HEAD:{self.MANIFEST_RELATIVE_PATH}"],
+            cwd=self.REPOSITORY_ROOT,
+            capture_output=True,
+            timeout=30,
+            shell=False,
+            check=True,
+        ).stdout
+        self.assertEqual(len(committed_bytes), 6176)
         self.assertEqual(
-            hashlib.sha256(self.manifest_path.read_bytes()).hexdigest(),
+            hashlib.sha256(committed_bytes).hexdigest(),
             "5b658f6d3e22143f06f45df535052886d2b3a1cbf2618be0be4ed7f40bda5b54",
         )
         self.assertEqual(self.manifest["schema_version"], 1)
