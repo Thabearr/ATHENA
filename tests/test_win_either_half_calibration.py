@@ -878,7 +878,7 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
                 self.assertIn("--benchmark-manifest", completed.stdout)
                 self.assertIn("--check", completed.stdout)
 
-    def test_outputs_remain_ignored_and_markets_disabled(self):
+    def test_row_outputs_remain_ignored_and_frozen_manifest_is_tracked(self):
         tracked = subprocess.run(
             ["git", "ls-files"],
             cwd=self.REPOSITORY_ROOT,
@@ -892,7 +892,7 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
         self.assertFalse(
             any(path.startswith(".cache/athena-research/") for path in tracked)
         )
-        self.assertNotIn(
+        self.assertIn(
             "artifacts/research-manifests/win-either-half-calibration-v1.json",
             tracked,
         )

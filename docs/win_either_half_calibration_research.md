@@ -94,7 +94,7 @@ average precision.
 Thresholds 0.50, 0.60, and 0.70 are descriptive only. Probabilities and metric
 floats are canonicalized to 12 decimal places before metrics, selection, and
 serialization. Model fitting, prediction, calibration fitting, and diagnostic
-fitting use a `threadpoolctl` limit of 1. The future manifest records the
+fitting use a `threadpoolctl` limit of 1. The frozen manifest records the
 numerical runtime and fails verification with a specific runtime-drift error.
 
 ## Predeclared subgroup stability policy
@@ -134,8 +134,8 @@ price-band evaluation remain Stage 5 work.
 
 ## Output lifecycle
 
-After this tooling PR is merged, a clean worktree with the frozen local inputs
-can generate:
+The reviewed Stage 4B run was generated from a clean worktree with the frozen
+local inputs using:
 
 ```powershell
 python -m scripts.export_win_either_half_calibration_research --manifest-output artifacts/research-manifests/win-either-half-calibration-v1.json --expect-feature-rows 21791 --expect-stage-4-prediction-rows 43582
@@ -147,7 +147,7 @@ The exporter writes these ignored research outputs atomically:
 - `.cache/athena-research/win-either-half/calibrated-predictions-v1.csv`
 - `.cache/athena-research/win-either-half/calibration-subgroups-v1.csv`
 
-The small manifest can be verified later with:
+The small tracked manifest can be verified later with:
 
 ```powershell
 python -m scripts.export_win_either_half_calibration_research --check artifacts/research-manifests/win-either-half-calibration-v1.json --expect-feature-rows 21791 --expect-stage-4-prediction-rows 43582
@@ -156,7 +156,32 @@ python -m scripts.export_win_either_half_calibration_research --check artifacts/
 Generation refuses a dirty tracked worktree or existing outputs unless
 `--force` is deliberate. Inputs are read-only, no network request is made, and
 no database, row-level output, calibrator object, or production model binary is
-committed by this tooling PR.
+committed. The manifest records the clean generator revision. Its existing
+revision-relationship policy permits a later artifact-only descendant only
+when that manifest is the sole tracked path changed; any other tracked change
+fails verification.
+
+## Frozen Stage 4B interpretation
+
+The frozen manifest selects `isotonic_calibration_v1` for Home and
+`identity_calibration_v1` for Away. Each target used 10,635 expanding temporal
+OOF calibration-fitting rows (with 2020-21 excluded), 3,476 VALIDATION rows,
+and 4,048 FINAL_TEST rows.
+
+For Home, isotonic calibration gives a modest aggregate FINAL_TEST improvement:
+log loss changes from 0.653048479324 to 0.649747309432, Brier score from
+0.230023921580 to 0.228957360638, and ECE from 0.043758010704 to
+0.037185180715. Calibration remains imperfect: its TEST slope is
+0.749546866238, still below 1. ROC-AUC and average precision decline by
+0.002043156794 and 0.008827249022 respectively. Ten of twelve supported
+leagues improve both log loss and Brier score; I1 worsens both, while E0 is
+mixed and approximately neutral. ECE does not improve in every league. The
+largest band improvement occurs in the LOW_SUPPORT `[0.0,0.2)` band, while
+supported probability bands improve or are effectively neutral.
+
+For Away, learned calibration candidates did not improve VALIDATION, so
+identity calibration correctly remains selected. Identity-versus-selected
+TEST and subgroup deltas are therefore exactly zero.
 
 Calibration improvement and subgroup stability are research evidence only.
 They do not establish bookmaker value or production readiness. Both Home and
