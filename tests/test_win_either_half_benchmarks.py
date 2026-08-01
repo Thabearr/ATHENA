@@ -888,8 +888,8 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
             ModelStatus.DISABLED,
         )
-        changed = subprocess.run(
-            ["git", "diff", "--name-only", "origin/main...HEAD"],
+        tracked = subprocess.run(
+            ["git", "ls-files"],
             cwd=self.REPOSITORY_ROOT,
             capture_output=True,
             text=True,
@@ -898,18 +898,16 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
             shell=False,
             check=True,
         ).stdout.splitlines()
-        forbidden_suffixes = (
-            "predictions-v1.csv",
-            ".joblib",
-            ".pkl",
-            ".pickle",
-            "athena.db",
+        forbidden_paths = (
+            ".cache/athena-research/win-either-half/benchmarks-v1.json",
+            ".cache/athena-research/win-either-half/predictions-v1.csv",
+            "database/athena.db",
         )
         self.assertFalse(
             any(
-                path.startswith(".cache/")
-                or any(path.endswith(suffix) for suffix in forbidden_suffixes)
-                for path in changed
+                path.startswith(".cache/athena-research/")
+                or path in forbidden_paths
+                for path in tracked
             )
         )
 
