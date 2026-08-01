@@ -24,6 +24,7 @@ from domain.win_either_half_pricing_evidence import (
     EvidenceReason,
     EvidenceStatus,
     KnownFixture,
+    PricingEvidenceError,
     ProviderSelectionMapping,
     ResearchQuoteRecord,
     bookmaker_fair_probability_band,
@@ -31,20 +32,28 @@ from domain.win_either_half_pricing_evidence import (
     canonical_decimal_text,
     select_latest_eligible_snapshots,
     validate_complete_snapshot,
+    validate_direct_quote_record,
     validate_research_quote,
 )
 from scripts.export_win_either_half_pricing_evidence import (
     CALIBRATED_PREDICTION_COLUMNS,
     FROZEN_CALIBRATED_PREDICTIONS_IDENTITY,
+    FROZEN_FIXTURE_MARKET_ROLE_COUNTS,
+    FROZEN_FIXTURE_MARKET_TOTAL,
+    HOLDOUT_GOVERNANCE,
     FROZEN_SELECTED_CALIBRATIONS,
     FROZEN_STAGE_4B_MANIFEST_LOGICAL_SHA256,
     PricingExportError,
     build_pricing_manifest,
+    build_fixture_market_coverage,
     compare_pricing_manifests,
     evaluate_pricing_evidence,
     load_verified_calibrated_predictions,
+    load_decisions,
+    load_provider_mappings,
     main,
     render_coverage,
+    render_fixture_market_coverage,
     render_rejected_quotes,
     render_snapshots,
     render_valid_quotes,
@@ -269,6 +278,7 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             ("MIXED_SOURCE", {"source": "book-b"}),
             ("MIXED_SNAPSHOT", {"quote_snapshot_id": "snapshot-2"}),
             ("MIXED_OBSERVED_AT", {"observed_at": no.observed_at - timedelta(seconds=1)}),
+            ("MIXED_DECISION_AT", {"decision_at": no.decision_at - timedelta(seconds=1)}),
         )
         for expected, changes in variants:
             with self.subTest(expected=expected):
@@ -276,6 +286,20 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
                 result = validate_complete_snapshot((yes, changed))
                 self.assertEqual(result.status, EvidenceStatus.REJECTED)
                 self.assertIn(expected, self._reasons(result))
+
+    def test_same_snapshot_with_different_observed_times_is_one_rejection(self):
+        rows = [self._quote(OutcomeId.YES), self._quote(OutcomeId.NO)]
+        rows[1]["observed_at"] = (self.observed + timedelta(seconds=1)).isoformat()
+        result = evaluate_pricing_evidence(
+            rows,
+            fixture_catalog=self.fixtures,
+            provider_mappings=self.mappings,
+            decisions={self.fixture_id: self.decision},
+        )
+        self.assertEqual(len(result["snapshot_results"]), 1)
+        snapshot = result["snapshot_results"][0]
+        self.assertEqual(snapshot.status, EvidenceStatus.REJECTED)
+        self.assertEqual(snapshot.reasons, (EvidenceReason.MIXED_OBSERVED_AT,))
 
     def test_cross_bookmaker_and_cross_snapshot_rows_cannot_form_a_market(self):
         quote_rows = [self._quote(OutcomeId.YES), self._quote(OutcomeId.NO)]
@@ -378,7 +402,55 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             (invalid_yes, self._record(OutcomeId.NO))
         )
         self.assertEqual(non_finite.status, EvidenceStatus.REJECTED)
-        self.assertIn(EvidenceReason.NON_FINITE_RESULT, non_finite.reasons)
+        self.assertIn(EvidenceReason.INVALID_ODDS, non_finite.reasons)
+
+    def test_directly_constructed_records_recheck_all_core_invariants(self):
+        yes = self._record(OutcomeId.YES)
+        no = self._record(OutcomeId.NO)
+        cases = (
+            ("odds_equal_one", {"decimal_odds": Decimal("1.0")}, "INVALID_ODDS"),
+            ("negative_odds", {"decimal_odds": Decimal("-2")}, "INVALID_ODDS"),
+            (
+                "extreme_finite_odds",
+                {"decimal_odds": Decimal("1E+10000")},
+                "INVALID_ODDS",
+            ),
+            ("unsupported_market", {"market_id": MarketId.MATCH_RESULT}, "UNKNOWN_MARKET"),
+            ("unsupported_outcome", {"outcome_id": OutcomeId.HOME}, "UNKNOWN_OUTCOME"),
+            (
+                "naive_timestamp",
+                {"observed_at": yes.observed_at.replace(tzinfo=None)},
+                "NAIVE_TIMESTAMP",
+            ),
+            (
+                "observed_after_decision",
+                {"observed_at": yes.decision_at + timedelta(seconds=1)},
+                "OBSERVED_AFTER_DECISION",
+            ),
+            (
+                "decision_at_kickoff",
+                {"decision_at": yes.fixture_kickoff},
+                "DECISION_AT_OR_AFTER_KICKOFF",
+            ),
+            (
+                "unsupported_role",
+                {"evaluation_role": "ALL_PERIODS"},
+                "UNSUPPORTED_EVALUATION_ROLE",
+            ),
+        )
+        for name, changes, reason in cases:
+            with self.subTest(name=name):
+                changed = ResearchQuoteRecord(**{**yes.__dict__, **changes})
+                direct_reasons = {
+                    value.value for value in validate_direct_quote_record(changed)
+                }
+                self.assertIn(reason, direct_reasons)
+                result = validate_complete_snapshot((changed, no))
+                self.assertEqual(result.status, EvidenceStatus.REJECTED)
+                self.assertIn(reason, self._reasons(result))
+
+        with self.assertRaises(PricingEvidenceError):
+            canonical_decimal_text(Decimal("1E+10000"))
 
     def test_accepted_rejected_and_unavailable_counts_are_separate(self):
         complete = [self._quote(OutcomeId.YES), self._quote(OutcomeId.NO)]
@@ -402,6 +474,130 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             result["coverage"]["snapshot_counts"],
             {"ACCEPTED": 1, "REJECTED": 0, "UNAVAILABLE": 1},
         )
+
+    def test_empty_quotes_cover_complete_frozen_fixture_market_universe(self):
+        catalog = {}
+        for role, count in FROZEN_FIXTURE_MARKET_ROLE_COUNTS.items():
+            for index in range(count):
+                market = PERMITTED_MARKETS[index % 2]
+                fixture_identifier = f"{role}-{index // 2:05d}"
+                catalog[(fixture_identifier, market)] = KnownFixture(
+                    fixture_identifier,
+                    market,
+                    self.kickoff,
+                    role,
+                )
+        self.assertEqual(len(catalog), FROZEN_FIXTURE_MARKET_TOTAL)
+        result = evaluate_pricing_evidence(
+            [],
+            fixture_catalog=catalog,
+            provider_mappings={},
+            decisions={},
+        )
+        coverage = result["coverage"]
+        self.assertEqual(coverage["total_frozen_fixture_markets"], 36318)
+        self.assertEqual(coverage["available_fixture_markets"], 0)
+        self.assertEqual(coverage["unavailable_fixture_markets"], 36318)
+        self.assertEqual(coverage["availability_rate"], 0.0)
+        self.assertEqual(coverage["reason_counts"], {"NO_QUOTE_RECORDS": 36318})
+        self.assertEqual(
+            {
+                role: bucket["total_frozen_fixture_markets"]
+                for role, bucket in coverage["by_evaluation_role"].items()
+            },
+            FROZEN_FIXTURE_MARKET_ROLE_COUNTS,
+        )
+        for bucket in coverage["by_evaluation_role"].values():
+            self.assertEqual(
+                bucket["available_fixture_markets"]
+                + bucket["unavailable_fixture_markets"],
+                bucket["total_frozen_fixture_markets"],
+            )
+        self.assertEqual(len(result["fixture_market_coverage"]), 36318)
+
+    def test_fixture_market_availability_reason_precedence(self):
+        rejected = evaluate_pricing_evidence(
+            [self._quote(OutcomeId.YES, decimal_odds=1.0)],
+            fixture_catalog=self.fixtures,
+            provider_mappings=self.mappings,
+            decisions={self.fixture_id: self.decision},
+        )
+        home = next(
+            row
+            for row in rejected["fixture_market_coverage"]
+            if row["market_id"] == "HOME_WIN_EITHER_HALF"
+        )
+        self.assertEqual(home["availability_reason"], "NO_ACCEPTED_QUOTES")
+        self.assertEqual(home["rejected_quote_row_count"], 1)
+
+        incomplete = evaluate_pricing_evidence(
+            [self._quote(OutcomeId.YES)],
+            fixture_catalog=self.fixtures,
+            provider_mappings=self.mappings,
+            decisions={self.fixture_id: self.decision},
+        )
+        home = next(
+            row
+            for row in incomplete["fixture_market_coverage"]
+            if row["market_id"] == "HOME_WIN_EITHER_HALF"
+        )
+        self.assertEqual(
+            home["availability_reason"], "NO_ELIGIBLE_COMPLETE_SNAPSHOT"
+        )
+        self.assertEqual(home["accepted_quote_row_count"], 1)
+        self.assertEqual(home["selected_latest_snapshot_count"], 0)
+
+        complete = evaluate_pricing_evidence(
+            [self._quote(OutcomeId.YES), self._quote(OutcomeId.NO)],
+            fixture_catalog=self.fixtures,
+            provider_mappings=self.mappings,
+            decisions={self.fixture_id: self.decision},
+        )
+        home = next(
+            row
+            for row in complete["fixture_market_coverage"]
+            if row["market_id"] == "HOME_WIN_EITHER_HALF"
+        )
+        self.assertEqual(home["availability_status"], "AVAILABLE")
+        self.assertEqual(home["availability_reason"], "")
+
+    def test_multiple_bookmakers_do_not_inflate_fixture_market_denominator(self):
+        rows = [self._quote(OutcomeId.YES), self._quote(OutcomeId.NO)]
+        mappings = dict(self.mappings)
+        for outcome in PERMITTED_OUTCOMES:
+            provider_selection = f"book-b-{outcome.value}"
+            mapping = ProviderSelectionMapping.from_mapping(
+                {
+                    "source": "book-b",
+                    "provider_event_identifier": "event-b",
+                    "provider_market_identifier": "market-b",
+                    "provider_selection_identifier": provider_selection,
+                    "fixture_identifier": self.fixture_id,
+                    "market_id": "HOME_WIN_EITHER_HALF",
+                    "outcome_id": outcome.value,
+                    "line": None,
+                }
+            )
+            mappings[mapping.lookup_key] = mapping
+            rows.append(
+                self._quote(
+                    outcome,
+                    source="book-b",
+                    quote_snapshot_id="book-b-snapshot",
+                    provider_event_identifier="event-b",
+                    provider_market_identifier="market-b",
+                    provider_selection_identifier=provider_selection,
+                )
+            )
+        result = evaluate_pricing_evidence(
+            rows,
+            fixture_catalog=self.fixtures,
+            provider_mappings=mappings,
+            decisions={self.fixture_id: self.decision},
+        )
+        self.assertEqual(result["coverage"]["total_frozen_fixture_markets"], 2)
+        self.assertEqual(result["coverage"]["available_fixture_markets"], 1)
+        self.assertEqual(result["coverage"]["selected_snapshot_count"], 2)
 
     def test_canonical_serialization_and_bookmaker_fair_band_boundaries(self):
         self.assertEqual(CANONICAL_DECIMAL_PLACES, 12)
@@ -432,12 +628,11 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             set(result["coverage"]["by_evaluation_role"]),
             {"CALIBRATION_FIT_OOF", "VALIDATION_SELECTION", "FINAL_TEST"},
         )
-        self.assertEqual(
-            result["coverage"]["by_evaluation_role"]["FINAL_TEST"][
-                "accepted_quotes"
-            ],
-            2,
-        )
+        final_test = result["coverage"]["by_evaluation_role"]["FINAL_TEST"]
+        self.assertEqual(final_test["total_frozen_fixture_markets"], 2)
+        self.assertEqual(final_test["available_fixture_markets"], 1)
+        self.assertEqual(final_test["unavailable_fixture_markets"], 1)
+        self.assertEqual(final_test["selected_snapshot_count"], 1)
 
     def test_exact_stage_4b_ancestry_and_local_prediction_identity_are_frozen(self):
         path = self.REPOSITORY_ROOT / (
@@ -527,12 +722,26 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
         valid, valid_rows = render_valid_quotes(evaluation["quote_results"])
         rejected, rejected_rows = render_rejected_quotes(evaluation["quote_results"])
         snapshots, snapshot_rows = render_snapshots(evaluation["snapshot_results"])
+        fixture_market_coverage, fixture_market_coverage_rows = (
+            render_fixture_market_coverage(evaluation["fixture_market_coverage"])
+        )
         coverage = render_coverage(evaluation["coverage"])
-        self.assertNotIn(b"\r\n", valid + rejected + snapshots + coverage)
+        self.assertNotIn(
+            b"\r\n",
+            valid + rejected + snapshots + fixture_market_coverage + coverage,
+        )
         header = snapshots.splitlines()[0].decode("utf-8").split(",")
         forbidden = {"edge", "edge_pp", "expected_value", "kelly", "bet"}
         self.assertFalse(forbidden.intersection(header))
-        self.assertEqual((valid_rows, rejected_rows, snapshot_rows), (2, 0, 1))
+        self.assertEqual(
+            (
+                valid_rows,
+                rejected_rows,
+                snapshot_rows,
+                fixture_market_coverage_rows,
+            ),
+            (2, 0, 1, 2),
+        )
 
         manifest_path_name = "win-either-half-pricing-v1.json"
         with tempfile.TemporaryDirectory() as directory:
@@ -541,6 +750,7 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
                 "valid_quotes_path": root / "valid.csv",
                 "rejected_quotes_path": root / "rejected.csv",
                 "snapshots_path": root / "snapshots.csv",
+                "fixture_market_coverage_path": root / "fixture-markets.csv",
                 "coverage_path": root / "coverage.json",
                 "manifest_path": root / manifest_path_name,
             }
@@ -549,6 +759,7 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
                 valid_quote_bytes=valid,
                 rejected_quote_bytes=rejected,
                 snapshot_bytes=snapshots,
+                fixture_market_coverage_bytes=fixture_market_coverage,
                 coverage_bytes=coverage,
                 manifest={"schema_version": 1},
             )
@@ -559,6 +770,7 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
                     valid_quote_bytes=valid,
                     rejected_quote_bytes=rejected,
                     snapshot_bytes=snapshots,
+                    fixture_market_coverage_bytes=fixture_market_coverage,
                     coverage_bytes=coverage,
                     manifest={"schema_version": 1},
                 )
@@ -583,6 +795,8 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             rejected_quote_rows=0,
             snapshot_bytes=empty,
             snapshot_rows=0,
+            fixture_market_coverage_bytes=empty,
+            fixture_market_coverage_rows=0,
             coverage_bytes=empty,
             coverage={"scope": "ALL_ROLES_DESCRIPTIVE"},
             generator_code_state={
@@ -610,6 +824,11 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             .intersection(keys)
         )
         self.assertFalse(manifest["market_safety"]["production_activation_authorized"])
+        self.assertEqual(manifest["holdout_governance"], HOLDOUT_GOVERNANCE)
+        self.assertEqual(
+            manifest["files"]["fixture_market_coverage"]["relative_name"],
+            "pricing-fixture-market-coverage-v1.csv",
+        )
 
     def test_dirty_worktree_fails_closed_before_generation(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -652,6 +871,94 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             self.assertEqual(result, 1)
             self.assertFalse((root / "manifest.json").exists())
 
+    def test_every_supplied_decision_row_is_validated_without_quote_usage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "decisions.json"
+
+            def load(rows):
+                path.write_text(json.dumps(rows), encoding="utf-8")
+                return load_decisions(path, self.fixtures)
+
+            decisions, identity = load(
+                [
+                    {
+                        "fixture_identifier": self.fixture_id,
+                        "decision_at": self.decision.isoformat(),
+                    }
+                ]
+            )
+            self.assertEqual(decisions[self.fixture_id], self.decision)
+            self.assertEqual(identity["rows"], 1)
+            bad_cases = (
+                [
+                    {
+                        "fixture_identifier": "unknown",
+                        "decision_at": self.decision.isoformat(),
+                    }
+                ],
+                [
+                    {
+                        "fixture_identifier": self.fixture_id,
+                        "decision_at": "2026-05-01T14:00:00",
+                    }
+                ],
+                [
+                    {
+                        "fixture_identifier": self.fixture_id,
+                        "decision_at": self.kickoff.isoformat(),
+                    }
+                ],
+                [
+                    {
+                        "fixture_identifier": self.fixture_id,
+                        "decision_at": self.decision.isoformat(),
+                    },
+                    {
+                        "fixture_identifier": self.fixture_id,
+                        "decision_at": self.decision.isoformat(),
+                    },
+                ],
+            )
+            for rows in bad_cases:
+                with self.subTest(rows=rows):
+                    with self.assertRaises(PricingExportError):
+                        load(rows)
+
+    def test_every_provider_mapping_is_validated_without_quote_usage(self):
+        mapping = next(iter(self.mappings.values()))
+
+        def mapping_dict(value):
+            return {
+                "source": value.source,
+                "provider_event_identifier": value.provider_event_identifier,
+                "provider_market_identifier": value.provider_market_identifier,
+                "provider_selection_identifier": value.provider_selection_identifier,
+                "fixture_identifier": value.fixture_identifier,
+                "market_id": value.market_id.value,
+                "outcome_id": value.outcome_id.value,
+                "line": None,
+            }
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "mappings.json"
+
+            def load(rows):
+                path.write_text(json.dumps(rows), encoding="utf-8")
+                return load_provider_mappings(path, self.fixtures)
+
+            registry, identity = load([mapping_dict(mapping)])
+            self.assertEqual(len(registry), 1)
+            self.assertEqual(identity["rows"], 1)
+            unknown = mapping_dict(mapping)
+            unknown["fixture_identifier"] = "unknown"
+            alias = mapping_dict(mapping)
+            alias["market_id"] = "HOME_TEAM_WIN_HALF"
+            duplicate = mapping_dict(mapping)
+            for rows in ([unknown], [alias], [duplicate, duplicate]):
+                with self.subTest(rows=rows):
+                    with self.assertRaises(PricingExportError):
+                        load(rows)
+
     def test_direct_and_module_help_are_offline(self):
         commands = (
             [sys.executable, "scripts/export_win_either_half_pricing_evidence.py", "--help"],
@@ -693,6 +1000,7 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             ".cache/athena-research/win-either-half/pricing-valid-quotes-v1.csv",
             ".cache/athena-research/win-either-half/pricing-rejected-quotes-v1.csv",
             ".cache/athena-research/win-either-half/pricing-snapshots-v1.csv",
+            ".cache/athena-research/win-either-half/pricing-fixture-market-coverage-v1.csv",
             ".cache/athena-research/win-either-half/pricing-coverage-v1.json",
             "artifacts/research-manifests/win-either-half-pricing-v1.json",
         ):

@@ -8,7 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal, InvalidOperation, ROUND_HALF_EVEN
+from decimal import (
+    Context,
+    Decimal,
+    DecimalException,
+    InvalidOperation,
+    ROUND_HALF_EVEN,
+    localcontext,
+)
 from enum import Enum
 from typing import Any, Mapping, Optional, Sequence
 
@@ -22,6 +29,12 @@ SCHEMA_VERSION = 1
 CANONICAL_DECIMAL_PLACES = 12
 CANONICAL_QUANTUM = Decimal("0.000000000001")
 CANONICAL_TOLERANCE = Decimal("0.000000000001")
+PRICING_DECIMAL_CONTEXT = Context(
+    prec=50,
+    rounding=ROUND_HALF_EVEN,
+    Emin=-999,
+    Emax=999,
+)
 DEFAULT_MAX_QUOTE_AGE_SECONDS = PRODUCTION_DEFAULT_MAX_QUOTE_AGE_SECONDS
 DEVIG_METHOD = "multiplicative_normalization"
 
@@ -99,9 +112,14 @@ class EvidenceReason(str, Enum):
     MIXED_SOURCE = "MIXED_SOURCE"
     MIXED_SNAPSHOT = "MIXED_SNAPSHOT"
     MIXED_OBSERVED_AT = "MIXED_OBSERVED_AT"
+    MIXED_DECISION_AT = "MIXED_DECISION_AT"
     PROVIDER_MAPPING_MISMATCH = "PROVIDER_MAPPING_MISMATCH"
     NON_FINITE_RESULT = "NON_FINITE_RESULT"
     UNSUPPORTED_SCHEMA_VERSION = "UNSUPPORTED_SCHEMA_VERSION"
+    UNSUPPORTED_EVALUATION_ROLE = "UNSUPPORTED_EVALUATION_ROLE"
+    NO_QUOTE_RECORDS = "NO_QUOTE_RECORDS"
+    NO_ACCEPTED_QUOTES = "NO_ACCEPTED_QUOTES"
+    NO_ELIGIBLE_COMPLETE_SNAPSHOT = "NO_ELIGIBLE_COMPLETE_SNAPSHOT"
 
 
 def _normalized_text(value: Any) -> Optional[str]:
@@ -143,26 +161,35 @@ def _decimal_odds(value: Any) -> Optional[Decimal]:
         return None
     try:
         parsed = Decimal(str(value))
-    except (InvalidOperation, ValueError):
+        with localcontext(PRICING_DECIMAL_CONTEXT) as context:
+            parsed = context.create_decimal(parsed)
+            parsed.quantize(CANONICAL_QUANTUM, context=context)
+    except (DecimalException, InvalidOperation, ValueError):
         return None
     if not parsed.is_finite() or parsed <= Decimal("1"):
         return None
     return parsed
 
 
-def canonical_decimal(value: Decimal | float | int) -> float:
-    """Return a finite value canonically rounded to twelve decimal places."""
+def _canonical_quantized_decimal(value: Decimal | float | int) -> Decimal:
     try:
         parsed = value if isinstance(value, Decimal) else Decimal(str(value))
-    except (InvalidOperation, ValueError) as error:
+        with localcontext(PRICING_DECIMAL_CONTEXT) as context:
+            parsed = context.create_decimal(parsed)
+            if not parsed.is_finite():
+                raise InvalidOperation
+            return parsed.quantize(CANONICAL_QUANTUM, context=context)
+    except (DecimalException, InvalidOperation, ValueError) as error:
         raise PricingEvidenceError("A numerical result is not finite") from error
-    if not parsed.is_finite():
-        raise PricingEvidenceError("A numerical result is not finite")
-    return float(parsed.quantize(CANONICAL_QUANTUM, rounding=ROUND_HALF_EVEN))
+
+
+def canonical_decimal(value: Decimal | float | int) -> float:
+    """Return a finite value canonically rounded under the fixed context."""
+    return float(_canonical_quantized_decimal(value))
 
 
 def canonical_decimal_text(value: Decimal | float | int) -> str:
-    return format(canonical_decimal(value), f".{CANONICAL_DECIMAL_PLACES}f")
+    return format(_canonical_quantized_decimal(value), "f")
 
 
 @dataclass(frozen=True)
@@ -533,6 +560,62 @@ class SnapshotValidationResult:
     selected: bool = False
 
 
+def validate_direct_quote_record(
+    record: ResearchQuoteRecord,
+) -> tuple[EvidenceReason, ...]:
+    """Recheck invariants for records constructed outside the raw validator."""
+    reasons: list[EvidenceReason] = []
+    if record.schema_version != SCHEMA_VERSION:
+        reasons.append(EvidenceReason.UNSUPPORTED_SCHEMA_VERSION)
+    if not _normalized_text(record.fixture_identifier):
+        reasons.append(EvidenceReason.UNKNOWN_FIXTURE)
+    if not isinstance(record.market_id, MarketId) or (
+        record.market_id not in PERMITTED_MARKETS
+    ):
+        reasons.append(EvidenceReason.UNKNOWN_MARKET)
+    if not isinstance(record.outcome_id, OutcomeId) or (
+        record.outcome_id not in PERMITTED_OUTCOMES
+    ):
+        reasons.append(EvidenceReason.UNKNOWN_OUTCOME)
+    if record.line is not None:
+        reasons.append(EvidenceReason.INVALID_LINE)
+    if not _normalized_text(record.source):
+        reasons.append(EvidenceReason.MISSING_SOURCE)
+    if not _normalized_text(record.quote_snapshot_id):
+        reasons.append(EvidenceReason.MISSING_SNAPSHOT_ID)
+    if not all(
+        _normalized_text(value)
+        for value in (
+            record.provider_event_identifier,
+            record.provider_market_identifier,
+            record.provider_selection_identifier,
+        )
+    ):
+        reasons.append(EvidenceReason.MISSING_PROVIDER_IDENTIFIER)
+    if record.is_genuine is not True:
+        reasons.append(EvidenceReason.NOT_GENUINE)
+    if _decimal_odds(record.decimal_odds) is None:
+        reasons.append(EvidenceReason.INVALID_ODDS)
+    parsed_timestamps = {}
+    for name in ("observed_at", "fixture_kickoff", "decision_at"):
+        parsed, error = _parse_timestamp(getattr(record, name))
+        if error is not None:
+            reasons.append(error)
+        parsed_timestamps[name] = parsed
+    observed_at = parsed_timestamps["observed_at"]
+    kickoff = parsed_timestamps["fixture_kickoff"]
+    decision_at = parsed_timestamps["decision_at"]
+    if observed_at is not None and decision_at is not None and observed_at > decision_at:
+        reasons.append(EvidenceReason.OBSERVED_AFTER_DECISION)
+    if observed_at is not None and kickoff is not None and observed_at >= kickoff:
+        reasons.append(EvidenceReason.OBSERVED_AFTER_KICKOFF)
+    if decision_at is not None and kickoff is not None and decision_at >= kickoff:
+        reasons.append(EvidenceReason.DECISION_AT_OR_AFTER_KICKOFF)
+    if record.evaluation_role not in EVALUATION_ROLE_SPLITS:
+        reasons.append(EvidenceReason.UNSUPPORTED_EVALUATION_ROLE)
+    return _reason_tuple(reasons)
+
+
 def validate_complete_snapshot(
     records: Sequence[ResearchQuoteRecord],
 ) -> SnapshotValidationResult:
@@ -543,6 +626,20 @@ def validate_complete_snapshot(
             EvidenceStatus.UNAVAILABLE,
             (EvidenceReason.INCOMPLETE_MARKET,),
             (),
+            None,
+        )
+    direct_reasons = _reason_tuple(
+        [
+            reason
+            for record in records
+            for reason in validate_direct_quote_record(record)
+        ]
+    )
+    if direct_reasons:
+        return SnapshotValidationResult(
+            EvidenceStatus.REJECTED,
+            direct_reasons,
+            records,
             None,
         )
     reasons: list[EvidenceReason] = []
@@ -557,11 +654,7 @@ def validate_complete_snapshot(
     if len({record.observed_at for record in records}) != 1:
         reasons.append(EvidenceReason.MIXED_OBSERVED_AT)
     if len({record.decision_at for record in records}) != 1:
-        reasons.append(EvidenceReason.MIXED_OBSERVED_AT)
-    if any(record.line is not None for record in records):
-        reasons.append(EvidenceReason.INVALID_LINE)
-    if any(record.is_genuine is not True for record in records):
-        reasons.append(EvidenceReason.NOT_GENUINE)
+        reasons.append(EvidenceReason.MIXED_DECISION_AT)
     if (
         len({record.provider_event_identifier for record in records}) != 1
         or len({record.provider_market_identifier for record in records}) != 1
@@ -590,27 +683,28 @@ def validate_complete_snapshot(
     yes = outcomes[OutcomeId.YES][0]
     no = outcomes[OutcomeId.NO][0]
     try:
-        yes_raw = Decimal(1) / yes.decimal_odds
-        no_raw = Decimal(1) / no.decimal_odds
-        overround = yes_raw + no_raw
-        if not overround.is_finite() or overround <= 0:
-            raise ArithmeticError
-        yes_fair = yes_raw / overround
-        no_fair = no_raw / overround
-        values = (yes_raw, no_raw, overround, yes_fair, no_fair)
-        if any(not value.is_finite() for value in values):
-            raise ArithmeticError
-        if not (Decimal(0) <= yes_fair <= Decimal(1)) or not (
-            Decimal(0) <= no_fair <= Decimal(1)
-        ):
-            raise ArithmeticError
-        canonical_yes_fair = Decimal(canonical_decimal_text(yes_fair))
-        canonical_no_fair = Decimal(canonical_decimal_text(no_fair))
-        if abs(canonical_yes_fair + canonical_no_fair - Decimal(1)) > (
-            CANONICAL_TOLERANCE
-        ):
-            raise ArithmeticError
-    except (ArithmeticError, InvalidOperation, ZeroDivisionError):
+        with localcontext(PRICING_DECIMAL_CONTEXT):
+            yes_raw = Decimal(1) / yes.decimal_odds
+            no_raw = Decimal(1) / no.decimal_odds
+            overround = yes_raw + no_raw
+            if not overround.is_finite() or overround <= 0:
+                raise ArithmeticError
+            yes_fair = yes_raw / overround
+            no_fair = no_raw / overround
+            values = (yes_raw, no_raw, overround, yes_fair, no_fair)
+            if any(not value.is_finite() for value in values):
+                raise ArithmeticError
+            if not (Decimal(0) <= yes_fair <= Decimal(1)) or not (
+                Decimal(0) <= no_fair <= Decimal(1)
+            ):
+                raise ArithmeticError
+            canonical_yes_fair = Decimal(canonical_decimal_text(yes_fair))
+            canonical_no_fair = Decimal(canonical_decimal_text(no_fair))
+            if abs(canonical_yes_fair + canonical_no_fair - Decimal(1)) > (
+                CANONICAL_TOLERANCE
+            ):
+                raise ArithmeticError
+    except (ArithmeticError, DecimalException, InvalidOperation, ZeroDivisionError):
         return SnapshotValidationResult(
             EvidenceStatus.REJECTED,
             (EvidenceReason.NON_FINITE_RESULT,),
@@ -700,6 +794,7 @@ __all__ = [
     "MARKET_TARGETS",
     "PERMITTED_MARKETS",
     "PERMITTED_OUTCOMES",
+    "PRICING_DECIMAL_CONTEXT",
     "PricedSnapshot",
     "PricingEvidenceError",
     "ProviderSelectionMapping",
@@ -714,5 +809,6 @@ __all__ = [
     "canonical_decimal_text",
     "select_latest_eligible_snapshots",
     "validate_complete_snapshot",
+    "validate_direct_quote_record",
     "validate_research_quote",
 ]
