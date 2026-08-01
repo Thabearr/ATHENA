@@ -12,11 +12,11 @@
       ],
       "provider_identifier": "sportybet",
       "provider_name": "SportyBet",
-      "provisional_status": "PARTIALLY_QUALIFIED",
+      "provisional_status": "UNKNOWN",
       "provisional_role_statuses": {
-        "execution_bookmaker_status": "PARTIALLY_QUALIFIED",
+        "execution_bookmaker_status": "UNKNOWN",
         "historical_status": "UNKNOWN",
-        "live_pricing_status": "PARTIALLY_QUALIFIED",
+        "live_pricing_status": "UNKNOWN",
         "prospective_replay_status": "UNKNOWN"
       },
       "unproven_capabilities": [
@@ -115,7 +115,16 @@
     "provider_selection_must_not_use_target_outcomes_or_performance": true,
     "status": "ALREADY_CONSUMED_AUDIT_HOLDOUT"
   },
-  "mandatory_gate_policy": "ALL_REQUIRED_GATES_PASS_OR_NOT_APPLICABLE; UNKNOWN_NEVER_QUALIFIES; NO_WEIGHTED_SCORE",
+  "mandatory_gate_policy": "ALL_REQUIRED_GATES_PASS; UNKNOWN_AND_NOT_APPLICABLE_NEVER_QUALIFY; NO_WEIGHTED_SCORE",
+  "not_applicable_allowlist": {
+    "EXECUTION_BOOKMAKER": [],
+    "HISTORICAL_RESEARCH_SOURCE": [],
+    "LIVE_PRICING_SOURCE": [],
+    "PROSPECTIVE_REPLAY": []
+  },
+  "optional_capabilities": [
+    "booking_code_support"
+  ],
   "role_mandatory_gates": {
     "EXECUTION_BOOKMAKER": [
       "exact_market_semantics",
@@ -128,8 +137,7 @@
       "changed_odds_detection",
       "suspended_selection_detection",
       "missing_market_detection",
-      "explicit_user_confirmation",
-      "booking_code_support"
+      "explicit_user_confirmation"
     ],
     "HISTORICAL_RESEARCH_SOURCE": [
       "exact_market_semantics",

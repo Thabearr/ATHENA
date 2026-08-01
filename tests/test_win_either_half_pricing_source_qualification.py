@@ -39,6 +39,7 @@ from scripts.qualify_win_either_half_pricing_source import (
     _canonical_json_bytes,
     main,
     qualify_candidate,
+    validate_protocol_contract,
     validate_evidence_files,
     write_report,
 )
@@ -50,7 +51,9 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
 
     def setUp(self):
         self.checked_at = datetime(2026, 8, 1, 12, 0, tzinfo=timezone.utc)
-        self.protocol = json.loads(DEFAULT_PROTOCOL_PATH.read_text(encoding="utf-8"))
+        protocol_bytes = DEFAULT_PROTOCOL_PATH.read_bytes()
+        self.protocol_value = json.loads(protocol_bytes.decode("utf-8"))
+        self.protocol = validate_protocol_contract(self.protocol_value, protocol_bytes)
         self.original_statuses = {
             market: status.status for market, status in MODEL_STATUS_REGISTRY.items()
         }
@@ -65,12 +68,19 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
         expected = MARKET_SEMANTICS[market]
         row = {
             "market_id": market.value,
-            "market_description": expected["market_description"],
+            "provider_market_identifier": f"provider-{market.value}",
+            "provider_market_name": "Provider localized market name",
+            "provider_description": "Reviewed provider settlement documentation",
             "subject": expected["subject"],
             "yes_settlement": expected["yes_settlement"],
             "no_settlement": expected["no_settlement"],
             "line": None,
-            "outcome_identifiers": ["YES", "NO"],
+            "provider_yes_selection_identifier": f"{market.value}-yes",
+            "provider_yes_selection_label": "Yes",
+            "provider_no_selection_identifier": f"{market.value}-no",
+            "provider_no_selection_label": "No",
+            "yes_canonical_outcome_id": "YES",
+            "no_canonical_outcome_id": "NO",
             "evidence_reference": "review.txt",
             "checked_at": self.CHECKED_AT,
         }
@@ -94,32 +104,129 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "candidate_roles": [role.value for role in SourceRole],
             "evidence_checked_at": self.CHECKED_AT,
             "market_semantics_evidence": {
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
                 "markets": [
                     self._semantics(MarketId.HOME_WIN_EITHER_HALF),
                     self._semantics(MarketId.AWAY_WIN_EITHER_HALF),
                 ]
             },
-            "outcome_evidence": {"identifiers": ["YES", "NO"]},
+            "outcome_evidence": {
+                "canonical_outcome_ids": ["YES", "NO"],
+                "provider_yes_selection_identifier": "provider-yes",
+                "provider_yes_selection_label": "Yes",
+                "provider_no_selection_identifier": "provider-no",
+                "provider_no_selection_label": "No",
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
             "quote_field_evidence": {
-                "price_type": "RAW_DECIMAL_BOOKMAKER_ODDS",
-                "bookmaker_identifier": True,
-                "bookmaker_name_or_source": True,
-                "provider_event_identifier": True,
-                "provider_market_identifier": True,
-                "provider_selection_identifier": True,
-                "fixture_kickoff_or_stable_reference": True,
+                "raw_decimal_odds_capability": True,
+                "bookmaker_identifier": "book-1",
+                "bookmaker_name_or_source": "Bookmaker One",
+                "provider_event_identifier": "event-1",
+                "provider_market_identifier": "market-1",
+                "provider_yes_selection_identifier": "yes-1",
+                "provider_no_selection_identifier": "no-1",
+                "fixture_reference": "fixture-1",
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
             },
             "timestamp_evidence": {
-                "timestamp_source": "PROVIDER_QUOTE_OR_UPDATE"
+                "timestamp_source": "PROVIDER_QUOTE_OR_UPDATE",
+                "sample_timestamp": self.CHECKED_AT,
+                "download_time_distinct": True,
+                "quote_ordering_reproducible": True,
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
             },
-            "snapshot_evidence": {"yes_no_common_snapshot": True},
-            "historical_retention_evidence": {},
-            "live_pricing_evidence": {},
-            "fixture_mapping_evidence": {},
-            "export_reproducibility_evidence": {},
-            "licensing_and_retention_evidence": {},
-            "execution_workflow_evidence": {},
-            "booking_code_evidence": {"provided": False},
+            "snapshot_evidence": {
+                "provider_identifier": "provider-1",
+                "fixture_identifier": "fixture-1",
+                "market_id": MarketId.HOME_WIN_EITHER_HALF.value,
+                "bookmaker_identifier": "book-1",
+                "yes_observed_at": self.CHECKED_AT,
+                "no_observed_at": self.CHECKED_AT,
+                "native_snapshot_id": "snapshot-1",
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "historical_retention_evidence": {
+                "retained_settled_history": True,
+                "historical_observed_at": True,
+                "bookmaker_identity": True,
+                "exact_market_and_selections": True,
+                "quote_change_ordering": True,
+                "archived_or_exportable_snapshots": True,
+                "frozen_period_coverage": {
+                    "CALIBRATION_FIT_OOF": 21270,
+                    "VALIDATION_SELECTION": 6952,
+                    "FINAL_TEST": 8096,
+                    "total": 36318,
+                },
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "live_pricing_evidence": {
+                "current_exact_market_availability": True,
+                "complete_yes_no_snapshots": True,
+                "latest_eligible_snapshot_selection": True,
+                "provider_mapping_reproducible": True,
+                "timezone_aware_quote_updates": True,
+                "maximum_quote_age_seconds": 900,
+                "excludes_post_decision": True,
+                "excludes_post_kickoff": True,
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "fixture_mapping_evidence": {
+                "examples": [
+                    {
+                        "provider": self._fixture_mapping("provider-event-1"),
+                        "canonical": self._fixture_mapping("athena-fixture-1"),
+                        "fuzzy_only": False,
+                    }
+                ],
+                "aggregate_results": {
+                    "EXACT": 1,
+                    "CONFLICT": 0,
+                    "AMBIGUOUS": 0,
+                    "UNAVAILABLE": 0,
+                },
+                "independent_fuzzy_name_qualification": False,
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "export_reproducibility_evidence": {
+                "reproducible_export": True,
+                "stable_fixture_market_identifiers": True,
+                "deterministic_ordering": True,
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "licensing_and_retention_evidence": {
+                "research_retention_permission": True,
+                "retained_research_use_permitted": True,
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "execution_workflow_evidence": {
+                "exact_fixture_market_outcome_selection": True,
+                "deterministic_betslip_construction": True,
+                "validated_price_matching": True,
+                "changed_odds_detection": True,
+                "suspended_selection_detection": True,
+                "missing_market_detection": True,
+                "explicit_user_confirmation": True,
+                "permitted_automation": True,
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
+            "booking_code_evidence": {
+                "capability_status": "UNAVAILABLE",
+                "evidence_reference": "review.txt",
+                "checked_at": self.CHECKED_AT,
+            },
             "gate_evidence": gate_evidence,
             "limitations": ["Research protocol only"],
             "evidence_files": [
@@ -130,6 +237,32 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                 }
             ],
         }
+
+    def _fixture_mapping(self, event_identifier):
+        return {
+            "provider_event_identifier": event_identifier,
+            "competition_identifier": "E0",
+            "season_identifier": "2025-26",
+            "kickoff": "2026-08-10T15:00:00Z",
+            "home_participant_identifier": "home-1",
+            "home_participant_name": "Home",
+            "away_participant_identifier": "away-1",
+            "away_participant_name": "Away",
+            "neutral_venue": False,
+            "fixture_status": "SCHEDULED",
+        }
+
+    def _qualify(self, candidate, root):
+        return qualify_candidate(
+            candidate,
+            evidence_root=root,
+            protocol=self.protocol,
+            code_state={
+                "evidence_git_head_sha": "1" * 40,
+                "tracked_worktree_clean": True,
+            },
+            input_identity={"byte_size": 1, "sha256": "a" * 64},
+        )
 
     def test_exact_market_semantics_and_yes_no_identifiers_pass(self):
         for market in PERMITTED_MARKETS:
@@ -146,39 +279,50 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "Double Chance 1X",
             "Bet Builder Home Wins a Half",
         )
-        for description in substitutions:
-            with self.subTest(description=description):
+        for settlement in substitutions:
+            with self.subTest(settlement=settlement):
                 result = validate_market_semantics(
                     self._semantics(
                         MarketId.HOME_WIN_EITHER_HALF,
-                        market_description=description,
+                        yes_settlement=settlement,
                     )
                 )
                 self.assertEqual(result.status, GateStatus.FAIL)
                 self.assertEqual(result.reason, "MARKET_SEMANTICS_MISMATCH")
         missing = self._semantics(MarketId.HOME_WIN_EITHER_HALF)
-        missing.pop("market_description")
+        missing.pop("provider_description")
         self.assertEqual(validate_market_semantics(missing).status, GateStatus.UNKNOWN)
+        localized = validate_market_semantics(
+            self._semantics(
+                MarketId.HOME_WIN_EITHER_HALF,
+                provider_market_name="Equipo local gana cualquiera de las mitades",
+            )
+        )
+        self.assertEqual(localized.status, GateStatus.PASS)
 
     def test_exact_outcomes_and_quote_evidence_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             evidence = root / "review.txt"
             evidence.write_text("review", encoding="utf-8")
-            cases = (
-                ("outcome_evidence", {"identifiers": ["YES", "HOME"]}, GateId.EXACT_YES_NO_STRUCTURE),
-                ("quote_field_evidence", {"price_type": "BEST_PRICE", "bookmaker_identifier": True, "bookmaker_name_or_source": True, "provider_event_identifier": True, "provider_market_identifier": True, "provider_selection_identifier": True, "fixture_kickoff_or_stable_reference": True}, GateId.RAW_DECIMAL_ODDS),
-                ("quote_field_evidence", {"price_type": "CONSENSUS_PROBABILITY", "bookmaker_identifier": True, "bookmaker_name_or_source": True, "provider_event_identifier": True, "provider_market_identifier": True, "provider_selection_identifier": True, "fixture_kickoff_or_stable_reference": True}, GateId.RAW_DECIMAL_ODDS),
-                ("quote_field_evidence", {"price_type": "MODEL_PROBABILITY", "bookmaker_identifier": True, "bookmaker_name_or_source": True, "provider_event_identifier": True, "provider_market_identifier": True, "provider_selection_identifier": True, "fixture_kickoff_or_stable_reference": True}, GateId.RAW_DECIMAL_ODDS),
-                ("quote_field_evidence", {"price_type": "RAW_DECIMAL_BOOKMAKER_ODDS", "bookmaker_identifier": False, "bookmaker_name_or_source": False, "provider_event_identifier": True, "provider_market_identifier": True, "provider_selection_identifier": True, "fixture_kickoff_or_stable_reference": True}, GateId.BOOKMAKER_PROVENANCE),
-                ("timestamp_evidence", {"timestamp_source": "DOWNLOAD_TIME"}, GateId.QUOTE_OBSERVED_AT),
-                ("timestamp_evidence", {}, GateId.QUOTE_OBSERVED_AT),
-                ("snapshot_evidence", {"yes_no_common_snapshot": False}, GateId.SAME_BOOKMAKER_SNAPSHOT),
-            )
-            for section, changed, gate in cases:
-                with self.subTest(section=section, changed=changed):
-                    candidate = self._candidate(evidence)
-                    candidate[section] = changed
+            cases = []
+            candidate = self._candidate(evidence)
+            candidate["outcome_evidence"]["canonical_outcome_ids"] = ["YES", "HOME"]
+            cases.append((candidate, GateId.EXACT_YES_NO_STRUCTURE))
+            candidate = self._candidate(evidence)
+            candidate["quote_field_evidence"]["raw_decimal_odds_capability"] = False
+            cases.append((candidate, GateId.RAW_DECIMAL_ODDS))
+            candidate = self._candidate(evidence)
+            candidate["quote_field_evidence"]["bookmaker_identifier"] = True
+            cases.append((candidate, GateId.BOOKMAKER_PROVENANCE))
+            candidate = self._candidate(evidence)
+            candidate["timestamp_evidence"]["timestamp_source"] = "DOWNLOAD_TIME"
+            cases.append((candidate, GateId.QUOTE_OBSERVED_AT))
+            candidate = self._candidate(evidence)
+            candidate["snapshot_evidence"]["no_observed_at"] = "2026-08-01T12:00:01Z"
+            cases.append((candidate, GateId.SAME_BOOKMAKER_SNAPSHOT))
+            for candidate, gate in cases:
+                with self.subTest(gate=gate):
                     report = qualify_candidate(
                         candidate,
                         evidence_root=root,
@@ -186,7 +330,10 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                         code_state={"evidence_git_head_sha": "1" * 40, "tracked_worktree_clean": True},
                         input_identity={"byte_size": 1, "sha256": "a" * 64},
                     )
-                    self.assertEqual(report["gate_results"][gate.value]["status"], "FAIL")
+                    self.assertEqual(
+                        report["gate_results"][gate.value]["effective"]["status"],
+                        "FAIL",
+                    )
 
     def test_native_and_derived_snapshot_identity_and_timestamp_safety(self):
         common = dict(
@@ -295,6 +442,18 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             self.assertEqual(first["qualification"]["live_pricing_status"], "QUALIFIED_FOR_LIVE_PRICING")
             self.assertEqual(first["qualification"]["execution_bookmaker_status"], "QUALIFIED_AS_EXECUTION_BOOKMAKER")
             self.assertEqual(set(first["gate_results"]), {gate.value for gate in GateId})
+            for gate_result in first["gate_results"].values():
+                self.assertEqual(
+                    set(gate_result), {"declared", "derived", "effective"}
+                )
+            protocol_bytes = DEFAULT_PROTOCOL_PATH.read_bytes()
+            self.assertEqual(first["protocol"]["byte_size"], len(protocol_bytes))
+            self.assertEqual(
+                first["protocol"]["sha256"], hashlib.sha256(protocol_bytes).hexdigest()
+            )
+            self.assertEqual(
+                first["decision_protocol"], self.protocol_value["decision_protocol"]
+            )
             output = root / "output.json"
             write_report(output, first)
             self.assertTrue(output.exists())
@@ -326,23 +485,23 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                     self.assertEqual(result.returncode, 0, result.stderr)
 
     def test_protocol_candidates_decision_schema_holdout_and_ignored_output(self):
-        candidates = {item["provider_identifier"]: item for item in self.protocol["candidate_provider_templates"]}
-        self.assertEqual(candidates["sportybet"]["provisional_status"], "PARTIALLY_QUALIFIED")
+        candidates = {item["provider_identifier"]: item for item in self.protocol_value["candidate_provider_templates"]}
+        self.assertEqual(candidates["sportybet"]["provisional_status"], "UNKNOWN")
         self.assertEqual(
             candidates["sportybet"]["provisional_role_statuses"],
             {
-                "execution_bookmaker_status": "PARTIALLY_QUALIFIED",
+                "execution_bookmaker_status": "UNKNOWN",
                 "historical_status": "UNKNOWN",
-                "live_pricing_status": "PARTIALLY_QUALIFIED",
+                "live_pricing_status": "UNKNOWN",
                 "prospective_replay_status": "UNKNOWN",
             },
         )
         self.assertEqual(candidates["sportmonks"]["provisional_status"], "UNKNOWN")
         self.assertEqual(candidates["the_odds_api"]["provisional_status"], "UNKNOWN")
-        decision = self.protocol["decision_protocol"]
+        decision = self.protocol_value["decision_protocol"]
         self.assertIsNone(decision["seconds_before_kickoff"])
         self.assertEqual(decision, DEFAULT_DECISION_PROTOCOL.to_dict())
-        self.assertEqual(self.protocol["holdout_governance"]["final_test_season"], "2025-26")
+        self.assertEqual(self.protocol_value["holdout_governance"]["final_test_season"], "2025-26")
         self.assertEqual(CONSUMED_HOLDOUT_GOVERNANCE["status"], "ALREADY_CONSUMED_AUDIT_HOLDOUT")
         ignored = subprocess.run(
             ["git", "check-ignore", ".cache/athena-research/win-either-half/pricing-source-qualification-v1.json"],
@@ -388,6 +547,245 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
         self.assertIn(GateId.DETERMINISTIC_BETSLIP, EXECUTION_REQUIRED_GATES)
         self.assertNotIn(GateId.DETERMINISTIC_BETSLIP, HISTORICAL_REQUIRED_GATES)
         self.assertIn(GateId.REPRODUCIBLE_EXPORT, PROSPECTIVE_REQUIRED_GATES)
+
+    def test_self_declared_pass_is_downgraded_when_structured_sections_are_empty(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("generic review", encoding="utf-8")
+            candidate = self._candidate(evidence)
+            for section in (
+                "market_semantics_evidence",
+                "outcome_evidence",
+                "quote_field_evidence",
+                "timestamp_evidence",
+                "snapshot_evidence",
+                "historical_retention_evidence",
+                "live_pricing_evidence",
+                "fixture_mapping_evidence",
+                "export_reproducibility_evidence",
+                "licensing_and_retention_evidence",
+                "execution_workflow_evidence",
+            ):
+                candidate[section] = {}
+            report = self._qualify(candidate, root)
+            for role_status in report["qualification"].values():
+                self.assertNotIn(role_status, {
+                    "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+                    "QUALIFIED_FOR_LIVE_PRICING",
+                    "QUALIFIED_AS_EXECUTION_BOOKMAKER",
+                    "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY",
+                })
+            semantics = report["gate_results"][GateId.EXACT_MARKET_SEMANTICS.value]
+            self.assertEqual(semantics["declared"]["status"], "PASS")
+            self.assertEqual(semantics["derived"]["status"], "UNKNOWN")
+            self.assertEqual(semantics["effective"]["status"], "UNKNOWN")
+
+    def test_full_candidate_preserves_unknown_and_conflict_semantics(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            valid = self._qualify(self._candidate(evidence), root)
+            self.assertEqual(
+                valid["gate_results"][GateId.EXACT_MARKET_SEMANTICS.value]["effective"]["status"],
+                "PASS",
+            )
+            missing_candidate = self._candidate(evidence)
+            missing_candidate["market_semantics_evidence"]["markets"][0].pop(
+                "provider_description"
+            )
+            missing = self._qualify(missing_candidate, root)
+            self.assertEqual(
+                missing["gate_results"][GateId.EXACT_MARKET_SEMANTICS.value]["effective"]["status"],
+                "UNKNOWN",
+            )
+            conflict_candidate = self._candidate(evidence)
+            conflict_candidate["market_semantics_evidence"]["markets"][0][
+                "yes_settlement"
+            ] = "home team wins the first half"
+            conflict = self._qualify(conflict_candidate, root)
+            self.assertEqual(
+                conflict["gate_results"][GateId.EXACT_MARKET_SEMANTICS.value]["effective"]["status"],
+                "FAIL",
+            )
+
+    def test_boolean_provider_identifiers_snapshot_and_fixture_mapping_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            candidate = self._candidate(evidence)
+            candidate["quote_field_evidence"]["provider_event_identifier"] = True
+            report = self._qualify(candidate, root)
+            self.assertEqual(
+                report["gate_results"][GateId.REPRODUCIBLE_PROVIDER_MAPPING.value]["derived"]["status"],
+                "FAIL",
+            )
+            candidate = self._candidate(evidence)
+            candidate["snapshot_evidence"]["no_observed_at"] = "2026-08-01T12:00:01Z"
+            report = self._qualify(candidate, root)
+            self.assertEqual(
+                report["gate_results"][GateId.SAME_BOOKMAKER_SNAPSHOT.value]["derived"]["reason"],
+                "MIXED_OBSERVED_AT",
+            )
+            candidate = self._candidate(evidence)
+            candidate["fixture_mapping_evidence"]["examples"][0]["provider"][
+                "home_participant_identifier"
+            ] = "away-1"
+            candidate["fixture_mapping_evidence"]["examples"][0]["provider"][
+                "away_participant_identifier"
+            ] = "home-1"
+            candidate["fixture_mapping_evidence"]["aggregate_results"] = {
+                "EXACT": 0,
+                "CONFLICT": 1,
+                "AMBIGUOUS": 0,
+                "UNAVAILABLE": 0,
+            }
+            report = self._qualify(candidate, root)
+            self.assertEqual(
+                report["gate_results"][GateId.FIXTURE_MAPPING.value]["derived"]["status"],
+                "FAIL",
+            )
+
+    def test_exact_frozen_coverage_live_freshness_and_retention_permission(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            candidate = self._candidate(evidence)
+            candidate["historical_retention_evidence"]["frozen_period_coverage"][
+                "FINAL_TEST"
+            ] = 8095
+            report = self._qualify(candidate, root)
+            self.assertEqual(
+                report["gate_results"][GateId.FROZEN_PERIOD_COVERAGE.value]["effective"]["status"],
+                "FAIL",
+            )
+            candidate = self._candidate(evidence)
+            candidate["live_pricing_evidence"]["maximum_quote_age_seconds"] = 901
+            report = self._qualify(candidate, root)
+            self.assertEqual(
+                report["gate_results"][GateId.FRESHNESS_ENFORCEABLE.value]["effective"]["status"],
+                "FAIL",
+            )
+            candidate = self._candidate(evidence)
+            candidate["licensing_and_retention_evidence"] = {}
+            report = self._qualify(candidate, root)
+            self.assertNotEqual(
+                report["qualification"]["historical_status"],
+                "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+            )
+            self.assertNotEqual(
+                report["qualification"]["prospective_replay_status"],
+                "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY",
+            )
+
+    def test_not_applicable_never_satisfies_mandatory_gates(self):
+        all_not_applicable = {
+            gate: self._gate(GateStatus.NOT_APPLICABLE) for gate in GateId
+        }
+        for role in SourceRole:
+            with self.subTest(role=role):
+                self.assertEqual(
+                    qualify_mandatory_gates(role, all_not_applicable),
+                    QualificationStatus.DISQUALIFIED,
+                )
+        self.assertEqual(
+            qualify_prospective_replay(all_not_applicable),
+            QualificationStatus.DISQUALIFIED,
+        )
+        for role, gate in (
+            (SourceRole.HISTORICAL_RESEARCH_SOURCE, GateId.EXACT_MARKET_SEMANTICS),
+            (SourceRole.HISTORICAL_RESEARCH_SOURCE, GateId.FIXTURE_MAPPING),
+            (SourceRole.HISTORICAL_RESEARCH_SOURCE, GateId.HISTORICAL_RETENTION),
+            (SourceRole.LIVE_PRICING_SOURCE, GateId.QUOTE_OBSERVED_AT),
+        ):
+            gates = self._gates()
+            gates[gate] = self._gate(GateStatus.NOT_APPLICABLE)
+            self.assertEqual(
+                qualify_mandatory_gates(role, gates), QualificationStatus.DISQUALIFIED
+            )
+
+    def test_execution_can_qualify_without_booking_code(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            report = self._qualify(self._candidate(evidence), root)
+            self.assertEqual(
+                report["qualification"]["execution_bookmaker_status"],
+                "QUALIFIED_AS_EXECUTION_BOOKMAKER",
+            )
+            self.assertEqual(
+                report["gate_results"][GateId.BOOKING_CODE_SUPPORT.value]["effective"]["status"],
+                "NOT_APPLICABLE",
+            )
+
+    def test_protocol_identity_and_contract_mutations_fail_closed(self):
+        protocol_bytes = DEFAULT_PROTOCOL_PATH.read_bytes()
+        validated = validate_protocol_contract(
+            json.loads(protocol_bytes.decode("utf-8")), protocol_bytes
+        )
+        self.assertEqual(validated.byte_size, len(protocol_bytes))
+        self.assertEqual(validated.sha256, hashlib.sha256(protocol_bytes).hexdigest())
+        mutations = {
+            "mandatory_gates": lambda value: value["role_mandatory_gates"]["LIVE_PRICING_SOURCE"].pop(),
+            "qualification_statuses": lambda value: value["qualification_statuses"].pop(),
+            "market_semantics": lambda value: value["market_scope"]["HOME_WIN_EITHER_HALF"].__setitem__("subject", "AWAY_TEAM"),
+            "fixture_tolerance": lambda value: value["fixture_mapping"].__setitem__("kickoff_tolerance_seconds", 301),
+            "snapshot_contract": lambda value: value["snapshot_contract"].__setitem__("same_observed_at", False),
+            "maximum_quote_age": lambda value: value["decision_protocol"].__setitem__("maximum_quote_age_seconds", 901),
+            "decision_protocol": lambda value: value["decision_protocol"].__setitem__("timezone", "LOCAL"),
+            "frozen_denominator": lambda value: value["frozen_fixture_market_denominator"].__setitem__("total", 36317),
+            "holdout_governance": lambda value: value["holdout_governance"].__setitem__("status", "PRISTINE"),
+            "no_production": lambda value: value.__setitem__("no_production_approval", False),
+        }
+        for label, mutate in mutations.items():
+            with self.subTest(label=label):
+                changed = json.loads(json.dumps(self.protocol_value))
+                mutate(changed)
+                changed_bytes = _canonical_json_bytes(changed)
+                with self.assertRaises(QualificationExportError):
+                    validate_protocol_contract(changed, changed_bytes)
+
+    def test_modified_protocol_fails_before_report_generation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            candidate_path = root / "candidate.json"
+            candidate_path.write_text(
+                json.dumps(self._candidate(evidence), sort_keys=True),
+                encoding="utf-8",
+            )
+            changed = json.loads(json.dumps(self.protocol_value))
+            changed["decision_protocol"]["maximum_quote_age_seconds"] = 901
+            protocol_path = root / "modified-protocol.json"
+            protocol_path.write_text(
+                json.dumps(changed, sort_keys=True), encoding="utf-8"
+            )
+            output = root / "report.json"
+            with patch(
+                "scripts.qualify_win_either_half_pricing_source.get_code_state",
+                side_effect=AssertionError("code state must not be inspected"),
+            ):
+                self.assertEqual(
+                    main(
+                        [
+                            "--input",
+                            str(candidate_path),
+                            "--evidence-root",
+                            str(root),
+                            "--protocol",
+                            str(protocol_path),
+                            "--output",
+                            str(output),
+                        ]
+                    ),
+                    1,
+                )
+            self.assertFalse(output.exists())
 
     def test_direct_and_module_entrypoints_generate_and_check_real_temp_reports(self):
         commands = (

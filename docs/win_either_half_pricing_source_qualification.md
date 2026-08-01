@@ -3,7 +3,8 @@
 Stage 5B1 defines a deterministic protocol for deciding whether supplied
 evidence can support a pricing-source role. It performs no network request and
 does not qualify a provider by reputation, popularity, or a weighted score.
-Every mandatory gate must pass; unknown evidence never qualifies.
+Every mandatory gate must have an effective `PASS`; `UNKNOWN` and
+`NOT_APPLICABLE` never satisfy mandatory gates.
 
 Win Either Half is ATHENA's first end-to-end evidence, modelling, calibration,
 and pricing pipeline. It is not ATHENA's only market. The canonical registry
@@ -45,6 +46,11 @@ half-time/full-time, full-time result, Double Chance, Draw No Bet, bet-builder
 approximations, and model-derived prices are not substitutions. Fuzzy market
 matching cannot qualify a source.
 
+Provider market names and labels may be localized and need not equal ATHENA's
+English display names. Qualification instead requires non-empty provider
+market/selection identifiers and descriptions, the exact canonical subject and
+settlement semantics, exact YES/NO mapping, and a null line.
+
 ## Mandatory evidence gates
 
 Historical research requires exact semantics and YES/NO structure, raw decimal
@@ -67,6 +73,9 @@ execution price matches the validated quote; suspended, changed-odds, and
 missing-market detection; explicit user confirmation; and a permitted
 automation method. Booking-code support is recorded where provided, but this
 PR generates no booking code and places no bet.
+Booking-code capability is an optional gate: an execution bookmaker can
+qualify while explicitly reporting it unavailable. No other mandatory gate may
+use `NOT_APPLICABLE`.
 
 ## Snapshot and fixture rules
 
@@ -102,7 +111,9 @@ SportyBet is the priority execution candidate. Provisional evidence indicates
 that it displays Home and Away Team to Win Either Half, explicit YES/NO decimal
 prices, and SportyBet provenance. Stable provider IDs, quote timestamps,
 snapshots, archives, permissions, automated betslip construction, and booking
-codes remain unproven, so SportyBet begins `PARTIALLY_QUALIFIED`, not qualified.
+codes remain unproven. The rules-only template therefore records every actual
+SportyBet role status as `UNKNOWN`. A later local report may become partially
+qualified only after verified structured evidence is supplied.
 
 Sportmonks, The Odds API, and other licensed historical providers are protocol
 candidates that begin `UNKNOWN`. No provider is qualified by this tooling PR.
@@ -119,6 +130,20 @@ and evidence files. Every gate records status, reason, evidence reference, and
 checked time. Evidence files must be regular files below the allowed evidence
 root and are verified by relative path, byte size, and SHA-256. Absolute paths,
 traversal, escaping symlinks, and identity mismatch fail closed.
+
+Reviewer-declared gate status is never authoritative by itself. The exporter
+derives each gate from its structured market, quote, timestamp, snapshot,
+fixture, historical, live, licensing, export, or execution evidence. Reports
+preserve declared, derived, and effective status separately. A derived pass
+also requires matching declared and structured references to verified files.
+Missing documentation stays `UNKNOWN`; supplied contradictions become `FAIL`.
+
+The supplied protocol must be semantically identical to the committed protocol.
+Before qualification, its gate lists, statuses, market semantics, fixture
+tolerance, snapshot rules, 900-second maximum age, decision contract, frozen
+36,318 denominator, holdout governance, and no-production flag are checked
+against the applied domain rules. The report records the supplied protocol's
+raw byte size and SHA-256 and uses its validated decision contract.
 
 Example:
 

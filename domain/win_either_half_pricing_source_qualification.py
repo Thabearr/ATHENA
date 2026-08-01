@@ -122,7 +122,6 @@ EXECUTION_REQUIRED_GATES = (
     GateId.SUSPENDED_SELECTION_DETECTION,
     GateId.MISSING_MARKET_DETECTION,
     GateId.EXPLICIT_USER_CONFIRMATION,
-    GateId.BOOKING_CODE_SUPPORT,
 )
 PROSPECTIVE_REQUIRED_GATES = (
     *LIVE_REQUIRED_GATES,
@@ -143,6 +142,13 @@ ROLE_QUALIFIED_STATUS = {
     SourceRole.EXECUTION_BOOKMAKER:
         QualificationStatus.QUALIFIED_AS_EXECUTION_BOOKMAKER,
 }
+ROLE_NOT_APPLICABLE_ALLOWLIST = {
+    SourceRole.HISTORICAL_RESEARCH_SOURCE: frozenset(),
+    SourceRole.LIVE_PRICING_SOURCE: frozenset(),
+    SourceRole.EXECUTION_BOOKMAKER: frozenset(),
+}
+PROSPECTIVE_NOT_APPLICABLE_ALLOWLIST = frozenset()
+OPTIONAL_GATES = frozenset({GateId.BOOKING_CODE_SUPPORT})
 
 
 HOME_YES_SETTLEMENT = "home team wins at least one regulation half"
@@ -151,13 +157,11 @@ AWAY_YES_SETTLEMENT = "away team wins at least one regulation half"
 AWAY_NO_SETTLEMENT = "away team does not win either regulation half"
 MARKET_SEMANTICS = {
     MarketId.HOME_WIN_EITHER_HALF: {
-        "market_description": "Home Team to Win Either Half",
         "subject": "HOME_TEAM",
         "yes_settlement": HOME_YES_SETTLEMENT,
         "no_settlement": HOME_NO_SETTLEMENT,
     },
     MarketId.AWAY_WIN_EITHER_HALF: {
-        "market_description": "Away Team to Win Either Half",
         "subject": "AWAY_TEAM",
         "yes_settlement": AWAY_YES_SETTLEMENT,
         "no_settlement": AWAY_NO_SETTLEMENT,
@@ -238,36 +242,52 @@ def validate_market_semantics(value: Mapping[str, Any]) -> GateEvidence:
     expected = MARKET_SEMANTICS.get(market)
     if expected is None:
         return GateEvidence(GateStatus.FAIL, "UNSUPPORTED_MARKET", None, checked_at)
+    if "line" not in value:
+        return GateEvidence(
+            GateStatus.UNKNOWN, "MISSING_LINE_EVIDENCE", None, checked_at
+        )
     if value.get("line") is not None:
         return GateEvidence(GateStatus.FAIL, "LINE_MUST_BE_NULL", None, checked_at)
     reference = _text(value.get("evidence_reference"))
     if reference is None:
         return GateEvidence(GateStatus.UNKNOWN, "MISSING_EVIDENCE", None, checked_at)
-    supplied = {
+    required_text = {
         key: _text(value.get(key))
         for key in (
-            "market_description",
+            "provider_market_identifier",
+            "provider_market_name",
+            "provider_description",
             "subject",
             "yes_settlement",
             "no_settlement",
+            "provider_yes_selection_identifier",
+            "provider_yes_selection_label",
+            "provider_no_selection_identifier",
+            "provider_no_selection_label",
         )
     }
-    if any(value is None for value in supplied.values()):
+    if any(item is None for item in required_text.values()):
         return GateEvidence(
             GateStatus.UNKNOWN,
-            "MISSING_MARKET_DESCRIPTION",
+            "MISSING_MARKET_DOCUMENTATION",
             reference,
             checked_at,
         )
-    if supplied != expected:
+    supplied_semantics = {
+        key: required_text[key]
+        for key in ("subject", "yes_settlement", "no_settlement")
+    }
+    if supplied_semantics != expected:
         return GateEvidence(
             GateStatus.FAIL,
             "MARKET_SEMANTICS_MISMATCH",
             reference,
             checked_at,
         )
-    outcomes = value.get("outcome_identifiers")
-    if outcomes != [OutcomeId.YES.value, OutcomeId.NO.value]:
+    if (
+        value.get("yes_canonical_outcome_id") != OutcomeId.YES.value
+        or value.get("no_canonical_outcome_id") != OutcomeId.NO.value
+    ):
         return GateEvidence(
             GateStatus.FAIL, "YES_NO_IDENTIFIERS_MISMATCH", reference, checked_at
         )
@@ -281,12 +301,19 @@ def qualify_mandatory_gates(
     gates: Mapping[GateId, GateEvidence],
 ) -> QualificationStatus:
     required = ROLE_REQUIRED_GATES[role]
-    statuses = [gates.get(gate) for gate in required]
-    if any(value is not None and value.status is GateStatus.FAIL for value in statuses):
+    statuses = [(gate, gates.get(gate)) for gate in required]
+    if any(
+        value is not None
+        and value.status is GateStatus.NOT_APPLICABLE
+        and gate not in ROLE_NOT_APPLICABLE_ALLOWLIST[role]
+        for gate, value in statuses
+    ):
         return QualificationStatus.DISQUALIFIED
-    present = [value for value in statuses if value is not None]
+    if any(value is not None and value.status is GateStatus.FAIL for _, value in statuses):
+        return QualificationStatus.DISQUALIFIED
+    present = [value for _, value in statuses if value is not None]
     if len(present) == len(required) and all(
-        value.status in {GateStatus.PASS, GateStatus.NOT_APPLICABLE}
+        value.status is GateStatus.PASS
         for value in present
     ):
         return ROLE_QUALIFIED_STATUS[role]
@@ -298,20 +325,27 @@ def qualify_mandatory_gates(
 def qualify_prospective_replay(
     gates: Mapping[GateId, GateEvidence],
 ) -> QualificationStatus:
-    statuses = [gates.get(gate) for gate in PROSPECTIVE_REQUIRED_GATES]
-    if any(value is not None and value.status is GateStatus.FAIL for value in statuses):
-        return QualificationStatus.DISQUALIFIED
-    if len([value for value in statuses if value is not None]) == len(statuses) and all(
+    statuses = [(gate, gates.get(gate)) for gate in PROSPECTIVE_REQUIRED_GATES]
+    if any(
         value is not None
-        and value.status in {GateStatus.PASS, GateStatus.NOT_APPLICABLE}
-        for value in statuses
+        and value.status is GateStatus.NOT_APPLICABLE
+        and gate not in PROSPECTIVE_NOT_APPLICABLE_ALLOWLIST
+        for gate, value in statuses
+    ):
+        return QualificationStatus.DISQUALIFIED
+    if any(value is not None and value.status is GateStatus.FAIL for _, value in statuses):
+        return QualificationStatus.DISQUALIFIED
+    if len([value for _, value in statuses if value is not None]) == len(statuses) and all(
+        value is not None
+        and value.status is GateStatus.PASS
+        for _, value in statuses
     ):
         if qualify_mandatory_gates(
             SourceRole.HISTORICAL_RESEARCH_SOURCE, gates
         ) is QualificationStatus.QUALIFIED_FOR_HISTORICAL_RESEARCH:
             return QualificationStatus.QUALIFIED_FOR_HISTORICAL_RESEARCH
         return QualificationStatus.QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY
-    if any(value is not None and value.status is GateStatus.PASS for value in statuses):
+    if any(value is not None and value.status is GateStatus.PASS for _, value in statuses):
         return QualificationStatus.PARTIALLY_QUALIFIED
     return QualificationStatus.UNKNOWN
 
@@ -514,8 +548,11 @@ __all__ = [
     "PERMITTED_MARKETS",
     "PERMITTED_OUTCOMES",
     "PROSPECTIVE_REQUIRED_GATES",
+    "OPTIONAL_GATES",
+    "PROSPECTIVE_NOT_APPLICABLE_ALLOWLIST",
     "QualificationStatus",
     "ROLE_REQUIRED_GATES",
+    "ROLE_NOT_APPLICABLE_ALLOWLIST",
     "SCHEMA_VERSION",
     "SnapshotIdentityResult",
     "SourceQualificationError",
