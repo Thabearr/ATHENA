@@ -1,0 +1,203 @@
+{
+  "calibration_configurations": [
+    {
+      "complexity_rank": 0,
+      "family": "identity",
+      "identifier": "identity_calibration_v1",
+      "parameters": {}
+    },
+    {
+      "complexity_rank": 2,
+      "family": "isotonic",
+      "identifier": "isotonic_calibration_v1",
+      "parameters": {
+        "increasing": true,
+        "minimum_unique_predictions": 3,
+        "out_of_bounds": "clip"
+      }
+    },
+    {
+      "complexity_rank": 1,
+      "family": "platt_logit",
+      "identifier": "platt_logit_calibration_v1",
+      "parameters": {
+        "C": 1000000000000.0,
+        "epsilon": 1e-06,
+        "max_iter": 2000,
+        "random_state": 1729,
+        "solver": "lbfgs"
+      }
+    }
+  ],
+  "dataset_name": "win-either-half-calibration-v1",
+  "dependencies": {
+    "numpy": "2.5.1",
+    "python": "3.12.0",
+    "scikit_learn": "1.9.0",
+    "scipy": "1.18.0",
+    "threadpoolctl": "3.6.0"
+  },
+  "files": {
+    "calibrated_predictions": {
+      "byte_size": 6705242,
+      "relative_name": "calibrated-predictions-v1.csv",
+      "rows": 36318,
+      "sha256": "6e931ae156f7319bc9cba2647e746471422adafad8e431981bdb573ca64c44d4"
+    },
+    "calibration_summary": {
+      "byte_size": 65337,
+      "relative_name": "calibration-v1.json",
+      "sha256": "957ffb850354173f84f1f3b44e8e5bff83c74357bdebc90c091c1f5ca997dfda"
+    },
+    "subgroups": {
+      "byte_size": 1442351,
+      "relative_name": "calibration-subgroups-v1.csv",
+      "rows": 356,
+      "sha256": "92035cfe39d6259fe24387811ccd62575a00b114ca3e220ac19baf3985f5cdb8"
+    }
+  },
+  "generated_at_utc": "2026-08-01T09:20:44Z",
+  "generator": {
+    "generator_git_head_sha": "61168988f8df07aaaf3504bdc530a635c0fad4c9",
+    "tracked_worktree_clean": true
+  },
+  "input_files": {
+    "feature_csv": {
+      "byte_size": 8032209,
+      "rows": 21791,
+      "sha256": "68547ae9670703c59d68367d8fa1ef067e7410d8beb842ad0aec2151f0777e7b"
+    },
+    "stage_4_benchmark_summary": {
+      "byte_size": 165692,
+      "sha256": "e6c2157f137a7d243f38d3a55a087e9b2ab9cb2536ab2a1544e1125362c9253f"
+    },
+    "stage_4_predictions": {
+      "byte_size": 5063993,
+      "rows": 43582,
+      "sha256": "02790fdb2c4549adb27d3a086d522491215ac7a2b9889375208cae96f32873a1"
+    }
+  },
+  "market_safety": {
+    "away_win_either_half": "DISABLED",
+    "home_win_either_half": "DISABLED"
+  },
+  "numerical_reproducibility": {
+    "canonical_decimal_places": 12,
+    "random_seed": 1729,
+    "runtime": {
+      "libraries": [
+        {
+          "architecture": "Haswell",
+          "internal_api": "openblas",
+          "num_threads": 1,
+          "prefix": "libscipy_openblas",
+          "threading_layer": "pthreads",
+          "user_api": "blas",
+          "version": "0.3.31.dev"
+        },
+        {
+          "architecture": "Haswell",
+          "internal_api": "openblas",
+          "num_threads": 1,
+          "prefix": "libscipy_openblas",
+          "threading_layer": "pthreads",
+          "user_api": "blas",
+          "version": "0.3.33.112.0"
+        },
+        {
+          "architecture": null,
+          "internal_api": "openmp",
+          "num_threads": 1,
+          "prefix": "vcomp",
+          "threading_layer": null,
+          "user_api": "openmp",
+          "version": null
+        }
+      ],
+      "machine_architecture": "AMD64",
+      "numpy_version": "2.5.1",
+      "platform_system": "Windows",
+      "python_implementation": "CPython",
+      "python_version": "3.12.0",
+      "scikit_learn_version": "1.9.0",
+      "scipy_version": "1.18.0",
+      "thread_limit": 1,
+      "threadpoolctl_version": "3.6.0"
+    },
+    "thread_limit": 1
+  },
+  "schema_version": 1,
+  "selected_calibrations": {
+    "away_win_either_half_yes": "identity_calibration_v1",
+    "home_win_either_half_yes": "isotonic_calibration_v1"
+  },
+  "selection_rule": "lowest canonical VALIDATION log loss; then lowest canonical VALIDATION Brier score; then lower declared calibration complexity; then lexical candidate identifier",
+  "stage_2_evidence": {
+    "baseline_name": "half-time-ready-for-research",
+    "cache_manifest_sha256": "1640f2964d34655e01407dd1a7a36b81b3f24f28d22e40f45568ba81ee84560e",
+    "evidence_git_head_sha": "7089c0c11c2ca725dd38f6345e210c9fa4f8747d",
+    "logical_evidence_sha256": "f79b9aa54f1d3a34fd6115d7a1cf1aa746e561a35073afb67d1dad97220011ba",
+    "schema_sha256": "fe5e29a6f0e9de427db1780f480689d1a23c732ba73779eb737af906a778161b"
+  },
+  "stage_3_features": {
+    "dataset_name": "win-either-half-features-v1",
+    "feature_manifest_logical_sha256": "490fbb682bc3e8d5bad605fc704aab14b0b45bf85b4c37586974e7655752aefd",
+    "generator_git_head_sha": "6b57a51092255d5e4c5ba1f37584c854b1fd2ca9"
+  },
+  "stage_3_labels": {
+    "dataset_name": "win-either-half-labels-v1",
+    "generator_git_head_sha": "fdd16e834e42fed19108d1c8db54955826903de3",
+    "label_manifest_logical_sha256": "c79739294de4350da608da56ee78d44fae51c8ab9697669fcc97de03d549481a"
+  },
+  "stage_4_benchmarks": {
+    "benchmark_manifest_logical_sha256": "6b8c82be8d2920f155bf9592ea7388ba6689b0cae05995642e348cf199fd2a7d",
+    "dataset_name": "win-either-half-baseline-benchmarks-v1",
+    "generator_git_head_sha": "3c06c76be881c3904bc1f74de607c7a06d90333a",
+    "selected_models": {
+      "away_win_either_half_yes": "logistic_l2_c0.1_v1",
+      "home_win_either_half_yes": "logistic_l2_c0.1_v1"
+    }
+  },
+  "subgroup_policy": {
+    "evaluation_role_scopes": {
+      "CALIBRATION_FIT_OOF": "CALIBRATION_FIT_SAMPLE",
+      "FINAL_TEST": "INDEPENDENT_FINAL_TEST",
+      "VALIDATION_SELECTION": "SELECTION_SAMPLE"
+    },
+    "minimum_supported_rows": 100,
+    "model_probability_bands": [
+      "[0.0,0.2)",
+      "[0.2,0.4)",
+      "[0.4,0.6)",
+      "[0.6,0.8)",
+      "[0.8,1.0]"
+    ]
+  },
+  "targets": [
+    "home_win_either_half_yes",
+    "away_win_either_half_yes"
+  ],
+  "temporal_splits": {
+    "test": {
+      "rows": 4048,
+      "seasons": [
+        "2025-26"
+      ]
+    },
+    "train": {
+      "rows": 14267,
+      "seasons": [
+        "2020-21",
+        "2021-22",
+        "2022-23",
+        "2023-24"
+      ]
+    },
+    "validation": {
+      "rows": 3476,
+      "seasons": [
+        "2024-25"
+      ]
+    }
+  }
+}
