@@ -245,6 +245,8 @@ def load_verified_feature_rows(
                 raw_row, "home_win_either_half_yes"
             ),
             "kickoff_utc": kickoff,
+            "league": str(raw_row.get("league") or "").strip(),
+            "season": season,
             "split": split,
         }
         for name in predictor_names:
