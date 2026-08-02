@@ -51,6 +51,13 @@ English display names. Qualification instead requires non-empty provider
 market/selection identifiers and descriptions, the exact canonical subject and
 settlement semantics, exact YES/NO mapping, and a null line.
 
+Evidence is market-specific. Exactly one quote mapping, snapshot sample,
+historical record, and live-capability record is required independently for
+each canonical market. A Home mapping or snapshot cannot prove Away support,
+and selection identifiers cannot be borrowed across the two subjects. Shared
+provider market identifiers fail unless reviewed evidence explicitly proves
+that the identifier represents both canonical subjects.
+
 ## Mandatory evidence gates
 
 Historical research requires exact semantics and YES/NO structure, raw decimal
@@ -60,6 +67,12 @@ settled history, all 36,318 frozen fixture-markets, and permission to retain
 research evidence. Current-only or short-retention evidence cannot qualify for
 history. It can qualify for prospective replay only when every prospective
 gate passes.
+
+Frozen historical coverage is reconciled both by market and evaluation role.
+Home and Away each require 10,635 `CALIBRATION_FIT_OOF`, 3,476
+`VALIDATION_SELECTION`, and 4,048 `FINAL_TEST` fixture-markets, totaling 18,159
+per market. The combined totals remain 21,270 / 6,952 / 8,096 and 36,318.
+Boolean full-coverage claims are not accepted.
 
 Live pricing additionally requires current availability, deterministic latest
 snapshot selection, reproducible provider mapping, and enforceable 900-second
@@ -126,22 +139,39 @@ local user-controlled browser workflow.
 
 Candidate evidence is JSON with schema version, provider identity, candidate
 roles, checked time, all named evidence sections, gate evidence, limitations,
-and evidence files. Every gate records status, reason, evidence reference, and
-checked time. Evidence files must be regular files below the allowed evidence
-root and are verified by relative path, byte size, and SHA-256. Absolute paths,
-traversal, escaping symlinks, and identity mismatch fail closed.
+typed evidence claims, and evidence files. Evidence files must be regular files
+below the allowed evidence root and are verified by relative path, byte size,
+and SHA-256. Absolute paths, traversal, escaping symlinks, and identity mismatch
+fail closed. A verified file identity proves only which bytes were reviewed; it
+does not prove a capability.
+
+Every typed claim has a unique ID, matching provider, verified file path,
+document title, source reference, capability identifier, bounded paraphrased
+statement, timezone-aware retrieval and review timestamps, and reviewer
+conclusion. Gate declarations and structured sections reference claim IDs.
+Capability allowlists prevent, for example, a market-semantics claim from
+proving research permission or a booking-code claim from proving historical
+retention. One physical file may support several separately typed claims, but
+generic file text with no claims cannot pass a gate. Missing claims remain
+`UNKNOWN`; contradictory or capability-mismatched claims produce `FAIL`.
 
 Reviewer-declared gate status is never authoritative by itself. The exporter
 derives each gate from its structured market, quote, timestamp, snapshot,
 fixture, historical, live, licensing, export, or execution evidence. Reports
 preserve declared, derived, and effective status separately. A derived pass
-also requires matching declared and structured references to verified files.
+also requires valid typed claims for both the declaration and structured
+evidence. Structured `FAIL` has first precedence, reviewer `FAIL` second, and
+`UNKNOWN` remains unknown only when neither side fails. A `PASS` requires both
+sides to pass. Mandatory `NOT_APPLICABLE` fails. Optional booking-code
+`NOT_APPLICABLE` is accepted only when both reviewer and structured evidence
+explicitly record that capability as unavailable; it cannot hide a conflict.
 Missing documentation stays `UNKNOWN`; supplied contradictions become `FAIL`.
 
 The supplied protocol must be semantically identical to the committed protocol.
 Before qualification, its gate lists, statuses, market semantics, fixture
-tolerance, snapshot rules, 900-second maximum age, decision contract, frozen
-36,318 denominator, holdout governance, and no-production flag are checked
+tolerance, snapshot rules, two-market evidence requirements, claim-capability
+allowlists, 900-second maximum age, decision contract, per-market and combined
+frozen denominators, holdout governance, and no-production flag are checked
 against the applied domain rules. The report records the supplied protocol's
 raw byte size and SHA-256 and uses its validated decision contract.
 

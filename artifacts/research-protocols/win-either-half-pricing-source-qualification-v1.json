@@ -92,6 +92,46 @@
     "snapshot_selection_rule": "LATEST_COMPLETE_SAME_BOOKMAKER_SNAPSHOT_NOT_AFTER_DECISION",
     "timezone": "UTC"
   },
+  "evidence_claim_contract": {
+    "gate_capability_allowlist": {
+      "booking_code_support": ["BOOKING_CODE"],
+      "bookmaker_provenance": ["QUOTE_SCHEMA"],
+      "changed_odds_detection": ["EXECUTION_SAFETY"],
+      "current_market_availability": ["LIVE_AVAILABILITY"],
+      "deterministic_betslip": ["EXECUTION_SAFETY"],
+      "exact_execution_selection": ["EXECUTION_SAFETY"],
+      "exact_market_semantics": ["MARKET_SEMANTICS"],
+      "exact_yes_no_structure": ["MARKET_SEMANTICS", "OUTCOME_STRUCTURE", "QUOTE_SCHEMA"],
+      "explicit_user_confirmation": ["EXECUTION_SAFETY"],
+      "fixture_mapping": ["FIXTURE_MAPPING"],
+      "freshness_enforceable": ["LIVE_AVAILABILITY", "TIMESTAMP"],
+      "frozen_period_coverage": ["FROZEN_COVERAGE"],
+      "historical_retention": ["HISTORICAL_RETENTION"],
+      "missing_market_detection": ["EXECUTION_SAFETY"],
+      "permitted_automation": ["EXECUTION_SAFETY"],
+      "quote_observed_at": ["TIMESTAMP"],
+      "raw_decimal_odds": ["QUOTE_SCHEMA"],
+      "reproducible_export": ["REPRODUCIBLE_EXPORT"],
+      "reproducible_provider_mapping": ["LIVE_AVAILABILITY", "QUOTE_SCHEMA"],
+      "research_retention_permission": ["RESEARCH_PERMISSION"],
+      "same_bookmaker_snapshot": ["SNAPSHOT"],
+      "suspended_selection_detection": ["EXECUTION_SAFETY"],
+      "validated_quote_price_match": ["EXECUTION_SAFETY"]
+    },
+    "required_fields": [
+      "claim_id",
+      "provider_identifier",
+      "evidence_file_path",
+      "document_title",
+      "source_reference",
+      "capability_identifier",
+      "capability_statement",
+      "retrieval_timestamp",
+      "reviewer_checked_at",
+      "reviewer_conclusion"
+    ],
+    "reviewer_conclusions": ["PASS", "FAIL", "UNKNOWN"]
+  },
   "fixture_mapping": {
     "kickoff_tolerance_seconds": 300,
     "results": [
@@ -108,6 +148,20 @@
     "FINAL_TEST": 8096,
     "VALIDATION_SELECTION": 6952,
     "total": 36318
+  },
+  "frozen_fixture_market_denominator_by_market": {
+    "AWAY_WIN_EITHER_HALF": {
+      "CALIBRATION_FIT_OOF": 10635,
+      "FINAL_TEST": 4048,
+      "VALIDATION_SELECTION": 3476,
+      "total": 18159
+    },
+    "HOME_WIN_EITHER_HALF": {
+      "CALIBRATION_FIT_OOF": 10635,
+      "FINAL_TEST": 4048,
+      "VALIDATION_SELECTION": 3476,
+      "total": 18159
+    }
   },
   "holdout_governance": {
     "final_test_season": "2025-26",
@@ -200,6 +254,13 @@
       "subject": "HOME_TEAM",
       "yes_settlement": "home team wins at least one regulation half"
     }
+  },
+  "market_specific_evidence_contract": {
+    "historical_coverage_records_per_market": 1,
+    "live_capability_records_per_market": 1,
+    "quote_mapping_records_per_market": 1,
+    "required_markets": ["AWAY_WIN_EITHER_HALF", "HOME_WIN_EITHER_HALF"],
+    "snapshot_samples_per_market": 1
   },
   "no_production_approval": true,
   "provider_roles": [

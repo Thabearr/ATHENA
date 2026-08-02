@@ -199,7 +199,7 @@ def _timestamp(value: datetime) -> str:
 class GateEvidence:
     status: GateStatus
     reason: str
-    evidence_reference: Optional[str]
+    evidence_claim_ids: tuple[str, ...]
     checked_at: datetime
 
     @classmethod
@@ -213,13 +213,27 @@ class GateEvidence:
         reason = _text(value.get("reason"))
         if reason is None:
             raise SourceQualificationError("Gate reason is required")
-        reference = _text(value.get("evidence_reference"))
-        if status is GateStatus.PASS and reference is None:
-            raise SourceQualificationError("Passing gates require evidence_reference")
+        raw_claim_ids = value.get("evidence_claim_ids")
+        if raw_claim_ids is None:
+            claim_ids: tuple[str, ...] = ()
+        elif not isinstance(raw_claim_ids, list) or any(
+            _text(item) is None for item in raw_claim_ids
+        ):
+            raise SourceQualificationError(
+                "evidence_claim_ids must be a list of non-empty strings"
+            )
+        else:
+            claim_ids = tuple(item.strip() for item in raw_claim_ids)
+        if len(set(claim_ids)) != len(claim_ids):
+            raise SourceQualificationError("evidence_claim_ids must be unique")
+        if not claim_ids:
+            raise SourceQualificationError(
+                "Every gate declaration requires evidence_claim_ids"
+            )
         return cls(
             status=status,
             reason=reason[:500],
-            evidence_reference=reference,
+            evidence_claim_ids=tuple(sorted(claim_ids)),
             checked_at=_aware_utc(value.get("checked_at"), "gate checked_at"),
         )
 
@@ -227,7 +241,7 @@ class GateEvidence:
         return {
             "status": self.status.value,
             "reason": self.reason,
-            "evidence_reference": self.evidence_reference,
+            "evidence_claim_ids": list(self.evidence_claim_ids),
             "checked_at": _timestamp(self.checked_at),
         }
 
@@ -238,19 +252,27 @@ def validate_market_semantics(value: Mapping[str, Any]) -> GateEvidence:
     try:
         market = MarketId(value.get("market_id"))
     except (TypeError, ValueError):
-        return GateEvidence(GateStatus.FAIL, "UNKNOWN_MARKET", None, checked_at)
+        return GateEvidence(GateStatus.FAIL, "UNKNOWN_MARKET", (), checked_at)
     expected = MARKET_SEMANTICS.get(market)
     if expected is None:
-        return GateEvidence(GateStatus.FAIL, "UNSUPPORTED_MARKET", None, checked_at)
+        return GateEvidence(GateStatus.FAIL, "UNSUPPORTED_MARKET", (), checked_at)
     if "line" not in value:
         return GateEvidence(
-            GateStatus.UNKNOWN, "MISSING_LINE_EVIDENCE", None, checked_at
+            GateStatus.UNKNOWN, "MISSING_LINE_EVIDENCE", (), checked_at
         )
     if value.get("line") is not None:
-        return GateEvidence(GateStatus.FAIL, "LINE_MUST_BE_NULL", None, checked_at)
-    reference = _text(value.get("evidence_reference"))
-    if reference is None:
-        return GateEvidence(GateStatus.UNKNOWN, "MISSING_EVIDENCE", None, checked_at)
+        return GateEvidence(GateStatus.FAIL, "LINE_MUST_BE_NULL", (), checked_at)
+    raw_claim_ids = value.get("claim_ids")
+    if raw_claim_ids is None:
+        claim_ids: tuple[str, ...] = ()
+    elif not isinstance(raw_claim_ids, list) or any(_text(item) is None for item in raw_claim_ids):
+        return GateEvidence(GateStatus.FAIL, "INVALID_EVIDENCE_CLAIMS", (), checked_at)
+    else:
+        claim_ids = tuple(sorted(item.strip() for item in raw_claim_ids))
+    if len(set(claim_ids)) != len(claim_ids):
+        return GateEvidence(GateStatus.FAIL, "DUPLICATE_EVIDENCE_CLAIM", (), checked_at)
+    if not claim_ids:
+        return GateEvidence(GateStatus.UNKNOWN, "MISSING_EVIDENCE_CLAIMS", (), checked_at)
     required_text = {
         key: _text(value.get(key))
         for key in (
@@ -270,7 +292,7 @@ def validate_market_semantics(value: Mapping[str, Any]) -> GateEvidence:
         return GateEvidence(
             GateStatus.UNKNOWN,
             "MISSING_MARKET_DOCUMENTATION",
-            reference,
+            claim_ids,
             checked_at,
         )
     supplied_semantics = {
@@ -281,7 +303,7 @@ def validate_market_semantics(value: Mapping[str, Any]) -> GateEvidence:
         return GateEvidence(
             GateStatus.FAIL,
             "MARKET_SEMANTICS_MISMATCH",
-            reference,
+            claim_ids,
             checked_at,
         )
     if (
@@ -289,10 +311,10 @@ def validate_market_semantics(value: Mapping[str, Any]) -> GateEvidence:
         or value.get("no_canonical_outcome_id") != OutcomeId.NO.value
     ):
         return GateEvidence(
-            GateStatus.FAIL, "YES_NO_IDENTIFIERS_MISMATCH", reference, checked_at
+            GateStatus.FAIL, "YES_NO_IDENTIFIERS_MISMATCH", claim_ids, checked_at
         )
     return GateEvidence(
-        GateStatus.PASS, "EXACT_CANONICAL_SEMANTICS", reference, checked_at
+        GateStatus.PASS, "EXACT_CANONICAL_SEMANTICS", claim_ids, checked_at
     )
 
 

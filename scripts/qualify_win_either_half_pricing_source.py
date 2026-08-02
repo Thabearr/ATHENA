@@ -57,6 +57,51 @@ FROZEN_FIXTURE_MARKET_DENOMINATOR = {
     "FINAL_TEST": 8096,
     "total": 36318,
 }
+FROZEN_MARKET_DENOMINATOR = {
+    market.value: {
+        "CALIBRATION_FIT_OOF": 10635,
+        "VALIDATION_SELECTION": 3476,
+        "FINAL_TEST": 4048,
+        "total": 18159,
+    }
+    for market in PERMITTED_MARKETS
+}
+CLAIM_CAPABILITY_ALLOWLIST = {
+    GateId.EXACT_MARKET_SEMANTICS: frozenset({"MARKET_SEMANTICS"}),
+    GateId.EXACT_YES_NO_STRUCTURE: frozenset(
+        {"MARKET_SEMANTICS", "OUTCOME_STRUCTURE", "QUOTE_SCHEMA"}
+    ),
+    GateId.RAW_DECIMAL_ODDS: frozenset({"QUOTE_SCHEMA"}),
+    GateId.BOOKMAKER_PROVENANCE: frozenset({"QUOTE_SCHEMA"}),
+    GateId.QUOTE_OBSERVED_AT: frozenset({"TIMESTAMP"}),
+    GateId.SAME_BOOKMAKER_SNAPSHOT: frozenset({"SNAPSHOT"}),
+    GateId.FIXTURE_MAPPING: frozenset({"FIXTURE_MAPPING"}),
+    GateId.REPRODUCIBLE_EXPORT: frozenset({"REPRODUCIBLE_EXPORT"}),
+    GateId.HISTORICAL_RETENTION: frozenset({"HISTORICAL_RETENTION"}),
+    GateId.FROZEN_PERIOD_COVERAGE: frozenset({"FROZEN_COVERAGE"}),
+    GateId.RESEARCH_RETENTION_PERMISSION: frozenset({"RESEARCH_PERMISSION"}),
+    GateId.CURRENT_MARKET_AVAILABILITY: frozenset({"LIVE_AVAILABILITY"}),
+    GateId.FRESHNESS_ENFORCEABLE: frozenset(
+        {"LIVE_AVAILABILITY", "TIMESTAMP"}
+    ),
+    GateId.REPRODUCIBLE_PROVIDER_MAPPING: frozenset(
+        {"QUOTE_SCHEMA", "LIVE_AVAILABILITY"}
+    ),
+    GateId.PERMITTED_AUTOMATION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.EXACT_EXECUTION_SELECTION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.DETERMINISTIC_BETSLIP: frozenset({"EXECUTION_SAFETY"}),
+    GateId.VALIDATED_QUOTE_PRICE_MATCH: frozenset({"EXECUTION_SAFETY"}),
+    GateId.CHANGED_ODDS_DETECTION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.SUSPENDED_SELECTION_DETECTION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.MISSING_MARKET_DETECTION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.EXPLICIT_USER_CONFIRMATION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.BOOKING_CODE_SUPPORT: frozenset({"BOOKING_CODE"}),
+}
+PERMITTED_CLAIM_CAPABILITIES = frozenset(
+    capability
+    for capabilities in CLAIM_CAPABILITY_ALLOWLIST.values()
+    for capability in capabilities
+)
 DEFAULT_PROTOCOL_PATH = (
     REPOSITORY_ROOT
     / "artifacts/research-protocols/win-either-half-pricing-source-qualification-v1.json"
@@ -114,7 +159,39 @@ class ValidatedProtocol:
 class DerivedGate:
     status: GateStatus
     reason: str
-    evidence_references: tuple[str, ...] = ()
+    evidence_claim_ids: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class EvidenceClaim:
+    claim_id: str
+    provider_identifier: str
+    evidence_file_path: str
+    document_title: str
+    source_reference: str
+    capability_identifier: str
+    capability_statement: str
+    retrieval_timestamp: datetime
+    reviewer_checked_at: datetime
+    reviewer_conclusion: GateStatus
+
+    def to_dict(self) -> dict:
+        return {
+            "claim_id": self.claim_id,
+            "provider_identifier": self.provider_identifier,
+            "evidence_file_path": self.evidence_file_path,
+            "document_title": self.document_title,
+            "source_reference": self.source_reference,
+            "capability_identifier": self.capability_identifier,
+            "capability_statement": self.capability_statement,
+            "retrieval_timestamp": self.retrieval_timestamp.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "reviewer_checked_at": self.reviewer_checked_at.isoformat().replace(
+                "+00:00", "Z"
+            ),
+            "reviewer_conclusion": self.reviewer_conclusion.value,
+        }
 
 
 def _canonical_json_bytes(value: Any, *, pretty: bool = True) -> bytes:
@@ -196,6 +273,34 @@ def validate_protocol_contract(
         "provider_selection_must_not_use_target_outcomes_or_performance": True,
         "status": "ALREADY_CONSUMED_AUDIT_HOLDOUT",
     }
+    expected_claim_contract = {
+        "required_fields": [
+            "claim_id",
+            "provider_identifier",
+            "evidence_file_path",
+            "document_title",
+            "source_reference",
+            "capability_identifier",
+            "capability_statement",
+            "retrieval_timestamp",
+            "reviewer_checked_at",
+            "reviewer_conclusion",
+        ],
+        "reviewer_conclusions": ["PASS", "FAIL", "UNKNOWN"],
+        "gate_capability_allowlist": {
+            gate.value: sorted(capabilities)
+            for gate, capabilities in sorted(
+                CLAIM_CAPABILITY_ALLOWLIST.items(), key=lambda item: item[0].value
+            )
+        },
+    }
+    expected_market_specific = {
+        "required_markets": sorted(market.value for market in PERMITTED_MARKETS),
+        "quote_mapping_records_per_market": 1,
+        "snapshot_samples_per_market": 1,
+        "live_capability_records_per_market": 1,
+        "historical_coverage_records_per_market": 1,
+    }
     checks = (
         (
             value.get("mandatory_gate_policy"),
@@ -240,6 +345,21 @@ def validate_protocol_contract(
             value.get("frozen_fixture_market_denominator"),
             FROZEN_FIXTURE_MARKET_DENOMINATOR,
             "frozen denominator",
+        ),
+        (
+            value.get("frozen_fixture_market_denominator_by_market"),
+            FROZEN_MARKET_DENOMINATOR,
+            "per-market frozen denominator",
+        ),
+        (
+            value.get("market_specific_evidence_contract"),
+            expected_market_specific,
+            "market-specific evidence contract",
+        ),
+        (
+            value.get("evidence_claim_contract"),
+            expected_claim_contract,
+            "evidence claim contract",
         ),
         (value.get("holdout_governance"), expected_holdout, "holdout governance"),
         (value.get("no_production_approval"), True, "no-production-approval flag"),
@@ -307,6 +427,76 @@ def validate_evidence_files(
     return sorted(identities, key=lambda item: item["relative_path"])
 
 
+def _claim_text(value: Any, field: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise QualificationExportError(f"Evidence claim {field} is required")
+    return value.strip()[:500]
+
+
+def load_evidence_claims(
+    records: Any,
+    *,
+    provider_identifier: str,
+    verified_evidence_paths: set[str],
+) -> dict[str, EvidenceClaim]:
+    """Validate typed claims independently from their verified file identities."""
+    if not isinstance(records, list):
+        raise QualificationExportError("evidence_claims must be a list")
+    claims: dict[str, EvidenceClaim] = {}
+    for row in records:
+        if not isinstance(row, Mapping):
+            raise QualificationExportError("Evidence claim row must be an object")
+        claim_id = _claim_text(row.get("claim_id"), "claim_id")
+        if claim_id in claims:
+            raise QualificationExportError("Evidence claim IDs must be unique")
+        claim_provider = _claim_text(
+            row.get("provider_identifier"), "provider_identifier"
+        )
+        if claim_provider != provider_identifier:
+            raise QualificationExportError(
+                "Evidence claim provider does not match candidate"
+            )
+        evidence_path = _claim_text(
+            row.get("evidence_file_path"), "evidence_file_path"
+        )
+        if evidence_path not in verified_evidence_paths:
+            raise QualificationExportError(
+                "Evidence claim does not identify a verified evidence file"
+            )
+        capability = _claim_text(
+            row.get("capability_identifier"), "capability_identifier"
+        )
+        if capability not in PERMITTED_CLAIM_CAPABILITIES:
+            raise QualificationExportError(
+                "Evidence claim capability_identifier is not permitted"
+            )
+        try:
+            conclusion = GateStatus(row.get("reviewer_conclusion"))
+        except (TypeError, ValueError) as error:
+            raise QualificationExportError(
+                "Evidence claim reviewer_conclusion is invalid"
+            ) from error
+        if conclusion is GateStatus.NOT_APPLICABLE:
+            raise QualificationExportError(
+                "Evidence claim reviewer_conclusion cannot be NOT_APPLICABLE"
+            )
+        claims[claim_id] = EvidenceClaim(
+            claim_id=claim_id,
+            provider_identifier=claim_provider,
+            evidence_file_path=evidence_path,
+            document_title=_claim_text(row.get("document_title"), "document_title"),
+            source_reference=_claim_text(row.get("source_reference"), "source_reference"),
+            capability_identifier=capability,
+            capability_statement=_claim_text(
+                row.get("capability_statement"), "capability_statement"
+            ),
+            retrieval_timestamp=_parse_checked_at(row.get("retrieval_timestamp")),
+            reviewer_checked_at=_parse_checked_at(row.get("reviewer_checked_at")),
+            reviewer_conclusion=conclusion,
+        )
+    return dict(sorted(claims.items()))
+
+
 def _bounded_text(value: Any, field: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise QualificationExportError(f"{field} is required")
@@ -343,12 +533,19 @@ def _parse_checked_at(value: Any) -> datetime:
 
 
 def _section_metadata(section: Mapping[str, Any], label: str) -> Optional[DerivedGate]:
-    reference = section.get("evidence_reference")
+    claim_ids = section.get("claim_ids")
     checked_at = section.get("checked_at")
-    if reference is None or checked_at is None:
+    if claim_ids is None or checked_at is None:
         return DerivedGate(GateStatus.UNKNOWN, f"MISSING_{label}_DOCUMENTATION")
-    if not isinstance(reference, str) or not reference.strip():
-        return DerivedGate(GateStatus.FAIL, f"INVALID_{label}_EVIDENCE_REFERENCE")
+    if not isinstance(claim_ids, list) or any(
+        not isinstance(claim_id, str) or not claim_id.strip()
+        for claim_id in claim_ids
+    ):
+        return DerivedGate(GateStatus.FAIL, f"INVALID_{label}_EVIDENCE_CLAIMS")
+    if len(set(claim_ids)) != len(claim_ids):
+        return DerivedGate(GateStatus.FAIL, f"DUPLICATE_{label}_EVIDENCE_CLAIMS")
+    if not claim_ids:
+        return DerivedGate(GateStatus.UNKNOWN, f"MISSING_{label}_EVIDENCE_CLAIMS")
     try:
         _parse_checked_at(checked_at)
     except QualificationExportError:
@@ -356,9 +553,19 @@ def _section_metadata(section: Mapping[str, Any], label: str) -> Optional[Derive
     return None
 
 
-def _reference(section: Mapping[str, Any]) -> tuple[str, ...]:
-    value = section.get("evidence_reference")
-    return (value.strip(),) if isinstance(value, str) and value.strip() else ()
+def _claim_ids(
+    section: Mapping[str, Any], field: str = "claim_ids"
+) -> tuple[str, ...]:
+    values = section.get(field)
+    if not isinstance(values, list):
+        return ()
+    return tuple(
+        sorted(
+            value.strip()
+            for value in values
+            if isinstance(value, str) and value.strip()
+        )
+    )
 
 
 def _strict_strings(
@@ -390,140 +597,198 @@ def _strict_true(
 
 
 def _merge_derived(*values: DerivedGate) -> DerivedGate:
-    references = tuple(
-        sorted({reference for value in values for reference in value.evidence_references})
+    claim_ids = tuple(
+        sorted({claim_id for value in values for claim_id in value.evidence_claim_ids})
     )
     failures = [value.reason for value in values if value.status is GateStatus.FAIL]
     if failures:
-        return DerivedGate(GateStatus.FAIL, ";".join(sorted(failures)), references)
+        return DerivedGate(GateStatus.FAIL, ";".join(sorted(failures)), claim_ids)
     unknown = [value.reason for value in values if value.status is GateStatus.UNKNOWN]
     if unknown:
-        return DerivedGate(GateStatus.UNKNOWN, ";".join(sorted(unknown)), references)
-    return DerivedGate(GateStatus.PASS, "STRUCTURED_EVIDENCE_VALIDATED", references)
+        return DerivedGate(GateStatus.UNKNOWN, ";".join(sorted(unknown)), claim_ids)
+    return DerivedGate(GateStatus.PASS, "STRUCTURED_EVIDENCE_VALIDATED", claim_ids)
 
 
-def _derive_market_and_outcomes(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
-    section = value["market_semantics_evidence"]
-    section_problem = _section_metadata(section, "MARKET_SEMANTICS")
-    if section_problem:
-        return {
-            GateId.EXACT_MARKET_SEMANTICS: section_problem,
-            GateId.EXACT_YES_NO_STRUCTURE: section_problem,
-        }
-    rows = section.get("markets")
+def _market_rows(
+    rows: Any, label: str
+) -> tuple[dict[MarketId, Mapping[str, Any]], list[DerivedGate]]:
+    indexed: dict[MarketId, Mapping[str, Any]] = {}
+    problems: list[DerivedGate] = []
     if not isinstance(rows, list) or not rows:
-        missing = DerivedGate(GateStatus.UNKNOWN, "MISSING_MARKET_DOCUMENTATION")
-        return {
-            GateId.EXACT_MARKET_SEMANTICS: missing,
-            GateId.EXACT_YES_NO_STRUCTURE: missing,
-        }
-    by_market = {}
-    results = []
-    references = set(_reference(section))
+        return indexed, [DerivedGate(GateStatus.UNKNOWN, f"MISSING_{label}_RECORDS")]
     for row in rows:
         if not isinstance(row, Mapping):
-            results.append(DerivedGate(GateStatus.FAIL, "INVALID_MARKET_EVIDENCE_ROW"))
+            problems.append(DerivedGate(GateStatus.FAIL, f"INVALID_{label}_RECORD"))
             continue
         try:
             market = MarketId(row.get("market_id"))
         except (TypeError, ValueError):
-            results.append(DerivedGate(GateStatus.FAIL, "UNKNOWN_MARKET"))
+            problems.append(DerivedGate(GateStatus.FAIL, f"UNKNOWN_{label}_MARKET"))
             continue
-        if market in by_market:
-            results.append(DerivedGate(GateStatus.FAIL, "DUPLICATE_MARKET_EVIDENCE"))
+        if market not in PERMITTED_MARKETS:
+            problems.append(DerivedGate(GateStatus.FAIL, f"EXTRA_{label}_MARKET"))
             continue
-        by_market[market] = row
-        if row.get("checked_at") is None:
-            results.append(
-                DerivedGate(GateStatus.UNKNOWN, "MISSING_MARKET_CHECKED_AT")
+        if market in indexed:
+            problems.append(DerivedGate(GateStatus.FAIL, f"DUPLICATE_{label}_MARKET"))
+            continue
+        indexed[market] = row
+    return indexed, problems
+
+
+def _missing_market_result(label: str) -> DerivedGate:
+    return DerivedGate(GateStatus.UNKNOWN, f"MISSING_{label}_FOR_CANONICAL_MARKET")
+
+
+def _derive_market_and_outcomes(
+    value: Mapping[str, Any],
+) -> tuple[dict[GateId, DerivedGate], dict[MarketId, DerivedGate], dict[MarketId, Mapping[str, Any]]]:
+    section = value["market_semantics_evidence"]
+    section_problem = _section_metadata(section, "MARKET_SEMANTICS")
+    indexed, indexing_problems = _market_rows(section.get("markets"), "SEMANTICS")
+    per_market: dict[MarketId, DerivedGate] = {}
+    for market in PERMITTED_MARKETS:
+        row = indexed.get(market)
+        if section_problem:
+            per_market[market] = section_problem
+        elif row is None:
+            per_market[market] = _missing_market_result("SEMANTICS")
+        elif row.get("checked_at") is None:
+            per_market[market] = DerivedGate(
+                GateStatus.UNKNOWN, "MISSING_MARKET_CHECKED_AT", _claim_ids(row)
             )
-            continue
-        try:
-            result = validate_market_semantics(row)
-        except SourceQualificationError:
-            results.append(
-                DerivedGate(GateStatus.FAIL, "INVALID_MARKET_CHECKED_AT")
-            )
-            continue
-        references.update(_reference(row))
-        results.append(DerivedGate(result.status, result.reason, _reference(row)))
-    if set(by_market) != set(PERMITTED_MARKETS):
-        results.append(DerivedGate(GateStatus.UNKNOWN, "MISSING_CANONICAL_MARKET_EVIDENCE"))
-    semantics = _merge_derived(*results)
+        else:
+            try:
+                result = validate_market_semantics(row)
+            except SourceQualificationError:
+                per_market[market] = DerivedGate(
+                    GateStatus.FAIL, "INVALID_MARKET_CHECKED_AT", _claim_ids(row)
+                )
+            else:
+                per_market[market] = DerivedGate(
+                    result.status,
+                    result.reason,
+                    tuple(sorted(set(_claim_ids(section) + result.evidence_claim_ids))),
+                )
+    semantics = _merge_derived(*per_market.values(), *indexing_problems)
 
     outcome = value["outcome_evidence"]
     outcome_problem = _section_metadata(outcome, "OUTCOME")
     if outcome_problem:
         outcome_result = outcome_problem
+    elif outcome.get("canonical_outcome_ids") != ["YES", "NO"]:
+        outcome_result = DerivedGate(
+            GateStatus.FAIL, "YES_NO_IDENTIFIERS_MISMATCH", _claim_ids(outcome)
+        )
     else:
-        string_problem = _strict_strings(
-            outcome,
-            (
+        outcome_result = DerivedGate(
+            GateStatus.PASS, "EXACT_YES_NO_STRUCTURE", _claim_ids(outcome)
+        )
+    return (
+        {
+            GateId.EXACT_MARKET_SEMANTICS: semantics,
+            GateId.EXACT_YES_NO_STRUCTURE: _merge_derived(
+                semantics, outcome_result
+            ),
+        },
+        per_market,
+        indexed,
+    )
+
+
+def _derive_quote_fields(
+    value: Mapping[str, Any],
+    semantic_rows: Mapping[MarketId, Mapping[str, Any]],
+) -> tuple[dict[GateId, DerivedGate], dict[MarketId, DerivedGate], dict[MarketId, Mapping[str, Any]]]:
+    section = value["quote_field_evidence"]
+    section_problem = _section_metadata(section, "QUOTE")
+    indexed, indexing_problems = _market_rows(section.get("mappings"), "QUOTE_MAPPING")
+    per_market: dict[MarketId, DerivedGate] = {}
+    required_strings = (
+        "provider_market_identifier",
+        "provider_market_name",
+        "provider_yes_selection_identifier",
+        "provider_yes_selection_label",
+        "provider_no_selection_identifier",
+        "provider_no_selection_label",
+        "bookmaker_identifier",
+        "bookmaker_name_or_source",
+        "provider_event_identifier",
+        "fixture_reference",
+    )
+    for market in PERMITTED_MARKETS:
+        row = indexed.get(market)
+        semantics = semantic_rows.get(market)
+        if section_problem:
+            per_market[market] = section_problem
+        elif row is None:
+            per_market[market] = _missing_market_result("QUOTE_MAPPING")
+        elif (row_problem := _section_metadata(row, "QUOTE_MAPPING")) is not None:
+            per_market[market] = row_problem
+        elif (string_problem := _strict_strings(row, required_strings, "QUOTE_MAPPING")) is not None:
+            per_market[market] = string_problem
+        elif row.get("raw_decimal_odds_capability") is not True:
+            per_market[market] = DerivedGate(
+                GateStatus.FAIL,
+                "RAW_DECIMAL_ODDS_CAPABILITY_NOT_PROVEN",
+                _claim_ids(row),
+            )
+        elif semantics is None:
+            per_market[market] = DerivedGate(
+                GateStatus.UNKNOWN, "MISSING_CORRESPONDING_SEMANTIC_RECORD", _claim_ids(row)
+            )
+        elif any(
+            row.get(field) != semantics.get(field)
+            for field in (
+                "provider_market_identifier",
+                "provider_market_name",
                 "provider_yes_selection_identifier",
                 "provider_yes_selection_label",
                 "provider_no_selection_identifier",
                 "provider_no_selection_label",
-            ),
-            "OUTCOME",
-        )
-        if string_problem:
-            outcome_result = string_problem
-        elif outcome.get("canonical_outcome_ids") != ["YES", "NO"]:
-            outcome_result = DerivedGate(GateStatus.FAIL, "YES_NO_IDENTIFIERS_MISMATCH")
-        else:
-            outcome_result = DerivedGate(
-                GateStatus.PASS, "EXACT_YES_NO_STRUCTURE", _reference(outcome)
             )
-    yes_no = _merge_derived(
-        DerivedGate(semantics.status, semantics.reason, tuple(sorted(references))),
-        outcome_result,
+        ):
+            per_market[market] = DerivedGate(
+                GateStatus.FAIL, "QUOTE_MAPPING_SEMANTICS_MISMATCH", _claim_ids(row)
+            )
+        else:
+            per_market[market] = DerivedGate(
+                GateStatus.PASS,
+                "MARKET_SPECIFIC_QUOTE_MAPPING_VALIDATED",
+                tuple(sorted(set(_claim_ids(section) + _claim_ids(row)))),
+            )
+    complete_rows = [indexed.get(market) for market in PERMITTED_MARKETS]
+    if all(row is not None for row in complete_rows):
+        provider_market_ids = [row.get("provider_market_identifier") for row in complete_rows]
+        if (
+            len(set(provider_market_ids)) != len(provider_market_ids)
+            and section.get("shared_provider_market_identifier_proven_for_both_subjects")
+            is not True
+        ):
+            indexing_problems.append(
+                DerivedGate(GateStatus.FAIL, "UNPROVEN_SHARED_PROVIDER_MARKET_IDENTIFIER")
+            )
+        selection_ids = [
+            row.get(field)
+            for row in complete_rows
+            for field in (
+                "provider_yes_selection_identifier",
+                "provider_no_selection_identifier",
+            )
+        ]
+        if len(set(selection_ids)) != len(selection_ids):
+            indexing_problems.append(
+                DerivedGate(GateStatus.FAIL, "CROSS_MARKET_SELECTION_IDENTIFIER_REUSE")
+            )
+    overall = _merge_derived(*per_market.values(), *indexing_problems)
+    return (
+        {
+            GateId.RAW_DECIMAL_ODDS: overall,
+            GateId.BOOKMAKER_PROVENANCE: overall,
+            GateId.REPRODUCIBLE_PROVIDER_MAPPING: overall,
+        },
+        per_market,
+        indexed,
     )
-    return {
-        GateId.EXACT_MARKET_SEMANTICS: DerivedGate(
-            semantics.status, semantics.reason, tuple(sorted(references))
-        ),
-        GateId.EXACT_YES_NO_STRUCTURE: yes_no,
-    }
-
-
-def _derive_quote_fields(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
-    section = value["quote_field_evidence"]
-    metadata = _section_metadata(section, "QUOTE")
-    refs = _reference(section)
-    if metadata:
-        return {
-            GateId.RAW_DECIMAL_ODDS: metadata,
-            GateId.BOOKMAKER_PROVENANCE: metadata,
-            GateId.REPRODUCIBLE_PROVIDER_MAPPING: metadata,
-        }
-    raw = _strict_true(section, ("raw_decimal_odds_capability",), "RAW_ODDS")
-    if raw is None:
-        raw = DerivedGate(GateStatus.PASS, "RAW_DECIMAL_BOOKMAKER_ODDS", refs)
-    provenance = _strict_strings(
-        section,
-        ("bookmaker_identifier", "bookmaker_name_or_source"),
-        "BOOKMAKER_PROVENANCE",
-    )
-    if provenance is None:
-        provenance = DerivedGate(GateStatus.PASS, "BOOKMAKER_IDENTIFIED", refs)
-    mapping = _strict_strings(
-        section,
-        (
-            "provider_event_identifier",
-            "provider_market_identifier",
-            "provider_yes_selection_identifier",
-            "provider_no_selection_identifier",
-            "fixture_reference",
-        ),
-        "PROVIDER_MAPPING",
-    )
-    if mapping is None:
-        mapping = DerivedGate(GateStatus.PASS, "PROVIDER_MAPPING_IDENTIFIED", refs)
-    return {
-        GateId.RAW_DECIMAL_ODDS: raw,
-        GateId.BOOKMAKER_PROVENANCE: provenance,
-        GateId.REPRODUCIBLE_PROVIDER_MAPPING: mapping,
-    }
 
 
 def _derive_timestamp(value: Mapping[str, Any]) -> DerivedGate:
@@ -552,45 +817,89 @@ def _derive_timestamp(value: Mapping[str, Any]) -> DerivedGate:
         or section.get("quote_ordering_reproducible") is not True
     ):
         return DerivedGate(GateStatus.FAIL, "QUOTE_TIMESTAMP_PROTOCOL_CONFLICT")
-    return DerivedGate(GateStatus.PASS, "QUOTE_UPDATE_TIMESTAMP_VALIDATED", _reference(section))
+    return DerivedGate(GateStatus.PASS, "QUOTE_UPDATE_TIMESTAMP_VALIDATED", _claim_ids(section))
 
 
-def _derive_snapshot(value: Mapping[str, Any]) -> DerivedGate:
+def _derive_snapshot(
+    value: Mapping[str, Any],
+    quote_rows: Mapping[MarketId, Mapping[str, Any]],
+    provider_identifier: str,
+) -> tuple[DerivedGate, dict[MarketId, DerivedGate], dict[MarketId, dict]]:
     section = value["snapshot_evidence"]
-    metadata = _section_metadata(section, "SNAPSHOT")
-    if metadata:
-        return metadata
-    required = (
-        "provider_identifier",
-        "fixture_identifier",
-        "market_id",
-        "bookmaker_identifier",
-        "yes_observed_at",
-        "no_observed_at",
+    section_problem = _section_metadata(section, "SNAPSHOT")
+    indexed, indexing_problems = _market_rows(section.get("samples"), "SNAPSHOT")
+    per_market: dict[MarketId, DerivedGate] = {}
+    audit: dict[MarketId, dict] = {}
+    for market in PERMITTED_MARKETS:
+        row = indexed.get(market)
+        quote = quote_rows.get(market)
+        audit[market] = {
+            "provider_identifier": row.get("provider_identifier") if row else None,
+            "fixture_identifier": row.get("fixture_identifier") if row else None,
+            "market_id": market.value,
+            "bookmaker_identifier": row.get("bookmaker_identifier") if row else None,
+            "observed_at": row.get("yes_observed_at") if row else None,
+            "snapshot_identifier": None,
+            "snapshot_identifier_derived": None,
+        }
+        if section_problem:
+            per_market[market] = section_problem
+        elif row is None:
+            per_market[market] = _missing_market_result("SNAPSHOT")
+        elif (row_problem := _section_metadata(row, "SNAPSHOT")) is not None:
+            per_market[market] = row_problem
+        elif row.get("provider_identifier") != provider_identifier:
+            per_market[market] = DerivedGate(
+                GateStatus.FAIL, "SNAPSHOT_PROVIDER_MISMATCH", _claim_ids(row)
+            )
+        elif row.get("outcome_identifiers") != ["YES", "NO"]:
+            per_market[market] = DerivedGate(
+                GateStatus.FAIL, "SNAPSHOT_YES_NO_RELATIONSHIP_INVALID", _claim_ids(row)
+            )
+        elif quote is None:
+            per_market[market] = DerivedGate(
+                GateStatus.UNKNOWN, "MISSING_CORRESPONDING_QUOTE_MAPPING", _claim_ids(row)
+            )
+        elif any(
+            row.get(field) != quote.get(field)
+            for field in (
+                "provider_yes_selection_identifier",
+                "provider_no_selection_identifier",
+                "bookmaker_identifier",
+            )
+        ):
+            per_market[market] = DerivedGate(
+                GateStatus.FAIL, "SNAPSHOT_QUOTE_MAPPING_MISMATCH", _claim_ids(row)
+            )
+        elif row.get("native_snapshot_id") is not None and (
+            not isinstance(row.get("native_snapshot_id"), str)
+            or not row.get("native_snapshot_id").strip()
+        ):
+            per_market[market] = DerivedGate(
+                GateStatus.FAIL, "INVALID_NATIVE_SNAPSHOT_ID", _claim_ids(row)
+            )
+        else:
+            result = validate_snapshot_identity(
+                provider_identifier=row.get("provider_identifier"),
+                fixture_identifier=row.get("fixture_identifier"),
+                market_id=row.get("market_id"),
+                bookmaker_identifier=row.get("bookmaker_identifier"),
+                yes_observed_at=row.get("yes_observed_at"),
+                no_observed_at=row.get("no_observed_at"),
+                native_snapshot_id=row.get("native_snapshot_id"),
+            )
+            per_market[market] = DerivedGate(
+                result.status,
+                result.reason,
+                tuple(sorted(set(_claim_ids(section) + _claim_ids(row)))),
+            )
+            audit[market]["snapshot_identifier"] = result.snapshot_identifier
+            audit[market]["snapshot_identifier_derived"] = result.derived
+    return (
+        _merge_derived(*per_market.values(), *indexing_problems),
+        per_market,
+        audit,
     )
-    if any(field not in section for field in required):
-        return DerivedGate(GateStatus.UNKNOWN, "MISSING_SNAPSHOT_COMPONENT")
-    string_problem = _strict_strings(
-        section,
-        ("provider_identifier", "fixture_identifier", "bookmaker_identifier"),
-        "SNAPSHOT",
-    )
-    if string_problem:
-        return string_problem
-    if "native_snapshot_id" in section and section.get("native_snapshot_id") is not None:
-        native = section.get("native_snapshot_id")
-        if not isinstance(native, str) or not native.strip():
-            return DerivedGate(GateStatus.FAIL, "INVALID_NATIVE_SNAPSHOT_ID")
-    result = validate_snapshot_identity(
-        provider_identifier=section.get("provider_identifier"),
-        fixture_identifier=section.get("fixture_identifier"),
-        market_id=section.get("market_id"),
-        bookmaker_identifier=section.get("bookmaker_identifier"),
-        yes_observed_at=section.get("yes_observed_at"),
-        no_observed_at=section.get("no_observed_at"),
-        native_snapshot_id=section.get("native_snapshot_id"),
-    )
-    return DerivedGate(result.status, result.reason, _reference(section))
 
 
 def _fixture_reference(value: Any) -> Optional[FixtureReference]:
@@ -674,41 +983,108 @@ def _derive_fixture_mapping(value: Mapping[str, Any]) -> DerivedGate:
         return DerivedGate(GateStatus.FAIL, "FUZZY_MAPPING_CANNOT_QUALIFY")
     if any(result is not FixtureMappingStatus.EXACT for result in results):
         return DerivedGate(GateStatus.FAIL, "NON_EXACT_FIXTURE_MAPPING_PRESENT")
-    return DerivedGate(GateStatus.PASS, "EXACT_FIXTURE_MAPPING_VALIDATED", _reference(section))
+    return DerivedGate(GateStatus.PASS, "EXACT_FIXTURE_MAPPING_VALIDATED", _claim_ids(section))
 
 
-def _derive_historical(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
+def _derive_historical(
+    value: Mapping[str, Any],
+) -> tuple[dict[GateId, DerivedGate], dict[MarketId, DerivedGate]]:
     section = value["historical_retention_evidence"]
-    metadata = _section_metadata(section, "HISTORICAL")
-    refs = _reference(section)
-    if metadata:
-        retention = metadata
-        coverage = metadata
-    else:
-        retention = _strict_true(
-            section,
-            (
-                "retained_settled_history",
-                "historical_observed_at",
-                "bookmaker_identity",
-                "exact_market_and_selections",
-                "quote_change_ordering",
-                "archived_or_exportable_snapshots",
-            ),
-            "HISTORICAL_RETENTION",
-        ) or DerivedGate(GateStatus.PASS, "HISTORICAL_EVIDENCE_VALIDATED", refs)
-        supplied_coverage = section.get("frozen_period_coverage")
-        if supplied_coverage is None:
-            coverage = DerivedGate(GateStatus.UNKNOWN, "MISSING_FROZEN_PERIOD_COVERAGE")
-        elif supplied_coverage != FROZEN_FIXTURE_MARKET_DENOMINATOR:
-            coverage = DerivedGate(GateStatus.FAIL, "FROZEN_PERIOD_COVERAGE_MISMATCH")
-        elif sum(
-            supplied_coverage[role]
-            for role in ("CALIBRATION_FIT_OOF", "VALIDATION_SELECTION", "FINAL_TEST")
-        ) != supplied_coverage["total"]:
-            coverage = DerivedGate(GateStatus.FAIL, "FROZEN_PERIOD_COVERAGE_NOT_RECONCILED")
+    section_problem = _section_metadata(section, "HISTORICAL")
+    indexed, indexing_problems = _market_rows(section.get("markets"), "HISTORICAL")
+    per_market: dict[MarketId, DerivedGate] = {}
+    retention_results: list[DerivedGate] = []
+    coverage_results: list[DerivedGate] = []
+    for market in PERMITTED_MARKETS:
+        row = indexed.get(market)
+        if section_problem:
+            per_market[market] = section_problem
+            retention_results.append(section_problem)
+            coverage_results.append(section_problem)
+        elif row is None:
+            per_market[market] = _missing_market_result("HISTORICAL")
+            retention_results.append(per_market[market])
+            coverage_results.append(per_market[market])
+        elif (row_problem := _section_metadata(row, "HISTORICAL")) is not None:
+            per_market[market] = row_problem
+            retention_results.append(row_problem)
+            coverage_results.append(row_problem)
         else:
-            coverage = DerivedGate(GateStatus.PASS, "FROZEN_PERIOD_COVERAGE_EXACT", refs)
+            capability = _strict_true(
+                row,
+                (
+                    "retained_settled_history",
+                    "historical_observed_at",
+                    "bookmaker_identity",
+                    "exact_market_and_selections",
+                    "quote_change_ordering",
+                    "archived_or_exportable_snapshots",
+                ),
+                "HISTORICAL_RETENTION",
+            ) or DerivedGate(
+                GateStatus.PASS,
+                "HISTORICAL_MARKET_EVIDENCE_VALIDATED",
+                _claim_ids(row, "retention_claim_ids"),
+            )
+            supplied = row.get("frozen_period_coverage")
+            if supplied is None:
+                coverage = DerivedGate(
+                    GateStatus.UNKNOWN,
+                    "MISSING_MARKET_FROZEN_PERIOD_COVERAGE",
+                    _claim_ids(row, "coverage_claim_ids"),
+                )
+            elif supplied != FROZEN_MARKET_DENOMINATOR[market.value]:
+                coverage = DerivedGate(
+                    GateStatus.FAIL,
+                    "MARKET_FROZEN_PERIOD_COVERAGE_MISMATCH",
+                    _claim_ids(row, "coverage_claim_ids"),
+                )
+            else:
+                coverage = DerivedGate(
+                    GateStatus.PASS,
+                    "MARKET_FROZEN_PERIOD_COVERAGE_EXACT",
+                    _claim_ids(row, "coverage_claim_ids"),
+                )
+            coverage_results.append(coverage)
+            retention_results.append(capability)
+            per_market[market] = _merge_derived(capability, coverage)
+    combined = section.get("combined_frozen_period_coverage")
+    if combined is None:
+        combined_result = DerivedGate(
+            GateStatus.UNKNOWN, "MISSING_COMBINED_FROZEN_PERIOD_COVERAGE"
+        )
+    elif combined != FROZEN_FIXTURE_MARKET_DENOMINATOR:
+        combined_result = DerivedGate(
+            GateStatus.FAIL, "COMBINED_FROZEN_PERIOD_COVERAGE_MISMATCH"
+        )
+    elif all(
+        indexed.get(market) is not None
+        and isinstance(indexed[market].get("frozen_period_coverage"), Mapping)
+        for market in PERMITTED_MARKETS
+    ) and any(
+        sum(
+            indexed[market]["frozen_period_coverage"].get(key, -1)
+            for market in PERMITTED_MARKETS
+        )
+        != combined[key]
+        for key in (
+            "CALIBRATION_FIT_OOF",
+            "VALIDATION_SELECTION",
+            "FINAL_TEST",
+            "total",
+        )
+    ):
+        combined_result = DerivedGate(
+            GateStatus.FAIL, "MARKET_AND_COMBINED_COVERAGE_NOT_RECONCILED"
+        )
+    else:
+        combined_result = DerivedGate(
+            GateStatus.PASS,
+            "COMBINED_FROZEN_PERIOD_COVERAGE_EXACT",
+            _claim_ids(section, "coverage_claim_ids"),
+        )
+    retention = _merge_derived(*retention_results, *indexing_problems)
+    coverage = _merge_derived(*coverage_results, combined_result, *indexing_problems)
 
     export = value["export_reproducibility_evidence"]
     export_metadata = _section_metadata(export, "EXPORT")
@@ -716,7 +1092,7 @@ def _derive_historical(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
         export,
         ("reproducible_export", "stable_fixture_market_identifiers", "deterministic_ordering"),
         "REPRODUCIBLE_EXPORT",
-    ) or DerivedGate(GateStatus.PASS, "REPRODUCIBLE_EXPORT_VALIDATED", _reference(export))
+    ) or DerivedGate(GateStatus.PASS, "REPRODUCIBLE_EXPORT_VALIDATED", _claim_ids(export))
 
     licensing = value["licensing_and_retention_evidence"]
     licensing_metadata = _section_metadata(licensing, "RETENTION_PERMISSION")
@@ -724,49 +1100,86 @@ def _derive_historical(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
         licensing,
         ("research_retention_permission", "retained_research_use_permitted"),
         "RESEARCH_RETENTION_PERMISSION",
-    ) or DerivedGate(GateStatus.PASS, "RESEARCH_RETENTION_PERMISSION_VALIDATED", _reference(licensing))
-    return {
-        GateId.HISTORICAL_RETENTION: retention,
-        GateId.FROZEN_PERIOD_COVERAGE: coverage,
-        GateId.REPRODUCIBLE_EXPORT: reproducible,
-        GateId.RESEARCH_RETENTION_PERMISSION: permission,
-    }
+    ) or DerivedGate(GateStatus.PASS, "RESEARCH_RETENTION_PERMISSION_VALIDATED", _claim_ids(licensing))
+    return (
+        {
+            GateId.HISTORICAL_RETENTION: retention,
+            GateId.FROZEN_PERIOD_COVERAGE: coverage,
+            GateId.REPRODUCIBLE_EXPORT: reproducible,
+            GateId.RESEARCH_RETENTION_PERMISSION: permission,
+        },
+        per_market,
+    )
 
 
-def _derive_live(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
+def _derive_live(
+    value: Mapping[str, Any],
+) -> tuple[dict[GateId, DerivedGate], dict[MarketId, DerivedGate]]:
     section = value["live_pricing_evidence"]
-    metadata = _section_metadata(section, "LIVE_PRICING")
-    refs = _reference(section)
-    if metadata:
-        return {
-            GateId.CURRENT_MARKET_AVAILABILITY: metadata,
-            GateId.FRESHNESS_ENFORCEABLE: metadata,
-        }
-    availability = _strict_true(
-        section,
-        (
-            "current_exact_market_availability",
-            "complete_yes_no_snapshots",
-            "latest_eligible_snapshot_selection",
-            "provider_mapping_reproducible",
-            "timezone_aware_quote_updates",
-        ),
-        "LIVE_AVAILABILITY",
-    ) or DerivedGate(GateStatus.PASS, "LIVE_MARKET_AVAILABILITY_VALIDATED", refs)
-    if "maximum_quote_age_seconds" not in section:
-        freshness = DerivedGate(GateStatus.UNKNOWN, "MISSING_LIVE_FRESHNESS_CONTRACT")
-    elif section.get("maximum_quote_age_seconds") != 900:
-        freshness = DerivedGate(GateStatus.FAIL, "LIVE_FRESHNESS_MUST_EQUAL_900_SECONDS")
-    else:
-        freshness = _strict_true(
-            section,
-            ("excludes_post_decision", "excludes_post_kickoff"),
-            "LIVE_TEMPORAL_EXCLUSION",
-        ) or DerivedGate(GateStatus.PASS, "LIVE_FRESHNESS_VALIDATED", refs)
-    return {
-        GateId.CURRENT_MARKET_AVAILABILITY: availability,
-        GateId.FRESHNESS_ENFORCEABLE: freshness,
-    }
+    section_problem = _section_metadata(section, "LIVE_PRICING")
+    indexed, indexing_problems = _market_rows(section.get("markets"), "LIVE")
+    per_market: dict[MarketId, DerivedGate] = {}
+    availability_results: list[DerivedGate] = []
+    freshness_results: list[DerivedGate] = []
+    for market in PERMITTED_MARKETS:
+        row = indexed.get(market)
+        if section_problem:
+            availability = section_problem
+            freshness = section_problem
+        elif row is None:
+            availability = _missing_market_result("LIVE")
+            freshness = availability
+        elif (row_problem := _section_metadata(row, "LIVE")) is not None:
+            availability = row_problem
+            freshness = row_problem
+        else:
+            availability = _strict_true(
+                row,
+                (
+                    "current_exact_market_availability",
+                    "complete_yes_no_snapshots",
+                    "latest_eligible_snapshot_selection",
+                    "provider_mapping_reproducible",
+                    "timezone_aware_quote_updates",
+                ),
+                "LIVE_AVAILABILITY",
+            ) or DerivedGate(
+                GateStatus.PASS,
+                "LIVE_MARKET_AVAILABILITY_VALIDATED",
+                tuple(sorted(set(_claim_ids(section) + _claim_ids(row)))),
+            )
+            if "maximum_quote_age_seconds" not in row:
+                freshness = DerivedGate(
+                    GateStatus.UNKNOWN, "MISSING_LIVE_FRESHNESS_CONTRACT", _claim_ids(row)
+                )
+            elif row.get("maximum_quote_age_seconds") != 900:
+                freshness = DerivedGate(
+                    GateStatus.FAIL,
+                    "LIVE_FRESHNESS_MUST_EQUAL_900_SECONDS",
+                    _claim_ids(row),
+                )
+            else:
+                freshness = _strict_true(
+                    row,
+                    ("excludes_post_decision", "excludes_post_kickoff"),
+                    "LIVE_TEMPORAL_EXCLUSION",
+                ) or DerivedGate(
+                    GateStatus.PASS, "LIVE_FRESHNESS_VALIDATED", _claim_ids(row)
+                )
+        availability_results.append(availability)
+        freshness_results.append(freshness)
+        per_market[market] = _merge_derived(availability, freshness)
+    return (
+        {
+            GateId.CURRENT_MARKET_AVAILABILITY: _merge_derived(
+                *availability_results, *indexing_problems
+            ),
+            GateId.FRESHNESS_ENFORCEABLE: _merge_derived(
+                *freshness_results, *indexing_problems
+            ),
+        },
+        per_market,
+    )
 
 
 def _derive_execution(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
@@ -791,7 +1204,7 @@ def _derive_execution(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
         elif section.get(field) is not True:
             results[gate] = DerivedGate(GateStatus.FAIL, f"{field.upper()}_NOT_PROVEN")
         else:
-            results[gate] = DerivedGate(GateStatus.PASS, f"{field.upper()}_VALIDATED", _reference(section))
+            results[gate] = DerivedGate(GateStatus.PASS, f"{field.upper()}_VALIDATED", _claim_ids(section))
     booking = value["booking_code_evidence"]
     booking_metadata = _section_metadata(booking, "BOOKING_CODE")
     if booking_metadata:
@@ -799,34 +1212,174 @@ def _derive_execution(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
     else:
         capability = booking.get("capability_status")
         if capability == "AVAILABLE":
-            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.PASS, "BOOKING_CODE_AVAILABLE", _reference(booking))
+            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.PASS, "BOOKING_CODE_AVAILABLE", _claim_ids(booking))
         elif capability == "UNAVAILABLE":
-            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.NOT_APPLICABLE, "BOOKING_CODE_UNAVAILABLE", _reference(booking))
+            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.NOT_APPLICABLE, "BOOKING_CODE_UNAVAILABLE", _claim_ids(booking))
         elif capability in (None, "UNKNOWN"):
-            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.UNKNOWN, "BOOKING_CODE_UNKNOWN", _reference(booking))
+            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.UNKNOWN, "BOOKING_CODE_UNKNOWN", _claim_ids(booking))
         else:
-            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.FAIL, "INVALID_BOOKING_CODE_STATUS", _reference(booking))
+            results[GateId.BOOKING_CODE_SUPPORT] = DerivedGate(GateStatus.FAIL, "INVALID_BOOKING_CODE_STATUS", _claim_ids(booking))
     return results
 
 
-def derive_structured_gates(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
-    derived = {gate: DerivedGate(GateStatus.UNKNOWN, "NO_STRUCTURED_EVIDENCE") for gate in GateId}
-    derived.update(_derive_market_and_outcomes(value))
-    derived.update(_derive_quote_fields(value))
+def derive_structured_gates(
+    value: Mapping[str, Any],
+    provider_identifier: str,
+    claims: Mapping[str, EvidenceClaim],
+) -> tuple[dict[GateId, DerivedGate], dict[str, dict]]:
+    derived = {
+        gate: DerivedGate(GateStatus.UNKNOWN, "NO_STRUCTURED_EVIDENCE")
+        for gate in GateId
+    }
+    semantics_gates, semantics_market, semantic_rows = _derive_market_and_outcomes(value)
+    quote_gates, quote_market, quote_rows = _derive_quote_fields(value, semantic_rows)
+    snapshot_gate, snapshot_market, snapshot_audit = _derive_snapshot(
+        value, quote_rows, provider_identifier
+    )
+    historical_gates, historical_market = _derive_historical(value)
+    live_gates, live_market = _derive_live(value)
+    historical_rows, _ = _market_rows(
+        value["historical_retention_evidence"].get("markets"), "HISTORICAL"
+    )
+    live_rows, _ = _market_rows(
+        value["live_pricing_evidence"].get("markets"), "LIVE"
+    )
+    derived.update(semantics_gates)
+    derived.update(quote_gates)
+    derived[GateId.EXACT_YES_NO_STRUCTURE] = _merge_derived(
+        derived[GateId.EXACT_YES_NO_STRUCTURE],
+        quote_gates[GateId.REPRODUCIBLE_PROVIDER_MAPPING],
+    )
     derived[GateId.QUOTE_OBSERVED_AT] = _derive_timestamp(value)
-    derived[GateId.SAME_BOOKMAKER_SNAPSHOT] = _derive_snapshot(value)
+    derived[GateId.SAME_BOOKMAKER_SNAPSHOT] = snapshot_gate
     derived[GateId.FIXTURE_MAPPING] = _derive_fixture_mapping(value)
-    derived.update(_derive_historical(value))
-    derived.update(_derive_live(value))
+    derived.update(historical_gates)
+    derived.update(live_gates)
     derived.update(_derive_execution(value))
-    return derived
+    market_qualification = {}
+    for market in sorted(PERMITTED_MARKETS, key=lambda item: item.value):
+        quote_row = quote_rows.get(market, {})
+        historical_row = historical_rows.get(market, {})
+        live_row = live_rows.get(market, {})
+        market_results = {
+            "semantics": _apply_claim_support(
+                semantics_market[market], claims, {"MARKET_SEMANTICS"}
+            ),
+            "quote_mapping": _apply_claim_support(
+                quote_market[market], claims, {"QUOTE_SCHEMA"}
+            ),
+            "snapshot": _apply_claim_support(
+                snapshot_market[market], claims, {"SNAPSHOT"}
+            ),
+            "historical": _apply_claim_support(
+                historical_market[market],
+                claims,
+                {"HISTORICAL_RETENTION", "FROZEN_COVERAGE"},
+            ),
+            "live": _apply_claim_support(
+                live_market[market], claims, {"LIVE_AVAILABILITY"}
+            ),
+        }
+        market_qualification[market.value] = {
+            **{
+                f"{name}_status": result.status.value
+                for name, result in market_results.items()
+            },
+            **{
+                f"{name}_reason": result.reason
+                for name, result in market_results.items()
+            },
+            "quote_mapping_audit": {
+                field: quote_row.get(field)
+                for field in (
+                    "provider_market_identifier",
+                    "provider_market_name",
+                    "provider_yes_selection_identifier",
+                    "provider_yes_selection_label",
+                    "provider_no_selection_identifier",
+                    "provider_no_selection_label",
+                    "bookmaker_identifier",
+                    "bookmaker_name_or_source",
+                    "provider_event_identifier",
+                    "fixture_reference",
+                )
+            },
+            "snapshot_audit": snapshot_audit[market],
+            "historical_frozen_period_coverage": historical_row.get(
+                "frozen_period_coverage"
+            ),
+            "live_protocol_audit": {
+                field: live_row.get(field)
+                for field in (
+                    "maximum_quote_age_seconds",
+                    "excludes_post_decision",
+                    "excludes_post_kickoff",
+                )
+            },
+        }
+    return derived, market_qualification
+
+
+def _claim_support_capabilities(
+    claim_ids: Sequence[str],
+    claims: Mapping[str, EvidenceClaim],
+    permitted_capabilities: set[str] | frozenset[str],
+) -> DerivedGate:
+    if not claim_ids:
+        return DerivedGate(GateStatus.UNKNOWN, "MISSING_EVIDENCE_CLAIMS")
+    resolved = []
+    for claim_id in claim_ids:
+        claim = claims.get(claim_id)
+        if claim is None:
+            return DerivedGate(
+                GateStatus.UNKNOWN, "UNKNOWN_EVIDENCE_CLAIM", tuple(sorted(claim_ids))
+            )
+        if claim.capability_identifier not in permitted_capabilities:
+            return DerivedGate(
+                GateStatus.FAIL,
+                "EVIDENCE_CLAIM_CAPABILITY_NOT_ALLOWED_FOR_GATE",
+                tuple(sorted(claim_ids)),
+            )
+        resolved.append(claim)
+    if any(claim.reviewer_conclusion is GateStatus.FAIL for claim in resolved):
+        return DerivedGate(
+            GateStatus.FAIL, "CONTRADICTORY_EVIDENCE_CLAIM", tuple(sorted(claim_ids))
+        )
+    if any(claim.reviewer_conclusion is GateStatus.UNKNOWN for claim in resolved):
+        return DerivedGate(
+            GateStatus.UNKNOWN, "UNKNOWN_EVIDENCE_CLAIM", tuple(sorted(claim_ids))
+        )
+    return DerivedGate(
+        GateStatus.PASS, "TYPED_EVIDENCE_CLAIMS_VALIDATED", tuple(sorted(claim_ids))
+    )
+
+
+def _claim_support(
+    gate: GateId,
+    claim_ids: Sequence[str],
+    claims: Mapping[str, EvidenceClaim],
+) -> DerivedGate:
+    return _claim_support_capabilities(
+        claim_ids, claims, CLAIM_CAPABILITY_ALLOWLIST[gate]
+    )
+
+
+def _apply_claim_support(
+    result: DerivedGate,
+    claims: Mapping[str, EvidenceClaim],
+    permitted_capabilities: set[str] | frozenset[str],
+) -> DerivedGate:
+    support = _claim_support_capabilities(
+        result.evidence_claim_ids, claims, permitted_capabilities
+    )
+    return _merge_derived(result, support)
 
 
 def build_effective_gates(
     declared: Mapping[GateId, GateEvidence],
     derived: Mapping[GateId, DerivedGate],
     *,
-    evidence_paths: set[str],
+    claims: Mapping[str, EvidenceClaim],
     checked_at: datetime,
 ) -> tuple[dict[GateId, GateEvidence], dict[str, dict]]:
     effective = {}
@@ -834,61 +1387,79 @@ def build_effective_gates(
     for gate in GateId:
         declaration = declared.get(
             gate,
-            GateEvidence(GateStatus.UNKNOWN, "NO_REVIEWER_DECLARATION", None, checked_at),
+            GateEvidence(GateStatus.UNKNOWN, "NO_REVIEWER_DECLARATION", (), checked_at),
         )
         structured = derived[gate]
-        if declaration.status is GateStatus.NOT_APPLICABLE:
-            if gate in OPTIONAL_GATES:
-                status = GateStatus.NOT_APPLICABLE
-                reason = "OPTIONAL_CAPABILITY_NOT_APPLICABLE"
-            else:
-                status = GateStatus.FAIL
-                reason = "NOT_APPLICABLE_NOT_ALLOWED"
-        elif structured.status is GateStatus.FAIL:
+        declared_claims = _claim_support(gate, declaration.evidence_claim_ids, claims)
+        structured_claims = _claim_support(gate, structured.evidence_claim_ids, claims)
+        if structured.status is GateStatus.FAIL or structured_claims.status is GateStatus.FAIL:
             status = GateStatus.FAIL
-            reason = structured.reason
-        elif structured.status is GateStatus.UNKNOWN:
+            reason = (
+                structured.reason
+                if structured.status is GateStatus.FAIL
+                else structured_claims.reason
+            )
+        elif declaration.status is GateStatus.FAIL or declared_claims.status is GateStatus.FAIL:
+            status = GateStatus.FAIL
+            reason = (
+                "REVIEWER_DECLARED_FAIL"
+                if declaration.status is GateStatus.FAIL
+                else declared_claims.reason
+            )
+        elif declaration.status is GateStatus.NOT_APPLICABLE and gate not in OPTIONAL_GATES:
+            status = GateStatus.FAIL
+            reason = "NOT_APPLICABLE_NOT_ALLOWED"
+        elif structured.status is GateStatus.NOT_APPLICABLE and gate not in OPTIONAL_GATES:
+            status = GateStatus.FAIL
+            reason = "NOT_APPLICABLE_NOT_ALLOWED"
+        elif gate in OPTIONAL_GATES and declaration.status is GateStatus.NOT_APPLICABLE:
+            if structured.status is GateStatus.NOT_APPLICABLE and all(
+                result.status is GateStatus.PASS
+                for result in (declared_claims, structured_claims)
+            ):
+                status = GateStatus.NOT_APPLICABLE
+                reason = "OPTIONAL_CAPABILITY_EXPLICITLY_UNAVAILABLE"
+            elif structured.status is GateStatus.PASS:
+                status = GateStatus.FAIL
+                reason = "OPTIONAL_CAPABILITY_STATUS_INCONSISTENT"
+            else:
+                status = GateStatus.UNKNOWN
+                reason = "OPTIONAL_CAPABILITY_UNAVAILABILITY_UNPROVEN"
+        elif gate in OPTIONAL_GATES and structured.status is GateStatus.NOT_APPLICABLE:
+            status = GateStatus.FAIL if declaration.status is GateStatus.PASS else GateStatus.UNKNOWN
+            reason = (
+                "OPTIONAL_CAPABILITY_STATUS_INCONSISTENT"
+                if declaration.status is GateStatus.PASS
+                else "OPTIONAL_CAPABILITY_UNAVAILABILITY_UNDECLARED"
+            )
+        elif (
+            structured.status is GateStatus.UNKNOWN
+            or structured_claims.status is GateStatus.UNKNOWN
+            or declaration.status is GateStatus.UNKNOWN
+            or declared_claims.status is GateStatus.UNKNOWN
+        ):
             status = GateStatus.UNKNOWN
             reason = (
-                f"DECLARED_PASS_UNSUPPORTED:{structured.reason}"
-                if declaration.status is GateStatus.PASS
-                else structured.reason
+                structured.reason
+                if structured.status is GateStatus.UNKNOWN
+                else "EVIDENCE_CLAIMS_OR_REVIEWER_STATUS_UNKNOWN"
             )
-        elif structured.status is GateStatus.NOT_APPLICABLE:
-            if gate in OPTIONAL_GATES:
-                status = GateStatus.NOT_APPLICABLE
-                reason = structured.reason
-            else:
-                status = GateStatus.FAIL
-                reason = "NOT_APPLICABLE_NOT_ALLOWED"
-        elif declaration.status is GateStatus.FAIL:
-            status = GateStatus.FAIL
-            reason = "REVIEWER_DECLARED_FAIL"
-        elif declaration.status is not GateStatus.PASS:
-            status = GateStatus.UNKNOWN
-            reason = "REVIEWER_PASS_NOT_DECLARED"
-        elif declaration.evidence_reference not in evidence_paths:
-            status = GateStatus.FAIL
-            reason = "DECLARED_EVIDENCE_REFERENCE_NOT_VERIFIED"
-        elif not structured.evidence_references or any(
-            reference not in evidence_paths for reference in structured.evidence_references
-        ):
-            status = GateStatus.FAIL
-            reason = "STRUCTURED_EVIDENCE_REFERENCE_NOT_VERIFIED"
-        elif declaration.evidence_reference not in structured.evidence_references:
-            status = GateStatus.FAIL
-            reason = "DECLARED_AND_STRUCTURED_EVIDENCE_REFERENCE_MISMATCH"
-        else:
+        elif declaration.status is GateStatus.PASS and structured.status is GateStatus.PASS:
             status = GateStatus.PASS
             reason = "DECLARED_AND_STRUCTURED_EVIDENCE_VALIDATED"
-        evidence_reference = declaration.evidence_reference
-        effective[gate] = GateEvidence(status, reason, evidence_reference, checked_at)
+        else:
+            status = GateStatus.UNKNOWN
+            reason = "GATE_STATUS_COMBINATION_UNAVAILABLE"
+        effective_claim_ids = tuple(
+            sorted(set(declaration.evidence_claim_ids + structured.evidence_claim_ids))
+        )
+        effective[gate] = GateEvidence(status, reason, effective_claim_ids, checked_at)
         audit[gate.value] = {
             "declared": declaration.to_dict(),
             "derived": {
                 "status": structured.status.value,
                 "reason": structured.reason,
-                "evidence_references": list(structured.evidence_references),
+                "evidence_claim_ids": list(structured.evidence_claim_ids),
             },
             "effective": effective[gate].to_dict(),
         }
@@ -925,11 +1496,18 @@ def qualify_candidate(
         value.get("evidence_files"), evidence_root=evidence_root
     )
     evidence_paths = {identity["relative_path"] for identity in evidence_identities}
-    derived_gates = derive_structured_gates(value)
+    evidence_claims = load_evidence_claims(
+        value.get("evidence_claims"),
+        provider_identifier=provider_identifier,
+        verified_evidence_paths=evidence_paths,
+    )
+    derived_gates, market_qualification = derive_structured_gates(
+        value, provider_identifier, evidence_claims
+    )
     effective_gates, gate_audit = build_effective_gates(
         declared_gates,
         derived_gates,
-        evidence_paths=evidence_paths,
+        claims=evidence_claims,
         checked_at=checked_at,
     )
     limitations = value.get("limitations")
@@ -968,10 +1546,14 @@ def qualify_candidate(
             "prospective_replay_status": prospective.value,
         },
         "gate_results": gate_audit,
+        "market_qualification": market_qualification,
         "unsupported_capabilities": unsupported,
         "unknown_capabilities": unknown,
         "limitations": sorted(item.strip()[:500] for item in limitations),
         "evidence_files": evidence_identities,
+        "evidence_claims": [
+            evidence_claims[claim_id].to_dict() for claim_id in sorted(evidence_claims)
+        ],
         "input_identity": dict(input_identity),
         "protocol": {
             "dataset_name": protocol.value.get("dataset_name"),

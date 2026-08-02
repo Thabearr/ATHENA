@@ -58,11 +58,50 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             market: status.status for market, status in MODEL_STATUS_REGISTRY.items()
         }
 
-    def _gate(self, status=GateStatus.PASS, reason="reviewed evidence"):
-        return GateEvidence(status, reason, "review.txt", self.checked_at)
+    GATE_CAPABILITY = {
+        GateId.EXACT_MARKET_SEMANTICS: "MARKET_SEMANTICS",
+        GateId.EXACT_YES_NO_STRUCTURE: "OUTCOME_STRUCTURE",
+        GateId.RAW_DECIMAL_ODDS: "QUOTE_SCHEMA",
+        GateId.BOOKMAKER_PROVENANCE: "QUOTE_SCHEMA",
+        GateId.QUOTE_OBSERVED_AT: "TIMESTAMP",
+        GateId.SAME_BOOKMAKER_SNAPSHOT: "SNAPSHOT",
+        GateId.FIXTURE_MAPPING: "FIXTURE_MAPPING",
+        GateId.REPRODUCIBLE_EXPORT: "REPRODUCIBLE_EXPORT",
+        GateId.HISTORICAL_RETENTION: "HISTORICAL_RETENTION",
+        GateId.FROZEN_PERIOD_COVERAGE: "FROZEN_COVERAGE",
+        GateId.RESEARCH_RETENTION_PERMISSION: "RESEARCH_PERMISSION",
+        GateId.CURRENT_MARKET_AVAILABILITY: "LIVE_AVAILABILITY",
+        GateId.FRESHNESS_ENFORCEABLE: "LIVE_AVAILABILITY",
+        GateId.REPRODUCIBLE_PROVIDER_MAPPING: "QUOTE_SCHEMA",
+        GateId.PERMITTED_AUTOMATION: "EXECUTION_SAFETY",
+        GateId.EXACT_EXECUTION_SELECTION: "EXECUTION_SAFETY",
+        GateId.DETERMINISTIC_BETSLIP: "EXECUTION_SAFETY",
+        GateId.VALIDATED_QUOTE_PRICE_MATCH: "EXECUTION_SAFETY",
+        GateId.CHANGED_ODDS_DETECTION: "EXECUTION_SAFETY",
+        GateId.SUSPENDED_SELECTION_DETECTION: "EXECUTION_SAFETY",
+        GateId.MISSING_MARKET_DETECTION: "EXECUTION_SAFETY",
+        GateId.EXPLICIT_USER_CONFIRMATION: "EXECUTION_SAFETY",
+        GateId.BOOKING_CODE_SUPPORT: "BOOKING_CODE",
+    }
+
+    def _claim_id(self, capability):
+        return f"claim-{capability.lower().replace('_', '-')}"
+
+    def _gate(
+        self,
+        status=GateStatus.PASS,
+        reason="reviewed evidence",
+        gate=GateId.EXACT_MARKET_SEMANTICS,
+    ):
+        return GateEvidence(
+            status,
+            reason,
+            (self._claim_id(self.GATE_CAPABILITY[gate]),),
+            self.checked_at,
+        )
 
     def _gates(self, default=GateStatus.PASS):
-        return {gate: self._gate(default) for gate in GateId}
+        return {gate: self._gate(default, gate=gate) for gate in GateId}
 
     def _semantics(self, market, **changes):
         expected = MARKET_SEMANTICS[market]
@@ -81,7 +120,7 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "provider_no_selection_label": "No",
             "yes_canonical_outcome_id": "YES",
             "no_canonical_outcome_id": "NO",
-            "evidence_reference": "review.txt",
+            "claim_ids": [self._claim_id("MARKET_SEMANTICS")],
             "checked_at": self.CHECKED_AT,
         }
         row.update(changes)
@@ -92,11 +131,109 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             gate.value: self._gate(
                 GateStatus.NOT_APPLICABLE
                 if gate is GateId.BOOKING_CODE_SUPPORT
-                else GateStatus.PASS
+                else GateStatus.PASS,
+                gate=gate,
             ).to_dict()
             for gate in GateId
         }
         content = evidence_file.read_bytes()
+        semantics = {
+            market: self._semantics(market) for market in PERMITTED_MARKETS
+        }
+        quote_mappings = []
+        snapshot_samples = []
+        historical_markets = []
+        live_markets = []
+        for market in PERMITTED_MARKETS:
+            semantic = semantics[market]
+            quote_mappings.append(
+                {
+                    "market_id": market.value,
+                    "provider_market_identifier": semantic["provider_market_identifier"],
+                    "provider_market_name": semantic["provider_market_name"],
+                    "provider_yes_selection_identifier": semantic["provider_yes_selection_identifier"],
+                    "provider_yes_selection_label": semantic["provider_yes_selection_label"],
+                    "provider_no_selection_identifier": semantic["provider_no_selection_identifier"],
+                    "provider_no_selection_label": semantic["provider_no_selection_label"],
+                    "bookmaker_identifier": "book-1",
+                    "bookmaker_name_or_source": "Bookmaker One",
+                    "provider_event_identifier": f"event-{market.value}",
+                    "fixture_reference": f"fixture-{market.value}",
+                    "raw_decimal_odds_capability": True,
+                    "claim_ids": [self._claim_id("QUOTE_SCHEMA")],
+                    "checked_at": self.CHECKED_AT,
+                }
+            )
+            snapshot_samples.append(
+                {
+                    "market_id": market.value,
+                    "provider_identifier": "reviewed-provider",
+                    "fixture_identifier": f"fixture-{market.value}",
+                    "bookmaker_identifier": "book-1",
+                    "provider_yes_selection_identifier": semantic["provider_yes_selection_identifier"],
+                    "provider_no_selection_identifier": semantic["provider_no_selection_identifier"],
+                    "outcome_identifiers": ["YES", "NO"],
+                    "yes_observed_at": self.CHECKED_AT,
+                    "no_observed_at": self.CHECKED_AT,
+                    "native_snapshot_id": f"snapshot-{market.value}",
+                    "claim_ids": [self._claim_id("SNAPSHOT")],
+                    "checked_at": self.CHECKED_AT,
+                }
+            )
+            historical_markets.append(
+                {
+                    "market_id": market.value,
+                    "retained_settled_history": True,
+                    "historical_observed_at": True,
+                    "bookmaker_identity": True,
+                    "exact_market_and_selections": True,
+                    "quote_change_ordering": True,
+                    "archived_or_exportable_snapshots": True,
+                    "frozen_period_coverage": {
+                        "CALIBRATION_FIT_OOF": 10635,
+                        "VALIDATION_SELECTION": 3476,
+                        "FINAL_TEST": 4048,
+                        "total": 18159,
+                    },
+                    "retention_claim_ids": [self._claim_id("HISTORICAL_RETENTION")],
+                    "coverage_claim_ids": [self._claim_id("FROZEN_COVERAGE")],
+                    "claim_ids": [
+                        self._claim_id("HISTORICAL_RETENTION"),
+                        self._claim_id("FROZEN_COVERAGE"),
+                    ],
+                    "checked_at": self.CHECKED_AT,
+                }
+            )
+            live_markets.append(
+                {
+                    "market_id": market.value,
+                    "current_exact_market_availability": True,
+                    "complete_yes_no_snapshots": True,
+                    "latest_eligible_snapshot_selection": True,
+                    "provider_mapping_reproducible": True,
+                    "timezone_aware_quote_updates": True,
+                    "maximum_quote_age_seconds": 900,
+                    "excludes_post_decision": True,
+                    "excludes_post_kickoff": True,
+                    "claim_ids": [self._claim_id("LIVE_AVAILABILITY")],
+                    "checked_at": self.CHECKED_AT,
+                }
+            )
+        evidence_claims = [
+            {
+                "claim_id": self._claim_id(capability),
+                "provider_identifier": "reviewed-provider",
+                "evidence_file_path": evidence_file.name,
+                "document_title": f"Reviewed {capability} artifact",
+                "source_reference": f"section:{capability.lower()}",
+                "capability_identifier": capability,
+                "capability_statement": f"Reviewed evidence for {capability}",
+                "retrieval_timestamp": self.CHECKED_AT,
+                "reviewer_checked_at": self.CHECKED_AT,
+                "reviewer_conclusion": "PASS",
+            }
+            for capability in sorted(set(self.GATE_CAPABILITY.values()))
+        ]
         return {
             "schema_version": 1,
             "provider_identifier": "reviewed-provider",
@@ -104,32 +241,19 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "candidate_roles": [role.value for role in SourceRole],
             "evidence_checked_at": self.CHECKED_AT,
             "market_semantics_evidence": {
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("MARKET_SEMANTICS")],
                 "checked_at": self.CHECKED_AT,
-                "markets": [
-                    self._semantics(MarketId.HOME_WIN_EITHER_HALF),
-                    self._semantics(MarketId.AWAY_WIN_EITHER_HALF),
-                ]
+                "markets": [semantics[market] for market in PERMITTED_MARKETS],
             },
             "outcome_evidence": {
                 "canonical_outcome_ids": ["YES", "NO"],
-                "provider_yes_selection_identifier": "provider-yes",
-                "provider_yes_selection_label": "Yes",
-                "provider_no_selection_identifier": "provider-no",
-                "provider_no_selection_label": "No",
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("OUTCOME_STRUCTURE")],
                 "checked_at": self.CHECKED_AT,
             },
             "quote_field_evidence": {
-                "raw_decimal_odds_capability": True,
-                "bookmaker_identifier": "book-1",
-                "bookmaker_name_or_source": "Bookmaker One",
-                "provider_event_identifier": "event-1",
-                "provider_market_identifier": "market-1",
-                "provider_yes_selection_identifier": "yes-1",
-                "provider_no_selection_identifier": "no-1",
-                "fixture_reference": "fixture-1",
-                "evidence_reference": "review.txt",
+                "mappings": quote_mappings,
+                "shared_provider_market_identifier_proven_for_both_subjects": False,
+                "claim_ids": [self._claim_id("QUOTE_SCHEMA")],
                 "checked_at": self.CHECKED_AT,
             },
             "timestamp_evidence": {
@@ -137,46 +261,32 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                 "sample_timestamp": self.CHECKED_AT,
                 "download_time_distinct": True,
                 "quote_ordering_reproducible": True,
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("TIMESTAMP")],
                 "checked_at": self.CHECKED_AT,
             },
             "snapshot_evidence": {
-                "provider_identifier": "provider-1",
-                "fixture_identifier": "fixture-1",
-                "market_id": MarketId.HOME_WIN_EITHER_HALF.value,
-                "bookmaker_identifier": "book-1",
-                "yes_observed_at": self.CHECKED_AT,
-                "no_observed_at": self.CHECKED_AT,
-                "native_snapshot_id": "snapshot-1",
-                "evidence_reference": "review.txt",
+                "samples": snapshot_samples,
+                "claim_ids": [self._claim_id("SNAPSHOT")],
                 "checked_at": self.CHECKED_AT,
             },
             "historical_retention_evidence": {
-                "retained_settled_history": True,
-                "historical_observed_at": True,
-                "bookmaker_identity": True,
-                "exact_market_and_selections": True,
-                "quote_change_ordering": True,
-                "archived_or_exportable_snapshots": True,
-                "frozen_period_coverage": {
+                "markets": historical_markets,
+                "combined_frozen_period_coverage": {
                     "CALIBRATION_FIT_OOF": 21270,
                     "VALIDATION_SELECTION": 6952,
                     "FINAL_TEST": 8096,
                     "total": 36318,
                 },
-                "evidence_reference": "review.txt",
+                "coverage_claim_ids": [self._claim_id("FROZEN_COVERAGE")],
+                "claim_ids": [
+                    self._claim_id("HISTORICAL_RETENTION"),
+                    self._claim_id("FROZEN_COVERAGE"),
+                ],
                 "checked_at": self.CHECKED_AT,
             },
             "live_pricing_evidence": {
-                "current_exact_market_availability": True,
-                "complete_yes_no_snapshots": True,
-                "latest_eligible_snapshot_selection": True,
-                "provider_mapping_reproducible": True,
-                "timezone_aware_quote_updates": True,
-                "maximum_quote_age_seconds": 900,
-                "excludes_post_decision": True,
-                "excludes_post_kickoff": True,
-                "evidence_reference": "review.txt",
+                "markets": live_markets,
+                "claim_ids": [self._claim_id("LIVE_AVAILABILITY")],
                 "checked_at": self.CHECKED_AT,
             },
             "fixture_mapping_evidence": {
@@ -194,20 +304,20 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                     "UNAVAILABLE": 0,
                 },
                 "independent_fuzzy_name_qualification": False,
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("FIXTURE_MAPPING")],
                 "checked_at": self.CHECKED_AT,
             },
             "export_reproducibility_evidence": {
                 "reproducible_export": True,
                 "stable_fixture_market_identifiers": True,
                 "deterministic_ordering": True,
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("REPRODUCIBLE_EXPORT")],
                 "checked_at": self.CHECKED_AT,
             },
             "licensing_and_retention_evidence": {
                 "research_retention_permission": True,
                 "retained_research_use_permitted": True,
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("RESEARCH_PERMISSION")],
                 "checked_at": self.CHECKED_AT,
             },
             "execution_workflow_evidence": {
@@ -219,15 +329,16 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                 "missing_market_detection": True,
                 "explicit_user_confirmation": True,
                 "permitted_automation": True,
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("EXECUTION_SAFETY")],
                 "checked_at": self.CHECKED_AT,
             },
             "booking_code_evidence": {
                 "capability_status": "UNAVAILABLE",
-                "evidence_reference": "review.txt",
+                "claim_ids": [self._claim_id("BOOKING_CODE")],
                 "checked_at": self.CHECKED_AT,
             },
             "gate_evidence": gate_evidence,
+            "evidence_claims": evidence_claims,
             "limitations": ["Research protocol only"],
             "evidence_files": [
                 {
@@ -310,16 +421,22 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             candidate["outcome_evidence"]["canonical_outcome_ids"] = ["YES", "HOME"]
             cases.append((candidate, GateId.EXACT_YES_NO_STRUCTURE))
             candidate = self._candidate(evidence)
-            candidate["quote_field_evidence"]["raw_decimal_odds_capability"] = False
+            candidate["quote_field_evidence"]["mappings"][0][
+                "raw_decimal_odds_capability"
+            ] = False
             cases.append((candidate, GateId.RAW_DECIMAL_ODDS))
             candidate = self._candidate(evidence)
-            candidate["quote_field_evidence"]["bookmaker_identifier"] = True
+            candidate["quote_field_evidence"]["mappings"][0][
+                "bookmaker_identifier"
+            ] = True
             cases.append((candidate, GateId.BOOKMAKER_PROVENANCE))
             candidate = self._candidate(evidence)
             candidate["timestamp_evidence"]["timestamp_source"] = "DOWNLOAD_TIME"
             cases.append((candidate, GateId.QUOTE_OBSERVED_AT))
             candidate = self._candidate(evidence)
-            candidate["snapshot_evidence"]["no_observed_at"] = "2026-08-01T12:00:01Z"
+            candidate["snapshot_evidence"]["samples"][0][
+                "no_observed_at"
+            ] = "2026-08-01T12:00:01Z"
             cases.append((candidate, GateId.SAME_BOOKMAKER_SNAPSHOT))
             for candidate, gate in cases:
                 with self.subTest(gate=gate):
@@ -616,14 +733,18 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             evidence = root / "review.txt"
             evidence.write_text("review", encoding="utf-8")
             candidate = self._candidate(evidence)
-            candidate["quote_field_evidence"]["provider_event_identifier"] = True
+            candidate["quote_field_evidence"]["mappings"][0][
+                "provider_event_identifier"
+            ] = True
             report = self._qualify(candidate, root)
             self.assertEqual(
                 report["gate_results"][GateId.REPRODUCIBLE_PROVIDER_MAPPING.value]["derived"]["status"],
                 "FAIL",
             )
             candidate = self._candidate(evidence)
-            candidate["snapshot_evidence"]["no_observed_at"] = "2026-08-01T12:00:01Z"
+            candidate["snapshot_evidence"]["samples"][0][
+                "no_observed_at"
+            ] = "2026-08-01T12:00:01Z"
             report = self._qualify(candidate, root)
             self.assertEqual(
                 report["gate_results"][GateId.SAME_BOOKMAKER_SNAPSHOT.value]["derived"]["reason"],
@@ -654,16 +775,18 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             evidence = root / "review.txt"
             evidence.write_text("review", encoding="utf-8")
             candidate = self._candidate(evidence)
-            candidate["historical_retention_evidence"]["frozen_period_coverage"][
-                "FINAL_TEST"
-            ] = 8095
+            candidate["historical_retention_evidence"]["markets"][0][
+                "frozen_period_coverage"
+            ]["FINAL_TEST"] = 4047
             report = self._qualify(candidate, root)
             self.assertEqual(
                 report["gate_results"][GateId.FROZEN_PERIOD_COVERAGE.value]["effective"]["status"],
                 "FAIL",
             )
             candidate = self._candidate(evidence)
-            candidate["live_pricing_evidence"]["maximum_quote_age_seconds"] = 901
+            candidate["live_pricing_evidence"]["markets"][0][
+                "maximum_quote_age_seconds"
+            ] = 901
             report = self._qualify(candidate, root)
             self.assertEqual(
                 report["gate_results"][GateId.FRESHNESS_ENFORCEABLE.value]["effective"]["status"],
@@ -722,6 +845,289 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                 "NOT_APPLICABLE",
             )
 
+    def test_both_market_quote_mappings_and_snapshots_are_required(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            cases = (
+                ("quote_field_evidence", "mappings", 0, GateId.RAW_DECIMAL_ODDS),
+                ("quote_field_evidence", "mappings", 1, GateId.RAW_DECIMAL_ODDS),
+                ("snapshot_evidence", "samples", 0, GateId.SAME_BOOKMAKER_SNAPSHOT),
+                ("snapshot_evidence", "samples", 1, GateId.SAME_BOOKMAKER_SNAPSHOT),
+            )
+            for section, rows, retained_index, gate in cases:
+                with self.subTest(section=section, retained_index=retained_index):
+                    candidate = self._candidate(evidence)
+                    candidate[section][rows] = [candidate[section][rows][retained_index]]
+                    report = self._qualify(candidate, root)
+                    self.assertNotEqual(
+                        report["qualification"]["live_pricing_status"],
+                        "QUALIFIED_FOR_LIVE_PRICING",
+                    )
+                    self.assertNotEqual(
+                        report["gate_results"][gate.value]["effective"]["status"],
+                        "PASS",
+                    )
+
+    def test_market_mapping_duplicates_and_semantic_selection_mismatch_fail(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            duplicate = self._candidate(evidence)
+            duplicate["quote_field_evidence"]["mappings"][1]["market_id"] = (
+                duplicate["quote_field_evidence"]["mappings"][0]["market_id"]
+            )
+            duplicate_report = self._qualify(duplicate, root)
+            self.assertEqual(
+                duplicate_report["gate_results"][GateId.RAW_DECIMAL_ODDS.value][
+                    "effective"
+                ]["status"],
+                "FAIL",
+            )
+
+            mismatch = self._candidate(evidence)
+            mismatch["quote_field_evidence"]["mappings"][1][
+                "provider_yes_selection_identifier"
+            ] = mismatch["quote_field_evidence"]["mappings"][0][
+                "provider_yes_selection_identifier"
+            ]
+            mismatch_report = self._qualify(mismatch, root)
+            self.assertEqual(
+                mismatch_report["gate_results"][GateId.REPRODUCIBLE_PROVIDER_MAPPING.value][
+                    "effective"
+                ]["status"],
+                "FAIL",
+            )
+
+    def test_per_market_historical_coverage_and_combined_reconciliation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            report = self._qualify(self._candidate(evidence), root)
+            self.assertEqual(
+                report["gate_results"][GateId.FROZEN_PERIOD_COVERAGE.value][
+                    "effective"
+                ]["status"],
+                "PASS",
+            )
+            for market in PERMITTED_MARKETS:
+                self.assertEqual(
+                    report["market_qualification"][market.value]["historical_status"],
+                    "PASS",
+                )
+                self.assertEqual(
+                    report["market_qualification"][market.value][
+                        "historical_frozen_period_coverage"
+                    ],
+                    {
+                        "CALIBRATION_FIT_OOF": 10635,
+                        "VALIDATION_SELECTION": 3476,
+                        "FINAL_TEST": 4048,
+                        "total": 18159,
+                    },
+                )
+
+            market_drift = self._candidate(evidence)
+            market_drift["historical_retention_evidence"]["markets"][0][
+                "frozen_period_coverage"
+            ]["total"] = 18158
+            self.assertEqual(
+                self._qualify(market_drift, root)["gate_results"][
+                    GateId.FROZEN_PERIOD_COVERAGE.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+            combined_drift = self._candidate(evidence)
+            combined_drift["historical_retention_evidence"][
+                "combined_frozen_period_coverage"
+            ]["total"] = 36317
+            self.assertEqual(
+                self._qualify(combined_drift, root)["gate_results"][
+                    GateId.FROZEN_PERIOD_COVERAGE.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+    def test_live_capability_is_required_for_each_market(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            candidate = self._candidate(evidence)
+            candidate["live_pricing_evidence"]["markets"].pop()
+            report = self._qualify(candidate, root)
+            self.assertNotEqual(
+                report["qualification"]["live_pricing_status"],
+                "QUALIFIED_FOR_LIVE_PRICING",
+            )
+            self.assertEqual(
+                sum(
+                    result["live_status"] == "PASS"
+                    for result in report["market_qualification"].values()
+                ),
+                1,
+            )
+
+    def test_typed_claims_are_authoritative_and_capability_scoped(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("generic text", encoding="utf-8")
+
+            no_claims = self._candidate(evidence)
+            no_claims["evidence_claims"] = []
+            no_claim_report = self._qualify(no_claims, root)
+            self.assertTrue(
+                all(
+                    not status.startswith("QUALIFIED")
+                    for status in no_claim_report["qualification"].values()
+                )
+            )
+
+            complete = self._qualify(self._candidate(evidence), root)
+            self.assertEqual(
+                complete["qualification"]["historical_status"],
+                "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+            )
+
+            unrelated = self._candidate(evidence)
+            market_claim = next(
+                claim
+                for claim in unrelated["evidence_claims"]
+                if claim["claim_id"] == self._claim_id("MARKET_SEMANTICS")
+            )
+            market_claim["capability_identifier"] = "BOOKING_CODE"
+            self.assertEqual(
+                self._qualify(unrelated, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            unknown = self._candidate(evidence)
+            unknown["evidence_claims"] = [
+                claim
+                for claim in unknown["evidence_claims"]
+                if claim["claim_id"] != self._claim_id("MARKET_SEMANTICS")
+            ]
+            self.assertEqual(
+                self._qualify(unknown, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "UNKNOWN",
+            )
+
+            contradictory = self._candidate(evidence)
+            next(
+                claim
+                for claim in contradictory["evidence_claims"]
+                if claim["claim_id"] == self._claim_id("MARKET_SEMANTICS")
+            )["reviewer_conclusion"] = "FAIL"
+            self.assertEqual(
+                self._qualify(contradictory, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+    def test_claim_registry_identity_provider_and_timestamps_fail_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            duplicate = self._candidate(evidence)
+            duplicate["evidence_claims"].append(dict(duplicate["evidence_claims"][0]))
+            with self.assertRaisesRegex(
+                QualificationExportError, "claim IDs must be unique"
+            ):
+                self._qualify(duplicate, root)
+
+            wrong_provider = self._candidate(evidence)
+            wrong_provider["evidence_claims"][0]["provider_identifier"] = "other"
+            with self.assertRaisesRegex(
+                QualificationExportError, "provider does not match"
+            ):
+                self._qualify(wrong_provider, root)
+
+            naive = self._candidate(evidence)
+            naive["evidence_claims"][0]["retrieval_timestamp"] = "2026-08-01T12:00:00"
+            with self.assertRaisesRegex(QualificationExportError, "timezone-aware"):
+                self._qualify(naive, root)
+
+    def test_failure_precedence_and_optional_booking_consistency(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+
+            reviewer_fail_unknown = self._candidate(evidence)
+            reviewer_fail_unknown["gate_evidence"][GateId.EXACT_MARKET_SEMANTICS.value][
+                "status"
+            ] = "FAIL"
+            reviewer_fail_unknown["market_semantics_evidence"]["markets"][0].pop(
+                "provider_description"
+            )
+            self.assertEqual(
+                self._qualify(reviewer_fail_unknown, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            reviewer_fail_pass = self._candidate(evidence)
+            reviewer_fail_pass["gate_evidence"][GateId.EXACT_MARKET_SEMANTICS.value][
+                "status"
+            ] = "FAIL"
+            self.assertEqual(
+                self._qualify(reviewer_fail_pass, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            reviewer_unknown_structured_fail = self._candidate(evidence)
+            reviewer_unknown_structured_fail["gate_evidence"][
+                GateId.EXACT_MARKET_SEMANTICS.value
+            ]["status"] = "UNKNOWN"
+            reviewer_unknown_structured_fail["market_semantics_evidence"]["markets"][0][
+                "yes_settlement"
+            ] = "home team wins first half only"
+            self.assertEqual(
+                self._qualify(reviewer_unknown_structured_fail, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            booking_fail = self._candidate(evidence)
+            booking_fail["booking_code_evidence"]["capability_status"] = "CONFLICT"
+            self.assertEqual(
+                self._qualify(booking_fail, root)["gate_results"][
+                    GateId.BOOKING_CODE_SUPPORT.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            booking_pass = self._candidate(evidence)
+            booking_pass["booking_code_evidence"]["capability_status"] = "AVAILABLE"
+            self.assertEqual(
+                self._qualify(booking_pass, root)["gate_results"][
+                    GateId.BOOKING_CODE_SUPPORT.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            booking_unavailable = self._qualify(self._candidate(evidence), root)
+            self.assertEqual(
+                booking_unavailable["gate_results"][GateId.BOOKING_CODE_SUPPORT.value][
+                    "effective"
+                ]["status"],
+                "NOT_APPLICABLE",
+            )
+
     def test_protocol_identity_and_contract_mutations_fail_closed(self):
         protocol_bytes = DEFAULT_PROTOCOL_PATH.read_bytes()
         validated = validate_protocol_contract(
@@ -738,6 +1144,17 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "maximum_quote_age": lambda value: value["decision_protocol"].__setitem__("maximum_quote_age_seconds", 901),
             "decision_protocol": lambda value: value["decision_protocol"].__setitem__("timezone", "LOCAL"),
             "frozen_denominator": lambda value: value["frozen_fixture_market_denominator"].__setitem__("total", 36317),
+            "per_market_denominator": lambda value: value[
+                "frozen_fixture_market_denominator_by_market"
+            ]["HOME_WIN_EITHER_HALF"].__setitem__("total", 18158),
+            "market_specific_contract": lambda value: value[
+                "market_specific_evidence_contract"
+            ].__setitem__("snapshot_samples_per_market", 0),
+            "evidence_claim_contract": lambda value: value[
+                "evidence_claim_contract"
+            ]["gate_capability_allowlist"]["exact_market_semantics"].append(
+                "BOOKING_CODE"
+            ),
             "holdout_governance": lambda value: value["holdout_governance"].__setitem__("status", "PRISTINE"),
             "no_production": lambda value: value.__setitem__("no_production_approval", False),
         }
