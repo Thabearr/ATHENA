@@ -1,0 +1,332 @@
+{
+  "candidate_provider_templates": [
+    {
+      "candidate_roles": [
+        "EXECUTION_BOOKMAKER",
+        "LIVE_PRICING_SOURCE"
+      ],
+      "known_provisional_evidence": [
+        "Displays Home Team to Win Either Half with YES and NO decimal prices",
+        "Displays Away Team to Win Either Half with YES and NO decimal prices",
+        "Bookmaker provenance is SportyBet"
+      ],
+      "provider_identifier": "sportybet",
+      "provider_name": "SportyBet",
+      "provisional_status": "UNKNOWN",
+      "provisional_role_statuses": {
+        "execution_bookmaker_status": "UNKNOWN",
+        "historical_status": "UNKNOWN",
+        "live_pricing_status": "UNKNOWN",
+        "prospective_replay_status": "UNKNOWN"
+      },
+      "unproven_capabilities": [
+        "archived quote history",
+        "automated betslip construction",
+        "booking-code generation mechanism",
+        "frozen-period historical backfill",
+        "native quote snapshot identifiers",
+        "official API or authorized feed",
+        "permission for automated collection",
+        "permission for retained research use",
+        "quote-update timestamps",
+        "snapshot reconstruction rules",
+        "stable provider market identifiers",
+        "stable provider selection identifiers"
+      ]
+    },
+    {
+      "candidate_roles": [
+        "HISTORICAL_RESEARCH_SOURCE",
+        "LIVE_PRICING_SOURCE"
+      ],
+      "provider_identifier": "sportmonks",
+      "provider_name": "Sportmonks",
+      "provisional_status": "UNKNOWN",
+      "provisional_role_statuses": {
+        "execution_bookmaker_status": "UNKNOWN",
+        "historical_status": "UNKNOWN",
+        "live_pricing_status": "UNKNOWN",
+        "prospective_replay_status": "UNKNOWN"
+      }
+    },
+    {
+      "candidate_roles": [
+        "HISTORICAL_RESEARCH_SOURCE",
+        "LIVE_PRICING_SOURCE"
+      ],
+      "provider_identifier": "the_odds_api",
+      "provider_name": "The Odds API",
+      "provisional_status": "UNKNOWN",
+      "provisional_role_statuses": {
+        "execution_bookmaker_status": "UNKNOWN",
+        "historical_status": "UNKNOWN",
+        "live_pricing_status": "UNKNOWN",
+        "prospective_replay_status": "UNKNOWN"
+      }
+    },
+    {
+      "candidate_roles": [
+        "HISTORICAL_RESEARCH_SOURCE"
+      ],
+      "provider_identifier": "licensed_historical_provider_template",
+      "provider_name": "Other licensed historical provider",
+      "provisional_status": "UNKNOWN",
+      "provisional_role_statuses": {
+        "execution_bookmaker_status": "UNKNOWN",
+        "historical_status": "UNKNOWN",
+        "live_pricing_status": "UNKNOWN",
+        "prospective_replay_status": "UNKNOWN"
+      }
+    }
+  ],
+  "decision_protocol": {
+    "abandoned_cancelled_handling": "UNAVAILABLE",
+    "decision_protocol_id": "win-either-half-pricing-decision-protocol-v1-unselected",
+    "frozen_revision": null,
+    "frozen_timestamp": null,
+    "kickoff_correction_handling": "FAIL_CLOSED_AND_REBUILD_PROTOCOL_INPUT",
+    "maximum_quote_age_seconds": 900,
+    "postponed_fixture_handling": "UNAVAILABLE_PENDING_EXPLICIT_RESCHEDULE_REVIEW",
+    "rescheduled_fixture_handling": "REQUIRE_NEW_FROZEN_KICKOFF_AND_DECISION_TIMESTAMP",
+    "seconds_before_kickoff": null,
+    "snapshot_selection_rule": "LATEST_COMPLETE_SAME_BOOKMAKER_SNAPSHOT_NOT_AFTER_DECISION",
+    "timezone": "UTC"
+  },
+  "evidence_claim_contract": {
+    "gate_capability_allowlist": {
+      "booking_code_support": ["BOOKING_CODE"],
+      "bookmaker_provenance": ["QUOTE_SCHEMA"],
+      "changed_odds_detection": ["EXECUTION_SAFETY"],
+      "current_market_availability": ["LIVE_AVAILABILITY"],
+      "deterministic_betslip": ["EXECUTION_SAFETY"],
+      "exact_execution_selection": ["EXECUTION_SELECTION"],
+      "exact_market_semantics": ["MARKET_SEMANTICS"],
+      "exact_yes_no_structure": ["MARKET_SEMANTICS", "OUTCOME_STRUCTURE", "QUOTE_SCHEMA"],
+      "explicit_user_confirmation": ["EXECUTION_SAFETY"],
+      "fixture_mapping": ["FIXTURE_MAPPING"],
+      "freshness_enforceable": ["LIVE_AVAILABILITY", "TIMESTAMP"],
+      "frozen_period_coverage": ["FROZEN_COVERAGE"],
+      "historical_retention": ["HISTORICAL_RETENTION"],
+      "missing_market_detection": ["EXECUTION_SAFETY"],
+      "permitted_automation": ["EXECUTION_SAFETY"],
+      "quote_observed_at": ["TIMESTAMP"],
+      "raw_decimal_odds": ["QUOTE_SCHEMA"],
+      "reproducible_export": ["REPRODUCIBLE_EXPORT"],
+      "reproducible_provider_mapping": ["LIVE_AVAILABILITY", "QUOTE_SCHEMA"],
+      "research_retention_permission": ["RESEARCH_PERMISSION"],
+      "same_bookmaker_snapshot": ["SNAPSHOT"],
+      "suspended_selection_detection": ["EXECUTION_SAFETY"],
+      "validated_quote_price_match": ["EXECUTION_SAFETY"]
+    },
+    "required_fields": [
+      "claim_id",
+      "provider_identifier",
+      "canonical_market_ids",
+      "evidence_file_path",
+      "document_title",
+      "source_reference",
+      "capability_identifier",
+      "capability_statement",
+      "retrieval_timestamp",
+      "reviewer_checked_at",
+      "reviewer_conclusion"
+    ],
+    "reviewer_conclusions": ["PASS", "FAIL", "UNKNOWN"],
+    "market_specific_capabilities": [
+      "EXECUTION_SELECTION",
+      "FROZEN_COVERAGE",
+      "HISTORICAL_RETENTION",
+      "LIVE_AVAILABILITY",
+      "MARKET_SEMANTICS",
+      "OUTCOME_STRUCTURE",
+      "QUOTE_SCHEMA",
+      "SNAPSHOT"
+    ],
+    "provider_global_capabilities": [
+      "BOOKING_CODE",
+      "EXECUTION_SAFETY",
+      "FIXTURE_MAPPING",
+      "REPRODUCIBLE_EXPORT",
+      "RESEARCH_PERMISSION",
+      "TIMESTAMP"
+    ],
+    "scope_policy": {
+      "market_specific": "NON_EMPTY_UNIQUE_SUBSET_OF_REQUIRED_MARKETS",
+      "provider_global": "EMPTY_LIST"
+    }
+  },
+  "fixture_mapping": {
+    "kickoff_tolerance_seconds": 300,
+    "results": [
+      "EXACT",
+      "CONFLICT",
+      "AMBIGUOUS",
+      "UNAVAILABLE"
+    ],
+    "reversed_participants": "CONFLICT",
+    "team_name_fuzzy_match_can_qualify": false
+  },
+  "frozen_fixture_market_denominator": {
+    "CALIBRATION_FIT_OOF": 21270,
+    "FINAL_TEST": 8096,
+    "VALIDATION_SELECTION": 6952,
+    "total": 36318
+  },
+  "frozen_fixture_market_denominator_by_market": {
+    "AWAY_WIN_EITHER_HALF": {
+      "CALIBRATION_FIT_OOF": 10635,
+      "FINAL_TEST": 4048,
+      "VALIDATION_SELECTION": 3476,
+      "total": 18159
+    },
+    "HOME_WIN_EITHER_HALF": {
+      "CALIBRATION_FIT_OOF": 10635,
+      "FINAL_TEST": 4048,
+      "VALIDATION_SELECTION": 3476,
+      "total": 18159
+    }
+  },
+  "holdout_governance": {
+    "final_test_season": "2025-26",
+    "prospective_validation_required": true,
+    "provider_selection_must_not_use_target_outcomes_or_performance": true,
+    "status": "ALREADY_CONSUMED_AUDIT_HOLDOUT"
+  },
+  "mandatory_gate_policy": "ALL_REQUIRED_GATES_PASS; UNKNOWN_AND_NOT_APPLICABLE_NEVER_QUALIFY; NO_WEIGHTED_SCORE",
+  "not_applicable_allowlist": {
+    "EXECUTION_BOOKMAKER": [],
+    "HISTORICAL_RESEARCH_SOURCE": [],
+    "LIVE_PRICING_SOURCE": [],
+    "PROSPECTIVE_REPLAY": []
+  },
+  "optional_capabilities": [
+    "booking_code_support"
+  ],
+  "role_mandatory_gates": {
+    "EXECUTION_BOOKMAKER": [
+      "exact_market_semantics",
+      "exact_yes_no_structure",
+      "fixture_mapping",
+      "permitted_automation",
+      "exact_execution_selection",
+      "deterministic_betslip",
+      "validated_quote_price_match",
+      "changed_odds_detection",
+      "suspended_selection_detection",
+      "missing_market_detection",
+      "explicit_user_confirmation"
+    ],
+    "HISTORICAL_RESEARCH_SOURCE": [
+      "exact_market_semantics",
+      "exact_yes_no_structure",
+      "raw_decimal_odds",
+      "bookmaker_provenance",
+      "quote_observed_at",
+      "same_bookmaker_snapshot",
+      "fixture_mapping",
+      "reproducible_export",
+      "historical_retention",
+      "frozen_period_coverage",
+      "research_retention_permission"
+    ],
+    "LIVE_PRICING_SOURCE": [
+      "exact_market_semantics",
+      "exact_yes_no_structure",
+      "raw_decimal_odds",
+      "bookmaker_provenance",
+      "quote_observed_at",
+      "same_bookmaker_snapshot",
+      "fixture_mapping",
+      "current_market_availability",
+      "freshness_enforceable",
+      "reproducible_provider_mapping"
+    ],
+    "PROSPECTIVE_REPLAY": [
+      "exact_market_semantics",
+      "exact_yes_no_structure",
+      "raw_decimal_odds",
+      "bookmaker_provenance",
+      "quote_observed_at",
+      "same_bookmaker_snapshot",
+      "fixture_mapping",
+      "current_market_availability",
+      "freshness_enforceable",
+      "reproducible_provider_mapping",
+      "reproducible_export",
+      "research_retention_permission"
+    ]
+  },
+  "market_scope": {
+    "AWAY_WIN_EITHER_HALF": {
+      "line": null,
+      "no_settlement": "away team does not win either regulation half",
+      "outcomes": [
+        "YES",
+        "NO"
+      ],
+      "subject": "AWAY_TEAM",
+      "yes_settlement": "away team wins at least one regulation half"
+    },
+    "HOME_WIN_EITHER_HALF": {
+      "line": null,
+      "no_settlement": "home team does not win either regulation half",
+      "outcomes": [
+        "YES",
+        "NO"
+      ],
+      "subject": "HOME_TEAM",
+      "yes_settlement": "home team wins at least one regulation half"
+    }
+  },
+  "market_specific_evidence_contract": {
+    "historical_coverage_records_per_market": 1,
+    "live_capability_records_per_market": 1,
+    "quote_mapping_records_per_market": 1,
+    "required_markets": ["AWAY_WIN_EITHER_HALF", "HOME_WIN_EITHER_HALF"],
+    "snapshot_samples_per_market": 1
+  },
+  "no_production_approval": true,
+  "provider_roles": [
+    "HISTORICAL_RESEARCH_SOURCE",
+    "LIVE_PRICING_SOURCE",
+    "EXECUTION_BOOKMAKER"
+  ],
+  "qualification_statuses": [
+    "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+    "QUALIFIED_FOR_LIVE_PRICING",
+    "QUALIFIED_AS_EXECUTION_BOOKMAKER",
+    "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY",
+    "PARTIALLY_QUALIFIED",
+    "DISQUALIFIED",
+    "UNKNOWN"
+  ],
+  "schema_version": 1,
+  "snapshot_contract": {
+    "derived_identifier_components": [
+      "provider",
+      "provider_event_identifier",
+      "market",
+      "bookmaker",
+      "exact_common_update_timestamp"
+    ],
+    "fixture_identifier_source": "provider_event_identifier",
+    "quote_mapping_reconciliation_fields": [
+      "provider_event_identifier",
+      "fixture_reference",
+      "provider_market_identifier",
+      "provider_yes_selection_identifier",
+      "provider_no_selection_identifier",
+      "bookmaker_identifier"
+    ],
+    "required_outcomes": [
+      "YES",
+      "NO"
+    ],
+    "same_bookmaker": true,
+    "same_fixture": true,
+    "same_market": true,
+    "same_observed_at": true,
+    "same_snapshot_identifier": true
+  },
+  "dataset_name": "win-either-half-pricing-source-qualification-protocol-v1"
+}
