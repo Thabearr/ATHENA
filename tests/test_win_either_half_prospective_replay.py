@@ -33,12 +33,14 @@ from domain.win_either_half_prospective_replay import (
     MAXIMUM_QUOTE_AGE_SECONDS,
     PERMITTED_MARKETS,
     SCHEMA_VERSION,
+    AttemptParseResult,
     AttemptResult,
     AvailabilityReason,
     AvailabilityStatus,
     EvaluationRecord,
     ObservationAttempt,
     ProspectiveQuote,
+    QuoteParseResult,
     ValidatedSnapshot,
     assert_no_forbidden_fields,
     build_expected_protocol_contract,
@@ -62,7 +64,7 @@ from scripts.export_win_either_half_prospective_replay import (
 
 
 class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
-    """Test suite proving all 40 required checklist items."""
+    """Test suite proving all required Stage 5B2 checklist items."""
 
     REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 
@@ -127,7 +129,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         self.protocol_raw = DEFAULT_PROTOCOL_PATH.read_bytes()
         self.protocol_payload = json.loads(self.protocol_raw.decode("utf-8"))
         self.mock_code_state = {
-            "git_sha": "0123456789abcdef0123456789abcdef01234567",
+            "evidence_git_head_sha": "0123456789abcdef0123456789abcdef01234567",
             "tracked_worktree_clean": True,
         }
 
@@ -189,6 +191,16 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
             "decimal_odds": odds,
             "is_genuine": True,
         }
+
+    def _group_quotes_by_attempt_id(
+        self, quote_results: list[QuoteParseResult]
+    ) -> dict[str, list[QuoteParseResult]]:
+        res: dict[str, list[QuoteParseResult]] = {}
+        for r in quote_results:
+            aid = r.raw_record.get("attempt_id")
+            if isinstance(aid, str) and aid.strip():
+                res.setdefault(aid.strip(), []).append(r)
+        return res
 
     # 1. Real nested Stage 5B1 report is accepted
     def test_real_nested_stage_5b1_report_accepted(self) -> None:
@@ -256,7 +268,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 8. MARKET_UNAVAILABLE attempt is not contaminated by quotes linked to a different offset
     def test_market_unavailable_not_contaminated_by_other_offset_quotes(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att_86400 = self._sample_attempt("ATT-86400", offset=86400, scheduled_at="2026-08-09T15:00:00Z", attempted_at="2026-08-09T15:00:00Z", result="MARKET_UNAVAILABLE")
         att_3600 = self._sample_attempt("ATT-3600", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z", result="QUOTES_CAPTURED", quote_snapshot_id="SNAP-3600")
@@ -264,11 +276,11 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         q_yes = self._sample_quote("ATT-3600", outcome_id="YES", quote_snapshot_id="SNAP-3600", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-YES")
         q_no = self._sample_quote("ATT-3600", outcome_id="NO", quote_snapshot_id="SNAP-3600", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-NO")
 
-        att_results, v_by_id, v_by_key = parse_observation_attempts([att_86400, att_3600], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, v_by_key, inv_by_key = parse_observation_attempts([att_86400, att_3600], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q_yes, q_no], fixtures, mappings, v_by_id, "TEST_PROVIDER")
-        valid_quotes = [r.quote for r in q_results if r.is_valid and r.quote is not None]
+        quote_by_att = self._group_quotes_by_attempt_id(q_results)
 
-        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, valid_quotes)
+        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, inv_by_key, quote_by_att)
         eval_86400 = [e for e in evals if e.offset_seconds_before_kickoff == 86400 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
         eval_3600 = [e for e in evals if e.offset_seconds_before_kickoff == 3600 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
 
@@ -278,7 +290,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 9. CAPTURE_ERROR attempt is not contaminated by quotes linked to another attempt
     def test_capture_error_not_contaminated_by_other_quotes(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att_err = self._sample_attempt("ATT-ERR", offset=86400, scheduled_at="2026-08-09T15:00:00Z", attempted_at="2026-08-09T15:00:00Z", result="CAPTURE_ERROR")
         att_ok = self._sample_attempt("ATT-OK", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z", result="QUOTES_CAPTURED", quote_snapshot_id="SNAP-OK")
@@ -286,11 +298,11 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         q_yes = self._sample_quote("ATT-OK", outcome_id="YES", quote_snapshot_id="SNAP-OK", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-YES")
         q_no = self._sample_quote("ATT-OK", outcome_id="NO", quote_snapshot_id="SNAP-OK", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-NO")
 
-        att_results, v_by_id, v_by_key = parse_observation_attempts([att_err, att_ok], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, v_by_key, inv_by_key = parse_observation_attempts([att_err, att_ok], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q_yes, q_no], fixtures, mappings, v_by_id, "TEST_PROVIDER")
-        valid_quotes = [r.quote for r in q_results if r.is_valid and r.quote is not None]
+        quote_by_att = self._group_quotes_by_attempt_id(q_results)
 
-        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, valid_quotes)
+        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, inv_by_key, quote_by_att)
         eval_err = [e for e in evals if e.offset_seconds_before_kickoff == 86400 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
         eval_ok = [e for e in evals if e.offset_seconds_before_kickoff == 3600 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
 
@@ -301,17 +313,17 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 10. Missing attempt remains UNKNOWN even when another checkpoint has quotes
     def test_missing_attempt_remains_unknown_despite_other_quotes(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att_ok = self._sample_attempt("ATT-OK", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z", result="QUOTES_CAPTURED", quote_snapshot_id="SNAP-OK")
         q_yes = self._sample_quote("ATT-OK", outcome_id="YES", quote_snapshot_id="SNAP-OK", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-YES")
         q_no = self._sample_quote("ATT-OK", outcome_id="NO", quote_snapshot_id="SNAP-OK", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-NO")
 
-        att_results, v_by_id, v_by_key = parse_observation_attempts([att_ok], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, v_by_key, inv_by_key = parse_observation_attempts([att_ok], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q_yes, q_no], fixtures, mappings, v_by_id, "TEST_PROVIDER")
-        valid_quotes = [r.quote for r in q_results if r.is_valid and r.quote is not None]
+        quote_by_att = self._group_quotes_by_attempt_id(q_results)
 
-        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, valid_quotes)
+        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, inv_by_key, quote_by_att)
         eval_missing = [e for e in evals if e.offset_seconds_before_kickoff == 86400 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
         self.assertEqual(eval_missing.availability_status, AvailabilityStatus.UNKNOWN)
         self.assertEqual(eval_missing.availability_reason, AvailabilityReason.NO_ATTEMPT_RECORD.value)
@@ -319,7 +331,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 11. Unknown attempt_id quote is rejected and counted as orphan evidence
     def test_unknown_attempt_id_quote_rejected_as_orphan(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         q_orphan = self._sample_quote("NON_EXISTENT_ATTEMPT", outcome_id="YES")
         q_results = parse_prospective_quotes([q_orphan], fixtures, mappings, {}, "TEST_PROVIDER")
@@ -329,9 +341,9 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 12. Quote attempt_id mismatch is rejected
     def test_quote_attempt_mismatch_rejected(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
         att = self._sample_attempt("ATT-1", fixture_id="FIX-101", market_id="HOME_WIN_EITHER_HALF")
-        att_results, v_by_id, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
 
         q_mismatch = self._sample_quote("ATT-1", outcome_id="YES")
         q_mismatch["market_id"] = "AWAY_WIN_EITHER_HALF"
@@ -342,12 +354,12 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 13. Duplicate attempt_id is invalid even across different expected keys
     def test_duplicate_attempt_id_invalidates_all_matching_records(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att1 = self._sample_attempt("ATT-DUP", offset=86400, scheduled_at="2026-08-09T15:00:00Z", attempted_at="2026-08-09T15:00:00Z")
         att2 = self._sample_attempt("ATT-DUP", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z")
 
-        att_results, v_by_id, v_by_key = parse_observation_attempts([att1, att2], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, v_by_key, inv_by_key = parse_observation_attempts([att1, att2], fixtures, mappings, "TEST_PROVIDER")
         self.assertFalse(att_results[0].is_valid)
         self.assertFalse(att_results[1].is_valid)
         self.assertIn("DUPLICATE_ATTEMPT_ID", att_results[0].rejection_reasons)
@@ -356,24 +368,24 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 14. Quote age 900 seconds at attempted_at passes
     def test_quote_age_900_at_attempted_at_passes(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att = self._sample_attempt("ATT-1", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z")
         q = self._sample_quote("ATT-1", outcome_id="YES", observed_at="2026-08-10T13:45:00Z")
 
-        att_results, v_by_id, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
         self.assertTrue(q_results[0].is_valid)
 
     # 15. Quote age 901 seconds fails
     def test_quote_age_901_fails(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att = self._sample_attempt("ATT-1", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z")
         q = self._sample_quote("ATT-1", outcome_id="YES", observed_at="2026-08-10T13:44:59Z")
 
-        att_results, v_by_id, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
         self.assertFalse(q_results[0].is_valid)
         self.assertIn("STALE_QUOTE", q_results[0].rejection_reasons)
@@ -381,12 +393,12 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 16. Quote observed after attempted_at fails
     def test_quote_observed_after_attempted_at_fails(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att = self._sample_attempt("ATT-1", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z")
         q = self._sample_quote("ATT-1", outcome_id="YES", observed_at="2026-08-10T14:01:00Z")
 
-        att_results, v_by_id, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
         self.assertFalse(q_results[0].is_valid)
         self.assertIn("QUOTE_OBSERVED_AFTER_ATTEMPT", q_results[0].rejection_reasons)
@@ -394,12 +406,12 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 17. Permitted late attempt can use quote after scheduled_at but before attempted_at
     def test_permitted_late_attempt_can_use_quote_after_scheduled_at_before_attempted_at(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att = self._sample_attempt("ATT-1", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:04:00Z")
         q = self._sample_quote("ATT-1", outcome_id="YES", observed_at="2026-08-10T14:02:00Z")
 
-        att_results, v_by_id, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
         self.assertTrue(q_results[0].is_valid)
 
@@ -415,16 +427,17 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_fixtures_dataset(fx)
 
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+
         mp = copy.deepcopy(self.mappings_payload)
         mp["schema_version"] = True
         with self.assertRaises(ValueError):
-            load_provider_mappings_dataset(mp, "TEST_PROVIDER")
+            load_provider_mappings_dataset(mp, "TEST_PROVIDER", fixtures)
 
-        fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
         att = self._sample_attempt("ATT-1")
         att["schema_version"] = True
-        att_results, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         self.assertFalse(att_results[0].is_valid)
         self.assertIn("INVALID_SCHEMA_VERSION", att_results[0].rejection_reasons)
 
@@ -437,21 +450,21 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
     # 19. offset=true fails
     def test_offset_true_fails(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
         att = self._sample_attempt("ATT-1")
         att["offset_seconds_before_kickoff"] = True
-        att_results, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         self.assertFalse(att_results[0].is_valid)
         self.assertIn("INVALID_OFFSET_SECONDS", att_results[0].rejection_reasons)
 
     # 20. Unexpected attempt and quote keys fail
     def test_unexpected_attempt_and_quote_keys_fail(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER")
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att = self._sample_attempt("ATT-1")
         att["unexpected_field"] = "extra"
-        att_results, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        att_results, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
         self.assertFalse(att_results[0].is_valid)
         self.assertIn("ATTEMPT_UNEXPECTED_FIELD", att_results[0].rejection_reasons)
 
@@ -554,7 +567,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
 
     # 25. Dirty tracked worktree fails generation
     def test_dirty_tracked_worktree_fails(self) -> None:
-        dirty_state = {"git_sha": "abc", "tracked_worktree_clean": False}
+        dirty_state = {"evidence_git_head_sha": "0123456789abcdef0123456789abcdef01234567", "tracked_worktree_clean": False}
         with self.assertRaises(ProspectiveReplayExportError):
             build_outputs(
                 source_qual_raw=b"",
@@ -758,7 +771,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
             output_paths = {"f1": p1, "f2": out_dir / "file2.txt"}
             contents = {"f1": b"new_f1", "f2": b"new_f2"}
 
-            with patch("shutil.move", side_effect=RuntimeError("Disk failure")):
+            with patch("os.fsync", side_effect=RuntimeError("Disk failure")):
                 with self.assertRaises(ProspectiveReplayExportError):
                     commit_evidence_bundle(output_paths=output_paths, contents=contents, force=True)
 
@@ -806,6 +819,12 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
             ])
             self.assertEqual(ret, 0)
             self.assertTrue(manifest_path.is_file())
+
+            # Verify no odds in valid_quotes.csv
+            valid_quotes_path = td / OUTPUT_FILENAMES["valid_quotes"]
+            reader = csv.reader(io.StringIO(valid_quotes_path.read_text(encoding="utf-8")))
+            header = next(reader)
+            self.assertNotIn("decimal_odds", header)
 
             # Run check
             ret_check = run([

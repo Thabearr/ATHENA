@@ -15,6 +15,7 @@ Safety & Governance Rules:
 
 from __future__ import annotations
 
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 from decimal import Decimal, InvalidOperation, Context, ROUND_HALF_EVEN, localcontext
@@ -32,7 +33,13 @@ from domain.win_either_half_pricing_source_qualification import (
 )
 
 SCHEMA_VERSION = 1
-DEFAULT_PROTOCOL_PATH = Path("artifacts/research-protocols/win-either-half-prospective-replay-v1.json")
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+DEFAULT_PROTOCOL_PATH = (
+    REPOSITORY_ROOT
+    / "artifacts"
+    / "research-protocols"
+    / "win-either-half-prospective-replay-v1.json"
+)
 
 PERMITTED_MARKETS = (
     MarketId.HOME_WIN_EITHER_HALF,
@@ -153,6 +160,7 @@ class AvailabilityReason(str, Enum):
     CAPTURE_ERROR = "CAPTURE_ERROR"
     INVALID_CAPTURE_ERROR_WITH_QUOTES = "INVALID_CAPTURE_ERROR_WITH_QUOTES"
     INVALID_UNAVAILABLE_ATTEMPT_WITH_QUOTES = "INVALID_UNAVAILABLE_ATTEMPT_WITH_QUOTES"
+    INVALID_CAPTURED_ATTEMPT_WITH_REJECTED_QUOTES = "INVALID_CAPTURED_ATTEMPT_WITH_REJECTED_QUOTES"
     NO_VALID_QUOTES_FOR_CAPTURED_ATTEMPT = "NO_VALID_QUOTES_FOR_CAPTURED_ATTEMPT"
     INCOMPLETE_MARKET_SNAPSHOT = "INCOMPLETE_MARKET_SNAPSHOT"
     STALE_QUOTE = "STALE_QUOTE"
@@ -270,6 +278,7 @@ class AttemptParseResult:
     is_valid: bool
     attempt: Optional[ObservationAttempt]
     rejection_reasons: tuple[str, ...]
+    expected_key: Optional[tuple[str, MarketId, int]]
 
 
 @dataclass(frozen=True)
@@ -432,6 +441,7 @@ def load_fixtures_dataset(payload: Mapping[str, Any]) -> dict[str, FixtureMetada
 def load_provider_mappings_dataset(
     payload: Mapping[str, Any],
     expected_provider: str,
+    fixtures: Mapping[str, FixtureMetadata],
 ) -> dict[str, ProviderMapping]:
     """Parse and validate provider fixture/market/selection mappings."""
     assert_no_forbidden_fields(payload)
@@ -510,7 +520,51 @@ def load_provider_mappings_dataset(
             markets=market_map,
         )
 
+    expected_fixture_ids = set(fixtures)
+    supplied_fixture_ids = set(mappings)
+    if supplied_fixture_ids != expected_fixture_ids:
+        missing = sorted(expected_fixture_ids - supplied_fixture_ids)
+        extra = sorted(supplied_fixture_ids - expected_fixture_ids)
+        raise ValueError(
+            "Provider mapping fixture coverage mismatch: "
+            f"missing={missing}, extra={extra}"
+        )
+
+    for fixture_id, mapping in mappings.items():
+        if set(mapping.markets) != set(PERMITTED_MARKETS):
+            raise ValueError(
+                f"Provider mapping market coverage incomplete for {fixture_id}"
+            )
+        for market in PERMITTED_MARKETS:
+            market_mapping = mapping.markets[market]
+            if set(market_mapping.outcomes) != {OutcomeId.YES, OutcomeId.NO}:
+                raise ValueError(
+                    f"Provider mapping outcome coverage incomplete for "
+                    f"{fixture_id} / {market.value}"
+                )
+
     return mappings
+
+
+def candidate_expected_key(
+    record: Mapping[str, Any],
+    fixtures: Mapping[str, FixtureMetadata],
+) -> Optional[tuple[str, MarketId, int]]:
+    """Compute expected key whenever fixture, market and offset are parseable."""
+    fid = record.get("fixture_identifier")
+    if not isinstance(fid, str) or fid not in fixtures:
+        return None
+    mkt_raw = record.get("market_id")
+    try:
+        market = MarketId(mkt_raw) if isinstance(mkt_raw, str) else None
+    except ValueError:
+        market = None
+    if market not in PERMITTED_MARKETS:
+        return None
+    offset = record.get("offset_seconds_before_kickoff")
+    if type(offset) is not int or offset not in FROZEN_CANDIDATE_OFFSETS_SECONDS:
+        return None
+    return (fid, market, offset)
 
 
 def parse_observation_attempts(
@@ -518,20 +572,28 @@ def parse_observation_attempts(
     fixtures: Mapping[str, FixtureMetadata],
     mappings: Mapping[str, ProviderMapping],
     expected_provider: str,
-) -> tuple[list[AttemptParseResult], dict[str, ObservationAttempt], dict[tuple[str, MarketId, int], ObservationAttempt]]:
+) -> tuple[
+    list[AttemptParseResult],
+    dict[str, ObservationAttempt],
+    dict[tuple[str, MarketId, int], ObservationAttempt],
+    dict[tuple[str, MarketId, int], tuple[AttemptParseResult, ...]],
+]:
     """Parse raw observation attempts, validate strict fields, and enforce unique attempt IDs and expected keys."""
     results: list[AttemptParseResult] = []
     seen_attempt_ids: dict[str, int] = {}
-    seen_expected_keys: dict[tuple[str, MarketId, int], int] = {}
+    expected_key_counts: Counter[tuple[str, MarketId, int]] = Counter()
 
-    # Count occurrences of attempt_id across all supplied records
     for record in raw_records:
         aid = record.get("attempt_id")
         if isinstance(aid, str) and aid.strip():
             seen_attempt_ids[aid] = seen_attempt_ids.get(aid, 0) + 1
+        key = candidate_expected_key(record, fixtures)
+        if key is not None:
+            expected_key_counts[key] += 1
 
     valid_attempts_by_id: dict[str, ObservationAttempt] = {}
     valid_attempts_by_key: dict[tuple[str, MarketId, int], ObservationAttempt] = {}
+    invalid_attempts_by_key_map: dict[tuple[str, MarketId, int], list[AttemptParseResult]] = {}
 
     for record in raw_records:
         rec_sha = canonical_record_sha256(record)
@@ -652,15 +714,21 @@ def parse_observation_attempts(
                 reasons.append("MAPPING_MARKET_MISMATCH")
 
         # Expected key duplicate check
-        expected_key = (fid, market, offset) if (fid and market and offset is not None) else None
-        if expected_key is not None:
-            seen_expected_keys[expected_key] = seen_expected_keys.get(expected_key, 0) + 1
-            if seen_expected_keys[expected_key] > 1:
-                reasons.append("DUPLICATE_EXPECTED_KEY")
+        expected_key = candidate_expected_key(record, fixtures)
+        if expected_key is not None and expected_key_counts[expected_key] > 1:
+            reasons.append("DUPLICATE_EXPECTED_KEY")
 
         is_valid = len(reasons) == 0
         attempt_obj = None
-        if is_valid and expected_key is not None and aid is not None and market is not None and result_enum is not None and sched_dt is not None and att_dt is not None:
+        if (
+            is_valid
+            and expected_key is not None
+            and aid is not None
+            and market is not None
+            and result_enum is not None
+            and sched_dt is not None
+            and att_dt is not None
+        ):
             attempt_obj = ObservationAttempt(
                 input_record_sha256=rec_sha,
                 attempt_id=aid,
@@ -681,17 +749,23 @@ def parse_observation_attempts(
             valid_attempts_by_id[aid] = attempt_obj
             valid_attempts_by_key[expected_key] = attempt_obj
 
-        results.append(
-            AttemptParseResult(
-                raw_record=record,
-                input_record_sha256=rec_sha,
-                is_valid=is_valid,
-                attempt=attempt_obj,
-                rejection_reasons=tuple(reasons),
-            )
+        parse_result = AttemptParseResult(
+            raw_record=record,
+            input_record_sha256=rec_sha,
+            is_valid=is_valid,
+            attempt=attempt_obj,
+            rejection_reasons=tuple(reasons),
+            expected_key=expected_key,
         )
+        if not is_valid and expected_key is not None:
+            invalid_attempts_by_key_map.setdefault(expected_key, []).append(parse_result)
 
-    return results, valid_attempts_by_id, valid_attempts_by_key
+        results.append(parse_result)
+
+    invalid_attempts_by_key = {
+        k: tuple(v) for k, v in invalid_attempts_by_key_map.items()
+    }
+    return results, valid_attempts_by_id, valid_attempts_by_key, invalid_attempts_by_key
 
 
 def parse_prospective_quotes(
@@ -872,14 +946,10 @@ def parse_prospective_quotes(
 def evaluate_prospective_replay(
     fixtures: Mapping[str, FixtureMetadata],
     valid_attempts_by_key: Mapping[tuple[str, MarketId, int], ObservationAttempt],
-    valid_quotes: Sequence[ProspectiveQuote],
+    invalid_attempts_by_key: Mapping[tuple[str, MarketId, int], Sequence[AttemptParseResult]],
+    quote_results_by_attempt_id: Mapping[str, Sequence[QuoteParseResult]],
 ) -> tuple[list[ValidatedSnapshot], list[EvaluationRecord]]:
     """Evaluate 12 expected keys per fixture according to strict precedence rules."""
-    # Index valid quotes by attempt_id
-    quotes_by_attempt_id: dict[str, list[ProspectiveQuote]] = {}
-    for q in valid_quotes:
-        quotes_by_attempt_id.setdefault(q.attempt_id, []).append(q)
-
     snapshots: list[ValidatedSnapshot] = []
     evaluations: list[EvaluationRecord] = []
 
@@ -895,10 +965,36 @@ def evaluate_prospective_replay(
                 key = (fixture.fixture_identifier, market, offset)
                 scheduled_at = fixture.kickoff - timedelta(seconds=offset)
 
+                invalid_rows = invalid_attempts_by_key.get(key, ())
+                if invalid_rows:
+                    eval_sha = hashlib.sha256(
+                        f"{fixture.fixture_identifier}|{market.value}|{offset}|{AvailabilityStatus.INVALID.value}|{AvailabilityReason.INVALID_ATTEMPT_RECORD.value}".encode("utf-8")
+                    ).hexdigest()
+                    evaluations.append(
+                        EvaluationRecord(
+                            evaluation_record_sha256=eval_sha,
+                            fixture_identifier=fixture.fixture_identifier,
+                            market_id=market,
+                            offset_seconds_before_kickoff=offset,
+                            scheduled_at=scheduled_at,
+                            availability_status=AvailabilityStatus.INVALID,
+                            availability_reason=AvailabilityReason.INVALID_ATTEMPT_RECORD.value,
+                            attempt_id=None,
+                            attempt_result=None,
+                            attempted_at=None,
+                            attempt_window_seconds_used=None,
+                            quote_snapshot_id=None,
+                            observed_at=None,
+                            quote_age_seconds_at_attempt=None,
+                            has_valid_snapshot=False,
+                        )
+                    )
+                    continue
+
                 if key not in valid_attempts_by_key:
                     # Missing attempt
                     eval_sha = hashlib.sha256(
-                        f"{fixture.fixture_identifier}|{market.value}|{offset}|UNKNOWN|{AvailabilityReason.NO_ATTEMPT_RECORD.value}".encode("utf-8")
+                        f"{fixture.fixture_identifier}|{market.value}|{offset}|{AvailabilityStatus.UNKNOWN.value}|{AvailabilityReason.NO_ATTEMPT_RECORD.value}".encode("utf-8")
                     ).hexdigest()
                     evaluations.append(
                         EvaluationRecord(
@@ -922,11 +1018,19 @@ def evaluate_prospective_replay(
                     continue
 
                 attempt = valid_attempts_by_key[key]
-                linked_quotes = quotes_by_attempt_id.get(attempt.attempt_id, [])
+                linked_results = list(quote_results_by_attempt_id.get(attempt.attempt_id, []))
+                linked_valid_quotes = [
+                    result.quote
+                    for result in linked_results
+                    if result.is_valid and result.quote is not None
+                ]
+                linked_invalid_results = [
+                    result for result in linked_results if not result.is_valid
+                ]
                 window_used = int(abs((attempt.attempted_at - scheduled_at).total_seconds()))
 
                 if attempt.result == AttemptResult.CAPTURE_ERROR:
-                    if linked_quotes:
+                    if linked_results:
                         status = AvailabilityStatus.INVALID
                         reason = AvailabilityReason.INVALID_CAPTURE_ERROR_WITH_QUOTES.value
                     else:
@@ -961,7 +1065,7 @@ def evaluate_prospective_replay(
                     AttemptResult.FIXTURE_UNAVAILABLE,
                     AttemptResult.SOURCE_UNAVAILABLE,
                 ):
-                    if linked_quotes:
+                    if linked_results:
                         status = AvailabilityStatus.INVALID
                         reason = AvailabilityReason.INVALID_UNAVAILABLE_ATTEMPT_WITH_QUOTES.value
                     else:
@@ -997,10 +1101,37 @@ def evaluate_prospective_replay(
                     continue
 
                 if attempt.result == AttemptResult.QUOTES_CAPTURED:
-                    yes_quotes = [q for q in linked_quotes if q.outcome_id == OutcomeId.YES]
-                    no_quotes = [q for q in linked_quotes if q.outcome_id == OutcomeId.NO]
+                    if linked_invalid_results:
+                        status = AvailabilityStatus.INVALID
+                        reason = AvailabilityReason.INVALID_CAPTURED_ATTEMPT_WITH_REJECTED_QUOTES.value
+                        eval_sha = hashlib.sha256(
+                            f"{fixture.fixture_identifier}|{market.value}|{offset}|{status.value}|{reason}".encode("utf-8")
+                        ).hexdigest()
+                        evaluations.append(
+                            EvaluationRecord(
+                                evaluation_record_sha256=eval_sha,
+                                fixture_identifier=fixture.fixture_identifier,
+                                market_id=market,
+                                offset_seconds_before_kickoff=offset,
+                                scheduled_at=scheduled_at,
+                                availability_status=status,
+                                availability_reason=reason,
+                                attempt_id=attempt.attempt_id,
+                                attempt_result=attempt.result.value,
+                                attempted_at=attempt.attempted_at,
+                                attempt_window_seconds_used=window_used,
+                                quote_snapshot_id=attempt.quote_snapshot_id,
+                                observed_at=None,
+                                quote_age_seconds_at_attempt=None,
+                                has_valid_snapshot=False,
+                            )
+                        )
+                        continue
 
-                    if not linked_quotes:
+                    yes_quotes = [q for q in linked_valid_quotes if q.outcome_id == OutcomeId.YES]
+                    no_quotes = [q for q in linked_valid_quotes if q.outcome_id == OutcomeId.NO]
+
+                    if not linked_valid_quotes:
                         status = AvailabilityStatus.INVALID
                         reason = AvailabilityReason.NO_VALID_QUOTES_FOR_CAPTURED_ATTEMPT.value
                         eval_sha = hashlib.sha256(

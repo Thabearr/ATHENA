@@ -37,12 +37,14 @@ from domain.win_either_half_prospective_replay import (
     MAXIMUM_QUOTE_AGE_SECONDS,
     PERMITTED_MARKETS,
     SCHEMA_VERSION,
+    AttemptParseResult,
     AttemptResult,
     AvailabilityReason,
     AvailabilityStatus,
     EvaluationRecord,
     ObservationAttempt,
     ProspectiveQuote,
+    QuoteParseResult,
     ValidatedSnapshot,
     assert_no_forbidden_fields,
     build_expected_protocol_contract,
@@ -128,6 +130,19 @@ def read_jsonl_records(raw_bytes: bytes) -> list[dict[str, Any]]:
     return records
 
 
+def assert_no_odds_in_json(obj: Any) -> None:
+    """Recursively verify no odds value fields are present in JSON output."""
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            lower_k = str(k).lower()
+            if lower_k in ("decimal_odds", "odds", "price", "odds_value", "odds_values"):
+                raise ProspectiveReplayExportError(f"Prohibited odds key in JSON: {k}")
+            assert_no_odds_in_json(v)
+    elif isinstance(obj, (list, tuple)):
+        for item in obj:
+            assert_no_odds_in_json(item)
+
+
 def build_outputs(
     *,
     source_qual_raw: bytes,
@@ -160,13 +175,14 @@ def build_outputs(
     if not code_state.get("tracked_worktree_clean"):
         raise ProspectiveReplayExportError("Tracked worktree is dirty")
 
-    git_sha = code_state.get("git_sha")
-    if not git_sha or not isinstance(git_sha, str):
-        raise ProspectiveReplayExportError("Invalid git SHA from get_code_state")
+    git_sha = code_state.get("evidence_git_head_sha")
+    if not isinstance(git_sha, str) or len(git_sha) != 40 or any(ch not in "0123456789abcdefABCDEF" for ch in git_sha):
+        raise ProspectiveReplayExportError("Invalid evidence Git SHA from get_code_state")
+    git_sha = git_sha.lower()
 
-    # 1. Validate Protocol
+    # 1. Validate Protocol against immutable committed path
     try:
-        validate_protocol_contract(protocol_payload, protocol_raw, committed_path=protocol_path)
+        validate_protocol_contract(protocol_payload, protocol_raw, committed_path=DEFAULT_PROTOCOL_PATH)
     except ValueError as err:
         raise ProspectiveReplayExportError(f"Protocol contract validation failed: {err}") from err
 
@@ -182,14 +198,14 @@ def build_outputs(
     except ValueError as err:
         raise ProspectiveReplayExportError(f"Fixtures dataset validation failed: {err}") from err
 
-    # 4. Load Provider Mappings
+    # 4. Load Provider Mappings with exact fixture/market/outcome coverage
     try:
-        mappings = load_provider_mappings_dataset(provider_mappings_payload, expected_provider)
+        mappings = load_provider_mappings_dataset(provider_mappings_payload, expected_provider, fixtures)
     except ValueError as err:
         raise ProspectiveReplayExportError(f"Provider mappings validation failed: {err}") from err
 
     # 5. Parse Observation Attempts
-    attempt_parse_results, valid_attempts_by_id, valid_attempts_by_key = parse_observation_attempts(
+    attempt_parse_results, valid_attempts_by_id, valid_attempts_by_key, invalid_attempts_by_key = parse_observation_attempts(
         raw_records=raw_attempts,
         fixtures=fixtures,
         mappings=mappings,
@@ -205,13 +221,20 @@ def build_outputs(
         expected_provider=expected_provider,
     )
 
+    quote_results_by_attempt_id: dict[str, list[QuoteParseResult]] = {}
+    for result in quote_parse_results:
+        aid = result.raw_record.get("attempt_id")
+        if isinstance(aid, str) and aid.strip():
+            quote_results_by_attempt_id.setdefault(aid.strip(), []).append(result)
+
     valid_quotes = [r.quote for r in quote_parse_results if r.is_valid and r.quote is not None]
 
-    # 7. Evaluate Replay
+    # 7. Evaluate Replay with raw quote results by attempt_id
     snapshots, evaluations = evaluate_prospective_replay(
         fixtures=fixtures,
         valid_attempts_by_key=valid_attempts_by_key,
-        valid_quotes=valid_quotes,
+        invalid_attempts_by_key=invalid_attempts_by_key,
+        quote_results_by_attempt_id=quote_results_by_attempt_id,
     )
 
     # Build CSV tables deterministically
@@ -277,7 +300,7 @@ def build_outputs(
     generated_files["normalized_attempts"] = format_csv(att_cols, att_rows)
     row_counts["normalized_attempts"] = len(att_rows)
 
-    # Table 2: valid_quotes
+    # Table 2: valid_quotes (NO decimal_odds emitted)
     vq_cols = [
         "input_record_sha256",
         "attempt_id",
@@ -290,7 +313,6 @@ def build_outputs(
         "quote_snapshot_id",
         "observed_at",
         "fixture_kickoff",
-        "decimal_odds",
         "provider_event_identifier",
         "provider_market_identifier",
         "provider_selection_identifier",
@@ -318,7 +340,6 @@ def build_outputs(
             q.quote_snapshot_id,
             q.observed_at,
             q.fixture_kickoff,
-            str(q.decimal_odds),
             q.provider_event_identifier,
             q.provider_market_identifier,
             q.provider_selection_identifier,
@@ -566,6 +587,8 @@ def build_outputs(
         "no_production_approval": "Stage 5B2 prospective replay is observation evidence only.",
     }
 
+    assert_no_odds_in_json(summary_dict)
+
     summary_bytes = (
         json.dumps(
             summary_dict,
@@ -656,6 +679,33 @@ def build_outputs(
         "permitted_markets": [m.value for m in PERMITTED_MARKETS],
         "market_registry": market_reg_snapshot,
         "model_status_registry": model_status_dict,
+        "snapshot_contract": {
+            "attempt_id_required": True,
+            "quotes_must_link_to_exact_attempt": True,
+            "requires_yes_and_no": True,
+            "same_source": True,
+            "same_provider": True,
+            "same_bookmaker": True,
+            "same_provider_event": True,
+            "same_provider_market": True,
+            "same_snapshot": True,
+            "same_observed_at": True,
+            "maximum_quote_age_seconds": MAXIMUM_QUOTE_AGE_SECONDS,
+            "freshness_reference": "ATTEMPTED_AT",
+            "odds_values_emitted": False,
+        },
+        "prohibited_calculations": [
+            "MODEL_PROBABILITY",
+            "FAIR_ODDS",
+            "EDGE",
+            "EXPECTED_VALUE",
+            "KELLY",
+            "STAKE",
+            "ACCA_SELECTION",
+            "BETSLIP",
+            "BOOKING_CODE",
+            "BET_DECISION",
+        ],
         "holdout_governance": {
             "final_test_season": "2025-26",
             "final_test_status": "ALREADY_CONSUMED_AUDIT_HOLDOUT",
@@ -672,6 +722,8 @@ def build_outputs(
         "outputs": manifest_outputs,
         "no_production_approval": "Stage 5B2 is observation evidence only.",
     }
+
+    assert_no_odds_in_json(manifest_dict)
 
     # Compute logical manifest hash before adding logical_manifest_sha256
     manifest_pre_bytes = json.dumps(
@@ -711,66 +763,67 @@ def commit_evidence_bundle(
     force: bool = False,
 ) -> None:
     """Atomic multi-file write with fsync, rollback on error, and overwrite protection."""
-    first_path = next(iter(output_paths.values()))
-    output_dir = first_path.parent
+    if set(output_paths) != set(contents):
+        raise ProspectiveReplayExportError("Output paths and content keys differ")
+
+    resolved_parents = {path.parent.resolve() for path in output_paths.values()}
+    if len(resolved_parents) != 1:
+        raise ProspectiveReplayExportError("All evidence outputs must share one directory")
+
+    output_dir = next(iter(resolved_parents))
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check overwrite protection
-    if not force:
-        for path in output_paths.values():
-            if path.exists():
-                raise ProspectiveReplayExportError(
-                    f"Destination exists and --force not specified: {path}"
-                )
+    if not force and any(path.exists() for path in output_paths.values()):
+        raise ProspectiveReplayExportError("Evidence output already exists; use --force")
 
-    stage_dir = Path(tempfile.mkdtemp(prefix="stage5b2_stage_", dir=output_dir))
-    rollback_dir = Path(tempfile.mkdtemp(prefix="stage5b2_backup_", dir=output_dir))
-
-    staged_files: list[Path] = []
-    backed_up_files: list[tuple[Path, Path]] = []
+    stage_dir = Path(tempfile.mkdtemp(prefix=".stage5b2-stage-", dir=output_dir))
+    rollback_dir = Path(tempfile.mkdtemp(prefix=".stage5b2-rollback-", dir=output_dir))
+    backups: list[tuple[Path, Path]] = []
+    installed: list[Path] = []
 
     try:
-        # Write and fsync all files in stage_dir
-        for name, dest_path in output_paths.items():
-            content = contents[name]
-            staged_path = stage_dir / dest_path.name
-            with open(staged_path, "wb") as fh:
-                fh.write(content)
-                fh.flush()
-                os.fsync(fh.fileno())
-            staged_files.append(staged_path)
+        for name in sorted(output_paths):
+            destination = output_paths[name]
+            staged = stage_dir / destination.name
+            with staged.open("wb") as handle:
+                handle.write(contents[name])
+                handle.flush()
+                os.fsync(handle.fileno())
 
-        # Move any existing files to backup
-        for name, dest_path in output_paths.items():
-            if dest_path.exists():
-                backup_path = rollback_dir / dest_path.name
-                shutil.move(str(dest_path), str(backup_path))
-                backed_up_files.append((dest_path, backup_path))
+        for name in sorted(output_paths):
+            destination = output_paths[name]
+            if destination.exists():
+                backup = rollback_dir / destination.name
+                os.replace(destination, backup)
+                backups.append((backup, destination))
 
-        # Move staged files into destination
-        for staged_path in staged_files:
-            target = output_dir / staged_path.name
-            shutil.move(str(staged_path), str(target))
+        for name in sorted(output_paths):
+            destination = output_paths[name]
+            staged = stage_dir / destination.name
+            os.replace(staged, destination)
+            installed.append(destination)
 
-        # Fsync output directory if supported
         try:
-            dir_fd = os.open(str(output_dir), os.O_RDONLY)
+            directory_fd = os.open(str(output_dir), os.O_RDONLY)
             try:
-                os.fsync(dir_fd)
+                os.fsync(directory_fd)
             finally:
-                os.close(dir_fd)
+                os.close(directory_fd)
         except Exception:
             pass
 
-    except Exception as err:
-        # Rollback
-        for dest_path, backup_path in backed_up_files:
-            if backup_path.exists():
-                shutil.move(str(backup_path), str(dest_path))
-        raise ProspectiveReplayExportError(f"Atomic commit failed: {err}") from err
+    except Exception as error:
+        for destination in reversed(installed):
+            if destination.exists():
+                destination.unlink()
+        for backup, destination in reversed(backups):
+            if backup.exists():
+                os.replace(backup, destination)
+        raise ProspectiveReplayExportError(f"Atomic evidence commit failed: {error}") from error
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)
         shutil.rmtree(rollback_dir, ignore_errors=True)
+
 
 
 def check_manifest(
