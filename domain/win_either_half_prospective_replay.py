@@ -204,8 +204,8 @@ class ObservationAttempt:
     source: str
     provider_identifier: str
     bookmaker_identifier: str
-    provider_event_identifier: str
-    provider_market_identifier: str
+    provider_event_identifier: Optional[str]
+    provider_market_identifier: Optional[str]
     offset_seconds_before_kickoff: int
     scheduled_at: datetime
     attempted_at: datetime
@@ -438,6 +438,111 @@ def load_fixtures_dataset(payload: Mapping[str, Any]) -> dict[str, FixtureMetada
     return fixtures
 
 
+def validate_attempt_mapping_semantics(
+    *,
+    fixture_identifier: str,
+    market: MarketId,
+    result: AttemptResult,
+    provider_identifier: Any,
+    source: Any,
+    bookmaker_identifier: Any,
+    provider_event_identifier: Any,
+    provider_market_identifier: Any,
+    mappings: Mapping[str, ProviderMapping],
+) -> tuple[str, ...]:
+    """Validate attempt identifiers against partial provider mappings according to result semantics."""
+    reasons: set[str] = set()
+
+    if result == AttemptResult.QUOTES_CAPTURED:
+        mapping = mappings.get(fixture_identifier)
+        if mapping is None:
+            reasons.add("MISSING_CAPTURE_MAPPING")
+        else:
+            if (
+                provider_identifier != mapping.provider_identifier
+                or source != mapping.source
+                or bookmaker_identifier != mapping.bookmaker_identifier
+                or provider_event_identifier != mapping.provider_event_identifier
+            ):
+                reasons.add("MAPPING_MISMATCH")
+            market_mapping = mapping.markets.get(market)
+            if market_mapping is None:
+                reasons.add("MISSING_CAPTURE_MAPPING")
+            else:
+                if provider_market_identifier != market_mapping.provider_market_identifier:
+                    reasons.add("MAPPING_MISMATCH")
+
+        if not isinstance(provider_event_identifier, str) or not provider_event_identifier.strip():
+            reasons.add("PROVIDER_EVENT_ID_REQUIRED")
+        if not isinstance(provider_market_identifier, str) or not provider_market_identifier.strip():
+            reasons.add("PROVIDER_MARKET_ID_REQUIRED")
+
+    elif result == AttemptResult.MARKET_UNAVAILABLE:
+        mapping = mappings.get(fixture_identifier)
+        if mapping is None:
+            reasons.add("MISSING_EVENT_MAPPING_FOR_MARKET_UNAVAILABLE")
+        else:
+            if (
+                provider_identifier != mapping.provider_identifier
+                or source != mapping.source
+                or bookmaker_identifier != mapping.bookmaker_identifier
+                or provider_event_identifier != mapping.provider_event_identifier
+            ):
+                reasons.add("MAPPING_MISMATCH")
+            if market in mapping.markets:
+                reasons.add("MAPPING_CONTRADICTS_MARKET_UNAVAILABLE")
+
+        if not isinstance(provider_event_identifier, str) or not provider_event_identifier.strip():
+            reasons.add("PROVIDER_EVENT_ID_REQUIRED")
+        if provider_market_identifier is not None:
+            reasons.add("PROVIDER_MARKET_ID_MUST_BE_NULL")
+
+    elif result == AttemptResult.FIXTURE_UNAVAILABLE:
+        if fixture_identifier in mappings:
+            reasons.add("MAPPING_CONTRADICTS_FIXTURE_UNAVAILABLE")
+        if provider_event_identifier is not None:
+            reasons.add("PROVIDER_EVENT_ID_MUST_BE_NULL")
+        if provider_market_identifier is not None:
+            reasons.add("PROVIDER_MARKET_ID_MUST_BE_NULL")
+
+    elif result == AttemptResult.SOURCE_UNAVAILABLE:
+        if provider_event_identifier is not None:
+            reasons.add("PROVIDER_EVENT_ID_MUST_BE_NULL")
+        if provider_market_identifier is not None:
+            reasons.add("PROVIDER_MARKET_ID_MUST_BE_NULL")
+
+    elif result == AttemptResult.CAPTURE_ERROR:
+        if provider_event_identifier is None and provider_market_identifier is None:
+            pass
+        elif (
+            isinstance(provider_event_identifier, str)
+            and provider_event_identifier.strip()
+            and isinstance(provider_market_identifier, str)
+            and provider_market_identifier.strip()
+        ):
+            mapping = mappings.get(fixture_identifier)
+            if mapping is None:
+                reasons.add("MISSING_CAPTURE_MAPPING")
+            else:
+                if (
+                    provider_identifier != mapping.provider_identifier
+                    or source != mapping.source
+                    or bookmaker_identifier != mapping.bookmaker_identifier
+                    or provider_event_identifier != mapping.provider_event_identifier
+                ):
+                    reasons.add("MAPPING_MISMATCH")
+                market_mapping = mapping.markets.get(market)
+                if market_mapping is None:
+                    reasons.add("MISSING_CAPTURE_MAPPING")
+                else:
+                    if provider_market_identifier != market_mapping.provider_market_identifier:
+                        reasons.add("MAPPING_MISMATCH")
+        else:
+            reasons.add("PARTIAL_CAPTURE_ERROR_IDENTIFIERS")
+
+    return tuple(sorted(reasons))
+
+
 def load_provider_mappings_dataset(
     payload: Mapping[str, Any],
     expected_provider: str,
@@ -451,6 +556,7 @@ def load_provider_mappings_dataset(
     if not isinstance(mappings_list, list):
         raise ValueError("Provider mappings payload missing 'mappings' list")
 
+    allowed_fixture_ids = set(fixtures)
     mappings: dict[str, ProviderMapping] = {}
     for item in mappings_list:
         if not isinstance(item, Mapping):
@@ -482,6 +588,14 @@ def load_provider_mappings_dataset(
         if not isinstance(markets_raw, Mapping):
             raise ValueError("Mapping missing markets object")
 
+        allowed_market_keys = {market.value for market in PERMITTED_MARKETS}
+        supplied_market_keys = set(markets_raw)
+        unexpected_market_keys = sorted(supplied_market_keys - allowed_market_keys)
+        if unexpected_market_keys:
+            raise ValueError(
+                f"Provider mapping contains unsupported market keys for {fid}: {unexpected_market_keys}"
+            )
+
         market_map: dict[MarketId, MarketMapping] = {}
         for market in PERMITTED_MARKETS:
             mkt_payload = markets_raw.get(market.value)
@@ -496,15 +610,33 @@ def load_provider_mappings_dataset(
             if not isinstance(outcomes_raw, Mapping):
                 raise ValueError(f"Mapping missing outcomes for {market.value}")
 
-            outcome_map: dict[OutcomeId, OutcomeMapping] = {}
-            for outcome in (OutcomeId.YES, OutcomeId.NO):
-                sel_id = outcomes_raw.get(outcome.value)
-                if not isinstance(sel_id, str) or not sel_id.strip():
-                    raise ValueError(f"Mapping missing outcome {outcome.value} for {market.value}")
-                outcome_map[outcome] = OutcomeMapping(
-                    outcome_id=outcome,
-                    provider_selection_identifier=sel_id,
+            outcome_keys = set(outcomes_raw)
+            if outcome_keys != {OutcomeId.YES.value, OutcomeId.NO.value}:
+                raise ValueError(
+                    f"Provider mapping outcomes must be exactly YES and NO for {fid} / {market.value}"
                 )
+
+            yes_identifier = outcomes_raw[OutcomeId.YES.value]
+            no_identifier = outcomes_raw[OutcomeId.NO.value]
+            if not isinstance(yes_identifier, str) or not yes_identifier.strip():
+                raise ValueError(f"Mapping missing YES selection for {fid} / {market.value}")
+            if not isinstance(no_identifier, str) or not no_identifier.strip():
+                raise ValueError(f"Mapping missing NO selection for {fid} / {market.value}")
+            if yes_identifier == no_identifier:
+                raise ValueError(
+                    f"YES and NO provider selection identifiers must differ for {fid} / {market.value}"
+                )
+
+            outcome_map: dict[OutcomeId, OutcomeMapping] = {
+                OutcomeId.YES: OutcomeMapping(
+                    outcome_id=OutcomeId.YES,
+                    provider_selection_identifier=yes_identifier,
+                ),
+                OutcomeId.NO: OutcomeMapping(
+                    outcome_id=OutcomeId.NO,
+                    provider_selection_identifier=no_identifier,
+                ),
+            }
 
             market_map[market] = MarketMapping(
                 market_id=market,
@@ -520,28 +652,11 @@ def load_provider_mappings_dataset(
             markets=market_map,
         )
 
-    expected_fixture_ids = set(fixtures)
-    supplied_fixture_ids = set(mappings)
-    if supplied_fixture_ids != expected_fixture_ids:
-        missing = sorted(expected_fixture_ids - supplied_fixture_ids)
-        extra = sorted(supplied_fixture_ids - expected_fixture_ids)
+    extra_fixture_ids = sorted(set(mappings) - allowed_fixture_ids)
+    if extra_fixture_ids:
         raise ValueError(
-            "Provider mapping fixture coverage mismatch: "
-            f"missing={missing}, extra={extra}"
+            f"Provider mappings contain unknown fixtures: {extra_fixture_ids}"
         )
-
-    for fixture_id, mapping in mappings.items():
-        if set(mapping.markets) != set(PERMITTED_MARKETS):
-            raise ValueError(
-                f"Provider mapping market coverage incomplete for {fixture_id}"
-            )
-        for market in PERMITTED_MARKETS:
-            market_mapping = mapping.markets[market]
-            if set(market_mapping.outcomes) != {OutcomeId.YES, OutcomeId.NO}:
-                raise ValueError(
-                    f"Provider mapping outcome coverage incomplete for "
-                    f"{fixture_id} / {market.value}"
-                )
 
     return mappings
 
@@ -698,27 +813,28 @@ def parse_observation_attempts(
                 if delta_sec > ATTEMPT_WINDOW_SECONDS:
                     reasons.append("ATTEMPT_WINDOW_EXCEEDED")
 
-        # Provider mapping checks
-        if fid in mappings and market in PERMITTED_MARKETS:
-            mapping = mappings[fid]
-            if prov != mapping.provider_identifier:
-                reasons.append("MAPPING_PROVIDER_MISMATCH")
-            if src != mapping.source:
-                reasons.append("MAPPING_SOURCE_MISMATCH")
-            if bookmaker != mapping.bookmaker_identifier:
-                reasons.append("MAPPING_BOOKMAKER_MISMATCH")
-            if prov_event != mapping.provider_event_identifier:
-                reasons.append("MAPPING_EVENT_MISMATCH")
-            mkt_map = mapping.markets.get(market)
-            if mkt_map is None or prov_mkt != mkt_map.provider_market_identifier:
-                reasons.append("MAPPING_MARKET_MISMATCH")
+        # Provider mapping checks according to result semantics
+        if fid in fixtures and market in PERMITTED_MARKETS and result_enum is not None:
+            mapping_reasons = validate_attempt_mapping_semantics(
+                fixture_identifier=fid,
+                market=market,
+                result=result_enum,
+                provider_identifier=prov,
+                source=src,
+                bookmaker_identifier=bookmaker,
+                provider_event_identifier=prov_event,
+                provider_market_identifier=prov_mkt,
+                mappings=mappings,
+            )
+            reasons.extend(mapping_reasons)
 
         # Expected key duplicate check
         expected_key = candidate_expected_key(record, fixtures)
         if expected_key is not None and expected_key_counts[expected_key] > 1:
             reasons.append("DUPLICATE_EXPECTED_KEY")
 
-        is_valid = len(reasons) == 0
+        normalized_reasons = tuple(sorted(set(reasons)))
+        is_valid = len(normalized_reasons) == 0
         attempt_obj = None
         if (
             is_valid
@@ -754,7 +870,7 @@ def parse_observation_attempts(
             input_record_sha256=rec_sha,
             is_valid=is_valid,
             attempt=attempt_obj,
-            rejection_reasons=tuple(reasons),
+            rejection_reasons=normalized_reasons,
             expected_key=expected_key,
         )
         if not is_valid and expected_key is not None:
@@ -882,12 +998,12 @@ def parse_prospective_quotes(
 
                 if obs_dt is not None and fid in fixtures:
                     fixture = fixtures[fid]
-                    if obs_dt > att.attempted_at:
-                        reasons.append("QUOTE_OBSERVED_AFTER_ATTEMPT")
                     if obs_dt >= fixture.kickoff:
                         reasons.append("QUOTE_OBSERVED_AT_OR_AFTER_KICKOFF")
-                    age_seconds = int((att.attempted_at - obs_dt).total_seconds())
-                    if age_seconds < 0 or age_seconds > MAXIMUM_QUOTE_AGE_SECONDS:
+                    quote_age = att.attempted_at - obs_dt
+                    if quote_age < timedelta(0):
+                        reasons.append("QUOTE_OBSERVED_AFTER_ATTEMPT")
+                    elif quote_age > timedelta(seconds=MAXIMUM_QUOTE_AGE_SECONDS):
                         reasons.append("STALE_QUOTE")
 
         # Validate against provider mappings
@@ -901,7 +1017,8 @@ def parse_prospective_quotes(
             elif outcome not in mkt_map.outcomes or prov_sel != mkt_map.outcomes[outcome].provider_selection_identifier:
                 reasons.append("MAPPING_SELECTION_MISMATCH")
 
-        is_valid = len(reasons) == 0
+        normalized_reasons = tuple(sorted(set(reasons)))
+        is_valid = len(normalized_reasons) == 0
         quote_obj = None
         if (
             is_valid
@@ -936,7 +1053,7 @@ def parse_prospective_quotes(
                 input_record_sha256=rec_sha,
                 is_valid=is_valid,
                 quote=quote_obj,
-                rejection_reasons=tuple(reasons),
+                rejection_reasons=normalized_reasons,
             )
         )
 
@@ -1286,6 +1403,37 @@ def build_expected_protocol_contract() -> dict[str, Any]:
                 "SOURCE_UNAVAILABLE",
                 "CAPTURE_ERROR",
             ],
+            "identifier_semantics": {
+                "QUOTES_CAPTURED": {
+                    "provider_event_identifier": "REQUIRED_EXACT_MAPPING",
+                    "provider_market_identifier": "REQUIRED_EXACT_MAPPING",
+                },
+                "MARKET_UNAVAILABLE": {
+                    "provider_event_identifier": "REQUIRED_EXACT_FIXTURE_MAPPING",
+                    "provider_market_identifier": "MUST_BE_NULL",
+                    "target_market_mapping": "MUST_BE_ABSENT",
+                },
+                "FIXTURE_UNAVAILABLE": {
+                    "provider_event_identifier": "MUST_BE_NULL",
+                    "provider_market_identifier": "MUST_BE_NULL",
+                    "fixture_mapping": "MUST_BE_ABSENT",
+                },
+                "SOURCE_UNAVAILABLE": {
+                    "provider_event_identifier": "MUST_BE_NULL",
+                    "provider_market_identifier": "MUST_BE_NULL",
+                },
+                "CAPTURE_ERROR": {
+                    "identifier_pair": "BOTH_NULL_OR_BOTH_EXACT_MAPPING",
+                },
+            },
+        },
+        "provider_mapping_contract": {
+            "fixture_coverage": "PARTIAL",
+            "unknown_fixture_mappings_forbidden": True,
+            "permitted_market_keys_only": True,
+            "supplied_market_requires_exact_yes_no": True,
+            "yes_no_selection_identifiers_must_differ": True,
+            "captured_attempt_requires_exact_mapping": True,
         },
         "market_scope": {
             "AWAY_WIN_EITHER_HALF": {

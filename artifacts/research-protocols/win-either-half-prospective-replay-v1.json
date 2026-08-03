@@ -20,7 +20,38 @@
       "FIXTURE_UNAVAILABLE",
       "SOURCE_UNAVAILABLE",
       "CAPTURE_ERROR"
-    ]
+    ],
+    "identifier_semantics": {
+      "QUOTES_CAPTURED": {
+        "provider_event_identifier": "REQUIRED_EXACT_MAPPING",
+        "provider_market_identifier": "REQUIRED_EXACT_MAPPING"
+      },
+      "MARKET_UNAVAILABLE": {
+        "provider_event_identifier": "REQUIRED_EXACT_FIXTURE_MAPPING",
+        "provider_market_identifier": "MUST_BE_NULL",
+        "target_market_mapping": "MUST_BE_ABSENT"
+      },
+      "FIXTURE_UNAVAILABLE": {
+        "provider_event_identifier": "MUST_BE_NULL",
+        "provider_market_identifier": "MUST_BE_NULL",
+        "fixture_mapping": "MUST_BE_ABSENT"
+      },
+      "SOURCE_UNAVAILABLE": {
+        "provider_event_identifier": "MUST_BE_NULL",
+        "provider_market_identifier": "MUST_BE_NULL"
+      },
+      "CAPTURE_ERROR": {
+        "identifier_pair": "BOTH_NULL_OR_BOTH_EXACT_MAPPING"
+      }
+    }
+  },
+  "provider_mapping_contract": {
+    "fixture_coverage": "PARTIAL",
+    "unknown_fixture_mappings_forbidden": true,
+    "permitted_market_keys_only": true,
+    "supplied_market_requires_exact_yes_no": true,
+    "yes_no_selection_identifiers_must_differ": true,
+    "captured_attempt_requires_exact_mapping": true
   },
   "market_scope": {
     "AWAY_WIN_EITHER_HALF": {

@@ -1,135 +1,145 @@
-# Win Either Half Prospective Pricing Replay (Stage 5B2)
+# Win Either Half Prospective Pricing Observations (Stage 5B2)
 
-Stage 5B2 adds provider-agnostic, offline research tooling to measure whether exact Home Team to Win Either Half and Away Team to Win Either Half YES/NO bookmaker snapshots would have been available and fresh at predeclared times before kickoff.
+Stage 5B2 records and evaluates offline prospective attempts to observe exact Home Team to Win Either Half and Away Team to Win Either Half YES/NO bookmaker snapshots at predeclared times before kickoff.
 
-This stage is operational availability research. It is not model evaluation, value analysis, decision-policy tuning, source integration, execution, or production approval.
+This is operational availability evidence. It is not model evaluation, value analysis, source integration, execution or production approval.
 
-## Why this stage exists
+## Why an attempt ledger is required
 
-Stage 5A froze an exact pricing-evidence contract. Stage 5B1 added evidence-source qualification gates. The 2025-26 FINAL_TEST season has already been consumed by model and calibration evaluation, so it cannot be reused as a pristine holdout for iterative pricing-policy tuning. ATHENA therefore requires prospective evidence before a decision timestamp or production policy can be frozen.
+A missing quote does not prove that a bookmaker market was unavailable. The system must know whether a check happened and what happened during that check. Every fixture therefore has twelve expected attempt keys:
 
-Stage 5B2 provides the deterministic replay machinery for that prospective evidence. It intentionally leaves the final decision offset unselected.
+- two canonical markets; and
+- six frozen offsets.
+
+A missing attempt is `UNKNOWN / NO_ATTEMPT_RECORD`, never `UNAVAILABLE`.
+
+## Frozen candidate offsets
+
+The exact seconds before kickoff are:
+
+- 86400 - 24 hours
+- 21600 - 6 hours
+- 10800 - 3 hours
+- 3600 - 1 hour
+- 1800 - 30 minutes
+- 900 - 15 minutes
+
+Stage 5B2 measures all six offsets. It does not select one. `selected_offset_seconds` remains null and `selection_authorized` remains false.
+
+## Attempt results
+
+Every supplied attempt uses exactly one result:
+
+- `QUOTES_CAPTURED`
+- `MARKET_UNAVAILABLE`
+- `FIXTURE_UNAVAILABLE`
+- `SOURCE_UNAVAILABLE`
+- `CAPTURE_ERROR`
+
+The resulting availability statuses are:
+
+- `AVAILABLE`
+- `UNAVAILABLE`
+- `UNKNOWN`
+- `INVALID`
+
+Structural contradiction is always `INVALID` and takes precedence over `UNKNOWN`.
+
+## Attempt timing
+
+For each expected fixture-market-offset:
+
+`scheduled_at = kickoff - offset_seconds_before_kickoff`
+
+The equality is exact. `attempted_at` must be within plus or minus 300 seconds of `scheduled_at` and must be strictly before kickoff.
+
+## Provider mapping semantics
+
+Provider mappings are partial evidence.
+
+- `QUOTES_CAPTURED` requires an exact fixture, market, YES and NO mapping.
+- `MARKET_UNAVAILABLE` requires an exact fixture/event mapping while the target market mapping is absent.
+- `FIXTURE_UNAVAILABLE` requires the fixture mapping to be absent.
+- `SOURCE_UNAVAILABLE` may occur even when an older mapping is known.
+- `CAPTURE_ERROR` may carry no event/market identifiers or a complete exact identifier pair; a partial pair is invalid.
+
+This prevents availability claims from contradicting the mapping evidence.
+
+## Exact snapshot integrity
+
+An available snapshot requires exactly one genuine YES quote and one genuine NO quote linked to the same attempt. Both rows must match the exact fixture, canonical market, provider, source, bookmaker, provider event, provider market, quote snapshot and observation timestamp.
+
+The line is null. Decimal input odds must be finite and greater than 1. Quote odds are validated privately but are not emitted by Stage 5B2 outputs.
+
+`observed_at` must be at or before `attempted_at`, strictly before kickoff and no more than 900 seconds old at `attempted_at`. Exactly 900 seconds is eligible; anything older is stale.
+
+Rows from different attempts, providers, bookmakers, snapshots or timestamps are never combined.
+
+## Explicit unavailability
+
+A valid `MARKET_UNAVAILABLE`, `FIXTURE_UNAVAILABLE` or `SOURCE_UNAVAILABLE` attempt with no attached quote rows produces `UNAVAILABLE`.
+
+`CAPTURE_ERROR` produces `UNKNOWN`, not `UNAVAILABLE`.
+
+Any raw quote row attached to an unavailable or capture-error attempt makes the evidence contradictory and therefore `INVALID`, even when that quote row is itself malformed.
 
 ## Inputs
 
-The exporter accepts only local files:
+The exporter reads local files only:
 
-1. A Stage 5B1 source-qualification report whose `prospective_replay_status` is `QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY` or `QUALIFIED_FOR_HISTORICAL_RESEARCH`.
-2. A prospective fixture catalog containing future fixture identity, provider event identity, UTC kickoff, both exact Win Either Half markets, and a frozen list of expected sources.
-3. Exact provider mappings for every fixture, source, market, and YES/NO outcome.
-4. UTF-8 JSON Lines quote records using genuine decimal odds and exact provider identifiers.
-5. The committed Stage 5B2 protocol.
+1. Stage 5B1 source-qualification JSON;
+2. fixture JSON;
+3. partial provider-mapping JSON;
+4. observation-attempt JSON Lines;
+5. quote JSON Lines; and
+6. the committed Stage 5B2 protocol.
 
-No network request is made. The exporter contains no API key, browser, scraper, session, betslip, or booking-code functionality.
-
-## Candidate decision offsets
-
-The committed protocol evaluates these candidate offsets before kickoff:
-
-- 24 hours
-- 12 hours
-- 6 hours
-- 3 hours
-- 2 hours
-- 1 hour
-- 30 minutes
-- 15 minutes
-
-The set is a research grid, not a recommendation. Stage 5B2 emits `selection_status: UNSELECTED` and never declares a winning offset.
-
-## Exact quote eligibility
-
-For one fixture, market, source, and candidate offset, ATHENA derives:
-
-`decision_at = fixture_kickoff - candidate_offset_seconds`
-
-A quote can contribute only when all of the following are true:
-
-- schema version is exact;
-- fixture, market, outcome, source, snapshot, event, market, and selection identifiers are explicit;
-- the canonical market is exactly Home or Away Win Either Half;
-- the canonical outcome is exactly YES or NO;
-- line is null;
-- decimal odds are finite and greater than 1;
-- `is_genuine` is true;
-- timestamps are timezone-aware;
-- quote kickoff equals the frozen fixture kickoff;
-- observed time is before kickoff;
-- provider mapping exactly matches the fixture, market, and outcome;
-- observed time is at or before the candidate decision time;
-- quote age at decision is at most 900 seconds.
-
-YES and NO must form one complete same-source, same-snapshot, same-observed-time market. Rows from different sources, snapshots, timestamps, fixtures, or provider markets cannot be combined.
-
-When several complete eligible snapshots exist, the latest `observed_at` wins. A timestamp tie is broken by the lexically greatest `quote_snapshot_id`. This makes selection deterministic without consulting prices or match results.
-
-## Availability reasons
-
-Every denominator row receives one status and one reason:
-
-- `NO_QUOTE_RECORDS`
-- `NO_STRUCTURALLY_VALID_QUOTES`
-- `NO_QUOTES_AT_OR_BEFORE_DECISION`
-- `NO_FRESH_QUOTES_AT_DECISION`
-- `NO_COMPLETE_SNAPSHOT`
-- `AVAILABLE`
-
-The denominator is frozen as one row per fixture, canonical market, expected source, and candidate offset. Missing quotes therefore remain explicit instead of disappearing from coverage.
+It performs no network request, scraping, browser automation or credential use.
 
 ## Outputs
 
-All outputs are local and ignored under `.cache/athena-research/`:
+One atomic ignored evidence bundle contains:
 
-- row-level replay CSV;
-- rejected-quote audit CSV;
-- deterministic summary JSON.
+- `normalized-attempts-table-v1.csv`
+- `valid-quotes-table-v1.csv`
+- `rejected-quotes-table-v1.csv`
+- `validated-snapshots-table-v1.csv`
+- `evaluations-table-v1.csv`
+- `prospective-replay-summary-v1.json`
+- `prospective-replay-manifest-v1.json`
 
-The replay rows contain availability, reason, selected snapshot identity, selected observation time, and quote age. They do not emit decimal odds, fair probabilities, model probabilities, edge, expected value, Kelly, stakes, profits, decision labels, or bets.
+The manifest records raw input hashes, output hashes and row counts, the exact protocol, Git revision, market and model-status registries, snapshot rules, summary accounting and holdout governance.
 
-The summary reports:
-
-- complete denominator and reconciliation counts;
-- availability by candidate offset;
-- availability by offset, source, and market;
-- same-source availability of both canonical markets for each fixture;
-- reason counts;
-- support status based on fixture count;
-- immutable identities for every input and generated local output;
-- consumed-holdout governance;
-- disabled market statuses;
-- explicit no-production approval.
-
-## Forbidden information
-
-Fixture, mapping, quote, and source-qualification inputs are recursively rejected if they contain match outcomes, scores, targets, labels, model probabilities, calibration probabilities, edge, expected value, Kelly, profitability, stakes, or betting decisions.
-
-The candidate decision offset must be assessed only from operational quote availability, timestamp freshness, source identity, and snapshot completeness. It must never be selected from match outcomes, model performance, price profitability, or the consumed FINAL_TEST period.
-
-## Command
+## Generate an evidence bundle
 
 ```bash
 python -m scripts.export_win_either_half_prospective_replay \
   --source-qualification path/to/source-qualification.json \
-  --fixtures path/to/prospective-fixtures.json \
+  --fixtures path/to/fixtures.json \
   --provider-mappings path/to/provider-mappings.json \
-  --quotes path/to/quotes.jsonl
-```
-
-To verify previously generated local outputs:
-
-```bash
-python -m scripts.export_win_either_half_prospective_replay \
-  --source-qualification path/to/source-qualification.json \
-  --fixtures path/to/prospective-fixtures.json \
-  --provider-mappings path/to/provider-mappings.json \
+  --attempts path/to/attempts.jsonl \
   --quotes path/to/quotes.jsonl \
-  --check-rows .cache/athena-research/win-either-half/prospective-replay-rows-v1.csv \
-  --check-rejected .cache/athena-research/win-either-half/prospective-replay-rejected-quotes-v1.csv \
-  --check-summary .cache/athena-research/win-either-half/prospective-replay-summary-v1.json
+  --manifest-output .cache/athena-research/win-either-half/prospective-pricing/prospective-replay-manifest-v1.json
 ```
+
+Existing outputs are not replaced unless `--force` is supplied.
+
+## Verify an existing bundle
+
+```bash
+python -m scripts.export_win_either_half_prospective_replay \
+  --source-qualification path/to/source-qualification.json \
+  --fixtures path/to/fixtures.json \
+  --provider-mappings path/to/provider-mappings.json \
+  --attempts path/to/attempts.jsonl \
+  --quotes path/to/quotes.jsonl \
+  --check .cache/athena-research/win-either-half/prospective-pricing/prospective-replay-manifest-v1.json
+```
+
+Verification is byte-for-byte and fails closed on protocol, input, output, manifest, Git-state or registry drift.
 
 ## Safety boundary
 
-Stage 5B2 does not qualify a provider, collect live quotes, freeze a final decision offset, calculate overround or value, enable either market, create an accumulator, construct a betslip, generate a booking code, recommend a stake, or emit `BET`.
+Stage 5B2 does not qualify a provider, fetch live odds, calculate fair odds, model probability, edge, expected value or Kelly, select accumulator legs, construct a betslip, generate a booking code, recommend a stake or emit `BET`.
 
-Both Win Either Half markets remain `DISABLED`. A later freeze stage may choose a decision protocol only after real prospective data have been collected under this predeclared contract and reviewed without outcome or profitability leakage.
+Both Win Either Half markets remain `DISABLED`. A future reviewed stage may freeze a decision offset only after genuine prospective evidence exists. This stage grants no production approval.

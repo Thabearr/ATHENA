@@ -265,16 +265,24 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         with self.assertRaises(ValueError):
             load_source_qualification(payload2)
 
-    # 8. MARKET_UNAVAILABLE attempt is not contaminated by quotes linked to a different offset
+    # 8. MARKET_UNAVAILABLE attempt is not contaminated by quotes linked to another offset
     def test_market_unavailable_not_contaminated_by_other_offset_quotes(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
+        partial_mappings_payload = copy.deepcopy(self.mappings_payload)
+        del partial_mappings_payload["mappings"][0]["markets"]["HOME_WIN_EITHER_HALF"]
+        mappings = load_provider_mappings_dataset(partial_mappings_payload, "TEST_PROVIDER", fixtures)
 
         att_86400 = self._sample_attempt("ATT-86400", offset=86400, scheduled_at="2026-08-09T15:00:00Z", attempted_at="2026-08-09T15:00:00Z", result="MARKET_UNAVAILABLE")
-        att_3600 = self._sample_attempt("ATT-3600", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z", result="QUOTES_CAPTURED", quote_snapshot_id="SNAP-3600")
+        att_86400["provider_market_identifier"] = None
+        att_3600 = self._sample_attempt("ATT-3600", market_id="AWAY_WIN_EITHER_HALF", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z", result="QUOTES_CAPTURED", quote_snapshot_id="SNAP-3600")
+        att_3600["provider_market_identifier"] = "MKT-AWEH"
 
-        q_yes = self._sample_quote("ATT-3600", outcome_id="YES", quote_snapshot_id="SNAP-3600", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-YES")
-        q_no = self._sample_quote("ATT-3600", outcome_id="NO", quote_snapshot_id="SNAP-3600", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-NO")
+        q_yes = self._sample_quote("ATT-3600", outcome_id="YES", quote_snapshot_id="SNAP-3600", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-AWEH-YES")
+        q_yes["market_id"] = "AWAY_WIN_EITHER_HALF"
+        q_yes["provider_market_identifier"] = "MKT-AWEH"
+        q_no = self._sample_quote("ATT-3600", outcome_id="NO", quote_snapshot_id="SNAP-3600", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-AWEH-NO")
+        q_no["market_id"] = "AWAY_WIN_EITHER_HALF"
+        q_no["provider_market_identifier"] = "MKT-AWEH"
 
         att_results, v_by_id, v_by_key, inv_by_key = parse_observation_attempts([att_86400, att_3600], fixtures, mappings, "TEST_PROVIDER")
         q_results = parse_prospective_quotes([q_yes, q_no], fixtures, mappings, v_by_id, "TEST_PROVIDER")
@@ -282,7 +290,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
 
         snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, inv_by_key, quote_by_att)
         eval_86400 = [e for e in evals if e.offset_seconds_before_kickoff == 86400 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
-        eval_3600 = [e for e in evals if e.offset_seconds_before_kickoff == 3600 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
+        eval_3600 = [e for e in evals if e.offset_seconds_before_kickoff == 3600 and e.market_id == MarketId.AWAY_WIN_EITHER_HALF][0]
 
         self.assertEqual(eval_86400.availability_status, AvailabilityStatus.UNAVAILABLE)
         self.assertEqual(eval_3600.availability_status, AvailabilityStatus.AVAILABLE)
@@ -293,6 +301,8 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
 
         att_err = self._sample_attempt("ATT-ERR", offset=86400, scheduled_at="2026-08-09T15:00:00Z", attempted_at="2026-08-09T15:00:00Z", result="CAPTURE_ERROR")
+        att_err["provider_event_identifier"] = None
+        att_err["provider_market_identifier"] = None
         att_ok = self._sample_attempt("ATT-OK", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z", result="QUOTES_CAPTURED", quote_snapshot_id="SNAP-OK")
 
         q_yes = self._sample_quote("ATT-OK", outcome_id="YES", quote_snapshot_id="SNAP-OK", observed_at="2026-08-10T13:58:00Z", selection_id="SEL-HWEH-YES")
@@ -837,6 +847,168 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
                 "--check", str(manifest_path),
             ])
             self.assertEqual(ret_check, 0)
+
+    # 41. QUOTES_CAPTURED without fixture mapping is INVALID
+    def test_quotes_captured_without_fixture_mapping_invalid(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        att = self._sample_attempt("ATT-1", fixture_id="FIX-101", result="QUOTES_CAPTURED")
+        res, _, _, _ = parse_observation_attempts([att], fixtures, {}, "TEST_PROVIDER")
+        self.assertFalse(res[0].is_valid)
+        self.assertIn("MISSING_CAPTURE_MAPPING", res[0].rejection_reasons)
+
+    # 42. QUOTES_CAPTURED without target market mapping is INVALID
+    def test_quotes_captured_without_target_market_mapping_invalid(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        partial_mappings_payload = copy.deepcopy(self.mappings_payload)
+        del partial_mappings_payload["mappings"][0]["markets"]["HOME_WIN_EITHER_HALF"]
+        mappings = load_provider_mappings_dataset(partial_mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", market_id="HOME_WIN_EITHER_HALF", result="QUOTES_CAPTURED")
+        res, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        self.assertFalse(res[0].is_valid)
+        self.assertIn("MISSING_CAPTURE_MAPPING", res[0].rejection_reasons)
+
+    # 43. MARKET_UNAVAILABLE with target market mapped is INVALID
+    def test_market_unavailable_with_target_market_mapped_invalid(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", market_id="HOME_WIN_EITHER_HALF", result="MARKET_UNAVAILABLE")
+        att["provider_market_identifier"] = None
+        res, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        self.assertFalse(res[0].is_valid)
+        self.assertIn("MAPPING_CONTRADICTS_MARKET_UNAVAILABLE", res[0].rejection_reasons)
+
+    # 44. MARKET_UNAVAILABLE with provider_market_identifier present is INVALID
+    def test_market_unavailable_with_provider_market_identifier_present_invalid(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        partial_mappings_payload = copy.deepcopy(self.mappings_payload)
+        del partial_mappings_payload["mappings"][0]["markets"]["HOME_WIN_EITHER_HALF"]
+        mappings = load_provider_mappings_dataset(partial_mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", market_id="HOME_WIN_EITHER_HALF", result="MARKET_UNAVAILABLE")
+        att["provider_market_identifier"] = "MKT-HWEH"
+        res, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        self.assertFalse(res[0].is_valid)
+        self.assertIn("PROVIDER_MARKET_ID_MUST_BE_NULL", res[0].rejection_reasons)
+
+    # 45. FIXTURE_UNAVAILABLE with no mapping and null event/market IDs is UNAVAILABLE
+    def test_fixture_unavailable_valid_when_unmapped_and_null_ids(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        att = self._sample_attempt("ATT-1", result="FIXTURE_UNAVAILABLE")
+        att["provider_event_identifier"] = None
+        att["provider_market_identifier"] = None
+        res, _, v_by_key, inv_by_key = parse_observation_attempts([att], fixtures, {}, "TEST_PROVIDER")
+        self.assertTrue(res[0].is_valid)
+        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, inv_by_key, {})
+        target_eval = [e for e in evals if e.offset_seconds_before_kickoff == 86400 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
+        self.assertEqual(target_eval.availability_status, AvailabilityStatus.UNAVAILABLE)
+        self.assertEqual(target_eval.availability_reason, AvailabilityReason.EXPLICIT_FIXTURE_UNAVAILABLE.value)
+
+    # 46. FIXTURE_UNAVAILABLE with a fixture mapping is INVALID
+    def test_fixture_unavailable_with_fixture_mapping_invalid(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", result="FIXTURE_UNAVAILABLE")
+        att["provider_event_identifier"] = None
+        att["provider_market_identifier"] = None
+        res, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        self.assertFalse(res[0].is_valid)
+        self.assertIn("MAPPING_CONTRADICTS_FIXTURE_UNAVAILABLE", res[0].rejection_reasons)
+
+    # 47. SOURCE_UNAVAILABLE with null IDs is UNAVAILABLE even when a prior mapping exists
+    def test_source_unavailable_valid_with_null_ids_even_if_mapped(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", result="SOURCE_UNAVAILABLE")
+        att["provider_event_identifier"] = None
+        att["provider_market_identifier"] = None
+        res, _, v_by_key, inv_by_key = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        self.assertTrue(res[0].is_valid)
+        snaps, evals = evaluate_prospective_replay(fixtures, v_by_key, inv_by_key, {})
+        target_eval = [e for e in evals if e.offset_seconds_before_kickoff == 86400 and e.market_id == MarketId.HOME_WIN_EITHER_HALF][0]
+        self.assertEqual(target_eval.availability_status, AvailabilityStatus.UNAVAILABLE)
+        self.assertEqual(target_eval.availability_reason, AvailabilityReason.EXPLICIT_SOURCE_UNAVAILABLE.value)
+
+    # 48. CAPTURE_ERROR accepts both IDs null
+    def test_capture_error_accepts_both_ids_null(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        att = self._sample_attempt("ATT-1", result="CAPTURE_ERROR")
+        att["provider_event_identifier"] = None
+        att["provider_market_identifier"] = None
+        res, _, _, _ = parse_observation_attempts([att], fixtures, {}, "TEST_PROVIDER")
+        self.assertTrue(res[0].is_valid)
+
+    # 49. CAPTURE_ERROR with only one identifier is INVALID
+    def test_capture_error_with_one_identifier_invalid(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        att = self._sample_attempt("ATT-1", result="CAPTURE_ERROR")
+        att["provider_event_identifier"] = "EV-101"
+        att["provider_market_identifier"] = None
+        res, _, _, _ = parse_observation_attempts([att], fixtures, {}, "TEST_PROVIDER")
+        self.assertFalse(res[0].is_valid)
+        self.assertIn("PARTIAL_CAPTURE_ERROR_IDENTIFIERS", res[0].rejection_reasons)
+
+    # 50. Mapping loader rejects extra fixture mapping
+    def test_mapping_loader_rejects_extra_fixture_mapping(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        bad_mappings = copy.deepcopy(self.mappings_payload)
+        bad_mappings["mappings"].append({
+            "fixture_identifier": "EXTRA-FIX",
+            "provider_identifier": "TEST_PROVIDER",
+            "source": "ODDS_PORTAL",
+            "bookmaker_identifier": "PINNACLE",
+            "provider_event_identifier": "EV-EXTRA",
+            "markets": {},
+        })
+        with self.assertRaises(ValueError):
+            load_provider_mappings_dataset(bad_mappings, "TEST_PROVIDER", fixtures)
+
+    # 51. Mapping loader rejects unsupported market key
+    def test_mapping_loader_rejects_unsupported_market_key(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        bad_mappings = copy.deepcopy(self.mappings_payload)
+        bad_mappings["mappings"][0]["markets"]["UNSUPPORTED_MARKET"] = {
+            "provider_market_identifier": "MKT-BAD",
+            "outcomes": {"YES": "SEL-YES", "NO": "SEL-NO"},
+        }
+        with self.assertRaises(ValueError):
+            load_provider_mappings_dataset(bad_mappings, "TEST_PROVIDER", fixtures)
+
+    # 52. Mapping loader rejects extra or missing outcome key
+    def test_mapping_loader_rejects_extra_or_missing_outcome_key(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        bad_mappings = copy.deepcopy(self.mappings_payload)
+        bad_mappings["mappings"][0]["markets"]["HOME_WIN_EITHER_HALF"]["outcomes"]["DRAW"] = "SEL-DRAW"
+        with self.assertRaises(ValueError):
+            load_provider_mappings_dataset(bad_mappings, "TEST_PROVIDER", fixtures)
+
+    # 53. Mapping loader rejects identical YES and NO selection identifiers
+    def test_mapping_loader_rejects_identical_yes_no_selection_ids(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        bad_mappings = copy.deepcopy(self.mappings_payload)
+        bad_mappings["mappings"][0]["markets"]["HOME_WIN_EITHER_HALF"]["outcomes"]["NO"] = "SEL-HWEH-YES"
+        with self.assertRaises(ValueError):
+            load_provider_mappings_dataset(bad_mappings, "TEST_PROVIDER", fixtures)
+
+    # 54. Exactly 900 seconds plus 1 microsecond is rejected as STALE_QUOTE
+    def test_quote_age_900_seconds_plus_microsecond_is_stale(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z")
+        q = self._sample_quote("ATT-1", outcome_id="YES", observed_at="2026-08-10T13:44:59.999999Z")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
+        self.assertFalse(q_results[0].is_valid)
+        self.assertIn("STALE_QUOTE", q_results[0].rejection_reasons)
+
+    # 55. One microsecond after attempted_at is rejected as QUOTE_OBSERVED_AFTER_ATTEMPT
+    def test_one_microsecond_after_attempted_at_rejected(self) -> None:
+        fixtures = load_fixtures_dataset(self.fixtures_payload)
+        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
+        att = self._sample_attempt("ATT-1", offset=3600, scheduled_at="2026-08-10T14:00:00Z", attempted_at="2026-08-10T14:00:00Z")
+        q = self._sample_quote("ATT-1", outcome_id="YES", observed_at="2026-08-10T14:00:00.000001Z")
+        att_results, v_by_id, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
+        q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
+        self.assertFalse(q_results[0].is_valid)
+        self.assertIn("QUOTE_OBSERVED_AFTER_ATTEMPT", q_results[0].rejection_reasons)
 
 
 if __name__ == "__main__":

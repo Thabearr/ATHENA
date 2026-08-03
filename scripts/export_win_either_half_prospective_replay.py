@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -236,6 +237,13 @@ def build_outputs(
         invalid_attempts_by_key=invalid_attempts_by_key,
         quote_results_by_attempt_id=quote_results_by_attempt_id,
     )
+
+    expected_evaluation_count = len(fixtures) * EXPECTED_ATTEMPTS_PER_FIXTURE
+    if len(evaluations) != expected_evaluation_count:
+        raise ProspectiveReplayExportError(
+            "Evaluation denominator mismatch: "
+            f"expected={expected_evaluation_count}, actual={len(evaluations)}"
+        )
 
     # Build CSV tables deterministically
     generated_files: dict[str, bytes] = {}
@@ -531,6 +539,10 @@ def build_outputs(
             "available_rate": round(mkt_avail / mkt_total, 6) if mkt_total > 0 else 0.0,
         }
 
+    availability_reason_counts = dict(sorted(Counter(
+        evaluation.availability_reason for evaluation in evaluations
+    ).items()))
+
     summary_dict: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "dataset_name": "win-either-half-prospective-replay-summary-v1",
@@ -540,6 +552,14 @@ def build_outputs(
         "supplied_attempt_count": len(attempt_parse_results),
         "valid_attempt_count": len(valid_attempts_by_id),
         "invalid_attempt_count": sum(1 for r in attempt_parse_results if not r.is_valid),
+        "supplied_quote_count": len(quote_parse_results),
+        "valid_quote_count": len(valid_quotes),
+        "invalid_quote_count": len(rejected_quote_results),
+        "complete_snapshot_count": len(snapshots),
+        "availability_reason_counts": availability_reason_counts,
+        "selected_offset_seconds": None,
+        "selection_authorized": False,
+        "production_approval_authorized": False,
         "missing_expected_attempt_count": sum(
             1 for e in evaluations if e.availability_reason == AvailabilityReason.NO_ATTEMPT_RECORD.value
         ),
@@ -559,9 +579,6 @@ def build_outputs(
                 or "INVALID_OFFSET_SECONDS" in r.rejection_reasons
             )
         ),
-        "supplied_quote_count": len(quote_parse_results),
-        "valid_quote_count": len(valid_quotes),
-        "invalid_quote_count": len(rejected_quote_results),
         "orphan_quote_count": sum(
             1 for r in quote_parse_results if "UNKNOWN_ATTEMPT_ID" in r.rejection_reasons
         ),
@@ -714,6 +731,40 @@ def build_outputs(
             "pricing_profitability_forbidden_from_offset_evaluation": True,
             "prospective_validation_required": True,
             "production_approval_authorized": False,
+        },
+        "summary_accounting": {
+            "fixture_count": summary_dict["fixture_count"],
+            "expected_evaluations_total": summary_dict["expected_evaluations_total"],
+            "supplied_attempt_count": summary_dict["supplied_attempt_count"],
+            "valid_attempt_count": summary_dict["valid_attempt_count"],
+            "invalid_attempt_count": summary_dict["invalid_attempt_count"],
+            "supplied_quote_count": summary_dict["supplied_quote_count"],
+            "valid_quote_count": summary_dict["valid_quote_count"],
+            "invalid_quote_count": summary_dict["invalid_quote_count"],
+            "complete_snapshot_count": summary_dict["complete_snapshot_count"],
+            "availability_reason_counts": summary_dict["availability_reason_counts"],
+        },
+        "deterministic_ordering": {
+            "attempts": [
+                "fixture_identifier",
+                "market_id",
+                "offset_seconds_before_kickoff",
+                "attempt_id",
+                "input_record_sha256",
+            ],
+            "quotes": [
+                "fixture_identifier",
+                "market_id",
+                "outcome_id",
+                "attempt_id",
+                "input_record_sha256",
+            ],
+            "evaluations": [
+                "scheduled_at",
+                "fixture_identifier",
+                "market_id",
+                "offset_seconds_before_kickoff",
+            ],
         },
         "selected_offset_seconds": None,
         "selection_authorized": False,
