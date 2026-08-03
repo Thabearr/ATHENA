@@ -1,0 +1,74 @@
+{
+  "candidate_offsets_seconds": [
+    86400,
+    43200,
+    21600,
+    10800,
+    7200,
+    3600,
+    1800,
+    900
+  ],
+  "dataset_name": "win-either-half-prospective-replay-protocol-v1",
+  "holdout_governance": {
+    "final_test_season": "2025-26",
+    "final_test_status": "ALREADY_CONSUMED_AUDIT_HOLDOUT",
+    "match_outcomes_forbidden_from_offset_evaluation": true,
+    "model_performance_forbidden_from_offset_evaluation": true,
+    "pricing_profitability_forbidden_from_offset_evaluation": true,
+    "prospective_validation_required": true,
+    "production_approval_authorized": false
+  },
+  "market_scope": {
+    "AWAY_WIN_EITHER_HALF": {
+      "line": null,
+      "outcomes": [
+        "YES",
+        "NO"
+      ]
+    },
+    "HOME_WIN_EITHER_HALF": {
+      "line": null,
+      "outcomes": [
+        "YES",
+        "NO"
+      ]
+    }
+  },
+  "maximum_quote_age_seconds": 900,
+  "minimum_fixtures_for_interpretation": 100,
+  "no_production_approval": true,
+  "output_contract": {
+    "odds_values_emitted": false,
+    "row_grain": "ONE_ROW_PER_FIXTURE_MARKET_SOURCE_CANDIDATE_OFFSET",
+    "selected_offset_emitted": false,
+    "selection_status": "UNSELECTED"
+  },
+  "schema_version": 1,
+  "selection_policy": {
+    "allowed_inputs": [
+      "complete_same_source_yes_no_snapshot_availability",
+      "provider_quote_timestamp",
+      "quote_age_at_candidate_decision",
+      "source_identity",
+      "snapshot_identity"
+    ],
+    "forbidden_inputs": [
+      "match_outcomes",
+      "model_probabilities",
+      "model_performance",
+      "edge",
+      "expected_value",
+      "kelly",
+      "profitability",
+      "stakes",
+      "bet_decisions",
+      "final_test_results"
+    ],
+    "selection_status": "UNSELECTED"
+  },
+  "source_qualification_required_statuses": [
+    "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+    "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY"
+  ]
+}
