@@ -1,23 +1,26 @@
 {
+  "schema_version": 1,
+  "dataset_name": "win-either-half-prospective-replay-protocol-v1",
   "candidate_offsets_seconds": [
     86400,
-    43200,
     21600,
     10800,
-    7200,
     3600,
     1800,
     900
   ],
-  "dataset_name": "win-either-half-prospective-replay-protocol-v1",
-  "holdout_governance": {
-    "final_test_season": "2025-26",
-    "final_test_status": "ALREADY_CONSUMED_AUDIT_HOLDOUT",
-    "match_outcomes_forbidden_from_offset_evaluation": true,
-    "model_performance_forbidden_from_offset_evaluation": true,
-    "pricing_profitability_forbidden_from_offset_evaluation": true,
-    "prospective_validation_required": true,
-    "production_approval_authorized": false
+  "attempt_contract": {
+    "expected_attempts_per_fixture": 12,
+    "attempt_window_seconds": 300,
+    "scheduled_at_must_equal_kickoff_minus_offset": true,
+    "attempted_at_must_be_before_kickoff": true,
+    "attempt_results": [
+      "QUOTES_CAPTURED",
+      "MARKET_UNAVAILABLE",
+      "FIXTURE_UNAVAILABLE",
+      "SOURCE_UNAVAILABLE",
+      "CAPTURE_ERROR"
+    ]
   },
   "market_scope": {
     "AWAY_WIN_EITHER_HALF": {
@@ -35,40 +38,52 @@
       ]
     }
   },
-  "maximum_quote_age_seconds": 900,
-  "minimum_fixtures_for_interpretation": 100,
-  "no_production_approval": true,
+  "quote_contract": {
+    "maximum_quote_age_seconds": 900,
+    "requires_same_source": true,
+    "requires_same_provider": true,
+    "requires_same_bookmaker": true,
+    "requires_same_provider_event": true,
+    "requires_same_provider_market": true,
+    "requires_same_snapshot": true,
+    "requires_same_observed_at": true,
+    "odds_values_emitted": false
+  },
+  "availability_contract": {
+    "statuses": [
+      "AVAILABLE",
+      "UNAVAILABLE",
+      "UNKNOWN",
+      "INVALID"
+    ],
+    "unavailable_requires_explicit_provider_evidence": true,
+    "missing_attempt_status": "UNKNOWN",
+    "capture_error_status": "UNKNOWN",
+    "contradiction_status": "INVALID",
+    "invalid_precedes_unknown": true
+  },
+  "holdout_governance": {
+    "final_test_season": "2025-26",
+    "final_test_status": "ALREADY_CONSUMED_AUDIT_HOLDOUT",
+    "match_outcomes_forbidden_from_offset_evaluation": true,
+    "model_performance_forbidden_from_offset_evaluation": true,
+    "pricing_profitability_forbidden_from_offset_evaluation": true,
+    "prospective_validation_required": true,
+    "production_approval_authorized": false
+  },
   "output_contract": {
-    "odds_values_emitted": false,
-    "row_grain": "ONE_ROW_PER_FIXTURE_MARKET_SOURCE_CANDIDATE_OFFSET",
-    "selected_offset_emitted": false,
-    "selection_status": "UNSELECTED"
+    "row_grain": "ONE_ROW_PER_FIXTURE_MARKET_OFFSET",
+    "selected_offset_seconds": null,
+    "selection_authorized": false,
+    "selection_status": "UNSELECTED",
+    "all_outputs_ignored": true,
+    "manifest_required": true,
+    "transactional_write_required": true
   },
-  "schema_version": 1,
-  "selection_policy": {
-    "allowed_inputs": [
-      "complete_same_source_yes_no_snapshot_availability",
-      "provider_quote_timestamp",
-      "quote_age_at_candidate_decision",
-      "source_identity",
-      "snapshot_identity"
-    ],
-    "forbidden_inputs": [
-      "match_outcomes",
-      "model_probabilities",
-      "model_performance",
-      "edge",
-      "expected_value",
-      "kelly",
-      "profitability",
-      "stakes",
-      "bet_decisions",
-      "final_test_results"
-    ],
-    "selection_status": "UNSELECTED"
-  },
+  "minimum_fixtures_for_interpretation": 100,
   "source_qualification_required_statuses": [
     "QUALIFIED_FOR_HISTORICAL_RESEARCH",
     "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY"
-  ]
+  ],
+  "no_production_approval": true
 }
