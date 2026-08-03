@@ -74,7 +74,7 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
         GateId.FRESHNESS_ENFORCEABLE: "LIVE_AVAILABILITY",
         GateId.REPRODUCIBLE_PROVIDER_MAPPING: "QUOTE_SCHEMA",
         GateId.PERMITTED_AUTOMATION: "EXECUTION_SAFETY",
-        GateId.EXACT_EXECUTION_SELECTION: "EXECUTION_SAFETY",
+        GateId.EXACT_EXECUTION_SELECTION: "EXECUTION_SELECTION",
         GateId.DETERMINISTIC_BETSLIP: "EXECUTION_SAFETY",
         GateId.VALIDATED_QUOTE_PRICE_MATCH: "EXECUTION_SAFETY",
         GateId.CHANGED_ODDS_DETECTION: "EXECUTION_SAFETY",
@@ -82,6 +82,16 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
         GateId.MISSING_MARKET_DETECTION: "EXECUTION_SAFETY",
         GateId.EXPLICIT_USER_CONFIRMATION: "EXECUTION_SAFETY",
         GateId.BOOKING_CODE_SUPPORT: "BOOKING_CODE",
+    }
+    MARKET_SPECIFIC_CAPABILITIES = {
+        "MARKET_SEMANTICS",
+        "OUTCOME_STRUCTURE",
+        "QUOTE_SCHEMA",
+        "SNAPSHOT",
+        "HISTORICAL_RETENTION",
+        "FROZEN_COVERAGE",
+        "LIVE_AVAILABILITY",
+        "EXECUTION_SELECTION",
     }
 
     def _claim_id(self, capability):
@@ -168,7 +178,9 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                 {
                     "market_id": market.value,
                     "provider_identifier": "reviewed-provider",
-                    "fixture_identifier": f"fixture-{market.value}",
+                    "provider_event_identifier": f"event-{market.value}",
+                    "fixture_reference": f"fixture-{market.value}",
+                    "provider_market_identifier": semantic["provider_market_identifier"],
                     "bookmaker_identifier": "book-1",
                     "provider_yes_selection_identifier": semantic["provider_yes_selection_identifier"],
                     "provider_no_selection_identifier": semantic["provider_no_selection_identifier"],
@@ -227,6 +239,11 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                 "document_title": f"Reviewed {capability} artifact",
                 "source_reference": f"section:{capability.lower()}",
                 "capability_identifier": capability,
+                "canonical_market_ids": (
+                    [market.value for market in PERMITTED_MARKETS]
+                    if capability in self.MARKET_SPECIFIC_CAPABILITIES
+                    else []
+                ),
                 "capability_statement": f"Reviewed evidence for {capability}",
                 "retrieval_timestamp": self.CHECKED_AT,
                 "reviewer_checked_at": self.CHECKED_AT,
@@ -322,6 +339,9 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             },
             "execution_workflow_evidence": {
                 "exact_fixture_market_outcome_selection": True,
+                "exact_selection_claim_ids": [
+                    self._claim_id("EXECUTION_SELECTION")
+                ],
                 "deterministic_betslip_construction": True,
                 "validated_price_matching": True,
                 "changed_odds_detection": True,
@@ -1248,6 +1268,216 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
                     timeout=60,
                 )
                 self.assertEqual(checked.returncode, 0, checked.stderr)
+
+    def test_snapshot_samples_reconcile_to_exact_quote_mapping(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+            cases = {
+                "provider_event_identifier": "other-event",
+                "fixture_reference": "other-fixture",
+                "provider_market_identifier": "other-market",
+                "bookmaker_identifier": "other-book",
+                "provider_yes_selection_identifier": "other-yes",
+                "provider_no_selection_identifier": "other-no",
+            }
+            for field, replacement in cases.items():
+                with self.subTest(field=field):
+                    candidate = self._candidate(evidence)
+                    candidate["snapshot_evidence"]["samples"][0][field] = replacement
+                    report = self._qualify(candidate, root)
+                    self.assertEqual(
+                        report["gate_results"][
+                            GateId.SAME_BOOKMAKER_SNAPSHOT.value
+                        ]["effective"]["status"],
+                        "FAIL",
+                    )
+
+            borrowed = self._candidate(evidence)
+            home = borrowed["snapshot_evidence"]["samples"][0]
+            away = borrowed["snapshot_evidence"]["samples"][1]
+            for field in (
+                "provider_event_identifier",
+                "fixture_reference",
+                "provider_market_identifier",
+                "provider_yes_selection_identifier",
+                "provider_no_selection_identifier",
+            ):
+                away[field] = home[field]
+            self.assertEqual(
+                self._qualify(borrowed, root)["gate_results"][
+                    GateId.SAME_BOOKMAKER_SNAPSHOT.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+    def test_claim_market_scope_is_explicit_and_role_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+
+            home_only = self._candidate(evidence)
+            next(
+                claim
+                for claim in home_only["evidence_claims"]
+                if claim["claim_id"] == self._claim_id("MARKET_SEMANTICS")
+            )["canonical_market_ids"] = [
+                MarketId.HOME_WIN_EITHER_HALF.value
+            ]
+            report = self._qualify(home_only, root)
+            self.assertEqual(
+                report["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+            self.assertEqual(
+                report["market_qualification"][
+                    MarketId.AWAY_WIN_EITHER_HALF.value
+                ]["semantics_status"],
+                "FAIL",
+            )
+
+            for scope in (
+                [],
+                ["MATCH_RESULT"],
+                [
+                    MarketId.HOME_WIN_EITHER_HALF.value,
+                    MarketId.HOME_WIN_EITHER_HALF.value,
+                ],
+            ):
+                candidate = self._candidate(evidence)
+                next(
+                    claim
+                    for claim in candidate["evidence_claims"]
+                    if claim["claim_id"] == self._claim_id("MARKET_SEMANTICS")
+                )["canonical_market_ids"] = scope
+                with self.subTest(scope=scope), self.assertRaises(
+                    QualificationExportError
+                ):
+                    self._qualify(candidate, root)
+
+            global_scoped = self._candidate(evidence)
+            next(
+                claim
+                for claim in global_scoped["evidence_claims"]
+                if claim["claim_id"] == self._claim_id("RESEARCH_PERMISSION")
+            )["canonical_market_ids"] = [
+                MarketId.HOME_WIN_EITHER_HALF.value
+            ]
+            self.assertEqual(
+                self._qualify(global_scoped, root)["gate_results"][
+                    GateId.RESEARCH_RETENTION_PERMISSION.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            execution_home_only = self._candidate(evidence)
+            next(
+                claim
+                for claim in execution_home_only["evidence_claims"]
+                if claim["claim_id"] == self._claim_id("EXECUTION_SELECTION")
+            )["canonical_market_ids"] = [
+                MarketId.HOME_WIN_EITHER_HALF.value
+            ]
+            execution_report = self._qualify(execution_home_only, root)
+            self.assertNotEqual(
+                execution_report["qualification"]["execution_bookmaker_status"],
+                "QUALIFIED_AS_EXECUTION_BOOKMAKER",
+            )
+
+    def test_claim_aggregation_is_order_independent_and_fail_dominant(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+
+            def add_claim(candidate, claim_id, conclusion):
+                template = next(
+                    claim
+                    for claim in candidate["evidence_claims"]
+                    if claim["claim_id"] == self._claim_id("MARKET_SEMANTICS")
+                )
+                row = dict(template)
+                row["claim_id"] = claim_id
+                row["reviewer_conclusion"] = conclusion
+                candidate["evidence_claims"].append(row)
+
+            statuses = []
+            for order in (
+                ["missing-claim", "claim-market-semantics-fail"],
+                ["claim-market-semantics-fail", "missing-claim"],
+            ):
+                candidate = self._candidate(evidence)
+                add_claim(candidate, "claim-market-semantics-fail", "FAIL")
+                candidate["market_semantics_evidence"]["claim_ids"] = order
+                statuses.append(
+                    self._qualify(candidate, root)["gate_results"][
+                        GateId.EXACT_MARKET_SEMANTICS.value
+                    ]["effective"]["status"]
+                )
+            self.assertEqual(statuses, ["FAIL", "FAIL"])
+
+            unknown_and_fail = self._candidate(evidence)
+            add_claim(
+                unknown_and_fail,
+                "claim-market-semantics-unknown",
+                "UNKNOWN",
+            )
+            add_claim(
+                unknown_and_fail,
+                "claim-market-semantics-fail",
+                "FAIL",
+            )
+            unknown_and_fail["market_semantics_evidence"]["claim_ids"] = [
+                "claim-market-semantics-unknown",
+                "claim-market-semantics-fail",
+            ]
+            self.assertEqual(
+                self._qualify(unknown_and_fail, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "FAIL",
+            )
+
+            pass_missing = self._candidate(evidence)
+            pass_missing["market_semantics_evidence"]["claim_ids"] = [
+                self._claim_id("MARKET_SEMANTICS"),
+                "missing-claim",
+            ]
+            self.assertEqual(
+                self._qualify(pass_missing, root)["gate_results"][
+                    GateId.EXACT_MARKET_SEMANTICS.value
+                ]["effective"]["status"],
+                "UNKNOWN",
+            )
+
+    def test_claim_timestamp_ordering_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            evidence = root / "review.txt"
+            evidence.write_text("review", encoding="utf-8")
+
+            retrieval_after_review = self._candidate(evidence)
+            retrieval_after_review["evidence_claims"][0][
+                "retrieval_timestamp"
+            ] = "2026-08-01T12:00:01Z"
+            with self.assertRaisesRegex(
+                QualificationExportError, "retrieval_timestamp"
+            ):
+                self._qualify(retrieval_after_review, root)
+
+            review_after_candidate = self._candidate(evidence)
+            review_after_candidate["evidence_claims"][0][
+                "reviewer_checked_at"
+            ] = "2026-08-01T12:00:01Z"
+            with self.assertRaisesRegex(
+                QualificationExportError,
+                "candidate evidence_checked_at",
+            ):
+                self._qualify(review_after_candidate, root)
 
 
 if __name__ == "__main__":

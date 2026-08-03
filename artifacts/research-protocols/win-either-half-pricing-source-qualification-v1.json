@@ -99,7 +99,7 @@
       "changed_odds_detection": ["EXECUTION_SAFETY"],
       "current_market_availability": ["LIVE_AVAILABILITY"],
       "deterministic_betslip": ["EXECUTION_SAFETY"],
-      "exact_execution_selection": ["EXECUTION_SAFETY"],
+      "exact_execution_selection": ["EXECUTION_SELECTION"],
       "exact_market_semantics": ["MARKET_SEMANTICS"],
       "exact_yes_no_structure": ["MARKET_SEMANTICS", "OUTCOME_STRUCTURE", "QUOTE_SCHEMA"],
       "explicit_user_confirmation": ["EXECUTION_SAFETY"],
@@ -121,6 +121,7 @@
     "required_fields": [
       "claim_id",
       "provider_identifier",
+      "canonical_market_ids",
       "evidence_file_path",
       "document_title",
       "source_reference",
@@ -130,7 +131,29 @@
       "reviewer_checked_at",
       "reviewer_conclusion"
     ],
-    "reviewer_conclusions": ["PASS", "FAIL", "UNKNOWN"]
+    "reviewer_conclusions": ["PASS", "FAIL", "UNKNOWN"],
+    "market_specific_capabilities": [
+      "EXECUTION_SELECTION",
+      "FROZEN_COVERAGE",
+      "HISTORICAL_RETENTION",
+      "LIVE_AVAILABILITY",
+      "MARKET_SEMANTICS",
+      "OUTCOME_STRUCTURE",
+      "QUOTE_SCHEMA",
+      "SNAPSHOT"
+    ],
+    "provider_global_capabilities": [
+      "BOOKING_CODE",
+      "EXECUTION_SAFETY",
+      "FIXTURE_MAPPING",
+      "REPRODUCIBLE_EXPORT",
+      "RESEARCH_PERMISSION",
+      "TIMESTAMP"
+    ],
+    "scope_policy": {
+      "market_specific": "NON_EMPTY_UNIQUE_SUBSET_OF_REQUIRED_MARKETS",
+      "provider_global": "EMPTY_LIST"
+    }
   },
   "fixture_mapping": {
     "kickoff_tolerance_seconds": 300,
@@ -281,10 +304,19 @@
   "snapshot_contract": {
     "derived_identifier_components": [
       "provider",
-      "fixture",
+      "provider_event_identifier",
       "market",
       "bookmaker",
       "exact_common_update_timestamp"
+    ],
+    "fixture_identifier_source": "provider_event_identifier",
+    "quote_mapping_reconciliation_fields": [
+      "provider_event_identifier",
+      "fixture_reference",
+      "provider_market_identifier",
+      "provider_yes_selection_identifier",
+      "provider_no_selection_identifier",
+      "bookmaker_identifier"
     ],
     "required_outcomes": [
       "YES",

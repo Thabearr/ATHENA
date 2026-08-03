@@ -193,3 +193,20 @@ a clean tracked worktree and writes deterministic UTF-8/LF bytes atomically.
 Stage 5B1 fetches no odds, uses no credentials, and adds no edge, expected
 value, Kelly, profitability, stake, ACCA, betslip, booking-code, or `BET`
 decision. Both Win Either Half markets remain `DISABLED`.
+
+## Final two-market evidence integrity
+
+Snapshot samples reconcile exactly to their quote mapping's provider event,
+fixture reference, provider market, YES and NO selections, and bookmaker. The
+provider event identifier is the sole fixture component used in a derived
+snapshot identity, so a snapshot from another fixture cannot qualify.
+
+Typed claims explicitly declare canonical market scope. Market-specific claims
+must name Home Win Either Half, Away Win Either Half, or both; provider-global
+claims use an empty scope. Exact execution-selection evidence is scoped to both
+canonical markets independently of general execution-safety evidence.
+
+Claim chronology requires retrieval no later than review and review no later
+than the candidate evidence timestamp. Claim evaluation is order-independent:
+a disallowed capability or contradiction fails before missing or unknown
+evidence can reduce the result to `UNKNOWN`.

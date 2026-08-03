@@ -88,7 +88,7 @@ CLAIM_CAPABILITY_ALLOWLIST = {
         {"QUOTE_SCHEMA", "LIVE_AVAILABILITY"}
     ),
     GateId.PERMITTED_AUTOMATION: frozenset({"EXECUTION_SAFETY"}),
-    GateId.EXACT_EXECUTION_SELECTION: frozenset({"EXECUTION_SAFETY"}),
+    GateId.EXACT_EXECUTION_SELECTION: frozenset({"EXECUTION_SELECTION"}),
     GateId.DETERMINISTIC_BETSLIP: frozenset({"EXECUTION_SAFETY"}),
     GateId.VALIDATED_QUOTE_PRICE_MATCH: frozenset({"EXECUTION_SAFETY"}),
     GateId.CHANGED_ODDS_DETECTION: frozenset({"EXECUTION_SAFETY"}),
@@ -102,6 +102,22 @@ PERMITTED_CLAIM_CAPABILITIES = frozenset(
     for capabilities in CLAIM_CAPABILITY_ALLOWLIST.values()
     for capability in capabilities
 )
+MARKET_SPECIFIC_CLAIM_CAPABILITIES = frozenset(
+    {
+        "MARKET_SEMANTICS",
+        "OUTCOME_STRUCTURE",
+        "QUOTE_SCHEMA",
+        "SNAPSHOT",
+        "HISTORICAL_RETENTION",
+        "FROZEN_COVERAGE",
+        "LIVE_AVAILABILITY",
+        "EXECUTION_SELECTION",
+    }
+)
+PROVIDER_GLOBAL_CLAIM_CAPABILITIES = (
+    PERMITTED_CLAIM_CAPABILITIES - MARKET_SPECIFIC_CLAIM_CAPABILITIES
+)
+REQUIRED_CANONICAL_MARKETS = frozenset(PERMITTED_MARKETS)
 DEFAULT_PROTOCOL_PATH = (
     REPOSITORY_ROOT
     / "artifacts/research-protocols/win-either-half-pricing-source-qualification-v1.json"
@@ -170,6 +186,7 @@ class EvidenceClaim:
     document_title: str
     source_reference: str
     capability_identifier: str
+    canonical_market_ids: tuple[MarketId, ...]
     capability_statement: str
     retrieval_timestamp: datetime
     reviewer_checked_at: datetime
@@ -183,6 +200,9 @@ class EvidenceClaim:
             "document_title": self.document_title,
             "source_reference": self.source_reference,
             "capability_identifier": self.capability_identifier,
+            "canonical_market_ids": [
+                market.value for market in self.canonical_market_ids
+            ],
             "capability_statement": self.capability_statement,
             "retrieval_timestamp": self.retrieval_timestamp.isoformat().replace(
                 "+00:00", "Z"
@@ -255,10 +275,19 @@ def validate_protocol_contract(
     expected_snapshot = {
         "derived_identifier_components": [
             "provider",
-            "fixture",
+            "provider_event_identifier",
             "market",
             "bookmaker",
             "exact_common_update_timestamp",
+        ],
+        "fixture_identifier_source": "provider_event_identifier",
+        "quote_mapping_reconciliation_fields": [
+            "provider_event_identifier",
+            "fixture_reference",
+            "provider_market_identifier",
+            "provider_yes_selection_identifier",
+            "provider_no_selection_identifier",
+            "bookmaker_identifier",
         ],
         "required_outcomes": ["YES", "NO"],
         "same_bookmaker": True,
@@ -277,6 +306,7 @@ def validate_protocol_contract(
         "required_fields": [
             "claim_id",
             "provider_identifier",
+            "canonical_market_ids",
             "evidence_file_path",
             "document_title",
             "source_reference",
@@ -287,6 +317,16 @@ def validate_protocol_contract(
             "reviewer_conclusion",
         ],
         "reviewer_conclusions": ["PASS", "FAIL", "UNKNOWN"],
+        "market_specific_capabilities": sorted(
+            MARKET_SPECIFIC_CLAIM_CAPABILITIES
+        ),
+        "provider_global_capabilities": sorted(
+            PROVIDER_GLOBAL_CLAIM_CAPABILITIES
+        ),
+        "scope_policy": {
+            "market_specific": "NON_EMPTY_UNIQUE_SUBSET_OF_REQUIRED_MARKETS",
+            "provider_global": "EMPTY_LIST",
+        },
         "gate_capability_allowlist": {
             gate.value: sorted(capabilities)
             for gate, capabilities in sorted(
@@ -438,8 +478,9 @@ def load_evidence_claims(
     *,
     provider_identifier: str,
     verified_evidence_paths: set[str],
+    candidate_checked_at: datetime,
 ) -> dict[str, EvidenceClaim]:
-    """Validate typed claims independently from their verified file identities."""
+    """Validate typed claims, market scope, chronology, and file identity."""
     if not isinstance(records, list):
         raise QualificationExportError("evidence_claims must be a list")
     claims: dict[str, EvidenceClaim] = {}
@@ -470,6 +511,36 @@ def load_evidence_claims(
             raise QualificationExportError(
                 "Evidence claim capability_identifier is not permitted"
             )
+        raw_market_ids = row.get("canonical_market_ids")
+        if not isinstance(raw_market_ids, list):
+            raise QualificationExportError(
+                "Evidence claim canonical_market_ids must be a list"
+            )
+        if any(
+            not isinstance(item, str) or not item.strip()
+            for item in raw_market_ids
+        ):
+            raise QualificationExportError(
+                "Evidence claim canonical_market_ids contains an invalid value"
+            )
+        try:
+            market_ids = tuple(MarketId(item.strip()) for item in raw_market_ids)
+        except ValueError as error:
+            raise QualificationExportError(
+                "Evidence claim canonical_market_ids contains an unsupported market"
+            ) from error
+        if any(market not in PERMITTED_MARKETS for market in market_ids):
+            raise QualificationExportError(
+                "Evidence claim canonical_market_ids contains an unsupported market"
+            )
+        if len(set(market_ids)) != len(market_ids):
+            raise QualificationExportError(
+                "Evidence claim canonical_market_ids must be unique"
+            )
+        if capability in MARKET_SPECIFIC_CLAIM_CAPABILITIES and not market_ids:
+            raise QualificationExportError(
+                "Market-specific evidence claim requires canonical_market_ids"
+            )
         try:
             conclusion = GateStatus(row.get("reviewer_conclusion"))
         except (TypeError, ValueError) as error:
@@ -480,6 +551,16 @@ def load_evidence_claims(
             raise QualificationExportError(
                 "Evidence claim reviewer_conclusion cannot be NOT_APPLICABLE"
             )
+        retrieval_timestamp = _parse_checked_at(row.get("retrieval_timestamp"))
+        reviewer_checked_at = _parse_checked_at(row.get("reviewer_checked_at"))
+        if retrieval_timestamp > reviewer_checked_at:
+            raise QualificationExportError(
+                "Evidence claim retrieval_timestamp must not follow reviewer_checked_at"
+            )
+        if reviewer_checked_at > candidate_checked_at:
+            raise QualificationExportError(
+                "Evidence claim reviewer_checked_at must not follow candidate evidence_checked_at"
+            )
         claims[claim_id] = EvidenceClaim(
             claim_id=claim_id,
             provider_identifier=claim_provider,
@@ -487,11 +568,14 @@ def load_evidence_claims(
             document_title=_claim_text(row.get("document_title"), "document_title"),
             source_reference=_claim_text(row.get("source_reference"), "source_reference"),
             capability_identifier=capability,
+            canonical_market_ids=tuple(
+                sorted(market_ids, key=lambda item: item.value)
+            ),
             capability_statement=_claim_text(
                 row.get("capability_statement"), "capability_statement"
             ),
-            retrieval_timestamp=_parse_checked_at(row.get("retrieval_timestamp")),
-            reviewer_checked_at=_parse_checked_at(row.get("reviewer_checked_at")),
+            retrieval_timestamp=retrieval_timestamp,
+            reviewer_checked_at=reviewer_checked_at,
             reviewer_conclusion=conclusion,
         )
     return dict(sorted(claims.items()))
@@ -830,12 +914,34 @@ def _derive_snapshot(
     indexed, indexing_problems = _market_rows(section.get("samples"), "SNAPSHOT")
     per_market: dict[MarketId, DerivedGate] = {}
     audit: dict[MarketId, dict] = {}
+    required_strings = (
+        "provider_event_identifier",
+        "fixture_reference",
+        "provider_market_identifier",
+        "bookmaker_identifier",
+        "provider_yes_selection_identifier",
+        "provider_no_selection_identifier",
+    )
+    reconciliation_fields = (
+        "provider_event_identifier",
+        "fixture_reference",
+        "provider_market_identifier",
+        "provider_yes_selection_identifier",
+        "provider_no_selection_identifier",
+        "bookmaker_identifier",
+    )
     for market in PERMITTED_MARKETS:
         row = indexed.get(market)
         quote = quote_rows.get(market)
         audit[market] = {
             "provider_identifier": row.get("provider_identifier") if row else None,
-            "fixture_identifier": row.get("fixture_identifier") if row else None,
+            "provider_event_identifier": (
+                row.get("provider_event_identifier") if row else None
+            ),
+            "fixture_reference": row.get("fixture_reference") if row else None,
+            "provider_market_identifier": (
+                row.get("provider_market_identifier") if row else None
+            ),
             "market_id": market.value,
             "bookmaker_identifier": row.get("bookmaker_identifier") if row else None,
             "observed_at": row.get("yes_observed_at") if row else None,
@@ -848,6 +954,12 @@ def _derive_snapshot(
             per_market[market] = _missing_market_result("SNAPSHOT")
         elif (row_problem := _section_metadata(row, "SNAPSHOT")) is not None:
             per_market[market] = row_problem
+        elif (
+            string_problem := _strict_strings(
+                row, required_strings, "SNAPSHOT"
+            )
+        ) is not None:
+            per_market[market] = string_problem
         elif row.get("provider_identifier") != provider_identifier:
             per_market[market] = DerivedGate(
                 GateStatus.FAIL, "SNAPSHOT_PROVIDER_MISMATCH", _claim_ids(row)
@@ -862,11 +974,7 @@ def _derive_snapshot(
             )
         elif any(
             row.get(field) != quote.get(field)
-            for field in (
-                "provider_yes_selection_identifier",
-                "provider_no_selection_identifier",
-                "bookmaker_identifier",
-            )
+            for field in reconciliation_fields
         ):
             per_market[market] = DerivedGate(
                 GateStatus.FAIL, "SNAPSHOT_QUOTE_MAPPING_MISMATCH", _claim_ids(row)
@@ -881,7 +989,7 @@ def _derive_snapshot(
         else:
             result = validate_snapshot_identity(
                 provider_identifier=row.get("provider_identifier"),
-                fixture_identifier=row.get("fixture_identifier"),
+                fixture_identifier=row.get("provider_event_identifier"),
                 market_id=row.get("market_id"),
                 bookmaker_identifier=row.get("bookmaker_identifier"),
                 yes_observed_at=row.get("yes_observed_at"),
@@ -1204,7 +1312,16 @@ def _derive_execution(value: Mapping[str, Any]) -> dict[GateId, DerivedGate]:
         elif section.get(field) is not True:
             results[gate] = DerivedGate(GateStatus.FAIL, f"{field.upper()}_NOT_PROVEN")
         else:
-            results[gate] = DerivedGate(GateStatus.PASS, f"{field.upper()}_VALIDATED", _claim_ids(section))
+            claim_field = (
+                "exact_selection_claim_ids"
+                if gate is GateId.EXACT_EXECUTION_SELECTION
+                else "claim_ids"
+            )
+            results[gate] = DerivedGate(
+                GateStatus.PASS,
+                f"{field.upper()}_VALIDATED",
+                _claim_ids(section, claim_field),
+            )
     booking = value["booking_code_evidence"]
     booking_metadata = _section_metadata(booking, "BOOKING_CODE")
     if booking_metadata:
@@ -1263,21 +1380,43 @@ def derive_structured_gates(
         live_row = live_rows.get(market, {})
         market_results = {
             "semantics": _apply_claim_support(
-                semantics_market[market], claims, {"MARKET_SEMANTICS"}
+                semantics_market[market],
+                claims,
+                {"MARKET_SEMANTICS"},
+                market=market,
             ),
             "quote_mapping": _apply_claim_support(
-                quote_market[market], claims, {"QUOTE_SCHEMA"}
+                quote_market[market],
+                claims,
+                {"QUOTE_SCHEMA"},
+                market=market,
             ),
             "snapshot": _apply_claim_support(
-                snapshot_market[market], claims, {"SNAPSHOT"}
+                snapshot_market[market],
+                claims,
+                {"SNAPSHOT"},
+                market=market,
             ),
             "historical": _apply_claim_support(
                 historical_market[market],
                 claims,
                 {"HISTORICAL_RETENTION", "FROZEN_COVERAGE"},
+                market=market,
             ),
             "live": _apply_claim_support(
-                live_market[market], claims, {"LIVE_AVAILABILITY"}
+                live_market[market],
+                claims,
+                {"LIVE_AVAILABILITY"},
+                market=market,
+            ),
+            "execution_selection": _claim_support_capabilities(
+                _claim_ids(
+                    value["execution_workflow_evidence"],
+                    "exact_selection_claim_ids",
+                ),
+                claims,
+                {"EXECUTION_SELECTION"},
+                required_market=market,
             ),
         }
         market_qualification[market.value] = {
@@ -1324,33 +1463,79 @@ def _claim_support_capabilities(
     claim_ids: Sequence[str],
     claims: Mapping[str, EvidenceClaim],
     permitted_capabilities: set[str] | frozenset[str],
+    *,
+    required_market: Optional[MarketId] = None,
+    require_all_markets: bool = False,
 ) -> DerivedGate:
-    if not claim_ids:
+    normalized_ids = tuple(sorted(claim_ids))
+    if not normalized_ids:
         return DerivedGate(GateStatus.UNKNOWN, "MISSING_EVIDENCE_CLAIMS")
-    resolved = []
-    for claim_id in claim_ids:
+
+    missing = False
+    disallowed = False
+    contradictory = False
+    unknown = False
+    scope_mismatch = False
+    covered_markets: set[MarketId] = set()
+
+    for claim_id in normalized_ids:
         claim = claims.get(claim_id)
         if claim is None:
-            return DerivedGate(
-                GateStatus.UNKNOWN, "UNKNOWN_EVIDENCE_CLAIM", tuple(sorted(claim_ids))
-            )
+            missing = True
+            continue
         if claim.capability_identifier not in permitted_capabilities:
-            return DerivedGate(
-                GateStatus.FAIL,
-                "EVIDENCE_CLAIM_CAPABILITY_NOT_ALLOWED_FOR_GATE",
-                tuple(sorted(claim_ids)),
-            )
-        resolved.append(claim)
-    if any(claim.reviewer_conclusion is GateStatus.FAIL for claim in resolved):
+            disallowed = True
+        if claim.reviewer_conclusion is GateStatus.FAIL:
+            contradictory = True
+        elif claim.reviewer_conclusion is GateStatus.UNKNOWN:
+            unknown = True
+
+        if claim.capability_identifier in MARKET_SPECIFIC_CLAIM_CAPABILITIES:
+            scope = set(claim.canonical_market_ids)
+            covered_markets.update(scope)
+            if required_market is not None and required_market not in scope:
+                scope_mismatch = True
+        elif claim.canonical_market_ids:
+            scope_mismatch = True
+
+    if disallowed:
         return DerivedGate(
-            GateStatus.FAIL, "CONTRADICTORY_EVIDENCE_CLAIM", tuple(sorted(claim_ids))
+            GateStatus.FAIL,
+            "EVIDENCE_CLAIM_CAPABILITY_NOT_ALLOWED_FOR_GATE",
+            normalized_ids,
         )
-    if any(claim.reviewer_conclusion is GateStatus.UNKNOWN for claim in resolved):
+    if contradictory:
         return DerivedGate(
-            GateStatus.UNKNOWN, "UNKNOWN_EVIDENCE_CLAIM", tuple(sorted(claim_ids))
+            GateStatus.FAIL,
+            "CONTRADICTORY_EVIDENCE_CLAIM",
+            normalized_ids,
+        )
+    if scope_mismatch:
+        return DerivedGate(
+            GateStatus.FAIL,
+            "EVIDENCE_CLAIM_MARKET_SCOPE_MISMATCH",
+            normalized_ids,
+        )
+    if missing:
+        return DerivedGate(
+            GateStatus.UNKNOWN, "UNKNOWN_EVIDENCE_CLAIM", normalized_ids
+        )
+    if (
+        require_all_markets
+        and set(permitted_capabilities) & MARKET_SPECIFIC_CLAIM_CAPABILITIES
+        and covered_markets != REQUIRED_CANONICAL_MARKETS
+    ):
+        return DerivedGate(
+            GateStatus.FAIL,
+            "EVIDENCE_CLAIM_MARKET_SCOPE_INCOMPLETE",
+            normalized_ids,
+        )
+    if unknown:
+        return DerivedGate(
+            GateStatus.UNKNOWN, "UNKNOWN_EVIDENCE_CLAIM", normalized_ids
         )
     return DerivedGate(
-        GateStatus.PASS, "TYPED_EVIDENCE_CLAIMS_VALIDATED", tuple(sorted(claim_ids))
+        GateStatus.PASS, "TYPED_EVIDENCE_CLAIMS_VALIDATED", normalized_ids
     )
 
 
@@ -1360,7 +1545,10 @@ def _claim_support(
     claims: Mapping[str, EvidenceClaim],
 ) -> DerivedGate:
     return _claim_support_capabilities(
-        claim_ids, claims, CLAIM_CAPABILITY_ALLOWLIST[gate]
+        claim_ids,
+        claims,
+        CLAIM_CAPABILITY_ALLOWLIST[gate],
+        require_all_markets=True,
     )
 
 
@@ -1368,9 +1556,14 @@ def _apply_claim_support(
     result: DerivedGate,
     claims: Mapping[str, EvidenceClaim],
     permitted_capabilities: set[str] | frozenset[str],
+    *,
+    market: MarketId,
 ) -> DerivedGate:
     support = _claim_support_capabilities(
-        result.evidence_claim_ids, claims, permitted_capabilities
+        result.evidence_claim_ids,
+        claims,
+        permitted_capabilities,
+        required_market=market,
     )
     return _merge_derived(result, support)
 
@@ -1500,6 +1693,7 @@ def qualify_candidate(
         value.get("evidence_claims"),
         provider_identifier=provider_identifier,
         verified_evidence_paths=evidence_paths,
+        candidate_checked_at=checked_at,
     )
     derived_gates, market_qualification = derive_structured_gates(
         value, provider_identifier, evidence_claims
