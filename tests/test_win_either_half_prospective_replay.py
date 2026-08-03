@@ -58,6 +58,7 @@ from scripts.export_win_either_half_prospective_replay import (
     build_outputs,
     check_manifest,
     commit_evidence_bundle,
+    duplicate_group_accounting,
     format_csv,
     run,
 )
@@ -199,7 +200,7 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         for r in quote_results:
             aid = r.raw_record.get("attempt_id")
             if isinstance(aid, str) and aid.strip():
-                res.setdefault(aid.strip(), []).append(r)
+                res.setdefault(aid, []).append(r)
         return res
 
     # 1. Real nested Stage 5B1 report is accepted
@@ -867,15 +868,86 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         self.assertFalse(res[0].is_valid)
         self.assertIn("MISSING_CAPTURE_MAPPING", res[0].rejection_reasons)
 
-    # 43. MARKET_UNAVAILABLE with target market mapped is INVALID
-    def test_market_unavailable_with_target_market_mapped_invalid(self) -> None:
+    # 43. Mapping presence is not temporal availability evidence
+    def test_market_unavailable_then_captured_at_later_offset(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
-        att = self._sample_attempt("ATT-1", market_id="HOME_WIN_EITHER_HALF", result="MARKET_UNAVAILABLE")
-        att["provider_market_identifier"] = None
-        res, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
-        self.assertFalse(res[0].is_valid)
-        self.assertIn("MAPPING_CONTRADICTS_MARKET_UNAVAILABLE", res[0].rejection_reasons)
+        mappings = load_provider_mappings_dataset(
+            self.mappings_payload,
+            "TEST_PROVIDER",
+            fixtures,
+        )
+
+        early = self._sample_attempt(
+            "ATT-EARLY",
+            offset=86400,
+            scheduled_at="2026-08-09T15:00:00Z",
+            attempted_at="2026-08-09T15:00:00Z",
+            result="MARKET_UNAVAILABLE",
+        )
+        early["provider_market_identifier"] = None
+
+        late = self._sample_attempt(
+            "ATT-LATE",
+            offset=3600,
+            scheduled_at="2026-08-10T14:00:00Z",
+            attempted_at="2026-08-10T14:00:00Z",
+            result="QUOTES_CAPTURED",
+            quote_snapshot_id="SNAP-LATE",
+        )
+        yes_quote = self._sample_quote(
+            "ATT-LATE",
+            outcome_id="YES",
+            quote_snapshot_id="SNAP-LATE",
+            observed_at="2026-08-10T13:55:00Z",
+            selection_id="SEL-HWEH-YES",
+        )
+        no_quote = self._sample_quote(
+            "ATT-LATE",
+            outcome_id="NO",
+            quote_snapshot_id="SNAP-LATE",
+            observed_at="2026-08-10T13:55:00Z",
+            selection_id="SEL-HWEH-NO",
+        )
+
+        attempt_results, valid_by_id, valid_by_key, invalid_by_key = (
+            parse_observation_attempts(
+                [early, late],
+                fixtures,
+                mappings,
+                "TEST_PROVIDER",
+            )
+        )
+        self.assertTrue(all(result.is_valid for result in attempt_results))
+
+        quote_results = parse_prospective_quotes(
+            [yes_quote, no_quote],
+            fixtures,
+            mappings,
+            valid_by_id,
+            "TEST_PROVIDER",
+        )
+        grouped = self._group_quotes_by_attempt_id(quote_results)
+        snapshots, evaluations = evaluate_prospective_replay(
+            fixtures,
+            valid_by_key,
+            invalid_by_key,
+            grouped,
+        )
+
+        by_offset = {
+            evaluation.offset_seconds_before_kickoff: evaluation
+            for evaluation in evaluations
+            if evaluation.market_id == MarketId.HOME_WIN_EITHER_HALF
+        }
+        self.assertEqual(
+            by_offset[86400].availability_status,
+            AvailabilityStatus.UNAVAILABLE,
+        )
+        self.assertEqual(
+            by_offset[3600].availability_status,
+            AvailabilityStatus.AVAILABLE,
+        )
+        self.assertEqual(len(snapshots), 1)
 
     # 44. MARKET_UNAVAILABLE with provider_market_identifier present is INVALID
     def test_market_unavailable_with_provider_market_identifier_present_invalid(self) -> None:
@@ -902,16 +974,41 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         self.assertEqual(target_eval.availability_status, AvailabilityStatus.UNAVAILABLE)
         self.assertEqual(target_eval.availability_reason, AvailabilityReason.EXPLICIT_FIXTURE_UNAVAILABLE.value)
 
-    # 46. FIXTURE_UNAVAILABLE with a fixture mapping is INVALID
-    def test_fixture_unavailable_with_fixture_mapping_invalid(self) -> None:
+    # 46. FIXTURE_UNAVAILABLE remains valid when a mapping was learned later
+    def test_fixture_unavailable_then_later_mapping_is_valid(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        mappings = load_provider_mappings_dataset(self.mappings_payload, "TEST_PROVIDER", fixtures)
-        att = self._sample_attempt("ATT-1", result="FIXTURE_UNAVAILABLE")
-        att["provider_event_identifier"] = None
-        att["provider_market_identifier"] = None
-        res, _, _, _ = parse_observation_attempts([att], fixtures, mappings, "TEST_PROVIDER")
-        self.assertFalse(res[0].is_valid)
-        self.assertIn("MAPPING_CONTRADICTS_FIXTURE_UNAVAILABLE", res[0].rejection_reasons)
+        mappings = load_provider_mappings_dataset(
+            self.mappings_payload,
+            "TEST_PROVIDER",
+            fixtures,
+        )
+        attempt = self._sample_attempt(
+            "ATT-EARLY",
+            result="FIXTURE_UNAVAILABLE",
+        )
+        attempt["provider_event_identifier"] = None
+        attempt["provider_market_identifier"] = None
+
+        results, _, valid_by_key, invalid_by_key = parse_observation_attempts(
+            [attempt],
+            fixtures,
+            mappings,
+            "TEST_PROVIDER",
+        )
+        self.assertTrue(results[0].is_valid)
+        _, evaluations = evaluate_prospective_replay(
+            fixtures,
+            valid_by_key,
+            invalid_by_key,
+            {},
+        )
+        target = next(
+            evaluation
+            for evaluation in evaluations
+            if evaluation.market_id == MarketId.HOME_WIN_EITHER_HALF
+            and evaluation.offset_seconds_before_kickoff == 86400
+        )
+        self.assertEqual(target.availability_status, AvailabilityStatus.UNAVAILABLE)
 
     # 47. SOURCE_UNAVAILABLE with null IDs is UNAVAILABLE even when a prior mapping exists
     def test_source_unavailable_valid_with_null_ids_even_if_mapped(self) -> None:
@@ -927,24 +1024,73 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         self.assertEqual(target_eval.availability_status, AvailabilityStatus.UNAVAILABLE)
         self.assertEqual(target_eval.availability_reason, AvailabilityReason.EXPLICIT_SOURCE_UNAVAILABLE.value)
 
-    # 48. CAPTURE_ERROR accepts both IDs null
-    def test_capture_error_accepts_both_ids_null(self) -> None:
+    # 48. CAPTURE_ERROR allows exact event without market
+    def test_capture_error_allows_exact_event_without_market(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        att = self._sample_attempt("ATT-1", result="CAPTURE_ERROR")
-        att["provider_event_identifier"] = None
-        att["provider_market_identifier"] = None
-        res, _, _, _ = parse_observation_attempts([att], fixtures, {}, "TEST_PROVIDER")
-        self.assertTrue(res[0].is_valid)
+        mappings = load_provider_mappings_dataset(
+            self.mappings_payload,
+            "TEST_PROVIDER",
+            fixtures,
+        )
+        attempt = self._sample_attempt("ATT-ERR", result="CAPTURE_ERROR")
+        attempt["provider_event_identifier"] = "EV-101"
+        attempt["provider_market_identifier"] = None
 
-    # 49. CAPTURE_ERROR with only one identifier is INVALID
-    def test_capture_error_with_one_identifier_invalid(self) -> None:
+        results, _, valid_by_key, invalid_by_key = parse_observation_attempts(
+            [attempt],
+            fixtures,
+            mappings,
+            "TEST_PROVIDER",
+        )
+        self.assertTrue(results[0].is_valid)
+        _, evaluations = evaluate_prospective_replay(
+            fixtures,
+            valid_by_key,
+            invalid_by_key,
+            {},
+        )
+        target = next(
+            evaluation
+            for evaluation in evaluations
+            if evaluation.market_id == MarketId.HOME_WIN_EITHER_HALF
+            and evaluation.offset_seconds_before_kickoff == 86400
+        )
+        self.assertEqual(target.availability_status, AvailabilityStatus.UNKNOWN)
+        self.assertEqual(
+            target.availability_reason,
+            AvailabilityReason.CAPTURE_ERROR.value,
+        )
+
+    # 49. CAPTURE_ERROR rejects market identifier without event identifier
+    def test_capture_error_rejects_market_identifier_without_event(self) -> None:
         fixtures = load_fixtures_dataset(self.fixtures_payload)
-        att = self._sample_attempt("ATT-1", result="CAPTURE_ERROR")
-        att["provider_event_identifier"] = "EV-101"
-        att["provider_market_identifier"] = None
-        res, _, _, _ = parse_observation_attempts([att], fixtures, {}, "TEST_PROVIDER")
-        self.assertFalse(res[0].is_valid)
-        self.assertIn("PARTIAL_CAPTURE_ERROR_IDENTIFIERS", res[0].rejection_reasons)
+        mappings = load_provider_mappings_dataset(
+            self.mappings_payload,
+            "TEST_PROVIDER",
+            fixtures,
+        )
+        attempt = self._sample_attempt("ATT-ERR", result="CAPTURE_ERROR")
+        attempt["provider_event_identifier"] = None
+        attempt["provider_market_identifier"] = "MKT-HWEH"
+
+        results, _, _, _ = parse_observation_attempts(
+            [attempt],
+            fixtures,
+            mappings,
+            "TEST_PROVIDER",
+        )
+        self.assertFalse(results[0].is_valid)
+        self.assertIn(
+            "PARTIAL_CAPTURE_ERROR_IDENTIFIERS",
+            results[0].rejection_reasons,
+        )
+
+    # 49b. Duplicate accounting helper test
+    def test_duplicate_accounting_counts_groups_and_rows(self) -> None:
+        self.assertEqual(
+            duplicate_group_accounting(["A", "A", "B", "C", "C", "C"]),
+            (2, 5),
+        )
 
     # 50. Mapping loader rejects extra fixture mapping
     def test_mapping_loader_rejects_extra_fixture_mapping(self) -> None:
@@ -1009,6 +1155,23 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
         q_results = parse_prospective_quotes([q], fixtures, mappings, v_by_id, "TEST_PROVIDER")
         self.assertFalse(q_results[0].is_valid)
         self.assertIn("QUOTE_OBSERVED_AFTER_ATTEMPT", q_results[0].rejection_reasons)
+
+    # 56. Assertions proving V5 protocol, safety, and accounting invariants
+    def test_v5_contract_and_safety_invariants_proved(self) -> None:
+        proto_file = json.loads(DEFAULT_PROTOCOL_PATH.read_text(encoding="utf-8"))
+        proto_dict = build_expected_protocol_contract()
+
+        for proto in (proto_file, proto_dict):
+            semantics = proto["attempt_contract"]["identifier_semantics"]
+            self.assertEqual(semantics["MARKET_UNAVAILABLE"]["target_market_mapping"], "MAY_EXIST_FROM_ANOTHER_OFFSET")
+            self.assertEqual(semantics["FIXTURE_UNAVAILABLE"]["fixture_mapping"], "MAY_EXIST_FROM_ANOTHER_OFFSET")
+            self.assertEqual(semantics["SOURCE_UNAVAILABLE"]["fixture_mapping"], "MAY_EXIST_FROM_ANOTHER_OFFSET")
+            self.assertTrue(proto["provider_mapping_contract"]["mapping_presence_is_not_temporal_availability_evidence"])
+
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
+        self.assertIsNone(proto_dict["output_contract"]["selected_offset_seconds"])
+        self.assertFalse(proto_dict["output_contract"]["selection_authorized"])
 
 
 if __name__ == "__main__":

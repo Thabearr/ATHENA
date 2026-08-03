@@ -450,56 +450,76 @@ def validate_attempt_mapping_semantics(
     provider_market_identifier: Any,
     mappings: Mapping[str, ProviderMapping],
 ) -> tuple[str, ...]:
-    """Validate attempt identifiers against partial provider mappings according to result semantics."""
+    """Validate identifiers without treating mapping presence as availability."""
     reasons: set[str] = set()
+    mapping = mappings.get(fixture_identifier)
 
-    if result == AttemptResult.QUOTES_CAPTURED:
-        mapping = mappings.get(fixture_identifier)
-        if mapping is None:
-            reasons.add("MISSING_CAPTURE_MAPPING")
-        else:
-            if (
+    def common_mapping_mismatch() -> bool:
+        return bool(
+            mapping is not None
+            and (
                 provider_identifier != mapping.provider_identifier
                 or source != mapping.source
                 or bookmaker_identifier != mapping.bookmaker_identifier
-                or provider_event_identifier != mapping.provider_event_identifier
-            ):
+            )
+        )
+
+    if common_mapping_mismatch():
+        reasons.add("MAPPING_MISMATCH")
+
+    event_present = (
+        isinstance(provider_event_identifier, str)
+        and bool(provider_event_identifier.strip())
+    )
+    market_present = (
+        isinstance(provider_market_identifier, str)
+        and bool(provider_market_identifier.strip())
+    )
+
+    if provider_event_identifier is not None and not event_present:
+        reasons.add("INVALID_PROVIDER_EVENT_IDENTIFIER")
+    if provider_market_identifier is not None and not market_present:
+        reasons.add("INVALID_PROVIDER_MARKET_IDENTIFIER")
+
+    if result == AttemptResult.QUOTES_CAPTURED:
+        if mapping is None:
+            reasons.add("MISSING_CAPTURE_MAPPING")
+        if not event_present:
+            reasons.add("PROVIDER_EVENT_ID_REQUIRED")
+        if not market_present:
+            reasons.add("PROVIDER_MARKET_ID_REQUIRED")
+
+        if mapping is not None:
+            if provider_event_identifier != mapping.provider_event_identifier:
                 reasons.add("MAPPING_MISMATCH")
             market_mapping = mapping.markets.get(market)
             if market_mapping is None:
                 reasons.add("MISSING_CAPTURE_MAPPING")
-            else:
-                if provider_market_identifier != market_mapping.provider_market_identifier:
-                    reasons.add("MAPPING_MISMATCH")
-
-        if not isinstance(provider_event_identifier, str) or not provider_event_identifier.strip():
-            reasons.add("PROVIDER_EVENT_ID_REQUIRED")
-        if not isinstance(provider_market_identifier, str) or not provider_market_identifier.strip():
-            reasons.add("PROVIDER_MARKET_ID_REQUIRED")
-
-    elif result == AttemptResult.MARKET_UNAVAILABLE:
-        mapping = mappings.get(fixture_identifier)
-        if mapping is None:
-            reasons.add("MISSING_EVENT_MAPPING_FOR_MARKET_UNAVAILABLE")
-        else:
-            if (
-                provider_identifier != mapping.provider_identifier
-                or source != mapping.source
-                or bookmaker_identifier != mapping.bookmaker_identifier
-                or provider_event_identifier != mapping.provider_event_identifier
+            elif (
+                provider_market_identifier
+                != market_mapping.provider_market_identifier
             ):
                 reasons.add("MAPPING_MISMATCH")
-            if market in mapping.markets:
-                reasons.add("MAPPING_CONTRADICTS_MARKET_UNAVAILABLE")
 
-        if not isinstance(provider_event_identifier, str) or not provider_event_identifier.strip():
+    elif result == AttemptResult.MARKET_UNAVAILABLE:
+        # The fixture/event must have been resolved at this attempt.
+        # A market mapping may exist from another offset; that does not prove
+        # the market was available at this timestamp.
+        if mapping is None:
+            reasons.add("MISSING_EVENT_MAPPING_FOR_MARKET_UNAVAILABLE")
+        if not event_present:
             reasons.add("PROVIDER_EVENT_ID_REQUIRED")
-        if provider_market_identifier is not None:
+        if market_present or provider_market_identifier is not None:
             reasons.add("PROVIDER_MARKET_ID_MUST_BE_NULL")
+        if (
+            mapping is not None
+            and provider_event_identifier != mapping.provider_event_identifier
+        ):
+            reasons.add("MAPPING_MISMATCH")
 
     elif result == AttemptResult.FIXTURE_UNAVAILABLE:
-        if fixture_identifier in mappings:
-            reasons.add("MAPPING_CONTRADICTS_FIXTURE_UNAVAILABLE")
+        # A mapping may have been learned at a later offset. Its presence is
+        # not evidence that the fixture was listed at this attempt.
         if provider_event_identifier is not None:
             reasons.add("PROVIDER_EVENT_ID_MUST_BE_NULL")
         if provider_market_identifier is not None:
@@ -512,33 +532,30 @@ def validate_attempt_mapping_semantics(
             reasons.add("PROVIDER_MARKET_ID_MUST_BE_NULL")
 
     elif result == AttemptResult.CAPTURE_ERROR:
-        if provider_event_identifier is None and provider_market_identifier is None:
-            pass
-        elif (
-            isinstance(provider_event_identifier, str)
-            and provider_event_identifier.strip()
-            and isinstance(provider_market_identifier, str)
-            and provider_market_identifier.strip()
-        ):
-            mapping = mappings.get(fixture_identifier)
+        # Valid progress states are:
+        #   1. no identifiers resolved;
+        #   2. exact event resolved, market unresolved;
+        #   3. exact event and exact market resolved.
+        if market_present and not event_present:
+            reasons.add("PARTIAL_CAPTURE_ERROR_IDENTIFIERS")
+        elif event_present:
             if mapping is None:
-                reasons.add("MISSING_CAPTURE_MAPPING")
+                reasons.add("MISSING_EVENT_MAPPING_FOR_CAPTURE_ERROR")
             else:
                 if (
-                    provider_identifier != mapping.provider_identifier
-                    or source != mapping.source
-                    or bookmaker_identifier != mapping.bookmaker_identifier
-                    or provider_event_identifier != mapping.provider_event_identifier
+                    provider_event_identifier
+                    != mapping.provider_event_identifier
                 ):
                     reasons.add("MAPPING_MISMATCH")
-                market_mapping = mapping.markets.get(market)
-                if market_mapping is None:
-                    reasons.add("MISSING_CAPTURE_MAPPING")
-                else:
-                    if provider_market_identifier != market_mapping.provider_market_identifier:
+                if market_present:
+                    market_mapping = mapping.markets.get(market)
+                    if market_mapping is None:
+                        reasons.add("MISSING_CAPTURE_MAPPING")
+                    elif (
+                        provider_market_identifier
+                        != market_mapping.provider_market_identifier
+                    ):
                         reasons.add("MAPPING_MISMATCH")
-        else:
-            reasons.add("PARTIAL_CAPTURE_ERROR_IDENTIFIERS")
 
     return tuple(sorted(reasons))
 
@@ -1411,19 +1428,26 @@ def build_expected_protocol_contract() -> dict[str, Any]:
                 "MARKET_UNAVAILABLE": {
                     "provider_event_identifier": "REQUIRED_EXACT_FIXTURE_MAPPING",
                     "provider_market_identifier": "MUST_BE_NULL",
-                    "target_market_mapping": "MUST_BE_ABSENT",
+                    "target_market_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET",
                 },
                 "FIXTURE_UNAVAILABLE": {
                     "provider_event_identifier": "MUST_BE_NULL",
                     "provider_market_identifier": "MUST_BE_NULL",
-                    "fixture_mapping": "MUST_BE_ABSENT",
+                    "fixture_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET",
                 },
                 "SOURCE_UNAVAILABLE": {
                     "provider_event_identifier": "MUST_BE_NULL",
                     "provider_market_identifier": "MUST_BE_NULL",
+                    "fixture_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET",
                 },
                 "CAPTURE_ERROR": {
-                    "identifier_pair": "BOTH_NULL_OR_BOTH_EXACT_MAPPING",
+                    "identifier_progression": [
+                        "BOTH_NULL",
+                        "EVENT_EXACT_MARKET_NULL",
+                        "EVENT_EXACT_MARKET_EXACT",
+                    ],
+                    "market_identifier_requires_event_identifier": True,
+                    "non_null_identifiers_must_match_mapping": True,
                 },
             },
         },
@@ -1434,6 +1458,7 @@ def build_expected_protocol_contract() -> dict[str, Any]:
             "supplied_market_requires_exact_yes_no": True,
             "yes_no_selection_identifiers_must_differ": True,
             "captured_attempt_requires_exact_mapping": True,
+            "mapping_presence_is_not_temporal_availability_evidence": True,
         },
         "market_scope": {
             "AWAY_WIN_EITHER_HALF": {

@@ -81,6 +81,15 @@ class EvidenceBundle:
     row_counts: dict[str, int]
 
 
+def duplicate_group_accounting(
+    values: Sequence[Any],
+) -> tuple[int, int]:
+    """Return distinct duplicate-group count and participating-row count."""
+    counts = Counter(value for value in values if value is not None)
+    duplicate_counts = [count for count in counts.values() if count > 1]
+    return len(duplicate_counts), sum(duplicate_counts)
+
+
 def _csv_cell(value: Any) -> Any:
     if value is None:
         return ""
@@ -224,9 +233,11 @@ def build_outputs(
 
     quote_results_by_attempt_id: dict[str, list[QuoteParseResult]] = {}
     for result in quote_parse_results:
-        aid = result.raw_record.get("attempt_id")
-        if isinstance(aid, str) and aid.strip():
-            quote_results_by_attempt_id.setdefault(aid.strip(), []).append(result)
+        attempt_id = result.raw_record.get("attempt_id")
+        if isinstance(attempt_id, str) and attempt_id.strip():
+            # Preserve the exact identifier used by both parsers. Do not strip it
+            # here after validating and indexing attempts with the original value.
+            quote_results_by_attempt_id.setdefault(attempt_id, []).append(result)
 
     valid_quotes = [r.quote for r in quote_parse_results if r.is_valid and r.quote is not None]
 
@@ -543,6 +554,24 @@ def build_outputs(
         evaluation.availability_reason for evaluation in evaluations
     ).items()))
 
+    expected_key_values = [
+        result.expected_key for result in attempt_parse_results
+    ]
+    attempt_id_values = [
+        value
+        for result in attempt_parse_results
+        for value in [result.raw_record.get("attempt_id")]
+        if isinstance(value, str) and value.strip()
+    ]
+    (
+        duplicate_expected_key_count,
+        duplicate_expected_key_record_count,
+    ) = duplicate_group_accounting(expected_key_values)
+    (
+        duplicate_attempt_id_count,
+        duplicate_attempt_id_record_count,
+    ) = duplicate_group_accounting(attempt_id_values)
+
     summary_dict: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
         "dataset_name": "win-either-half-prospective-replay-summary-v1",
@@ -563,12 +592,12 @@ def build_outputs(
         "missing_expected_attempt_count": sum(
             1 for e in evaluations if e.availability_reason == AvailabilityReason.NO_ATTEMPT_RECORD.value
         ),
-        "duplicate_expected_key_count": sum(
-            1 for r in attempt_parse_results if "DUPLICATE_EXPECTED_KEY" in r.rejection_reasons
+        "duplicate_expected_key_count": duplicate_expected_key_count,
+        "duplicate_expected_key_record_count": (
+            duplicate_expected_key_record_count
         ),
-        "duplicate_attempt_id_count": sum(
-            1 for r in attempt_parse_results if "DUPLICATE_ATTEMPT_ID" in r.rejection_reasons
-        ),
+        "duplicate_attempt_id_count": duplicate_attempt_id_count,
+        "duplicate_attempt_id_record_count": duplicate_attempt_id_record_count,
         "unassociated_invalid_attempt_count": sum(
             1
             for r in attempt_parse_results
@@ -743,6 +772,12 @@ def build_outputs(
             "invalid_quote_count": summary_dict["invalid_quote_count"],
             "complete_snapshot_count": summary_dict["complete_snapshot_count"],
             "availability_reason_counts": summary_dict["availability_reason_counts"],
+            "duplicate_expected_key_count": duplicate_expected_key_count,
+            "duplicate_expected_key_record_count": (
+                duplicate_expected_key_record_count
+            ),
+            "duplicate_attempt_id_count": duplicate_attempt_id_count,
+            "duplicate_attempt_id_record_count": duplicate_attempt_id_record_count,
         },
         "deterministic_ordering": {
             "attempts": [

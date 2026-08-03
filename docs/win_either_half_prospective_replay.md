@@ -55,15 +55,25 @@ The equality is exact. `attempted_at` must be within plus or minus 300 seconds o
 
 ## Provider mapping semantics
 
-Provider mappings are partial evidence.
+Provider mappings are timeless identity dictionaries for the complete evidence
+bundle. Their presence does not prove that a fixture or market was available at
+every observation offset.
 
-- `QUOTES_CAPTURED` requires an exact fixture, market, YES and NO mapping.
-- `MARKET_UNAVAILABLE` requires an exact fixture/event mapping while the target market mapping is absent.
-- `FIXTURE_UNAVAILABLE` requires the fixture mapping to be absent.
-- `SOURCE_UNAVAILABLE` may occur even when an older mapping is known.
-- `CAPTURE_ERROR` may carry no event/market identifiers or a complete exact identifier pair; a partial pair is invalid.
+- `QUOTES_CAPTURED` requires exact fixture, event, market, YES and NO mappings.
+- `MARKET_UNAVAILABLE` requires the fixture/event to be resolved and the
+  attempt's `provider_market_identifier` to be null. The target market may
+  still have a mapping learned at another offset.
+- `FIXTURE_UNAVAILABLE` requires null event and market identifiers for that
+  attempt. A mapping learned at a later offset does not contradict the result.
+- `SOURCE_UNAVAILABLE` requires null event and market identifiers. Existing
+  mappings do not contradict a temporary source outage.
+- `CAPTURE_ERROR` may occur before any identifier is resolved, after only the
+  event is resolved, or after both event and market are resolved. Every
+  non-null identifier must match the mapping exactly, and a market identifier
+  is never allowed without an event identifier.
 
-This prevents availability claims from contradicting the mapping evidence.
+Temporal availability comes only from the observation-attempt ledger and its
+linked quote rows, never from mapping-file presence.
 
 ## Exact snapshot integrity
 

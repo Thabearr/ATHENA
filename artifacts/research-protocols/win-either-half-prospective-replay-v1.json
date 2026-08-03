@@ -29,19 +29,26 @@
       "MARKET_UNAVAILABLE": {
         "provider_event_identifier": "REQUIRED_EXACT_FIXTURE_MAPPING",
         "provider_market_identifier": "MUST_BE_NULL",
-        "target_market_mapping": "MUST_BE_ABSENT"
+        "target_market_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET"
       },
       "FIXTURE_UNAVAILABLE": {
         "provider_event_identifier": "MUST_BE_NULL",
         "provider_market_identifier": "MUST_BE_NULL",
-        "fixture_mapping": "MUST_BE_ABSENT"
+        "fixture_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET"
       },
       "SOURCE_UNAVAILABLE": {
         "provider_event_identifier": "MUST_BE_NULL",
-        "provider_market_identifier": "MUST_BE_NULL"
+        "provider_market_identifier": "MUST_BE_NULL",
+        "fixture_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET"
       },
       "CAPTURE_ERROR": {
-        "identifier_pair": "BOTH_NULL_OR_BOTH_EXACT_MAPPING"
+        "identifier_progression": [
+          "BOTH_NULL",
+          "EVENT_EXACT_MARKET_NULL",
+          "EVENT_EXACT_MARKET_EXACT"
+        ],
+        "market_identifier_requires_event_identifier": true,
+        "non_null_identifiers_must_match_mapping": true
       }
     }
   },
@@ -51,7 +58,8 @@
     "permitted_market_keys_only": true,
     "supplied_market_requires_exact_yes_no": true,
     "yes_no_selection_identifiers_must_differ": true,
-    "captured_attempt_requires_exact_mapping": true
+    "captured_attempt_requires_exact_mapping": true,
+    "mapping_presence_is_not_temporal_availability_evidence": true
   },
   "market_scope": {
     "AWAY_WIN_EITHER_HALF": {
