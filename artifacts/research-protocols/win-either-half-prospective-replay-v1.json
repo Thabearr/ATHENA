@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "dataset_name": "win-either-half-prospective-replay-protocol-v1",
+  "candidate_offsets_seconds": [
+    86400,
+    21600,
+    10800,
+    3600,
+    1800,
+    900
+  ],
+  "attempt_contract": {
+    "expected_attempts_per_fixture": 12,
+    "attempt_window_seconds": 300,
+    "scheduled_at_must_equal_kickoff_minus_offset": true,
+    "attempted_at_must_be_before_kickoff": true,
+    "attempt_results": [
+      "QUOTES_CAPTURED",
+      "MARKET_UNAVAILABLE",
+      "FIXTURE_UNAVAILABLE",
+      "SOURCE_UNAVAILABLE",
+      "CAPTURE_ERROR"
+    ],
+    "identifier_semantics": {
+      "QUOTES_CAPTURED": {
+        "provider_event_identifier": "REQUIRED_EXACT_MAPPING",
+        "provider_market_identifier": "REQUIRED_EXACT_MAPPING"
+      },
+      "MARKET_UNAVAILABLE": {
+        "provider_event_identifier": "REQUIRED_EXACT_FIXTURE_MAPPING",
+        "provider_market_identifier": "MUST_BE_NULL",
+        "target_market_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET"
+      },
+      "FIXTURE_UNAVAILABLE": {
+        "provider_event_identifier": "MUST_BE_NULL",
+        "provider_market_identifier": "MUST_BE_NULL",
+        "fixture_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET"
+      },
+      "SOURCE_UNAVAILABLE": {
+        "provider_event_identifier": "MUST_BE_NULL",
+        "provider_market_identifier": "MUST_BE_NULL",
+        "fixture_mapping": "MAY_EXIST_FROM_ANOTHER_OFFSET"
+      },
+      "CAPTURE_ERROR": {
+        "identifier_progression": [
+          "BOTH_NULL",
+          "EVENT_EXACT_MARKET_NULL",
+          "EVENT_EXACT_MARKET_EXACT"
+        ],
+        "market_identifier_requires_event_identifier": true,
+        "non_null_identifiers_must_match_mapping": true
+      }
+    }
+  },
+  "provider_mapping_contract": {
+    "fixture_coverage": "PARTIAL",
+    "unknown_fixture_mappings_forbidden": true,
+    "permitted_market_keys_only": true,
+    "supplied_market_requires_exact_yes_no": true,
+    "yes_no_selection_identifiers_must_differ": true,
+    "captured_attempt_requires_exact_mapping": true,
+    "mapping_presence_is_not_temporal_availability_evidence": true
+  },
+  "market_scope": {
+    "AWAY_WIN_EITHER_HALF": {
+      "line": null,
+      "outcomes": [
+        "YES",
+        "NO"
+      ]
+    },
+    "HOME_WIN_EITHER_HALF": {
+      "line": null,
+      "outcomes": [
+        "YES",
+        "NO"
+      ]
+    }
+  },
+  "quote_contract": {
+    "maximum_quote_age_seconds": 900,
+    "requires_same_source": true,
+    "requires_same_provider": true,
+    "requires_same_bookmaker": true,
+    "requires_same_provider_event": true,
+    "requires_same_provider_market": true,
+    "requires_same_snapshot": true,
+    "requires_same_observed_at": true,
+    "odds_values_emitted": false,
+    "attempt_id_required": true,
+    "quotes_must_link_to_exact_attempt": true
+  },
+  "input_contract": {
+    "attempt_required_fields": [
+      "attempt_id",
+      "attempted_at",
+      "bookmaker_identifier",
+      "capture_method",
+      "fixture_identifier",
+      "line",
+      "market_id",
+      "offset_seconds_before_kickoff",
+      "provider_event_identifier",
+      "provider_identifier",
+      "provider_market_identifier",
+      "quote_snapshot_id",
+      "result",
+      "scheduled_at",
+      "schema_version",
+      "source"
+    ],
+    "quote_required_fields": [
+      "attempt_id",
+      "bookmaker_identifier",
+      "decimal_odds",
+      "fixture_identifier",
+      "fixture_kickoff",
+      "is_genuine",
+      "line",
+      "market_id",
+      "observed_at",
+      "outcome_id",
+      "provider_event_identifier",
+      "provider_identifier",
+      "provider_market_identifier",
+      "provider_selection_identifier",
+      "quote_snapshot_id",
+      "schema_version",
+      "source"
+    ],
+    "forbidden_fields": [
+      "acca_selection",
+      "away_goals",
+      "bet",
+      "bet_decision",
+      "calibrated_probability",
+      "decision_label",
+      "edge",
+      "edge_pp",
+      "expected_value",
+      "full_time_away_goals",
+      "full_time_home_goals",
+      "half_time_away_goals",
+      "half_time_home_goals",
+      "home_goals",
+      "kelly",
+      "kelly_stake",
+      "label",
+      "model_probability",
+      "profit",
+      "profitability",
+      "settled_outcome",
+      "stake",
+      "target",
+      "target_value"
+    ]
+  },
+  "availability_contract": {
+    "statuses": [
+      "AVAILABLE",
+      "UNAVAILABLE",
+      "UNKNOWN",
+      "INVALID"
+    ],
+    "unavailable_requires_explicit_provider_evidence": true,
+    "missing_attempt_status": "UNKNOWN",
+    "capture_error_status": "UNKNOWN",
+    "contradiction_status": "INVALID",
+    "invalid_precedes_unknown": true
+  },
+  "holdout_governance": {
+    "final_test_season": "2025-26",
+    "final_test_status": "ALREADY_CONSUMED_AUDIT_HOLDOUT",
+    "match_outcomes_forbidden_from_offset_evaluation": true,
+    "model_performance_forbidden_from_offset_evaluation": true,
+    "pricing_profitability_forbidden_from_offset_evaluation": true,
+    "prospective_validation_required": true,
+    "production_approval_authorized": false
+  },
+  "output_contract": {
+    "row_grain": "ONE_ROW_PER_FIXTURE_MARKET_OFFSET",
+    "selected_offset_seconds": null,
+    "selection_authorized": false,
+    "selection_status": "UNSELECTED",
+    "all_outputs_ignored": true,
+    "manifest_required": true,
+    "transactional_write_required": true
+  },
+  "minimum_fixtures_for_interpretation": 100,
+  "source_qualification_required_statuses": [
+    "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+    "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY"
+  ],
+  "no_production_approval": true
+}
