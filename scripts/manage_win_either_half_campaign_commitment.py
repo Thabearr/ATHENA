@@ -266,16 +266,21 @@ def _write_file_atomically(
             f"Atomic file write failed for {resolved_dest}: {orig_error}"
         ) from orig_error
     finally:
+        cleanup_in_finally: list[str] = []
         if temp_dir.exists():
             try:
                 shutil.rmtree(temp_dir)
-            except Exception:
-                pass
+            except OSError as exc:
+                cleanup_in_finally.append(f"failed to clean temp_dir in finally: {exc}")
         if backup_path.exists():
             try:
                 backup_path.unlink()
-            except Exception:
-                pass
+            except OSError as exc:
+                cleanup_in_finally.append(f"failed to clean backup_path in finally: {exc}")
+        if cleanup_in_finally:
+            raise CampaignCommitmentExportError(
+                f"Cleanup failed during atomic write: {'; '.join(cleanup_in_finally)}"
+            )
 
 
 def create_commitment(
@@ -369,7 +374,7 @@ def check_commitment(
         raise CampaignCommitmentExportError(
             "Tracked worktree must be clean before commitment check"
         )
-    validate_git_sha(
+    current_head_sha = validate_git_sha(
         code_state.get("evidence_git_head_sha"),
         "evidence_git_head_sha",
     )
@@ -407,6 +412,36 @@ def check_commitment(
         raise CampaignCommitmentExportError(str(error)) from error
 
     generator_sha = decl_obj.generator_git_sha
+
+    # If running in a repository, verify generator commit exists and is an ancestor of current head
+    try:
+        check_commit = subprocess.run(
+            ["git", "-C", str(REPOSITORY_ROOT), "cat-file", "-e", generator_sha],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if check_commit.returncode == 0:
+            ancestor_res = subprocess.run(
+                [
+                    "git",
+                    "-C",
+                    str(REPOSITORY_ROOT),
+                    "merge-base",
+                    "--is-ancestor",
+                    generator_sha,
+                    current_head_sha,
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if ancestor_res.returncode != 0:
+                raise CampaignCommitmentExportError(
+                    f"Declaration generator_git_sha {generator_sha} is not an ancestor of current head {current_head_sha}"
+                )
+    except OSError:
+        pass
 
     expected_declaration = build_commitment_declaration(
         bundle=bundle,

@@ -39,6 +39,20 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Verify Checked-out Revisions
+        run: |
+          HEAD_ACTUAL=$(git -C head rev-parse HEAD)
+          if [ "$HEAD_ACTUAL" != "${{ github.event.pull_request.head.sha }}" ]; then
+            echo "error: head checkout SHA mismatch: expected ${{ github.event.pull_request.head.sha }}, got $HEAD_ACTUAL" >&2
+            exit 1
+          fi
+
+          BASE_ACTUAL=$(git -C verifier rev-parse HEAD)
+          if [ "$BASE_ACTUAL" != "${{ github.event.pull_request.base.sha }}" ]; then
+            echo "error: base checkout SHA mismatch: expected ${{ github.event.pull_request.base.sha }}, got $BASE_ACTUAL" >&2
+            exit 1
+          fi
+
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
@@ -65,8 +79,8 @@ jobs:
             echo "Executing base-revision verifier code..."
 
             # Enforce separation-of-duties: if commitment files changed, verifier/tooling cannot change in same PR
-            COMMITMENT_CHANGES=$(git -C head diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- artifacts/research-commitments/win-either-half/)
-            TOOLING_CHANGES=$(git -C head diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- .github/workflows/validate-win-either-half-campaign-commitment.yml artifacts/research-protocols/win-either-half-campaign-commitment-v1.json domain/win_either_half_campaign_commitment.py scripts/manage_win_either_half_campaign_commitment.py)
+            COMMITMENT_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- artifacts/research-commitments/win-either-half/)
+            TOOLING_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/workflows/validate-win-either-half-campaign-commitment.yml artifacts/research-protocols/win-either-half-campaign-commitment-v1.json domain/win_either_half_campaign_commitment.py scripts/manage_win_either_half_campaign_commitment.py)
 
             if [ -n "$COMMITMENT_CHANGES" ] && [ -n "$TOOLING_CHANGES" ]; then
               echo "error: Separation-of-duties violation. Campaign commitment declarations cannot edit Stage 5B4 verifier/workflow/protocol files in the same pull request." >&2
@@ -76,11 +90,11 @@ jobs:
             PYTHONPATH=verifier python -m scripts.manage_win_either_half_campaign_commitment \
               --validate-git-diff \
               --repository-root head \
-              --base-sha ${{ github.event.pull_request.base.sha }} \
-              --head-sha ${{ github.event.pull_request.head.sha }} \
+              --base-sha "${{ github.event.pull_request.base.sha }}" \
+              --head-sha "${{ github.event.pull_request.head.sha }}" \
               --server-observed-at "$SERVER_UTC" \
-              --github-run-id ${{ github.run_id }} \
-              --github-run-attempt ${{ github.run_attempt }} \
+              --github-run-id "${{ github.run_id }}" \
+              --github-run-attempt "${{ github.run_attempt }}" \
               --github-event-name pull_request \
               --attestation-output "$ATTESTATION_PATH" | tee output_summary.md
 
@@ -92,7 +106,7 @@ jobs:
             echo "Base revision does not contain Stage 5B4 verifier (Bootstrap PR mode)."
 
             # Fail unless zero declarations exist under commitment root
-            COMMITMENT_COUNT=$(git -C head diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.event.pull_request.head.sha }} -- artifacts/research-commitments/win-either-half/ | wc -l)
+            COMMITMENT_COUNT=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- artifacts/research-commitments/win-either-half/ | wc -l)
             if [ "$COMMITMENT_COUNT" -ne 0 ]; then
               echo "error: Bootstrap PR cannot include real campaign declarations before base verifier is merged." >&2
               exit 1

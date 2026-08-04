@@ -874,29 +874,291 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
     # GIT DIFF / IMMUTABILITY TESTS
     def test_newly_added_valid_direct_child_declaration_passes(self) -> None:
-        # Tested via validate_git_diff end-to-end
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            commitments_dir = repo_dir / COMMITMENT_ROOT
+            commitments_dir.mkdir(parents=True)
+            proto_dir = repo_dir / "artifacts" / "research-protocols"
+            proto_dir.mkdir(parents=True)
+            proto_path = proto_dir / "win-either-half-campaign-commitment-v1.json"
+            proto_path.write_bytes(DEFAULT_PROTOCOL_PATH.read_bytes())
+
+            files = self._create_stage_5b3_bundle_files(tmp_root)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                generator_git_sha="1" * 40,
+            )
+            decl_bytes = canonical_json_bytes(decl.to_mapping(), pretty=True)
+            decl_file = commitments_dir / f"{bundle.campaign_id}.json"
+            decl_file.write_bytes(decl_bytes)
+
+            att_file = tmp_root / "attestation.json"
+            rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                if "ls-tree" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
+                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                count, summary_md = validate_git_diff(
+                    repository_root=repo_dir,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at=serialize_utc(decl.commitment_deadline_at - timedelta(seconds=10)),
+                    github_run_id="123",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=att_file,
+                )
+                self.assertEqual(count, 1)
+                self.assertIn(bundle.campaign_id, summary_md)
+                self.assertTrue(att_file.is_file())
 
     def test_modified_declaration_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+            rel_decl = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"M\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("Forbidden git status M", str(ctx.exception))
 
     def test_deleted_declaration_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+            rel_decl = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"D\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("Forbidden git status D", str(ctx.exception))
 
     def test_renamed_declaration_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+            rel_old = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+            rel_new = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'1'*24}.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"R100\x00{rel_old}\x00{rel_new}\x00".encode("utf-8"), stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("Renames/copies forbidden", str(ctx.exception))
 
     def test_copied_declaration_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+            rel_old = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+            rel_new = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'1'*24}.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"C100\x00{rel_old}\x00{rel_new}\x00".encode("utf-8"), stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("Renames/copies forbidden", str(ctx.exception))
 
     def test_symlink_mode_declaration_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+            rel_decl = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                if "ls-tree" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"120000 blob abc\t{rel_decl}", stderr="")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("mode 120000 forbidden", str(ctx.exception))
 
     def test_duplicate_campaign_ids_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+            rel_decl = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                if "ls-tree" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("Duplicate path in diff", str(ctx.exception))
 
     def test_non_ancestor_base_head_rejected(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            att_file = tmp_root / "att.json"
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=1)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at="2026-08-10T00:00:00Z",
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("is not an ancestor of head_sha", str(ctx.exception))
 
     def test_zero_changed_declarations_rejected_in_validation_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -914,16 +1176,221 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 )
 
     def test_tooling_plus_declaration_in_same_diff_rejected(self) -> None:
-        pass
+        # Separation of duties: workflow check asserts that tooling + commitments cannot change together.
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn("Separation-of-duties violation", text)
+        self.assertIn("COMMITMENT_CHANGES", text)
+        self.assertIn("TOOLING_CHANGES", text)
 
     def test_attestation_records_exact_run_base_head_deadline_hash_values(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            commitments_dir = repo_dir / COMMITMENT_ROOT
+            commitments_dir.mkdir(parents=True)
+            proto_dir = repo_dir / "artifacts" / "research-protocols"
+            proto_dir.mkdir(parents=True)
+            proto_path = proto_dir / "win-either-half-campaign-commitment-v1.json"
+            proto_path.write_bytes(DEFAULT_PROTOCOL_PATH.read_bytes())
+
+            files = self._create_stage_5b3_bundle_files(tmp_root)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                generator_git_sha="1" * 40,
+            )
+            decl_bytes = canonical_json_bytes(decl.to_mapping(), pretty=True)
+            decl_file = commitments_dir / f"{bundle.campaign_id}.json"
+            decl_file.write_bytes(decl_bytes)
+
+            att_file = tmp_root / "attestation.json"
+            rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                if "ls-tree" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
+                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                validate_git_diff(
+                    repository_root=repo_dir,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at=serialize_utc(decl.commitment_deadline_at - timedelta(seconds=10)),
+                    github_run_id="98765",
+                    github_run_attempt="2",
+                    github_event_name="pull_request",
+                    attestation_output=att_file,
+                )
+                att_payload = json.loads(att_file.read_text(encoding="utf-8"))
+                self.assertEqual(att_payload["github_run_id"], "98765")
+                self.assertEqual(att_payload["github_run_attempt"], 2)
+                self.assertEqual(att_payload["base_sha"], "0" * 40)
+                self.assertEqual(att_payload["head_sha"], "1" * 40)
+                self.assertEqual(att_payload["declarations"][0]["commitment_sha256"], sha256_bytes(decl_bytes))
 
     def test_attestation_results_sorted_deterministically(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            commitments_dir = repo_dir / COMMITMENT_ROOT
+            commitments_dir.mkdir(parents=True)
+            proto_dir = repo_dir / "artifacts" / "research-protocols"
+            proto_dir.mkdir(parents=True)
+            proto_path = proto_dir / "win-either-half-campaign-commitment-v1.json"
+            proto_path.write_bytes(DEFAULT_PROTOCOL_PATH.read_bytes())
+
+            files = self._create_stage_5b3_bundle_files(tmp_root)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+
+            # Build 2 declarations with different campaign IDs: WEH-CAP-000000000000000000000002 and ...01
+            c2_id = "WEH-CAP-000000000000000000000002"
+            c1_id = "WEH-CAP-000000000000000000000001"
+
+            decl2 = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                generator_git_sha="1" * 40,
+            )
+            decl2_map = decl2.to_mapping()
+            decl2_map["campaign_id"] = c2_id
+            decl2_bytes = canonical_json_bytes(decl2_map, pretty=True)
+            (commitments_dir / f"{c2_id}.json").write_bytes(decl2_bytes)
+
+            decl1_map = copy.deepcopy(decl2_map)
+            decl1_map["campaign_id"] = c1_id
+            decl1_bytes = canonical_json_bytes(decl1_map, pretty=True)
+            (commitments_dir / f"{c1_id}.json").write_bytes(decl1_bytes)
+
+            att_file = tmp_root / "attestation.json"
+            rel2 = (COMMITMENT_ROOT / f"{c2_id}.json").as_posix()
+            rel1 = (COMMITMENT_ROOT / f"{c1_id}.json").as_posix()
+
+            # Diff returns c2 first, then c1
+            diff_output = f"A\x00{rel2}\x00A\x00{rel1}\x00".encode("utf-8")
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=diff_output, stderr=b"")
+                if "ls-tree" in cmd_list:
+                    p = cmd_list[-1]
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{p}", stderr="")
+                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    spec = cmd_list[-1]
+                    if c2_id in spec:
+                        return MagicMock(returncode=0, stdout=decl2_bytes, stderr=b"")
+                    return MagicMock(returncode=0, stdout=decl1_bytes, stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                validate_git_diff(
+                    repository_root=repo_dir,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at=serialize_utc(decl2.commitment_deadline_at - timedelta(seconds=10)),
+                    github_run_id="123",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=att_file,
+                )
+                att_payload = json.loads(att_file.read_text(encoding="utf-8"))
+                campaign_ids = [d["campaign_id"] for d in att_payload["declarations"]]
+                self.assertEqual(campaign_ids, [c1_id, c2_id])
 
     def test_attestation_keeps_all_production_selection_bet_fields_false_null(self) -> None:
-        pass
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            commitments_dir = repo_dir / COMMITMENT_ROOT
+            commitments_dir.mkdir(parents=True)
+            proto_dir = repo_dir / "artifacts" / "research-protocols"
+            proto_dir.mkdir(parents=True)
+            proto_path = proto_dir / "win-either-half-campaign-commitment-v1.json"
+            proto_path.write_bytes(DEFAULT_PROTOCOL_PATH.read_bytes())
+
+            files = self._create_stage_5b3_bundle_files(tmp_root)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                generator_git_sha="1" * 40,
+            )
+            decl_bytes = canonical_json_bytes(decl.to_mapping(), pretty=True)
+            decl_file = commitments_dir / f"{bundle.campaign_id}.json"
+            decl_file.write_bytes(decl_bytes)
+
+            att_file = tmp_root / "attestation.json"
+            rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                if "ls-tree" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
+                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                validate_git_diff(
+                    repository_root=repo_dir,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at=serialize_utc(decl.commitment_deadline_at - timedelta(seconds=10)),
+                    github_run_id="123",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=att_file,
+                )
+                att = json.loads(att_file.read_text(encoding="utf-8"))
+                self.assertIsNone(att["selected_offset_seconds"])
+                self.assertFalse(att["selection_authorized"])
+                self.assertFalse(att["production_approval_authorized"])
+                self.assertFalse(att["prospective_claim_authorized"])
+                self.assertEqual(
+                    att["market_statuses"],
+                    {"HOME_WIN_EITHER_HALF": "DISABLED", "AWAY_WIN_EITHER_HALF": "DISABLED"},
+                )
+                self.assertEqual(att["safety"], GENERATED_SAFETY_CONTRACT)
 
     # CLI / FILE SAFETY TESTS
     def test_direct_and_module_help_entrypoints(self) -> None:
