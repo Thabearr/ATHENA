@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 from datetime import datetime, timedelta, timezone
 import json
+import os
 from pathlib import Path
 import socket
 import subprocess
@@ -17,13 +18,17 @@ from domain.markets import MARKET_REGISTRY, MarketId
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
 from domain.win_either_half_capture_campaign import (
     ATTEMPT_WINDOW_SECONDS,
+    CAMPAIGN_COMMITMENT_STATUS,
     DEFAULT_PROTOCOL_PATH,
     DEFAULT_STAGE_5B2_PROTOCOL_PATH,
     EXPECTED_TASKS_PER_FIXTURE,
     FROZEN_CANDIDATE_OFFSETS_SECONDS,
     MINIMUM_FIXTURES_FOR_INTERPRETATION,
+    PROSPECTIVE_CLAIM_AUTHORIZED,
+    CampaignTarget,
     CaptureCampaignError,
     build_campaign_plan,
+    build_campaign_target,
     build_expected_protocol_contract,
     load_fixtures,
     load_source_qualification,
@@ -32,7 +37,9 @@ from domain.win_either_half_capture_campaign import (
     validate_stage_5b2_protocol,
 )
 from scripts.manage_win_either_half_capture_campaign import (
+    DEFAULT_OUTPUT_ROOT,
     OUTPUT_FILENAMES,
+    REPOSITORY_ROOT,
     CaptureCampaignExportError,
     build_bundle,
     check_bundle,
@@ -42,7 +49,7 @@ from scripts.manage_win_either_half_capture_campaign import (
 
 
 class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
-    REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+    REPOSITORY_ROOT = REPOSITORY_ROOT
 
     def setUp(self) -> None:
         self.source_payload = {
@@ -72,6 +79,9 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             "evidence_git_head_sha": "1" * 40,
             "tracked_worktree_clean": True,
         }
+        self.source = "ODDS_PORTAL"
+        self.bookmaker_identifier = "PINNACLE"
+        self.capture_method = "MANUAL_REVIEW"
 
     def _fixtures_payload(self, count: int) -> dict:
         base = datetime(2026, 8, 12, 15, 0, tzinfo=timezone.utc)
@@ -114,16 +124,28 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             fixtures_path=paths["fixtures"],
             stage_5b2_protocol_path=paths["stage5b2"],
             campaign_protocol_path=paths["campaign"],
+            source=self.source,
+            bookmaker_identifier=self.bookmaker_identifier,
+            capture_method=self.capture_method,
             anchor_at=self.anchor_at,
             code_state=self.code_state,
         )
 
+    def _target(self) -> CampaignTarget:
+        return build_campaign_target(
+            source=self.source,
+            bookmaker_identifier=self.bookmaker_identifier,
+            capture_method=self.capture_method,
+        )
+
     def test_committed_campaign_protocol_matches_python_contract(self) -> None:
-        payload = json.loads(DEFAULT_PROTOCOL_PATH.read_text(encoding="utf-8"))
+        raw = DEFAULT_PROTOCOL_PATH.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
         self.assertEqual(payload, build_expected_protocol_contract())
-        validate_campaign_protocol(payload)
+        validate_campaign_protocol(payload, raw)
 
     def test_every_top_level_campaign_protocol_mutation_fails(self) -> None:
+        raw = DEFAULT_PROTOCOL_PATH.read_bytes()
         original = build_expected_protocol_contract()
         for key in original:
             mutated = copy.deepcopy(original)
@@ -137,32 +159,534 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
                 mutated[key] = list(reversed(mutated[key]))
             elif isinstance(mutated[key], dict):
                 mutated[key]["unexpected"] = True
+            mutated_bytes = (
+                json.dumps(mutated, indent=2, ensure_ascii=False) + "\n"
+            ).encode("utf-8")
             with self.assertRaises(CaptureCampaignError, msg=key):
-                validate_campaign_protocol(mutated)
+                validate_campaign_protocol(mutated, mutated_bytes)
 
     def test_stage5b2_protocol_contract_is_accepted(self) -> None:
-        payload = json.loads(
-            DEFAULT_STAGE_5B2_PROTOCOL_PATH.read_text(encoding="utf-8")
-        )
-        validate_stage_5b2_protocol(payload)
+        raw = DEFAULT_STAGE_5B2_PROTOCOL_PATH.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        validate_stage_5b2_protocol(payload, raw)
 
     def test_stage5b2_offset_drift_fails_closed(self) -> None:
-        payload = json.loads(
-            DEFAULT_STAGE_5B2_PROTOCOL_PATH.read_text(encoding="utf-8")
-        )
+        raw = DEFAULT_STAGE_5B2_PROTOCOL_PATH.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
         payload["candidate_offsets_seconds"] = [86400, 3600, 900]
+        mutated_bytes = (
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        ).encode("utf-8")
         with self.assertRaises(CaptureCampaignError):
-            validate_stage_5b2_protocol(payload)
+            validate_stage_5b2_protocol(payload, mutated_bytes)
 
-    def test_one_fixture_creates_exactly_twelve_tasks(self) -> None:
+    def test_stage5b2_semantically_modified_protocol_fails(self) -> None:
+        raw = DEFAULT_STAGE_5B2_PROTOCOL_PATH.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        payload["holdout_governance"] = {"final_test_status": "MUTATED"}
+        mutated_bytes = (
+            json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+        ).encode("utf-8")
+        with self.assertRaises(CaptureCampaignError):
+            validate_stage_5b2_protocol(payload, mutated_bytes)
+
+    def test_stage5b2_byte_different_equivalent_json_fails(self) -> None:
+        raw = DEFAULT_STAGE_5B2_PROTOCOL_PATH.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        compact_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        with self.assertRaises(CaptureCampaignError):
+            validate_stage_5b2_protocol(payload, compact_bytes)
+
+    def test_stage5b3_byte_different_equivalent_json_fails(self) -> None:
+        raw = DEFAULT_PROTOCOL_PATH.read_bytes()
+        payload = json.loads(raw.decode("utf-8"))
+        compact_bytes = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        with self.assertRaises(CaptureCampaignError):
+            validate_campaign_protocol(payload, compact_bytes)
+
+    def test_campaign_target_values_are_required(self) -> None:
+        for invalid in (None, "", "  ", 123):
+            with self.assertRaises(CaptureCampaignError):
+                build_campaign_target(
+                    source=invalid,
+                    bookmaker_identifier="PINNACLE",
+                    capture_method="MANUAL_REVIEW",
+                )
+            with self.assertRaises(CaptureCampaignError):
+                build_campaign_target(
+                    source="ODDS_PORTAL",
+                    bookmaker_identifier=invalid,
+                    capture_method="MANUAL_REVIEW",
+                )
+            with self.assertRaises(CaptureCampaignError):
+                build_campaign_target(
+                    source="ODDS_PORTAL",
+                    bookmaker_identifier="PINNACLE",
+                    capture_method=invalid,
+                )
+
+    def test_every_task_freezes_source_bookmaker_and_capture_method(self) -> None:
         source = load_source_qualification(self.source_payload)
         fixtures = load_fixtures(self.fixtures_payload)
+        target = self._target()
         plan = build_campaign_plan(
             source_qualification=source,
+            target=target,
             fixtures=fixtures,
             anchor_at=parse_utc(self.anchor_at, "anchor"),
             stage_5b2_protocol_sha256="a" * 64,
             campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        self.assertEqual(plan.source, self.source)
+        self.assertEqual(plan.bookmaker_identifier, self.bookmaker_identifier)
+        self.assertEqual(plan.capture_method, self.capture_method)
+        for task in plan.tasks:
+            self.assertEqual(task.source, self.source)
+            self.assertEqual(task.bookmaker_identifier, self.bookmaker_identifier)
+            self.assertEqual(task.capture_method, self.capture_method)
+            mapping = task.to_mapping()
+            self.assertEqual(mapping["source"], self.source)
+            self.assertEqual(mapping["bookmaker_identifier"], self.bookmaker_identifier)
+            self.assertEqual(mapping["capture_method"], self.capture_method)
+
+    def test_campaign_id_changes_when_source_changes(self) -> None:
+        source = load_source_qualification(self.source_payload)
+        fixtures = load_fixtures(self.fixtures_payload)
+        plan_a = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="SOURCE_A",
+                bookmaker_identifier="PINNACLE",
+                capture_method="MANUAL_REVIEW",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        plan_b = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="SOURCE_B",
+                bookmaker_identifier="PINNACLE",
+                capture_method="MANUAL_REVIEW",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        self.assertNotEqual(plan_a.campaign_id, plan_b.campaign_id)
+
+    def test_campaign_id_changes_when_bookmaker_changes(self) -> None:
+        source = load_source_qualification(self.source_payload)
+        fixtures = load_fixtures(self.fixtures_payload)
+        plan_a = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="ODDS_PORTAL",
+                bookmaker_identifier="BOOKMAKER_A",
+                capture_method="MANUAL_REVIEW",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        plan_b = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="ODDS_PORTAL",
+                bookmaker_identifier="BOOKMAKER_B",
+                capture_method="MANUAL_REVIEW",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        self.assertNotEqual(plan_a.campaign_id, plan_b.campaign_id)
+
+    def test_campaign_id_changes_when_capture_method_changes(self) -> None:
+        source = load_source_qualification(self.source_payload)
+        fixtures = load_fixtures(self.fixtures_payload)
+        plan_a = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="ODDS_PORTAL",
+                bookmaker_identifier="PINNACLE",
+                capture_method="METHOD_A",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        plan_b = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="ODDS_PORTAL",
+                bookmaker_identifier="PINNACLE",
+                capture_method="METHOD_B",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        self.assertNotEqual(plan_a.campaign_id, plan_b.campaign_id)
+
+    def test_campaign_id_changes_when_source_qualification_bytes_change(self) -> None:
+        source = load_source_qualification(self.source_payload)
+        fixtures = load_fixtures(self.fixtures_payload)
+        target = self._target()
+        plan_a = build_campaign_plan(
+            source_qualification=source,
+            target=target,
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        plan_b = build_campaign_plan(
+            source_qualification=source,
+            target=target,
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="d" * 64,
+        )
+        self.assertNotEqual(plan_a.campaign_id, plan_b.campaign_id)
+
+    def test_task_id_changes_when_campaign_target_changes(self) -> None:
+        source = load_source_qualification(self.source_payload)
+        fixtures = load_fixtures(self.fixtures_payload)
+        plan_a = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="SOURCE_A",
+                bookmaker_identifier="PINNACLE",
+                capture_method="MANUAL_REVIEW",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        plan_b = build_campaign_plan(
+            source_qualification=source,
+            target=build_campaign_target(
+                source="SOURCE_B",
+                bookmaker_identifier="PINNACLE",
+                capture_method="MANUAL_REVIEW",
+            ),
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
+        )
+        self.assertNotEqual(plan_a.tasks[0].task_id, plan_b.tasks[0].task_id)
+
+    def test_case_variant_forbidden_field_is_rejected(self) -> None:
+        for forbidden in ("Model_Probability", "DECIMAL_ODDS", "Kelly_Stake"):
+            payload = copy.deepcopy(self.fixtures_payload)
+            payload["fixtures"][0][forbidden] = "1.85"
+            with self.assertRaises(CaptureCampaignError, msg=forbidden):
+                load_fixtures(payload)
+
+    def test_padded_forbidden_field_is_rejected(self) -> None:
+        payload = copy.deepcopy(self.fixtures_payload)
+        payload["fixtures"][0][" model_probability "] = 0.7
+        with self.assertRaises(CaptureCampaignError):
+            load_fixtures(payload)
+
+    def test_summary_marks_unfrozen_local_plan(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._build_bundle(Path(tmp))
+        self.assertEqual(
+            bundle.summary["campaign_commitment_status"],
+            CAMPAIGN_COMMITMENT_STATUS,
+        )
+        self.assertFalse(bundle.summary["prospective_claim_authorized"])
+        self.assertTrue(
+            bundle.summary["tracked_commitment_required_before_first_window"]
+        )
+
+    def test_manifest_marks_prospective_claim_unauthorized(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._build_bundle(Path(tmp))
+        commitment = bundle.manifest["commitment"]
+        self.assertEqual(
+            commitment["campaign_commitment_status"],
+            CAMPAIGN_COMMITMENT_STATUS,
+        )
+        self.assertFalse(commitment["prospective_claim_authorized"])
+        self.assertTrue(
+            commitment["local_anchor_is_not_trusted_creation_time_proof"]
+        )
+        self.assertTrue(
+            commitment["tracked_commitment_required_before_first_window"]
+        )
+
+    def test_manifest_records_complete_safety_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._build_bundle(Path(tmp))
+        safety = bundle.manifest["safety"]
+        expected_keys = {
+            "network_requests",
+            "scraping",
+            "browser_automation",
+            "credential_use",
+            "odds_collection",
+            "provider_qualification",
+            "offset_selection",
+            "market_activation",
+            "bet_decision",
+        }
+        self.assertEqual(set(safety.keys()), expected_keys)
+        self.assertTrue(all(val is False for val in safety.values()))
+
+    def test_repository_output_outside_default_cache_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._write_inputs(root)
+            invalid_manifest = REPOSITORY_ROOT / "docs" / OUTPUT_FILENAMES["manifest"]
+            with patch("scripts.manage_win_either_half_capture_campaign.get_code_state", return_value=self.code_state):
+                result = run(
+                    [
+                        "--source-qualification",
+                        str(paths["source"]),
+                        "--fixtures",
+                        str(paths["fixtures"]),
+                        "--source",
+                        self.source,
+                        "--bookmaker-identifier",
+                        self.bookmaker_identifier,
+                        "--capture-method",
+                        self.capture_method,
+                        "--anchor-at",
+                        self.anchor_at,
+                        "--manifest-output",
+                        str(invalid_manifest),
+                    ]
+                )
+            self.assertEqual(result, 1)
+
+    def test_output_outside_repository_is_allowed(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._write_inputs(root)
+            manifest = root / "out" / OUTPUT_FILENAMES["manifest"]
+            with patch("scripts.manage_win_either_half_capture_campaign.get_code_state", return_value=self.code_state):
+                result = run(
+                    [
+                        "--source-qualification",
+                        str(paths["source"]),
+                        "--fixtures",
+                        str(paths["fixtures"]),
+                        "--source",
+                        self.source,
+                        "--bookmaker-identifier",
+                        self.bookmaker_identifier,
+                        "--capture-method",
+                        self.capture_method,
+                        "--anchor-at",
+                        self.anchor_at,
+                        "--manifest-output",
+                        str(manifest),
+                    ]
+                )
+            self.assertEqual(result, 0)
+            self.assertTrue(manifest.is_file())
+
+    def test_symlinked_output_parent_is_rejected(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            real_dir = root / "real"
+            real_dir.mkdir()
+            sym_dir = root / "symlink_dir"
+            try:
+                os.symlink(real_dir, sym_dir, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlinks not supported on platform")
+
+            bundle = self._build_bundle(root)
+            paths = {
+                name: sym_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            with self.assertRaises(CaptureCampaignExportError):
+                commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+
+    def test_transaction_restores_prior_bundle_on_install_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = self._build_bundle(root)
+            output_dir = root / "out"
+            paths = {
+                name: output_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+
+            new_files = copy.deepcopy(bundle.files)
+            new_files["summary"] = bundle.files["summary"] + b"/* new */"
+
+            with patch("os.replace", side_effect=[None, None, None, OSError("Install failure")]):
+                with self.assertRaises(CaptureCampaignExportError) as ctx:
+                    commit_bundle(output_paths=paths, contents=new_files, force=True)
+                self.assertIn("restored", str(ctx.exception))
+
+            check_bundle(output_paths=paths, expected_contents=bundle.files)
+
+    def test_transaction_reports_incomplete_rollback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = self._build_bundle(root)
+            output_dir = root / "out"
+            paths = {
+                name: output_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+
+            real_replace = os.replace
+
+            def replace_fail_on_rollback(src, dst):
+                if ".stage5b3-stage" in str(src) and "summary" in str(dst):
+                    raise OSError("Install failure")
+                if ".stage5b3-rollback" in str(src):
+                    raise OSError("Rollback restore failure")
+                return real_replace(src, dst)
+
+            with patch("os.replace", side_effect=replace_fail_on_rollback):
+                with self.assertRaises(CaptureCampaignExportError) as ctx:
+                    commit_bundle(output_paths=paths, contents=bundle.files, force=True)
+                self.assertIn("rollback was incomplete", str(ctx.exception))
+
+    def test_directory_fsync_is_attempted_after_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = self._build_bundle(root)
+            output_dir = root / "out"
+            paths = {
+                name: output_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            with patch("scripts.manage_win_either_half_capture_campaign._fsync_dir") as mock_fsync:
+                commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+                mock_fsync.assert_called_with(output_dir)
+
+    def test_cli_requires_campaign_target_arguments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._write_inputs(root)
+            manifest = root / "out" / OUTPUT_FILENAMES["manifest"]
+            with patch("scripts.manage_win_either_half_capture_campaign.get_code_state", return_value=self.code_state):
+                with self.assertRaises(SystemExit) as ctx:
+                    run(
+                        [
+                            "--source-qualification",
+                            str(paths["source"]),
+                            "--fixtures",
+                            str(paths["fixtures"]),
+                            "--anchor-at",
+                            self.anchor_at,
+                            "--manifest-output",
+                            str(manifest),
+                        ]
+                    )
+                self.assertEqual(ctx.exception.code, 2)
+
+    @patch("scripts.manage_win_either_half_capture_campaign.get_code_state")
+    def test_cli_generate_and_check_with_campaign_target(self, mock_code_state) -> None:
+        mock_code_state.return_value = self.code_state
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._write_inputs(root)
+            manifest = root / "out" / OUTPUT_FILENAMES["manifest"]
+            common = [
+                "--source-qualification",
+                str(paths["source"]),
+                "--fixtures",
+                str(paths["fixtures"]),
+                "--source",
+                self.source,
+                "--bookmaker-identifier",
+                self.bookmaker_identifier,
+                "--capture-method",
+                self.capture_method,
+                "--stage-5b2-protocol",
+                str(paths["stage5b2"]),
+                "--campaign-protocol",
+                str(paths["campaign"]),
+                "--anchor-at",
+                self.anchor_at,
+            ]
+            self.assertEqual(
+                run(common + ["--manifest-output", str(manifest)]),
+                0,
+            )
+            self.assertEqual(run(common + ["--check", str(manifest)]), 0)
+
+    def test_fixture_permutation_still_produces_identical_bytes_after_target_binding(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            paths = self._write_inputs(root, fixture_count=3)
+            first_bundle = build_bundle(
+                source_qualification_path=paths["source"],
+                fixtures_path=paths["fixtures"],
+                stage_5b2_protocol_path=paths["stage5b2"],
+                campaign_protocol_path=paths["campaign"],
+                source=self.source,
+                bookmaker_identifier=self.bookmaker_identifier,
+                capture_method=self.capture_method,
+                anchor_at=self.anchor_at,
+                code_state=self.code_state,
+            )
+
+            fixtures_raw = json.loads(paths["fixtures"].read_text(encoding="utf-8"))
+            fixtures_raw["fixtures"].reverse()
+            paths["fixtures"].write_text(json.dumps(fixtures_raw), encoding="utf-8")
+
+            second_bundle = build_bundle(
+                source_qualification_path=paths["source"],
+                fixtures_path=paths["fixtures"],
+                stage_5b2_protocol_path=paths["stage5b2"],
+                campaign_protocol_path=paths["campaign"],
+                source=self.source,
+                bookmaker_identifier=self.bookmaker_identifier,
+                capture_method=self.capture_method,
+                anchor_at=self.anchor_at,
+                code_state=self.code_state,
+            )
+
+            self.assertEqual(first_bundle.summary["campaign_id"], second_bundle.summary["campaign_id"])
+            self.assertEqual(first_bundle.files["tasks"], second_bundle.files["tasks"])
+
+    def test_one_fixture_creates_exactly_twelve_tasks(self) -> None:
+        source = load_source_qualification(self.source_payload)
+        fixtures = load_fixtures(self.fixtures_payload)
+        target = self._target()
+        plan = build_campaign_plan(
+            source_qualification=source,
+            target=target,
+            fixtures=fixtures,
+            anchor_at=parse_utc(self.anchor_at, "anchor"),
+            stage_5b2_protocol_sha256="a" * 64,
+            campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
         )
         self.assertEqual(len(plan.tasks), EXPECTED_TASKS_PER_FIXTURE)
         self.assertEqual(
@@ -180,24 +704,30 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
     def test_one_hundred_fixtures_create_1200_tasks(self) -> None:
         source = load_source_qualification(self.source_payload)
         fixtures = load_fixtures(self._fixtures_payload(100))
+        target = self._target()
         plan = build_campaign_plan(
             source_qualification=source,
+            target=target,
             fixtures=fixtures,
             anchor_at=parse_utc(self.anchor_at, "anchor"),
             stage_5b2_protocol_sha256="a" * 64,
             campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
         )
         self.assertEqual(len(plan.tasks), 1200)
         self.assertTrue(plan.interpretation_eligible)
 
     def test_99_fixtures_are_not_interpretation_eligible(self) -> None:
         source = load_source_qualification(self.source_payload)
+        target = self._target()
         plan = build_campaign_plan(
             source_qualification=source,
+            target=target,
             fixtures=load_fixtures(self._fixtures_payload(99)),
             anchor_at=parse_utc(self.anchor_at, "anchor"),
             stage_5b2_protocol_sha256="a" * 64,
             campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
         )
         self.assertFalse(plan.interpretation_eligible)
         self.assertEqual(MINIMUM_FIXTURES_FOR_INTERPRETATION, 100)
@@ -205,32 +735,35 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
     def test_scheduled_at_and_capture_window_are_exact(self) -> None:
         source = load_source_qualification(self.source_payload)
         fixture = load_fixtures(self.fixtures_payload)[0]
+        target = self._target()
         plan = build_campaign_plan(
             source_qualification=source,
+            target=target,
             fixtures=(fixture,),
             anchor_at=parse_utc(self.anchor_at, "anchor"),
             stage_5b2_protocol_sha256="a" * 64,
             campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
         )
-        target = next(
+        task_match = next(
             task
             for task in plan.tasks
             if task.market_id == MarketId.HOME_WIN_EITHER_HALF
             and task.offset_seconds_before_kickoff == 3600
         )
         self.assertEqual(
-            target.scheduled_at,
+            task_match.scheduled_at,
             fixture.kickoff - timedelta(seconds=3600),
         )
         self.assertEqual(
-            target.capture_window_opens_at,
-            target.scheduled_at - timedelta(seconds=ATTEMPT_WINDOW_SECONDS),
+            task_match.capture_window_opens_at,
+            task_match.scheduled_at - timedelta(seconds=ATTEMPT_WINDOW_SECONDS),
         )
         self.assertEqual(
-            target.capture_window_closes_at,
-            target.scheduled_at + timedelta(seconds=ATTEMPT_WINDOW_SECONDS),
+            task_match.capture_window_closes_at,
+            task_match.scheduled_at + timedelta(seconds=ATTEMPT_WINDOW_SECONDS),
         )
-        self.assertLess(target.capture_window_closes_at, fixture.kickoff)
+        self.assertLess(task_match.capture_window_closes_at, fixture.kickoff)
 
     def test_fixture_input_order_does_not_change_campaign_or_tasks(self) -> None:
         source = load_source_qualification(self.source_payload)
@@ -241,9 +774,11 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
         second = load_fixtures(reversed_payload)
         kwargs = {
             "source_qualification": source,
+            "target": self._target(),
             "anchor_at": parse_utc(self.anchor_at, "anchor"),
             "stage_5b2_protocol_sha256": "a" * 64,
             "campaign_protocol_sha256": "b" * 64,
+            "source_qualification_sha256": "c" * 64,
         }
         plan_a = build_campaign_plan(fixtures=first, **kwargs)
         plan_b = build_campaign_plan(fixtures=second, **kwargs)
@@ -272,10 +807,12 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
         source = load_source_qualification(self.source_payload)
         plan = build_campaign_plan(
             source_qualification=source,
+            target=self._target(),
             fixtures=(fixture,),
             anchor_at=anchor,
             stage_5b2_protocol_sha256="a" * 64,
             campaign_protocol_sha256="b" * 64,
+            source_qualification_sha256="c" * 64,
         )
         self.assertEqual(len(plan.tasks), 12)
 
@@ -290,10 +827,12 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
         with self.assertRaises(CaptureCampaignError):
             build_campaign_plan(
                 source_qualification=source,
+                target=self._target(),
                 fixtures=(fixture,),
                 anchor_at=anchor,
                 stage_5b2_protocol_sha256="a" * 64,
                 campaign_protocol_sha256="b" * 64,
+                source_qualification_sha256="c" * 64,
             )
 
     def test_naive_anchor_and_fixture_timestamps_are_rejected(self) -> None:
@@ -417,6 +956,9 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
                     fixtures_path=paths["fixtures"],
                     stage_5b2_protocol_path=paths["stage5b2"],
                     campaign_protocol_path=paths["campaign"],
+                    source=self.source,
+                    bookmaker_identifier=self.bookmaker_identifier,
+                    capture_method=self.capture_method,
                     anchor_at=self.anchor_at,
                     code_state={
                         "evidence_git_head_sha": "1" * 40,
@@ -433,6 +975,9 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
                     fixtures_path=paths["fixtures"],
                     stage_5b2_protocol_path=paths["stage5b2"],
                     campaign_protocol_path=paths["campaign"],
+                    source=self.source,
+                    bookmaker_identifier=self.bookmaker_identifier,
+                    capture_method=self.capture_method,
                     anchor_at=self.anchor_at,
                     code_state={
                         "evidence_git_head_sha": "short",
@@ -497,6 +1042,12 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
                 str(paths["source"]),
                 "--fixtures",
                 str(paths["fixtures"]),
+                "--source",
+                self.source,
+                "--bookmaker-identifier",
+                self.bookmaker_identifier,
+                "--capture-method",
+                self.capture_method,
                 "--stage-5b2-protocol",
                 str(paths["stage5b2"]),
                 "--campaign-protocol",
@@ -524,6 +1075,12 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
                         str(paths["source"]),
                         "--fixtures",
                         str(paths["fixtures"]),
+                        "--source",
+                        self.source,
+                        "--bookmaker-identifier",
+                        self.bookmaker_identifier,
+                        "--capture-method",
+                        self.capture_method,
                         "--stage-5b2-protocol",
                         str(paths["stage5b2"]),
                         "--campaign-protocol",

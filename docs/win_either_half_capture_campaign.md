@@ -4,9 +4,10 @@ Stage 5B3 creates the immutable schedule needed to collect genuine prospective
 Win Either Half pricing-availability evidence under the merged Stage 5B2
 contract.
 
-It does not fetch a fixture, open a bookmaker, collect a price, qualify a
-provider, select a decision offset, calculate value, enable a market, or issue a
-bet. It only creates deterministic observation tasks.
+It is adapter-neutral and campaign-target-specific. It does not fetch a fixture,
+open a bookmaker, collect a price, qualify a provider, select a decision offset,
+calculate value, enable a market, or issue a bet. It only creates deterministic
+observation tasks.
 
 ## Why this stage is next
 
@@ -35,8 +36,19 @@ The planner accepts local files only:
 4. the committed Stage 5B3 capture-campaign protocol; and
 5. an explicit UTC `anchor_at` timestamp supplied by the operator.
 
-No current wall-clock time is read. The anchor is part of the immutable campaign
-identity.
+Protocol inputs are accepted only when their bytes exactly match the committed
+repository protocols. No current wall-clock time is read.
+
+## Campaign target freezing
+
+One campaign freezes:
+- `provider_identifier`;
+- `source`;
+- `bookmaker_identifier`; and
+- `capture_method`.
+
+These values are copied into every task and cannot be changed after observing
+availability.
 
 ## Frozen schedule
 
@@ -72,23 +84,40 @@ The campaign identifier is derived from canonical JSON containing:
 
 - provider identifier;
 - eligible Stage 5B1 status;
+- source qualification SHA-256;
+- source, bookmaker identifier, and capture method;
 - anchor timestamp;
 - frozen offsets and attempt window;
 - exact Stage 5B2 and Stage 5B3 protocol hashes; and
 - the sorted fixture catalog.
 
 Each task identifier is derived from the campaign identifier, fixture,
-canonical market, offset, and scheduled timestamp. Reordering the fixture input
-cannot change the campaign identifier, task identifiers, task order, summary,
-or manifest bytes.
+canonical market, offset, scheduled timestamp, source, bookmaker identifier, and
+capture method. Reordering the fixture input cannot change the campaign
+identifier, task identifiers, task order, summary, or manifest bytes.
 
-## Outputs
+## Commitment status
+
+Stage 5B3 produces an `UNFROZEN_LOCAL_PLAN`. The operator-supplied anchor is
+part of deterministic identity, but it is not trusted proof of when the file
+was created. Therefore `prospective_claim_authorized` remains false. Before any
+task may count as prospective evidence, a later reviewed commitment step must
+track a small campaign commitment artifact before
+`commitment_deadline_at`, which is the earliest capture-window opening.
+
+## Outputs and repository policy
 
 One transactional ignored bundle contains:
 
 - `capture-campaign-tasks-v1.jsonl`
 - `capture-campaign-summary-v1.json`
 - `capture-campaign-manifest-v1.json`
+
+Repository output policy:
+- default ignored root inside repository: `.cache/athena-research/win-either-half/capture-campaign`;
+- output outside the repository is allowed for temporary/test usage;
+- other locations inside the repository are rejected;
+- symlinked outputs and symlinked parent directory components are forbidden.
 
 The task file is the immutable schedule. It contains no odds and no completed
 attempt result. A permitted manual workflow or future reviewed provider adapter
@@ -97,11 +126,13 @@ inputs. Stage 5B2 remains the authority that decides whether those completed
 records are `AVAILABLE`, `UNAVAILABLE`, `UNKNOWN`, or `INVALID`.
 
 The summary records fixture and task counts, earliest and latest campaign
-bounds, source status, the 100-fixture interpretation minimum, and whether the
-campaign is large enough for later interpretation.
+bounds, source status, commitment status, deadline, the 100-fixture
+interpretation minimum, and whether the campaign is large enough for later
+interpretation.
 
 The manifest records all input and output hashes, the generator Git revision,
-registry snapshots, deterministic identity rules, and safety state.
+registry snapshots, target object, commitment object, deterministic identity
+rules, and complete safety state.
 
 ## Generate a campaign
 
@@ -112,12 +143,16 @@ chosen anchor.
 python -m scripts.manage_win_either_half_capture_campaign \
   --source-qualification path/to/source-qualification.json \
   --fixtures path/to/future-fixtures.json \
+  --source ODDS_PORTAL \
+  --bookmaker-identifier PINNACLE \
+  --capture-method MANUAL_REVIEW \
   --anchor-at 2026-08-10T00:00:00Z \
   --manifest-output \
     .cache/athena-research/win-either-half/capture-campaign/capture-campaign-manifest-v1.json
 ```
 
-Existing output is not replaced unless `--force` is supplied.
+These flag values are examples only, not production endorsements. Existing output
+is not replaced unless `--force` is supplied.
 
 ## Verify an existing campaign
 
@@ -125,12 +160,15 @@ Existing output is not replaced unless `--force` is supplied.
 python -m scripts.manage_win_either_half_capture_campaign \
   --source-qualification path/to/source-qualification.json \
   --fixtures path/to/future-fixtures.json \
+  --source ODDS_PORTAL \
+  --bookmaker-identifier PINNACLE \
+  --capture-method MANUAL_REVIEW \
   --anchor-at 2026-08-10T00:00:00Z \
   --check \
     .cache/athena-research/win-either-half/capture-campaign/capture-campaign-manifest-v1.json
 ```
 
-Verification is byte-for-byte and fails closed on source report, fixture,
+Verification is byte-for-byte and fails closed on source report, target, fixture,
 protocol, Git-state, registry, task, summary, or manifest drift.
 
 ## Interpretation boundary

@@ -18,6 +18,9 @@ from typing import Any, Iterable, Mapping, Sequence
 
 from domain.markets import MARKET_REGISTRY, MarketId
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.win_either_half_prospective_replay import (
+    validate_protocol_contract as validate_stage_5b2_protocol_contract,
+)
 
 
 SCHEMA_VERSION = 1
@@ -68,6 +71,9 @@ PERMITTED_ATTEMPT_RESULTS = (
     "CAPTURE_ERROR",
 )
 PERMITTED_QUOTE_OUTCOMES = ("YES", "NO")
+
+CAMPAIGN_COMMITMENT_STATUS = "UNFROZEN_LOCAL_PLAN"
+PROSPECTIVE_CLAIM_AUTHORIZED = False
 
 FORBIDDEN_FIELDS = frozenset(
     {
@@ -120,6 +126,32 @@ class SourceQualification:
 
 
 @dataclass(frozen=True)
+class CampaignTarget:
+    source: str
+    bookmaker_identifier: str
+    capture_method: str
+
+
+def build_campaign_target(
+    *,
+    source: Any,
+    bookmaker_identifier: Any,
+    capture_method: Any,
+) -> CampaignTarget:
+    return CampaignTarget(
+        source=_require_non_empty_string(source, "source"),
+        bookmaker_identifier=_require_non_empty_string(
+            bookmaker_identifier,
+            "bookmaker_identifier",
+        ),
+        capture_method=_require_non_empty_string(
+            capture_method,
+            "capture_method",
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class CampaignFixture:
     fixture_identifier: str
     kickoff: datetime
@@ -131,6 +163,9 @@ class CaptureTask:
     campaign_id: str
     task_id: str
     provider_identifier: str
+    source: str
+    bookmaker_identifier: str
+    capture_method: str
     fixture_identifier: str
     market_id: MarketId
     line: None
@@ -146,6 +181,9 @@ class CaptureTask:
             "campaign_id": self.campaign_id,
             "task_id": self.task_id,
             "provider_identifier": self.provider_identifier,
+            "source": self.source,
+            "bookmaker_identifier": self.bookmaker_identifier,
+            "capture_method": self.capture_method,
             "fixture_identifier": self.fixture_identifier,
             "market_id": self.market_id.value,
             "line": None,
@@ -168,6 +206,9 @@ class CampaignPlan:
     campaign_id: str
     provider_identifier: str
     source_status: str
+    source: str
+    bookmaker_identifier: str
+    capture_method: str
     anchor_at: datetime
     fixtures: tuple[CampaignFixture, ...]
     tasks: tuple[CaptureTask, ...]
@@ -175,6 +216,18 @@ class CampaignPlan:
     @property
     def interpretation_eligible(self) -> bool:
         return len(self.fixtures) >= MINIMUM_FIXTURES_FOR_INTERPRETATION
+
+    @property
+    def campaign_commitment_status(self) -> str:
+        return CAMPAIGN_COMMITMENT_STATUS
+
+    @property
+    def prospective_claim_authorized(self) -> bool:
+        return PROSPECTIVE_CLAIM_AUTHORIZED
+
+    @property
+    def commitment_deadline_at(self) -> datetime:
+        return min(task.capture_window_opens_at for task in self.tasks)
 
 
 def _is_int(value: Any) -> bool:
@@ -233,10 +286,12 @@ def serialize_utc(value: datetime) -> str:
 def _walk_mapping_keys(value: Any) -> Iterable[str]:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            if isinstance(key, str):
-                yield key
+            normalized = str(key).strip().lower()
+            if normalized == "safety":
+                continue
+            yield normalized
             yield from _walk_mapping_keys(child)
-    elif isinstance(value, list):
+    elif isinstance(value, (list, tuple, set)):
         for child in value:
             yield from _walk_mapping_keys(child)
 
@@ -379,53 +434,58 @@ def load_fixtures(payload: Mapping[str, Any]) -> tuple[CampaignFixture, ...]:
     )
 
 
-def validate_stage_5b2_protocol(payload: Mapping[str, Any]) -> None:
-    """Fail closed when the upstream Stage 5B2 planning constants drift."""
+def validate_stage_5b2_protocol(
+    payload: Mapping[str, Any],
+    raw_bytes: bytes,
+    *,
+    committed_path: Path = DEFAULT_STAGE_5B2_PROTOCOL_PATH,
+) -> None:
+    """Validate Stage 5B2 protocol using exact byte and Python contract verification."""
 
-    if not isinstance(payload, Mapping):
-        raise CaptureCampaignError("Stage 5B2 protocol must be an object")
-    if payload.get("schema_version") != SCHEMA_VERSION:
-        raise CaptureCampaignError("Stage 5B2 protocol schema_version drifted")
-    if payload.get("dataset_name") != STAGE_5B2_PROTOCOL_DATASET_NAME:
-        raise CaptureCampaignError("Stage 5B2 protocol dataset_name drifted")
-    if payload.get("candidate_offsets_seconds") != list(
-        FROZEN_CANDIDATE_OFFSETS_SECONDS
-    ):
-        raise CaptureCampaignError("Stage 5B2 candidate offsets drifted")
-
-    attempt_contract = payload.get("attempt_contract")
-    if not isinstance(attempt_contract, Mapping):
-        raise CaptureCampaignError("Stage 5B2 attempt_contract is missing")
-    if attempt_contract.get("expected_attempts_per_fixture") != (
-        EXPECTED_TASKS_PER_FIXTURE
-    ):
-        raise CaptureCampaignError(
-            "Stage 5B2 expected attempts per fixture drifted"
+    try:
+        validate_stage_5b2_protocol_contract(
+            payload,
+            raw_bytes,
+            committed_path=committed_path,
         )
-    if attempt_contract.get("attempt_window_seconds") != ATTEMPT_WINDOW_SECONDS:
-        raise CaptureCampaignError("Stage 5B2 attempt window drifted")
-
-    if payload.get("minimum_fixtures_for_interpretation") != (
-        MINIMUM_FIXTURES_FOR_INTERPRETATION
-    ):
+    except ValueError as error:
         raise CaptureCampaignError(
-            "Stage 5B2 interpretation minimum drifted"
+            f"Stage 5B2 protocol validation failed: {error}"
+        ) from error
+
+
+def validate_campaign_protocol(
+    payload: Mapping[str, Any],
+    raw_bytes: bytes,
+    *,
+    committed_path: Path = DEFAULT_PROTOCOL_PATH,
+) -> None:
+    """Validate Stage 5B3 protocol using exact byte and Python contract verification."""
+
+    if not committed_path.is_file():
+        raise CaptureCampaignError(
+            f"Committed Stage 5B3 protocol is missing: {committed_path}"
         )
 
-    output_contract = payload.get("output_contract")
-    if not isinstance(output_contract, Mapping):
-        raise CaptureCampaignError("Stage 5B2 output_contract is missing")
-    if output_contract.get("selected_offset_seconds") is not None:
+    committed_raw = committed_path.read_bytes()
+    try:
+        committed_payload = json.loads(committed_raw.decode("utf-8"))
+    except Exception as error:
         raise CaptureCampaignError(
-            "Stage 5B2 selected_offset_seconds must remain null"
+            "Committed Stage 5B3 protocol is invalid"
+        ) from error
+
+    if raw_bytes != committed_raw:
+        raise CaptureCampaignError(
+            "Supplied Stage 5B3 protocol bytes differ from committed protocol"
         )
-    if output_contract.get("selection_authorized") is not False:
+    if payload != committed_payload:
         raise CaptureCampaignError(
-            "Stage 5B2 selection_authorized must remain false"
+            "Supplied Stage 5B3 protocol differs from committed protocol"
         )
-    if payload.get("no_production_approval") is not True:
+    if committed_payload != build_expected_protocol_contract():
         raise CaptureCampaignError(
-            "Stage 5B2 no_production_approval must remain true"
+            "Committed Stage 5B3 protocol drifted from Python contract"
         )
 
 
@@ -446,6 +506,15 @@ def _sha256_hex(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
+def validate_sha256(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not re.fullmatch(
+        r"[0-9a-fA-F]{64}",
+        value,
+    ):
+        raise CaptureCampaignError(f"{label} must be a full SHA-256")
+    return value.lower()
+
+
 def _campaign_identity_payload(
     *,
     provider_identifier: str,
@@ -454,19 +523,31 @@ def _campaign_identity_payload(
     fixtures: Sequence[CampaignFixture],
     stage_5b2_protocol_sha256: str,
     campaign_protocol_sha256: str,
+    source_qualification_sha256: str,
+    target: CampaignTarget,
 ) -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
         "provider_identifier": provider_identifier,
         "source_status": source_status,
+        "source_qualification_sha256": validate_sha256(
+            source_qualification_sha256, "source_qualification_sha256"
+        ),
+        "source": target.source,
+        "bookmaker_identifier": target.bookmaker_identifier,
+        "capture_method": target.capture_method,
         "anchor_at": serialize_utc(anchor_at),
         "candidate_offsets_seconds": list(
             FROZEN_CANDIDATE_OFFSETS_SECONDS
         ),
         "attempt_window_seconds": ATTEMPT_WINDOW_SECONDS,
-        "stage_5b2_protocol_sha256": stage_5b2_protocol_sha256,
-        "campaign_protocol_sha256": campaign_protocol_sha256,
+        "stage_5b2_protocol_sha256": validate_sha256(
+            stage_5b2_protocol_sha256, "stage_5b2_protocol_sha256"
+        ),
+        "campaign_protocol_sha256": validate_sha256(
+            campaign_protocol_sha256, "campaign_protocol_sha256"
+        ),
         "fixtures": [
             {
                 "fixture_identifier": fixture.fixture_identifier,
@@ -489,6 +570,9 @@ def build_task_id(
     market_id: MarketId,
     offset_seconds_before_kickoff: int,
     scheduled_at: datetime,
+    source: str,
+    bookmaker_identifier: str,
+    capture_method: str,
 ) -> str:
     payload = {
         "campaign_id": campaign_id,
@@ -496,6 +580,9 @@ def build_task_id(
         "market_id": market_id.value,
         "offset_seconds_before_kickoff": offset_seconds_before_kickoff,
         "scheduled_at": serialize_utc(scheduled_at),
+        "source": source,
+        "bookmaker_identifier": bookmaker_identifier,
+        "capture_method": capture_method,
     }
     digest = _sha256_hex(_canonical_json_bytes(payload))
     return f"WEH-TASK-{digest[:24].upper()}"
@@ -504,14 +591,20 @@ def build_task_id(
 def build_campaign_plan(
     *,
     source_qualification: SourceQualification,
+    target: CampaignTarget,
     fixtures: Sequence[CampaignFixture],
     anchor_at: datetime,
     stage_5b2_protocol_sha256: str,
     campaign_protocol_sha256: str,
+    source_qualification_sha256: str,
 ) -> CampaignPlan:
     """Build all 12 immutable observation tasks for every fixture."""
 
     anchor = parse_utc(anchor_at, "anchor_at")
+    validate_sha256(stage_5b2_protocol_sha256, "stage_5b2_protocol_sha256")
+    validate_sha256(campaign_protocol_sha256, "campaign_protocol_sha256")
+    validate_sha256(source_qualification_sha256, "source_qualification_sha256")
+
     normalized_fixtures = tuple(
         sorted(fixtures, key=lambda item: (item.kickoff, item.fixture_identifier))
     )
@@ -534,6 +627,8 @@ def build_campaign_plan(
     campaign_id = build_campaign_id(
         provider_identifier=source_qualification.provider_identifier,
         source_status=source_qualification.prospective_replay_status,
+        source_qualification_sha256=source_qualification_sha256,
+        target=target,
         anchor_at=anchor,
         fixtures=normalized_fixtures,
         stage_5b2_protocol_sha256=stage_5b2_protocol_sha256,
@@ -562,6 +657,9 @@ def build_campaign_plan(
                     market_id=market,
                     offset_seconds_before_kickoff=offset,
                     scheduled_at=scheduled_at,
+                    source=target.source,
+                    bookmaker_identifier=target.bookmaker_identifier,
+                    capture_method=target.capture_method,
                 )
                 if task_id in seen_task_ids:
                     raise CaptureCampaignError("Duplicate task identity")
@@ -574,6 +672,9 @@ def build_campaign_plan(
                         provider_identifier=(
                             source_qualification.provider_identifier
                         ),
+                        source=target.source,
+                        bookmaker_identifier=target.bookmaker_identifier,
+                        capture_method=target.capture_method,
                         fixture_identifier=fixture.fixture_identifier,
                         market_id=market,
                         line=None,
@@ -607,6 +708,9 @@ def build_campaign_plan(
         campaign_id=campaign_id,
         provider_identifier=source_qualification.provider_identifier,
         source_status=source_qualification.prospective_replay_status,
+        source=target.source,
+        bookmaker_identifier=target.bookmaker_identifier,
+        capture_method=target.capture_method,
         anchor_at=anchor,
         fixtures=normalized_fixtures,
         tasks=ordered_tasks,
@@ -673,12 +777,26 @@ def build_expected_protocol_contract() -> dict[str, Any]:
             "production_approval_authorized": False,
             "both_markets_must_remain_disabled": True,
         },
+        "campaign_target_contract": {
+            "source_required": True,
+            "bookmaker_identifier_required": True,
+            "capture_method_required": True,
+            "constant_across_campaign": True,
+            "included_in_campaign_identity": True,
+            "included_in_task_identity": True,
+        },
         "fixture_contract": {
             "schema_version": SCHEMA_VERSION,
             "required_fields": ["fixture_identifier", "kickoff"],
             "fixture_identifiers_unique": True,
             "kickoff_timezone": "UTC",
             "anchor_must_not_follow_first_window_open": True,
+        },
+        "commitment_contract": {
+            "campaign_commitment_status": "UNFROZEN_LOCAL_PLAN",
+            "prospective_claim_authorized": False,
+            "local_anchor_is_not_trusted_creation_time_proof": True,
+            "tracked_commitment_required_before_first_window": True,
         },
         "task_contract": {
             "task_state": TaskState.PLANNED.value,
@@ -695,6 +813,9 @@ def build_expected_protocol_contract() -> dict[str, Any]:
             "tasks_per_fixture": EXPECTED_TASKS_PER_FIXTURE,
             "deterministic_task_ids": True,
             "no_wall_clock_time_used": True,
+            "source_frozen": True,
+            "bookmaker_identifier_frozen": True,
+            "capture_method_frozen": True,
         },
         "output_contract": {
             "tasks_jsonl": "capture-campaign-tasks-v1.jsonl",
@@ -705,6 +826,10 @@ def build_expected_protocol_contract() -> dict[str, Any]:
             "selected_offset_seconds": None,
             "selection_authorized": False,
             "production_approval_authorized": False,
+            "repository_output_policy": "DEFAULT_IGNORED_ROOT_OR_OUTSIDE_REPOSITORY",
+            "symlink_outputs_forbidden": True,
+            "campaign_commitment_status": "UNFROZEN_LOCAL_PLAN",
+            "prospective_claim_authorized": False,
         },
         "forbidden_fields": sorted(FORBIDDEN_FIELDS),
         "safety": {
@@ -720,13 +845,6 @@ def build_expected_protocol_contract() -> dict[str, Any]:
         },
         "no_production_approval": True,
     }
-
-
-def validate_campaign_protocol(payload: Mapping[str, Any]) -> None:
-    if payload != build_expected_protocol_contract():
-        raise CaptureCampaignError(
-            "Campaign protocol differs from the exact Python contract"
-        )
 
 
 def validate_full_git_sha(value: Any, label: str) -> str:

@@ -26,6 +26,14 @@
     "production_approval_authorized": false,
     "both_markets_must_remain_disabled": true
   },
+  "campaign_target_contract": {
+    "source_required": true,
+    "bookmaker_identifier_required": true,
+    "capture_method_required": true,
+    "constant_across_campaign": true,
+    "included_in_campaign_identity": true,
+    "included_in_task_identity": true
+  },
   "fixture_contract": {
     "schema_version": 1,
     "required_fields": [
@@ -35,6 +43,12 @@
     "fixture_identifiers_unique": true,
     "kickoff_timezone": "UTC",
     "anchor_must_not_follow_first_window_open": true
+  },
+  "commitment_contract": {
+    "campaign_commitment_status": "UNFROZEN_LOCAL_PLAN",
+    "prospective_claim_authorized": false,
+    "local_anchor_is_not_trusted_creation_time_proof": true,
+    "tracked_commitment_required_before_first_window": true
   },
   "task_contract": {
     "task_state": "PLANNED",
@@ -65,7 +79,10 @@
     ],
     "tasks_per_fixture": 12,
     "deterministic_task_ids": true,
-    "no_wall_clock_time_used": true
+    "no_wall_clock_time_used": true,
+    "source_frozen": true,
+    "bookmaker_identifier_frozen": true,
+    "capture_method_frozen": true
   },
   "output_contract": {
     "tasks_jsonl": "capture-campaign-tasks-v1.jsonl",
@@ -75,7 +92,11 @@
     "transactional_write_required": true,
     "selected_offset_seconds": null,
     "selection_authorized": false,
-    "production_approval_authorized": false
+    "production_approval_authorized": false,
+    "repository_output_policy": "DEFAULT_IGNORED_ROOT_OR_OUTSIDE_REPOSITORY",
+    "symlink_outputs_forbidden": true,
+    "campaign_commitment_status": "UNFROZEN_LOCAL_PLAN",
+    "prospective_claim_authorized": false
   },
   "forbidden_fields": [
     "acca_selection",

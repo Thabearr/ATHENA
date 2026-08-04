@@ -20,6 +20,7 @@ if __package__ in {None, ""}:
 
 from domain.win_either_half_capture_campaign import (  # noqa: E402
     ATTEMPT_WINDOW_SECONDS,
+    CAMPAIGN_COMMITMENT_STATUS,
     DATASET_NAME,
     DEFAULT_PROTOCOL_PATH,
     DEFAULT_STAGE_5B2_PROTOCOL_PATH,
@@ -29,12 +30,15 @@ from domain.win_either_half_capture_campaign import (  # noqa: E402
     PERMITTED_ATTEMPT_RESULTS,
     PERMITTED_MARKETS,
     PERMITTED_QUOTE_OUTCOMES,
+    PROSPECTIVE_CLAIM_AUTHORIZED,
     SCHEMA_VERSION,
-    CaptureCampaignError,
     CampaignPlan,
+    CampaignTarget,
+    CaptureCampaignError,
     assert_market_safety,
     assert_no_forbidden_fields,
     build_campaign_plan,
+    build_campaign_target,
     load_fixtures,
     load_source_qualification,
     market_registry_snapshot,
@@ -144,12 +148,35 @@ def _output_identity(name: str, content: bytes, rows: int) -> dict[str, Any]:
     }
 
 
+def _is_relative_to(path: Path, parent: Path) -> bool:
+    try:
+        path.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def _assert_no_symlink_components(path: Path, label: str) -> Path:
+    unresolved = path.absolute()
+    curr = unresolved
+    while curr != curr.parent:
+        if curr.is_symlink():
+            raise CaptureCampaignExportError(
+                f"{label} contains forbidden symlink path component: {curr}"
+            )
+        curr = curr.parent
+    return path.resolve(strict=False)
+
+
 def build_bundle(
     *,
     source_qualification_path: Path,
     fixtures_path: Path,
     stage_5b2_protocol_path: Path,
     campaign_protocol_path: Path,
+    source: str,
+    bookmaker_identifier: str,
+    capture_method: str,
     anchor_at: str,
     code_state: Mapping[str, Any],
 ) -> CampaignBundle:
@@ -185,17 +212,33 @@ def build_bundle(
     )
 
     source_qualification = load_source_qualification(source_payload)
+    target = build_campaign_target(
+        source=source,
+        bookmaker_identifier=bookmaker_identifier,
+        capture_method=capture_method,
+    )
     fixtures = load_fixtures(fixtures_payload)
-    validate_stage_5b2_protocol(stage_5b2_payload)
-    validate_campaign_protocol(campaign_protocol_payload)
+
+    validate_stage_5b2_protocol(
+        stage_5b2_payload,
+        stage_5b2_raw,
+        committed_path=DEFAULT_STAGE_5B2_PROTOCOL_PATH,
+    )
+    validate_campaign_protocol(
+        campaign_protocol_payload,
+        campaign_protocol_raw,
+        committed_path=DEFAULT_PROTOCOL_PATH,
+    )
     anchor = parse_utc(anchor_at, "anchor_at")
 
     plan = build_campaign_plan(
         source_qualification=source_qualification,
+        target=target,
         fixtures=fixtures,
         anchor_at=anchor,
         stage_5b2_protocol_sha256=_sha256(stage_5b2_raw),
         campaign_protocol_sha256=_sha256(campaign_protocol_raw),
+        source_qualification_sha256=_sha256(source_raw),
     )
 
     tasks_bytes = _tasks_jsonl_bytes(plan)
@@ -208,6 +251,9 @@ def build_bundle(
         "dataset_name": "win-either-half-capture-campaign-summary-v1",
         "campaign_id": plan.campaign_id,
         "provider_identifier": plan.provider_identifier,
+        "source": plan.source,
+        "bookmaker_identifier": plan.bookmaker_identifier,
+        "capture_method": plan.capture_method,
         "prospective_replay_status": plan.source_status,
         "anchor_at": serialize_utc(plan.anchor_at),
         "fixture_count": len(plan.fixtures),
@@ -231,6 +277,10 @@ def build_bundle(
             MINIMUM_FIXTURES_FOR_INTERPRETATION
         ),
         "interpretation_eligible": plan.interpretation_eligible,
+        "campaign_commitment_status": CAMPAIGN_COMMITMENT_STATUS,
+        "prospective_claim_authorized": PROSPECTIVE_CLAIM_AUTHORIZED,
+        "commitment_deadline_at": serialize_utc(plan.commitment_deadline_at),
+        "tracked_commitment_required_before_first_window": True,
         "selected_offset_seconds": None,
         "selection_authorized": False,
         "production_approval_authorized": False,
@@ -239,8 +289,9 @@ def build_bundle(
             "AWAY_WIN_EITHER_HALF": "DISABLED",
         },
         "no_production_approval": (
-            "Stage 5B3 creates a capture schedule only. It collects no odds, "
-            "selects no offset, enables no market, and issues no bet."
+            "Stage 5B3 creates an unfrozen local capture schedule only. It is not "
+            "trusted proof of pre-registration. It collects no odds, selects no "
+            "offset, enables no market, and issues no bet."
         ),
     }
     assert_no_forbidden_fields(summary, "Campaign summary")
@@ -278,6 +329,12 @@ def build_bundle(
         "tracked_worktree_clean": True,
         "campaign_id": plan.campaign_id,
         "provider_identifier": plan.provider_identifier,
+        "campaign_target": {
+            "provider_identifier": plan.provider_identifier,
+            "source": plan.source,
+            "bookmaker_identifier": plan.bookmaker_identifier,
+            "capture_method": plan.capture_method,
+        },
         "prospective_replay_status": plan.source_status,
         "anchor_at": serialize_utc(plan.anchor_at),
         "candidate_offsets_seconds": list(
@@ -289,11 +346,22 @@ def build_bundle(
             MINIMUM_FIXTURES_FOR_INTERPRETATION
         ),
         "interpretation_eligible": plan.interpretation_eligible,
+        "commitment": {
+            "campaign_commitment_status": CAMPAIGN_COMMITMENT_STATUS,
+            "prospective_claim_authorized": PROSPECTIVE_CLAIM_AUTHORIZED,
+            "local_anchor_is_not_trusted_creation_time_proof": True,
+            "tracked_commitment_required_before_first_window": True,
+            "commitment_deadline_at": serialize_utc(plan.commitment_deadline_at),
+        },
         "task_identity": {
             "algorithm": "SHA256_CANONICAL_JSON_PREFIX_24",
             "campaign_id_fields": [
                 "provider_identifier",
                 "prospective_replay_status",
+                "source_qualification_sha256",
+                "source",
+                "bookmaker_identifier",
+                "capture_method",
                 "anchor_at",
                 "candidate_offsets_seconds",
                 "attempt_window_seconds",
@@ -307,6 +375,9 @@ def build_bundle(
                 "market_id",
                 "offset_seconds_before_kickoff",
                 "scheduled_at",
+                "source",
+                "bookmaker_identifier",
+                "capture_method",
             ],
         },
         "deterministic_ordering": [
@@ -321,8 +392,17 @@ def build_bundle(
         "selected_offset_seconds": None,
         "selection_authorized": False,
         "production_approval_authorized": False,
-        "network_requests": False,
-        "odds_collection": False,
+        "safety": {
+            "network_requests": False,
+            "scraping": False,
+            "browser_automation": False,
+            "credential_use": False,
+            "odds_collection": False,
+            "provider_qualification": False,
+            "offset_selection": False,
+            "market_activation": False,
+            "bet_decision": False,
+        },
         "inputs": inputs,
         "outputs": outputs,
         "summary_accounting": {
@@ -358,10 +438,37 @@ def _output_paths_from_manifest_path(manifest_path: Path) -> dict[str, Path]:
             "Manifest output filename must be "
             f"{OUTPUT_FILENAMES['manifest']}"
         )
+
+    resolved_repo = REPOSITORY_ROOT.resolve(strict=False)
+    resolved_default = DEFAULT_OUTPUT_ROOT.resolve(strict=False)
+    resolved_manifest = _assert_no_symlink_components(manifest_path, "Manifest path")
+    target_dir = resolved_manifest.parent
+
+    if _is_relative_to(resolved_manifest, resolved_repo):
+        if not _is_relative_to(target_dir, resolved_default):
+            raise CaptureCampaignExportError(
+                "Campaign outputs inside the repository must be under "
+                '".cache/athena-research/win-either-half/capture-campaign"'
+            )
+
     return {
-        name: manifest_path.parent / filename
+        name: target_dir / filename
         for name, filename in OUTPUT_FILENAMES.items()
     }
+
+
+def _fsync_dir(path: Path) -> None:
+    try:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        fd = os.open(str(path), flags)
+        try:
+            os.fsync(fd)
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
 
 
 def commit_bundle(
@@ -372,11 +479,16 @@ def commit_bundle(
 ) -> None:
     """Write the complete campaign bundle transactionally with rollback."""
 
-    if set(output_paths) != set(contents):
+    if set(output_paths) != set(OUTPUT_FILENAMES):
         raise CaptureCampaignExportError(
-            "Output paths and content keys must match"
+            "Campaign output keys must exactly match the frozen bundle"
         )
-    resolved = [path.resolve() for path in output_paths.values()]
+    if set(contents) != set(OUTPUT_FILENAMES):
+        raise CaptureCampaignExportError(
+            "Campaign content keys must exactly match the frozen bundle"
+        )
+
+    resolved = [_assert_no_symlink_components(path, "Output destination") for path in output_paths.values()]
     if len(set(resolved)) != len(resolved):
         raise CaptureCampaignExportError("Output paths must be distinct")
     parent_dirs = {path.parent for path in resolved}
@@ -388,7 +500,7 @@ def commit_bundle(
     output_dir.mkdir(parents=True, exist_ok=True)
 
     if not force:
-        existing = [path for path in output_paths.values() if path.exists()]
+        existing = [path for path in resolved if path.exists()]
         if existing:
             raise CaptureCampaignExportError(
                 "Campaign output exists; use --force to replace the bundle"
@@ -424,21 +536,30 @@ def commit_bundle(
             os.replace(staged, destination)
             installed.append(destination)
 
+        _fsync_dir(output_dir)
+
     except Exception as error:
+        rollback_errors: list[Exception] = []
         for destination in reversed(installed):
             try:
                 if destination.exists():
                     destination.unlink()
-            except OSError:
-                pass
+            except Exception as rollback_err:
+                rollback_errors.append(rollback_err)
         for backup, destination in reversed(backups):
             try:
                 if backup.exists():
                     os.replace(backup, destination)
-            except OSError:
-                pass
+            except Exception as rollback_err:
+                rollback_errors.append(rollback_err)
+        _fsync_dir(output_dir)
+
+        if rollback_errors:
+            raise CaptureCampaignExportError(
+                f"Campaign bundle transaction failed and rollback was incomplete: {error}"
+            ) from error
         raise CaptureCampaignExportError(
-            "Campaign bundle transaction failed and was rolled back"
+            "Campaign bundle transaction failed and the prior bundle was restored"
         ) from error
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)
@@ -467,6 +588,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--source-qualification", type=Path, required=True)
     parser.add_argument("--fixtures", type=Path, required=True)
+    parser.add_argument("--source", required=True)
+    parser.add_argument("--bookmaker-identifier", required=True)
+    parser.add_argument("--capture-method", required=True)
     parser.add_argument(
         "--stage-5b2-protocol",
         type=Path,
@@ -509,6 +633,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             fixtures_path=args.fixtures,
             stage_5b2_protocol_path=args.stage_5b2_protocol,
             campaign_protocol_path=args.campaign_protocol,
+            source=args.source,
+            bookmaker_identifier=args.bookmaker_identifier,
+            capture_method=args.capture_method,
             anchor_at=args.anchor_at,
             code_state=code_state,
         )
@@ -529,6 +656,9 @@ def run(argv: Sequence[str] | None = None) -> int:
             print(
                 "Stage 5B3 capture campaign verified: "
                 f"campaign_id={bundle.summary['campaign_id']} "
+                f"provider={bundle.summary['provider_identifier']} "
+                f"source={bundle.summary['source']} "
+                f"bookmaker={bundle.summary['bookmaker_identifier']} "
                 f"tasks={bundle.summary['task_count']}"
             )
             return 0
@@ -541,6 +671,9 @@ def run(argv: Sequence[str] | None = None) -> int:
         print(
             "Stage 5B3 capture campaign created: "
             f"campaign_id={bundle.summary['campaign_id']} "
+            f"provider={bundle.summary['provider_identifier']} "
+            f"source={bundle.summary['source']} "
+            f"bookmaker={bundle.summary['bookmaker_identifier']} "
             f"fixtures={bundle.summary['fixture_count']} "
             f"tasks={bundle.summary['task_count']}"
         )
