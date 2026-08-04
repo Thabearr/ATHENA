@@ -49,17 +49,33 @@ Declarations must be created at:
 - Symlink path components are forbidden;
 - Paths outside `artifacts/research-commitments/win-either-half/` are rejected.
 
+## Exact Head-Tree Blob and Working-Tree Verification
+
+Validation in `--validate-git-diff` mode verifies declarations using exact Git blob and tree objects:
+- Exact tracked head-tree blob bytes are canonicalized and hashed.
+- Working-tree bytes must equal head-tree blob bytes byte-for-byte.
+- A local `--validate-git-diff` invocation is for offline verification only and is **not platform proof** of prospective timing.
+
 ## GitHub Base-Verifier and Server-UTC Deadline Check
 
 When a pull request introduces a new commitment declaration, the `.github/workflows/validate-win-either-half-campaign-commitment.yml` workflow runs:
 
-1. **Base-Revision Verifier Checkout**: Checks out the verifier code from the PR base (`main`). The declaration PR's own code changes do not execute for deadline validation.
-2. **Server-Observed UTC**: Obtains `date -u +%Y-%m-%dT%H:%M:%S.%6NZ` from the GitHub runner.
-3. **Strict Comparison**: Requires `server_observed_at <= commitment_deadline_at`. Exact equality passes; even a single microsecond late fails closed.
+1. **Exact Revision Checkouts**: Checks out the exact PR head SHA (`github.event.pull_request.head.sha`) and exact base SHA (`github.event.pull_request.base.sha`). The workflow explicitly verifies checked-out SHAs with `git rev-parse HEAD`.
+2. **Base-Revision Verifier Execution**: Future declaration PRs execute verifier code from the base revision (`main`). The declaration PR's own code changes do not execute for deadline validation.
+3. **Server-Observed UTC**: Obtains `date -u +%Y-%m-%dT%H:%M:%S.%6NZ` from the GitHub runner.
+4. **Strict Comparison**: Requires `server_observed_at <= commitment_deadline_at`. Exact equality passes; even a single microsecond late fails closed.
+
+## Local Check Mode and Generator Ancestry Verification
+
+The `--check` verification mode:
+- Rebuilds the expected declaration using the stored `generator_git_sha`.
+- Verifies that `generator_git_sha` is a valid commit object in the repository (`git cat-file -e <sha>^{commit}`).
+- Verifies that `generator_git_sha` is an ancestor of the current clean HEAD (`git merge-base --is-ancestor`).
+- Rejects dirty tracked worktrees and requires exact stored byte equality.
 
 ## Separation of Tooling PRs and Declaration PRs
 
-PR #27 introduces Stage 5B4 tooling only and intentionally contains no real campaign declaration.
+PR #27 is **tooling-only and contains no declaration**.
 
 Future PRs must maintain strict separation of duties:
 - A declaration PR must ONLY add new commitment files under `artifacts/research-commitments/win-either-half/`.
@@ -80,6 +96,7 @@ Upon successful validation, the workflow emits a JSON attestation artifact:
 `win-either-half-campaign-commitment-${{ github.run_id }}`
 
 - Retained for 90 days as supplementary audit material.
+- Artifact expiration does not erase the authoritative GitHub run ID and `success` conclusion.
 - The authoritative platform record is the GitHub Actions workflow run ID and `success` conclusion.
 
 ## Truth Statement

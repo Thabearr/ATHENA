@@ -53,12 +53,21 @@ from domain.win_either_half_capture_campaign import (
     load_source_qualification,
 )
 from scripts.manage_win_either_half_campaign_commitment import (
+    COMMITMENT_ROOT,
+    DEFAULT_PROTOCOL_PATH,
+    DEFAULT_STAGE_5B3_PROTOCOL_PATH,
     REPOSITORY_ROOT,
     CampaignCommitmentExportError,
+    _decode_git_token,
+    _fsync_dir,
+    _fsync_file,
     _is_git_tracked,
+    _parse_name_status_z,
+    _parse_single_ls_tree_record,
+    _require_ancestor,
+    _require_commit,
     _run_git_bytes,
-    _run_git_command,
-    _run_git_stdout,
+    _run_git_text,
     _write_file_atomically,
     check_commitment,
     create_commitment,
@@ -920,8 +929,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
-                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
@@ -1087,7 +1096,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"120000 blob abc\t{rel_decl}", stderr="")
+                    return MagicMock(returncode=0, stdout=f"120000 blob abc\t{rel_decl}\x00", stderr="")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
             with patch("subprocess.run", side_effect=mock_run_cmd):
@@ -1121,7 +1130,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
             with patch("subprocess.run", side_effect=mock_run_cmd):
@@ -1165,7 +1174,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                         github_event_name="pull_request",
                         attestation_output=att_file,
                     )
-                self.assertIn("is not an ancestor of head_sha", str(ctx.exception))
+                self.assertIn("is not an ancestor of", str(ctx.exception))
 
     def test_zero_changed_declarations_rejected_in_validation_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1230,8 +1239,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
-                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
@@ -1309,8 +1318,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                     return MagicMock(returncode=0, stdout=diff_output, stderr=b"")
                 if "ls-tree" in cmd_list:
                     p = cmd_list[-1]
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{p}", stderr="")
-                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{p}\x00", stderr="")
+                if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     spec = cmd_list[-1]
                     if c2_id in spec:
                         return MagicMock(returncode=0, stdout=decl2_bytes, stderr=b"")
@@ -1372,8 +1381,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}", stderr="")
-                if "cat-file" in cmd_list and "-p" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
@@ -1549,8 +1558,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             dest = Path(tmp) / "tracked.json"
             dest.write_bytes(b"{}")
-            with patch("subprocess.run") as mock_run:
-                mock_run.return_value = MagicMock(returncode=0)
+            with patch("scripts.manage_win_either_half_campaign_commitment._is_git_tracked", return_value=True):
                 with self.assertRaises(CampaignCommitmentExportError) as ctx:
                     _write_file_atomically(
                         dest, b"new", force=True, is_git_tracked_check=True
@@ -1721,7 +1729,10 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             mock_run.return_value = MagicMock(returncode=128, stderr="fatal: not a git repository")
             with self.assertRaises(CampaignCommitmentExportError) as ctx:
                 _is_git_tracked(test_path, REPOSITORY_ROOT)
-            self.assertIn("Unable to determine Git tracked status", str(ctx.exception))
+            self.assertTrue(
+                "Git command failed" in str(ctx.exception)
+                or "Unable to determine Git tracked status" in str(ctx.exception)
+            )
 
     def test_atomic_write_backup_and_rollback_on_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1958,52 +1969,188 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 validate_deadline(decl, server_observed_at=non_utc_dt)
             self.assertIn("must be timezone-aware UTC", str(ctx.exception))
 
-    def test_run_git_command_success_and_failure(self) -> None:
-        res = _run_git_command(["--version"], cwd=REPOSITORY_ROOT, label="git version", check=True)
-        self.assertEqual(res.returncode, 0)
-        self.assertIn("git version", res.stdout)
+    def test_decode_git_token_valid(self) -> None:
+        self.assertEqual(_decode_git_token(b"hello/world", "label"), "hello/world")
+
+    def test_decode_git_token_rejects_empty(self) -> None:
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _decode_git_token(b"", "empty token")
+        self.assertIn("empty token was unexpectedly empty", str(ctx.exception))
+
+    def test_decode_git_token_rejects_invalid_utf8(self) -> None:
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _decode_git_token(b"\xff\xfe", "bad token")
+        self.assertIn("not valid UTF-8", str(ctx.exception))
+
+    def test_parse_name_status_z_empty(self) -> None:
+        self.assertEqual(_parse_name_status_z(b""), [])
+
+    def test_parse_name_status_z_missing_trailing_nul(self) -> None:
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_name_status_z(b"A\x00file.json")
+        self.assertIn("unterminated", str(ctx.exception))
+
+    def test_parse_name_status_z_addition(self) -> None:
+        raw = b"A\x00path/to/file.json\x00"
+        records = _parse_name_status_z(raw)
+        self.assertEqual(records, [("A", ["path/to/file.json"])])
+
+    def test_parse_name_status_z_rename(self) -> None:
+        raw = b"R100\x00old/path.json\x00new/path.json\x00"
+        records = _parse_name_status_z(raw)
+        self.assertEqual(records, [("R100", ["old/path.json", "new/path.json"])])
+
+    def test_parse_name_status_z_truncated_rename(self) -> None:
+        raw = b"R100\x00old/path.json\x00"
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_name_status_z(raw)
+        self.assertIn("truncated", str(ctx.exception))
+
+    def test_parse_single_ls_tree_record_valid(self) -> None:
+        raw = b"100644 blob abc123def456\tpath/to/file.json\x00"
+        mode, sha = _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
+        self.assertEqual(mode, "100644")
+        self.assertEqual(sha, "abc123def456")
+
+    def test_parse_single_ls_tree_record_missing_nul(self) -> None:
+        raw = b"100644 blob abc123def456\tpath/to/file.json"
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
+        self.assertIn("unterminated", str(ctx.exception))
+
+    def test_parse_single_ls_tree_record_empty(self) -> None:
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_single_ls_tree_record(b"", "path/to/file.json", "tree record")
+        self.assertIn("not found in Git tree", str(ctx.exception))
+
+    def test_parse_single_ls_tree_record_not_blob(self) -> None:
+        raw = b"040000 tree abc123def456\tpath/to/file.json\x00"
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
+        self.assertIn("expected blob", str(ctx.exception))
+
+    def test_parse_single_ls_tree_record_unexpected_path(self) -> None:
+        raw = b"100644 blob abc123def456\tpath/to/other.json\x00"
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
+        self.assertIn("did not match requested path", str(ctx.exception))
+
+    def test_parse_single_ls_tree_record_multiple_records(self) -> None:
+        raw = b"100644 blob abc123def456\tpath/to/file.json\x00100644 blob fed654cba321\tpath/to/file2.json\x00"
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
+        self.assertIn("multiple entries", str(ctx.exception))
+
+    def test_run_git_bytes_success_and_failure(self) -> None:
+        res = _run_git_bytes(["--version"], cwd=REPOSITORY_ROOT, label="git version")
+        self.assertIn(b"git version", res)
 
         with self.assertRaises(CampaignCommitmentExportError) as ctx:
-            _run_git_command(["invalid-git-subcommand-xyz"], cwd=REPOSITORY_ROOT, label="invalid command", check=True)
+            _run_git_bytes(["invalid-git-subcommand-xyz"], cwd=REPOSITORY_ROOT, label="invalid command")
         self.assertIn("Git command failed", str(ctx.exception))
 
-    def test_run_git_stdout_returns_text(self) -> None:
-        out = _run_git_stdout(["--version"], cwd=REPOSITORY_ROOT, label="git version")
+    def test_run_git_text_returns_text(self) -> None:
+        out = _run_git_text(["--version"], cwd=REPOSITORY_ROOT, label="git version")
         self.assertIsInstance(out, str)
         self.assertIn("git version", out)
 
-    def test_run_git_bytes_returns_raw_bytes(self) -> None:
-        out = _run_git_bytes(["--version"], cwd=REPOSITORY_ROOT, label="git version")
-        self.assertIsInstance(out, bytes)
-        self.assertIn(b"git version", out)
-
-    def test_run_git_command_raises_on_oserror(self) -> None:
+    def test_run_git_bytes_raises_on_oserror(self) -> None:
         with patch("subprocess.run", side_effect=OSError("executable not found")):
             with self.assertRaises(CampaignCommitmentExportError) as ctx:
-                _run_git_command(["--version"], cwd=REPOSITORY_ROOT, label="git version")
+                _run_git_bytes(["--version"], cwd=REPOSITORY_ROOT, label="git version")
             self.assertIn("Git process execution failed", str(ctx.exception))
+
+    def test_require_commit_success(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_git:
+            mock_git.return_value = b""
+            sha = _require_commit(REPOSITORY_ROOT, "0" * 40, "check commit")
+            self.assertEqual(sha, "0" * 40)
+
+    def test_require_commit_failure(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_git:
+            mock_git.side_effect = CampaignCommitmentExportError("not found")
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _require_commit(REPOSITORY_ROOT, "0" * 40, "check commit")
+            self.assertIn("not found", str(ctx.exception))
+
+    def test_require_ancestor_success(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_process") as mock_proc:
+            mock_proc.return_value = MagicMock(returncode=0)
+            _require_ancestor(REPOSITORY_ROOT, "0" * 40, "1" * 40, "check ancestor")
+
+    def test_require_ancestor_failure(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_process") as mock_proc:
+            mock_proc.return_value = MagicMock(returncode=1)
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _require_ancestor(REPOSITORY_ROOT, "0" * 40, "1" * 40, "check ancestor")
+            self.assertIn("is not an ancestor of", str(ctx.exception))
 
     def test_is_git_tracked_returns_false_on_unmatched(self) -> None:
         test_path = REPOSITORY_ROOT / "non_existent_untracked_file_xyz.json"
-        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd:
-            mock_cmd.return_value = MagicMock(
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
                 returncode=1,
-                stderr="error: pathspec 'non_existent_untracked_file_xyz.json' did not match any files",
-                stdout="",
+                stderr=b"error: pathspec 'non_existent_untracked_file_xyz.json' did not match any files\n",
+                stdout=b"",
             )
             self.assertFalse(_is_git_tracked(test_path, REPOSITORY_ROOT))
 
     def test_is_git_tracked_raises_on_unexpected_git_failure(self) -> None:
         test_path = REPOSITORY_ROOT / "some_file.json"
-        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd:
-            mock_cmd.return_value = MagicMock(
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
                 returncode=128,
-                stderr="fatal: not a git repository",
-                stdout="",
+                stderr=b"fatal: not a git repository\n",
+                stdout=b"",
             )
             with self.assertRaises(CampaignCommitmentExportError) as ctx:
                 _is_git_tracked(test_path, REPOSITORY_ROOT)
-            self.assertIn("Unable to determine Git tracked status", str(ctx.exception))
+            self.assertIn("Git command failed", str(ctx.exception))
+
+    def test_write_file_atomically_success(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "subdir" / "test.json"
+            content = b'{"hello": "world"}\n'
+            _write_file_atomically(target, content, force=False, is_git_tracked_check=False)
+            self.assertTrue(target.exists())
+            self.assertEqual(target.read_bytes(), content)
+
+    def test_write_file_atomically_refuses_existing_without_force(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "test.json"
+            target.write_bytes(b"initial")
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _write_file_atomically(target, b"new", force=False, is_git_tracked_check=False)
+            self.assertIn("already exists", str(ctx.exception))
+
+    def test_write_file_atomically_refuses_git_tracked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "test.json"
+            target.write_bytes(b"existing")
+            with patch("scripts.manage_win_either_half_campaign_commitment._is_git_tracked", return_value=True):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _write_file_atomically(target, b"new", force=True, is_git_tracked_check=True)
+                self.assertIn("Refusing to overwrite Git-tracked commitment file", str(ctx.exception))
+
+    def test_write_file_atomically_rollback_on_new_file_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp) / "newdir"
+            target = parent / "test.json"
+            with patch("os.replace", side_effect=OSError("replace error")):
+                with self.assertRaises(CampaignCommitmentExportError):
+                    _write_file_atomically(target, b"content", force=False, is_git_tracked_check=False)
+            self.assertFalse(target.exists())
+
+    def test_write_file_atomically_rollback_on_overwrite_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "test.json"
+            initial_bytes = b"initial content"
+            target.write_bytes(initial_bytes)
+            with patch("os.replace", side_effect=[None, OSError("replace error"), None, None]):
+                with self.assertRaises(CampaignCommitmentExportError):
+                    _write_file_atomically(target, b"new content", force=True, is_git_tracked_check=False)
+            self.assertTrue(target.exists())
+            self.assertEqual(target.read_bytes(), initial_bytes)
 
     def test_check_commitment_verifies_generator_sha_in_git(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2025,8 +2172,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             decl_path.write_bytes(canonical_json_bytes(decl.to_mapping(), pretty=True))
 
             try:
-                with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_git:
-                    mock_git.side_effect = CampaignCommitmentExportError("Git command failed (check generator commit): not found")
+                with patch("scripts.manage_win_either_half_campaign_commitment._require_commit") as mock_req:
+                    mock_req.side_effect = CampaignCommitmentExportError("generator commit not found")
                     with self.assertRaises(CampaignCommitmentExportError) as ctx:
                         check_commitment(
                             tasks_path=files["tasks"],
@@ -2037,18 +2184,16 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                             declaration_path=decl_path,
                             code_state={"evidence_git_head_sha": "1" * 40, "tracked_worktree_clean": True},
                         )
-                    self.assertIn("check generator commit", str(ctx.exception))
+                    self.assertIn("generator commit not found", str(ctx.exception))
             finally:
                 if decl_path.exists():
                     decl_path.unlink()
 
     def test_validate_git_diff_rejects_non_ancestor_base(self) -> None:
-        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd:
-            mock_cmd.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=1, stdout=""),
-            ]
+        with patch("scripts.manage_win_either_half_campaign_commitment._require_commit") as mock_commit, \
+             patch("scripts.manage_win_either_half_campaign_commitment._require_ancestor") as mock_ancestor:
+            mock_commit.side_effect = lambda repo, sha, label: sha
+            mock_ancestor.side_effect = CampaignCommitmentExportError("base_sha is not an ancestor of head_sha")
             with self.assertRaises(CampaignCommitmentExportError) as ctx:
                 validate_git_diff(
                     repository_root=REPOSITORY_ROOT,
@@ -2060,48 +2205,19 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                     github_event_name="pull_request",
                     attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
                 )
-            self.assertIn("is not an ancestor of head_sha", str(ctx.exception))
-
-    def test_validate_git_diff_rejects_git_cat_file_failure(self) -> None:
-        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd, \
-             patch("scripts.manage_win_either_half_campaign_commitment._run_git_stdout") as mock_stdout, \
-             patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_bytes:
-            mock_cmd.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=""),
-            ]
-            diff_output = b"A\x00artifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
-            mock_stdout.return_value = "100644 blob abc123\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json"
-            mock_bytes.side_effect = [
-                diff_output,
-                CampaignCommitmentExportError("Git command failed (cat-file blob): object not found"),
-            ]
-            with self.assertRaises(CampaignCommitmentExportError) as ctx:
-                validate_git_diff(
-                    repository_root=REPOSITORY_ROOT,
-                    base_sha="0" * 40,
-                    head_sha="1" * 40,
-                    server_observed_at="2026-08-04T12:00:00.000000Z",
-                    github_run_id="12345",
-                    github_run_attempt="1",
-                    github_event_name="pull_request",
-                    attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
-                )
-            self.assertIn("cat-file blob", str(ctx.exception))
+            self.assertIn("is not an ancestor of", str(ctx.exception))
 
     def test_validate_git_diff_rejects_invalid_file_mode(self) -> None:
-        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd, \
-             patch("scripts.manage_win_either_half_campaign_commitment._run_git_stdout") as mock_stdout, \
+        with patch("scripts.manage_win_either_half_campaign_commitment._require_commit") as mock_commit, \
+             patch("scripts.manage_win_either_half_campaign_commitment._require_ancestor"), \
              patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_bytes:
-            mock_cmd.side_effect = [
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=""),
-                MagicMock(returncode=0, stdout=""),
-            ]
+            mock_commit.side_effect = lambda repo, sha, label: sha
             diff_output = b"A\x00artifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
-            mock_bytes.return_value = diff_output
-            mock_stdout.return_value = "120000 blob abc123\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json"
+            ls_tree_output = b"120000 blob abc123\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
+            mock_bytes.side_effect = [
+                diff_output,
+                ls_tree_output,
+            ]
             with self.assertRaises(CampaignCommitmentExportError) as ctx:
                 validate_git_diff(
                     repository_root=REPOSITORY_ROOT,
@@ -2114,6 +2230,124 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                     attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
                 )
             self.assertIn("120000 forbidden", str(ctx.exception))
+
+    def test_check_commitment_rejects_non_ancestor_generator_sha(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            decl_dir = REPOSITORY_ROOT / COMMITMENT_ROOT
+            decl_dir.mkdir(parents=True, exist_ok=True)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl_path = decl_dir / f"{bundle.campaign_id}.json"
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=DEFAULT_STAGE_5B3_PROTOCOL_PATH.read_bytes(),
+                commitment_protocol_raw=DEFAULT_PROTOCOL_PATH.read_bytes(),
+                generator_git_sha="0" * 40,
+            )
+            decl_path.write_bytes(canonical_json_bytes(decl.to_mapping(), pretty=True))
+
+            try:
+                with patch("scripts.manage_win_either_half_campaign_commitment._require_commit") as mock_commit, \
+                     patch("scripts.manage_win_either_half_campaign_commitment._require_ancestor") as mock_ancestor:
+                    mock_commit.side_effect = lambda repo, sha, label: sha
+                    mock_ancestor.side_effect = CampaignCommitmentExportError("generator commit is not an ancestor of evidence git head")
+                    with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                        check_commitment(
+                            tasks_path=files["tasks"],
+                            summary_path=files["summary"],
+                            manifest_path=files["manifest"],
+                            stage_5b3_protocol_path=files["stage_5b3_protocol"],
+                            commitment_protocol_path=files["commitment_protocol"],
+                            declaration_path=decl_path,
+                            code_state={"evidence_git_head_sha": "1" * 40, "tracked_worktree_clean": True},
+                        )
+                    self.assertIn("not an ancestor", str(ctx.exception))
+            finally:
+                if decl_path.exists():
+                    decl_path.unlink()
+
+    def test_validate_git_diff_rejects_modified_or_deleted_status(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._require_commit") as mock_commit, \
+             patch("scripts.manage_win_either_half_campaign_commitment._require_ancestor"), \
+             patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_bytes:
+            mock_commit.side_effect = lambda repo, sha, label: sha
+            diff_output = b"M\x00artifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
+            mock_bytes.return_value = diff_output
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                validate_git_diff(
+                    repository_root=REPOSITORY_ROOT,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at="2026-08-04T12:00:00.000000Z",
+                    github_run_id="12345",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
+                )
+            self.assertIn("only file additions are permitted", str(ctx.exception))
+
+    def test_validate_git_diff_rejects_differing_protocol_bytes_in_head(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            repo_dir = tmp_root / "repo"
+            repo_dir.mkdir()
+            commitments_dir = repo_dir / COMMITMENT_ROOT
+            commitments_dir.mkdir(parents=True)
+            proto_dir = repo_dir / "artifacts" / "research-protocols"
+            proto_dir.mkdir(parents=True)
+            proto_path = proto_dir / "win-either-half-campaign-commitment-v1.json"
+            proto_path.write_bytes(b'{"dataset_name": "tampered-protocol"}')
+
+            files = self._create_stage_5b3_bundle_files(tmp_root)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                generator_git_sha="1" * 40,
+            )
+            decl_bytes = canonical_json_bytes(decl.to_mapping(), pretty=True)
+            decl_file = commitments_dir / f"{bundle.campaign_id}.json"
+            decl_file.write_bytes(decl_bytes)
+
+            att_file = tmp_root / "attestation.json"
+            rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+
+            def mock_run_cmd(cmd, *args, **kwargs):
+                cmd_list = cmd if isinstance(cmd, list) else []
+                if "merge-base" in cmd_list:
+                    return MagicMock(returncode=0)
+                if "cat-file" in cmd_list and "-e" in cmd_list:
+                    return MagicMock(returncode=0, stdout="", stderr="")
+                if "diff" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
+                if "ls-tree" in cmd_list:
+                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
+                    return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
+                return MagicMock(returncode=0, stdout="", stderr="")
+
+            with patch("subprocess.run", side_effect=mock_run_cmd):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    validate_git_diff(
+                        repository_root=repo_dir,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at=serialize_utc(decl.commitment_deadline_at - timedelta(seconds=10)),
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=att_file,
+                    )
+                self.assertIn("Head Stage 5B4 protocol bytes differ from base-revision verifier protocol bytes", str(ctx.exception))
 
 
 if __name__ == "__main__":

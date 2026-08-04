@@ -9,6 +9,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -111,90 +112,73 @@ def _assert_no_symlink_components(path: Path, label: str) -> Path:
 
 def _fsync_dir(path: Path) -> None:
     if os.name == "nt":
-        try:
-            import ctypes
-
-            FILE_WRITE_DATA = 2
-            FILE_READ_DATA = 1
-            FILE_SHARE_READ = 1
-            FILE_SHARE_WRITE = 2
-            FILE_SHARE_DELETE = 4
-            OPEN_EXISTING = 3
-            FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
-            handle = ctypes.windll.kernel32.CreateFileW(
-                str(path),
-                FILE_WRITE_DATA | FILE_READ_DATA,
-                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-                None,
-                OPEN_EXISTING,
-                FILE_FLAG_BACKUP_SEMANTICS,
-                None,
-            )
-            if handle != -1 and handle != 0xFFFFFFFF:
-                try:
-                    ctypes.windll.kernel32.FlushFileBuffers(handle)
-                finally:
-                    ctypes.windll.kernel32.CloseHandle(handle)
-        except Exception:
-            pass
-    else:
-        try:
-            flags = os.O_RDONLY
-            if hasattr(os, "O_DIRECTORY"):
-                flags |= os.O_DIRECTORY
-            fd = os.open(str(path), flags)
-            try:
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-        except Exception:
-            pass
+        return
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        descriptor = os.open(str(path), flags)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def _fsync_file(path: Path) -> None:
-    mode = "rb+" if os.name == "nt" else "rb"
-    with path.open(mode) as handle:
-        handle.flush()
-        os.fsync(handle.fileno())
+    try:
+        mode = "rb+" if os.name == "nt" else "rb"
+        with path.open(mode) as handle:
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError:
+        pass
 
 
-def _run_git_command(
+def _bounded_external_text(*values: Any) -> str:
+    parts: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        if isinstance(value, bytes):
+            text = value.decode("utf-8", errors="replace")
+        elif isinstance(value, str):
+            text = value
+        elif isinstance(value, (int, float)):
+            text = str(value)
+        else:
+            continue
+        parts.append(text)
+    normalized = " ".join(" ".join(parts).split())
+    return (normalized or "<no output>")[:240]
+
+
+def _run_git_process(
     args: Sequence[str],
     *,
     cwd: Path,
     label: str,
-    check: bool = True,
-) -> subprocess.CompletedProcess[str]:
+    accepted_returncodes: frozenset[int] = frozenset({0}),
+) -> subprocess.CompletedProcess[bytes]:
     try:
-        res = subprocess.run(
+        result = subprocess.run(
             ["git", "-C", str(cwd), *args],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
-            shell=False,
             check=False,
+            shell=False,
         )
     except OSError as error:
         raise CampaignCommitmentExportError(
-            f"Git process execution failed ({label}): {error}"
+            f"Git process execution failed ({label}): "
+            f"{_bounded_external_text(str(error))}"
         ) from error
-
-    if check and res.returncode != 0:
-        err_msg = (res.stderr or res.stdout or "").strip()
+    if result.returncode not in accepted_returncodes:
         raise CampaignCommitmentExportError(
-            f"Git command failed ({label}): {err_msg}"
+            f"Git command failed ({label}, exit={result.returncode}): "
+            f"{_bounded_external_text(result.stderr, result.stdout)}"
         )
-
-    return res
-
-
-def _run_git_stdout(
-    args: Sequence[str],
-    *,
-    cwd: Path,
-    label: str,
-) -> str:
-    return _run_git_command(args, cwd=cwd, label=label, check=True).stdout
+    return result
 
 
 def _run_git_bytes(
@@ -202,59 +186,211 @@ def _run_git_bytes(
     *,
     cwd: Path,
     label: str,
+    accepted_returncodes: frozenset[int] = frozenset({0}),
 ) -> bytes:
+    out = _run_git_process(
+        args,
+        cwd=cwd,
+        label=label,
+        accepted_returncodes=accepted_returncodes,
+    ).stdout
+    if isinstance(out, bytes):
+        return out
+    if isinstance(out, str):
+        return out.encode("utf-8")
+    return bytes(out or b"")
+
+
+def _run_git_text(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+    accepted_returncodes: frozenset[int] = frozenset({0}),
+) -> str:
+    raw = _run_git_bytes(
+        args,
+        cwd=cwd,
+        label=label,
+        accepted_returncodes=accepted_returncodes,
+    )
     try:
-        res = subprocess.run(
-            ["git", "-C", str(cwd), *args],
-            capture_output=True,
-            shell=False,
-            check=False,
-        )
-    except OSError as error:
+        return raw.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
         raise CampaignCommitmentExportError(
-            f"Git process execution failed ({label}): {error}"
+            f"Git output was not valid UTF-8 ({label})"
         ) from error
 
-    if res.returncode != 0:
-        err_msg = (res.stderr or res.stdout or b"").decode(
-            "utf-8", errors="replace"
-        ).strip()
+
+def _require_commit(
+    repository: Path,
+    sha: str,
+    label: str,
+) -> str:
+    validated_sha = validate_git_sha(sha, label)
+    _run_git_bytes(
+        ["cat-file", "-e", f"{validated_sha}^{{commit}}"],
+        cwd=repository,
+        label=f"verify {label} commit object",
+    )
+    return validated_sha
+
+
+def _require_ancestor(
+    repository: Path,
+    ancestor_sha: str,
+    descendant_sha: str,
+    label: str,
+) -> None:
+    proc = _run_git_process(
+        [
+            "merge-base",
+            "--is-ancestor",
+            ancestor_sha,
+            descendant_sha,
+        ],
+        cwd=repository,
+        label=label,
+        accepted_returncodes=frozenset({0, 1}),
+    )
+    if proc.returncode == 1:
         raise CampaignCommitmentExportError(
-            f"Git command failed ({label}): {err_msg}"
+            f"{ancestor_sha} is not an ancestor of {descendant_sha}"
         )
 
-    return res.stdout
+
+def _decode_git_token(token: bytes, label: str) -> str:
+    try:
+        value = token.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise CampaignCommitmentExportError(
+            f"Git {label} was not valid UTF-8"
+        ) from error
+    if not value:
+        raise CampaignCommitmentExportError(
+            f"Git {label} was unexpectedly empty"
+        )
+    return value
+
+
+def _parse_name_status_z(
+    raw: bytes,
+) -> list[tuple[str, list[str]]]:
+    if raw == b"":
+        return []
+    if not raw.endswith(b"\x00"):
+        raise CampaignCommitmentExportError(
+            "Malformed unterminated NUL-delimited Git diff: missing terminal NUL"
+        )
+    tokens = raw[:-1].split(b"\x00")
+    records: list[tuple[str, list[str]]] = []
+    index = 0
+    while index < len(tokens):
+        status = _decode_git_token(tokens[index], "diff status")
+        index += 1
+        path_count = 2 if status.startswith(("R", "C")) else 1
+        if index + path_count > len(tokens):
+            raise CampaignCommitmentExportError(
+                f"Malformed truncated NUL-delimited Git diff for status {status}"
+            )
+        paths = [
+            _decode_git_token(
+                tokens[index + offset],
+                "diff path",
+            )
+            for offset in range(path_count)
+        ]
+        index += path_count
+        records.append((status, paths))
+    return records
+
+
+def _parse_single_ls_tree_record(
+    raw: bytes | str,
+    expected_path: str,
+    label: str = "ls-tree record",
+) -> tuple[str, str]:
+    if isinstance(raw, str):
+        raw = raw.encode("utf-8")
+    if not raw:
+        raise CampaignCommitmentExportError(
+            f"File {expected_path} not found in Git tree"
+        )
+    if not raw.endswith(b"\x00"):
+        raise CampaignCommitmentExportError(
+            f"Malformed unterminated ls-tree output for {expected_path}"
+        )
+    records = raw[:-1].split(b"\x00")
+    if len(records) > 1:
+        raise CampaignCommitmentExportError(
+            f"Expected exactly one ls-tree record for {expected_path}, got multiple entries ({len(records)})"
+        )
+    if not records[0]:
+        raise CampaignCommitmentExportError(
+            f"File {expected_path} not found in Git tree"
+        )
+    try:
+        metadata, raw_path = records[0].split(b"\t", 1)
+        mode, object_type, object_sha = metadata.decode(
+            "ascii",
+            errors="strict",
+        ).split(" ")
+    except (ValueError, UnicodeDecodeError) as error:
+        raise CampaignCommitmentExportError(
+            f"Malformed ls-tree record for {expected_path}"
+        ) from error
+    actual_path = _decode_git_token(raw_path, "ls-tree path")
+    if actual_path != expected_path:
+        raise CampaignCommitmentExportError(
+            f"ls-tree path did not match requested path: expected {expected_path}, "
+            f"got {actual_path}"
+        )
+    if object_type != "blob":
+        raise CampaignCommitmentExportError(
+            f"expected blob for {expected_path}, got {object_type}"
+        )
+    return mode, object_sha
 
 
 def _is_git_tracked(path: Path, repo_root: Path) -> bool:
-    resolved_path = path.resolve()
-    resolved_repo = repo_root.resolve()
+    repository = repo_root.resolve(strict=True)
+    resolved_path = path.resolve(strict=False)
     try:
-        target_arg = resolved_path.relative_to(resolved_repo).as_posix()
-        cwd_dir = resolved_repo
-    except ValueError:
-        target_arg = str(resolved_path)
-        cwd_dir = resolved_path.parent
-
-    res = _run_git_command(
-        ["ls-files", "--error-unmatch", "--", target_arg],
-        cwd=cwd_dir,
-        label=f"ls-files {target_arg}",
-        check=False,
+        relative_path = resolved_path.relative_to(repository).as_posix()
+    except ValueError as error:
+        raise CampaignCommitmentExportError(
+            f"Tracked-file query is outside repository: {resolved_path}"
+        ) from error
+    proc = _run_git_process(
+        [
+            "ls-files",
+            "--error-unmatch",
+            "--",
+            relative_path,
+        ],
+        cwd=repository,
+        label=f"determine tracked status for {relative_path}",
+        accepted_returncodes=frozenset({0, 1}),
     )
-
-    if res.returncode == 0:
+    if proc.returncode == 0:
         return True
-    if res.returncode == 1 and (
-        "did not match any files" in (res.stderr or "")
-        or "did not match any files" in (res.stdout or "")
-    ):
-        return False
-
-    err_msg = (res.stderr or res.stdout or "").strip()[:240]
-    raise CampaignCommitmentExportError(
-        f"Unable to determine Git tracked status for {target_arg}: {err_msg}"
+    message = _bounded_external_text(
+        proc.stderr,
+        proc.stdout,
     )
+    if "did not match any files" in message:
+        return False
+    raise CampaignCommitmentExportError(
+        "Unable to determine Git tracked status (Git tracked status was indeterminate) for "
+        f"{relative_path}: {message}"
+    )
+
+
+def _remove_tree_strict(path: Path) -> None:
+    if path.exists():
+        shutil.rmtree(path)
+    if path.exists():
+        shutil.rmtree(path)
 
 
 def _write_file_atomically(
@@ -264,91 +400,234 @@ def _write_file_atomically(
     force: bool = False,
     is_git_tracked_check: bool = False,
 ) -> None:
-    resolved_dest = _assert_no_symlink_components(destination, "Output destination")
-    parent_dir = _assert_no_symlink_components(resolved_dest.parent, "Output parent directory")
-
-    if resolved_dest.exists() and not force:
+    resolved_destination = _assert_no_symlink_components(
+        destination,
+        "Output destination",
+    )
+    parent = _assert_no_symlink_components(
+        resolved_destination.parent,
+        "Output parent directory",
+    )
+    parent.mkdir(parents=True, exist_ok=True)
+    destination_existed = resolved_destination.exists()
+    if destination_existed and not force:
         raise CampaignCommitmentExportError(
-            f"Output file already exists: {resolved_dest}; use --force to overwrite untracked file"
+            f"Output file already exists: {resolved_destination}; "
+            "use --force only for an untracked file"
         )
-
-    if resolved_dest.exists() and is_git_tracked_check:
-        if _is_git_tracked(resolved_dest, REPOSITORY_ROOT):
+    if destination_existed and is_git_tracked_check:
+        if _is_git_tracked(resolved_destination, REPOSITORY_ROOT):
             raise CampaignCommitmentExportError(
-                f"Refusing to overwrite Git-tracked commitment file: {resolved_dest}"
+                "Refusing to overwrite Git-tracked commitment file: "
+                f"{resolved_destination}"
             )
-
-    parent_dir.mkdir(parents=True, exist_ok=True)
-    temp_dir = Path(tempfile.mkdtemp(prefix=".stage5b4-tmp-", dir=parent_dir))
-    staged_path = temp_dir / resolved_dest.name
-    backup_path = parent_dir / f".stage5b4-bak-{resolved_dest.name}-{os.getpid()}"
-    destination_backed_up = False
-    dest_existed = resolved_dest.exists()
-
+    original_bytes: bytes | None = None
+    original_mode: int | None = None
+    if destination_existed:
+        if (
+            resolved_destination.is_symlink()
+            or not resolved_destination.is_file()
+        ):
+            raise CampaignCommitmentExportError(
+                "Existing destination must be a regular non-symlink file"
+            )
+        original_bytes = resolved_destination.read_bytes()
+        original_mode = stat.S_IMODE(
+            resolved_destination.stat().st_mode
+        )
+    backup = parent / (
+        f".stage5b4-backup-{resolved_destination.name}"
+    )
+    if backup.exists() or backup.is_symlink():
+        raise CampaignCommitmentExportError(
+            f"Stale transaction backup exists: {backup}"
+        )
+    temporary_directory = Path(
+        tempfile.mkdtemp(
+            prefix=".stage5b4-transaction-",
+            dir=parent,
+        )
+    )
+    staged = temporary_directory / resolved_destination.name
+    backup_created = False
     try:
-        with staged_path.open("wb") as handle:
+        with staged.open("xb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        if destination_existed:
+            os.replace(resolved_destination, backup)
+            backup_created = True
+            _fsync_dir(parent)
+        os.replace(staged, resolved_destination)
+        _fsync_file(resolved_destination)
+        _fsync_dir(parent)
+        _remove_tree_strict(temporary_directory)
+        _fsync_dir(parent)
+        if backup_created:
+            backup.unlink()
+            backup_created = False
+            _fsync_dir(parent)
+        return
+    except Exception as original_error:
+        rollback_errors: list[str] = []
 
-        if dest_existed:
-            os.replace(resolved_dest, backup_path)
-            destination_backed_up = True
+        def record_failure(
+            action: str,
+            error: BaseException,
+        ) -> None:
+            rollback_errors.append(
+                f"{action}: {_bounded_external_text(str(error))}"
+            )
 
-        os.replace(staged_path, resolved_dest)
-        _fsync_file(resolved_dest)
-        _fsync_dir(parent_dir)
-
-        if destination_backed_up and backup_path.exists():
-            backup_path.unlink()
-            destination_backed_up = False
-
-    except Exception as orig_error:
-        cleanup_errors: list[str] = []
-        if destination_backed_up and backup_path.exists():
+        if destination_existed:
+            restored = False
+            if backup.exists():
+                try:
+                    if resolved_destination.exists():
+                        resolved_destination.unlink()
+                        try:
+                            _fsync_dir(parent)
+                        except Exception as fsync_err:
+                            record_failure("fsync parent during unlink", fsync_err)
+                    os.replace(backup, resolved_destination)
+                    backup_created = False
+                    if original_mode is not None:
+                        os.chmod(
+                            resolved_destination,
+                            original_mode,
+                        )
+                    restored = True
+                except Exception as error:
+                    record_failure("restore backup", error)
+                if restored:
+                    try:
+                        _fsync_file(resolved_destination)
+                    except Exception as error:
+                        record_failure("fsync restored destination", error)
+                    try:
+                        _fsync_dir(parent)
+                    except Exception as error:
+                        record_failure("fsync parent after restore", error)
+            if not restored:
+                try:
+                    if original_bytes is None:
+                        raise RuntimeError(
+                            "original bytes were not captured"
+                        )
+                    rollback_stage = parent / (
+                        ".stage5b4-rollback-"
+                        f"{resolved_destination.name}"
+                    )
+                    if (
+                        rollback_stage.exists()
+                        or rollback_stage.is_symlink()
+                    ):
+                        raise RuntimeError(
+                            "stale rollback path exists: "
+                            f"{rollback_stage}"
+                        )
+                    with rollback_stage.open("xb") as handle:
+                        handle.write(original_bytes)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    if original_mode is not None:
+                        os.chmod(
+                            rollback_stage,
+                            original_mode,
+                        )
+                    os.replace(
+                        rollback_stage,
+                        resolved_destination,
+                    )
+                    restored = True
+                except Exception as error:
+                    record_failure(
+                        "recreate original destination",
+                        error,
+                    )
+                if restored:
+                    try:
+                        _fsync_file(resolved_destination)
+                    except Exception as error:
+                        record_failure("fsync recreated destination", error)
+                    try:
+                        _fsync_dir(parent)
+                    except Exception as error:
+                        record_failure("fsync parent after recreate", error)
+            if restored:
+                try:
+                    restored_bytes = (
+                        resolved_destination.read_bytes()
+                    )
+                    if restored_bytes != original_bytes:
+                        raise RuntimeError(
+                            "restored bytes differ from original"
+                        )
+                except Exception as error:
+                    record_failure(
+                        "verify restored bytes",
+                        error,
+                    )
+        else:
+            if resolved_destination.exists():
+                try:
+                    resolved_destination.unlink()
+                except Exception as error:
+                    record_failure(
+                        "remove newly installed destination",
+                        error,
+                    )
+                try:
+                    _fsync_dir(parent)
+                except Exception as error:
+                    record_failure(
+                        "fsync parent after removing destination",
+                        error,
+                    )
+        if staged.exists():
             try:
-                os.replace(backup_path, resolved_dest)
-                _fsync_file(resolved_dest)
-                _fsync_dir(parent_dir)
-            except Exception as rollback_err:
-                cleanup_errors.append(f"failed to restore backup: {rollback_err}")
-        elif not dest_existed and resolved_dest.exists():
+                staged.unlink()
+            except Exception as error:
+                record_failure("remove staged file", error)
+        if temporary_directory.exists():
             try:
-                resolved_dest.unlink()
-                _fsync_dir(parent_dir)
-            except Exception as unlink_err:
-                cleanup_errors.append(f"failed to unlink created dest: {unlink_err}")
-
-        if staged_path.exists():
+                _remove_tree_strict(temporary_directory)
+                _fsync_dir(parent)
+            except Exception as error:
+                record_failure(
+                    "remove transaction directory",
+                    error,
+                )
+        if backup.exists():
             try:
-                staged_path.unlink()
-            except Exception as staged_err:
-                cleanup_errors.append(f"failed to unlink staged: {staged_err}")
-
-        if temp_dir.exists():
-            try:
-                shutil.rmtree(temp_dir)
-            except Exception as rmtree_err:
-                cleanup_errors.append(f"failed to remove temp_dir: {rmtree_err}")
-
-        if cleanup_errors:
+                prior_state_proven = (
+                    destination_existed
+                    and original_bytes is not None
+                    and resolved_destination.exists()
+                    and resolved_destination.read_bytes()
+                    == original_bytes
+                )
+                if not prior_state_proven:
+                    raise RuntimeError(
+                        "prior state was not proven restored"
+                    )
+                backup.unlink()
+                _fsync_dir(parent)
+            except Exception as error:
+                record_failure("clean backup", error)
+        if rollback_errors:
             raise CampaignCommitmentExportError(
-                f"Atomic file write failed for {resolved_dest} and rollback was incomplete: {orig_error}; cleanup errors: {'; '.join(cleanup_errors)}"
-            ) from orig_error
+                "Atomic file write failed and rollback was "
+                "incomplete: "
+                f"{_bounded_external_text(str(original_error))}; "
+                + "; ".join(rollback_errors)
+            ) from original_error
         raise CampaignCommitmentExportError(
-            f"Atomic file write failed for {resolved_dest}: {orig_error}"
-        ) from orig_error
-    finally:
-        if temp_dir.exists():
-            try:
-                shutil.rmtree(temp_dir)
-            except OSError:
-                pass
-        if backup_path.exists():
-            try:
-                backup_path.unlink()
-            except OSError:
-                pass
+            "Atomic file write failed; prior state was "
+            "restored: "
+            f"{_bounded_external_text(str(original_error))}"
+        ) from original_error
 
 
 def create_commitment(
@@ -481,28 +760,22 @@ def check_commitment(
 
     generator_sha = decl_obj.generator_git_sha
 
-    _run_git_command(
-        ["cat-file", "-e", generator_sha],
-        cwd=REPOSITORY_ROOT,
-        label=f"check generator commit {generator_sha}",
-        check=True,
+    _require_commit(
+        REPOSITORY_ROOT,
+        generator_sha,
+        "declaration generator",
     )
-
-    ancestor_res = _run_git_command(
-        [
-            "merge-base",
-            "--is-ancestor",
-            generator_sha,
-            current_head_sha,
-        ],
-        cwd=REPOSITORY_ROOT,
-        label=f"verify generator {generator_sha} is ancestor of head {current_head_sha}",
-        check=False,
+    _require_commit(
+        REPOSITORY_ROOT,
+        current_head_sha,
+        "current HEAD",
     )
-    if ancestor_res.returncode != 0:
-        raise CampaignCommitmentExportError(
-            f"Declaration generator_git_sha {generator_sha} is not an ancestor of current head {current_head_sha}"
-        )
+    _require_ancestor(
+        REPOSITORY_ROOT,
+        generator_sha,
+        current_head_sha,
+        "verify declaration generator ancestry",
+    )
 
     expected_declaration = build_commitment_declaration(
         bundle=bundle,
@@ -520,9 +793,6 @@ def check_commitment(
         )
 
     return bundle.campaign_id
-
-
-
 
 
 def validate_git_diff(
@@ -574,32 +844,16 @@ def validate_git_diff(
 
     observed_dt = parse_utc(server_observed_at, "server_observed_at")
 
-    # Verify commits exist and base is ancestor of head
-    _run_git_command(
-        ["cat-file", "-e", v_base],
-        cwd=repo,
-        label=f"check base commit {v_base}",
-        check=True,
+    _require_commit(repo, v_base, "base")
+    _require_commit(repo, v_head, "head")
+    _require_ancestor(
+        repo,
+        v_base,
+        v_head,
+        "verify base/head ancestry",
     )
-    _run_git_command(
-        ["cat-file", "-e", v_head],
-        cwd=repo,
-        label=f"check head commit {v_head}",
-        check=True,
-    )
-    ancestor_res = _run_git_command(
-        ["merge-base", "--is-ancestor", v_base, v_head],
-        cwd=repo,
-        label=f"verify base {v_base} is ancestor of head {v_head}",
-        check=False,
-    )
-    if ancestor_res.returncode != 0:
-        raise CampaignCommitmentExportError(
-            f"base_sha {v_base} is not an ancestor of head_sha {v_head}"
-        )
 
-    # Check git diff under commitment root
-    diff_raw_bytes = _run_git_bytes(
+    diff_result = _run_git_bytes(
         [
             "diff",
             "--name-status",
@@ -609,81 +863,88 @@ def validate_git_diff(
             v_base,
             v_head,
             "--",
-            str(COMMITMENT_ROOT),
+            COMMITMENT_ROOT.as_posix(),
         ],
         cwd=repo,
-        label="diff added commitment files",
+        label="commitment-root name-status diff",
     )
-
-    tokens = [t.decode("utf-8") for t in diff_raw_bytes.split(b"\x00") if t]
-
+    records = _parse_name_status_z(diff_result)
     declarations_to_validate: list[Path] = []
     seen_paths: set[str] = set()
     seen_campaign_ids: set[str] = set()
-
-    idx = 0
-    while idx < len(tokens):
-        status = tokens[idx]
-        idx += 1
-        if status.startswith("R") or status.startswith("C"):
-            old_path = tokens[idx]
-            new_path = tokens[idx + 1]
-            idx += 2
-            raise CampaignCommitmentExportError(
-                f"Renames/copies forbidden in commitment root: {old_path} -> {new_path}"
-            )
-        path_str = tokens[idx]
-        idx += 1
-
+    for status, paths in records:
         if status != "A":
+            if status.startswith(("R", "C")):
+                raise CampaignCommitmentExportError(
+                    "Renames/copies forbidden in the "
+                    f"commitment root: status={status}, "
+                    f"paths={paths}"
+                )
             raise CampaignCommitmentExportError(
-                f"Forbidden git status {status} for path {path_str}; only additions (A) are permitted"
+                f"Forbidden git status {status}: only file additions are permitted in the "
+                f"commitment root: status={status}, paths={paths}"
             )
-
-        p = Path(path_str)
-        if p.parent != COMMITMENT_ROOT:
+        if len(paths) != 1:
             raise CampaignCommitmentExportError(
-                f"Commitment file must be direct child of {COMMITMENT_ROOT}, got {path_str}"
+                f"Addition record must contain one path: {paths}"
             )
-
-        match = CAMPAIGN_ID_PATTERN.match(p.stem)
-        if not match or p.name != f"{p.stem}.json":
+        path_string = paths[0]
+        declaration_relative_path = Path(path_string)
+        if declaration_relative_path.parent != COMMITMENT_ROOT:
             raise CampaignCommitmentExportError(
-                f"Commitment filename contract violated: {path_str}"
+                "Commitment file must be a direct child of "
+                f"{COMMITMENT_ROOT}: {path_string}"
             )
-
-        if path_str in seen_paths:
-            raise CampaignCommitmentExportError(f"Duplicate path in diff: {path_str}")
-        seen_paths.add(path_str)
-
-        if p.stem in seen_campaign_ids:
+        campaign_id = declaration_relative_path.stem
+        if (
+            not CAMPAIGN_ID_PATTERN.fullmatch(campaign_id)
+            or declaration_relative_path.name
+            != f"{campaign_id}.json"
+        ):
             raise CampaignCommitmentExportError(
-                f"Duplicate campaign_id in diff: {p.stem}"
+                f"Commitment filename contract violated: "
+                f"{path_string}"
             )
-        seen_campaign_ids.add(p.stem)
-
-        # Check git ls-tree mode
-        ls_out = _run_git_stdout(
-            ["ls-tree", v_head, path_str],
+        if path_string in seen_paths:
+            raise CampaignCommitmentExportError(
+                f"Duplicate path in diff: {path_string}"
+            )
+        if campaign_id in seen_campaign_ids:
+            raise CampaignCommitmentExportError(
+                f"Duplicate campaign ID: {campaign_id}"
+            )
+        seen_paths.add(path_string)
+        seen_campaign_ids.add(campaign_id)
+        ls_tree_result = _run_git_bytes(
+            [
+                "ls-tree",
+                "-z",
+                v_head,
+                "--",
+                path_string,
+            ],
             cwd=repo,
-            label=f"ls-tree mode for {path_str}",
+            label=f"inspect head-tree mode for {path_string}",
         )
-        if not ls_out:
-            raise CampaignCommitmentExportError(
-                f"Path {path_str} not found in head tree"
-            )
-        file_mode = ls_out.split()[0]
+        file_mode, _ = _parse_single_ls_tree_record(
+            ls_tree_result,
+            expected_path=path_string,
+        )
         if file_mode == "120000":
             raise CampaignCommitmentExportError(
-                f"Path {path_str} is a symlink in head tree (mode 120000 forbidden)"
+                f"Symlink declarations are forbidden (mode 120000 forbidden): "
+                f"{path_string}"
             )
         if file_mode not in {"100644", "100755"}:
             raise CampaignCommitmentExportError(
-                f"Path {path_str} has invalid file mode {file_mode}"
+                f"Invalid declaration file mode {file_mode}: "
+                f"{path_string}"
             )
-
-        full_path = repo / p
-        _assert_no_symlink_components(full_path, "Diff declaration path")
+        full_path = repo / declaration_relative_path
+        _assert_no_symlink_components(
+            full_path,
+            "Diff declaration path",
+        )
         declarations_to_validate.append(full_path)
 
     if not declarations_to_validate:
@@ -695,9 +956,13 @@ def validate_git_diff(
     for d_path in declarations_to_validate:
         rel_posix = d_path.relative_to(repo).as_posix()
         blob_bytes = _run_git_bytes(
-            ["cat-file", "-p", f"{v_head}:{rel_posix}"],
+            [
+                "cat-file",
+                "blob",
+                f"{v_head}:{rel_posix}",
+            ],
             cwd=repo,
-            label=f"cat-file blob {rel_posix}",
+            label=f"read exact head blob for {rel_posix}",
         )
 
         if not d_path.is_file():
@@ -752,8 +1017,26 @@ def validate_git_diff(
 
     results.sort(key=lambda r: r.campaign_id)
 
-    proto_path = repo / "artifacts" / "research-protocols" / "win-either-half-campaign-commitment-v1.json"
-    proto_bytes = _read_bytes(proto_path, "Stage 5B4 commitment protocol")
+    base_protocol_bytes = _read_bytes(
+        DEFAULT_PROTOCOL_PATH,
+        "Base-revision Stage 5B4 commitment protocol",
+    )
+    head_protocol_path = (
+        repo
+        / "artifacts"
+        / "research-protocols"
+        / "win-either-half-campaign-commitment-v1.json"
+    )
+    if head_protocol_path.exists():
+        head_protocol_bytes = _read_bytes(
+            head_protocol_path,
+            "Head Stage 5B4 commitment protocol",
+        )
+        if head_protocol_bytes != base_protocol_bytes:
+            raise CampaignCommitmentExportError(
+                "Head Stage 5B4 protocol bytes differ from "
+                "base-revision verifier protocol bytes"
+            )
 
     attestation: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -779,7 +1062,8 @@ def validate_git_diff(
         "safety": dict(GENERATED_SAFETY_CONTRACT),
         "upstream_protocol_identity": {
             "relative_name": DEFAULT_PROTOCOL_PATH.name,
-            "sha256": sha256_bytes(proto_bytes),
+            "byte_size": len(base_protocol_bytes),
+            "sha256": sha256_bytes(base_protocol_bytes),
         },
         "no_production_approval": (
             "This attestation qualifies the timing of pre-registered prospective "
