@@ -158,6 +158,74 @@ def _fsync_file(path: Path) -> None:
         os.fsync(handle.fileno())
 
 
+def _run_git_command(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            shell=False,
+            check=False,
+        )
+    except OSError as error:
+        raise CampaignCommitmentExportError(
+            f"Git process execution failed ({label}): {error}"
+        ) from error
+
+    if check and res.returncode != 0:
+        err_msg = (res.stderr or res.stdout or "").strip()
+        raise CampaignCommitmentExportError(
+            f"Git command failed ({label}): {err_msg}"
+        )
+
+    return res
+
+
+def _run_git_stdout(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+) -> str:
+    return _run_git_command(args, cwd=cwd, label=label, check=True).stdout
+
+
+def _run_git_bytes(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+) -> bytes:
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True,
+            shell=False,
+            check=False,
+        )
+    except OSError as error:
+        raise CampaignCommitmentExportError(
+            f"Git process execution failed ({label}): {error}"
+        ) from error
+
+    if res.returncode != 0:
+        err_msg = (res.stderr or res.stdout or b"").decode(
+            "utf-8", errors="replace"
+        ).strip()
+        raise CampaignCommitmentExportError(
+            f"Git command failed ({label}): {err_msg}"
+        )
+
+    return res.stdout
+
+
 def _is_git_tracked(path: Path, repo_root: Path) -> bool:
     resolved_path = path.resolve()
     resolved_repo = repo_root.resolve()
@@ -168,29 +236,25 @@ def _is_git_tracked(path: Path, repo_root: Path) -> bool:
         target_arg = str(resolved_path)
         cwd_dir = resolved_path.parent
 
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(cwd_dir), "ls-files", "--error-unmatch", "--", target_arg],
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            shell=False,
-        )
-        if res.returncode == 0:
-            return True
-        if res.returncode == 1 and (
-            "did not match any files" in (res.stderr or "")
-            or "did not match any files" in (res.stdout or "")
-        ):
-            return False
-        err_msg = (res.stderr or res.stdout or "").strip()[:240]
-        raise CampaignCommitmentExportError(
-            f"Unable to determine Git tracked status for {target_arg}: {err_msg}"
-        )
-    except OSError as error:
-        raise CampaignCommitmentExportError(
-            f"Git tracked check failed for {target_arg}: {error}"
-        ) from error
+    res = _run_git_command(
+        ["ls-files", "--error-unmatch", "--", target_arg],
+        cwd=cwd_dir,
+        label=f"ls-files {target_arg}",
+        check=False,
+    )
+
+    if res.returncode == 0:
+        return True
+    if res.returncode == 1 and (
+        "did not match any files" in (res.stderr or "")
+        or "did not match any files" in (res.stdout or "")
+    ):
+        return False
+
+    err_msg = (res.stderr or res.stdout or "").strip()[:240]
+    raise CampaignCommitmentExportError(
+        f"Unable to determine Git tracked status for {target_arg}: {err_msg}"
+    )
 
 
 def _write_file_atomically(
@@ -417,35 +481,28 @@ def check_commitment(
 
     generator_sha = decl_obj.generator_git_sha
 
-    # If running in a repository, verify generator commit exists and is an ancestor of current head
-    try:
-        check_commit = subprocess.run(
-            ["git", "-C", str(REPOSITORY_ROOT), "cat-file", "-e", generator_sha],
-            capture_output=True,
-            text=True,
-            check=False,
+    _run_git_command(
+        ["cat-file", "-e", generator_sha],
+        cwd=REPOSITORY_ROOT,
+        label=f"check generator commit {generator_sha}",
+        check=True,
+    )
+
+    ancestor_res = _run_git_command(
+        [
+            "merge-base",
+            "--is-ancestor",
+            generator_sha,
+            current_head_sha,
+        ],
+        cwd=REPOSITORY_ROOT,
+        label=f"verify generator {generator_sha} is ancestor of head {current_head_sha}",
+        check=False,
+    )
+    if ancestor_res.returncode != 0:
+        raise CampaignCommitmentExportError(
+            f"Declaration generator_git_sha {generator_sha} is not an ancestor of current head {current_head_sha}"
         )
-        if check_commit.returncode == 0:
-            ancestor_res = subprocess.run(
-                [
-                    "git",
-                    "-C",
-                    str(REPOSITORY_ROOT),
-                    "merge-base",
-                    "--is-ancestor",
-                    generator_sha,
-                    current_head_sha,
-                ],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if ancestor_res.returncode != 0:
-                raise CampaignCommitmentExportError(
-                    f"Declaration generator_git_sha {generator_sha} is not an ancestor of current head {current_head_sha}"
-                )
-    except OSError:
-        pass
 
     expected_declaration = build_commitment_declaration(
         bundle=bundle,
@@ -465,29 +522,7 @@ def check_commitment(
     return bundle.campaign_id
 
 
-def _run_git(
-    args: list[str],
-    *,
-    cwd: Path,
-    label: str,
-) -> str:
-    try:
-        res = subprocess.run(
-            ["git", "-C", str(cwd)] + args,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if res.returncode != 0:
-            err_msg = res.stderr.strip() or res.stdout.strip()
-            raise CampaignCommitmentExportError(
-                f"Git command failed ({label}): {err_msg}"
-            )
-        return res.stdout
-    except OSError as error:
-        raise CampaignCommitmentExportError(
-            f"Git process execution failed ({label}): {error}"
-        ) from error
+
 
 
 def validate_git_diff(
@@ -540,12 +575,22 @@ def validate_git_diff(
     observed_dt = parse_utc(server_observed_at, "server_observed_at")
 
     # Verify commits exist and base is ancestor of head
-    _run_git(["cat-file", "-e", v_base], cwd=repo, label="check base commit")
-    _run_git(["cat-file", "-e", v_head], cwd=repo, label="check head commit")
-    ancestor_res = subprocess.run(
-        ["git", "-C", str(repo), "merge-base", "--is-ancestor", v_base, v_head],
-        capture_output=True,
-        text=True,
+    _run_git_command(
+        ["cat-file", "-e", v_base],
+        cwd=repo,
+        label=f"check base commit {v_base}",
+        check=True,
+    )
+    _run_git_command(
+        ["cat-file", "-e", v_head],
+        cwd=repo,
+        label=f"check head commit {v_head}",
+        check=True,
+    )
+    ancestor_res = _run_git_command(
+        ["merge-base", "--is-ancestor", v_base, v_head],
+        cwd=repo,
+        label=f"verify base {v_base} is ancestor of head {v_head}",
         check=False,
     )
     if ancestor_res.returncode != 0:
@@ -554,11 +599,8 @@ def validate_git_diff(
         )
 
     # Check git diff under commitment root
-    diff_raw = subprocess.run(
+    diff_raw_bytes = _run_git_bytes(
         [
-            "git",
-            "-C",
-            str(repo),
             "diff",
             "--name-status",
             "-z",
@@ -569,13 +611,11 @@ def validate_git_diff(
             "--",
             str(COMMITMENT_ROOT),
         ],
-        capture_output=True,
-        check=False,
+        cwd=repo,
+        label="diff added commitment files",
     )
-    if diff_raw.returncode != 0:
-        raise CampaignCommitmentExportError("Git diff command failed")
 
-    tokens = [t.decode("utf-8") for t in diff_raw.stdout.split(b"\x00") if t]
+    tokens = [t.decode("utf-8") for t in diff_raw_bytes.split(b"\x00") if t]
 
     declarations_to_validate: list[Path] = []
     seen_paths: set[str] = set()
@@ -623,8 +663,10 @@ def validate_git_diff(
         seen_campaign_ids.add(p.stem)
 
         # Check git ls-tree mode
-        ls_out = _run_git(
-            ["ls-tree", v_head, path_str], cwd=repo, label="check ls-tree mode"
+        ls_out = _run_git_stdout(
+            ["ls-tree", v_head, path_str],
+            cwd=repo,
+            label=f"ls-tree mode for {path_str}",
         )
         if not ls_out:
             raise CampaignCommitmentExportError(
@@ -652,16 +694,11 @@ def validate_git_diff(
     results: list[DeadlineValidationResult] = []
     for d_path in declarations_to_validate:
         rel_posix = d_path.relative_to(repo).as_posix()
-        blob_cmd = subprocess.run(
-            ["git", "-C", str(repo), "cat-file", "-p", f"{v_head}:{rel_posix}"],
-            capture_output=True,
-            check=False,
+        blob_bytes = _run_git_bytes(
+            ["cat-file", "-p", f"{v_head}:{rel_posix}"],
+            cwd=repo,
+            label=f"cat-file blob {rel_posix}",
         )
-        if blob_cmd.returncode != 0:
-            raise CampaignCommitmentExportError(
-                f"Failed to read blob for {rel_posix} at commit {v_head}"
-            )
-        blob_bytes = blob_cmd.stdout
 
         if not d_path.is_file():
             raise CampaignCommitmentExportError(
@@ -693,7 +730,7 @@ def validate_git_diff(
 
         try:
             decl = validate_declaration_mapping(
-                d_payload, expected_path=d_path
+                d_payload, expected_path=d_path, repository_root=repo
             )
             commitment_sha256 = sha256_bytes(blob_bytes)
             res = validate_deadline(

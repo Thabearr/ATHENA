@@ -52,15 +52,17 @@ DECLARATION_STATUS = "TRACKED_DECLARATION_PENDING_GITHUB_DEADLINE_CHECK"
 PROSPECTIVE_CLAIM_AUTHORIZED = False
 EVIDENCE_COUNTING_AUTHORIZED = False
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
+
 DEFAULT_PROTOCOL_PATH = (
-    Path(__file__).resolve().parents[1]
+    REPOSITORY_ROOT
     / "artifacts"
     / "research-protocols"
     / "win-either-half-campaign-commitment-v1.json"
 )
 
 DEFAULT_STAGE_5B3_PROTOCOL_PATH = (
-    Path(__file__).resolve().parents[1]
+    REPOSITORY_ROOT
     / "artifacts"
     / "research-protocols"
     / "win-either-half-prospective-capture-campaign-v1.json"
@@ -303,8 +305,12 @@ class CampaignCommitmentError(ValueError):
 
 
 def _assert_str(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not value:
         raise CampaignCommitmentError(f"{label} must be a non-empty string")
+    if value != value.strip():
+        raise CampaignCommitmentError(
+            f"{label} must not contain surrounding whitespace"
+        )
     return value
 
 
@@ -312,6 +318,16 @@ def _assert_int(value: Any, label: str) -> int:
     if not isinstance(value, int) or isinstance(value, bool):
         raise CampaignCommitmentError(f"{label} must be a strict integer, not bool")
     return value
+
+
+def _assert_utc_datetime(value: Any, label: str) -> datetime:
+    if not isinstance(value, datetime):
+        raise CampaignCommitmentError(f"{label} must be datetime")
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise CampaignCommitmentError(
+            f"{label} must be timezone-aware UTC"
+        )
+    return value.astimezone(timezone.utc)
 
 
 def _walk_mapping_keys(value: Any) -> Iterable[str]:
@@ -341,7 +357,11 @@ class FileIdentity:
 
     def __post_init__(self) -> None:
         _assert_str(self.relative_name, "FileIdentity.relative_name")
-        validate_sha256(self.sha256, "FileIdentity.sha256")
+        object.__setattr__(
+            self,
+            "sha256",
+            validate_sha256(self.sha256, "FileIdentity.sha256"),
+        )
         _assert_int(self.byte_size, "FileIdentity.byte_size")
         if self.byte_size < 0:
             raise CampaignCommitmentError(
@@ -523,10 +543,14 @@ class CommitmentDeclaration:
             raise CampaignCommitmentError(
                 "evidence_counting_authorized must be False"
             )
-        if not isinstance(self.commitment_deadline_at, datetime):
-            raise CampaignCommitmentError(
-                "commitment_deadline_at must be datetime"
-            )
+        object.__setattr__(
+            self,
+            "commitment_deadline_at",
+            _assert_utc_datetime(
+                self.commitment_deadline_at,
+                "commitment_deadline_at",
+            ),
+        )
         if self.prospective_replay_status not in PERMITTED_PROSPECTIVE_REPLAY_STATUSES:
             raise CampaignCommitmentError(
                 f"Invalid prospective_replay_status: {self.prospective_replay_status}"
@@ -540,7 +564,11 @@ class CommitmentDeclaration:
                 f"task_count must equal fixture_count * {EXPECTED_TASKS_PER_FIXTURE} "
                 f"({self.fixture_count * EXPECTED_TASKS_PER_FIXTURE}), got {self.task_count}"
             )
-        validate_git_sha(self.generator_git_sha, "generator_git_sha")
+        object.__setattr__(
+            self,
+            "generator_git_sha",
+            validate_git_sha(self.generator_git_sha, "generator_git_sha"),
+        )
         if self.timing_authority != TIMING_AUTHORITY_CONTRACT:
             raise CampaignCommitmentError("timing_authority contract drifted")
         if self.selected_offset_seconds is not None:
@@ -610,11 +638,27 @@ class DeadlineValidationResult:
             raise CampaignCommitmentError(
                 f"campaign_id format invalid: {self.campaign_id}"
             )
-        validate_sha256(self.commitment_sha256, "commitment_sha256")
-        if not isinstance(self.commitment_deadline_at, datetime):
-            raise CampaignCommitmentError("commitment_deadline_at must be datetime")
-        if not isinstance(self.server_observed_at, datetime):
-            raise CampaignCommitmentError("server_observed_at must be datetime")
+        object.__setattr__(
+            self,
+            "commitment_sha256",
+            validate_sha256(self.commitment_sha256, "commitment_sha256"),
+        )
+        object.__setattr__(
+            self,
+            "commitment_deadline_at",
+            _assert_utc_datetime(
+                self.commitment_deadline_at,
+                "commitment_deadline_at",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "server_observed_at",
+            _assert_utc_datetime(
+                self.server_observed_at,
+                "server_observed_at",
+            ),
+        )
         if not isinstance(self.prospective_timing_qualified, bool):
             raise CampaignCommitmentError(
                 "prospective_timing_qualified must be boolean"
@@ -779,28 +823,29 @@ def validate_sha256(value: Any, label: str) -> str:
 
 
 def parse_utc(value: Any, label: str) -> datetime:
-    if not isinstance(value, str):
-        raise CampaignCommitmentError(f"{label} must be a string timestamp")
-    if value != value.strip() or not value:
-        raise CampaignCommitmentError(f"{label} must not contain surrounding whitespace")
-    if not (value.endswith("Z") or "+00:00" in value):
-        raise CampaignCommitmentError(f"{label} must be formatted as UTC ISO-8601")
-    iso_val = value.replace("Z", "+00:00")
+    value = _assert_str(value, label)
+
+    if value.endswith("Z"):
+        iso_value = value[:-1] + "+00:00"
+    elif value.endswith("+00:00"):
+        iso_value = value
+    else:
+        raise CampaignCommitmentError(
+            f"{label} must end with Z or +00:00"
+        )
+
     try:
-        dt = datetime.fromisoformat(iso_val)
+        parsed = datetime.fromisoformat(iso_value)
     except ValueError as error:
-        raise CampaignCommitmentError(f"{label} invalid ISO timestamp: {value}") from error
-    if dt.tzinfo is None or dt.utcoffset() != timezone.utc.utcoffset(None):
-        raise CampaignCommitmentError(f"{label} must have UTC timezone")
-    return dt.astimezone(timezone.utc)
+        raise CampaignCommitmentError(
+            f"{label} invalid ISO-8601 timestamp: {value}"
+        ) from error
+
+    return _assert_utc_datetime(parsed, label)
 
 
 def serialize_utc(value: datetime) -> str:
-    if not isinstance(value, datetime):
-        raise CampaignCommitmentError("Timestamp must be datetime")
-    if value.tzinfo is None or value.utcoffset() != timezone.utc.utcoffset(None):
-        raise CampaignCommitmentError("Timestamp must be timezone-aware UTC")
-    normalized = value.astimezone(timezone.utc)
+    normalized = _assert_utc_datetime(value, "Timestamp")
     timespec = "microseconds" if normalized.microsecond else "seconds"
     return normalized.isoformat(timespec=timespec).replace("+00:00", "Z")
 
@@ -843,10 +888,29 @@ def validate_protocol_contract(
         raise CampaignCommitmentError("Stage 5B4 protocol payload drifted from Python contract")
 
     committed = committed_path or DEFAULT_PROTOCOL_PATH
-    if not committed.is_file():
-        raise CampaignCommitmentError(f"Committed protocol file missing: {committed}")
+    if committed.is_symlink() or not committed.is_file():
+        raise CampaignCommitmentError(
+            f"Committed protocol must be a regular non-symlink file: {committed}"
+        )
+
     committed_bytes = committed.read_bytes()
-    if committed_bytes != raw_bytes:
+
+    try:
+        committed_payload = json.loads(committed_bytes.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise CampaignCommitmentError(
+            "Committed Stage 5B4 protocol is not valid UTF-8 JSON"
+        ) from error
+
+    if committed_payload != expected:
+        raise CampaignCommitmentError(
+            "Committed Stage 5B4 protocol payload drifted from Python contract"
+        )
+    if payload != committed_payload:
+        raise CampaignCommitmentError(
+            "Supplied Stage 5B4 protocol payload differs from committed payload"
+        )
+    if raw_bytes != committed_bytes:
         raise CampaignCommitmentError(
             "Stage 5B4 protocol bytes do not match exact committed protocol bytes"
         )
@@ -1415,10 +1479,42 @@ def build_commitment_declaration(
     )
 
 
+def _validate_expected_declaration_path(
+    expected_path: Path,
+    campaign_id: str,
+    *,
+    repository_root: Path | None = None,
+) -> None:
+    repo = (repository_root or REPOSITORY_ROOT).resolve(strict=False)
+    unresolved = expected_path.absolute()
+    current = unresolved
+    while current != current.parent:
+        if current.is_symlink():
+            raise CampaignCommitmentError(
+                "Declaration path contains forbidden symlink component: "
+                f"{current}"
+            )
+        current = current.parent
+
+    resolved_actual = expected_path.resolve(strict=False)
+    resolved_expected = (
+        repo
+        / COMMITMENT_ROOT
+        / f"{campaign_id}.json"
+    ).resolve(strict=False)
+
+    if resolved_actual != resolved_expected:
+        raise CampaignCommitmentError(
+            "Declaration path must be exactly "
+            f"{resolved_expected}, got {resolved_actual}"
+        )
+
+
 def validate_declaration_mapping(
     payload: Mapping[str, Any],
     *,
     expected_path: Path | None = None,
+    repository_root: Path | None = None,
 ) -> CommitmentDeclaration:
     if not isinstance(payload, Mapping):
         raise CampaignCommitmentError("Declaration payload must be a JSON object")
@@ -1448,30 +1544,9 @@ def validate_declaration_mapping(
         raise CampaignCommitmentError(f"Declaration campaign_id invalid: {c_id}")
 
     if expected_path is not None:
-        curr = expected_path.absolute()
-        while curr != curr.parent:
-            if curr.is_symlink():
-                raise CampaignCommitmentError(
-                    f"Declaration path contains forbidden symlink component: {curr}"
-                )
-            curr = curr.parent
-
-        if expected_path.name != f"{c_id}.json":
-            raise CampaignCommitmentError(
-                f"Declaration filename must be {c_id}.json, got {expected_path.name}"
-            )
-
-        posix_parts = expected_path.parts
-        is_direct_child = False
-        if expected_path.parent == COMMITMENT_ROOT:
-            is_direct_child = True
-        elif len(posix_parts) >= 4 and tuple(posix_parts[-4:-1]) == tuple(COMMITMENT_ROOT.parts):
-            is_direct_child = True
-
-        if not is_direct_child:
-            raise CampaignCommitmentError(
-                f"Declaration path must be direct child of {COMMITMENT_ROOT}, got {expected_path}"
-            )
+        _validate_expected_declaration_path(
+            expected_path, c_id, repository_root=repository_root
+        )
 
     if payload["campaign_commitment_status"] != DECLARATION_STATUS:
         raise CampaignCommitmentError(
@@ -1652,10 +1727,14 @@ def validate_deadline(
     server_observed_at: datetime,
     commitment_sha256: str | None = None,
 ) -> DeadlineValidationResult:
-    if not isinstance(server_observed_at, datetime):
-        raise CampaignCommitmentError("server_observed_at must be datetime")
-    if server_observed_at.tzinfo is None or server_observed_at.utcoffset() != timezone.utc.utcoffset(None):
-        raise CampaignCommitmentError("server_observed_at must be timezone-aware UTC")
+    observed = _assert_utc_datetime(
+        server_observed_at,
+        "server_observed_at",
+    )
+    deadline = _assert_utc_datetime(
+        declaration.commitment_deadline_at,
+        "commitment_deadline_at",
+    )
 
     if commitment_sha256 is None:
         decl_bytes = canonical_json_bytes(declaration.to_mapping(), pretty=True)
@@ -1664,12 +1743,12 @@ def validate_deadline(
         c_sha = validate_sha256(commitment_sha256, "commitment_sha256")
 
     # Strict UTC comparison: server_observed_at <= commitment_deadline_at
-    qualified = server_observed_at <= declaration.commitment_deadline_at
+    qualified = observed <= deadline
 
     return DeadlineValidationResult(
         campaign_id=declaration.campaign_id,
         commitment_sha256=c_sha,
-        commitment_deadline_at=declaration.commitment_deadline_at,
-        server_observed_at=server_observed_at,
+        commitment_deadline_at=deadline,
+        server_observed_at=observed,
         prospective_timing_qualified=qualified,
     )

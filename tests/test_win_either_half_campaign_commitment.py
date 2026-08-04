@@ -32,6 +32,8 @@ from domain.win_either_half_campaign_commitment import (
     CampaignCommitmentError,
     CommitmentDeclaration,
     DeadlineValidationResult,
+    FileIdentity,
+    _validate_expected_declaration_path,
     build_commitment_declaration,
     build_expected_protocol_contract,
     canonical_json_bytes,
@@ -53,6 +55,10 @@ from domain.win_either_half_capture_campaign import (
 from scripts.manage_win_either_half_campaign_commitment import (
     REPOSITORY_ROOT,
     CampaignCommitmentExportError,
+    _is_git_tracked,
+    _run_git_bytes,
+    _run_git_command,
+    _run_git_stdout,
     _write_file_atomically,
     check_commitment,
     create_commitment,
@@ -1776,6 +1782,338 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 self.assertEqual(DEFAULT_PROTOCOL_PATH.parent.name, "research-protocols")
             finally:
                 os.chdir(old_cwd)
+
+    def test_parse_utc_rejects_non_utc_offsets(self) -> None:
+        for bad_ts in [
+            "2026-08-04T12:00:00+01:00",
+            "2026-08-04T12:00:00-05:00",
+            "2026-08-04T12:00:00+02:00",
+            "2026-08-04T12:00:00",
+        ]:
+            with self.assertRaises(CampaignCommitmentError):
+                parse_utc(bad_ts, "timestamp")
+
+    def test_parse_utc_rejects_surrounding_whitespace(self) -> None:
+        for bad_ts in [
+            " 2026-08-04T12:00:00Z",
+            "2026-08-04T12:00:00Z ",
+            "\n2026-08-04T12:00:00Z\n",
+            "\t2026-08-04T12:00:00+00:00\t",
+        ]:
+            with self.assertRaises(CampaignCommitmentError):
+                parse_utc(bad_ts, "timestamp")
+
+    def test_serialize_utc_preserves_microseconds_and_normalizes_to_z(self) -> None:
+        dt_with_micro = datetime(2026, 8, 4, 12, 0, 0, 123456, tzinfo=timezone.utc)
+        self.assertEqual(serialize_utc(dt_with_micro), "2026-08-04T12:00:00.123456Z")
+        dt_no_micro = datetime(2026, 8, 4, 12, 0, 0, 0, tzinfo=timezone.utc)
+        self.assertEqual(serialize_utc(dt_no_micro), "2026-08-04T12:00:00Z")
+
+    def test_serialize_utc_rejects_naive_datetime(self) -> None:
+        naive_dt = datetime(2026, 8, 4, 12, 0, 0)
+        with self.assertRaises(CampaignCommitmentError):
+            serialize_utc(naive_dt)
+
+    def test_file_identity_lowercases_sha256(self) -> None:
+        upper_sha = "A" * 64
+        ident = FileIdentity(relative_name="tasks.json", byte_size=100, sha256=upper_sha, rows=10)
+        self.assertEqual(ident.sha256, "a" * 64)
+
+    def test_file_identity_rejects_surrounding_whitespace_in_relative_name(self) -> None:
+        with self.assertRaises(CampaignCommitmentError):
+            FileIdentity(relative_name=" tasks.json ", byte_size=100, sha256="a" * 64, rows=10)
+
+    def test_commitment_declaration_normalizes_generator_sha_and_deadline_utc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=DEFAULT_STAGE_5B3_PROTOCOL_PATH.read_bytes(),
+                commitment_protocol_raw=DEFAULT_PROTOCOL_PATH.read_bytes(),
+                generator_git_sha="A" * 40,
+            )
+            self.assertEqual(decl.generator_git_sha, "a" * 40)
+            self.assertEqual(decl.commitment_deadline_at.tzinfo, timezone.utc)
+
+    def test_deadline_validation_result_normalizes_fields(self) -> None:
+        res = DeadlineValidationResult(
+            campaign_id="WEH-CAP-000000000000000000000001",
+            commitment_sha256="F" * 64,
+            commitment_deadline_at=datetime(2026, 8, 4, 12, 0, tzinfo=timezone.utc),
+            server_observed_at=datetime(2026, 8, 4, 11, 0, tzinfo=timezone.utc),
+            prospective_timing_qualified=True,
+        )
+        self.assertEqual(res.commitment_sha256, "f" * 64)
+        self.assertEqual(res.commitment_deadline_at.tzinfo, timezone.utc)
+        self.assertEqual(res.server_observed_at.tzinfo, timezone.utc)
+
+    def test_validate_protocol_contract_rejects_symlink(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real_proto = Path(tmp) / "real_proto.json"
+            real_proto.write_bytes(DEFAULT_PROTOCOL_PATH.read_bytes())
+            link_proto = Path(tmp) / "link_proto.json"
+            try:
+                link_proto.symlink_to(real_proto)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlinks not supported in environment")
+            payload = json.loads(real_proto.read_bytes().decode("utf-8"))
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_protocol_contract(
+                    payload, real_proto.read_bytes(), committed_path=link_proto
+                )
+            self.assertIn("non-symlink", str(ctx.exception))
+
+    def test_validate_protocol_contract_rejects_corrupted_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bad_proto = Path(tmp) / "corrupt_proto.json"
+            bad_proto.write_bytes(b"{corrupted json")
+            payload = build_expected_protocol_contract()
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_protocol_contract(
+                    payload, DEFAULT_PROTOCOL_PATH.read_bytes(), committed_path=bad_proto
+                )
+            self.assertIn("not valid UTF-8 JSON", str(ctx.exception))
+
+    def test_validate_protocol_contract_rejects_drifted_payload(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            drifted_proto = Path(tmp) / "drifted_proto.json"
+            drifted = build_expected_protocol_contract()
+            drifted["dataset_name"] = "drifted-name-v1"
+            drifted_bytes = (json.dumps(drifted, indent=2) + "\n").encode("utf-8")
+            drifted_proto.write_bytes(drifted_bytes)
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_protocol_contract(
+                    build_expected_protocol_contract(),
+                    DEFAULT_PROTOCOL_PATH.read_bytes(),
+                    committed_path=drifted_proto,
+                )
+            self.assertIn("drifted from Python contract", str(ctx.exception))
+
+    def test_validate_expected_declaration_path_rejects_wrong_directory(self) -> None:
+        wrong_path = REPOSITORY_ROOT / "other_dir" / "c123.json"
+        with self.assertRaises(CampaignCommitmentError) as ctx:
+            _validate_expected_declaration_path(wrong_path, "c123")
+        self.assertIn("Declaration path must be exactly", str(ctx.exception))
+
+    def test_validate_expected_declaration_path_rejects_wrong_filename(self) -> None:
+        wrong_path = REPOSITORY_ROOT / COMMITMENT_ROOT / "wrong_id.json"
+        with self.assertRaises(CampaignCommitmentError) as ctx:
+            _validate_expected_declaration_path(wrong_path, "correct_id")
+        self.assertIn("Declaration path must be exactly", str(ctx.exception))
+
+    def test_validate_expected_declaration_path_rejects_symlink_components(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            real_file = Path(tmp) / "real.json"
+            real_file.write_bytes(b"{}")
+            link_file = Path(tmp) / "link.json"
+            try:
+                link_file.symlink_to(real_file)
+            except (OSError, NotImplementedError):
+                self.skipTest("Symlinks not supported in environment")
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                _validate_expected_declaration_path(link_file, "link")
+            self.assertIn("symlink", str(ctx.exception).lower())
+
+    def test_validate_deadline_rejects_naive_server_observed_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=DEFAULT_STAGE_5B3_PROTOCOL_PATH.read_bytes(),
+                commitment_protocol_raw=DEFAULT_PROTOCOL_PATH.read_bytes(),
+                generator_git_sha="0" * 40,
+            )
+            naive_dt = datetime(2026, 8, 4, 12, 0, 0)
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_deadline(decl, server_observed_at=naive_dt)
+            self.assertIn("must be timezone-aware UTC", str(ctx.exception))
+
+    def test_validate_deadline_rejects_non_utc_server_observed_at(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=DEFAULT_STAGE_5B3_PROTOCOL_PATH.read_bytes(),
+                commitment_protocol_raw=DEFAULT_PROTOCOL_PATH.read_bytes(),
+                generator_git_sha="0" * 40,
+            )
+            non_utc_tz = timezone(timedelta(hours=2))
+            non_utc_dt = datetime(2026, 8, 4, 12, 0, 0, tzinfo=non_utc_tz)
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_deadline(decl, server_observed_at=non_utc_dt)
+            self.assertIn("must be timezone-aware UTC", str(ctx.exception))
+
+    def test_run_git_command_success_and_failure(self) -> None:
+        res = _run_git_command(["--version"], cwd=REPOSITORY_ROOT, label="git version", check=True)
+        self.assertEqual(res.returncode, 0)
+        self.assertIn("git version", res.stdout)
+
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            _run_git_command(["invalid-git-subcommand-xyz"], cwd=REPOSITORY_ROOT, label="invalid command", check=True)
+        self.assertIn("Git command failed", str(ctx.exception))
+
+    def test_run_git_stdout_returns_text(self) -> None:
+        out = _run_git_stdout(["--version"], cwd=REPOSITORY_ROOT, label="git version")
+        self.assertIsInstance(out, str)
+        self.assertIn("git version", out)
+
+    def test_run_git_bytes_returns_raw_bytes(self) -> None:
+        out = _run_git_bytes(["--version"], cwd=REPOSITORY_ROOT, label="git version")
+        self.assertIsInstance(out, bytes)
+        self.assertIn(b"git version", out)
+
+    def test_run_git_command_raises_on_oserror(self) -> None:
+        with patch("subprocess.run", side_effect=OSError("executable not found")):
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _run_git_command(["--version"], cwd=REPOSITORY_ROOT, label="git version")
+            self.assertIn("Git process execution failed", str(ctx.exception))
+
+    def test_is_git_tracked_returns_false_on_unmatched(self) -> None:
+        test_path = REPOSITORY_ROOT / "non_existent_untracked_file_xyz.json"
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd:
+            mock_cmd.return_value = MagicMock(
+                returncode=1,
+                stderr="error: pathspec 'non_existent_untracked_file_xyz.json' did not match any files",
+                stdout="",
+            )
+            self.assertFalse(_is_git_tracked(test_path, REPOSITORY_ROOT))
+
+    def test_is_git_tracked_raises_on_unexpected_git_failure(self) -> None:
+        test_path = REPOSITORY_ROOT / "some_file.json"
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd:
+            mock_cmd.return_value = MagicMock(
+                returncode=128,
+                stderr="fatal: not a git repository",
+                stdout="",
+            )
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _is_git_tracked(test_path, REPOSITORY_ROOT)
+            self.assertIn("Unable to determine Git tracked status", str(ctx.exception))
+
+    def test_check_commitment_verifies_generator_sha_in_git(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            decl_dir = REPOSITORY_ROOT / COMMITMENT_ROOT
+            decl_dir.mkdir(parents=True, exist_ok=True)
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl_path = decl_dir / f"{bundle.campaign_id}.json"
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=DEFAULT_STAGE_5B3_PROTOCOL_PATH.read_bytes(),
+                commitment_protocol_raw=DEFAULT_PROTOCOL_PATH.read_bytes(),
+                generator_git_sha="0" * 40,
+            )
+            decl_path.write_bytes(canonical_json_bytes(decl.to_mapping(), pretty=True))
+
+            try:
+                with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_git:
+                    mock_git.side_effect = CampaignCommitmentExportError("Git command failed (check generator commit): not found")
+                    with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                        check_commitment(
+                            tasks_path=files["tasks"],
+                            summary_path=files["summary"],
+                            manifest_path=files["manifest"],
+                            stage_5b3_protocol_path=files["stage_5b3_protocol"],
+                            commitment_protocol_path=files["commitment_protocol"],
+                            declaration_path=decl_path,
+                            code_state={"evidence_git_head_sha": "1" * 40, "tracked_worktree_clean": True},
+                        )
+                    self.assertIn("check generator commit", str(ctx.exception))
+            finally:
+                if decl_path.exists():
+                    decl_path.unlink()
+
+    def test_validate_git_diff_rejects_non_ancestor_base(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd:
+            mock_cmd.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=1, stdout=""),
+            ]
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                validate_git_diff(
+                    repository_root=REPOSITORY_ROOT,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at="2026-08-04T12:00:00.000000Z",
+                    github_run_id="12345",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
+                )
+            self.assertIn("is not an ancestor of head_sha", str(ctx.exception))
+
+    def test_validate_git_diff_rejects_git_cat_file_failure(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd, \
+             patch("scripts.manage_win_either_half_campaign_commitment._run_git_stdout") as mock_stdout, \
+             patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_bytes:
+            mock_cmd.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=""),
+            ]
+            diff_output = b"A\x00artifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
+            mock_stdout.return_value = "100644 blob abc123\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json"
+            mock_bytes.side_effect = [
+                diff_output,
+                CampaignCommitmentExportError("Git command failed (cat-file blob): object not found"),
+            ]
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                validate_git_diff(
+                    repository_root=REPOSITORY_ROOT,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at="2026-08-04T12:00:00.000000Z",
+                    github_run_id="12345",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
+                )
+            self.assertIn("cat-file blob", str(ctx.exception))
+
+    def test_validate_git_diff_rejects_invalid_file_mode(self) -> None:
+        with patch("scripts.manage_win_either_half_campaign_commitment._run_git_command") as mock_cmd, \
+             patch("scripts.manage_win_either_half_campaign_commitment._run_git_stdout") as mock_stdout, \
+             patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_bytes:
+            mock_cmd.side_effect = [
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=""),
+                MagicMock(returncode=0, stdout=""),
+            ]
+            diff_output = b"A\x00artifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
+            mock_bytes.return_value = diff_output
+            mock_stdout.return_value = "120000 blob abc123\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json"
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                validate_git_diff(
+                    repository_root=REPOSITORY_ROOT,
+                    base_sha="0" * 40,
+                    head_sha="1" * 40,
+                    server_observed_at="2026-08-04T12:00:00.000000Z",
+                    github_run_id="12345",
+                    github_run_attempt="1",
+                    github_event_name="pull_request",
+                    attestation_output=Path(tempfile.gettempdir()) / "attestation.json",
+                )
+            self.assertIn("120000 forbidden", str(ctx.exception))
 
 
 if __name__ == "__main__":
