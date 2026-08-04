@@ -1177,6 +1177,138 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         self.assertNotIn("secrets.", text)
         self.assertNotIn("contents: write", text)
 
+    def test_validate_deadline_with_commitment_sha256(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            bundle = validate_stage_5b3_bundle(
+                tasks_path=files["tasks"],
+                summary_path=files["summary"],
+                manifest_path=files["manifest"],
+            )
+            decl = build_commitment_declaration(
+                bundle=bundle,
+                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                generator_git_sha="1" * 40,
+            )
+            observed_dt = decl.commitment_deadline_at - timedelta(seconds=10)
+            valid_sha = sha256_bytes(canonical_json_bytes(decl.to_mapping(), pretty=True))
+
+            # Valid matching hash
+            res = validate_deadline(
+                decl,
+                server_observed_at=observed_dt,
+                commitment_sha256=valid_sha,
+            )
+            self.assertTrue(res.prospective_timing_qualified)
+            self.assertEqual(res.commitment_sha256, valid_sha)
+
+            # Invalid format (non-hex chars)
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_deadline(
+                    decl,
+                    server_observed_at=observed_dt,
+                    commitment_sha256="g" * 64,
+                )
+            self.assertIn("64-character hexadecimal", str(ctx.exception))
+
+            # Invalid format (short length)
+            with self.assertRaises(CampaignCommitmentError) as ctx:
+                validate_deadline(
+                    decl,
+                    server_observed_at=observed_dt,
+                    commitment_sha256="abc123",
+                )
+            self.assertIn("64-character hexadecimal", str(ctx.exception))
+
+            # Optional sha256 (None) computes it
+            res_default = validate_deadline(
+                decl,
+                server_observed_at=observed_dt,
+            )
+            self.assertTrue(res_default.prospective_timing_qualified)
+            self.assertEqual(res_default.commitment_sha256, valid_sha)
+
+    def test_is_git_tracked_error_handling(self) -> None:
+        from scripts.manage_win_either_half_campaign_commitment import _is_git_tracked
+        test_path = REPOSITORY_ROOT / "some_file.json"
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=0)
+            self.assertTrue(_is_git_tracked(test_path, REPOSITORY_ROOT))
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(
+                returncode=1, stderr="error: pathspec 'some_file.json' did not match any files"
+            )
+            self.assertFalse(_is_git_tracked(test_path, REPOSITORY_ROOT))
+
+        with patch("subprocess.run") as mock_run:
+            mock_run.return_value = MagicMock(returncode=128, stderr="fatal: not a git repository")
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _is_git_tracked(test_path, REPOSITORY_ROOT)
+            self.assertIn("Unable to determine Git tracked status", str(ctx.exception))
+
+    def test_atomic_write_backup_and_rollback_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            dest = Path(tmp) / "file_to_modify.json"
+            dest.write_bytes(b'{"original": true}')
+
+            with patch("scripts.manage_win_either_half_campaign_commitment._fsync_dir", side_effect=OSError("fsync failed")):
+                with self.assertRaises(CampaignCommitmentExportError):
+                    _write_file_atomically(dest, b'{"modified": true}', force=True)
+
+            # Check that original content was restored by rollback
+            self.assertEqual(dest.read_bytes(), b'{"original": true}')
+
+    @patch("scripts.manage_win_either_half_campaign_commitment.get_code_state")
+    def test_check_commitment_requires_clean_worktree(self, mock_code_state) -> None:
+        dirty_code_state = dict(self.code_state)
+        dirty_code_state["tracked_worktree_clean"] = False
+        mock_code_state.return_value = dirty_code_state
+
+        with tempfile.TemporaryDirectory() as tmp:
+            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            decl_path = Path(tmp) / "decl.json"
+            decl_path.write_bytes(b"{}")
+
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                check_commitment(
+                    tasks_path=files["tasks"],
+                    summary_path=files["summary"],
+                    manifest_path=files["manifest"],
+                    stage_5b3_protocol_path=files["stage_5b3_protocol"],
+                    commitment_protocol_path=files["commitment_protocol"],
+                    declaration_path=decl_path,
+                    code_state=dirty_code_state,
+                )
+            self.assertIn("Tracked worktree must be clean", str(ctx.exception))
+
+    def test_validate_git_diff_rejects_attestation_inside_repo(self) -> None:
+        with self.assertRaises(CampaignCommitmentExportError) as ctx:
+            validate_git_diff(
+                repository_root=REPOSITORY_ROOT,
+                base_sha="0" * 40,
+                head_sha="1" * 40,
+                server_observed_at="2026-08-04T12:00:00.000000Z",
+                github_run_id="12345",
+                github_run_attempt="1",
+                github_event_name="pull_request",
+                attestation_output=REPOSITORY_ROOT / "attestation.json",
+            )
+        self.assertIn("must be outside repository root", str(ctx.exception))
+
+    def test_protocol_resolution_from_arbitrary_cwd(self) -> None:
+        old_cwd = os.getcwd()
+        with tempfile.TemporaryDirectory() as tmp:
+            try:
+                os.chdir(tmp)
+                self.assertTrue(DEFAULT_PROTOCOL_PATH.is_file())
+                self.assertTrue(DEFAULT_STAGE_5B3_PROTOCOL_PATH.is_file())
+                self.assertEqual(DEFAULT_PROTOCOL_PATH.parent.name, "research-protocols")
+            finally:
+                os.chdir(old_cwd)
+
 
 if __name__ == "__main__":
     unittest.main()

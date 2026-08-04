@@ -39,9 +39,13 @@ STAGE_5B3_TASKS_FILENAME = "capture-campaign-tasks-v1.jsonl"
 STAGE_5B3_SUMMARY_FILENAME = "capture-campaign-summary-v1.json"
 STAGE_5B3_MANIFEST_FILENAME = "capture-campaign-manifest-v1.json"
 
+REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 COMMITMENT_ROOT = Path("artifacts/research-commitments/win-either-half")
-DEFAULT_PROTOCOL_PATH = Path(
-    "artifacts/research-protocols/win-either-half-campaign-commitment-v1.json"
+DEFAULT_PROTOCOL_PATH = (
+    REPOSITORY_ROOT
+    / "artifacts"
+    / "research-protocols"
+    / "win-either-half-campaign-commitment-v1.json"
 )
 
 DECLARATION_STATUS = (
@@ -1060,12 +1064,16 @@ def validate_deadline(
     declaration: CommitmentDeclaration,
     *,
     server_observed_at: datetime,
+    commitment_sha256: str | None = None,
 ) -> DeadlineValidationResult:
     if server_observed_at.tzinfo is None or server_observed_at.utcoffset() != timezone.utc.utcoffset(None):
         raise CampaignCommitmentError("server_observed_at must be timezone-aware UTC")
 
-    decl_bytes = canonical_json_bytes(declaration.to_mapping(), pretty=True)
-    c_sha = sha256_bytes(decl_bytes)
+    if commitment_sha256 is None:
+        decl_bytes = canonical_json_bytes(declaration.to_mapping(), pretty=True)
+        c_sha = sha256_bytes(decl_bytes)
+    else:
+        c_sha = validate_sha256(commitment_sha256, "commitment_sha256")
 
     # Strict UTC comparison: server_observed_at <= commitment_deadline_at
     qualified = server_observed_at <= declaration.commitment_deadline_at

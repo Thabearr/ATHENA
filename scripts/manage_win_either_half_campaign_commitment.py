@@ -153,6 +153,38 @@ def _fsync_file(path: Path) -> None:
         os.fsync(handle.fileno())
 
 
+def _is_git_tracked(path: Path, repo_root: Path) -> bool:
+    resolved_path = path.resolve()
+    resolved_repo = repo_root.resolve()
+    try:
+        target_arg = resolved_path.relative_to(resolved_repo).as_posix()
+        cwd_dir = resolved_repo
+    except ValueError:
+        target_arg = str(resolved_path)
+        cwd_dir = resolved_path.parent
+
+    try:
+        res = subprocess.run(
+            ["git", "-C", str(cwd_dir), "ls-files", "--error-unmatch", "--", target_arg],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            shell=False,
+        )
+        if res.returncode == 0:
+            return True
+        if res.returncode == 1 and ("did not match any files" in (res.stderr or "") or "did not match any files" in (res.stdout or "")):
+            return False
+        err_msg = (res.stderr or res.stdout or "").strip()[:240]
+        raise CampaignCommitmentExportError(
+            f"Unable to determine Git tracked status for {target_arg}: {err_msg}"
+        )
+    except OSError as error:
+        raise CampaignCommitmentExportError(
+            f"Git tracked check failed for {target_arg}: {error}"
+        ) from error
+
+
 def _write_file_atomically(
     destination: Path,
     content: bytes,
@@ -169,27 +201,17 @@ def _write_file_atomically(
         )
 
     if resolved_dest.exists() and is_git_tracked_check:
-        # Check if file is tracked by git
-        try:
-            res = subprocess.run(
-                ["git", "ls-files", "--error-unmatch", str(resolved_dest)],
-                cwd=REPOSITORY_ROOT,
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if res.returncode == 0:
-                raise CampaignCommitmentExportError(
-                    f"Refusing to overwrite Git-tracked commitment file: {resolved_dest}"
-                )
-        except OSError as error:
+        if _is_git_tracked(resolved_dest, REPOSITORY_ROOT):
             raise CampaignCommitmentExportError(
-                f"Failed to check Git tracked status for {resolved_dest}"
-            ) from error
+                f"Refusing to overwrite Git-tracked commitment file: {resolved_dest}"
+            )
 
     parent_dir.mkdir(parents=True, exist_ok=True)
     temp_dir = Path(tempfile.mkdtemp(prefix=".stage5b4-tmp-", dir=parent_dir))
     staged_path = temp_dir / resolved_dest.name
+    backup_path = parent_dir / f".stage5b4-bak-{resolved_dest.name}-{os.getpid()}"
+    destination_backed_up = False
+    dest_existed = resolved_dest.exists()
 
     try:
         with staged_path.open("wb") as handle:
@@ -197,20 +219,63 @@ def _write_file_atomically(
             handle.flush()
             os.fsync(handle.fileno())
 
+        if dest_existed:
+            os.replace(resolved_dest, backup_path)
+            destination_backed_up = True
+
         os.replace(staged_path, resolved_dest)
         _fsync_file(resolved_dest)
         _fsync_dir(parent_dir)
-    except OSError as error:
-        if resolved_dest.exists() and staged_path.exists():
+
+        if destination_backed_up and backup_path.exists():
+            backup_path.unlink()
+
+    except Exception as orig_error:
+        cleanup_errors: list[str] = []
+        if destination_backed_up and backup_path.exists():
+            try:
+                os.replace(backup_path, resolved_dest)
+                _fsync_file(resolved_dest)
+                _fsync_dir(parent_dir)
+            except Exception as rollback_err:
+                cleanup_errors.append(f"failed to restore backup: {rollback_err}")
+        elif not dest_existed and resolved_dest.exists():
+            try:
+                resolved_dest.unlink()
+                _fsync_dir(parent_dir)
+            except Exception as unlink_err:
+                cleanup_errors.append(f"failed to unlink created dest: {unlink_err}")
+
+        if staged_path.exists():
             try:
                 staged_path.unlink()
-            except OSError:
-                pass
+            except Exception as staged_err:
+                cleanup_errors.append(f"failed to unlink staged: {staged_err}")
+
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception as rmtree_err:
+                cleanup_errors.append(f"failed to remove temp_dir: {rmtree_err}")
+
+        if cleanup_errors:
+            raise CampaignCommitmentExportError(
+                f"Atomic file write failed for {resolved_dest} and rollback was incomplete: {orig_error}; cleanup errors: {'; '.join(cleanup_errors)}"
+            ) from orig_error
         raise CampaignCommitmentExportError(
-            f"Atomic file write failed for {resolved_dest}: {error}"
-        ) from error
+            f"Atomic file write failed for {resolved_dest}: {orig_error}"
+        ) from orig_error
     finally:
-        shutil.rmtree(temp_dir, ignore_errors=True)
+        if temp_dir.exists():
+            try:
+                shutil.rmtree(temp_dir)
+            except Exception:
+                pass
+        if backup_path.exists():
+            try:
+                backup_path.unlink()
+            except Exception:
+                pass
 
 
 def create_commitment(
@@ -262,7 +327,6 @@ def create_commitment(
 
     expected_target_path = REPOSITORY_ROOT / COMMITMENT_ROOT / f"{bundle.campaign_id}.json"
     resolved_output = _assert_no_symlink_components(output_path, "Output path")
-    resolved_repo = REPOSITORY_ROOT.resolve(strict=False)
     resolved_expected = expected_target_path.resolve(strict=False)
 
     if resolved_output != resolved_expected:
@@ -300,6 +364,16 @@ def check_commitment(
     declaration_path: Path,
     code_state: Mapping[str, Any],
 ) -> str:
+    tracked_clean = code_state.get("tracked_worktree_clean")
+    if tracked_clean is not True:
+        raise CampaignCommitmentExportError(
+            "Tracked worktree must be clean before commitment check"
+        )
+    validate_git_sha(
+        code_state.get("evidence_git_head_sha"),
+        "evidence_git_head_sha",
+    )
+
     stage_5b3_proto_raw, stage_5b3_proto_payload = _read_json(
         stage_5b3_protocol_path, "Stage 5B3 protocol"
     )
@@ -308,11 +382,6 @@ def check_commitment(
     )
     declaration_raw, declaration_payload = _read_json(
         declaration_path, "Declaration"
-    )
-
-    git_sha = validate_git_sha(
-        code_state.get("evidence_git_head_sha"),
-        "evidence_git_head_sha",
     )
 
     try:
@@ -331,17 +400,19 @@ def check_commitment(
             summary_path=summary_path,
             manifest_path=manifest_path,
         )
-        validate_declaration_mapping(
+        decl_obj = validate_declaration_mapping(
             declaration_payload, expected_path=declaration_path
         )
     except CampaignCommitmentError as error:
         raise CampaignCommitmentExportError(str(error)) from error
 
+    generator_sha = decl_obj.generator_git_sha
+
     expected_declaration = build_commitment_declaration(
         bundle=bundle,
         stage_5b3_protocol_raw=stage_5b3_proto_raw,
         commitment_protocol_raw=commitment_proto_raw,
-        generator_git_sha=git_sha,
+        generator_git_sha=generator_sha,
     )
     expected_bytes = canonical_json_bytes(
         expected_declaration.to_mapping(), pretty=True
@@ -394,6 +465,15 @@ def validate_git_diff(
     repo = _assert_no_symlink_components(repository_root, "Repository root")
     v_base = validate_git_sha(base_sha, "base_sha")
     v_head = validate_git_sha(head_sha, "head_sha")
+
+    resolved_attestation = _assert_no_symlink_components(
+        attestation_output, "Attestation output"
+    )
+    resolved_repo = repo.resolve(strict=False)
+    if _is_relative_to(resolved_attestation, resolved_repo):
+        raise CampaignCommitmentExportError(
+            f"Attestation output path {attestation_output} must be outside repository root {repository_root}"
+        )
 
     if github_event_name != "pull_request":
         raise CampaignCommitmentExportError(
@@ -532,12 +612,56 @@ def validate_git_diff(
 
     results: list[DeadlineValidationResult] = []
     for d_path in declarations_to_validate:
-        d_raw, d_payload = _read_json(d_path, f"Declaration {d_path.name}")
+        rel_posix = d_path.relative_to(repo).as_posix()
+        blob_cmd = subprocess.run(
+            ["git", "-C", str(repo), "cat-file", "-p", f"{v_head}:{rel_posix}"],
+            capture_output=True,
+            check=False,
+        )
+        if blob_cmd.returncode != 0:
+            raise CampaignCommitmentExportError(
+                f"Failed to read blob for {rel_posix} at commit {v_head}"
+            )
+        blob_bytes = blob_cmd.stdout
+
+        if not d_path.is_file():
+            raise CampaignCommitmentExportError(
+                f"Declaration {rel_posix} is missing from working tree"
+            )
+        worktree_bytes = d_path.read_bytes()
+        if blob_bytes != worktree_bytes:
+            raise CampaignCommitmentExportError(
+                f"Working tree bytes for {rel_posix} differ from commit {v_head} blob bytes"
+            )
+
+        try:
+            d_payload = json.loads(blob_bytes.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as error:
+            raise CampaignCommitmentExportError(
+                f"Declaration {rel_posix} must be valid UTF-8 JSON"
+            ) from error
+
+        if not isinstance(d_payload, Mapping):
+            raise CampaignCommitmentExportError(
+                f"Declaration {rel_posix} must be a JSON object"
+            )
+
+        expected_formatted_bytes = canonical_json_bytes(d_payload, pretty=True)
+        if blob_bytes != expected_formatted_bytes:
+            raise CampaignCommitmentExportError(
+                f"Declaration {rel_posix} does not match canonical pretty formatting"
+            )
+
         try:
             decl = validate_declaration_mapping(
                 d_payload, expected_path=d_path
             )
-            res = validate_deadline(decl, server_observed_at=observed_dt)
+            commitment_sha256 = sha256_bytes(blob_bytes)
+            res = validate_deadline(
+                decl,
+                server_observed_at=observed_dt,
+                commitment_sha256=commitment_sha256,
+            )
         except CampaignCommitmentError as error:
             raise CampaignCommitmentExportError(
                 f"Declaration validation failed for {d_path.name}: {error}"
@@ -551,6 +675,9 @@ def validate_git_diff(
         results.append(res)
 
     results.sort(key=lambda r: r.campaign_id)
+
+    proto_path = repo / "artifacts" / "research-protocols" / "win-either-half-campaign-commitment-v1.json"
+    proto_bytes = _read_bytes(proto_path, "Stage 5B4 commitment protocol")
 
     attestation: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
@@ -576,7 +703,7 @@ def validate_git_diff(
         "safety": dict(GENERATED_SAFETY_CONTRACT),
         "upstream_protocol_identity": {
             "relative_name": DEFAULT_PROTOCOL_PATH.name,
-            "sha256": sha256_bytes(_read_bytes(REPOSITORY_ROOT / DEFAULT_PROTOCOL_PATH, "protocol")),
+            "sha256": sha256_bytes(proto_bytes),
         },
         "no_production_approval": (
             "This attestation qualifies the timing of pre-registered prospective "
@@ -585,7 +712,14 @@ def validate_git_diff(
         ),
     }
 
-    assert_no_forbidden_fields(attestation, "Attestation")
+    if attestation.get("safety") != GENERATED_SAFETY_CONTRACT:
+        raise CampaignCommitmentExportError(
+            "Attestation safety contract drifted from exact expectation"
+        )
+    attestation_clean = dict(attestation)
+    attestation_clean.pop("safety")
+    assert_no_forbidden_fields(attestation_clean, "Attestation")
+
     attestation_bytes = canonical_json_bytes(attestation, pretty=True)
 
     _write_file_atomically(
@@ -640,12 +774,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--stage-5b3-protocol",
         type=Path,
-        default=REPOSITORY_ROOT / DEFAULT_STAGE_5B3_PROTOCOL_PATH,
+        default=DEFAULT_STAGE_5B3_PROTOCOL_PATH,
     )
     parser.add_argument(
         "--commitment-protocol",
         type=Path,
-        default=REPOSITORY_ROOT / DEFAULT_PROTOCOL_PATH,
+        default=DEFAULT_PROTOCOL_PATH,
     )
     parser.add_argument("--force", action="store_true", help="Allow replacing untracked declaration")
 

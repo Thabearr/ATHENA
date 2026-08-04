@@ -26,6 +26,7 @@ jobs:
       - name: Checkout PR Head Revision
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           path: head
           fetch-depth: 0
           persist-credentials: false
@@ -97,7 +98,10 @@ jobs:
               exit 1
             fi
 
-            PYTHONPATH=head python -m pytest head/tests/test_win_either_half_campaign_commitment.py -q
+            (
+              cd head
+              PYTHONPATH=. python -m pytest tests/test_win_either_half_campaign_commitment.py -q
+            )
 
             echo "### Stage 5B4 Tooling Bootstrap" >> $GITHUB_STEP_SUMMARY
             echo "**Status:** \`BOOTSTRAP_TOOLING_ONLY\`" >> $GITHUB_STEP_SUMMARY
