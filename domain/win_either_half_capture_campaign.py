@@ -1,6 +1,6 @@
 """Deterministic Stage 5B3 prospective capture-campaign planning.
 
-This module creates an immutable, provider-neutral schedule for collecting the
+This module creates an immutable, adapter-neutral, campaign-target-specific schedule for collecting the
 Stage 5B2 Win Either Half observation attempts. It never fetches odds, records
 prices, selects a decision offset, or enables either market.
 """
@@ -286,10 +286,7 @@ def serialize_utc(value: datetime) -> str:
 def _walk_mapping_keys(value: Any) -> Iterable[str]:
     if isinstance(value, Mapping):
         for key, child in value.items():
-            normalized = str(key).strip().lower()
-            if normalized == "safety":
-                continue
-            yield normalized
+            yield str(key).strip().lower()
             yield from _walk_mapping_keys(child)
     elif isinstance(value, (list, tuple, set)):
         for child in value:

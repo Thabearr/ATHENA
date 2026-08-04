@@ -66,6 +66,18 @@ OUTPUT_FILENAMES = {
     "manifest": "capture-campaign-manifest-v1.json",
 }
 
+GENERATED_SAFETY_CONTRACT: dict[str, bool] = {
+    "network_requests": False,
+    "scraping": False,
+    "browser_automation": False,
+    "credential_use": False,
+    "odds_collection": False,
+    "provider_qualification": False,
+    "offset_selection": False,
+    "market_activation": False,
+    "bet_decision": False,
+}
+
 
 class CaptureCampaignExportError(ValueError):
     """Raised when deterministic campaign export fails closed."""
@@ -392,17 +404,7 @@ def build_bundle(
         "selected_offset_seconds": None,
         "selection_authorized": False,
         "production_approval_authorized": False,
-        "safety": {
-            "network_requests": False,
-            "scraping": False,
-            "browser_automation": False,
-            "credential_use": False,
-            "odds_collection": False,
-            "provider_qualification": False,
-            "offset_selection": False,
-            "market_activation": False,
-            "bet_decision": False,
-        },
+        "safety": dict(GENERATED_SAFETY_CONTRACT),
         "inputs": inputs,
         "outputs": outputs,
         "summary_accounting": {
@@ -415,7 +417,18 @@ def build_bundle(
             "Stage 5B3 is scheduling evidence only."
         ),
     }
-    assert_no_forbidden_fields(manifest, "Campaign manifest")
+
+    if manifest.get("safety") != GENERATED_SAFETY_CONTRACT:
+        raise CaptureCampaignExportError(
+            "Generated campaign safety contract drifted"
+        )
+
+    manifest_without_safety = dict(manifest)
+    manifest_without_safety.pop("safety")
+    assert_no_forbidden_fields(
+        manifest_without_safety,
+        "Campaign manifest outside the exact safety policy",
+    )
 
     pre_hash_bytes = _canonical_json_bytes(manifest, pretty=True)
     manifest["logical_manifest_sha256"] = _sha256(pre_hash_bytes)
@@ -458,7 +471,33 @@ def _output_paths_from_manifest_path(manifest_path: Path) -> dict[str, Path]:
 
 
 def _fsync_dir(path: Path) -> None:
-    try:
+    if os.name == "nt":
+        import ctypes
+
+        FILE_WRITE_DATA = 2
+        FILE_READ_DATA = 1
+        FILE_SHARE_READ = 1
+        FILE_SHARE_WRITE = 2
+        FILE_SHARE_DELETE = 4
+        OPEN_EXISTING = 3
+        FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+        handle = ctypes.windll.kernel32.CreateFileW(
+            str(path),
+            FILE_WRITE_DATA | FILE_READ_DATA,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAG_BACKUP_SEMANTICS,
+            None,
+        )
+        if handle == -1 or handle == 0xFFFFFFFF:
+            raise OSError(f"CreateFileW failed for directory {path}")
+        try:
+            if not ctypes.windll.kernel32.FlushFileBuffers(handle):
+                raise OSError(f"FlushFileBuffers failed for directory {path}")
+        finally:
+            ctypes.windll.kernel32.CloseHandle(handle)
+    else:
         flags = os.O_RDONLY
         if hasattr(os, "O_DIRECTORY"):
             flags |= os.O_DIRECTORY
@@ -467,8 +506,12 @@ def _fsync_dir(path: Path) -> None:
             os.fsync(fd)
         finally:
             os.close(fd)
-    except OSError:
-        pass
+
+
+def _fsync_file(path: Path) -> None:
+    mode = "rb+" if os.name == "nt" else "rb"
+    with path.open(mode) as handle:
+        os.fsync(handle.fileno())
 
 
 def commit_bundle(
@@ -488,7 +531,14 @@ def commit_bundle(
             "Campaign content keys must exactly match the frozen bundle"
         )
 
-    resolved = [_assert_no_symlink_components(path, "Output destination") for path in output_paths.values()]
+    resolved_paths = {
+        name: _assert_no_symlink_components(
+            path,
+            f"Output destination {name}",
+        )
+        for name, path in output_paths.items()
+    }
+    resolved = list(resolved_paths.values())
     if len(set(resolved)) != len(resolved):
         raise CaptureCampaignExportError("Output paths must be distinct")
     parent_dirs = {path.parent for path in resolved}
@@ -498,6 +548,14 @@ def commit_bundle(
         )
     output_dir = next(iter(parent_dirs))
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    validated_output_dir = _assert_no_symlink_components(
+        output_dir, "Output directory"
+    )
+    if validated_output_dir != output_dir:
+        raise CaptureCampaignExportError(
+            "Output directory path component resolved differently"
+        )
 
     if not force:
         existing = [path for path in resolved if path.exists()]
@@ -517,24 +575,27 @@ def commit_bundle(
 
     try:
         for name in sorted(contents):
-            staged = stage_dir / output_paths[name].name
+            staged = stage_dir / resolved_paths[name].name
             with staged.open("wb") as handle:
                 handle.write(contents[name])
                 handle.flush()
                 os.fsync(handle.fileno())
 
-        for name in sorted(output_paths):
-            destination = output_paths[name]
+        for name in sorted(resolved_paths):
+            destination = resolved_paths[name]
             if destination.exists():
                 backup = rollback_dir / destination.name
                 os.replace(destination, backup)
                 backups.append((backup, destination))
 
-        for name in sorted(output_paths):
-            destination = output_paths[name]
+        for name in sorted(resolved_paths):
+            destination = resolved_paths[name]
             staged = stage_dir / destination.name
             os.replace(staged, destination)
             installed.append(destination)
+
+        for destination in installed:
+            _fsync_file(destination)
 
         _fsync_dir(output_dir)
 
@@ -552,14 +613,28 @@ def commit_bundle(
                     os.replace(backup, destination)
             except Exception as rollback_err:
                 rollback_errors.append(rollback_err)
-        _fsync_dir(output_dir)
+
+        try:
+            for _backup, destination in backups:
+                if destination.is_file() and not destination.is_symlink():
+                    _fsync_file(destination)
+            _fsync_dir(output_dir)
+        except Exception as rollback_error:
+            rollback_errors.append(rollback_error)
 
         if rollback_errors:
+            rollback_detail = "; ".join(
+                f"{type(item).__name__}: {item}"
+                for item in rollback_errors
+            )
             raise CaptureCampaignExportError(
-                f"Campaign bundle transaction failed and rollback was incomplete: {error}"
+                "Campaign bundle transaction failed and rollback was incomplete: "
+                f"original={type(error).__name__}: {error}; "
+                f"rollback={rollback_detail}"
             ) from error
         raise CaptureCampaignExportError(
-            "Campaign bundle transaction failed and the prior bundle was restored"
+            "Campaign bundle transaction failed and the prior state was restored: "
+            f"{type(error).__name__}: {error}"
         ) from error
     finally:
         shutil.rmtree(stage_dir, ignore_errors=True)

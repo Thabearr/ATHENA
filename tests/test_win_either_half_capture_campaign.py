@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import call, patch
 
 from domain.markets import MARKET_REGISTRY, MarketId
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
@@ -38,9 +38,11 @@ from domain.win_either_half_capture_campaign import (
 )
 from scripts.manage_win_either_half_capture_campaign import (
     DEFAULT_OUTPUT_ROOT,
+    GENERATED_SAFETY_CONTRACT,
     OUTPUT_FILENAMES,
     REPOSITORY_ROOT,
     CaptureCampaignExportError,
+    _fsync_dir,
     build_bundle,
     check_bundle,
     commit_bundle,
@@ -398,6 +400,14 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
         )
         self.assertNotEqual(plan_a.tasks[0].task_id, plan_b.tasks[0].task_id)
 
+    def test_forbidden_field_hidden_under_safety_is_rejected(self) -> None:
+        for forbidden in ("model_probability", "decimal_odds", "bet_decision", "expected_value", "stake"):
+            with self.subTest(forbidden=forbidden):
+                payload = copy.deepcopy(self.source_payload)
+                payload["safety"] = {forbidden: 0.71 if forbidden == "model_probability" else "1.90"}
+                with self.assertRaises(CaptureCampaignError):
+                    load_source_qualification(payload)
+
     def test_case_variant_forbidden_field_is_rejected(self) -> None:
         for forbidden in ("Model_Probability", "DECIMAL_ODDS", "Kelly_Stake"):
             payload = copy.deepcopy(self.fixtures_payload)
@@ -410,6 +420,12 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
         payload["fixtures"][0][" model_probability "] = 0.7
         with self.assertRaises(CaptureCampaignError):
             load_fixtures(payload)
+
+    def test_generated_manifest_retains_exact_safety_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            bundle = self._build_bundle(Path(tmp))
+        self.assertEqual(bundle.manifest["safety"], GENERATED_SAFETY_CONTRACT)
+        self.assertTrue(all(val is False for val in bundle.manifest["safety"].values()))
 
     def test_summary_marks_unfrozen_local_plan(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -529,6 +545,76 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             with self.assertRaises(CaptureCampaignExportError):
                 commit_bundle(output_paths=paths, contents=bundle.files, force=False)
 
+    def test_directory_fsync_failure_fails_closed_and_restores_empty_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = self._build_bundle(root)
+            output_dir = root / "out"
+            paths = {
+                name: output_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            with patch(
+                "scripts.manage_win_either_half_capture_campaign._fsync_dir",
+                side_effect=[OSError("commit directory fsync failed"), None],
+            ):
+                with self.assertRaises(CaptureCampaignExportError) as ctx:
+                    commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+                self.assertIn("prior state was restored", str(ctx.exception))
+            self.assertFalse(any(path.exists() for path in paths.values()))
+
+    def test_directory_fsync_failure_during_rollback_reports_incomplete(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = self._build_bundle(root)
+            output_dir = root / "out"
+            paths = {
+                name: output_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            with patch(
+                "scripts.manage_win_either_half_capture_campaign._fsync_dir",
+                side_effect=[
+                    OSError("commit directory fsync failed"),
+                    OSError("rollback directory fsync failed"),
+                ],
+            ):
+                with self.assertRaises(CaptureCampaignExportError) as ctx:
+                    commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+                err_msg = str(ctx.exception)
+                self.assertIn("rollback was incomplete", err_msg)
+                self.assertIn("commit directory fsync failed", err_msg)
+                self.assertIn("rollback directory fsync failed", err_msg)
+
+    def test_installed_files_are_fsynced(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = self._build_bundle(root)
+            output_dir = root / "out"
+            paths = {
+                name: output_dir / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            resolved_paths = [p.resolve() for p in paths.values()]
+            with patch("scripts.manage_win_either_half_capture_campaign._fsync_file") as mock_fsync_file:
+                commit_bundle(output_paths=paths, contents=bundle.files, force=False)
+                expected_calls = [call(p) for p in resolved_paths]
+                mock_fsync_file.assert_has_calls(expected_calls, any_order=True)
+                self.assertEqual(mock_fsync_file.call_count, 3)
+
+    def test_commit_bundle_uses_resolved_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            out_dir = root / "out"
+            bundle = self._build_bundle(root)
+            unresolved_paths = {
+                name: root / "missing-component" / ".." / "out" / filename
+                for name, filename in OUTPUT_FILENAMES.items()
+            }
+            commit_bundle(output_paths=unresolved_paths, contents=bundle.files, force=False)
+            for filename in OUTPUT_FILENAMES.values():
+                self.assertTrue((out_dir / filename).is_file())
+
     def test_transaction_restores_prior_bundle_on_install_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -543,10 +629,21 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             new_files = copy.deepcopy(bundle.files)
             new_files["summary"] = bundle.files["summary"] + b"/* new */"
 
-            with patch("os.replace", side_effect=[None, None, None, OSError("Install failure")]):
+            real_replace = os.replace
+            replace_call_count = 0
+
+            def replace_side_effect(src, dst):
+                nonlocal replace_call_count
+                if ".stage5b3-stage" in str(src):
+                    replace_call_count += 1
+                    if replace_call_count == 2:
+                        raise OSError("Install failure")
+                return real_replace(src, dst)
+
+            with patch("os.replace", side_effect=replace_side_effect):
                 with self.assertRaises(CaptureCampaignExportError) as ctx:
                     commit_bundle(output_paths=paths, contents=new_files, force=True)
-                self.assertIn("restored", str(ctx.exception))
+                self.assertIn("prior state was restored", str(ctx.exception))
 
             check_bundle(output_paths=paths, expected_contents=bundle.files)
 
@@ -575,6 +672,18 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
                     commit_bundle(output_paths=paths, contents=bundle.files, force=True)
                 self.assertIn("rollback was incomplete", str(ctx.exception))
 
+    def test_fsync_function_does_not_swallow_os_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            if os.name == "nt":
+                with patch("ctypes.windll.kernel32.FlushFileBuffers", return_value=0):
+                    with self.assertRaises(OSError):
+                        _fsync_dir(root)
+            else:
+                with patch("os.fsync", side_effect=OSError("fsync failure")):
+                    with self.assertRaises(OSError):
+                        _fsync_dir(root)
+
     def test_directory_fsync_is_attempted_after_success(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -586,7 +695,7 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             }
             with patch("scripts.manage_win_either_half_capture_campaign._fsync_dir") as mock_fsync:
                 commit_bundle(output_paths=paths, contents=bundle.files, force=False)
-                mock_fsync.assert_called_with(output_dir)
+                mock_fsync.assert_called_with(output_dir.resolve())
 
     def test_cli_requires_campaign_target_arguments(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

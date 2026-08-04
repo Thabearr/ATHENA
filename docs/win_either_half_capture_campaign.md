@@ -119,6 +119,10 @@ Repository output policy:
 - other locations inside the repository are rejected;
 - symlinked outputs and symlinked parent directory components are forbidden.
 
+Successful generation requires staged-file, installed-file, and output-directory
+fsync. Any durability failure fails closed; an incomplete rollback is reported
+explicitly rather than being described as restored.
+
 The task file is the immutable schedule. It contains no odds and no completed
 attempt result. A permitted manual workflow or future reviewed provider adapter
 may later use the task identifiers when creating Stage 5B2 attempt and quote
