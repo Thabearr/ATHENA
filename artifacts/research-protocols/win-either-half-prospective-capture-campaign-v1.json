@@ -1,0 +1,121 @@
+{
+  "schema_version": 1,
+  "dataset_name": "win-either-half-prospective-capture-campaign-protocol-v1",
+  "upstream_stage_5b2": {
+    "dataset_name": "win-either-half-prospective-replay-protocol-v1",
+    "candidate_offsets_seconds": [
+      86400,
+      21600,
+      10800,
+      3600,
+      1800,
+      900
+    ],
+    "attempt_window_seconds": 300,
+    "expected_attempts_per_fixture": 12,
+    "minimum_fixtures_for_interpretation": 100,
+    "selected_offset_seconds": null,
+    "selection_authorized": false
+  },
+  "source_qualification_contract": {
+    "accepted_prospective_replay_statuses": [
+      "QUALIFIED_FOR_HISTORICAL_RESEARCH",
+      "QUALIFIED_FOR_PROSPECTIVE_REPLAY_ONLY"
+    ],
+    "prospective_validation_required": true,
+    "production_approval_authorized": false,
+    "both_markets_must_remain_disabled": true
+  },
+  "fixture_contract": {
+    "schema_version": 1,
+    "required_fields": [
+      "fixture_identifier",
+      "kickoff"
+    ],
+    "fixture_identifiers_unique": true,
+    "kickoff_timezone": "UTC",
+    "anchor_must_not_follow_first_window_open": true
+  },
+  "task_contract": {
+    "task_state": "PLANNED",
+    "markets": [
+      "HOME_WIN_EITHER_HALF",
+      "AWAY_WIN_EITHER_HALF"
+    ],
+    "line": null,
+    "candidate_offsets_seconds": [
+      86400,
+      21600,
+      10800,
+      3600,
+      1800,
+      900
+    ],
+    "capture_window_seconds_before_and_after_scheduled_at": 300,
+    "expected_attempt_results": [
+      "QUOTES_CAPTURED",
+      "MARKET_UNAVAILABLE",
+      "FIXTURE_UNAVAILABLE",
+      "SOURCE_UNAVAILABLE",
+      "CAPTURE_ERROR"
+    ],
+    "expected_quote_outcomes": [
+      "YES",
+      "NO"
+    ],
+    "tasks_per_fixture": 12,
+    "deterministic_task_ids": true,
+    "no_wall_clock_time_used": true
+  },
+  "output_contract": {
+    "tasks_jsonl": "capture-campaign-tasks-v1.jsonl",
+    "summary_json": "capture-campaign-summary-v1.json",
+    "manifest_json": "capture-campaign-manifest-v1.json",
+    "all_outputs_ignored": true,
+    "transactional_write_required": true,
+    "selected_offset_seconds": null,
+    "selection_authorized": false,
+    "production_approval_authorized": false
+  },
+  "forbidden_fields": [
+    "acca_selection",
+    "away_goals",
+    "bet",
+    "bet_decision",
+    "bookmaker_odds",
+    "calibrated_probability",
+    "decimal_odds",
+    "decision_label",
+    "edge",
+    "edge_pp",
+    "expected_value",
+    "fair_odds",
+    "full_time_away_goals",
+    "full_time_home_goals",
+    "half_time_away_goals",
+    "half_time_home_goals",
+    "home_goals",
+    "kelly",
+    "kelly_stake",
+    "label",
+    "model_probability",
+    "profit",
+    "profitability",
+    "settled_outcome",
+    "stake",
+    "target",
+    "target_value"
+  ],
+  "safety": {
+    "network_requests": false,
+    "scraping": false,
+    "browser_automation": false,
+    "credential_use": false,
+    "odds_collection": false,
+    "provider_qualification": false,
+    "offset_selection": false,
+    "market_activation": false,
+    "bet_decision": false
+  },
+  "no_production_approval": true
+}
