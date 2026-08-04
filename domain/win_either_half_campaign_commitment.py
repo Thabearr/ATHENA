@@ -2,20 +2,26 @@
 
 This module provides deterministic validation and construction of Stage 5B4 campaign
 commitment declarations. A Stage 5B4 declaration pre-registers a Stage 5B3 capture
-campaign schedule before the earliest capture window opens, creating an immutable
-public commitment baseline for prospective timing qualification in PR workflows.
-It contains no odds, selects no offset, enables no market, and authorizes no bet.
+campaign schedule before the earliest capture window opens.
+
+A declaration alone is a tracked Git artifact with status
+TRACKED_DECLARATION_PENDING_GITHUB_DEADLINE_CHECK. It is not a completed, frozen,
+or qualified public commitment until the GitHub Actions deadline verification check
+succeeds no later than commitment_deadline_at.
+
+Stage 5B4 contains no odds, selects no offset, enables no market, and authorizes no bet.
 """
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
 import re
-from typing import Any, Mapping, Sequence
+from typing import Any
 
 from domain.markets import MARKET_REGISTRY, MarketId
 from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
@@ -36,11 +42,15 @@ from domain.win_either_half_capture_campaign import (
 
 
 SCHEMA_VERSION = 1
-DATASET_NAME = "win-either-half-campaign-commitment-v1"
 PROTOCOL_DATASET_NAME = "win-either-half-campaign-commitment-protocol-v1"
-ATTESTATION_DATASET_NAME = "win-either-half-campaign-commitment-attestation-v1"
-DECLARATION_DATASET_NAME = "win-either-half-campaign-commitment-declaration-v1"
-DECLARATION_STATUS = "FROZEN_PROSPECTIVE_CAMPAIGN_COMMITTED"
+DECLARATION_DATASET_NAME = "win-either-half-campaign-commitment-v1"
+DATASET_NAME = DECLARATION_DATASET_NAME
+ATTESTATION_DATASET_NAME = (
+    "win-either-half-campaign-commitment-deadline-attestation-v1"
+)
+DECLARATION_STATUS = "TRACKED_DECLARATION_PENDING_GITHUB_DEADLINE_CHECK"
+PROSPECTIVE_CLAIM_AUTHORIZED = False
+EVIDENCE_COUNTING_AUTHORIZED = False
 
 DEFAULT_PROTOCOL_PATH = (
     Path(__file__).resolve().parents[1]
@@ -208,10 +218,14 @@ NO_PRODUCTION_APPROVAL_STATEMENT = (
     "market, and authorizes no bet."
 )
 
-STAGE_5B3_NO_PRODUCTION_APPROVAL_STATEMENT = (
+STAGE_5B3_SUMMARY_NO_PRODUCTION_APPROVAL_STATEMENT = (
     "Stage 5B3 creates an unfrozen local capture schedule only. It is not "
     "trusted proof of pre-registration. It collects no odds, selects no "
     "offset, enables no market, and issues no bet."
+)
+
+STAGE_5B3_MANIFEST_NO_PRODUCTION_APPROVAL_STATEMENT = (
+    "Stage 5B3 is scheduling evidence only."
 )
 
 GENERATED_SAFETY_CONTRACT: dict[str, bool] = {
@@ -259,8 +273,8 @@ FORBIDDEN_FIELDS = frozenset(
         "bet_decision",
         "bookmaker_odds",
         "calibrated_probability",
-        "decision_label",
         "decimal_odds",
+        "decision_label",
         "edge",
         "edge_pp",
         "expected_value",
@@ -288,6 +302,36 @@ class CampaignCommitmentError(ValueError):
     """Raised when commitment contract or validation fails closed."""
 
 
+def _assert_str(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise CampaignCommitmentError(f"{label} must be a non-empty string")
+    return value
+
+
+def _assert_int(value: Any, label: str) -> int:
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise CampaignCommitmentError(f"{label} must be a strict integer, not bool")
+    return value
+
+
+def _walk_mapping_keys(value: Any) -> Iterable[str]:
+    if isinstance(value, Mapping):
+        for key, child in value.items():
+            yield str(key).strip().lower()
+            yield from _walk_mapping_keys(child)
+    elif isinstance(value, (list, tuple, set)):
+        for child in value:
+            yield from _walk_mapping_keys(child)
+
+
+def assert_no_forbidden_fields(data: Any, context: str = "") -> None:
+    for key in _walk_mapping_keys(data):
+        if key in FORBIDDEN_FIELDS:
+            raise CampaignCommitmentError(
+                f"Forbidden field '{key}' detected in {context or 'payload'}"
+            )
+
+
 @dataclass(frozen=True)
 class FileIdentity:
     relative_name: str
@@ -298,16 +342,17 @@ class FileIdentity:
     def __post_init__(self) -> None:
         _assert_str(self.relative_name, "FileIdentity.relative_name")
         validate_sha256(self.sha256, "FileIdentity.sha256")
-        if not isinstance(self.byte_size, int) or self.byte_size < 0:
+        _assert_int(self.byte_size, "FileIdentity.byte_size")
+        if self.byte_size < 0:
             raise CampaignCommitmentError(
                 "FileIdentity.byte_size must be a non-negative integer"
             )
-        if self.rows is not None and (
-            not isinstance(self.rows, int) or self.rows < 0
-        ):
-            raise CampaignCommitmentError(
-                "FileIdentity.rows must be a non-negative integer or None"
-            )
+        if self.rows is not None:
+            _assert_int(self.rows, "FileIdentity.rows")
+            if self.rows < 0:
+                raise CampaignCommitmentError(
+                    "FileIdentity.rows must be a non-negative integer"
+                )
 
     def to_mapping(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -449,6 +494,7 @@ class CommitmentDeclaration:
     no_production_approval: str = NO_PRODUCTION_APPROVAL_STATEMENT
 
     def __post_init__(self) -> None:
+        _assert_int(self.schema_version, "schema_version")
         if self.schema_version != SCHEMA_VERSION:
             raise CampaignCommitmentError(
                 f"schema_version must be {SCHEMA_VERSION}, got {self.schema_version}"
@@ -485,11 +531,14 @@ class CommitmentDeclaration:
             raise CampaignCommitmentError(
                 f"Invalid prospective_replay_status: {self.prospective_replay_status}"
             )
-        if not isinstance(self.fixture_count, int) or self.fixture_count <= 0:
+        _assert_int(self.fixture_count, "fixture_count")
+        if self.fixture_count <= 0:
             raise CampaignCommitmentError("fixture_count must be a positive integer")
-        if not isinstance(self.task_count, int) or self.task_count != self.fixture_count * 12:
+        _assert_int(self.task_count, "task_count")
+        if self.task_count != self.fixture_count * EXPECTED_TASKS_PER_FIXTURE:
             raise CampaignCommitmentError(
-                f"task_count must equal fixture_count * 12 ({self.fixture_count * 12}), got {self.task_count}"
+                f"task_count must equal fixture_count * {EXPECTED_TASKS_PER_FIXTURE} "
+                f"({self.fixture_count * EXPECTED_TASKS_PER_FIXTURE}), got {self.task_count}"
             )
         validate_git_sha(self.generator_git_sha, "generator_git_sha")
         if self.timing_authority != TIMING_AUTHORITY_CONTRACT:
@@ -584,18 +633,6 @@ class DeadlineValidationResult:
             "prospective_timing_qualified": self.prospective_timing_qualified,
             "prospective_claim_authorized": self.prospective_claim_authorized,
         }
-
-
-def _assert_str(value: Any, label: str) -> str:
-    if not isinstance(value, str) or not value.strip():
-        raise CampaignCommitmentError(f"{label} must be a non-empty string")
-    return value
-
-
-def _assert_int(value: Any, label: str) -> int:
-    if not isinstance(value, int) or isinstance(value, bool):
-        raise CampaignCommitmentError(f"{label} must be an integer")
-    return value
 
 
 def assert_market_safety() -> None:
@@ -744,6 +781,8 @@ def validate_sha256(value: Any, label: str) -> str:
 def parse_utc(value: Any, label: str) -> datetime:
     if not isinstance(value, str):
         raise CampaignCommitmentError(f"{label} must be a string timestamp")
+    if value != value.strip() or not value:
+        raise CampaignCommitmentError(f"{label} must not contain surrounding whitespace")
     if not (value.endswith("Z") or "+00:00" in value):
         raise CampaignCommitmentError(f"{label} must be formatted as UTC ISO-8601")
     iso_val = value.replace("Z", "+00:00")
@@ -753,14 +792,17 @@ def parse_utc(value: Any, label: str) -> datetime:
         raise CampaignCommitmentError(f"{label} invalid ISO timestamp: {value}") from error
     if dt.tzinfo is None or dt.utcoffset() != timezone.utc.utcoffset(None):
         raise CampaignCommitmentError(f"{label} must have UTC timezone")
-    return dt
+    return dt.astimezone(timezone.utc)
 
 
-def serialize_utc(dt: datetime) -> str:
-    if dt.tzinfo is None or dt.utcoffset() != timezone.utc.utcoffset(None):
-        raise CampaignCommitmentError("Timestamp must have UTC timezone")
-    formatted = dt.astimezone(timezone.utc).isoformat(timespec="seconds")
-    return formatted.replace("+00:00", "Z")
+def serialize_utc(value: datetime) -> str:
+    if not isinstance(value, datetime):
+        raise CampaignCommitmentError("Timestamp must be datetime")
+    if value.tzinfo is None or value.utcoffset() != timezone.utc.utcoffset(None):
+        raise CampaignCommitmentError("Timestamp must be timezone-aware UTC")
+    normalized = value.astimezone(timezone.utc)
+    timespec = "microseconds" if normalized.microsecond else "seconds"
+    return normalized.isoformat(timespec=timespec).replace("+00:00", "Z")
 
 
 def canonical_json_bytes(value: Any, *, pretty: bool) -> bytes:
@@ -780,21 +822,6 @@ def sha256_bytes(content: bytes) -> str:
     return hashlib.sha256(content).hexdigest()
 
 
-def assert_no_forbidden_fields(data: Any, context: str = "") -> None:
-    if isinstance(data, Mapping):
-        for k, v in data.items():
-            if k in ("safety", "forbidden_fields"):
-                continue
-            if k in FORBIDDEN_FIELDS:
-                raise CampaignCommitmentError(
-                    f"Forbidden field '{k}' detected in {context}"
-                )
-            assert_no_forbidden_fields(v, f"{context}.{k}" if context else str(k))
-    elif isinstance(data, list):
-        for i, item in enumerate(data):
-            assert_no_forbidden_fields(item, f"{context}[{i}]")
-
-
 def validate_protocol_contract(
     payload: Mapping[str, Any],
     raw_bytes: bytes,
@@ -806,7 +833,10 @@ def validate_protocol_contract(
 
     if payload.get("safety") != PROTOCOL_SAFETY_CONTRACT:
         raise CampaignCommitmentError("Stage 5B4 protocol safety contract drifted")
-    assert_no_forbidden_fields(payload, "Stage 5B4 protocol")
+    protocol_to_scan = dict(payload)
+    protocol_to_scan.pop("safety", None)
+    protocol_to_scan.pop("forbidden_fields", None)
+    assert_no_forbidden_fields(protocol_to_scan, "Stage 5B4 protocol")
 
     expected = build_expected_protocol_contract()
     if payload != expected:
@@ -848,6 +878,19 @@ def validate_stage_5b3_bundle(
 ) -> ValidatedStage5B3Bundle:
     assert_market_safety()
 
+    if tasks_path.name != STAGE_5B3_TASKS_FILENAME:
+        raise CampaignCommitmentError(
+            f"Tasks filename must be {STAGE_5B3_TASKS_FILENAME}, got {tasks_path.name}"
+        )
+    if summary_path.name != STAGE_5B3_SUMMARY_FILENAME:
+        raise CampaignCommitmentError(
+            f"Summary filename must be {STAGE_5B3_SUMMARY_FILENAME}, got {summary_path.name}"
+        )
+    if manifest_path.name != STAGE_5B3_MANIFEST_FILENAME:
+        raise CampaignCommitmentError(
+            f"Manifest filename must be {STAGE_5B3_MANIFEST_FILENAME}, got {manifest_path.name}"
+        )
+
     for p, label in [
         (tasks_path, "Tasks file"),
         (summary_path, "Summary file"),
@@ -874,20 +917,23 @@ def validate_stage_5b3_bundle(
         raise CampaignCommitmentError("Summary and Manifest must be JSON objects")
 
     assert_no_forbidden_fields(summary, "Stage 5B3 summary")
-    assert_no_forbidden_fields(manifest, "Stage 5B3 manifest")
 
-    if summary.get("safety") is not None:
-        assert_no_forbidden_fields(summary.get("safety"), "Stage 5B3 summary safety")
     if manifest.get("safety") != STAGE_5B3_SAFETY_CONTRACT:
         raise CampaignCommitmentError("Stage 5B3 manifest safety contract drifted")
+    manifest_to_scan = dict(manifest)
+    manifest_to_scan.pop("safety", None)
+    assert_no_forbidden_fields(manifest_to_scan, "Stage 5B3 manifest")
 
-    # Parse and validate task rows
-    task_lines = [line for line in tasks_raw.splitlines() if line.strip()]
-    if not task_lines:
+    # Parse and validate task rows strictly: reject blank lines
+    raw_task_lines = tasks_raw.split(b"\n")
+    if raw_task_lines and raw_task_lines[-1] == b"":
+        raw_task_lines.pop()
+    if not raw_task_lines:
         raise CampaignCommitmentError("Stage 5B3 tasks file is empty")
 
     task_rows: list[dict[str, Any]] = []
     seen_task_ids: set[str] = set()
+    seen_task_keys: set[tuple[str, str, int]] = set()
     fixture_ids: set[str] = set()
     fixture_tasks: dict[str, list[dict[str, Any]]] = {}
     scheduled_dts: list[datetime] = []
@@ -897,7 +943,10 @@ def validate_stage_5b3_bundle(
     campaign_id: str | None = None
     target: CampaignTarget | None = None
 
-    for idx, line in enumerate(task_lines, start=1):
+    for idx, line in enumerate(raw_task_lines, start=1):
+        if not line or not line.strip():
+            raise CampaignCommitmentError(f"Task line {idx} is blank")
+
         try:
             row = json.loads(line.decode("utf-8"))
         except (UnicodeDecodeError, json.JSONDecodeError) as error:
@@ -911,7 +960,7 @@ def validate_stage_5b3_bundle(
 
         assert_no_forbidden_fields(row, f"Task line {idx}")
 
-        if row.get("schema_version") != 1:
+        if _assert_int(row.get("schema_version"), f"Task line {idx} schema_version") != 1:
             raise CampaignCommitmentError(f"Task line {idx} schema_version must be 1")
         if row.get("line") is not None:
             raise CampaignCommitmentError(f"Task line {idx} line must be null")
@@ -942,9 +991,19 @@ def validate_stage_5b3_bundle(
         if m_id not in {"HOME_WIN_EITHER_HALF", "AWAY_WIN_EITHER_HALF"}:
             raise CampaignCommitmentError(f"Task line {idx} invalid market_id: {m_id}")
 
-        offset = row.get("offset_seconds_before_kickoff")
+        offset = _assert_int(
+            row.get("offset_seconds_before_kickoff"),
+            f"Task line {idx} offset_seconds_before_kickoff",
+        )
         if offset not in FROZEN_CANDIDATE_OFFSETS_SECONDS:
             raise CampaignCommitmentError(f"Task line {idx} invalid offset: {offset}")
+
+        task_key = (f_id, m_id, offset)
+        if task_key in seen_task_keys:
+            raise CampaignCommitmentError(
+                f"Duplicate task for fixture {f_id}, market {m_id}, offset {offset} at line {idx}"
+            )
+        seen_task_keys.add(task_key)
 
         sched_dt = parse_utc(row.get("scheduled_at"), f"Task line {idx} scheduled_at")
         open_dt = parse_utc(row.get("capture_window_opens_at"), f"Task line {idx} capture_window_opens_at")
@@ -1002,7 +1061,7 @@ def validate_stage_5b3_bundle(
     # Validate Summary schema and fields
     if set(summary.keys()) != EXPECTED_STAGE_5B3_SUMMARY_KEYS:
         raise CampaignCommitmentError("Summary keys differ from exact Stage 5B3 schema")
-    if summary.get("schema_version") != 1:
+    if _assert_int(summary.get("schema_version"), "Summary schema_version") != 1:
         raise CampaignCommitmentError("Summary schema_version must be 1")
     if summary.get("dataset_name") != "win-either-half-capture-campaign-summary-v1":
         raise CampaignCommitmentError("Summary dataset_name invalid")
@@ -1023,17 +1082,21 @@ def validate_stage_5b3_bundle(
 
     parse_utc(summary.get("anchor_at"), "summary anchor_at")
 
-    if summary.get("fixture_count") != len(fixture_ids):
+    if _assert_int(summary.get("fixture_count"), "Summary fixture_count") != len(fixture_ids):
         raise CampaignCommitmentError("Summary fixture_count mismatch")
-    if summary.get("task_count") != len(task_rows):
+    if _assert_int(summary.get("task_count"), "Summary task_count") != len(task_rows):
         raise CampaignCommitmentError("Summary task_count mismatch")
-    if summary.get("expected_tasks_per_fixture") != EXPECTED_TASKS_PER_FIXTURE:
+    if _assert_int(summary.get("expected_tasks_per_fixture"), "Summary expected_tasks_per_fixture") != EXPECTED_TASKS_PER_FIXTURE:
         raise CampaignCommitmentError("Summary expected_tasks_per_fixture mismatch")
-    if summary.get("expected_task_count") != len(fixture_ids) * EXPECTED_TASKS_PER_FIXTURE:
+    if _assert_int(summary.get("expected_task_count"), "Summary expected_task_count") != len(fixture_ids) * EXPECTED_TASKS_PER_FIXTURE:
         raise CampaignCommitmentError("Summary expected_task_count mismatch")
-    if summary.get("candidate_offsets_seconds") != list(FROZEN_CANDIDATE_OFFSETS_SECONDS):
+    
+    summary_candidate_offsets = summary.get("candidate_offsets_seconds")
+    if not isinstance(summary_candidate_offsets, list) or [
+        _assert_int(off, "summary candidate_offset") for off in summary_candidate_offsets
+    ] != list(FROZEN_CANDIDATE_OFFSETS_SECONDS):
         raise CampaignCommitmentError("Summary candidate_offsets_seconds mismatch")
-    if summary.get("attempt_window_seconds") != ATTEMPT_WINDOW_SECONDS:
+    if _assert_int(summary.get("attempt_window_seconds"), "Summary attempt_window_seconds") != ATTEMPT_WINDOW_SECONDS:
         raise CampaignCommitmentError("Summary attempt_window_seconds mismatch")
     if summary.get("permitted_markets") != [m.value for m in PERMITTED_MARKETS]:
         raise CampaignCommitmentError("Summary permitted_markets mismatch")
@@ -1051,7 +1114,7 @@ def validate_stage_5b3_bundle(
     if summary.get("latest_window_closes_at") != serialize_utc(max(close_dts)):
         raise CampaignCommitmentError("Summary latest_window_closes_at mismatch")
 
-    if summary.get("minimum_fixtures_for_interpretation") != MINIMUM_FIXTURES_FOR_INTERPRETATION:
+    if _assert_int(summary.get("minimum_fixtures_for_interpretation"), "Summary minimum_fixtures_for_interpretation") != MINIMUM_FIXTURES_FOR_INTERPRETATION:
         raise CampaignCommitmentError("Summary minimum_fixtures_for_interpretation mismatch")
     expected_eligible = bool(len(fixture_ids) >= MINIMUM_FIXTURES_FOR_INTERPRETATION)
     if summary.get("interpretation_eligible") is not expected_eligible:
@@ -1079,12 +1142,13 @@ def validate_stage_5b3_bundle(
     if not isinstance(m_statuses, dict) or m_statuses != {"HOME_WIN_EITHER_HALF": "DISABLED", "AWAY_WIN_EITHER_HALF": "DISABLED"}:
         raise CampaignCommitmentError("Summary market_statuses must both be DISABLED")
 
-    _assert_str(summary.get("no_production_approval"), "Summary no_production_approval")
+    if summary.get("no_production_approval") != STAGE_5B3_SUMMARY_NO_PRODUCTION_APPROVAL_STATEMENT:
+        raise CampaignCommitmentError("Summary no_production_approval mismatch")
 
     # Validate Manifest schema and fields
     if set(manifest.keys()) != EXPECTED_STAGE_5B3_MANIFEST_KEYS:
         raise CampaignCommitmentError("Manifest keys differ from exact Stage 5B3 schema")
-    if manifest.get("schema_version") != 1:
+    if _assert_int(manifest.get("schema_version"), "Manifest schema_version") != 1:
         raise CampaignCommitmentError("Manifest schema_version must be 1")
     if manifest.get("dataset_name") != "win-either-half-capture-campaign-manifest-v1":
         raise CampaignCommitmentError("Manifest dataset_name invalid")
@@ -1103,13 +1167,17 @@ def validate_stage_5b3_bundle(
         raise CampaignCommitmentError("Manifest prospective_replay_status mismatch")
     if manifest.get("anchor_at") != summary.get("anchor_at"):
         raise CampaignCommitmentError("Manifest anchor_at mismatch")
-    if manifest.get("candidate_offsets_seconds") != list(FROZEN_CANDIDATE_OFFSETS_SECONDS):
+    
+    manifest_candidate_offsets = manifest.get("candidate_offsets_seconds")
+    if not isinstance(manifest_candidate_offsets, list) or [
+        _assert_int(off, "manifest candidate_offset") for off in manifest_candidate_offsets
+    ] != list(FROZEN_CANDIDATE_OFFSETS_SECONDS):
         raise CampaignCommitmentError("Manifest candidate_offsets_seconds mismatch")
-    if manifest.get("attempt_window_seconds") != ATTEMPT_WINDOW_SECONDS:
+    if _assert_int(manifest.get("attempt_window_seconds"), "Manifest attempt_window_seconds") != ATTEMPT_WINDOW_SECONDS:
         raise CampaignCommitmentError("Manifest attempt_window_seconds mismatch")
-    if manifest.get("expected_tasks_per_fixture") != EXPECTED_TASKS_PER_FIXTURE:
+    if _assert_int(manifest.get("expected_tasks_per_fixture"), "Manifest expected_tasks_per_fixture") != EXPECTED_TASKS_PER_FIXTURE:
         raise CampaignCommitmentError("Manifest expected_tasks_per_fixture mismatch")
-    if manifest.get("minimum_fixtures_for_interpretation") != MINIMUM_FIXTURES_FOR_INTERPRETATION:
+    if _assert_int(manifest.get("minimum_fixtures_for_interpretation"), "Manifest minimum_fixtures_for_interpretation") != MINIMUM_FIXTURES_FOR_INTERPRETATION:
         raise CampaignCommitmentError("Manifest minimum_fixtures_for_interpretation mismatch")
     if manifest.get("interpretation_eligible") is not expected_eligible:
         raise CampaignCommitmentError("Manifest interpretation_eligible mismatch")
@@ -1184,9 +1252,34 @@ def validate_stage_5b3_bundle(
     }:
         raise CampaignCommitmentError("Manifest inputs object invalid")
 
+    for inp_key in ["source_qualification", "stage_5b2_protocol", "campaign_protocol"]:
+        inp_dict = m_inputs[inp_key]
+        if not isinstance(inp_dict, dict) or set(inp_dict.keys()) != {"relative_name", "byte_size", "sha256"}:
+            raise CampaignCommitmentError(f"Manifest input {inp_key} schema invalid")
+        _assert_str(inp_dict["relative_name"], f"Manifest input {inp_key} relative_name")
+        _assert_int(inp_dict["byte_size"], f"Manifest input {inp_key} byte_size")
+        validate_sha256(inp_dict["sha256"], f"Manifest input {inp_key} sha256")
+
+    fix_dict = m_inputs["fixtures"]
+    if not isinstance(fix_dict, dict) or set(fix_dict.keys()) != {"relative_name", "byte_size", "sha256", "rows"}:
+        raise CampaignCommitmentError("Manifest input fixtures schema invalid")
+    _assert_str(fix_dict["relative_name"], "Manifest input fixtures relative_name")
+    _assert_int(fix_dict["byte_size"], "Manifest input fixtures byte_size")
+    validate_sha256(fix_dict["sha256"], "Manifest input fixtures sha256")
+    _assert_int(fix_dict["rows"], "Manifest input fixtures rows")
+
     m_outputs = manifest.get("outputs")
     if not isinstance(m_outputs, dict) or set(m_outputs.keys()) != {"tasks", "summary"}:
         raise CampaignCommitmentError("Manifest outputs keys invalid")
+
+    for out_key in ["tasks", "summary"]:
+        out_dict = m_outputs[out_key]
+        if not isinstance(out_dict, dict) or set(out_dict.keys()) != {"relative_name", "byte_size", "sha256", "rows"}:
+            raise CampaignCommitmentError(f"Manifest output {out_key} schema invalid")
+        _assert_str(out_dict["relative_name"], f"Manifest output {out_key} relative_name")
+        _assert_int(out_dict["byte_size"], f"Manifest output {out_key} byte_size")
+        validate_sha256(out_dict["sha256"], f"Manifest output {out_key} sha256")
+        _assert_int(out_dict["rows"], f"Manifest output {out_key} rows")
 
     t_out = m_outputs["tasks"]
     if (
@@ -1207,15 +1300,22 @@ def validate_stage_5b3_bundle(
         raise CampaignCommitmentError("Manifest summary output identity mismatch")
 
     m_summary_acc = manifest.get("summary_accounting")
-    if not isinstance(m_summary_acc, dict) or m_summary_acc != {
-        "fixture_count": len(fixture_ids),
-        "task_count": len(task_rows),
-        "expected_task_count": len(fixture_ids) * EXPECTED_TASKS_PER_FIXTURE,
-        "interpretation_eligible": expected_eligible,
+    if not isinstance(m_summary_acc, dict) or set(m_summary_acc.keys()) != {
+        "fixture_count",
+        "task_count",
+        "expected_task_count",
+        "interpretation_eligible",
     }:
+        raise CampaignCommitmentError("Manifest summary_accounting schema invalid")
+    if (
+        _assert_int(m_summary_acc.get("fixture_count"), "summary_accounting fixture_count") != len(fixture_ids)
+        or _assert_int(m_summary_acc.get("task_count"), "summary_accounting task_count") != len(task_rows)
+        or _assert_int(m_summary_acc.get("expected_task_count"), "summary_accounting expected_task_count") != len(fixture_ids) * EXPECTED_TASKS_PER_FIXTURE
+        or m_summary_acc.get("interpretation_eligible") is not expected_eligible
+    ):
         raise CampaignCommitmentError("Manifest summary_accounting mismatch")
 
-    if manifest.get("no_production_approval") != "Stage 5B3 is scheduling evidence only.":
+    if manifest.get("no_production_approval") != STAGE_5B3_MANIFEST_NO_PRODUCTION_APPROVAL_STATEMENT:
         raise CampaignCommitmentError("Manifest no_production_approval mismatch")
 
     # Verify logical manifest hash
@@ -1348,9 +1448,29 @@ def validate_declaration_mapping(
         raise CampaignCommitmentError(f"Declaration campaign_id invalid: {c_id}")
 
     if expected_path is not None:
+        curr = expected_path.absolute()
+        while curr != curr.parent:
+            if curr.is_symlink():
+                raise CampaignCommitmentError(
+                    f"Declaration path contains forbidden symlink component: {curr}"
+                )
+            curr = curr.parent
+
         if expected_path.name != f"{c_id}.json":
             raise CampaignCommitmentError(
                 f"Declaration filename must be {c_id}.json, got {expected_path.name}"
+            )
+
+        posix_parts = expected_path.parts
+        is_direct_child = False
+        if expected_path.parent == COMMITMENT_ROOT:
+            is_direct_child = True
+        elif len(posix_parts) >= 4 and tuple(posix_parts[-4:-1]) == tuple(COMMITMENT_ROOT.parts):
+            is_direct_child = True
+
+        if not is_direct_child:
+            raise CampaignCommitmentError(
+                f"Declaration path must be direct child of {COMMITMENT_ROOT}, got {expected_path}"
             )
 
     if payload["campaign_commitment_status"] != DECLARATION_STATUS:
@@ -1413,7 +1533,9 @@ def validate_declaration_mapping(
         raise CampaignCommitmentError("source_bundle.tasks schema invalid")
     if tasks_sb.get("relative_name") != STAGE_5B3_TASKS_FILENAME:
         raise CampaignCommitmentError("source_bundle.tasks filename mismatch")
-    if tasks_sb.get("rows") != t_count:
+    _assert_int(tasks_sb["byte_size"], "source_bundle.tasks.byte_size")
+    validate_sha256(tasks_sb["sha256"], "source_bundle.tasks.sha256")
+    if _assert_int(tasks_sb["rows"], "source_bundle.tasks.rows") != t_count:
         raise CampaignCommitmentError("source_bundle.tasks rows mismatch")
 
     summary_sb = sb_map["summary"]
@@ -1421,7 +1543,9 @@ def validate_declaration_mapping(
         raise CampaignCommitmentError("source_bundle.summary schema invalid")
     if summary_sb.get("relative_name") != STAGE_5B3_SUMMARY_FILENAME:
         raise CampaignCommitmentError("source_bundle.summary filename mismatch")
-    if summary_sb.get("rows") != 1:
+    _assert_int(summary_sb["byte_size"], "source_bundle.summary.byte_size")
+    validate_sha256(summary_sb["sha256"], "source_bundle.summary.sha256")
+    if _assert_int(summary_sb["rows"], "source_bundle.summary.rows") != 1:
         raise CampaignCommitmentError("source_bundle.summary rows mismatch")
 
     manifest_sb = sb_map["manifest"]
@@ -1429,7 +1553,9 @@ def validate_declaration_mapping(
         raise CampaignCommitmentError("source_bundle.manifest schema invalid")
     if manifest_sb.get("relative_name") != STAGE_5B3_MANIFEST_FILENAME:
         raise CampaignCommitmentError("source_bundle.manifest filename mismatch")
-    if manifest_sb.get("rows") != 1:
+    _assert_int(manifest_sb["byte_size"], "source_bundle.manifest.byte_size")
+    validate_sha256(manifest_sb["sha256"], "source_bundle.manifest.sha256")
+    if _assert_int(manifest_sb["rows"], "source_bundle.manifest.rows") != 1:
         raise CampaignCommitmentError("source_bundle.manifest rows mismatch")
 
     source_bundle = {
@@ -1451,12 +1577,16 @@ def validate_declaration_mapping(
         raise CampaignCommitmentError("upstream_protocols.stage_5b3_protocol schema invalid")
     if p5b3_up.get("relative_name") != DEFAULT_STAGE_5B3_PROTOCOL_PATH.name:
         raise CampaignCommitmentError("upstream_protocols.stage_5b3_protocol relative_name mismatch")
+    _assert_int(p5b3_up["byte_size"], "upstream_protocols.stage_5b3_protocol.byte_size")
+    validate_sha256(p5b3_up["sha256"], "upstream_protocols.stage_5b3_protocol.sha256")
 
     p5b4_up = up_map["stage_5b4_protocol"]
     if not isinstance(p5b4_up, Mapping) or set(p5b4_up.keys()) != {"relative_name", "byte_size", "sha256"}:
         raise CampaignCommitmentError("upstream_protocols.stage_5b4_protocol schema invalid")
     if p5b4_up.get("relative_name") != DEFAULT_PROTOCOL_PATH.name:
         raise CampaignCommitmentError("upstream_protocols.stage_5b4_protocol relative_name mismatch")
+    _assert_int(p5b4_up["byte_size"], "upstream_protocols.stage_5b4_protocol.byte_size")
+    validate_sha256(p5b4_up["sha256"], "upstream_protocols.stage_5b4_protocol.sha256")
 
     upstream_protocols = {
         k: FileIdentity(
@@ -1522,6 +1652,8 @@ def validate_deadline(
     server_observed_at: datetime,
     commitment_sha256: str | None = None,
 ) -> DeadlineValidationResult:
+    if not isinstance(server_observed_at, datetime):
+        raise CampaignCommitmentError("server_observed_at must be datetime")
     if server_observed_at.tzinfo is None or server_observed_at.utcoffset() != timezone.utc.utcoffset(None):
         raise CampaignCommitmentError("server_observed_at must be timezone-aware UTC")
 

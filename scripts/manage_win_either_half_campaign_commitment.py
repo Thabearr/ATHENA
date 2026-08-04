@@ -111,45 +111,50 @@ def _assert_no_symlink_components(path: Path, label: str) -> Path:
 
 def _fsync_dir(path: Path) -> None:
     if os.name == "nt":
-        import ctypes
+        try:
+            import ctypes
 
-        FILE_WRITE_DATA = 2
-        FILE_READ_DATA = 1
-        FILE_SHARE_READ = 1
-        FILE_SHARE_WRITE = 2
-        FILE_SHARE_DELETE = 4
-        OPEN_EXISTING = 3
-        FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
-        handle = ctypes.windll.kernel32.CreateFileW(
-            str(path),
-            FILE_WRITE_DATA | FILE_READ_DATA,
-            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
-            None,
-            OPEN_EXISTING,
-            FILE_FLAG_BACKUP_SEMANTICS,
-            None,
-        )
-        if handle == -1 or handle == 0xFFFFFFFF:
-            raise OSError(f"CreateFileW failed for directory {path}")
-        try:
-            if not ctypes.windll.kernel32.FlushFileBuffers(handle):
-                raise OSError(f"FlushFileBuffers failed for directory {path}")
-        finally:
-            ctypes.windll.kernel32.CloseHandle(handle)
+            FILE_WRITE_DATA = 2
+            FILE_READ_DATA = 1
+            FILE_SHARE_READ = 1
+            FILE_SHARE_WRITE = 2
+            FILE_SHARE_DELETE = 4
+            OPEN_EXISTING = 3
+            FILE_FLAG_BACKUP_SEMANTICS = 0x02000000
+            handle = ctypes.windll.kernel32.CreateFileW(
+                str(path),
+                FILE_WRITE_DATA | FILE_READ_DATA,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                None,
+                OPEN_EXISTING,
+                FILE_FLAG_BACKUP_SEMANTICS,
+                None,
+            )
+            if handle != -1 and handle != 0xFFFFFFFF:
+                try:
+                    ctypes.windll.kernel32.FlushFileBuffers(handle)
+                finally:
+                    ctypes.windll.kernel32.CloseHandle(handle)
+        except Exception:
+            pass
     else:
-        flags = os.O_RDONLY
-        if hasattr(os, "O_DIRECTORY"):
-            flags |= os.O_DIRECTORY
-        fd = os.open(str(path), flags)
         try:
-            os.fsync(fd)
-        finally:
-            os.close(fd)
+            flags = os.O_RDONLY
+            if hasattr(os, "O_DIRECTORY"):
+                flags |= os.O_DIRECTORY
+            fd = os.open(str(path), flags)
+            try:
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+        except Exception:
+            pass
 
 
 def _fsync_file(path: Path) -> None:
     mode = "rb+" if os.name == "nt" else "rb"
     with path.open(mode) as handle:
+        handle.flush()
         os.fsync(handle.fileno())
 
 
@@ -173,7 +178,10 @@ def _is_git_tracked(path: Path, repo_root: Path) -> bool:
         )
         if res.returncode == 0:
             return True
-        if res.returncode == 1 and ("did not match any files" in (res.stderr or "") or "did not match any files" in (res.stdout or "")):
+        if res.returncode == 1 and (
+            "did not match any files" in (res.stderr or "")
+            or "did not match any files" in (res.stdout or "")
+        ):
             return False
         err_msg = (res.stderr or res.stdout or "").strip()[:240]
         raise CampaignCommitmentExportError(
@@ -229,6 +237,7 @@ def _write_file_atomically(
 
         if destination_backed_up and backup_path.exists():
             backup_path.unlink()
+            destination_backed_up = False
 
     except Exception as orig_error:
         cleanup_errors: list[str] = []
@@ -266,21 +275,16 @@ def _write_file_atomically(
             f"Atomic file write failed for {resolved_dest}: {orig_error}"
         ) from orig_error
     finally:
-        cleanup_in_finally: list[str] = []
         if temp_dir.exists():
             try:
                 shutil.rmtree(temp_dir)
-            except OSError as exc:
-                cleanup_in_finally.append(f"failed to clean temp_dir in finally: {exc}")
+            except OSError:
+                pass
         if backup_path.exists():
             try:
                 backup_path.unlink()
-            except OSError as exc:
-                cleanup_in_finally.append(f"failed to clean backup_path in finally: {exc}")
-        if cleanup_in_finally:
-            raise CampaignCommitmentExportError(
-                f"Cleanup failed during atomic write: {'; '.join(cleanup_in_finally)}"
-            )
+            except OSError:
+                pass
 
 
 def create_commitment(
@@ -764,7 +768,6 @@ def validate_git_diff(
         is_git_tracked_check=False,
     )
 
-    # Format Markdown summary table
     summary_lines = [
         "### Win Either Half Campaign Commitment Timing Qualification",
         "",

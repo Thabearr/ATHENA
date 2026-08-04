@@ -10,6 +10,8 @@ on:
       - 'artifacts/research-protocols/win-either-half-campaign-commitment-v1.json'
       - 'domain/win_either_half_campaign_commitment.py'
       - 'scripts/manage_win_either_half_campaign_commitment.py'
+      - 'docs/win_either_half_campaign_commitment.md'
+      - 'tests/test_win_either_half_campaign_commitment.py'
 
 permissions:
   contents: read
@@ -80,7 +82,7 @@ jobs:
 
             # Enforce separation-of-duties: if commitment files changed, verifier/tooling cannot change in same PR
             COMMITMENT_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- artifacts/research-commitments/win-either-half/)
-            TOOLING_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/workflows/validate-win-either-half-campaign-commitment.yml artifacts/research-protocols/win-either-half-campaign-commitment-v1.json domain/win_either_half_campaign_commitment.py scripts/manage_win_either_half_campaign_commitment.py)
+            TOOLING_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/workflows/validate-win-either-half-campaign-commitment.yml artifacts/research-protocols/win-either-half-campaign-commitment-v1.json domain/win_either_half_campaign_commitment.py scripts/manage_win_either_half_campaign_commitment.py docs/win_either_half_campaign_commitment.md tests/test_win_either_half_campaign_commitment.py)
 
             if [ -n "$COMMITMENT_CHANGES" ] && [ -n "$TOOLING_CHANGES" ]; then
               echo "error: Separation-of-duties violation. Campaign commitment declarations cannot edit Stage 5B4 verifier/workflow/protocol files in the same pull request." >&2
@@ -105,9 +107,9 @@ jobs:
           else
             echo "Base revision does not contain Stage 5B4 verifier (Bootstrap PR mode)."
 
-            # Fail unless zero declarations exist under commitment root
-            COMMITMENT_COUNT=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- artifacts/research-commitments/win-either-half/ | wc -l)
-            if [ "$COMMITMENT_COUNT" -ne 0 ]; then
+            # Fail if any declarations exist under commitment root in bootstrap PR
+            COMMITMENT_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- artifacts/research-commitments/win-either-half/)
+            if [ -n "$COMMITMENT_CHANGES" ]; then
               echo "error: Bootstrap PR cannot include real campaign declarations before base verifier is merged." >&2
               exit 1
             fi

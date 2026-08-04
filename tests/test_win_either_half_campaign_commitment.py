@@ -501,42 +501,43 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
     def test_declaration_changes_when_any_source_bundle_byte_changes(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            files = self._create_stage_5b3_bundle_files(Path(tmp))
+            tmp_p = Path(tmp)
+            b1_dir = tmp_p / "b1"
+            b1_dir.mkdir(parents=True, exist_ok=True)
+            files1 = self._create_stage_5b3_bundle_files(b1_dir)
             bundle1 = validate_stage_5b3_bundle(
-                tasks_path=files["tasks"],
-                summary_path=files["summary"],
-                manifest_path=files["manifest"],
+                tasks_path=files1["tasks"],
+                summary_path=files1["summary"],
+                manifest_path=files1["manifest"],
             )
             decl1 = build_commitment_declaration(
                 bundle=bundle1,
-                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
-                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
+                stage_5b3_protocol_raw=files1["stage_5b3_protocol"].read_bytes(),
+                commitment_protocol_raw=files1["commitment_protocol"].read_bytes(),
                 generator_git_sha="1" * 40,
             )
 
-            # Change summary field to modify source bundle bytes cleanly
-            summary = json.loads(files["summary"].read_text(encoding="utf-8"))
-            summary["no_production_approval"] += " Modified."
-            files["summary"].write_text(json.dumps(summary), encoding="utf-8")
-            manifest = json.loads(files["manifest"].read_text(encoding="utf-8"))
-            manifest["outputs"]["summary"]["byte_size"] = len(files["summary"].read_bytes())
-            manifest["outputs"]["summary"]["sha256"] = sha256_bytes(files["summary"].read_bytes())
-            manifest_pre = dict(manifest)
-            manifest_pre.pop("logical_manifest_sha256", None)
-            manifest["logical_manifest_sha256"] = sha256_bytes(canonical_json_bytes(manifest_pre, pretty=True))
-            files["manifest"].write_text(json.dumps(manifest), encoding="utf-8")
+            # Create second bundle with different anchor_at
+            orig_anchor = self.anchor_at
+            try:
+                self.anchor_at = "2026-08-11T00:00:00Z"
+                b2_dir = tmp_p / "b2"
+                b2_dir.mkdir(parents=True, exist_ok=True)
+                files2 = self._create_stage_5b3_bundle_files(b2_dir)
+                bundle2 = validate_stage_5b3_bundle(
+                    tasks_path=files2["tasks"],
+                    summary_path=files2["summary"],
+                    manifest_path=files2["manifest"],
+                )
+                decl2 = build_commitment_declaration(
+                    bundle=bundle2,
+                    stage_5b3_protocol_raw=files2["stage_5b3_protocol"].read_bytes(),
+                    commitment_protocol_raw=files2["commitment_protocol"].read_bytes(),
+                    generator_git_sha="1" * 40,
+                )
+            finally:
+                self.anchor_at = orig_anchor
 
-            bundle2 = validate_stage_5b3_bundle(
-                tasks_path=files["tasks"],
-                summary_path=files["summary"],
-                manifest_path=files["manifest"],
-            )
-            decl2 = build_commitment_declaration(
-                bundle=bundle2,
-                stage_5b3_protocol_raw=files["stage_5b3_protocol"].read_bytes(),
-                commitment_protocol_raw=files["commitment_protocol"].read_bytes(),
-                generator_git_sha="1" * 40,
-            )
             self.assertNotEqual(
                 canonical_json_bytes(decl1.to_mapping(), pretty=True),
                 canonical_json_bytes(decl2.to_mapping(), pretty=True),
