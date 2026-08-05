@@ -409,17 +409,34 @@ def _ensure_directory_tree_durable(
             raise CampaignCommitmentExportError(
                 f"Target directory {target} is outside boundary {boundary}"
             ) from error
+        if not boundary.exists():
+            raise CampaignCommitmentExportError(
+                f"Boundary directory does not exist: {boundary}"
+            )
+        if boundary.is_symlink() or not boundary.is_dir():
+            raise CampaignCommitmentExportError(
+                f"Boundary path is not a directory: {boundary}"
+            )
         current = boundary
         _fsync_dir(current)
         for part in relative.parts:
-            current = current / part
-            if not current.exists():
-                current.mkdir()
-            elif current.is_symlink() or not current.is_dir():
-                raise CampaignCommitmentExportError(
-                    f"Directory path component is not a directory: {current}"
-                )
-            _fsync_dir(current)
+            child = current / part
+            if not child.exists():
+                child.mkdir()
+                _fsync_dir(current)
+                if child.is_symlink() or not child.is_dir():
+                    raise CampaignCommitmentExportError(
+                        f"Directory path component is not a directory: {child}"
+                    )
+                _fsync_dir(child)
+                current = child
+            else:
+                if child.is_symlink() or not child.is_dir():
+                    raise CampaignCommitmentExportError(
+                        f"Directory path component is not a directory: {child}"
+                    )
+                _fsync_dir(child)
+                current = child
     except OSError as error:
         raise CampaignCommitmentExportError(
             f"Failed to ensure directory tree durability for {target_directory}: {error}"
@@ -461,11 +478,7 @@ def _write_file_atomically(
             "use --force only for an untracked file"
         )
     if destination_existed and is_git_tracked_check:
-        try:
-            is_tracked = _is_git_tracked(resolved_destination, boundary)
-        except CampaignCommitmentExportError:
-            is_tracked = False
-        if is_tracked:
+        if _is_git_tracked(resolved_destination, boundary):
             raise CampaignCommitmentExportError(
                 "Refusing to overwrite Git-tracked commitment file: "
                 f"{resolved_destination}"

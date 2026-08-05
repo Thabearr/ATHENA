@@ -2641,11 +2641,121 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                     _is_git_tracked(repo / "some/path", repo)
                 self.assertIn("Malformed unterminated ls-files output", str(ctx.exception))
 
-    def test_ensure_directory_tree_durable_creates_and_fsyncs_hierarchy(self) -> None:
+    def test_is_git_tracked_rejects_invalid_utf8_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._run_git_bytes",
+                return_value=b"invalid\xff\x00",
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _is_git_tracked(repo / "invalid", repo)
+                self.assertIn("valid UTF-8", str(ctx.exception))
+
+    def test_is_git_tracked_propagates_git_process_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment.subprocess.run",
+                return_value=subprocess.CompletedProcess(
+                    args=["git", "ls-files"],
+                    returncode=128,
+                    stdout=b"",
+                    stderr=b"fatal: not a git repository",
+                ),
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _is_git_tracked(repo / "file.json", repo)
+                self.assertIn("exit=128", str(ctx.exception))
+
+    def test_write_file_atomically_propagates_is_git_tracked_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            dest = repo_root / "commitment.json"
+            dest.write_text('{"original": true}', encoding="utf-8")
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment.REPOSITORY_ROOT",
+                repo_root,
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._is_git_tracked",
+                side_effect=CampaignCommitmentExportError("Git inspection failed"),
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _write_file_atomically(
+                        dest,
+                        b'{"modified": true}',
+                        force=True,
+                        is_git_tracked_check=True,
+                        boundary_directory=repo_root,
+                    )
+                self.assertIn("Git inspection failed", str(ctx.exception))
+            self.assertEqual(dest.read_text(encoding="utf-8"), '{"original": true}')
+            artifacts = [p.name for p in repo_root.iterdir() if p.name.startswith(".stage5b4-")]
+            self.assertEqual(artifacts, [])
+
+    def test_write_file_atomically_with_real_git_tracked_and_untracked_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(["git", "init"], cwd=repo_root, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "AthenaTest"], cwd=repo_root, check=True, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "athena@test.local"], cwd=repo_root, check=True, capture_output=True)
+
+            tracked = repo_root / "tracked.json"
+            tracked.write_text('{"tracked": true}', encoding="utf-8")
+            subprocess.run(["git", "add", "tracked.json"], cwd=repo_root, check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "add tracked"], cwd=repo_root, check=True, capture_output=True)
+
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _write_file_atomically(
+                    tracked,
+                    b'{"new_content": 1}',
+                    force=True,
+                    is_git_tracked_check=True,
+                    boundary_directory=repo_root,
+                )
+            self.assertIn("Refusing to overwrite Git-tracked commitment file", str(ctx.exception))
+            self.assertEqual(tracked.read_text(encoding="utf-8"), '{"tracked": true}')
+
+            untracked = repo_root / "untracked.json"
+            untracked.write_text('{"untracked": true}', encoding="utf-8")
+            _write_file_atomically(
+                untracked,
+                b'{"new_content": 2}',
+                force=True,
+                is_git_tracked_check=True,
+                boundary_directory=repo_root,
+            )
+            self.assertEqual(untracked.read_text(encoding="utf-8"), '{"new_content": 2}')
+
+    def test_write_file_atomically_preserves_destination_bytes_and_cleans_artifacts_on_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            dest = repo_root / "file.json"
+            dest.write_text('{"original": 123}', encoding="utf-8")
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment.REPOSITORY_ROOT",
+                repo_root,
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_file",
+                side_effect=OSError("disk sync failed"),
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _write_file_atomically(
+                        dest,
+                        b'{"modified": 456}',
+                        force=True,
+                        boundary_directory=repo_root,
+                    )
+                self.assertIn("disk sync failed", str(ctx.exception))
+            self.assertEqual(dest.read_text(encoding="utf-8"), '{"original": 123}')
+            artifacts = [p.name for p in repo_root.iterdir() if p.name.startswith(".stage5b4-")]
+            self.assertEqual(artifacts, [])
+
+    def test_ensure_directory_tree_durable_fsync_call_order_and_parent_fsync(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             boundary = Path(tmp) / "repo"
             boundary.mkdir()
-            target = boundary / "nested" / "deep" / "dir"
+            target = boundary / "nested" / "deep"
             fsynced: list[Path] = []
 
             with patch(
@@ -2657,11 +2767,92 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             self.assertTrue(target.is_dir())
             expected_order = [
                 boundary,
+                boundary,
+                boundary / "nested",
                 boundary / "nested",
                 boundary / "nested" / "deep",
-                boundary / "nested" / "deep" / "dir",
             ]
             self.assertEqual(fsynced, expected_order)
+
+    def test_ensure_directory_tree_durable_existing_hierarchy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            target = boundary / "nested" / "deep"
+            target.mkdir(parents=True)
+            fsynced: list[Path] = []
+
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_dir",
+                side_effect=lambda p: fsynced.append(p),
+            ):
+                _ensure_directory_tree_durable(target, boundary)
+
+            expected_order = [
+                boundary,
+                boundary / "nested",
+                boundary / "nested" / "deep",
+            ]
+            self.assertEqual(fsynced, expected_order)
+
+    def test_ensure_directory_tree_durable_propagates_parent_fsync_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            target = boundary / "child"
+            call_count = 0
+
+            def failing_fsync(p: Path) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 2:
+                    raise OSError("parent fsync failed after child mkdir")
+
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_dir",
+                side_effect=failing_fsync,
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _ensure_directory_tree_durable(target, boundary)
+                self.assertIn("Failed to ensure directory tree durability", str(ctx.exception))
+                self.assertIn("parent fsync failed after child mkdir", str(ctx.exception))
+
+    def test_ensure_directory_tree_durable_propagates_child_fsync_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            target = boundary / "child"
+            call_count = 0
+
+            def failing_fsync(p: Path) -> None:
+                nonlocal call_count
+                call_count += 1
+                if call_count == 3:
+                    raise OSError("child fsync failed")
+
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_dir",
+                side_effect=failing_fsync,
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _ensure_directory_tree_durable(target, boundary)
+                self.assertIn("Failed to ensure directory tree durability", str(ctx.exception))
+                self.assertIn("child fsync failed", str(ctx.exception))
+
+    def test_ensure_directory_tree_durable_propagates_mkdir_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            target = boundary / "child"
+
+            with patch(
+                "pathlib.Path.mkdir",
+                side_effect=PermissionError("Permission denied on mkdir"),
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _ensure_directory_tree_durable(target, boundary)
+                self.assertIn("Failed to ensure directory tree durability", str(ctx.exception))
+                self.assertIn("Permission denied on mkdir", str(ctx.exception))
 
     def test_ensure_directory_tree_durable_rejects_outside_boundary(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2683,6 +2874,14 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 _ensure_directory_tree_durable(target, boundary)
             self.assertIn("is not a directory", str(ctx.exception))
 
+    def test_ensure_directory_tree_durable_rejects_missing_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "non_existent_repo"
+            target = boundary / "child"
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _ensure_directory_tree_durable(target, boundary)
+            self.assertIn("Boundary directory does not exist", str(ctx.exception))
+
     def test_write_file_atomically_ensures_directory_durability_and_fsync(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             repo_root = Path(tmp)
@@ -2700,7 +2899,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 "scripts.manage_win_either_half_campaign_commitment._fsync_file",
                 side_effect=lambda p: fsynced_files.append(p),
             ):
-                _write_file_atomically(dest, b'{"hello": "world"}')
+                _write_file_atomically(dest, b'{"hello": "world"}', boundary_directory=repo_root)
 
             self.assertTrue(dest.exists())
             self.assertEqual(dest.read_bytes(), b'{"hello": "world"}')
@@ -2725,6 +2924,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                         b'{"new": true}',
                         force=True,
                         is_git_tracked_check=True,
+                        boundary_directory=repo_root,
                     )
                 self.assertIn(
                     "Refusing to overwrite Git-tracked commitment file",
