@@ -117,6 +117,10 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         self.source = "ODDS_PORTAL"
         self.bookmaker_identifier = "PINNACLE"
         self.capture_method = "MANUAL_REVIEW"
+        if os.name == "nt":
+            patcher = patch("scripts.manage_win_either_half_campaign_commitment._fsync_dir")
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _write_stage_5b3_inputs(self, root: Path) -> dict[str, Path]:
         source_p = root / "source.json"
@@ -919,6 +923,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
             att_file = tmp_root / "attestation.json"
             rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+            valid_sha = "a" * 40
 
             def mock_run_cmd(cmd, *args, **kwargs):
                 cmd_list = cmd if isinstance(cmd, list) else []
@@ -929,7 +934,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob {valid_sha}\t{rel_decl}\x00".encode("utf-8"), stderr="")
                 if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
@@ -1086,6 +1091,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             repo_dir.mkdir()
             att_file = tmp_root / "att.json"
             rel_decl = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+            valid_sha = "a" * 40
 
             def mock_run_cmd(cmd, *args, **kwargs):
                 cmd_list = cmd if isinstance(cmd, list) else []
@@ -1096,7 +1102,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"120000 blob abc\t{rel_decl}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"120000 blob {valid_sha}\t{rel_decl}\x00".encode("utf-8"), stderr="")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
             with patch("subprocess.run", side_effect=mock_run_cmd):
@@ -1120,6 +1126,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             repo_dir.mkdir()
             att_file = tmp_root / "att.json"
             rel_decl = f"artifacts/research-commitments/win-either-half/WEH-CAP-{'0'*24}.json"
+            valid_sha = "a" * 40
 
             def mock_run_cmd(cmd, *args, **kwargs):
                 cmd_list = cmd if isinstance(cmd, list) else []
@@ -1130,7 +1137,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob {valid_sha}\t{rel_decl}\x00".encode("utf-8"), stderr="")
                 return MagicMock(returncode=0, stdout="", stderr="")
 
             with patch("subprocess.run", side_effect=mock_run_cmd):
@@ -1229,6 +1236,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
             att_file = tmp_root / "attestation.json"
             rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+            valid_sha = "a" * 40
 
             def mock_run_cmd(cmd, *args, **kwargs):
                 cmd_list = cmd if isinstance(cmd, list) else []
@@ -1239,7 +1247,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob {valid_sha}\t{rel_decl}\x00".encode("utf-8"), stderr="")
                 if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
@@ -1304,6 +1312,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             att_file = tmp_root / "attestation.json"
             rel2 = (COMMITMENT_ROOT / f"{c2_id}.json").as_posix()
             rel1 = (COMMITMENT_ROOT / f"{c1_id}.json").as_posix()
+            valid_sha = "a" * 40
 
             # Diff returns c2 first, then c1
             diff_output = f"A\x00{rel2}\x00A\x00{rel1}\x00".encode("utf-8")
@@ -1318,7 +1327,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                     return MagicMock(returncode=0, stdout=diff_output, stderr=b"")
                 if "ls-tree" in cmd_list:
                     p = cmd_list[-1]
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{p}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob {valid_sha}\t{p}\x00".encode("utf-8"), stderr="")
                 if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     spec = cmd_list[-1]
                     if c2_id in spec:
@@ -1371,6 +1380,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
             att_file = tmp_root / "attestation.json"
             rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+            valid_sha = "a" * 40
 
             def mock_run_cmd(cmd, *args, **kwargs):
                 cmd_list = cmd if isinstance(cmd, list) else []
@@ -1381,7 +1391,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob {valid_sha}\t{rel_decl}\x00".encode("utf-8"), stderr="")
                 if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
@@ -2007,13 +2017,22 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         self.assertIn("truncated", str(ctx.exception))
 
     def test_parse_single_ls_tree_record_valid(self) -> None:
-        raw = b"100644 blob abc123def456\tpath/to/file.json\x00"
-        mode, sha = _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
+        valid_sha = "a" * 40
+        raw = (
+            f"100644 blob {valid_sha}\t"
+            "path/to/file.json\x00"
+        ).encode("utf-8")
+        mode, parsed_sha = _parse_single_ls_tree_record(
+            raw,
+            "path/to/file.json",
+            "tree record",
+        )
         self.assertEqual(mode, "100644")
-        self.assertEqual(sha, "abc123def456")
+        self.assertEqual(parsed_sha, valid_sha)
 
     def test_parse_single_ls_tree_record_missing_nul(self) -> None:
-        raw = b"100644 blob abc123def456\tpath/to/file.json"
+        valid_sha = "a" * 40
+        raw = f"100644 blob {valid_sha}\tpath/to/file.json".encode("utf-8")
         with self.assertRaises(CampaignCommitmentExportError) as ctx:
             _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
         self.assertIn("unterminated", str(ctx.exception))
@@ -2024,19 +2043,23 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         self.assertIn("not found in Git tree", str(ctx.exception))
 
     def test_parse_single_ls_tree_record_not_blob(self) -> None:
-        raw = b"040000 tree abc123def456\tpath/to/file.json\x00"
+        valid_sha = "a" * 40
+        raw = f"040000 tree {valid_sha}\tpath/to/file.json\x00".encode("utf-8")
         with self.assertRaises(CampaignCommitmentExportError) as ctx:
             _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
         self.assertIn("expected blob", str(ctx.exception))
 
     def test_parse_single_ls_tree_record_unexpected_path(self) -> None:
-        raw = b"100644 blob abc123def456\tpath/to/other.json\x00"
+        valid_sha = "a" * 40
+        raw = f"100644 blob {valid_sha}\tpath/to/other.json\x00".encode("utf-8")
         with self.assertRaises(CampaignCommitmentExportError) as ctx:
             _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
         self.assertIn("did not match requested path", str(ctx.exception))
 
     def test_parse_single_ls_tree_record_multiple_records(self) -> None:
-        raw = b"100644 blob abc123def456\tpath/to/file.json\x00100644 blob fed654cba321\tpath/to/file2.json\x00"
+        sha1 = "a" * 40
+        sha2 = "b" * 40
+        raw = f"100644 blob {sha1}\tpath/to/file.json\x00100644 blob {sha2}\tpath/to/file2.json\x00".encode("utf-8")
         with self.assertRaises(CampaignCommitmentExportError) as ctx:
             _parse_single_ls_tree_record(raw, "path/to/file.json", "tree record")
         self.assertIn("multiple entries", str(ctx.exception))
@@ -2213,7 +2236,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
              patch("scripts.manage_win_either_half_campaign_commitment._run_git_bytes") as mock_bytes:
             mock_commit.side_effect = lambda repo, sha, label: sha
             diff_output = b"A\x00artifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
-            ls_tree_output = b"120000 blob abc123\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00"
+            valid_sha = "a" * 40
+            ls_tree_output = f"120000 blob {valid_sha}\tartifacts/research-commitments/win-either-half/WEH-CAP-000000000000000000000001.json\x00".encode("utf-8")
             mock_bytes.side_effect = [
                 diff_output,
                 ls_tree_output,
@@ -2320,6 +2344,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
 
             att_file = tmp_root / "attestation.json"
             rel_decl = (COMMITMENT_ROOT / f"{bundle.campaign_id}.json").as_posix()
+            valid_sha = "a" * 40
 
             def mock_run_cmd(cmd, *args, **kwargs):
                 cmd_list = cmd if isinstance(cmd, list) else []
@@ -2330,7 +2355,7 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                 if "diff" in cmd_list:
                     return MagicMock(returncode=0, stdout=f"A\x00{rel_decl}\x00".encode("utf-8"), stderr=b"")
                 if "ls-tree" in cmd_list:
-                    return MagicMock(returncode=0, stdout=f"100644 blob abc\t{rel_decl}\x00", stderr="")
+                    return MagicMock(returncode=0, stdout=f"100644 blob {valid_sha}\t{rel_decl}\x00".encode("utf-8"), stderr="")
                 if "cat-file" in cmd_list and ("-p" in cmd_list or "blob" in cmd_list):
                     return MagicMock(returncode=0, stdout=decl_bytes, stderr=b"")
                 return MagicMock(returncode=0, stdout="", stderr="")
@@ -2348,6 +2373,209 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
                         attestation_output=att_file,
                     )
                 self.assertIn("Head Stage 5B4 protocol bytes differ from base-revision verifier protocol bytes", str(ctx.exception))
+
+    def test_fsync_dir_os_open_error_propagates(self) -> None:
+        with patch(
+            "scripts.manage_win_either_half_campaign_commitment.os.open",
+            side_effect=OSError("directory open failed"),
+        ):
+            with self.assertRaises(OSError) as ctx:
+                _fsync_dir(Path("unopenable-directory"))
+            self.assertIn("directory open failed", str(ctx.exception))
+
+    def test_fsync_file_error_propagates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "file.json"
+            path.write_bytes(b"payload")
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment.os.fsync",
+                side_effect=OSError("file fsync failed"),
+            ):
+                with self.assertRaises(OSError) as ctx:
+                    _fsync_file(path)
+                self.assertIn("file fsync failed", str(ctx.exception))
+
+    def test_fsync_helpers_have_no_exception_swallowing(self) -> None:
+        import ast
+        source_path = (
+            REPOSITORY_ROOT
+            / "scripts"
+            / "manage_win_either_half_campaign_commitment.py"
+        )
+        source = source_path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        functions = {
+            node.name: node
+            for node in tree.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        for name in ("_fsync_dir", "_fsync_file"):
+            function = functions[name]
+            self.assertFalse(
+                any(
+                    isinstance(node, ast.ExceptHandler)
+                    for node in ast.walk(function)
+                ),
+                f"{name} must not catch and suppress filesystem errors",
+            )
+            self.assertFalse(
+                any(isinstance(node, ast.Pass) for node in ast.walk(function)),
+                f"{name} must not contain pass",
+            )
+        self.assertNotIn(
+            'if os.name == "nt":\n return',
+            source,
+        )
+
+    def test_parse_single_ls_tree_record_rejects_invalid_object_sha(
+        self,
+    ) -> None:
+        raw = (
+            b"100644 blob abc123\t"
+            b"path/to/file.json\x00"
+        )
+        with self.assertRaises(
+            CampaignCommitmentExportError
+        ) as ctx:
+            _parse_single_ls_tree_record(
+                raw,
+                "path/to/file.json",
+                "tree record",
+            )
+        self.assertIn(
+            "full 40-hex Git SHA",
+            str(ctx.exception),
+        )
+
+    def test_validate_git_diff_rejects_missing_head_protocol(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            campaign_id = (
+                "WEH-CAP-000000000000000000000001"
+            )
+            relative_path = (
+                COMMITMENT_ROOT / f"{campaign_id}.json"
+            ).as_posix()
+            declaration_path = repo / relative_path
+            declaration_path.parent.mkdir(parents=True)
+            blob_bytes = canonical_json_bytes({}, pretty=True)
+            declaration_path.write_bytes(blob_bytes)
+            diff_bytes = (
+                f"A\x00{relative_path}\x00"
+            ).encode("utf-8")
+            tree_bytes = (
+                f"100644 blob {'a' * 40}\t"
+                f"{relative_path}\x00"
+            ).encode("utf-8")
+            deadline = datetime(
+                2026, 8, 10, 0, 0, 0,
+                tzinfo=timezone.utc,
+            )
+            declaration = MagicMock(
+                campaign_id=campaign_id,
+                commitment_deadline_at=deadline,
+            )
+            result = MagicMock(
+                campaign_id=campaign_id,
+                prospective_timing_qualified=True,
+            )
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._require_commit"
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._require_ancestor"
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._run_git_bytes",
+                side_effect=[
+                    diff_bytes,
+                    tree_bytes,
+                    blob_bytes,
+                ],
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment.validate_declaration_mapping",
+                return_value=declaration,
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment.validate_deadline",
+                return_value=result,
+            ):
+                with self.assertRaises(
+                    CampaignCommitmentExportError
+                ) as ctx:
+                    validate_git_diff(
+                        repository_root=repo,
+                        base_sha="0" * 40,
+                        head_sha="1" * 40,
+                        server_observed_at=(
+                            "2026-08-09T23:59:00Z"
+                        ),
+                        github_run_id="123",
+                        github_run_attempt="1",
+                        github_event_name="pull_request",
+                        attestation_output=(
+                            root / "attestation.json"
+                        ),
+                    )
+                self.assertIn(
+                    "Head Stage 5B4 commitment protocol",
+                    str(ctx.exception),
+                )
+
+    def test_remove_tree_strict_has_single_rmtree_call(
+        self,
+    ) -> None:
+        import ast
+        source_path = (
+            REPOSITORY_ROOT
+            / "scripts"
+            / "manage_win_either_half_campaign_commitment.py"
+        )
+        tree = ast.parse(
+            source_path.read_text(encoding="utf-8")
+        )
+        function = next(
+            node
+            for node in tree.body
+            if (
+                isinstance(node, ast.FunctionDef)
+                and node.name == "_remove_tree_strict"
+            )
+        )
+        calls = [
+            node
+            for node in ast.walk(function)
+            if (
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Attribute)
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "shutil"
+                and node.func.attr == "rmtree"
+            )
+        ]
+        self.assertEqual(len(calls), 1)
+
+    def test_head_protocol_read_is_unconditional(
+        self,
+    ) -> None:
+        source = (
+            REPOSITORY_ROOT
+            / "scripts"
+            / "manage_win_either_half_campaign_commitment.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn(
+            "if head_protocol_path.exists():",
+            source,
+        )
+        self.assertIn(
+            '"Head Stage 5B4 commitment protocol"',
+            source,
+        )
+        self.assertIn(
+            "head_protocol_bytes != base_protocol_bytes",
+            source,
+        )
 
 
 if __name__ == "__main__":

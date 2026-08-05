@@ -56,6 +56,14 @@ Validation in `--validate-git-diff` mode verifies declarations using exact Git b
 - Working-tree bytes must equal head-tree blob bytes byte-for-byte.
 - A local `--validate-git-diff` invocation is for offline verification only and is **not platform proof** of prospective timing.
 
+## Atomic Persistence, File System Integrity, and Strict Cleanup
+
+Stage 5B4 implements hardened fail-closed file system and Git parsing guarantees:
+- **Strict Cross-Platform Fsync**: `_fsync_dir` and `_fsync_file` open directory/file handles and invoke `os.fsync` across all operating systems (including Windows and POSIX) without swallowing `OSError` or `IOError`.
+- **Strict Tree Cleanup**: Directory tree removals use `_remove_tree_strict` with a single, fail-closed `shutil.rmtree` invocation.
+- **Full 40-Hex Git Object SHA Enforcement**: `_parse_single_ls_tree_record` parses NUL-delimited `git ls-tree` records and validates object SHAs with `validate_git_sha` to prevent truncated or malformed hashes.
+- **Unconditional Head Protocol Verification**: `validate_git_diff` unconditionally reads the head Stage 5B4 commitment protocol and asserts exact byte equality against the base-revision verifier protocol bytes before signing the attestation.
+
 ## GitHub Base-Verifier and Server-UTC Deadline Check
 
 When a pull request introduces a new commitment declaration, the `.github/workflows/validate-win-either-half-campaign-commitment.yml` workflow runs:

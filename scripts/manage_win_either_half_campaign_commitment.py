@@ -111,15 +111,10 @@ def _assert_no_symlink_components(path: Path, label: str) -> Path:
 
 
 def _fsync_dir(path: Path) -> None:
-    if os.name == "nt":
-        return
     flags = os.O_RDONLY
     if hasattr(os, "O_DIRECTORY"):
         flags |= os.O_DIRECTORY
-    try:
-        descriptor = os.open(str(path), flags)
-    except OSError:
-        return
+    descriptor = os.open(str(path), flags)
     try:
         os.fsync(descriptor)
     finally:
@@ -127,13 +122,10 @@ def _fsync_dir(path: Path) -> None:
 
 
 def _fsync_file(path: Path) -> None:
-    try:
-        mode = "rb+" if os.name == "nt" else "rb"
-        with path.open(mode) as handle:
-            handle.flush()
-            os.fsync(handle.fileno())
-    except OSError:
-        pass
+    mode = "rb+" if os.name == "nt" else "rb"
+    with path.open(mode) as handle:
+        handle.flush()
+        os.fsync(handle.fileno())
 
 
 def _bounded_external_text(*values: Any) -> str:
@@ -349,6 +341,14 @@ def _parse_single_ls_tree_record(
         raise CampaignCommitmentExportError(
             f"expected blob for {expected_path}, got {object_type}"
         )
+    try:
+        object_sha = validate_git_sha(
+            object_sha,
+            f"ls-tree object SHA for {expected_path}",
+        )
+    except CampaignCommitmentError as error:
+        raise CampaignCommitmentExportError(str(error)) from error
+
     return mode, object_sha
 
 
@@ -387,8 +387,6 @@ def _is_git_tracked(path: Path, repo_root: Path) -> bool:
 
 
 def _remove_tree_strict(path: Path) -> None:
-    if path.exists():
-        shutil.rmtree(path)
     if path.exists():
         shutil.rmtree(path)
 
@@ -618,14 +616,12 @@ def _write_file_atomically(
                 record_failure("clean backup", error)
         if rollback_errors:
             raise CampaignCommitmentExportError(
-                "Atomic file write failed and rollback was "
-                "incomplete: "
+                "Atomic file write failed and rollback was incomplete: "
                 f"{_bounded_external_text(str(original_error))}; "
                 + "; ".join(rollback_errors)
             ) from original_error
         raise CampaignCommitmentExportError(
-            "Atomic file write failed; prior state was "
-            "restored: "
+            "Atomic file write failed; prior state was restored: "
             f"{_bounded_external_text(str(original_error))}"
         ) from original_error
 
@@ -1027,16 +1023,15 @@ def validate_git_diff(
         / "research-protocols"
         / "win-either-half-campaign-commitment-v1.json"
     )
-    if head_protocol_path.exists():
-        head_protocol_bytes = _read_bytes(
-            head_protocol_path,
-            "Head Stage 5B4 commitment protocol",
+    head_protocol_bytes = _read_bytes(
+        head_protocol_path,
+        "Head Stage 5B4 commitment protocol",
+    )
+    if head_protocol_bytes != base_protocol_bytes:
+        raise CampaignCommitmentExportError(
+            "Head Stage 5B4 protocol bytes differ from "
+            "base-revision verifier protocol bytes"
         )
-        if head_protocol_bytes != base_protocol_bytes:
-            raise CampaignCommitmentExportError(
-                "Head Stage 5B4 protocol bytes differ from "
-                "base-revision verifier protocol bytes"
-            )
 
     attestation: dict[str, Any] = {
         "schema_version": SCHEMA_VERSION,
