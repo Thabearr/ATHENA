@@ -78,31 +78,82 @@ jobs:
 
           # Check if base revision has Stage 5B4 verifier
           if [ -f "verifier/scripts/manage_win_either_half_campaign_commitment.py" ]; then
-            echo "Executing base-revision verifier code..."
+            echo "Base revision contains Stage 5B4 verifier."
 
-            # Enforce separation-of-duties: if commitment files changed, verifier/tooling cannot change in same PR
-            COMMITMENT_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- artifacts/research-commitments/win-either-half/)
-            TOOLING_CHANGES=$(git -C head diff --name-only "${{ github.event.pull_request.base.sha }}" "${{ github.event.pull_request.head.sha }}" -- .github/workflows/validate-win-either-half-campaign-commitment.yml artifacts/research-protocols/win-either-half-campaign-commitment-v1.json domain/win_either_half_campaign_commitment.py scripts/manage_win_either_half_campaign_commitment.py docs/win_either_half_campaign_commitment.md tests/test_win_either_half_campaign_commitment.py)
+            COMMITMENT_CHANGES=$(git -C head diff --name-only \
+              "${{ github.event.pull_request.base.sha }}" \
+              "${{ github.event.pull_request.head.sha }}" \
+              -- artifacts/research-commitments/win-either-half/)
+
+            TOOLING_CHANGES=$(git -C head diff --name-only \
+              "${{ github.event.pull_request.base.sha }}" \
+              "${{ github.event.pull_request.head.sha }}" \
+              -- \
+              .github/workflows/validate-win-either-half-campaign-commitment.yml \
+              artifacts/research-protocols/win-either-half-campaign-commitment-v1.json \
+              domain/win_either_half_campaign_commitment.py \
+              scripts/manage_win_either_half_campaign_commitment.py \
+              docs/win_either_half_campaign_commitment.md \
+              tests/test_win_either_half_campaign_commitment.py)
 
             if [ -n "$COMMITMENT_CHANGES" ] && [ -n "$TOOLING_CHANGES" ]; then
               echo "error: Separation-of-duties violation. Campaign commitment declarations cannot edit Stage 5B4 verifier/workflow/protocol files in the same pull request." >&2
               exit 1
             fi
 
-            PYTHONPATH=verifier python -m scripts.manage_win_either_half_campaign_commitment \
-              --validate-git-diff \
-              --repository-root head \
-              --base-sha "${{ github.event.pull_request.base.sha }}" \
-              --head-sha "${{ github.event.pull_request.head.sha }}" \
-              --server-observed-at "$SERVER_UTC" \
-              --github-run-id "${{ github.run_id }}" \
-              --github-run-attempt "${{ github.run_attempt }}" \
-              --github-event-name pull_request \
-              --attestation-output "$ATTESTATION_PATH" | tee output_summary.md
+            if [ -n "$COMMITMENT_CHANGES" ]; then
+              echo "Executing base-revision declaration verifier..."
 
-            cat output_summary.md >> $GITHUB_STEP_SUMMARY
-            echo "ATTESTATION_CREATED=true" >> $GITHUB_ENV
-            echo "ATTESTATION_PATH=$ATTESTATION_PATH" >> $GITHUB_ENV
+              PYTHONPATH=verifier python -m \
+                scripts.manage_win_either_half_campaign_commitment \
+                --validate-git-diff \
+                --repository-root head \
+                --base-sha "${{ github.event.pull_request.base.sha }}" \
+                --head-sha "${{ github.event.pull_request.head.sha }}" \
+                --server-observed-at "$SERVER_UTC" \
+                --github-run-id "${{ github.run_id }}" \
+                --github-run-attempt "${{ github.run_attempt }}" \
+                --github-event-name pull_request \
+                --attestation-output "$ATTESTATION_PATH" \
+                | tee output_summary.md
+
+              cat output_summary.md >> "$GITHUB_STEP_SUMMARY"
+              echo "VALIDATION_MODE=DECLARATION_VALIDATION" >> "$GITHUB_ENV"
+              echo "ATTESTATION_CREATED=true" >> "$GITHUB_ENV"
+              echo "ATTESTATION_PATH=$ATTESTATION_PATH" >> "$GITHUB_ENV"
+
+            elif [ -n "$TOOLING_CHANGES" ]; then
+              echo "Executing Stage 5B4 tooling-only validation..."
+
+              (
+                cd head
+                PYTHONPATH=. python -m pytest \
+                  tests/test_win_either_half_campaign_commitment.py -q
+
+                python -m compileall -q \
+                  domain/win_either_half_campaign_commitment.py \
+                  scripts/manage_win_either_half_campaign_commitment.py \
+                  tests/test_win_either_half_campaign_commitment.py
+              )
+
+              {
+                echo "### Stage 5B4 Tooling-Only Validation"
+                echo
+                echo "**Status:** \`TOOLING_ONLY_VALIDATION\`"
+                echo
+                echo "Stage 5B4 focused tests and syntax validation passed."
+                echo "No campaign commitment declarations changed."
+                echo "No timing qualification or attestation was created."
+                echo "Markets and all authorization remain disabled."
+              } >> "$GITHUB_STEP_SUMMARY"
+
+              echo "VALIDATION_MODE=TOOLING_ONLY_VALIDATION" >> "$GITHUB_ENV"
+              echo "ATTESTATION_CREATED=false" >> "$GITHUB_ENV"
+
+            else
+              echo "error: Stage 5B4 workflow was triggered but no commitment or tooling changes were found." >&2
+              exit 1
+            fi
 
           else
             echo "Base revision does not contain Stage 5B4 verifier (Bootstrap PR mode)."

@@ -75,6 +75,34 @@ When a pull request introduces a new commitment declaration, the `.github/workfl
 3. **Server-Observed UTC**: Obtains `date -u +%Y-%m-%dT%H:%M:%S.%6NZ` from the GitHub runner.
 4. **Strict Comparison**: Requires `server_observed_at <= commitment_deadline_at`. Exact equality passes; even a single microsecond late fails closed.
 
+## GitHub Workflow Validation Modes
+
+The Stage 5B4 workflow operates in exactly three modes:
+
+1. **`DECLARATION_VALIDATION`**:
+   - Base revision contains the verifier.
+   - One or more declaration additions changed.
+   - Base-revision verifier validates timing.
+   - Successful validation creates an attestation.
+
+2. **`TOOLING_ONLY_VALIDATION`**:
+   - Base revision contains the verifier.
+   - Stage 5B4 tooling changed but no declaration changed.
+   - Focused tests and syntax validation run against the PR head.
+   - No timing qualification is claimed.
+   - No attestation is created.
+
+3. **`BOOTSTRAP_TOOLING_ONLY`**:
+   - Base revision does not yet contain the verifier.
+   - Tooling tests run.
+   - Real declarations are forbidden.
+   - No attestation is created.
+
+Additional workflow governance rules:
+- A PR changing both declarations and tooling is rejected (separation of duties).
+- The workflow fails closed when triggered without a recognized change category.
+- Tooling-only success does not enable a market or authorize a prospective claim, selection, production use or bet.
+
 ## Local Check Mode and Generator Ancestry Verification
 
 The `--check` verification mode:

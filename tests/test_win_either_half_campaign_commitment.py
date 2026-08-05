@@ -1670,6 +1670,71 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         self.assertNotIn("secrets.", text)
         self.assertNotIn("contents: write", text)
 
+    def test_workflow_has_tooling_only_validation_mode(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn("VALIDATION_MODE=TOOLING_ONLY_VALIDATION", text)
+        self.assertIn("TOOLING_ONLY_VALIDATION", text)
+
+    def test_workflow_tooling_only_mode_runs_head_focused_tests(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn("tests/test_win_either_half_campaign_commitment.py", text)
+        self.assertIn("PYTHONPATH=. python -m pytest", text)
+        self.assertIn("python -m compileall -q", text)
+
+    def test_workflow_tooling_only_mode_never_creates_attestation(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn('echo "ATTESTATION_CREATED=false" >> "$GITHUB_ENV"', text)
+
+    def test_workflow_declaration_mode_creates_attestation(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn('echo "VALIDATION_MODE=DECLARATION_VALIDATION" >> "$GITHUB_ENV"', text)
+        self.assertIn('echo "ATTESTATION_CREATED=true" >> "$GITHUB_ENV"', text)
+
+    def test_workflow_declaration_verifier_is_guarded_by_commitment_changes(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        commitment_guard = 'if [ -n "$COMMITMENT_CHANGES" ]; then'
+        tooling_guard = 'elif [ -n "$TOOLING_CHANGES" ]; then'
+        verifier_cmd = "--validate-git-diff"
+
+        self.assertIn(commitment_guard, text)
+        self.assertIn(tooling_guard, text)
+        self.assertIn(verifier_cmd, text)
+
+        pos_comm = text.find(commitment_guard)
+        pos_tool = text.find(tooling_guard)
+        pos_verifier = text.find(verifier_cmd)
+
+        self.assertGreater(pos_tool, pos_comm)
+        self.assertGreater(pos_verifier, pos_comm)
+        self.assertLess(pos_verifier, pos_tool)
+
+    def test_workflow_zero_relevant_changes_fails_closed(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn("error: Stage 5B4 workflow was triggered but no commitment or tooling changes were found.", text)
+
+    def test_workflow_attestation_upload_remains_conditional(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn("if: env.ATTESTATION_CREATED == 'true'", text)
+
+    def test_workflow_pull_request_path_filters_remain_present(self) -> None:
+        wf_p = REPOSITORY_ROOT / ".github" / "workflows" / "validate-win-either-half-campaign-commitment.yml"
+        text = wf_p.read_text(encoding="utf-8")
+        self.assertIn("paths:", text)
+        self.assertIn("'artifacts/research-commitments/win-either-half/**'", text)
+        self.assertIn("'.github/workflows/validate-win-either-half-campaign-commitment.yml'", text)
+        self.assertIn("'artifacts/research-protocols/win-either-half-campaign-commitment-v1.json'", text)
+        self.assertIn("'domain/win_either_half_campaign_commitment.py'", text)
+        self.assertIn("'scripts/manage_win_either_half_campaign_commitment.py'", text)
+        self.assertIn("'docs/win_either_half_campaign_commitment.md'", text)
+        self.assertIn("'tests/test_win_either_half_campaign_commitment.py'", text)
+
     def test_validate_deadline_with_commitment_sha256(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             files = self._create_stage_5b3_bundle_files(Path(tmp))
