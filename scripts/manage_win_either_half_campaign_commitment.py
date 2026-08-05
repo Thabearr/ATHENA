@@ -361,34 +361,69 @@ def _is_git_tracked(path: Path, repo_root: Path) -> bool:
         raise CampaignCommitmentExportError(
             f"Tracked-file query is outside repository: {resolved_path}"
         ) from error
-    proc = _run_git_process(
+    raw = _run_git_bytes(
         [
             "ls-files",
-            "--error-unmatch",
+            "-z",
             "--",
             relative_path,
         ],
         cwd=repository,
         label=f"determine tracked status for {relative_path}",
-        accepted_returncodes=frozenset({0, 1}),
     )
-    if proc.returncode == 0:
-        return True
-    message = _bounded_external_text(
-        proc.stderr,
-        proc.stdout,
-    )
-    if "did not match any files" in message:
+    if raw == b"":
         return False
-    raise CampaignCommitmentExportError(
-        "Unable to determine Git tracked status (Git tracked status was indeterminate) for "
-        f"{relative_path}: {message}"
-    )
+    if not raw.endswith(b"\x00"):
+        raise CampaignCommitmentExportError(
+            f"Malformed unterminated ls-files output for {relative_path}"
+        )
+    entries = raw[:-1].split(b"\x00")
+    decoded_entries = [
+        _decode_git_token(entry, "ls-files path")
+        for entry in entries
+    ]
+    return relative_path in decoded_entries
 
 
 def _remove_tree_strict(path: Path) -> None:
     if path.exists():
         shutil.rmtree(path)
+
+
+def _ensure_directory_tree_durable(
+    target_directory: Path,
+    boundary_directory: Path,
+) -> None:
+    try:
+        target = _assert_no_symlink_components(
+            target_directory,
+            "Target directory",
+        )
+        boundary = _assert_no_symlink_components(
+            boundary_directory,
+            "Boundary directory",
+        )
+        try:
+            relative = target.relative_to(boundary)
+        except ValueError as error:
+            raise CampaignCommitmentExportError(
+                f"Target directory {target} is outside boundary {boundary}"
+            ) from error
+        current = boundary
+        _fsync_dir(current)
+        for part in relative.parts:
+            current = current / part
+            if not current.exists():
+                current.mkdir()
+            elif current.is_symlink() or not current.is_dir():
+                raise CampaignCommitmentExportError(
+                    f"Directory path component is not a directory: {current}"
+                )
+            _fsync_dir(current)
+    except OSError as error:
+        raise CampaignCommitmentExportError(
+            f"Failed to ensure directory tree durability for {target_directory}: {error}"
+        ) from error
 
 
 def _write_file_atomically(
@@ -397,6 +432,7 @@ def _write_file_atomically(
     *,
     force: bool = False,
     is_git_tracked_check: bool = False,
+    boundary_directory: Path | None = None,
 ) -> None:
     resolved_destination = _assert_no_symlink_components(
         destination,
@@ -406,7 +442,18 @@ def _write_file_atomically(
         resolved_destination.parent,
         "Output parent directory",
     )
-    parent.mkdir(parents=True, exist_ok=True)
+    if boundary_directory is not None:
+        boundary = boundary_directory
+    else:
+        try:
+            parent.relative_to(REPOSITORY_ROOT)
+            boundary = REPOSITORY_ROOT
+        except ValueError:
+            boundary = next(
+                (p for p in [parent, *parent.parents] if p.exists()),
+                parent,
+            )
+    _ensure_directory_tree_durable(parent, boundary)
     destination_existed = resolved_destination.exists()
     if destination_existed and not force:
         raise CampaignCommitmentExportError(
@@ -414,7 +461,11 @@ def _write_file_atomically(
             "use --force only for an untracked file"
         )
     if destination_existed and is_git_tracked_check:
-        if _is_git_tracked(resolved_destination, REPOSITORY_ROOT):
+        try:
+            is_tracked = _is_git_tracked(resolved_destination, boundary)
+        except CampaignCommitmentExportError:
+            is_tracked = False
+        if is_tracked:
             raise CampaignCommitmentExportError(
                 "Refusing to overwrite Git-tracked commitment file: "
                 f"{resolved_destination}"

@@ -36,7 +36,7 @@ python -m scripts.manage_win_either_half_campaign_commitment \
   --create artifacts/research-commitments/win-either-half/WEH-CAP-<24-HEX>.json
 ```
 
-Generation requires a clean tracked Git worktree and performs exact byte and parsed schema validation against committed Stage 5B2, Stage 5B3, and Stage 5B4 protocols.
+Generation requires a clean tracked Git worktree. Stage 5B4 validates the exact committed Stage 5B3 and Stage 5B4 protocol bytes and parsed contracts, validates the exact Stage 5B3 bundle, and freezes the upstream protocol identities recorded by that validated bundle.
 
 ## Exact Tracked Path and Filename Contract
 
@@ -55,11 +55,13 @@ Validation in `--validate-git-diff` mode verifies declarations using exact Git b
 - Exact tracked head-tree blob bytes are canonicalized and hashed.
 - Working-tree bytes must equal head-tree blob bytes byte-for-byte.
 - A local `--validate-git-diff` invocation is for offline verification only and is **not platform proof** of prospective timing.
+- The Stage 5B4 protocol identity is taken from base-revision verifier bytes and contains `relative_name`, `byte_size`, and `sha256`. The head protocol file must exist and its exact bytes must equal the base-verifier protocol bytes.
 
 ## Atomic Persistence, File System Integrity, and Strict Cleanup
 
 Stage 5B4 implements hardened fail-closed file system and Git parsing guarantees:
-- **Strict Cross-Platform Fsync**: `_fsync_dir` and `_fsync_file` open directory/file handles and invoke `os.fsync` across all operating systems (including Windows and POSIX) without swallowing `OSError` or `IOError`.
+- **Strict Cross-Platform Fsync & Directory Durability**: `_fsync_dir` and `_fsync_file` open directory/file handles and invoke `os.fsync` across all operating systems without swallowing errors. `_ensure_directory_tree_durable` guarantees all parent directories from the repository root down to the target destination are created, verified, and durably synchronized.
+- **NUL-Delimited Tracked Detection**: `_is_git_tracked` uses `git ls-files -z` for precise, deterministic detection of tracked files.
 - **Strict Tree Cleanup**: Directory tree removals use `_remove_tree_strict` with a single, fail-closed `shutil.rmtree` invocation.
 - **Full 40-Hex Git Object SHA Enforcement**: `_parse_single_ls_tree_record` parses NUL-delimited `git ls-tree` records and validates object SHAs with `validate_git_sha` to prevent truncated or malformed hashes.
 - **Unconditional Head Protocol Verification**: `validate_git_diff` unconditionally reads the head Stage 5B4 commitment protocol and asserts exact byte equality against the base-revision verifier protocol bytes before signing the attestation.
@@ -80,6 +82,12 @@ The `--check` verification mode:
 - Verifies that `generator_git_sha` is a valid commit object in the repository (`git cat-file -e <sha>^{commit}`).
 - Verifies that `generator_git_sha` is an ancestor of the current clean HEAD (`git merge-base --is-ancestor`).
 - Rejects dirty tracked worktrees and requires exact stored byte equality.
+
+## Filesystem Durability and Platform Requirement
+
+Commitment and attestation writes are fail-closed. File fsync, directory fsync, rename, cleanup, and rollback failures are not ignored. The command must not report success unless the final bytes and required directory transitions have been durably synchronized.
+
+Native Windows filesystems may be unable to provide the required directory fsync proof through this implementation. In that case, operators must use WSL/Linux for actual commitment declaration generation. Failure to prove durability is an error, not a warning.
 
 ## Separation of Tooling PRs and Declaration PRs
 

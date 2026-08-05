@@ -59,6 +59,7 @@ from scripts.manage_win_either_half_campaign_commitment import (
     REPOSITORY_ROOT,
     CampaignCommitmentExportError,
     _decode_git_token,
+    _ensure_directory_tree_durable,
     _fsync_dir,
     _fsync_file,
     _is_git_tracked,
@@ -1726,23 +1727,30 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         test_path = REPOSITORY_ROOT / "some_file.json"
 
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=0)
+            mock_run.return_value = MagicMock(
+                returncode=0,
+                stdout=b"some_file.json\x00",
+                stderr=b"",
+            )
             self.assertTrue(_is_git_tracked(test_path, REPOSITORY_ROOT))
 
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
-                returncode=1, stderr="error: pathspec 'some_file.json' did not match any files"
+                returncode=0,
+                stdout=b"",
+                stderr=b"",
             )
             self.assertFalse(_is_git_tracked(test_path, REPOSITORY_ROOT))
 
         with patch("subprocess.run") as mock_run:
-            mock_run.return_value = MagicMock(returncode=128, stderr="fatal: not a git repository")
+            mock_run.return_value = MagicMock(
+                returncode=128,
+                stdout=b"",
+                stderr=b"fatal: not a git repository",
+            )
             with self.assertRaises(CampaignCommitmentExportError) as ctx:
                 _is_git_tracked(test_path, REPOSITORY_ROOT)
-            self.assertTrue(
-                "Git command failed" in str(ctx.exception)
-                or "Unable to determine Git tracked status" in str(ctx.exception)
-            )
+            self.assertIn("Git command failed", str(ctx.exception))
 
     def test_atomic_write_backup_and_rollback_on_failure(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -2112,8 +2120,8 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
         test_path = REPOSITORY_ROOT / "non_existent_untracked_file_xyz.json"
         with patch("subprocess.run") as mock_run:
             mock_run.return_value = MagicMock(
-                returncode=1,
-                stderr=b"error: pathspec 'non_existent_untracked_file_xyz.json' did not match any files\n",
+                returncode=0,
+                stderr=b"",
                 stdout=b"",
             )
             self.assertFalse(_is_git_tracked(test_path, REPOSITORY_ROOT))
@@ -2576,6 +2584,152 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             "head_protocol_bytes != base_protocol_bytes",
             source,
         )
+
+    def test_is_git_tracked_with_real_git_repository(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            subprocess.run(
+                ["git", "init"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.name", "AthenaTest"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "config", "user.email", "athena@test.local"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+            )
+            tracked_file = repo_root / "tracked.json"
+            tracked_file.write_text("{}", encoding="utf-8")
+            subprocess.run(
+                ["git", "add", "tracked.json"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                ["git", "commit", "-m", "init"],
+                cwd=repo_root,
+                check=True,
+                capture_output=True,
+            )
+            untracked_file = repo_root / "untracked.json"
+            untracked_file.write_text("{}", encoding="utf-8")
+            outside_file = Path(tmp).parent / "outside.json"
+
+            self.assertTrue(_is_git_tracked(tracked_file, repo_root))
+            self.assertFalse(_is_git_tracked(untracked_file, repo_root))
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _is_git_tracked(outside_file, repo_root)
+            self.assertIn("outside repository", str(ctx.exception))
+
+    def test_is_git_tracked_rejects_unterminated_nul_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._run_git_bytes",
+                return_value=b"some/path/without_null",
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _is_git_tracked(repo / "some/path", repo)
+                self.assertIn("Malformed unterminated ls-files output", str(ctx.exception))
+
+    def test_ensure_directory_tree_durable_creates_and_fsyncs_hierarchy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            target = boundary / "nested" / "deep" / "dir"
+            fsynced: list[Path] = []
+
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_dir",
+                side_effect=lambda p: fsynced.append(p),
+            ):
+                _ensure_directory_tree_durable(target, boundary)
+
+            self.assertTrue(target.is_dir())
+            expected_order = [
+                boundary,
+                boundary / "nested",
+                boundary / "nested" / "deep",
+                boundary / "nested" / "deep" / "dir",
+            ]
+            self.assertEqual(fsynced, expected_order)
+
+    def test_ensure_directory_tree_durable_rejects_outside_boundary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            target = Path(tmp) / "outside"
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _ensure_directory_tree_durable(target, boundary)
+            self.assertIn("is outside boundary", str(ctx.exception))
+
+    def test_ensure_directory_tree_durable_rejects_non_directory_component(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            boundary = Path(tmp) / "repo"
+            boundary.mkdir()
+            file_component = boundary / "file_blocking"
+            file_component.write_text("data", encoding="utf-8")
+            target = file_component / "child"
+            with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                _ensure_directory_tree_durable(target, boundary)
+            self.assertIn("is not a directory", str(ctx.exception))
+
+    def test_write_file_atomically_ensures_directory_durability_and_fsync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            dest = repo_root / "deep" / "nested" / "file.json"
+            fsynced_dirs: list[Path] = []
+            fsynced_files: list[Path] = []
+
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment.REPOSITORY_ROOT",
+                repo_root,
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_dir",
+                side_effect=lambda p: fsynced_dirs.append(p),
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._fsync_file",
+                side_effect=lambda p: fsynced_files.append(p),
+            ):
+                _write_file_atomically(dest, b'{"hello": "world"}')
+
+            self.assertTrue(dest.exists())
+            self.assertEqual(dest.read_bytes(), b'{"hello": "world"}')
+            self.assertIn(repo_root / "deep" / "nested", fsynced_dirs)
+            self.assertIn(dest, fsynced_files)
+
+    def test_write_file_atomically_refuses_git_tracked_overwrite(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            dest = repo_root / "tracked_file.json"
+            dest.write_text("{}", encoding="utf-8")
+            with patch(
+                "scripts.manage_win_either_half_campaign_commitment.REPOSITORY_ROOT",
+                repo_root,
+            ), patch(
+                "scripts.manage_win_either_half_campaign_commitment._is_git_tracked",
+                return_value=True,
+            ):
+                with self.assertRaises(CampaignCommitmentExportError) as ctx:
+                    _write_file_atomically(
+                        dest,
+                        b'{"new": true}',
+                        force=True,
+                        is_git_tracked_check=True,
+                    )
+                self.assertIn(
+                    "Refusing to overwrite Git-tracked commitment file",
+                    str(ctx.exception),
+                )
 
 
 if __name__ == "__main__":
