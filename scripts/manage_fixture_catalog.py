@@ -60,6 +60,80 @@ class _PreparedOutput:
     replaced: bool = False
 
 
+def _bounded_external_text(*values: Any) -> str:
+    parts: list[str] = []
+    for value in values:
+        if not value:
+            continue
+        if isinstance(value, bytes):
+            text = value.decode("utf-8", errors="replace")
+        elif isinstance(value, str):
+            text = value
+        elif isinstance(value, (int, float)):
+            text = str(value)
+        else:
+            continue
+        parts.append(text)
+    normalized = " ".join(" ".join(parts).split())
+    return (normalized or "<no output>")[:240]
+
+
+def _run_git_process(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+    accepted_returncodes: frozenset[int] = frozenset({0}),
+) -> subprocess.CompletedProcess[bytes]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True,
+            check=False,
+            shell=False,
+        )
+    except OSError as error:
+        raise FixtureCatalogCLIError(
+            f"Git process execution failed ({label}): {_bounded_external_text(str(error))}"
+        ) from error
+    if result.returncode not in accepted_returncodes:
+        raise FixtureCatalogCLIError(
+            f"Git command failed ({label}, exit={result.returncode}): "
+            f"{_bounded_external_text(result.stderr, result.stdout)}"
+        )
+    return result
+
+
+def _run_git_bytes(
+    args: Sequence[str],
+    *,
+    cwd: Path,
+    label: str,
+    accepted_returncodes: frozenset[int] = frozenset({0}),
+) -> bytes:
+    out = _run_git_process(
+        args,
+        cwd=cwd,
+        label=label,
+        accepted_returncodes=accepted_returncodes,
+    ).stdout
+    if isinstance(out, bytes):
+        return out
+    if isinstance(out, str):
+        return out.encode("utf-8")
+    return bytes(out or b"")
+
+
+def _decode_git_token(token: bytes, label: str) -> str:
+    try:
+        value = token.decode("utf-8", errors="strict")
+    except UnicodeDecodeError as error:
+        raise FixtureCatalogCLIError(f"Git {label} was not valid UTF-8") from error
+    if not value:
+        raise FixtureCatalogCLIError(f"Git {label} was unexpectedly empty")
+    return value
+
+
 def _require_full_git_sha(value: Any, label: str) -> str:
     if not isinstance(value, str) or len(value) != 40:
         raise FixtureCatalogCLIError(f"{label} must be a full Git SHA")
@@ -69,22 +143,45 @@ def _require_full_git_sha(value: Any, label: str) -> str:
 
 
 def _win_fsync_directory(path: Path) -> None:
-    kernel32 = ctypes.windll.kernel32
+    kernel32 = getattr(ctypes.windll, "kernel32", None)
+    if kernel32 is None:
+        raise FixtureCatalogCLIError("kernel32 is not available on this platform")
+    invalid_handle = ctypes.c_void_p(-1).value
     handle = kernel32.CreateFileW(
-        ctypes.wintypes.LPCWSTR(str(path)),
-        0x80000000,
+        str(path),
+        0xC0000000,
         0x00000007,
         None,
         3,
         0x02000000,
         None,
     )
-    if handle == ctypes.wintypes.HANDLE(-1).value:
-        return
+    if handle in (0, None, invalid_handle):
+        err = getattr(kernel32, "GetLastError", lambda: ctypes.get_last_error())()
+        raise FixtureCatalogCLIError(
+            f"CreateFileW failed for directory fsync: {path} "
+            f"(winerror={err})"
+        )
+    flush_error: str | None = None
+    close_error: str | None = None
     try:
-        kernel32.FlushFileBuffers(handle)
+        if not kernel32.FlushFileBuffers(handle):
+            err = getattr(kernel32, "GetLastError", lambda: ctypes.get_last_error())()
+            flush_error = (
+                f"FlushFileBuffers failed for {path} "
+                f"(winerror={err})"
+            )
     finally:
-        kernel32.CloseHandle(handle)
+        if not kernel32.CloseHandle(handle):
+            err = getattr(kernel32, "GetLastError", lambda: ctypes.get_last_error())()
+            close_error = (
+                f"CloseHandle failed for {path} "
+                f"(winerror={err})"
+            )
+    if flush_error or close_error:
+        raise FixtureCatalogCLIError(
+            "; ".join(item for item in (flush_error, close_error) if item)
+        )
 
 
 def _fsync_directory(path: Path) -> None:
@@ -117,7 +214,7 @@ def _walk_unresolved_path(path: Path) -> Path:
             raise FixtureCatalogCLIError(
                 f"Path contains a forbidden symlink component: {path}"
             )
-    return absolute.resolve(strict=False)
+    return absolute
 
 
 def _is_relative_to(path: Path, parent: Path) -> bool:
@@ -129,17 +226,36 @@ def _is_relative_to(path: Path, parent: Path) -> bool:
 
 
 def _is_git_tracked(path: Path, repo_root: Path) -> bool:
+    repository = repo_root.resolve(strict=True)
+    resolved_path = path.resolve(strict=False)
     try:
-        relative = path.relative_to(repo_root).as_posix()
-    except ValueError:
-        return False
-    proc = subprocess.run(
-        ["git", "-C", str(repo_root), "ls-files", "--error-unmatch", "--", relative],
-        capture_output=True,
-        check=False,
-        shell=False,
+        relative_path = resolved_path.relative_to(repository).as_posix()
+    except ValueError as error:
+        raise FixtureCatalogCLIError(
+            f"Tracked-file query is outside repository: {resolved_path}"
+        ) from error
+    raw = _run_git_bytes(
+        ["ls-files", "-z", "--", relative_path],
+        cwd=repository,
+        label=f"determine tracked status for {relative_path}",
     )
-    return proc.returncode == 0
+    if raw == b"":
+        return False
+    if not raw.endswith(b"\x00"):
+        raise FixtureCatalogCLIError(
+            f"Malformed unterminated ls-files output for {relative_path}"
+        )
+    entries = raw[:-1].split(b"\x00")
+    decoded_entries = [
+        _decode_git_token(entry, "ls-files path")
+        for entry in entries
+    ]
+    if len(decoded_entries) != 1:
+        raise FixtureCatalogCLIError(
+            f"Unexpected ls-files output for {relative_path}: "
+            f"{_bounded_external_text(raw)}"
+        )
+    return decoded_entries[0] == relative_path
 
 
 def _validate_output_destination(path: Path) -> Path:
@@ -156,7 +272,7 @@ def _validate_output_destination(path: Path) -> Path:
         raise FixtureCatalogCLIError(
             f"Refusing to overwrite tracked repository file: {resolved}"
         )
-    return resolved
+    return resolved.resolve(strict=False)
 
 
 def _prepare_output(destination: Path, content: bytes, *, force: bool) -> _PreparedOutput:
@@ -225,15 +341,6 @@ def _restore_original(prepared: _PreparedOutput) -> None:
         _fsync_directory(destination.parent)
 
 
-def _cleanup_prepared(prepared: _PreparedOutput) -> None:
-    if prepared.backup_path.exists():
-        prepared.backup_path.unlink()
-    if prepared.staged_dir.exists():
-        shutil.rmtree(prepared.staged_dir)
-    if prepared.destination.parent.exists():
-        _fsync_directory(prepared.destination.parent)
-
-
 def _commit_prepared(prepared: _PreparedOutput) -> None:
     destination = prepared.destination
     try:
@@ -247,7 +354,6 @@ def _commit_prepared(prepared: _PreparedOutput) -> None:
         os.replace(prepared.staged_path, destination)
         _fsync_file(destination)
         _fsync_directory(destination.parent)
-        object.__setattr__(prepared, "replaced", True)
     except Exception as error:
         try:
             if prepared.backup_path.exists():
@@ -265,15 +371,28 @@ def _commit_prepared(prepared: _PreparedOutput) -> None:
         raise FixtureCatalogCLIError(str(error)) from error
 
 
-def _remove_prepared_artifacts(prepared: _PreparedOutput) -> None:
-    try:
-        if prepared.backup_path.exists():
-            prepared.backup_path.unlink()
-    finally:
-        if prepared.staged_dir.exists():
-            shutil.rmtree(prepared.staged_dir)
+def _cleanup_staged_artifacts(prepared: _PreparedOutput) -> None:
+    if prepared.staged_dir.exists():
+        shutil.rmtree(prepared.staged_dir)
     if prepared.destination.parent.exists():
         _fsync_directory(prepared.destination.parent)
+
+
+def _cleanup_backups(prepared: _PreparedOutput) -> None:
+    if prepared.backup_path.exists():
+        prepared.backup_path.unlink()
+    if prepared.destination.parent.exists():
+        _fsync_directory(prepared.destination.parent)
+
+
+def _rollback_prepared_outputs(prepared_outputs: Sequence[_PreparedOutput]) -> list[str]:
+    errors: list[str] = []
+    for prepared in reversed(prepared_outputs):
+        try:
+            _restore_original(prepared)
+        except Exception as error:
+            errors.append(_bounded_external_text(str(error)))
+    return errors
 
 
 def _write_outputs_atomically(
@@ -284,48 +403,78 @@ def _write_outputs_atomically(
     manifest_bytes: bytes,
     force: bool,
 ) -> None:
-    prepared_catalog = _prepare_output(catalog_output, catalog_bytes, force=force)
-    prepared_manifest = _prepare_output(manifest_output, manifest_bytes, force=force)
+    catalog_resolved = _validate_output_destination(catalog_output)
+    manifest_resolved = _validate_output_destination(manifest_output)
+    if catalog_resolved == manifest_resolved:
+        raise FixtureCatalogCLIError("Catalog and manifest output paths must differ")
+    prepared: list[_PreparedOutput] = []
+    try:
+        prepared.append(_prepare_output(catalog_resolved, catalog_bytes, force=force))
+        try:
+            prepared.append(_prepare_output(manifest_resolved, manifest_bytes, force=force))
+        except Exception:
+            cleanup_errors: list[str] = []
+            for item in reversed(prepared):
+                try:
+                    _cleanup_staged_artifacts(item)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(_bounded_external_text(str(cleanup_error)))
+            if cleanup_errors:
+                raise FixtureCatalogCLIError(
+                    "Transaction preparation failed and cleanup could not be proven: "
+                    + "; ".join(cleanup_errors)
+                )
+            raise
+    except Exception as error:
+        raise FixtureCatalogCLIError(str(error)) from error
     committed: list[_PreparedOutput] = []
     try:
-        for prepared in (prepared_catalog, prepared_manifest):
-            _commit_prepared(prepared)
-            committed.append(prepared)
+        for item in prepared:
+            _commit_prepared(item)
+            committed.append(item)
     except Exception as error:
-        rollback_errors: list[str] = []
-        for prepared in reversed(committed):
+        rollback_errors = _rollback_prepared_outputs(committed)
+        cleanup_errors: list[str] = []
+        for item in prepared:
             try:
-                _restore_original(prepared)
-            except Exception as rollback_error:
-                rollback_errors.append(str(rollback_error))
-        for prepared in (prepared_catalog, prepared_manifest):
-            try:
-                _remove_prepared_artifacts(prepared)
+                _cleanup_staged_artifacts(item)
+                _cleanup_backups(item)
             except Exception as cleanup_error:
-                rollback_errors.append(str(cleanup_error))
-        if rollback_errors:
+                cleanup_errors.append(_bounded_external_text(str(cleanup_error)))
+        if rollback_errors or cleanup_errors:
+            details = "; ".join(rollback_errors + cleanup_errors)
             raise FixtureCatalogCLIError(
-                "Transaction rollback could not be proven: "
-                + "; ".join(rollback_errors)
+                "Transaction rollback could not be proven: " + details
             ) from error
         raise FixtureCatalogCLIError(str(error)) from error
     else:
-        cleanup_errors: list[str] = []
-        for prepared in (prepared_catalog, prepared_manifest):
+        finalization_errors: list[str] = []
+        for item in prepared:
             try:
-                _remove_prepared_artifacts(prepared)
+                _cleanup_staged_artifacts(item)
+                _cleanup_backups(item)
             except Exception as cleanup_error:
-                cleanup_errors.append(str(cleanup_error))
-        if cleanup_errors:
+                finalization_errors.append(_bounded_external_text(str(cleanup_error)))
+        if finalization_errors:
+            rollback_errors = _rollback_prepared_outputs(committed)
+            if rollback_errors:
+                raise FixtureCatalogCLIError(
+                    "Transaction rollback could not be proven: "
+                    + "; ".join(finalization_errors + rollback_errors)
+                )
             raise FixtureCatalogCLIError(
-                "Output cleanup could not be proven: " + "; ".join(cleanup_errors)
+                "Transaction finalization failed: " + "; ".join(finalization_errors)
             )
 
 
 def _compare_expected_output(expected: bytes, actual_path: Path, label: str) -> None:
-    if not actual_path.is_file() or actual_path.is_symlink():
+    safe_path = _walk_unresolved_path(actual_path)
+    if not safe_path.is_file() or safe_path.is_symlink():
         raise FixtureCatalogCLIError(f"{label} must be a regular file: {actual_path}")
-    actual = actual_path.read_bytes()
+    resolved = safe_path.resolve(strict=True)
+    if resolved != safe_path.resolve(strict=False):
+        raise FixtureCatalogCLIError(f"{label} path resolution drifted: {actual_path}")
+    actual = safe_path.read_bytes()
     if actual != expected:
         raise FixtureCatalogCLIError(f"{label} bytes differ from the expected output")
 
@@ -472,7 +621,6 @@ __all__ = [
     "_fsync_directory",
     "_fsync_file",
     "_prepare_output",
-    "_remove_prepared_artifacts",
     "_restore_original",
     "_write_outputs_atomically",
     "build_parser",

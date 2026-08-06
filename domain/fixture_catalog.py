@@ -89,8 +89,8 @@ class FixtureCatalogResult:
     manifest: dict[str, Any]
     catalog_bytes: bytes
     manifest_bytes: bytes
-    input_bytes: bytes
-    input_sha256: str
+    normalized_input_bytes: bytes
+    normalized_input_sha256: str
     records: tuple[FixtureProvenanceRecord, ...]
     as_of: datetime
     minimum_lead_seconds: int
@@ -405,9 +405,10 @@ def build_manifest(
         "latest_kickoff": serialize_utc(max(kickoff_values)),
         "catalog_byte_size": len(catalog_bytes),
         "catalog_sha256": sha256_bytes(catalog_bytes),
-        "input_byte_size": len(normalized_input_bytes),
-        "input_sha256": sha256_bytes(normalized_input_bytes),
+        "normalized_input_byte_size": len(normalized_input_bytes),
+        "normalized_input_sha256": sha256_bytes(normalized_input_bytes),
         "deterministic_ordering_rules": [
+            "normalized input stream serializes sorted provenance records as canonical JSON Lines",
             "fixtures sort by kickoff then fixture_identifier",
             "provenance records use the same ordering as the strict catalog",
             "JSON serializes with sorted keys, indent 2, UTF-8, and a final newline",
@@ -466,8 +467,8 @@ def compile_fixture_catalog(
         manifest=manifest,
         catalog_bytes=catalog_bytes,
         manifest_bytes=manifest_bytes,
-        input_bytes=input_bytes,
-        input_sha256=sha256_bytes(normalized_input_bytes),
+        normalized_input_bytes=normalized_input_bytes,
+        normalized_input_sha256=sha256_bytes(normalized_input_bytes),
         records=ordered_records,
         as_of=parse_utc_timestamp(as_of, "as_of"),
         minimum_lead_seconds=minimum_lead_seconds,
