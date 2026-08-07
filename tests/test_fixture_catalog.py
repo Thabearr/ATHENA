@@ -1307,9 +1307,10 @@ class FixtureCatalogTests(unittest.TestCase):
             root_spaced = root / "spaced"
             root_spaced.mkdir()
             ev_dir = root_spaced / "evidence"
-            ev_dir.mkdir()
             for s in [spec_a, spec_b]:
-                (ev_dir / s["evidence_file_path"]).write_bytes(s["evidence_bytes"])
+                ev_file = ev_dir / Path(str(s["evidence_file_path"]))
+                ev_file.parent.mkdir(parents=True, exist_ok=True)
+                ev_file.write_bytes(s["evidence_bytes"])
             input_file = root_spaced / "fixture-provenance.jsonl"
             lines_spaced = []
             for s in [spec_a, spec_b]:
