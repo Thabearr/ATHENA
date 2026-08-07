@@ -602,5 +602,106 @@ class TestFixtureIntelligence(unittest.TestCase):
         for forbidden in ['import requests', 'import httpx', 'import aiohttp', 'from urllib.request', 'kelly', 'expected_value', 'accumulator']:
             self.assertNotIn(forbidden, src.lower())
 
+    def test_schema_version_true_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=True, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety={k: False for k in [
+                    'network_acquisition_authorized', 'scraping_authorized',
+                    'browser_automation_authorized', 'pricing_authorized',
+                    'market_activation_authorized', 'prospective_claim_authorized',
+                    'selection_authorized', 'production_approval_authorized', 'bet_authorized'
+                ]})
+
+    def test_schema_version_float_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1.0, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety={k: False for k in [
+                    'network_acquisition_authorized', 'scraping_authorized',
+                    'browser_automation_authorized', 'pricing_authorized',
+                    'market_activation_authorized', 'prospective_claim_authorized',
+                    'selection_authorized', 'production_approval_authorized', 'bet_authorized'
+                ]})
+
+    def test_schema_version_string_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version='1', dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety={k: False for k in [
+                    'network_acquisition_authorized', 'scraping_authorized',
+                    'browser_automation_authorized', 'pricing_authorized',
+                    'market_activation_authorized', 'prospective_claim_authorized',
+                    'selection_authorized', 'production_approval_authorized', 'bet_authorized'
+                ]})
+
+    def test_schema_version_zero_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=0, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety={k: False for k in [
+                    'network_acquisition_authorized', 'scraping_authorized',
+                    'browser_automation_authorized', 'pricing_authorized',
+                    'market_activation_authorized', 'prospective_claim_authorized',
+                    'selection_authorized', 'production_approval_authorized', 'bet_authorized'
+                ]})
+
+    def test_schema_version_two_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=2, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety={k: False for k in [
+                    'network_acquisition_authorized', 'scraping_authorized',
+                    'browser_automation_authorized', 'pricing_authorized',
+                    'market_activation_authorized', 'prospective_claim_authorized',
+                    'selection_authorized', 'production_approval_authorized', 'bet_authorized'
+                ]})
+
+    def test_schema_version_is_exact_int_in_snapshot(self):
+        snap = self._make_snapshot([])
+        self.assertIs(type(snap.schema_version), int)
+        self.assertEqual(snap.schema_version, 1)
+
+    def test_schema_version_is_exact_int_in_to_dict(self):
+        snap = self._make_snapshot([])
+        d = snap.to_dict()
+        self.assertIs(type(d['schema_version']), int)
+        self.assertEqual(d['schema_version'], 1)
+
 if __name__ == '__main__':
     unittest.main()

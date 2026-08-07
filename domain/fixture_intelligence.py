@@ -298,8 +298,11 @@ class FixtureIntelligenceSnapshot:
 
     def __post_init__(self):
         try:
-            if self.schema_version != SCHEMA_VERSION:
-                raise FixtureIntelligenceError(f"schema_version must be {SCHEMA_VERSION}")
+            if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
+                raise FixtureIntelligenceError(
+                    f"schema_version must be exact int {SCHEMA_VERSION}, "
+                    f"got {type(self.schema_version).__name__!r} {self.schema_version!r}"
+                )
             if self.dataset_name != DATASET_NAME:
                 raise FixtureIntelligenceError(f"dataset_name must be {DATASET_NAME}")
 
