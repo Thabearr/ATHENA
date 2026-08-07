@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
-import ctypes
-import ctypes.wintypes
+from datetime import datetime
 import os
 from pathlib import Path
 import shutil
+import stat
 import subprocess
 import sys
 import tempfile
@@ -57,7 +57,6 @@ class _PreparedOutput:
     original_bytes: bytes | None
     original_mode: int | None
     backup_path: Path
-    replaced: bool = False
 
 
 def _bounded_external_text(*values: Any) -> str:
@@ -134,19 +133,60 @@ def _decode_git_token(token: bytes, label: str) -> str:
     return value
 
 
-def _require_full_git_sha(value: Any, label: str) -> str:
-    if not isinstance(value, str) or len(value) != 40:
-        raise FixtureCatalogCLIError(f"{label} must be a full Git SHA")
-    if any(ch not in "0123456789abcdefABCDEF" for ch in value):
-        raise FixtureCatalogCLIError(f"{label} must be a full Git SHA")
-    return value.lower()
+def _load_kernel32() -> Any:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [
+            ctypes.wintypes.LPCWSTR,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
+
+        kernel32.FlushFileBuffers.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.FlushFileBuffers.restype = ctypes.wintypes.BOOL
+
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+        return kernel32
+    except (AttributeError, OSError, ImportError):
+        return None
+
+
+def _get_last_error(kernel32: Any) -> int:
+    if hasattr(kernel32, "GetLastError"):
+        try:
+            return int(kernel32.GetLastError())
+        except Exception:
+            pass
+    try:
+        import ctypes
+
+        if hasattr(ctypes, "get_last_error"):
+            return int(ctypes.get_last_error())
+    except Exception:
+        pass
+    return 0
 
 
 def _win_fsync_directory(path: Path) -> None:
-    kernel32 = getattr(ctypes.windll, "kernel32", None)
+    kernel32 = _load_kernel32()
     if kernel32 is None:
         raise FixtureCatalogCLIError("kernel32 is not available on this platform")
-    invalid_handle = ctypes.c_void_p(-1).value
+
+    # 0xC0000000 = GENERIC_READ | GENERIC_WRITE
+    # 0x00000007 = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+    # 3 = OPEN_EXISTING
+    # 0x02000000 = FILE_FLAG_BACKUP_SEMANTICS
     handle = kernel32.CreateFileW(
         str(path),
         0xC0000000,
@@ -156,28 +196,34 @@ def _win_fsync_directory(path: Path) -> None:
         0x02000000,
         None,
     )
-    if handle in (0, None, invalid_handle):
-        err = getattr(kernel32, "GetLastError", lambda: ctypes.get_last_error())()
+    invalid_handle_values: set[Any] = {0, None, -1}
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        if hasattr(ctypes, "c_void_p"):
+            invalid_handle_values.add(ctypes.c_void_p(-1).value)
+        if hasattr(ctypes, "wintypes") and hasattr(ctypes.wintypes, "HANDLE"):
+            invalid_handle_values.add(ctypes.wintypes.HANDLE(-1).value)
+            invalid_handle_values.add((1 << (ctypes.sizeof(ctypes.wintypes.HANDLE) * 8)) - 1)
+    except Exception:
+        pass
+
+    if handle in invalid_handle_values:
+        err = _get_last_error(kernel32)
         raise FixtureCatalogCLIError(
-            f"CreateFileW failed for directory fsync: {path} "
-            f"(winerror={err})"
+            f"CreateFileW failed for directory fsync: {path} (winerror={err})"
         )
     flush_error: str | None = None
     close_error: str | None = None
     try:
         if not kernel32.FlushFileBuffers(handle):
-            err = getattr(kernel32, "GetLastError", lambda: ctypes.get_last_error())()
-            flush_error = (
-                f"FlushFileBuffers failed for {path} "
-                f"(winerror={err})"
-            )
+            err = _get_last_error(kernel32)
+            flush_error = f"FlushFileBuffers failed for {path} (winerror={err})"
     finally:
         if not kernel32.CloseHandle(handle):
-            err = getattr(kernel32, "GetLastError", lambda: ctypes.get_last_error())()
-            close_error = (
-                f"CloseHandle failed for {path} "
-                f"(winerror={err})"
-            )
+            err = _get_last_error(kernel32)
+            close_error = f"CloseHandle failed for {path} (winerror={err})"
     if flush_error or close_error:
         raise FixtureCatalogCLIError(
             "; ".join(item for item in (flush_error, close_error) if item)
@@ -217,12 +263,103 @@ def _walk_unresolved_path(path: Path) -> Path:
     return absolute
 
 
+def _assert_no_symlink_components(path: Path, label: str) -> Path:
+    unresolved = path.absolute()
+    curr = unresolved
+    while curr != curr.parent:
+        if curr.is_symlink():
+            raise FixtureCatalogCLIError(
+                f"{label} contains forbidden symlink path component: {curr}"
+            )
+        curr = curr.parent
+    return path.resolve(strict=False)
+
+
 def _is_relative_to(path: Path, parent: Path) -> bool:
     try:
         path.relative_to(parent)
     except ValueError:
         return False
     return True
+
+
+def _find_boundary(target_directory: Path) -> Path:
+    target = target_directory.resolve(strict=False)
+    if _is_relative_to(target, REPOSITORY_ROOT):
+        return REPOSITORY_ROOT
+    curr = target
+    while not curr.exists() and curr != curr.parent:
+        curr = curr.parent
+    return curr if curr.exists() else target
+
+
+def _ensure_directory_tree_durable(
+    target_directory: Path,
+    boundary_directory: Path,
+) -> list[Path]:
+    created_dirs: list[Path] = []
+    try:
+        target = _assert_no_symlink_components(
+            target_directory,
+            "Target directory",
+        )
+        boundary = _assert_no_symlink_components(
+            boundary_directory,
+            "Boundary directory",
+        )
+        try:
+            relative = target.relative_to(boundary)
+        except ValueError as error:
+            raise FixtureCatalogCLIError(
+                f"Target directory {target} is outside boundary {boundary}"
+            ) from error
+        if not boundary.exists():
+            raise FixtureCatalogCLIError(
+                f"Boundary directory does not exist: {boundary}"
+            )
+        if boundary.is_symlink() or not boundary.is_dir():
+            raise FixtureCatalogCLIError(
+                f"Boundary path is not a directory: {boundary}"
+            )
+        current = boundary
+        _fsync_directory(current)
+        for part in relative.parts:
+            child = current / part
+            if not child.exists():
+                child.mkdir()
+                created_dirs.append(child)
+                _fsync_directory(current)
+                if child.is_symlink() or not child.is_dir():
+                    raise FixtureCatalogCLIError(
+                        f"Directory path component is not a directory: {child}"
+                    )
+                _fsync_directory(child)
+                current = child
+            else:
+                if child.is_symlink() or not child.is_dir():
+                    raise FixtureCatalogCLIError(
+                        f"Directory path component is not a directory: {child}"
+                    )
+                _fsync_directory(child)
+                current = child
+        return created_dirs
+    except Exception as error:
+        cleanup_errors: list[str] = []
+        for d in reversed(created_dirs):
+            try:
+                if d.exists() and not any(d.iterdir()):
+                    d.rmdir()
+                    _fsync_directory(d.parent)
+            except Exception as d_err:
+                cleanup_errors.append(_bounded_external_text(str(d_err)))
+        if cleanup_errors:
+            raise FixtureCatalogCLIError(
+                f"Failed to ensure directory tree durability for {target_directory}: {error}; "
+                + "; ".join(cleanup_errors)
+            ) from error
+        raise FixtureCatalogCLIError(
+            f"Failed to ensure directory tree durability for {target_directory}: {error}"
+        ) from error
 
 
 def _is_git_tracked(path: Path, repo_root: Path) -> bool:
@@ -246,16 +383,17 @@ def _is_git_tracked(path: Path, repo_root: Path) -> bool:
             f"Malformed unterminated ls-files output for {relative_path}"
         )
     entries = raw[:-1].split(b"\x00")
-    decoded_entries = [
-        _decode_git_token(entry, "ls-files path")
-        for entry in entries
-    ]
-    if len(decoded_entries) != 1:
+    if len(entries) != 1:
         raise FixtureCatalogCLIError(
             f"Unexpected ls-files output for {relative_path}: "
             f"{_bounded_external_text(raw)}"
         )
-    return decoded_entries[0] == relative_path
+    decoded = _decode_git_token(entries[0], "ls-files path")
+    if decoded != relative_path:
+        raise FixtureCatalogCLIError(
+            f"Unexpected single ls-files path for {relative_path}: {decoded}"
+        )
+    return True
 
 
 def _validate_output_destination(path: Path) -> Path:
@@ -275,10 +413,16 @@ def _validate_output_destination(path: Path) -> Path:
     return resolved.resolve(strict=False)
 
 
-def _prepare_output(destination: Path, content: bytes, *, force: bool) -> _PreparedOutput:
+def _prepare_output(
+    destination: Path,
+    content: bytes,
+    *,
+    force: bool,
+) -> tuple[_PreparedOutput, list[Path]]:
     resolved = _validate_output_destination(destination)
     parent = resolved.parent
-    parent.mkdir(parents=True, exist_ok=True)
+    boundary = _find_boundary(parent)
+    created_dirs = _ensure_directory_tree_durable(parent, boundary)
     if parent.is_symlink():
         raise FixtureCatalogCLIError(
             f"Output parent directory must not be a symlink: {parent}"
@@ -294,14 +438,40 @@ def _prepare_output(destination: Path, content: bytes, *, force: bool) -> _Prepa
     original_mode = None
     if existing:
         original_bytes = resolved.read_bytes()
-        original_mode = os.stat(resolved).st_mode & 0o777
-    staged_dir = Path(tempfile.mkdtemp(prefix=".fixture-catalog-", dir=str(parent)))
-    staged_path = staged_dir / resolved.name
-    with staged_path.open("xb") as handle:
-        handle.write(content)
-        handle.flush()
-        os.fsync(handle.fileno())
-    return _PreparedOutput(
+        original_mode = stat.S_IMODE(os.stat(resolved).st_mode)
+
+    staged_dir: Path | None = None
+    staged_path: Path | None = None
+    try:
+        staged_dir = Path(tempfile.mkdtemp(prefix=".fixture-catalog-", dir=str(parent)))
+        staged_path = staged_dir / resolved.name
+        with staged_path.open("xb") as handle:
+            handle.write(content)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except Exception as error:
+        cleanup_errors: list[str] = []
+        if staged_dir is not None and staged_dir.exists():
+            try:
+                shutil.rmtree(staged_dir)
+                _fsync_directory(parent)
+            except Exception as cleanup_error:
+                cleanup_errors.append(_bounded_external_text(str(cleanup_error)))
+        for d in reversed(created_dirs):
+            try:
+                if d.exists() and not any(d.iterdir()):
+                    d.rmdir()
+                    _fsync_directory(d.parent)
+            except Exception as d_err:
+                cleanup_errors.append(_bounded_external_text(str(d_err)))
+        if cleanup_errors:
+            raise FixtureCatalogCLIError(
+                f"Preparation failed for {destination} and staging cleanup could not be proven: "
+                + "; ".join([str(error)] + cleanup_errors)
+            ) from error
+        raise FixtureCatalogCLIError(str(error)) from error
+
+    prepared = _PreparedOutput(
         destination=resolved,
         staged_dir=staged_dir,
         staged_path=staged_path,
@@ -310,6 +480,7 @@ def _prepare_output(destination: Path, content: bytes, *, force: bool) -> _Prepa
         original_mode=original_mode,
         backup_path=parent / f".fixture-catalog-backup-{resolved.name}",
     )
+    return prepared, created_dirs
 
 
 def _restore_original(prepared: _PreparedOutput) -> None:
@@ -336,39 +507,27 @@ def _restore_original(prepared: _PreparedOutput) -> None:
             os.chmod(destination, prepared.original_mode)
         _fsync_file(destination)
         _fsync_directory(destination.parent)
-    elif destination.exists():
-        destination.unlink()
-        _fsync_directory(destination.parent)
+    else:
+        if destination.exists():
+            destination.unlink()
+            _fsync_directory(destination.parent)
+        if prepared.backup_path.exists():
+            prepared.backup_path.unlink()
+            _fsync_directory(destination.parent)
 
 
 def _commit_prepared(prepared: _PreparedOutput) -> None:
     destination = prepared.destination
-    try:
-        if prepared.existed:
-            if prepared.backup_path.exists() or prepared.backup_path.is_symlink():
-                raise FixtureCatalogCLIError(
-                    f"Stale backup file exists: {prepared.backup_path}"
-                )
-            os.replace(destination, prepared.backup_path)
-            _fsync_directory(destination.parent)
-        os.replace(prepared.staged_path, destination)
-        _fsync_file(destination)
-        _fsync_directory(destination.parent)
-    except Exception as error:
-        try:
-            if prepared.backup_path.exists():
-                if destination.exists():
-                    destination.unlink()
-                os.replace(prepared.backup_path, destination)
-                if prepared.original_mode is not None:
-                    os.chmod(destination, prepared.original_mode)
-                _fsync_file(destination)
-                _fsync_directory(destination.parent)
-        except Exception as restore_error:  # pragma: no cover - defensive
+    if prepared.existed:
+        if prepared.backup_path.exists() or prepared.backup_path.is_symlink():
             raise FixtureCatalogCLIError(
-                f"Failed to restore original output after commit failure: {restore_error}"
-            ) from error
-        raise FixtureCatalogCLIError(str(error)) from error
+                f"Stale backup file exists: {prepared.backup_path}"
+            )
+        os.replace(destination, prepared.backup_path)
+        _fsync_directory(destination.parent)
+    os.replace(prepared.staged_path, destination)
+    _fsync_file(destination)
+    _fsync_directory(destination.parent)
 
 
 def _cleanup_staged_artifacts(prepared: _PreparedOutput) -> None:
@@ -383,6 +542,37 @@ def _cleanup_backups(prepared: _PreparedOutput) -> None:
         prepared.backup_path.unlink()
     if prepared.destination.parent.exists():
         _fsync_directory(prepared.destination.parent)
+
+
+def _cleanup_all_artifacts(
+    prepared_outputs: Sequence[_PreparedOutput],
+    created_dirs: Sequence[Path] = (),
+) -> list[str]:
+    errors: list[str] = []
+    for item in prepared_outputs:
+        try:
+            _cleanup_staged_artifacts(item)
+        except Exception as error:
+            errors.append(_bounded_external_text(str(error)))
+        try:
+            _cleanup_backups(item)
+        except Exception as error:
+            errors.append(_bounded_external_text(str(error)))
+        rollback_path = item.destination.parent / f".fixture-catalog-rollback-{item.destination.name}"
+        if rollback_path.exists():
+            try:
+                rollback_path.unlink()
+                _fsync_directory(item.destination.parent)
+            except Exception as error:
+                errors.append(_bounded_external_text(str(error)))
+    for d in reversed(created_dirs):
+        try:
+            if d.exists() and not any(d.iterdir()):
+                d.rmdir()
+                _fsync_directory(d.parent)
+        except Exception as error:
+            errors.append(_bounded_external_text(str(error)))
+    return errors
 
 
 def _rollback_prepared_outputs(prepared_outputs: Sequence[_PreparedOutput]) -> list[str]:
@@ -407,18 +597,19 @@ def _write_outputs_atomically(
     manifest_resolved = _validate_output_destination(manifest_output)
     if catalog_resolved == manifest_resolved:
         raise FixtureCatalogCLIError("Catalog and manifest output paths must differ")
+
     prepared: list[_PreparedOutput] = []
+    all_created_dirs: list[Path] = []
     try:
-        prepared.append(_prepare_output(catalog_resolved, catalog_bytes, force=force))
+        catalog_prep, cat_dirs = _prepare_output(catalog_resolved, catalog_bytes, force=force)
+        prepared.append(catalog_prep)
+        all_created_dirs.extend(cat_dirs)
         try:
-            prepared.append(_prepare_output(manifest_resolved, manifest_bytes, force=force))
+            manifest_prep, man_dirs = _prepare_output(manifest_resolved, manifest_bytes, force=force)
+            prepared.append(manifest_prep)
+            all_created_dirs.extend(man_dirs)
         except Exception:
-            cleanup_errors: list[str] = []
-            for item in reversed(prepared):
-                try:
-                    _cleanup_staged_artifacts(item)
-                except Exception as cleanup_error:
-                    cleanup_errors.append(_bounded_external_text(str(cleanup_error)))
+            cleanup_errors = _cleanup_all_artifacts(prepared, all_created_dirs)
             if cleanup_errors:
                 raise FixtureCatalogCLIError(
                     "Transaction preparation failed and cleanup could not be proven: "
@@ -427,20 +618,13 @@ def _write_outputs_atomically(
             raise
     except Exception as error:
         raise FixtureCatalogCLIError(str(error)) from error
-    committed: list[_PreparedOutput] = []
+
     try:
         for item in prepared:
             _commit_prepared(item)
-            committed.append(item)
     except Exception as error:
-        rollback_errors = _rollback_prepared_outputs(committed)
-        cleanup_errors: list[str] = []
-        for item in prepared:
-            try:
-                _cleanup_staged_artifacts(item)
-                _cleanup_backups(item)
-            except Exception as cleanup_error:
-                cleanup_errors.append(_bounded_external_text(str(cleanup_error)))
+        rollback_errors = _rollback_prepared_outputs(prepared)
+        cleanup_errors = _cleanup_all_artifacts(prepared, all_created_dirs)
         if rollback_errors or cleanup_errors:
             details = "; ".join(rollback_errors + cleanup_errors)
             raise FixtureCatalogCLIError(
@@ -456,11 +640,13 @@ def _write_outputs_atomically(
             except Exception as cleanup_error:
                 finalization_errors.append(_bounded_external_text(str(cleanup_error)))
         if finalization_errors:
-            rollback_errors = _rollback_prepared_outputs(committed)
-            if rollback_errors:
+            rollback_errors = _rollback_prepared_outputs(prepared)
+            second_cleanup_errors = _cleanup_all_artifacts(prepared, all_created_dirs)
+            all_errors = finalization_errors + rollback_errors + second_cleanup_errors
+            if rollback_errors or second_cleanup_errors:
                 raise FixtureCatalogCLIError(
-                    "Transaction rollback could not be proven: "
-                    + "; ".join(finalization_errors + rollback_errors)
+                    "Transaction rollback and artifact cleanup could not be proven: "
+                    + "; ".join(all_errors)
                 )
             raise FixtureCatalogCLIError(
                 "Transaction finalization failed: " + "; ".join(finalization_errors)
@@ -500,6 +686,15 @@ def run(
         raise FixtureCatalogCLIError(
             "Provide both catalog and manifest destinations for the selected mode"
         )
+
+    if check_catalog is not None and check_manifest is not None:
+        check_cat_safe = _walk_unresolved_path(check_catalog)
+        check_man_safe = _walk_unresolved_path(check_manifest)
+        if check_cat_safe.resolve(strict=False) == check_man_safe.resolve(strict=False):
+            raise FixtureCatalogCLIError(
+                "Check catalog and check manifest paths must differ"
+            )
+
     result = compile_fixture_catalog(
         input_path=input_path,
         evidence_root=evidence_root,
@@ -516,6 +711,7 @@ def run(
             force=force,
         )
     else:
+        assert check_catalog is not None and check_manifest is not None
         _compare_expected_output(result.catalog_bytes, check_catalog, "catalog")
         _compare_expected_output(result.manifest_bytes, check_manifest, "manifest")
     return result
@@ -616,12 +812,20 @@ __all__ = [
     "FixtureCatalogCLIError",
     "GENERATED_SAFETY_CONTRACT",
     "REPOSITORY_ROOT",
-    "_compare_expected_output",
+    "_cleanup_all_artifacts",
+    "_cleanup_backups",
+    "_cleanup_staged_artifacts",
     "_commit_prepared",
+    "_compare_expected_output",
+    "_ensure_directory_tree_durable",
     "_fsync_directory",
     "_fsync_file",
+    "_is_git_tracked",
+    "_load_kernel32",
     "_prepare_output",
     "_restore_original",
+    "_rollback_prepared_outputs",
+    "_win_fsync_directory",
     "_write_outputs_atomically",
     "build_parser",
     "main",

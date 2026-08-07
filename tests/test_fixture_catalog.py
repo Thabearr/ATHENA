@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import stat
 import subprocess
 import tempfile
 import unittest
@@ -634,7 +635,6 @@ class FixtureCatalogTests(unittest.TestCase):
             tracked = repo / "tracked.txt"
             tracked.write_text("tracked", encoding="utf-8")
             subprocess.run(["git", "add", "tracked.txt"], cwd=repo, check=True, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
             self.assertTrue(manage_fixture_catalog._is_git_tracked(tracked, repo))
             self.assertFalse(manage_fixture_catalog._is_git_tracked(repo / "untracked.txt", repo))
             with self.assertRaises(FixtureCatalogError):
@@ -668,7 +668,25 @@ class FixtureCatalogTests(unittest.TestCase):
                 manage_fixture_catalog,
                 "_run_git_process",
                 return_value=subprocess.CompletedProcess(
-                    args=["git"], returncode=0, stdout=b"tracked\x00extra\x00", stderr=b""
+                    args=["git"], returncode=0, stdout=b"tracked.txt\x00extra.txt\x00", stderr=b""
+                ),
+            ):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._is_git_tracked(tracked, repo)
+            with patch.object(
+                manage_fixture_catalog,
+                "_run_git_process",
+                return_value=subprocess.CompletedProcess(
+                    args=["git"], returncode=0, stdout=b"other.txt\x00", stderr=b""
+                ),
+            ):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._is_git_tracked(tracked, repo)
+            with patch.object(
+                manage_fixture_catalog,
+                "_run_git_process",
+                return_value=subprocess.CompletedProcess(
+                    args=["git"], returncode=0, stdout=b"tracked.txt", stderr=b""
                 ),
             ):
                 with self.assertRaises(FixtureCatalogError):
@@ -676,10 +694,11 @@ class FixtureCatalogTests(unittest.TestCase):
 
     def test_windows_directory_fsync_checks_are_fail_closed(self) -> None:
         class FakeKernel32:
-            def __init__(self, create_value=1, flush_value=True, close_value=True):
+            def __init__(self, create_value=1, flush_value=True, close_value=True, last_error=123):
                 self.create_value = create_value
                 self.flush_value = flush_value
                 self.close_value = close_value
+                self.last_error = last_error
 
             def CreateFileW(self, *args, **kwargs):
                 return self.create_value
@@ -690,53 +709,113 @@ class FixtureCatalogTests(unittest.TestCase):
             def CloseHandle(self, handle):
                 return self.close_value
 
-        original_error = manage_fixture_catalog.ctypes.get_last_error
-        try:
-            manage_fixture_catalog.ctypes.get_last_error = lambda: 123  # type: ignore[assignment]
-            with patch.object(
-                manage_fixture_catalog.ctypes,
-                "windll",
-                type("Windll", (), {"kernel32": FakeKernel32(create_value=0)})(),
-            ):
-                with self.assertRaises(FixtureCatalogError):
-                    manage_fixture_catalog._win_fsync_directory(Path("."))
-            with patch.object(
-                manage_fixture_catalog.ctypes,
-                "windll",
-                type("Windll", (), {"kernel32": FakeKernel32(flush_value=False)})(),
-            ):
-                with self.assertRaises(FixtureCatalogError):
-                    manage_fixture_catalog._win_fsync_directory(Path("."))
-            with patch.object(
-                manage_fixture_catalog.ctypes,
-                "windll",
-                type("Windll", (), {"kernel32": FakeKernel32(close_value=False)})(),
-            ):
-                with self.assertRaises(FixtureCatalogError):
-                    manage_fixture_catalog._win_fsync_directory(Path("."))
-            with patch.object(
-                manage_fixture_catalog.ctypes,
-                "windll",
-                type("Windll", (), {"kernel32": FakeKernel32()})(),
-            ):
-                manage_fixture_catalog._win_fsync_directory(Path("."))
-        finally:
-            manage_fixture_catalog.ctypes.get_last_error = original_error  # type: ignore[assignment]
+            def GetLastError(self):
+                return self.last_error
 
-    def test_transaction_preparation_and_same_path_failures(self) -> None:
+        with patch.object(manage_fixture_catalog, "_load_kernel32", return_value=None):
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._win_fsync_directory(Path("."))
+
+        with patch.object(
+            manage_fixture_catalog,
+            "_load_kernel32",
+            return_value=FakeKernel32(create_value=0),
+        ):
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._win_fsync_directory(Path("."))
+
+        with patch.object(
+            manage_fixture_catalog,
+            "_load_kernel32",
+            return_value=FakeKernel32(create_value=-1),
+        ):
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._win_fsync_directory(Path("."))
+
+        with patch.object(
+            manage_fixture_catalog,
+            "_load_kernel32",
+            return_value=FakeKernel32(flush_value=False),
+        ):
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._win_fsync_directory(Path("."))
+
+        with patch.object(
+            manage_fixture_catalog,
+            "_load_kernel32",
+            return_value=FakeKernel32(close_value=False),
+        ):
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._win_fsync_directory(Path("."))
+
+        with patch.object(
+            manage_fixture_catalog,
+            "_load_kernel32",
+            return_value=FakeKernel32(),
+        ):
+            manage_fixture_catalog._win_fsync_directory(Path("."))
+
+    def test_durable_directory_tree_creation_and_failures(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "nested" / "sub" / "output_dir"
+            boundary = root
+            fsynced: list[Path] = []
+
+            def track_fsync(path: Path) -> None:
+                fsynced.append(path)
+
+            with patch.object(manage_fixture_catalog, "_fsync_directory", side_effect=track_fsync):
+                created = manage_fixture_catalog._ensure_directory_tree_durable(target, boundary)
+                self.assertTrue(target.is_dir())
+                self.assertEqual(len(created), 3)
+                self.assertIn(boundary, fsynced)
+                self.assertIn(target, fsynced)
+
+            failing_target = root / "fail_nest" / "sub"
+            with patch.object(
+                manage_fixture_catalog,
+                "_fsync_directory",
+                side_effect=[None, None, FixtureCatalogError("fsync fail")],
+            ):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._ensure_directory_tree_durable(failing_target, boundary)
+            self.assertFalse((root / "fail_nest").exists())
+
+    def test_prepare_output_self_cleaning_on_staging_failure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            destination = root / "output.json"
+            original_open = Path.open
+
+            def fail_open(path_obj, *args, **kwargs):
+                if ".fixture-catalog-" in str(path_obj):
+                    raise OSError("simulated staged write failure")
+                return original_open(path_obj, *args, **kwargs)
+
+            with patch.object(Path, "open", fail_open):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._prepare_output(destination, b"content", force=True)
+
+            leftovers = [p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")]
+            self.assertEqual(leftovers, [])
+
+    def test_commit_failure_post_replace_rolls_back_every_prepared_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             result = self._compile(root, self._valid_specs())
+
+            # Test A: Both outputs originally absent; fail _fsync_file after catalog replace.
             catalog_output = root / "catalog.json"
             manifest_output = root / "manifest.json"
-            original_prepare = manage_fixture_catalog._prepare_output
+            original_fsync_file = manage_fixture_catalog._fsync_file
 
-            def fail_second(destination, content, *, force):
-                if destination.name == manifest_output.name:
-                    raise FixtureCatalogError("manifest prep failed")
-                return original_prepare(destination, content, force=force)
+            def fail_after_cat_fsync(path: Path) -> None:
+                if path.name == "catalog.json":
+                    raise FixtureCatalogError("fsync failure after catalog replace")
+                original_fsync_file(path)
 
-            with patch.object(manage_fixture_catalog, "_prepare_output", side_effect=fail_second):
+            with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_after_cat_fsync):
                 with self.assertRaises(FixtureCatalogError):
                     manage_fixture_catalog._write_outputs_atomically(
                         catalog_output=catalog_output,
@@ -745,46 +824,75 @@ class FixtureCatalogTests(unittest.TestCase):
                         manifest_bytes=result.manifest_bytes,
                         force=True,
                     )
-            self.assertFalse(any(p.name.startswith(".fixture-catalog-") for p in root.iterdir()))
-            with self.assertRaises(FixtureCatalogError):
-                manage_fixture_catalog._write_outputs_atomically(
-                    catalog_output=catalog_output,
-                    manifest_output=catalog_output,
-                    catalog_bytes=result.catalog_bytes,
-                    manifest_bytes=result.manifest_bytes,
-                    force=True,
-                )
-            alias = root / "alias"
-            alias.mkdir()
-            with self.assertRaises(FixtureCatalogError):
-                manage_fixture_catalog._write_outputs_atomically(
-                    catalog_output=alias / ".." / "catalog.json",
-                    manifest_output=alias / ".." / "." / "catalog.json",
-                    catalog_bytes=result.catalog_bytes,
-                    manifest_bytes=result.manifest_bytes,
-                    force=True,
-                )
+            self.assertFalse(catalog_output.exists())
+            self.assertFalse(manifest_output.exists())
+            self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")], [])
 
-    def test_transaction_finalization_and_rollback_failures(self) -> None:
+            # Test B: Catalog existing and manifest absent; fail manifest fsync after replace.
+            catalog_output.write_text("orig-cat", encoding="utf-8")
+            orig_cat_mode = stat.S_IMODE(os.stat(catalog_output).st_mode)
+
+            def fail_after_man_fsync(path: Path) -> None:
+                if path.name == "manifest.json":
+                    raise FixtureCatalogError("fsync failure after manifest replace")
+                original_fsync_file(path)
+
+            with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_after_man_fsync):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._write_outputs_atomically(
+                        catalog_output=catalog_output,
+                        manifest_output=manifest_output,
+                        catalog_bytes=result.catalog_bytes,
+                        manifest_bytes=result.manifest_bytes,
+                        force=True,
+                    )
+            self.assertEqual(catalog_output.read_text(encoding="utf-8"), "orig-cat")
+            self.assertEqual(stat.S_IMODE(os.stat(catalog_output).st_mode), orig_cat_mode)
+            self.assertFalse(manifest_output.exists())
+            self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")], [])
+
+            # Test C: Both existing; fail after second replace.
+            manifest_output.write_text("orig-man", encoding="utf-8")
+            orig_man_mode = stat.S_IMODE(os.stat(manifest_output).st_mode)
+
+            with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_after_man_fsync):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._write_outputs_atomically(
+                        catalog_output=catalog_output,
+                        manifest_output=manifest_output,
+                        catalog_bytes=result.catalog_bytes,
+                        manifest_bytes=result.manifest_bytes,
+                        force=True,
+                    )
+            self.assertEqual(catalog_output.read_text(encoding="utf-8"), "orig-cat")
+            self.assertEqual(manifest_output.read_text(encoding="utf-8"), "orig-man")
+            self.assertEqual(stat.S_IMODE(os.stat(catalog_output).st_mode), orig_cat_mode)
+            self.assertEqual(stat.S_IMODE(os.stat(manifest_output).st_mode), orig_man_mode)
+            self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")], [])
+
+    def test_finalization_failure_rolls_back_and_cleans_artifacts(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             result = self._compile(root, self._valid_specs())
             catalog_output = root / "catalog.json"
             manifest_output = root / "manifest.json"
             catalog_output.write_text("original-catalog", encoding="utf-8")
-            catalog_mode = catalog_output.stat().st_mode
-            original_manifest_exists = manifest_output.exists()
-            original_commit = manage_fixture_catalog._commit_prepared
+            catalog_mode = stat.S_IMODE(os.stat(catalog_output).st_mode)
 
-            def fail_cleanup(prepared):
-                if prepared.destination.name == manifest_output.name:
-                    raise FixtureCatalogError("staged cleanup failed")
-                return None
+            # 1. Staged-directory cleanup failure
+            call_count = [0]
+            original_cleanup = manage_fixture_catalog._cleanup_staged_artifacts
+
+            def fail_first_cleanup(prepared):
+                call_count[0] += 1
+                if call_count[0] == 1:
+                    raise FixtureCatalogError("staged cleanup first pass failed")
+                return original_cleanup(prepared)
 
             with patch.object(
                 manage_fixture_catalog,
                 "_cleanup_staged_artifacts",
-                side_effect=fail_cleanup,
+                side_effect=fail_first_cleanup,
             ):
                 with self.assertRaises(FixtureCatalogError):
                     manage_fixture_catalog._write_outputs_atomically(
@@ -795,20 +903,24 @@ class FixtureCatalogTests(unittest.TestCase):
                         force=True,
                     )
             self.assertEqual(catalog_output.read_text(encoding="utf-8"), "original-catalog")
-            self.assertEqual(catalog_output.stat().st_mode & 0o777, catalog_mode & 0o777)
-            self.assertEqual(manifest_output.exists(), original_manifest_exists)
+            self.assertEqual(stat.S_IMODE(os.stat(catalog_output).st_mode), catalog_mode)
+            self.assertFalse(manifest_output.exists())
+            self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")], [])
 
-            def fail_restore(prepared):
-                raise FixtureCatalogError("restore failed")
+            # 2. Backup cleanup failure
+            backup_call_count = [0]
+            original_backup_cleanup = manage_fixture_catalog._cleanup_backups
+
+            def fail_first_backup_cleanup(prepared):
+                backup_call_count[0] += 1
+                if backup_call_count[0] == 1:
+                    raise FixtureCatalogError("backup cleanup first pass failed")
+                return original_backup_cleanup(prepared)
 
             with patch.object(
                 manage_fixture_catalog,
-                "_cleanup_staged_artifacts",
-                side_effect=FixtureCatalogError("cleanup failed"),
-            ), patch.object(
-                manage_fixture_catalog,
-                "_rollback_prepared_outputs",
-                side_effect=lambda prepared: ["rollback failed"],
+                "_cleanup_backups",
+                side_effect=fail_first_backup_cleanup,
             ):
                 with self.assertRaises(FixtureCatalogError):
                     manage_fixture_catalog._write_outputs_atomically(
@@ -818,6 +930,83 @@ class FixtureCatalogTests(unittest.TestCase):
                         manifest_bytes=result.manifest_bytes,
                         force=True,
                     )
+            self.assertEqual(catalog_output.read_text(encoding="utf-8"), "original-catalog")
+            self.assertFalse(manifest_output.exists())
+            self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")], [])
+
+            # 3. Both outputs originally absent with finalization failure
+            catalog_output.unlink()
+            call_count[0] = 0
+            with patch.object(
+                manage_fixture_catalog,
+                "_cleanup_staged_artifacts",
+                side_effect=fail_first_cleanup,
+            ):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._write_outputs_atomically(
+                        catalog_output=catalog_output,
+                        manifest_output=manifest_output,
+                        catalog_bytes=result.catalog_bytes,
+                        manifest_bytes=result.manifest_bytes,
+                        force=True,
+                    )
+            self.assertFalse(catalog_output.exists())
+            self.assertFalse(manifest_output.exists())
+            self.assertEqual([p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")], [])
+
+    def test_check_mode_identical_and_aliased_paths_and_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            specs = self._valid_specs()
+            result = self._compile(root, specs)
+            cat_path = root / "catalog.json"
+            cat_path.write_bytes(result.catalog_bytes)
+            man_path = root / "manifest.json"
+            man_path.write_bytes(result.manifest_bytes)
+
+            # Identical check paths
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog.run(
+                    input_path=root / "fixture-provenance.jsonl",
+                    evidence_root=root / "evidence",
+                    as_of=self.as_of_text,
+                    minimum_lead_seconds=self.minimum_lead_seconds,
+                    check_catalog=cat_path,
+                    check_manifest=cat_path,
+                    code_state=self.clean_code_state,
+                )
+
+            # Aliased check paths
+            alias = root / "sub"
+            alias.mkdir()
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog.run(
+                    input_path=root / "fixture-provenance.jsonl",
+                    evidence_root=root / "evidence",
+                    as_of=self.as_of_text,
+                    minimum_lead_seconds=self.minimum_lead_seconds,
+                    check_catalog=cat_path,
+                    check_manifest=alias / ".." / "catalog.json",
+                    code_state=self.clean_code_state,
+                )
+
+            # Symlinks in check path
+            if hasattr(os, "symlink"):
+                sym_cat = root / "sym_catalog.json"
+                try:
+                    os.symlink(cat_path, sym_cat)
+                    with self.assertRaises(FixtureCatalogError):
+                        manage_fixture_catalog.run(
+                            input_path=root / "fixture-provenance.jsonl",
+                            evidence_root=root / "evidence",
+                            as_of=self.as_of_text,
+                            minimum_lead_seconds=self.minimum_lead_seconds,
+                            check_catalog=sym_cat,
+                            check_manifest=man_path,
+                            code_state=self.clean_code_state,
+                        )
+                except OSError:
+                    pass
 
     def test_catalog_and_manifest_shape_and_check_mode(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

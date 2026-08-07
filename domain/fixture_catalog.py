@@ -443,7 +443,6 @@ def compile_fixture_catalog(
         as_of=as_of,
         minimum_lead_seconds=minimum_lead_seconds,
     )
-    input_bytes = input_path.read_bytes()
     ordered_records = tuple(
         sorted(records, key=lambda item: (item.kickoff, item.fixture_identifier))
     )
