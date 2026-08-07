@@ -103,6 +103,8 @@ def _validate_evidence_path(path: str) -> None:
     win = pathlib.PureWindowsPath(path)
     if posix.is_absolute() or win.is_absolute():
         raise FixtureIntelligenceError("evidence_file_path must be relative")
+    if win.drive or win.root:
+        raise FixtureIntelligenceError(f'evidence_file_path must be a relative logical path, got: {path!r}')
     if path.startswith('\\\\') or path.startswith('//'):
         raise FixtureIntelligenceError("UNC paths are not allowed")
     for part in posix.parts:
@@ -346,7 +348,8 @@ class FixtureIntelligenceSnapshot:
                 if type(v) is not bool or v is not False:
                     raise FixtureIntelligenceError(f"safety[{k!r}] must be exactly bool False")
 
-            object.__setattr__(self, 'safety', types.MappingProxyType(self.safety))
+            detached_safety = dict(self.safety)
+            object.__setattr__(self, 'safety', types.MappingProxyType(detached_safety))
 
         except (TypeError, AttributeError) as e:
             raise FixtureIntelligenceError(f"Validation error: {e}")
@@ -376,6 +379,9 @@ class FixtureIntelligenceSnapshot:
 
 
 def build_snapshot(fixture_identifier: str, kickoff: datetime.datetime, as_of: datetime.datetime, raw_facts: List[FixtureIntelligenceFact]) -> FixtureIntelligenceSnapshot:
+    if not isinstance(raw_facts, (list, tuple)):
+        raise FixtureIntelligenceError(f'raw_facts must be a list or tuple of FixtureIntelligenceFact, got {type(raw_facts).__name__}')
+
     as_of_utc = _require_utc(as_of, "as_of")
     kickoff_utc = _require_utc(kickoff, "kickoff")
 
@@ -383,9 +389,9 @@ def build_snapshot(fixture_identifier: str, kickoff: datetime.datetime, as_of: d
         raise FixtureIntelligenceError("as_of must be strictly before kickoff")
 
     valid_facts = []
-    for f in raw_facts:
+    for i, f in enumerate(raw_facts):
         if not isinstance(f, FixtureIntelligenceFact):
-            raise FixtureIntelligenceError("all facts must be FixtureIntelligenceFact")
+            raise FixtureIntelligenceError(f'raw_facts[{i}] must be FixtureIntelligenceFact, got {type(f).__name__}')
         if f.observed_at > as_of_utc:
             raise FixtureIntelligenceError("Fact observed_at cannot be after as_of")
         valid_facts.append(f)

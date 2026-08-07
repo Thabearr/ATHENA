@@ -287,6 +287,26 @@ class TestFixtureIntelligence(unittest.TestCase):
         with self.assertRaises(TypeError):
             snap.safety['bet_authorized'] = True
 
+    def test_caller_safety_mutation_does_not_affect_snapshot(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        my_safety = dict(self._SAFE_DICT)
+        snap = FixtureIntelligenceSnapshot(
+            schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+            kickoff=ko, as_of=ao, facts=real_snap.facts,
+            category_coverage=real_snap.category_coverage,
+            conflicted_fields=real_snap.conflicted_fields,
+            unverified_fields=real_snap.unverified_fields,
+            safety=my_safety)
+        b1 = canonical_snapshot_bytes(snap)
+        my_safety['bet_authorized'] = True
+        self.assertFalse(snap.safety['bet_authorized'])
+        b2 = canonical_snapshot_bytes(snap)
+        self.assertEqual(b1, b2)
+        with self.assertRaises(TypeError):
+            snap.safety['bet_authorized'] = True
+
     def test_canonical_bytes_stable_after_input_mutation(self):
         val = {'key': [1, 2]}
         snap = self._make_snapshot(facts=[self._make_fact(value=val)])
@@ -402,6 +422,31 @@ class TestFixtureIntelligence(unittest.TestCase):
         with self.assertRaises(FixtureIntelligenceError):
             build_snapshot('X', ko, ao, ['not-a-fact'])
 
+    def test_build_snapshot_none_raw_facts_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        with self.assertRaises(FixtureIntelligenceError):
+            build_snapshot('X', ko, ao, None)
+
+    def test_build_snapshot_int_raw_facts_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        with self.assertRaises(FixtureIntelligenceError):
+            build_snapshot('X', ko, ao, 123)
+
+    def test_build_snapshot_string_raw_facts_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        with self.assertRaises(FixtureIntelligenceError):
+            build_snapshot('X', ko, ao, 'bad')
+
+    def test_build_snapshot_mixed_raw_facts_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        valid_fact = self._make_fact()
+        with self.assertRaises(FixtureIntelligenceError):
+            build_snapshot('X', ko, ao, [valid_fact, 'bad_string'])
+
     def test_tie_breaking_determinism(self):
         sha = 'a' * 64
         f1 = self._make_fact(value='alpha_value', source_reference='ref-alpha', evidence_sha256=sha)
@@ -438,8 +483,28 @@ class TestFixtureIntelligence(unittest.TestCase):
         with self.assertRaises(FixtureIntelligenceError):
             self._make_fact(evidence_file_path='../../etc/passwd')
 
+    def test_embedded_traversal_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='folder\\..\\fact.json')
+
     def test_normal_relative_path_accepted(self):
         fact = self._make_fact(evidence_file_path='evidence/fixture_123/fact.json')
+        self.assertIsNotNone(fact)
+
+    def test_windows_drive_relative_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='C:folder\\fact.json')
+
+    def test_windows_root_relative_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='\\folder\\fact.json')
+
+    def test_posix_unc_style_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='//server/share/fact.json')
+
+    def test_windows_relative_with_backslashes_accepted(self):
+        fact = self._make_fact(evidence_file_path='evidence\\fixture_123\\fact.json')
         self.assertIsNotNone(fact)
 
     def test_safety_zero_rejected(self):
