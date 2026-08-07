@@ -1480,5 +1480,272 @@ class FixtureCatalogTests(unittest.TestCase):
                 )
             self.assertEqual(cat_out.read_text(encoding="utf-8"), "existing-cat")
 
+    def test_rollback_replace_failure_preserves_backup_and_reports_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._compile(root, self._valid_specs())
+            cat_out = root / "catalog.json"
+            man_out = root / "manifest.json"
+            cat_out.write_text("orig-cat-content", encoding="utf-8")
+
+            real_replace = os.replace
+            backup_path = root / f".fixture-catalog-backup-{cat_out.name}"
+
+            def fail_restore_replace(src, dst, *args, **kwargs):
+                if str(src) == str(backup_path) and str(dst) == str(cat_out):
+                    raise OSError("injected disk failure during restore replace")
+                return real_replace(src, dst, *args, **kwargs)
+
+            original_fsync_file = manage_fixture_catalog._fsync_file
+
+            def fail_on_man_fsync(path: Path) -> None:
+                if path.name == "manifest.json":
+                    raise FixtureCatalogError("injected manifest commit fsync failure")
+                original_fsync_file(path)
+
+            with patch("os.replace", side_effect=fail_restore_replace):
+                with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_on_man_fsync):
+                    with self.assertRaises(FixtureCatalogError) as ctx:
+                        manage_fixture_catalog._write_outputs_atomically(
+                            catalog_output=cat_out,
+                            manifest_output=man_out,
+                            catalog_bytes=result.catalog_bytes,
+                            manifest_bytes=result.manifest_bytes,
+                            force=True,
+                        )
+
+            err_msg = str(ctx.exception)
+            self.assertIn("Transaction rollback could not be proven; manual recovery is required", err_msg)
+            self.assertIn(str(backup_path), err_msg)
+            self.assertTrue(backup_path.exists())
+            self.assertEqual(backup_path.read_text(encoding="utf-8"), "orig-cat-content")
+            self.assertTrue(cat_out.exists())
+            staging_leftovers = [p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-") and p != backup_path]
+            self.assertEqual(staging_leftovers, [])
+
+    def test_rollback_fallback_failure_preserves_rollback_file_and_reports_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cat_out = root / "catalog.json"
+            cat_out.write_text("modified-content", encoding="utf-8")
+            backup_path = root / f".fixture-catalog-backup-{cat_out.name}"
+            rollback_path = root / f".fixture-catalog-rollback-{cat_out.name}"
+
+            prepared = manage_fixture_catalog._PreparedOutput(
+                destination=cat_out,
+                staged_dir=root / ".fixture-catalog-staged",
+                staged_path=root / ".fixture-catalog-staged" / "catalog.json",
+                existed=True,
+                original_bytes=b"original-fallback-bytes",
+                original_mode=0o644,
+                backup_path=backup_path,
+                rollback_path=rollback_path,
+                created_backup=False,
+                created_rollback=False,
+            )
+
+            real_replace = os.replace
+
+            def fail_rollback_replace(src, dst, *args, **kwargs):
+                if str(src) == str(rollback_path):
+                    raise OSError("injected disk failure replacing rollback file")
+                return real_replace(src, dst, *args, **kwargs)
+
+            with patch("os.replace", side_effect=fail_rollback_replace):
+                with self.assertRaises(OSError):
+                    manage_fixture_catalog._restore_original(prepared)
+
+            self.assertTrue(prepared.created_rollback)
+            self.assertTrue(rollback_path.exists())
+            self.assertEqual(rollback_path.read_bytes(), b"original-fallback-bytes")
+
+            preserved = manage_fixture_catalog._collect_preserved_recovery_artifacts([prepared])
+            self.assertEqual(preserved, [rollback_path])
+
+    def test_successful_rollback_removes_recovery_files_and_restores_original(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._compile(root, self._valid_specs())
+            cat_out = root / "catalog.json"
+            man_out = root / "manifest.json"
+            cat_out.write_text("orig-cat-text", encoding="utf-8")
+            orig_cat_mode = stat.S_IMODE(os.stat(cat_out).st_mode)
+
+            original_fsync_file = manage_fixture_catalog._fsync_file
+
+            def fail_on_man_fsync(path: Path) -> None:
+                if path.name == "manifest.json":
+                    raise FixtureCatalogError("fsync error on manifest")
+                original_fsync_file(path)
+
+            with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_on_man_fsync):
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog._write_outputs_atomically(
+                        catalog_output=cat_out,
+                        manifest_output=man_out,
+                        catalog_bytes=result.catalog_bytes,
+                        manifest_bytes=result.manifest_bytes,
+                        force=True,
+                    )
+
+            self.assertEqual(cat_out.read_text(encoding="utf-8"), "orig-cat-text")
+            self.assertEqual(stat.S_IMODE(os.stat(cat_out).st_mode), orig_cat_mode)
+            self.assertFalse(man_out.exists())
+            all_artifacts = [p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")]
+            self.assertEqual(all_artifacts, [])
+
+    def test_rollback_failure_with_transient_cleanup_failure_aggregates_errors(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._compile(root, self._valid_specs())
+            cat_out = root / "catalog.json"
+            man_out = root / "manifest.json"
+            cat_out.write_text("orig-cat-data", encoding="utf-8")
+            backup_path = root / f".fixture-catalog-backup-{cat_out.name}"
+
+            real_replace = os.replace
+
+            def fail_restore_replace(src, dst, *args, **kwargs):
+                if str(src) == str(backup_path):
+                    raise OSError("restore replace error")
+                return real_replace(src, dst, *args, **kwargs)
+
+            original_fsync_file = manage_fixture_catalog._fsync_file
+
+            def fail_on_man_fsync(path: Path) -> None:
+                if path.name == "manifest.json":
+                    raise FixtureCatalogError("manifest fsync fail")
+                original_fsync_file(path)
+
+            def fail_staged_cleanup(prepared):
+                raise OSError("staging cleanup failure")
+
+            with patch("os.replace", side_effect=fail_restore_replace):
+                with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_on_man_fsync):
+                    with patch.object(manage_fixture_catalog, "_cleanup_staged_artifacts", side_effect=fail_staged_cleanup):
+                        with self.assertRaises(FixtureCatalogError) as ctx:
+                            manage_fixture_catalog._write_outputs_atomically(
+                                catalog_output=cat_out,
+                                manifest_output=man_out,
+                                catalog_bytes=result.catalog_bytes,
+                                manifest_bytes=result.manifest_bytes,
+                                force=True,
+                            )
+
+            err_msg = str(ctx.exception)
+            self.assertIn("Transaction rollback could not be proven; manual recovery is required", err_msg)
+            self.assertIn(str(backup_path), err_msg)
+            self.assertIn("Transient cleanup errors", err_msg)
+            self.assertIn("staging cleanup failure", err_msg)
+            self.assertTrue(backup_path.exists())
+            self.assertEqual(backup_path.read_text(encoding="utf-8"), "orig-cat-data")
+
+    def test_restore_uses_direct_replace_without_pre_unlinking_destination(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._compile(root, self._valid_specs())
+            cat_out = root / "catalog.json"
+            man_out = root / "manifest.json"
+            cat_out.write_text("orig-cat-content", encoding="utf-8")
+            backup_path = root / f".fixture-catalog-backup-{cat_out.name}"
+
+            unlinked_paths: list[Path] = []
+            dest_existed_at_replace: list[bool] = []
+
+            original_unlink = Path.unlink
+            real_replace = os.replace
+
+            def track_unlink(path_obj, *args, **kwargs):
+                unlinked_paths.append(path_obj)
+                return original_unlink(path_obj, *args, **kwargs)
+
+            def track_replace(src, dst, *args, **kwargs):
+                if str(dst) == str(cat_out) and str(src) == str(backup_path):
+                    dest_existed_at_replace.append(cat_out.exists())
+                return real_replace(src, dst, *args, **kwargs)
+
+            original_fsync_file = manage_fixture_catalog._fsync_file
+
+            def fail_on_man_fsync(path: Path) -> None:
+                if path.name == "manifest.json":
+                    raise FixtureCatalogError("manifest fsync fail")
+                original_fsync_file(path)
+
+            with patch.object(Path, "unlink", track_unlink):
+                with patch("os.replace", side_effect=track_replace):
+                    with patch.object(manage_fixture_catalog, "_fsync_file", side_effect=fail_on_man_fsync):
+                        with self.assertRaises(FixtureCatalogError):
+                            manage_fixture_catalog._write_outputs_atomically(
+                                catalog_output=cat_out,
+                                manifest_output=man_out,
+                                catalog_bytes=result.catalog_bytes,
+                                manifest_bytes=result.manifest_bytes,
+                                force=True,
+                            )
+
+            self.assertNotIn(cat_out, unlinked_paths)
+            self.assertEqual(dest_existed_at_replace, [True])
+            self.assertEqual(cat_out.read_text(encoding="utf-8"), "orig-cat-content")
+
+    def test_prepare_output_rejects_non_regular_existing_destinations(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            # 1. Existing directory as output destination
+            dir_dest = root / "directory_target"
+            dir_dest.mkdir()
+            with self.assertRaises(FixtureCatalogError) as ctx:
+                manage_fixture_catalog._prepare_output(
+                    destination=dir_dest,
+                    content=b"test",
+                    force=True,
+                    backup_path=root / ".fixture-catalog-backup-dir",
+                    rollback_path=root / ".fixture-catalog-rollback-dir",
+                )
+            self.assertIn("regular non-symlink file", str(ctx.exception))
+
+            # 2. Existing FIFO if supported by OS
+            if hasattr(os, "mkfifo"):
+                fifo_dest = root / "fifo_target"
+                try:
+                    os.mkfifo(fifo_dest)
+                    with self.assertRaises(FixtureCatalogError) as ctx:
+                        manage_fixture_catalog._prepare_output(
+                            destination=fifo_dest,
+                            content=b"test",
+                            force=True,
+                            backup_path=root / ".fixture-catalog-backup-fifo",
+                            rollback_path=root / ".fixture-catalog-rollback-fifo",
+                        )
+                    self.assertIn("regular non-symlink file", str(ctx.exception))
+                finally:
+                    if fifo_dest.exists() or fifo_dest.is_fifo():
+                        fifo_dest.unlink()
+
+            # 3. Simulated non-regular stat mode (e.g. character device / socket)
+            fake_dest = root / "fake_non_regular.json"
+            fake_dest.write_text("some-data", encoding="utf-8")
+            original_lstat = Path.lstat
+
+            class FakeStatResult:
+                def __init__(self, mode):
+                    self.st_mode = mode
+
+            def fake_lstat(path_obj):
+                if str(path_obj) == str(fake_dest):
+                    return FakeStatResult(stat.S_IFCHR | 0o666)
+                return original_lstat(path_obj)
+
+            with patch.object(Path, "lstat", fake_lstat):
+                with self.assertRaises(FixtureCatalogError) as ctx:
+                    manage_fixture_catalog._prepare_output(
+                        destination=fake_dest,
+                        content=b"test",
+                        force=True,
+                        backup_path=root / ".fixture-catalog-backup-fake",
+                        rollback_path=root / ".fixture-catalog-rollback-fake",
+                    )
+                self.assertIn("regular non-symlink file", str(ctx.exception))
+
 
 __all__ = ["FixtureCatalogTests"]
+

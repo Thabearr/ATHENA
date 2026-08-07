@@ -488,11 +488,19 @@ def _prepare_output(
         )
     existing = destination.exists()
     if destination.is_symlink():
-        raise FixtureCatalogCLIError(f"Output file must be a regular non-symlink file: {destination}")
-    if existing and not force:
         raise FixtureCatalogCLIError(
-            f"Output already exists: {destination}; use --force to replace untracked files"
+            f"Output destination must be a regular non-symlink file: {destination}"
         )
+    if existing:
+        st = destination.lstat()
+        if stat.S_ISLNK(st.st_mode) or not stat.S_ISREG(st.st_mode):
+            raise FixtureCatalogCLIError(
+                f"Output destination must be a regular non-symlink file: {destination}"
+            )
+        if not force:
+            raise FixtureCatalogCLIError(
+                f"Output already exists: {destination}; use --force to replace untracked files"
+            )
     original_bytes = None
     original_mode = None
     if existing:
@@ -549,16 +557,17 @@ def _restore_original(prepared: _PreparedOutput) -> None:
     destination = prepared.destination
     if prepared.existed:
         if prepared.created_backup and prepared.backup_path.exists():
-            if destination.exists():
-                destination.unlink()
             os.replace(prepared.backup_path, destination)
             prepared.created_backup = False
         else:
             if prepared.original_bytes is not None:
-                dest_bytes = destination.read_bytes() if destination.exists() else None
+                dest_bytes = None
+                try:
+                    if destination.exists() and destination.is_file():
+                        dest_bytes = destination.read_bytes()
+                except Exception:
+                    dest_bytes = None
                 if dest_bytes != prepared.original_bytes:
-                    if destination.exists():
-                        destination.unlink()
                     if prepared.rollback_path.exists() or prepared.rollback_path.is_symlink():
                         raise FixtureCatalogCLIError(
                             f"Stale rollback artifact exists: {prepared.rollback_path}"
@@ -610,6 +619,26 @@ def _cleanup_staged_artifacts(prepared: _PreparedOutput) -> None:
         _fsync_directory(prepared.destination.parent)
 
 
+def _cleanup_safe_transient_artifacts(
+    prepared_outputs: Sequence[_PreparedOutput],
+    created_dirs: Sequence[Path] = (),
+) -> list[str]:
+    errors: list[str] = []
+    for item in prepared_outputs:
+        try:
+            _cleanup_staged_artifacts(item)
+        except Exception as error:
+            errors.append(_bounded_external_text(str(error)))
+    for d in reversed(created_dirs):
+        try:
+            if d.exists() and not any(d.iterdir()):
+                d.rmdir()
+                _fsync_directory(d.parent)
+        except Exception as error:
+            errors.append(_bounded_external_text(str(error)))
+    return errors
+
+
 def _cleanup_backups(prepared: _PreparedOutput) -> None:
     if prepared.created_backup and prepared.backup_path.exists():
         prepared.backup_path.unlink()
@@ -623,25 +652,26 @@ def _cleanup_backups(prepared: _PreparedOutput) -> None:
             _fsync_directory(prepared.destination.parent)
 
 
+def _collect_preserved_recovery_artifacts(
+    prepared_outputs: Sequence[_PreparedOutput],
+) -> list[Path]:
+    preserved: list[Path] = []
+    for item in prepared_outputs:
+        if item.created_backup and item.backup_path.exists():
+            preserved.append(item.backup_path)
+        if item.created_rollback and item.rollback_path.exists():
+            preserved.append(item.rollback_path)
+    return preserved
+
+
 def _cleanup_all_artifacts(
     prepared_outputs: Sequence[_PreparedOutput],
     created_dirs: Sequence[Path] = (),
 ) -> list[str]:
-    errors: list[str] = []
+    errors = _cleanup_safe_transient_artifacts(prepared_outputs, created_dirs)
     for item in prepared_outputs:
         try:
-            _cleanup_staged_artifacts(item)
-        except Exception as error:
-            errors.append(_bounded_external_text(str(error)))
-        try:
             _cleanup_backups(item)
-        except Exception as error:
-            errors.append(_bounded_external_text(str(error)))
-    for d in reversed(created_dirs):
-        try:
-            if d.exists() and not any(d.iterdir()):
-                d.rmdir()
-                _fsync_directory(d.parent)
         except Exception as error:
             errors.append(_bounded_external_text(str(error)))
     return errors
@@ -694,10 +724,10 @@ def _write_outputs_atomically(
             prepared.append(manifest_prep)
             all_created_dirs.extend(man_dirs)
         except Exception:
-            cleanup_errors = _cleanup_all_artifacts(prepared, all_created_dirs)
+            cleanup_errors = _cleanup_safe_transient_artifacts(prepared, all_created_dirs)
             if cleanup_errors:
                 raise FixtureCatalogCLIError(
-                    "Transaction preparation failed and cleanup could not be proven: "
+                    "Transaction preparation failed and transient cleanup could not be proven: "
                     + "; ".join(cleanup_errors)
                 )
             raise
@@ -709,12 +739,23 @@ def _write_outputs_atomically(
             _commit_prepared(item)
     except Exception as error:
         rollback_errors = _rollback_prepared_outputs(prepared)
-        cleanup_errors = _cleanup_all_artifacts(prepared, all_created_dirs)
-        if rollback_errors or cleanup_errors:
-            details = "; ".join(rollback_errors + cleanup_errors)
-            raise FixtureCatalogCLIError(
-                "Transaction rollback could not be proven: " + details
-            ) from error
+        safe_cleanup_errors = _cleanup_safe_transient_artifacts(prepared, all_created_dirs)
+        preserved_recovery_artifacts = _collect_preserved_recovery_artifacts(prepared)
+        if rollback_errors or preserved_recovery_artifacts or safe_cleanup_errors:
+            error_parts: list[str] = []
+            if rollback_errors or preserved_recovery_artifacts:
+                error_parts.append(
+                    "Transaction rollback could not be proven; manual recovery is required"
+                )
+                if preserved_recovery_artifacts:
+                    paths_str = ", ".join(str(p) for p in preserved_recovery_artifacts)
+                    error_parts.append(f"Preserved recovery artifacts: {paths_str}")
+                if rollback_errors:
+                    error_parts.append("Rollback errors: " + "; ".join(rollback_errors))
+            if safe_cleanup_errors:
+                error_parts.append("Transient cleanup errors: " + "; ".join(safe_cleanup_errors))
+            error_parts.append(f"Original failure: {_bounded_external_text(str(error))}")
+            raise FixtureCatalogCLIError(". ".join(error_parts)) from error
         raise FixtureCatalogCLIError(str(error)) from error
     else:
         finalization_errors: list[str] = []
@@ -726,13 +767,21 @@ def _write_outputs_atomically(
                 finalization_errors.append(_bounded_external_text(str(cleanup_error)))
         if finalization_errors:
             rollback_errors = _rollback_prepared_outputs(prepared)
-            second_cleanup_errors = _cleanup_all_artifacts(prepared, all_created_dirs)
-            all_errors = finalization_errors + rollback_errors + second_cleanup_errors
-            if rollback_errors or second_cleanup_errors:
-                raise FixtureCatalogCLIError(
-                    "Transaction rollback and artifact cleanup could not be proven: "
-                    + "; ".join(all_errors)
-                )
+            safe_cleanup_errors = _cleanup_safe_transient_artifacts(prepared, all_created_dirs)
+            preserved_recovery_artifacts = _collect_preserved_recovery_artifacts(prepared)
+            if rollback_errors or preserved_recovery_artifacts or safe_cleanup_errors:
+                error_parts = [
+                    "Transaction finalization failed and rollback could not be proven; manual recovery is required"
+                ]
+                if preserved_recovery_artifacts:
+                    paths_str = ", ".join(str(p) for p in preserved_recovery_artifacts)
+                    error_parts.append(f"Preserved recovery artifacts: {paths_str}")
+                if rollback_errors:
+                    error_parts.append("Rollback errors: " + "; ".join(rollback_errors))
+                if safe_cleanup_errors:
+                    error_parts.append("Transient cleanup errors: " + "; ".join(safe_cleanup_errors))
+                error_parts.append("Finalization errors: " + "; ".join(finalization_errors))
+                raise FixtureCatalogCLIError(". ".join(error_parts))
             raise FixtureCatalogCLIError(
                 "Transaction finalization failed: " + "; ".join(finalization_errors)
             )
@@ -913,7 +962,9 @@ __all__ = [
     "REPOSITORY_ROOT",
     "_cleanup_all_artifacts",
     "_cleanup_backups",
+    "_cleanup_safe_transient_artifacts",
     "_cleanup_staged_artifacts",
+    "_collect_preserved_recovery_artifacts",
     "_commit_prepared",
     "_compare_expected_output",
     "_ensure_directory_tree_durable",
