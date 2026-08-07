@@ -1303,19 +1303,20 @@ class FixtureCatalogTests(unittest.TestCase):
             result_extra = self._compile(root_extra, [spec_a, spec_b, spec_c])
             self.assertNotEqual(manifest["normalized_input_sha256"], result_extra.manifest["normalized_input_sha256"])
 
-            # Raw formatting whitespace differences in the source input file do not change normalized bytes
+            # Raw formatting whitespace differences within single-line JSON records do not change normalized bytes
             root_spaced = root / "spaced"
             root_spaced.mkdir()
             ev_dir = root_spaced / "evidence"
+            lines_spaced = []
             for s in [spec_a, spec_b]:
                 ev_file = ev_dir / Path(str(s["evidence_file_path"]))
                 ev_file.parent.mkdir(parents=True, exist_ok=True)
-                ev_file.write_bytes(s["evidence_bytes"])
-            input_file = root_spaced / "fixture-provenance.jsonl"
-            lines_spaced = []
-            for s in [spec_a, spec_b]:
+                ev_bytes = bytes(s["evidence_bytes"])
+                ev_file.write_bytes(ev_bytes)
                 payload = {k: v for k, v in s.items() if k != "evidence_bytes"}
-                lines_spaced.append("  " + json.dumps(payload, indent=4) + "  \n\n")
+                payload["evidence_sha256"] = hashlib.sha256(ev_bytes).hexdigest()
+                lines_spaced.append(json.dumps(payload, separators=(",  ", " : ")) + "\n")
+            input_file = root_spaced / "fixture-provenance.jsonl"
             input_file.write_text("".join(lines_spaced), encoding="utf-8")
             result_spaced = compile_fixture_catalog(
                 input_path=input_file,
