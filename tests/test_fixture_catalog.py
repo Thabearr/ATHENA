@@ -23,6 +23,7 @@ from domain.fixture_catalog import (
     canonical_json_bytes,
     canonical_json_line_bytes,
     compile_fixture_catalog,
+    load_fixture_provenance_records,
     parse_utc_timestamp,
     serialize_utc,
     sha256_bytes,
@@ -1257,19 +1258,18 @@ class FixtureCatalogTests(unittest.TestCase):
             self.assertEqual(manifest["fixture_count"], 2)
 
             # Check normalized input serialization contract
-            rec_a = FixtureProvenanceRecord.from_dict(
-                spec_a,
+            records = load_fixture_provenance_records(
+                root / "fixture-provenance.jsonl",
                 evidence_root=root / "evidence",
                 as_of=self.as_of,
                 minimum_lead_seconds=self.minimum_lead_seconds,
             )
-            rec_b = FixtureProvenanceRecord.from_dict(
-                spec_b,
-                evidence_root=root / "evidence",
-                as_of=self.as_of,
-                minimum_lead_seconds=self.minimum_lead_seconds,
+            ordered_records = tuple(
+                sorted(records, key=lambda item: (item.kickoff, item.fixture_identifier))
             )
-            expected_norm_bytes = canonical_json_line_bytes([rec_b.to_dict(), rec_a.to_dict()])
+            expected_norm_bytes = b"".join(
+                canonical_json_line_bytes(record.provenance_entry()) for record in ordered_records
+            )
             self.assertEqual(manifest["normalized_input_byte_size"], len(expected_norm_bytes))
             self.assertEqual(manifest["normalized_input_sha256"], hashlib.sha256(expected_norm_bytes).hexdigest())
 
