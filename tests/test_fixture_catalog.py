@@ -1242,11 +1242,15 @@ class FixtureCatalogTests(unittest.TestCase):
                 source_fixture_identifier="101",
                 kickoff="2026-08-07T02:00:00Z",
                 reviewed_at="2026-08-05T20:00:00Z",
+                evidence_file_path="evidence/a.txt",
+                evidence_bytes=b"evidence a",
             )
             spec_b = self._record_spec(
                 source_fixture_identifier="100",
                 kickoff="2026-08-07T01:00:00Z",
                 reviewed_at="2026-08-05T21:00:00Z",
+                evidence_file_path="evidence/b.txt",
+                evidence_bytes=b"evidence b",
             )
             result = self._compile(root, [spec_a, spec_b])
             manifest = result.manifest
@@ -1291,6 +1295,8 @@ class FixtureCatalogTests(unittest.TestCase):
                 source_fixture_identifier="102",
                 kickoff="2026-08-07T03:00:00Z",
                 reviewed_at="2026-08-05T22:00:00Z",
+                evidence_file_path="evidence/c.txt",
+                evidence_bytes=b"evidence c",
             )
             root_extra = root / "extra"
             root_extra.mkdir()
@@ -1324,7 +1330,7 @@ class FixtureCatalogTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp) / "repo"
             repo.mkdir()
-            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(["git", "-C", str(repo), "init"], check=True, capture_output=True)
             allowed_dir = repo / ".cache" / "athena-research"
             allowed_dir.mkdir(parents=True, exist_ok=True)
             (repo / ".gitignore").write_text(".cache/athena-research/\n", encoding="utf-8")
@@ -1332,7 +1338,11 @@ class FixtureCatalogTests(unittest.TestCase):
             tracked_file.parent.mkdir(parents=True, exist_ok=True)
             tracked_file.write_text("original-tracked", encoding="utf-8")
             orig_tracked_mode = stat.S_IMODE(os.stat(tracked_file).st_mode)
-            subprocess.run(["git", "add", "domain/tracked.txt", ".gitignore"], cwd=repo, check=True, capture_output=True)
+            subprocess.run(
+                ["git", "-C", str(repo), "add", "domain/tracked.txt", ".gitignore"],
+                check=True,
+                capture_output=True,
+            )
 
             input_root = Path(tmp) / "input"
             input_root.mkdir()
