@@ -21,6 +21,7 @@ from domain.fixture_catalog import (
     SAFETY_FLAGS,
     build_strict_catalog,
     canonical_json_bytes,
+    canonical_json_line_bytes,
     compile_fixture_catalog,
     parse_utc_timestamp,
     serialize_utc,
@@ -795,7 +796,13 @@ class FixtureCatalogTests(unittest.TestCase):
 
             with patch.object(Path, "open", fail_open):
                 with self.assertRaises(FixtureCatalogError):
-                    manage_fixture_catalog._prepare_output(destination, b"content", force=True)
+                    manage_fixture_catalog._prepare_output(
+                        destination,
+                        b"content",
+                        force=True,
+                        backup_path=root / f".fixture-catalog-backup-{destination.name}",
+                        rollback_path=root / f".fixture-catalog-rollback-{destination.name}",
+                    )
 
             leftovers = [p.name for p in root.iterdir() if p.name.startswith(".fixture-catalog-")]
             self.assertEqual(leftovers, [])
@@ -1227,6 +1234,239 @@ class FixtureCatalogTests(unittest.TestCase):
             self.assertNotIn("away_team", catalog_text)
             self.assertNotIn("competition", catalog_text)
             self.assertTrue(all(flag is False for flag in result.manifest["safety"].values()))
+
+    def test_normalized_input_canonical_json_lines(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            spec_a = self._record_spec(
+                source_fixture_identifier="101",
+                kickoff="2026-08-07T02:00:00Z",
+                reviewed_at="2026-08-05T20:00:00Z",
+            )
+            spec_b = self._record_spec(
+                source_fixture_identifier="100",
+                kickoff="2026-08-07T01:00:00Z",
+                reviewed_at="2026-08-05T21:00:00Z",
+            )
+            result = self._compile(root, [spec_a, spec_b])
+            manifest = result.manifest
+            self.assertEqual(manifest["fixture_count"], 2)
+
+            # Check normalized input serialization contract
+            rec_a = FixtureProvenanceRecord.from_dict(
+                spec_a,
+                evidence_root=root / "evidence",
+                as_of=self.as_of,
+                minimum_lead_seconds=self.minimum_lead_seconds,
+            )
+            rec_b = FixtureProvenanceRecord.from_dict(
+                spec_b,
+                evidence_root=root / "evidence",
+                as_of=self.as_of,
+                minimum_lead_seconds=self.minimum_lead_seconds,
+            )
+            expected_norm_bytes = canonical_json_line_bytes([rec_b.to_dict(), rec_a.to_dict()])
+            self.assertEqual(manifest["normalized_input_byte_size"], len(expected_norm_bytes))
+            self.assertEqual(manifest["normalized_input_sha256"], hashlib.sha256(expected_norm_bytes).hexdigest())
+
+            # Physical line count must equal fixture count
+            raw_lines = expected_norm_bytes.splitlines(keepends=True)
+            self.assertEqual(len(raw_lines), 2)
+            for raw_line in raw_lines:
+                self.assertTrue(raw_line.endswith(b"\n"))
+                self.assertFalse(raw_line.endswith(b" \n"))
+                parsed = json.loads(raw_line.decode("utf-8"))
+                self.assertIsInstance(parsed, dict)
+                self.assertEqual(list(parsed.keys()), sorted(parsed.keys()))
+
+            # Input record reordering produces identical normalized bytes and hash
+            root_rev = root / "reversed"
+            root_rev.mkdir()
+            result_rev = self._compile(root_rev, [spec_b, spec_a])
+            self.assertEqual(manifest["normalized_input_byte_size"], result_rev.manifest["normalized_input_byte_size"])
+            self.assertEqual(manifest["normalized_input_sha256"], result_rev.manifest["normalized_input_sha256"])
+
+            # Adding, deleting, or altering a record changes the digest
+            spec_c = self._record_spec(
+                source_fixture_identifier="102",
+                kickoff="2026-08-07T03:00:00Z",
+                reviewed_at="2026-08-05T22:00:00Z",
+            )
+            root_extra = root / "extra"
+            root_extra.mkdir()
+            result_extra = self._compile(root_extra, [spec_a, spec_b, spec_c])
+            self.assertNotEqual(manifest["normalized_input_sha256"], result_extra.manifest["normalized_input_sha256"])
+
+            # Raw formatting whitespace differences in the source input file do not change normalized bytes
+            root_spaced = root / "spaced"
+            root_spaced.mkdir()
+            ev_dir = root_spaced / "evidence"
+            ev_dir.mkdir()
+            for s in [spec_a, spec_b]:
+                (ev_dir / s["evidence_file_path"]).write_bytes(s["evidence_bytes"])
+            input_file = root_spaced / "fixture-provenance.jsonl"
+            lines_spaced = []
+            for s in [spec_a, spec_b]:
+                payload = {k: v for k, v in s.items() if k != "evidence_bytes"}
+                lines_spaced.append("  " + json.dumps(payload, indent=4) + "  \n\n")
+            input_file.write_text("".join(lines_spaced), encoding="utf-8")
+            result_spaced = compile_fixture_catalog(
+                input_path=input_file,
+                evidence_root=ev_dir,
+                as_of=self.as_of,
+                minimum_lead_seconds=self.minimum_lead_seconds,
+                code_state=self.clean_code_state,
+            )
+            self.assertEqual(manifest["normalized_input_sha256"], result_spaced.manifest["normalized_input_sha256"])
+            self.assertEqual(manifest["normalized_input_byte_size"], result_spaced.manifest["normalized_input_byte_size"])
+
+    def test_output_destination_canonical_resolution_and_policy(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+            allowed_dir = repo / ".cache" / "athena-research"
+            allowed_dir.mkdir(parents=True, exist_ok=True)
+            (repo / ".gitignore").write_text(".cache/athena-research/\n", encoding="utf-8")
+            tracked_file = repo / "domain" / "tracked.txt"
+            tracked_file.parent.mkdir(parents=True, exist_ok=True)
+            tracked_file.write_text("original-tracked", encoding="utf-8")
+            orig_tracked_mode = stat.S_IMODE(os.stat(tracked_file).st_mode)
+            subprocess.run(["git", "add", "domain/tracked.txt", ".gitignore"], cwd=repo, check=True, capture_output=True)
+
+            input_root = Path(tmp) / "input"
+            input_root.mkdir()
+            result = self._compile(input_root, self._valid_specs())
+
+            with patch.object(manage_fixture_catalog, "REPOSITORY_ROOT", repo), patch.object(
+                manage_fixture_catalog,
+                "ALLOWED_REPOSITORY_OUTPUT_ROOT",
+                allowed_dir,
+            ):
+                # 1. Output path inside repo but resolving outside allowed cache dir via traversal
+                escape_catalog = allowed_dir / ".." / "outside.json"
+                valid_manifest = allowed_dir / "manifest.json"
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog.run(
+                        input_path=input_root / "fixture-provenance.jsonl",
+                        evidence_root=input_root / "evidence",
+                        as_of=self.as_of_text,
+                        minimum_lead_seconds=self.minimum_lead_seconds,
+                        catalog_output=escape_catalog,
+                        manifest_output=valid_manifest,
+                        force=True,
+                        code_state=self.clean_code_state,
+                    )
+                self.assertFalse(escape_catalog.resolve().exists())
+                self.assertFalse(valid_manifest.exists())
+
+                # 2. Output path targeting tracked file via traversal
+                target_tracked = allowed_dir / ".." / ".." / "domain" / "tracked.txt"
+                with self.assertRaises(FixtureCatalogError):
+                    manage_fixture_catalog.run(
+                        input_path=input_root / "fixture-provenance.jsonl",
+                        evidence_root=input_root / "evidence",
+                        as_of=self.as_of_text,
+                        minimum_lead_seconds=self.minimum_lead_seconds,
+                        catalog_output=target_tracked,
+                        manifest_output=valid_manifest,
+                        force=True,
+                        code_state=self.clean_code_state,
+                    )
+                self.assertEqual(tracked_file.read_text(encoding="utf-8"), "original-tracked")
+                self.assertEqual(stat.S_IMODE(os.stat(tracked_file).st_mode), orig_tracked_mode)
+                self.assertFalse(valid_manifest.exists())
+                leftovers = [
+                    p.name for p in allowed_dir.iterdir() if p.name.startswith(".fixture-catalog-")
+                ]
+                self.assertEqual(leftovers, [])
+
+    def test_transaction_stale_artifacts_and_path_collisions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            result = self._compile(root, self._valid_specs())
+            cat_out = root / "future-fixtures.json"
+            man_out = root / "fixture-catalog-manifest-v1.json"
+            cat_out.write_text("existing-cat", encoding="utf-8")
+            man_out.write_text("existing-man", encoding="utf-8")
+            orig_cat_mode = stat.S_IMODE(os.stat(cat_out).st_mode)
+            orig_man_mode = stat.S_IMODE(os.stat(man_out).st_mode)
+
+            # 1. Stale catalog backup exists
+            stale_cat_backup = root / f".fixture-catalog-backup-{cat_out.name}"
+            stale_cat_backup.write_text("stale-backup-content", encoding="utf-8")
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._write_outputs_atomically(
+                    catalog_output=cat_out,
+                    manifest_output=man_out,
+                    catalog_bytes=result.catalog_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    force=True,
+                )
+            self.assertEqual(cat_out.read_text(encoding="utf-8"), "existing-cat")
+            self.assertEqual(man_out.read_text(encoding="utf-8"), "existing-man")
+            self.assertEqual(stat.S_IMODE(os.stat(cat_out).st_mode), orig_cat_mode)
+            self.assertEqual(stat.S_IMODE(os.stat(man_out).st_mode), orig_man_mode)
+            self.assertEqual(stale_cat_backup.read_text(encoding="utf-8"), "stale-backup-content")
+            stale_cat_backup.unlink()
+
+            # 2. Stale manifest rollback artifact exists
+            stale_man_rollback = root / f".fixture-catalog-rollback-{man_out.name}"
+            stale_man_rollback.write_text("stale-rollback-content", encoding="utf-8")
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._write_outputs_atomically(
+                    catalog_output=cat_out,
+                    manifest_output=man_out,
+                    catalog_bytes=result.catalog_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    force=True,
+                )
+            self.assertEqual(cat_out.read_text(encoding="utf-8"), "existing-cat")
+            self.assertEqual(man_out.read_text(encoding="utf-8"), "existing-man")
+            self.assertEqual(stat.S_IMODE(os.stat(cat_out).st_mode), orig_cat_mode)
+            self.assertEqual(stat.S_IMODE(os.stat(man_out).st_mode), orig_man_mode)
+            self.assertEqual(stale_man_rollback.read_text(encoding="utf-8"), "stale-rollback-content")
+            stale_man_rollback.unlink()
+
+            # 3. Manifest destination collides with catalog backup artifact name
+            colliding_manifest = root / f".fixture-catalog-backup-{cat_out.name}"
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._write_outputs_atomically(
+                    catalog_output=cat_out,
+                    manifest_output=colliding_manifest,
+                    catalog_bytes=result.catalog_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    force=True,
+                )
+            self.assertEqual(cat_out.read_text(encoding="utf-8"), "existing-cat")
+            self.assertFalse(colliding_manifest.exists())
+
+            # 4. Catalog destination collides with manifest rollback artifact name
+            colliding_catalog = root / f".fixture-catalog-rollback-{man_out.name}"
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._write_outputs_atomically(
+                    catalog_output=colliding_catalog,
+                    manifest_output=man_out,
+                    catalog_bytes=result.catalog_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    force=True,
+                )
+            self.assertEqual(man_out.read_text(encoding="utf-8"), "existing-man")
+            self.assertFalse(colliding_catalog.exists())
+
+            # 5. Output paths pointing to the same file via alias/path resolution
+            alias_dir = root / "alias"
+            alias_dir.mkdir()
+            alias_cat = alias_dir / ".." / "future-fixtures.json"
+            with self.assertRaises(FixtureCatalogError):
+                manage_fixture_catalog._write_outputs_atomically(
+                    catalog_output=cat_out,
+                    manifest_output=alias_cat,
+                    catalog_bytes=result.catalog_bytes,
+                    manifest_bytes=result.manifest_bytes,
+                    force=True,
+                )
+            self.assertEqual(cat_out.read_text(encoding="utf-8"), "existing-cat")
 
 
 __all__ = ["FixtureCatalogTests"]

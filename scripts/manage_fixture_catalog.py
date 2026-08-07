@@ -48,7 +48,7 @@ class FixtureCatalogCLIError(FixtureCatalogError):
     """Raised when the CLI cannot safely compile or verify outputs."""
 
 
-@dataclass(frozen=True)
+@dataclass
 class _PreparedOutput:
     destination: Path
     staged_dir: Path
@@ -57,6 +57,9 @@ class _PreparedOutput:
     original_bytes: bytes | None
     original_mode: int | None
     backup_path: Path
+    rollback_path: Path
+    created_backup: bool = False
+    created_rollback: bool = False
 
 
 def _bounded_external_text(*values: Any) -> str:
@@ -397,20 +400,75 @@ def _is_git_tracked(path: Path, repo_root: Path) -> bool:
 
 
 def _validate_output_destination(path: Path) -> Path:
-    resolved = _walk_unresolved_path(path)
-    if _is_relative_to(resolved, REPOSITORY_ROOT) and not _is_relative_to(
-        resolved, ALLOWED_REPOSITORY_OUTPUT_ROOT
+    _walk_unresolved_path(path)
+    canonical = path.resolve(strict=False)
+    _walk_unresolved_path(canonical)
+    if _is_relative_to(canonical, REPOSITORY_ROOT):
+        if not _is_relative_to(canonical, ALLOWED_REPOSITORY_OUTPUT_ROOT):
+            raise FixtureCatalogCLIError(
+                "Output path inside the repository must live under .cache/athena-research/"
+            )
+        if _is_git_tracked(canonical, REPOSITORY_ROOT):
+            raise FixtureCatalogCLIError(
+                f"Refusing to overwrite tracked repository file: {canonical}"
+            )
+    return canonical
+
+
+def _validate_transaction_paths(
+    catalog_resolved: Path,
+    manifest_resolved: Path,
+) -> tuple[Path, Path, Path, Path]:
+    if catalog_resolved == manifest_resolved:
+        raise FixtureCatalogCLIError("Catalog and manifest output paths must differ")
+    if (
+        catalog_resolved.exists()
+        and manifest_resolved.exists()
+        and os.path.samefile(catalog_resolved, manifest_resolved)
     ):
         raise FixtureCatalogCLIError(
-            "Output path inside the repository must live under .cache/athena-research/"
+            "Catalog and manifest output destinations refer to the same file"
         )
-    if _is_relative_to(resolved, REPOSITORY_ROOT) and _is_git_tracked(
-        resolved, REPOSITORY_ROOT
-    ):
-        raise FixtureCatalogCLIError(
-            f"Refusing to overwrite tracked repository file: {resolved}"
-        )
-    return resolved.resolve(strict=False)
+
+    cat_backup = catalog_resolved.parent / f".fixture-catalog-backup-{catalog_resolved.name}"
+    cat_rollback = catalog_resolved.parent / f".fixture-catalog-rollback-{catalog_resolved.name}"
+    man_backup = manifest_resolved.parent / f".fixture-catalog-backup-{manifest_resolved.name}"
+    man_rollback = manifest_resolved.parent / f".fixture-catalog-rollback-{manifest_resolved.name}"
+
+    all_entries = [
+        ("catalog destination", catalog_resolved),
+        ("manifest destination", manifest_resolved),
+        ("catalog backup", cat_backup),
+        ("manifest backup", man_backup),
+        ("catalog rollback", cat_rollback),
+        ("manifest rollback", man_rollback),
+    ]
+    for i, (name_a, path_a) in enumerate(all_entries):
+        res_a = path_a.resolve(strict=False)
+        for j in range(i + 1, len(all_entries)):
+            name_b, path_b = all_entries[j]
+            res_b = path_b.resolve(strict=False)
+            if res_a == res_b:
+                raise FixtureCatalogCLIError(
+                    f"Collision detected between {name_a} and {name_b}: {res_a}"
+                )
+            if path_a.exists() and path_b.exists() and os.path.samefile(path_a, path_b):
+                raise FixtureCatalogCLIError(
+                    f"Same-file alias collision detected between {name_a} and {name_b}: {path_a}"
+                )
+
+    for name, artifact_path in [
+        ("catalog backup", cat_backup),
+        ("catalog rollback", cat_rollback),
+        ("manifest backup", man_backup),
+        ("manifest rollback", man_rollback),
+    ]:
+        if artifact_path.exists() or artifact_path.is_symlink():
+            raise FixtureCatalogCLIError(
+                f"Stale transaction artifact exists ({name}): {artifact_path}"
+            )
+
+    return cat_backup, cat_rollback, man_backup, man_rollback
 
 
 def _prepare_output(
@@ -418,33 +476,34 @@ def _prepare_output(
     content: bytes,
     *,
     force: bool,
+    backup_path: Path,
+    rollback_path: Path,
 ) -> tuple[_PreparedOutput, list[Path]]:
-    resolved = _validate_output_destination(destination)
-    parent = resolved.parent
+    parent = destination.parent
     boundary = _find_boundary(parent)
     created_dirs = _ensure_directory_tree_durable(parent, boundary)
     if parent.is_symlink():
         raise FixtureCatalogCLIError(
             f"Output parent directory must not be a symlink: {parent}"
         )
-    existing = resolved.exists()
-    if resolved.is_symlink():
-        raise FixtureCatalogCLIError(f"Output file must be a regular non-symlink file: {resolved}")
+    existing = destination.exists()
+    if destination.is_symlink():
+        raise FixtureCatalogCLIError(f"Output file must be a regular non-symlink file: {destination}")
     if existing and not force:
         raise FixtureCatalogCLIError(
-            f"Output already exists: {resolved}; use --force to replace untracked files"
+            f"Output already exists: {destination}; use --force to replace untracked files"
         )
     original_bytes = None
     original_mode = None
     if existing:
-        original_bytes = resolved.read_bytes()
-        original_mode = stat.S_IMODE(os.stat(resolved).st_mode)
+        original_bytes = destination.read_bytes()
+        original_mode = stat.S_IMODE(os.stat(destination).st_mode)
 
     staged_dir: Path | None = None
     staged_path: Path | None = None
     try:
         staged_dir = Path(tempfile.mkdtemp(prefix=".fixture-catalog-", dir=str(parent)))
-        staged_path = staged_dir / resolved.name
+        staged_path = staged_dir / destination.name
         with staged_path.open("xb") as handle:
             handle.write(content)
             handle.flush()
@@ -472,13 +531,16 @@ def _prepare_output(
         raise FixtureCatalogCLIError(str(error)) from error
 
     prepared = _PreparedOutput(
-        destination=resolved,
+        destination=destination,
         staged_dir=staged_dir,
         staged_path=staged_path,
         existed=existing,
         original_bytes=original_bytes,
         original_mode=original_mode,
-        backup_path=parent / f".fixture-catalog-backup-{resolved.name}",
+        backup_path=backup_path,
+        rollback_path=rollback_path,
+        created_backup=False,
+        created_rollback=False,
     )
     return prepared, created_dirs
 
@@ -486,34 +548,44 @@ def _prepare_output(
 def _restore_original(prepared: _PreparedOutput) -> None:
     destination = prepared.destination
     if prepared.existed:
-        if prepared.backup_path.exists():
+        if prepared.created_backup and prepared.backup_path.exists():
             if destination.exists():
                 destination.unlink()
             os.replace(prepared.backup_path, destination)
+            prepared.created_backup = False
         else:
-            if destination.exists():
-                destination.unlink()
-            if prepared.original_bytes is None:
-                raise FixtureCatalogCLIError(
-                    f"Could not restore original output: {destination}"
-                )
-            rollback = destination.parent / f".fixture-catalog-rollback-{destination.name}"
-            with rollback.open("xb") as handle:
-                handle.write(prepared.original_bytes)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(rollback, destination)
-        if prepared.original_mode is not None:
+            if prepared.original_bytes is not None:
+                dest_bytes = destination.read_bytes() if destination.exists() else None
+                if dest_bytes != prepared.original_bytes:
+                    if destination.exists():
+                        destination.unlink()
+                    if prepared.rollback_path.exists() or prepared.rollback_path.is_symlink():
+                        raise FixtureCatalogCLIError(
+                            f"Stale rollback artifact exists: {prepared.rollback_path}"
+                        )
+                    with prepared.rollback_path.open("xb") as handle:
+                        handle.write(prepared.original_bytes)
+                        handle.flush()
+                        os.fsync(handle.fileno())
+                    prepared.created_rollback = True
+                    os.replace(prepared.rollback_path, destination)
+                    prepared.created_rollback = False
+        if prepared.original_mode is not None and destination.exists():
             os.chmod(destination, prepared.original_mode)
-        _fsync_file(destination)
-        _fsync_directory(destination.parent)
+        if destination.exists():
+            _fsync_file(destination)
+        if destination.parent.exists():
+            _fsync_directory(destination.parent)
     else:
         if destination.exists():
             destination.unlink()
-            _fsync_directory(destination.parent)
-        if prepared.backup_path.exists():
+            if destination.parent.exists():
+                _fsync_directory(destination.parent)
+        if prepared.created_backup and prepared.backup_path.exists():
             prepared.backup_path.unlink()
-            _fsync_directory(destination.parent)
+            prepared.created_backup = False
+            if destination.parent.exists():
+                _fsync_directory(destination.parent)
 
 
 def _commit_prepared(prepared: _PreparedOutput) -> None:
@@ -524,6 +596,7 @@ def _commit_prepared(prepared: _PreparedOutput) -> None:
                 f"Stale backup file exists: {prepared.backup_path}"
             )
         os.replace(destination, prepared.backup_path)
+        prepared.created_backup = True
         _fsync_directory(destination.parent)
     os.replace(prepared.staged_path, destination)
     _fsync_file(destination)
@@ -538,10 +611,16 @@ def _cleanup_staged_artifacts(prepared: _PreparedOutput) -> None:
 
 
 def _cleanup_backups(prepared: _PreparedOutput) -> None:
-    if prepared.backup_path.exists():
+    if prepared.created_backup and prepared.backup_path.exists():
         prepared.backup_path.unlink()
-    if prepared.destination.parent.exists():
-        _fsync_directory(prepared.destination.parent)
+        prepared.created_backup = False
+        if prepared.destination.parent.exists():
+            _fsync_directory(prepared.destination.parent)
+    if prepared.created_rollback and prepared.rollback_path.exists():
+        prepared.rollback_path.unlink()
+        prepared.created_rollback = False
+        if prepared.destination.parent.exists():
+            _fsync_directory(prepared.destination.parent)
 
 
 def _cleanup_all_artifacts(
@@ -558,13 +637,6 @@ def _cleanup_all_artifacts(
             _cleanup_backups(item)
         except Exception as error:
             errors.append(_bounded_external_text(str(error)))
-        rollback_path = item.destination.parent / f".fixture-catalog-rollback-{item.destination.name}"
-        if rollback_path.exists():
-            try:
-                rollback_path.unlink()
-                _fsync_directory(item.destination.parent)
-            except Exception as error:
-                errors.append(_bounded_external_text(str(error)))
     for d in reversed(created_dirs):
         try:
             if d.exists() and not any(d.iterdir()):
@@ -595,17 +667,30 @@ def _write_outputs_atomically(
 ) -> None:
     catalog_resolved = _validate_output_destination(catalog_output)
     manifest_resolved = _validate_output_destination(manifest_output)
-    if catalog_resolved == manifest_resolved:
-        raise FixtureCatalogCLIError("Catalog and manifest output paths must differ")
+    cat_backup, cat_rollback, man_backup, man_rollback = _validate_transaction_paths(
+        catalog_resolved, manifest_resolved
+    )
 
     prepared: list[_PreparedOutput] = []
     all_created_dirs: list[Path] = []
     try:
-        catalog_prep, cat_dirs = _prepare_output(catalog_resolved, catalog_bytes, force=force)
+        catalog_prep, cat_dirs = _prepare_output(
+            catalog_resolved,
+            catalog_bytes,
+            force=force,
+            backup_path=cat_backup,
+            rollback_path=cat_rollback,
+        )
         prepared.append(catalog_prep)
         all_created_dirs.extend(cat_dirs)
         try:
-            manifest_prep, man_dirs = _prepare_output(manifest_resolved, manifest_bytes, force=force)
+            manifest_prep, man_dirs = _prepare_output(
+                manifest_resolved,
+                manifest_bytes,
+                force=force,
+                backup_path=man_backup,
+                rollback_path=man_rollback,
+            )
             prepared.append(manifest_prep)
             all_created_dirs.extend(man_dirs)
         except Exception:
@@ -655,6 +740,8 @@ def _write_outputs_atomically(
 
 def _compare_expected_output(expected: bytes, actual_path: Path, label: str) -> None:
     safe_path = _walk_unresolved_path(actual_path)
+    canonical = actual_path.resolve(strict=False)
+    _walk_unresolved_path(canonical)
     if not safe_path.is_file() or safe_path.is_symlink():
         raise FixtureCatalogCLIError(f"{label} must be a regular file: {actual_path}")
     resolved = safe_path.resolve(strict=True)
@@ -690,9 +777,21 @@ def run(
     if check_catalog is not None and check_manifest is not None:
         check_cat_safe = _walk_unresolved_path(check_catalog)
         check_man_safe = _walk_unresolved_path(check_manifest)
-        if check_cat_safe.resolve(strict=False) == check_man_safe.resolve(strict=False):
+        cat_canonical = check_catalog.resolve(strict=False)
+        man_canonical = check_manifest.resolve(strict=False)
+        _walk_unresolved_path(cat_canonical)
+        _walk_unresolved_path(man_canonical)
+        if cat_canonical == man_canonical:
             raise FixtureCatalogCLIError(
                 "Check catalog and check manifest paths must differ"
+            )
+        if (
+            check_catalog.exists()
+            and check_manifest.exists()
+            and os.path.samefile(check_catalog, check_manifest)
+        ):
+            raise FixtureCatalogCLIError(
+                "Check catalog and check manifest destinations refer to the same file"
             )
 
     result = compile_fixture_catalog(

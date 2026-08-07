@@ -187,6 +187,19 @@ def canonical_json_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def canonical_json_line_bytes(value: Any) -> bytes:
+    return (
+        json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+
+
 def _ensure_regular_non_symlink_file(path: Path, label: str) -> Path:
     if path.is_symlink() or not path.is_file():
         raise FixtureCatalogError(f"{label} must be a regular non-symlink file")
@@ -447,7 +460,7 @@ def compile_fixture_catalog(
         sorted(records, key=lambda item: (item.kickoff, item.fixture_identifier))
     )
     normalized_input_bytes = b"".join(
-        canonical_json_bytes(record.provenance_entry()) for record in ordered_records
+        canonical_json_line_bytes(record.provenance_entry()) for record in ordered_records
     )
     catalog = build_strict_catalog(ordered_records)
     catalog_bytes = canonical_json_bytes(catalog)
@@ -504,6 +517,7 @@ __all__ = [
     "build_manifest",
     "build_strict_catalog",
     "canonical_json_bytes",
+    "canonical_json_line_bytes",
     "compile_fixture_catalog",
     "load_fixture_provenance_records",
     "parse_utc_timestamp",

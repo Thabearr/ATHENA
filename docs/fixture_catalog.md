@@ -31,15 +31,17 @@ Evidence must already be saved before its SHA-256 is recorded.
 ### Normalized input semantics
 
 - `normalized_input_byte_size` and `normalized_input_sha256` in the manifest represent the deterministic byte count and SHA-256 digest of the validated provenance records.
-- Records are sorted by `(kickoff, fixture_identifier)` and serialized as canonical JSON Lines with sorted keys and UTF-8 encoding.
-- This is not the raw source-file digest; raw whitespace, line ordering variations, or omitted unreviewed lines in the source input file do not change the normalized digest.
+- Records are sorted by `(kickoff, fixture_identifier)` and serialized as canonical JSON Lines: exactly one compact UTF-8 JSON object per line with sorted keys, deterministic separators (`allow_nan=False`), and a trailing newline per line.
+- The normalized digest reflects the exact set of validated records; adding, modifying, or removing a record changes the digest, whereas raw whitespace differences in the source input file do not change normalized bytes.
 
 ### Security and path integrity
 
-- Catalog and manifest output and check paths must differ; passing identical or aliased paths is rejected.
+- Catalog and manifest output and check paths must differ; passing identical or aliased paths (including canonical aliases or hard links) is rejected.
+- Pre-existing or colliding transaction backup and rollback paths are rejected fail-closed; the transaction never deletes, overwrites, or trusts pre-existing transaction artifacts.
 - Check mode and generation mode strictly reject symlinks and symlinked parent path components.
 - Output paths within the repository must reside under `.cache/athena-research/` and cannot overwrite tracked Git files.
-- Atomic two-file updates guarantee that either both catalog and manifest files are committed durably or neither is modified.
+- Policy checks apply to the canonical resolved destination paths, preventing traversal or prefix aliasing bypasses.
+- Individual file replacements are atomic within their destination filesystem, and detected runtime errors trigger exact pair rollback and artifact cleanup. Abrupt process termination or power loss between replacements is not claimed to be cross-file crash atomic; check mode should be used to verify pairs before consumption, and incomplete or drifted pairs must be regenerated from reviewed input.
 - On Windows platforms, directory durability utilizes Win32 `CreateFileW` with `FILE_FLAG_BACKUP_SEMANTICS` and `FlushFileBuffers`; native Windows execution fails closed if directory durability cannot be proven (WSL/Linux is the fallback).
 
 The catalog is reusable across all ATHENA markets.
