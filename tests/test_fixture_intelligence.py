@@ -252,5 +252,290 @@ class TestFixtureIntelligence(unittest.TestCase):
         self.assertNotIn("datetime.now()", content)
         self.assertNotIn("time.time()", content)
 
+
+    _SAFE_DICT = {
+        "network_acquisition_authorized": False,
+        "scraping_authorized": False,
+        "browser_automation_authorized": False,
+        "pricing_authorized": False,
+        "market_activation_authorized": False,
+        "prospective_claim_authorized": False,
+        "selection_authorized": False,
+        "production_approval_authorized": False,
+        "bet_authorized": False
+    }
+
+    def test_nested_dict_mutation_after_construction(self):
+        val = {'key': [1, 2, 3]}
+        fact = self._make_fact(value=val)
+        val['key'].append(99)
+        self.assertEqual(list(fact.value['key']), [1, 2, 3])
+
+    def test_nested_list_mutation_after_construction(self):
+        val = [{'a': 1}]
+        fact = self._make_fact(value=val)
+        val.append({'b': 2})
+        self.assertEqual(len(fact.value), 1)
+
+    def test_fact_value_cannot_be_mutated(self):
+        fact = self._make_fact(value={'key': 'val'})
+        with self.assertRaises(TypeError):
+            fact.value['key'] = 'mutated'
+
+    def test_snapshot_safety_immutable(self):
+        snap = self._make_snapshot([])
+        with self.assertRaises(TypeError):
+            snap.safety['bet_authorized'] = True
+
+    def test_canonical_bytes_stable_after_input_mutation(self):
+        val = {'key': [1, 2]}
+        snap = self._make_snapshot(facts=[self._make_fact(value=val)])
+        b1 = canonical_snapshot_bytes(snap)
+        val['key'].append(99)
+        b2 = canonical_snapshot_bytes(snap)
+        self.assertEqual(b1, b2)
+
+    def test_dishonest_conflicted_fields_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        f1 = self._make_fact(status=IntelligenceFactStatus.SUPPORTED, value='alpha', evidence_sha256='a'*64)
+        f2 = self._make_fact(status=IntelligenceFactStatus.SUPPORTED, value='beta', evidence_sha256='b'*64)
+        real_snap = build_snapshot('X', ko, ao, [f1, f2])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=(),
+                unverified_fields=real_snap.unverified_fields,
+                safety=dict(self._SAFE_DICT))
+
+    def test_dishonest_unverified_fields_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        f1 = self._make_fact(status=IntelligenceFactStatus.UNVERIFIED, value='alpha', evidence_sha256='a'*64)
+        real_snap = build_snapshot('X', ko, ao, [f1])
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=(),
+                safety=dict(self._SAFE_DICT))
+
+    def test_dishonest_category_coverage_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        f1 = self._make_fact()
+        real_snap = build_snapshot('X', ko, ao, [f1])
+        bad_cov = [CategoryCoverage(c.category, 0, 0, 0, 0, False) for c in real_snap.category_coverage]
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=tuple(bad_cov),
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety=dict(self._SAFE_DICT))
+
+    def test_negative_coverage_count_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            CategoryCoverage(IntelligenceCategory.FIXTURE_CONTEXT, -1, 0, 0, 0, False)
+
+    def test_duplicate_coverage_category_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        bad_cov = list(real_snap.category_coverage)
+        bad_cov[1] = bad_cov[0]
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=tuple(bad_cov),
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety=dict(self._SAFE_DICT))
+
+    def test_missing_coverage_category_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        bad_cov = list(real_snap.category_coverage)[1:]
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=tuple(bad_cov),
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety=dict(self._SAFE_DICT))
+
+    def test_discovery_only_stale_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(source_role=SourceRole.DISCOVERY_ONLY, status=IntelligenceFactStatus.STALE)
+
+    def test_discovery_only_conflicted_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(source_role=SourceRole.DISCOVERY_ONLY, status=IntelligenceFactStatus.CONFLICTED)
+
+    def test_discovery_only_unverified_accepted(self):
+        fact = self._make_fact(source_role=SourceRole.DISCOVERY_ONLY, status=IntelligenceFactStatus.UNVERIFIED)
+        self.assertIsNotNone(fact)
+
+    def test_string_category_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(category='FORM')
+
+    def test_string_status_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(status='SUPPORTED')
+
+    def test_string_source_role_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(source_role='DISCOVERY_ONLY')
+
+    def test_non_fact_in_raw_facts_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        with self.assertRaises(FixtureIntelligenceError):
+            build_snapshot('X', ko, ao, ['not-a-fact'])
+
+    def test_tie_breaking_determinism(self):
+        sha = 'a' * 64
+        f1 = self._make_fact(value='alpha_value', source_reference='ref-alpha', evidence_sha256=sha)
+        f2 = self._make_fact(value='beta_value', source_reference='ref-beta', evidence_sha256=sha)
+        snap_forward = self._make_snapshot([f1, f2])
+        snap_reverse = self._make_snapshot([f2, f1])
+        self.assertEqual(canonical_snapshot_bytes(snap_forward), canonical_snapshot_bytes(snap_reverse))
+
+    def test_tie_breaking_determinism_reverse(self):
+        sha = 'a' * 64
+        f1 = self._make_fact(value='alpha_value', source_reference='ref-alpha', evidence_sha256=sha)
+        f2 = self._make_fact(value='beta_value', source_reference='ref-beta', evidence_sha256=sha)
+        snap_forward = self._make_snapshot([f1, f2])
+        snap_reverse = self._make_snapshot([f2, f1])
+        self.assertEqual(canonical_snapshot_bytes(snap_forward), canonical_snapshot_bytes(snap_reverse))
+
+    def test_windows_backslash_path_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='C:\\evidence\\fact.json')
+
+    def test_windows_forward_slash_path_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='C:/evidence/fact.json')
+
+    def test_unc_path_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='\\\\server\\share\\evidence.json')
+
+    def test_posix_absolute_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='/etc/evidence.json')
+
+    def test_traversal_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(evidence_file_path='../../etc/passwd')
+
+    def test_normal_relative_path_accepted(self):
+        fact = self._make_fact(evidence_file_path='evidence/fixture_123/fact.json')
+        self.assertIsNotNone(fact)
+
+    def test_safety_zero_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        bad_safety = dict(self._SAFE_DICT)
+        bad_safety['network_acquisition_authorized'] = 0
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety=bad_safety)
+
+    def test_safety_none_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        bad_safety = dict(self._SAFE_DICT)
+        bad_safety['network_acquisition_authorized'] = None
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety=bad_safety)
+
+    def test_safety_empty_string_rejected(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        bad_safety = dict(self._SAFE_DICT)
+        bad_safety['network_acquisition_authorized'] = ""
+        with self.assertRaises(FixtureIntelligenceError):
+            FixtureIntelligenceSnapshot(
+                schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+                kickoff=ko, as_of=ao, facts=real_snap.facts,
+                category_coverage=real_snap.category_coverage,
+                conflicted_fields=real_snap.conflicted_fields,
+                unverified_fields=real_snap.unverified_fields,
+                safety=bad_safety)
+
+    def test_safety_exact_false_accepted(self):
+        ko = datetime.datetime(2023, 1, 2, tzinfo=datetime.timezone.utc)
+        ao = datetime.datetime(2023, 1, 1, 12, tzinfo=datetime.timezone.utc)
+        real_snap = build_snapshot('X', ko, ao, [])
+        snap = FixtureIntelligenceSnapshot(
+            schema_version=1, dataset_name=DATASET_NAME, fixture_identifier='X',
+            kickoff=ko, as_of=ao, facts=real_snap.facts,
+            category_coverage=real_snap.category_coverage,
+            conflicted_fields=real_snap.conflicted_fields,
+            unverified_fields=real_snap.unverified_fields,
+            safety=dict(self._SAFE_DICT))
+        self.assertIsNotNone(snap)
+
+    def test_to_dict_method_exists(self):
+        snap = self._make_snapshot([])
+        result = snap.to_dict()
+        self.assertIsInstance(result, dict)
+
+    def test_to_dict_equals_compat_helper(self):
+        snap = self._make_snapshot([])
+        self.assertEqual(snap.to_dict(), snapshot_to_dict(snap))
+
+    def test_to_dict_is_json_serializable(self):
+        snap = self._make_snapshot([])
+        json.dumps(snap.to_dict())
+
+    def test_final_newline(self):
+        snap = self._make_snapshot([])
+        self.assertTrue(canonical_snapshot_bytes(snap).endswith(b'\n'))
+
+    def test_whitespace_only_source_reference_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(source_reference='   ')
+
+    def test_padded_source_reference_rejected(self):
+        with self.assertRaises(FixtureIntelligenceError):
+            self._make_fact(source_reference=' http://example.com')
+
+    def test_category_coverage_has_all_ten_categories(self):
+        snap = self._make_snapshot([])
+        covered = {c.category for c in snap.category_coverage}
+        self.assertEqual(covered, set(IntelligenceCategory))
+
+    def test_no_forbidden_imports_in_domain(self):
+        import inspect
+        import domain.fixture_intelligence as mod
+        src = inspect.getsource(mod)
+        for forbidden in ['import requests', 'import httpx', 'import aiohttp', 'from urllib.request', 'kelly', 'expected_value', 'accumulator']:
+            self.assertNotIn(forbidden, src.lower())
+
 if __name__ == '__main__':
     unittest.main()

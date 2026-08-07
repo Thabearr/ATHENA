@@ -54,16 +54,16 @@ market-specific probability models
 - `UNVERIFIED`: Data lacking corroboration or trust.
 
 ## 6. Primary Football-Context Backbone
-FotMob serves as the primary football-context backbone. It provides the base layer of intelligence. Note that this is not yet wired in this PR.
+FotMob serves as the primary football-context backbone. It provides the base layer of intelligence. FotMob is NOT activated by this PR; legacy network/bypass workers remain disconnected; future reviewed adapters must transform preserved source evidence into this contract.
 
 ## 7. Official Sources
-Official corroboration is required to elevate certain claims (like injuries or lineups) from rumors to supported facts.
+Official corroboration is required to elevate certain claims (like injuries or lineups) from rumors to supported facts. OFFICIAL_CORROBORATION does not automatically win conflicts in PR #30. There is no source-precedence policy yet.
 
 ## 8. Weather Context
 Weather intelligence is modeled as a dedicated `WEATHER_CONTEXT` source role, mapping to the `WEATHER` category.
 
 ## 9. Search as Discovery Only
-Search results and exploratory web scraping act as `DISCOVERY_ONLY` leads. They yield `UNVERIFIED` facts and cannot become `SUPPORTED` directly without corroboration.
+Search results and search/general-web discovery act as `DISCOVERY_ONLY` leads. They remain DISCOVERY_ONLY and unverified until stronger evidence is preserved and reviewed.
 
 ## 10. Pricing and Bookmakers
 SportyBet (or other bookmakers) serves as a pricing/bookmaker source only. Odds do not dictate ground-truth intelligence.
@@ -72,7 +72,7 @@ SportyBet (or other bookmakers) serves as a pricing/bookmaker source only. Odds 
 The intelligence gathered here will eventually map to features as defined in `domain/model_status.py` in a future step.
 
 ## 12. Relation to Prediction Engine
-This contract will act as a contextual overlay for `intelligence/prediction_engine.py`.
+This is the audited upstream evidence substrate from which a future reviewed feature/context mapper may derive model inputs.
 
 ## 13. Safety Flags
 The snapshot includes explicit safety flags (e.g., `network_acquisition_authorized`, `bet_authorized`). All must be `False` to ensure this contract merely represents inert data, not executable actions.
