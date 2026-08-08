@@ -404,18 +404,49 @@ def _validate_transport_receipt(response: Any) -> CapturedHttpResponse:
         raise FotMobCaptureError(f"invalid transport receipt: {exc}") from exc
 
 
-def _atomic_write(path: Path, content: bytes) -> None:
+@dataclasses.dataclass
+class _CaptureTransactionState:
+    date_directory: Path
+    capture_directory: Path
+    date_directory_owned: bool = False
+    capture_directory_owned: bool = False
+    owned_files: set[Path] = dataclasses.field(default_factory=set)
+    owned_temporary_files: set[Path] = dataclasses.field(default_factory=set)
+
+
+def _atomic_write(
+    path: Path,
+    content: bytes,
+    transaction: _CaptureTransactionState,
+) -> None:
     if not isinstance(content, bytes):
         raise FotMobCaptureError("capture file content must be bytes")
+    if not isinstance(transaction, _CaptureTransactionState):
+        raise FotMobCaptureError("capture transaction state is invalid")
+    if not transaction.capture_directory_owned:
+        raise FotMobCaptureError("capture directory is not owned by this transaction")
+    if path.parent != transaction.capture_directory:
+        raise FotMobCaptureError("capture output is outside the owned capture directory")
     temporary = path.with_name(f".{path.name}.tmp")
     if temporary.exists() or temporary.is_symlink() or path.exists() or path.is_symlink():
         raise FotMobCaptureError("capture output or transaction file already exists")
     try:
-        with temporary.open("xb") as handle:
+        try:
+            handle = temporary.open("xb")
+        except FileExistsError as exc:
+            raise FotMobCaptureError(
+                f"capture transaction file already exists: {temporary}"
+            ) from exc
+        transaction.owned_temporary_files.add(temporary)
+        with handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        if path.exists() or path.is_symlink():
+            raise FotMobCaptureError(f"capture output already exists: {path}")
         os.replace(temporary, path)
+        transaction.owned_temporary_files.remove(temporary)
+        transaction.owned_files.add(path)
         _sync_directory(path.parent)
     except Exception as exc:
         raise FotMobCaptureError(
@@ -424,56 +455,54 @@ def _atomic_write(path: Path, content: bytes) -> None:
 
 
 def _cleanup_owned_capture(
-    capture_directory: Path,
-    date_directory_created: bool,
+    transaction: _CaptureTransactionState,
 ) -> tuple[str, ...]:
-    owned_names = (
-        RESPONSE_FILENAME,
-        CANDIDATE_FILENAME,
-        MANIFEST_FILENAME,
-        f".{RESPONSE_FILENAME}.tmp",
-        f".{CANDIDATE_FILENAME}.tmp",
-        f".{MANIFEST_FILENAME}.tmp",
-    )
     failures: list[str] = []
-    for name in owned_names:
-        path = capture_directory / name
+    capture_directory = transaction.capture_directory
+    if transaction.capture_directory_owned:
+        owned_paths = sorted(
+            transaction.owned_temporary_files | transaction.owned_files,
+            key=lambda item: item.as_posix(),
+        )
+        for path in owned_paths:
+            try:
+                if path.parent != capture_directory:
+                    raise FotMobCaptureError("owned path escaped capture directory")
+                if path.is_symlink():
+                    raise FotMobCaptureError("refusing to remove a symlink")
+                if path.exists():
+                    if not path.is_file():
+                        raise FotMobCaptureError(
+                            "owned capture path is not a regular file"
+                        )
+                    path.unlink()
+            except Exception as exc:
+                failures.append(f"{path}: {_bounded_failure(exc)}")
         try:
-            if path.is_symlink():
-                raise FotMobCaptureError("refusing to remove a symlink")
-            if path.exists():
-                if not path.is_file():
-                    raise FotMobCaptureError("owned capture path is not a regular file")
-                path.unlink()
+            if capture_directory.exists() and not capture_directory.is_symlink():
+                _sync_directory(capture_directory)
         except Exception as exc:
-            failures.append(f"{path}: {_bounded_failure(exc)}")
-    if capture_directory.exists() and not capture_directory.is_symlink():
+            failures.append(f"{capture_directory}: {_bounded_failure(exc)}")
         try:
-            _sync_directory(capture_directory)
+            if capture_directory.is_symlink():
+                raise FotMobCaptureError(
+                    "refusing to remove a symlink capture directory"
+                )
+            if capture_directory.exists():
+                capture_directory.rmdir()
+                _sync_directory(capture_directory.parent)
         except Exception as exc:
-            failures.append(
-                f"{capture_directory}: {_bounded_failure(exc)}"
-            )
-    try:
-        if capture_directory.is_symlink():
-            raise FotMobCaptureError("refusing to remove a symlink capture directory")
-        if capture_directory.exists():
-            capture_directory.rmdir()
-            _sync_directory(capture_directory.parent)
-    except Exception as exc:
-        failures.append(f"{capture_directory}: {_bounded_failure(exc)}")
-    if date_directory_created:
+            failures.append(f"{capture_directory}: {_bounded_failure(exc)}")
+    if transaction.date_directory_owned:
+        date_directory = transaction.date_directory
         try:
-            date_directory = capture_directory.parent
             if date_directory.is_symlink():
                 raise FotMobCaptureError("refusing to remove a symlink date directory")
             if date_directory.exists():
                 date_directory.rmdir()
                 _sync_directory(date_directory.parent)
         except Exception as exc:
-            failures.append(
-                f"{capture_directory.parent}: {_bounded_failure(exc)}"
-            )
+            failures.append(f"{date_directory}: {_bounded_failure(exc)}")
     return tuple(failures)
 
 
@@ -491,9 +520,6 @@ def write_capture_directory(
     _ensure_directory_tree_durable(root, boundary=repository)
     _reject_symlink_components(root, "output root")
     date_directory = root / date
-    date_directory_created = not date_directory.exists()
-    if date_directory.exists() and (date_directory.is_symlink() or not date_directory.is_dir()):
-        raise FotMobCaptureError("capture date directory is invalid")
     observed = response.observed_at
     capture_name = (
         observed.strftime("%Y%m%dT%H%M%S%fZ")
@@ -501,19 +527,37 @@ def write_capture_directory(
         + sha256_bytes(response.body)[:12]
     )
     capture_directory = date_directory / capture_name
-    if capture_directory.exists() or capture_directory.is_symlink():
-        raise FotMobCaptureError("capture directory already exists")
+    transaction = _CaptureTransactionState(
+        date_directory=date_directory,
+        capture_directory=capture_directory,
+    )
     try:
-        if date_directory_created:
-            date_directory.mkdir()
-            _sync_directory(root)
+        if date_directory.exists() or date_directory.is_symlink():
+            if date_directory.is_symlink() or not date_directory.is_dir():
+                raise FotMobCaptureError("capture date directory is invalid")
             _sync_directory(date_directory)
         else:
+            try:
+                date_directory.mkdir()
+            except FileExistsError as exc:
+                raise FotMobCaptureError(
+                    "capture date directory appeared concurrently"
+                ) from exc
+            transaction.date_directory_owned = True
+            _sync_directory(root)
             _sync_directory(date_directory)
-        capture_directory.mkdir()
+        try:
+            capture_directory.mkdir()
+        except FileExistsError as exc:
+            raise FotMobCaptureError("capture directory already exists") from exc
+        transaction.capture_directory_owned = True
         _sync_directory(date_directory)
         _sync_directory(capture_directory)
-        _atomic_write(capture_directory / RESPONSE_FILENAME, response.body)
+        _atomic_write(
+            capture_directory / RESPONSE_FILENAME,
+            response.body,
+            transaction,
+        )
         manifest = build_capture_manifest(
             response.body,
             request_date=date,
@@ -526,17 +570,16 @@ def write_capture_directory(
         _atomic_write(
             capture_directory / CANDIDATE_FILENAME,
             canonical_candidate_jsonl_bytes(manifest.candidates),
+            transaction,
         )
         _atomic_write(
             capture_directory / MANIFEST_FILENAME,
             canonical_manifest_bytes(manifest),
+            transaction,
         )
         return capture_directory, manifest
     except Exception as operation_error:
-        cleanup_failures = _cleanup_owned_capture(
-            capture_directory,
-            date_directory_created,
-        )
+        cleanup_failures = _cleanup_owned_capture(transaction)
         if cleanup_failures:
             raise FotMobCaptureError(
                 "capture operation failed: "

@@ -921,11 +921,11 @@ def test_normal_handled_write_failure_cleans_only_owned_capture(tmp_path, monkey
     original = capture_script._atomic_write
     calls = []
 
-    def fail_second(path, content):
+    def fail_second(path, content, transaction):
         calls.append(path.name)
         if len(calls) == 2:
             raise FotMobCaptureError("injected")
-        return original(path, content)
+        return original(path, content, transaction)
 
     monkeypatch.setattr(capture_script, "_atomic_write", fail_second)
     with pytest.raises(FotMobCaptureError, match="injected"):
@@ -1107,9 +1107,9 @@ def test_atomic_write_order_places_manifest_last(tmp_path, monkeypatch):
     original = capture_script._atomic_write
     order = []
 
-    def record(path, content):
+    def record(path, content, transaction):
         order.append(path.name)
-        return original(path, content)
+        return original(path, content, transaction)
 
     monkeypatch.setattr(capture_script, "_atomic_write", record)
     write_capture_directory(
@@ -1148,7 +1148,12 @@ def test_file_fsync_precedes_rename_and_directory_sync(
         lambda directory: events.append(("directory_sync", Path(directory))),
     )
     destination = tmp_path / filename
-    capture_script._atomic_write(destination, b"evidence")
+    transaction = capture_script._CaptureTransactionState(
+        date_directory=tmp_path,
+        capture_directory=tmp_path,
+        capture_directory_owned=True,
+    )
+    capture_script._atomic_write(destination, b"evidence", transaction)
     assert events[0][0] == "file_fsync"
     assert events[1] == ("replace", filename)
     assert events[2] == ("directory_sync", tmp_path)
@@ -1307,6 +1312,203 @@ def test_windows_directory_sync_dispatches_and_fails_closed(tmp_path, monkeypatc
     assert calls == [tmp_path]
 
 
+def test_date_directory_race_loser_does_not_remove_winner(tmp_path, monkeypatch):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    root.mkdir(parents=True)
+    date_directory = root / REQUEST_DATE
+    sentinel = date_directory / "foreign.txt"
+    original_mkdir = Path.mkdir
+    raced = False
+
+    def mkdir(path, *args, **kwargs):
+        nonlocal raced
+        if Path(path) == date_directory and not raced:
+            raced = True
+            original_mkdir(path)
+            sentinel.write_bytes(b"date-race-winner")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    with pytest.raises(FotMobCaptureError, match="appeared concurrently"):
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert raced is True
+    assert date_directory.is_dir()
+    assert sentinel.read_bytes() == b"date-race-winner"
+
+
+def test_capture_directory_race_loser_never_cleans_winner_files(
+    tmp_path, monkeypatch
+):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    date_directory = root / REQUEST_DATE
+    date_directory.mkdir(parents=True)
+    raw = payload()
+    capture_name = (
+        OBSERVED.strftime("%Y%m%dT%H%M%S%fZ") + "-" + sha256_bytes(raw)[:12]
+    )
+    capture_directory = date_directory / capture_name
+    foreign = capture_directory / "foreign.txt"
+    foreign_response = capture_directory / RESPONSE_FILENAME
+    original_mkdir = Path.mkdir
+    raced = False
+
+    def mkdir(path, *args, **kwargs):
+        nonlocal raced
+        if Path(path) == capture_directory and not raced:
+            raced = True
+            original_mkdir(path)
+            foreign.write_bytes(b"capture-race-winner")
+            foreign_response.write_bytes(b"foreign-response")
+        return original_mkdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    with pytest.raises(FotMobCaptureError, match="capture directory already exists"):
+        write_capture_directory(
+            offline_response(raw),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert raced is True
+    assert capture_directory.is_dir()
+    assert foreign.read_bytes() == b"capture-race-winner"
+    assert foreign_response.read_bytes() == b"foreign-response"
+    assert not (capture_directory / CANDIDATE_FILENAME).exists()
+    assert not (capture_directory / MANIFEST_FILENAME).exists()
+
+
+@pytest.mark.parametrize(
+    "foreign_name",
+    [f".{RESPONSE_FILENAME}.tmp", RESPONSE_FILENAME],
+)
+def test_foreign_deterministic_file_created_before_atomic_write_is_not_cleaned(
+    tmp_path, monkeypatch, foreign_name
+):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    date_directory = root / REQUEST_DATE
+    date_directory.mkdir(parents=True)
+    original_atomic = capture_script._atomic_write
+    foreign_path = None
+
+    def inject(path, content, transaction):
+        nonlocal foreign_path
+        if foreign_path is None:
+            foreign_path = path.parent / foreign_name
+            foreign_path.write_bytes(b"foreign-deterministic-name")
+        return original_atomic(path, content, transaction)
+
+    monkeypatch.setattr(capture_script, "_atomic_write", inject)
+    with pytest.raises(FotMobCaptureError, match="cleanup incomplete") as error:
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert foreign_path is not None
+    assert foreign_path.read_bytes() == b"foreign-deterministic-name"
+    assert str(foreign_path.parent) in str(error.value)
+
+
+def test_atomic_write_records_temp_then_final_ownership(tmp_path, monkeypatch):
+    destination = tmp_path / RESPONSE_FILENAME
+    temporary = tmp_path / f".{RESPONSE_FILENAME}.tmp"
+    transaction = capture_script._CaptureTransactionState(
+        date_directory=tmp_path,
+        capture_directory=tmp_path,
+        capture_directory_owned=True,
+    )
+    original_replace = os.replace
+    observed = []
+
+    def replace(source, final):
+        observed.append(
+            (
+                Path(source) in transaction.owned_temporary_files,
+                Path(final) in transaction.owned_files,
+            )
+        )
+        return original_replace(source, final)
+
+    monkeypatch.setattr(capture_script.os, "replace", replace)
+    capture_script._atomic_write(destination, b"owned", transaction)
+    assert observed == [(True, False)]
+    assert temporary not in transaction.owned_temporary_files
+    assert destination in transaction.owned_files
+
+
+def test_owned_rollback_removes_owned_files_and_directories(tmp_path, monkeypatch):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    original_atomic = capture_script._atomic_write
+    capture_directory = None
+    calls = 0
+
+    def fail_after_response(path, content, transaction):
+        nonlocal calls, capture_directory
+        calls += 1
+        capture_directory = path.parent
+        if calls == 2:
+            assert (capture_directory / RESPONSE_FILENAME).is_file()
+            raise FotMobCaptureError("later owned transaction failure")
+        return original_atomic(path, content, transaction)
+
+    monkeypatch.setattr(capture_script, "_atomic_write", fail_after_response)
+    with pytest.raises(FotMobCaptureError, match="later owned transaction failure"):
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert capture_directory is not None
+    assert not (capture_directory / RESPONSE_FILENAME).exists()
+    assert not capture_directory.exists()
+    assert not (root / REQUEST_DATE).exists()
+
+
+def test_foreign_file_in_owned_capture_survives_and_blocks_rmdir(
+    tmp_path, monkeypatch
+):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    original_atomic = capture_script._atomic_write
+    foreign_path = None
+    calls = 0
+
+    def add_foreign_after_response(path, content, transaction):
+        nonlocal calls, foreign_path
+        calls += 1
+        result = original_atomic(path, content, transaction)
+        if calls == 1:
+            foreign_path = path.parent / "foreign.txt"
+            foreign_path.write_bytes(b"concurrent-foreign-file")
+            raise FotMobCaptureError("injected failure after foreign arrival")
+        return result
+
+    monkeypatch.setattr(capture_script, "_atomic_write", add_foreign_after_response)
+    with pytest.raises(FotMobCaptureError, match="cleanup incomplete") as error:
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert foreign_path is not None
+    capture_directory = foreign_path.parent
+    assert foreign_path.read_bytes() == b"concurrent-foreign-file"
+    assert not (capture_directory / RESPONSE_FILENAME).exists()
+    assert str(capture_directory) in str(error.value)
+
+
 @pytest.mark.parametrize(
     "failure_target",
     ["temporary", "response", "candidate", "capture_directory", "date_directory"],
@@ -1327,17 +1529,25 @@ def test_incomplete_cleanup_is_reported_with_exact_owned_path(
     original_atomic = capture_script._atomic_write
     atomic_calls = 0
 
-    def fail_during_write(path, content):
+    def fail_during_write(path, content, transaction):
         nonlocal atomic_calls
         atomic_calls += 1
         if failure_target == "temporary" and atomic_calls == 1:
-            path.with_name(f".{path.name}.tmp").write_bytes(b"partial")
-            raise FotMobCaptureError("injected write failure")
+            original_replace = capture_script.os.replace
+
+            def fail_replace(source, destination):
+                raise OSError("injected write failure")
+
+            monkeypatch.setattr(capture_script.os, "replace", fail_replace)
+            try:
+                return original_atomic(path, content, transaction)
+            finally:
+                monkeypatch.setattr(capture_script.os, "replace", original_replace)
         if failure_target in {"response", "capture_directory", "date_directory"} and atomic_calls == 2:
             raise FotMobCaptureError("injected write failure")
         if failure_target == "candidate" and atomic_calls == 3:
             raise FotMobCaptureError("injected write failure")
-        return original_atomic(path, content)
+        return original_atomic(path, content, transaction)
 
     original_unlink = Path.unlink
     original_rmdir = Path.rmdir

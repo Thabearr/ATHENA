@@ -123,10 +123,14 @@ files. This is per-file durability only; no cross-file crash atomicity is
 claimed.
 
 Normal handled failure attempts to remove only files and directories owned by
-that transaction. Cleanup failures are never silently ignored: the reported
-error preserves the original operation failure and identifies every owned path
-whose cleanup could not be completed. Unrelated and sibling files are not
-removed.
+that transaction. Ownership is recorded only after this transaction
+successfully creates a directory or temporary file, and final-file ownership
+is recorded only after successful publication. Expected basenames do not prove
+ownership: a concurrent race winner's directory, temporary file, final file,
+or other foreign content is never enumerated or removed by rollback. Cleanup
+failures are never silently ignored: the reported error preserves the original
+operation failure and identifies every owned path whose cleanup could not be
+completed. Unrelated and sibling files are not removed.
 
 The manifest records the network-acquisition provenance asserted by the
 validated transport receipt. A live transport receipt records `true`; a
