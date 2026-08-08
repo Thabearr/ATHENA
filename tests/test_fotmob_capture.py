@@ -1125,11 +1125,12 @@ def test_atomic_write_order_places_manifest_last(tmp_path, monkeypatch):
     "filename",
     [RESPONSE_FILENAME, CANDIDATE_FILENAME, MANIFEST_FILENAME],
 )
-def test_file_fsync_precedes_rename_and_directory_sync(
+def test_file_fsync_precedes_no_overwrite_publication_and_directory_syncs(
     tmp_path, monkeypatch, filename
 ):
     events = []
-    original_replace = os.replace
+    original_link = os.link
+    original_unlink = Path.unlink
 
     monkeypatch.setattr(
         capture_script.os,
@@ -1137,11 +1138,16 @@ def test_file_fsync_precedes_rename_and_directory_sync(
         lambda descriptor: events.append(("file_fsync", descriptor)),
     )
 
-    def replace(source, destination):
-        events.append(("replace", Path(destination).name))
-        return original_replace(source, destination)
+    def link(source, destination):
+        events.append(("link", Path(destination).name))
+        return original_link(source, destination)
 
-    monkeypatch.setattr(capture_script.os, "replace", replace)
+    def unlink(path, *args, **kwargs):
+        events.append(("unlink", Path(path).name))
+        return original_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(capture_script.os, "link", link)
+    monkeypatch.setattr(Path, "unlink", unlink)
     monkeypatch.setattr(
         capture_script,
         "_sync_directory",
@@ -1155,8 +1161,10 @@ def test_file_fsync_precedes_rename_and_directory_sync(
     )
     capture_script._atomic_write(destination, b"evidence", transaction)
     assert events[0][0] == "file_fsync"
-    assert events[1] == ("replace", filename)
+    assert events[1] == ("link", filename)
     assert events[2] == ("directory_sync", tmp_path)
+    assert events[3] == ("unlink", f".{filename}.tmp")
+    assert events[4] == ("directory_sync", tmp_path)
     assert destination.read_bytes() == b"evidence"
 
 
@@ -1198,21 +1206,29 @@ def test_new_directories_are_synced_after_parent_publication(tmp_path, monkeypat
         assert events[start : start + 3] == transition
 
 
-def test_capture_directory_is_synced_after_every_final_replace(tmp_path, monkeypatch):
+def test_capture_directory_is_synced_after_link_and_temp_unlink(
+    tmp_path, monkeypatch
+):
     repository = repo_root(tmp_path)
     events = []
-    original_replace = os.replace
+    original_link = os.link
+    original_unlink = Path.unlink
     original_sync = capture_script._sync_directory
 
-    def replace(source, destination):
-        events.append(("replace", Path(destination)))
-        return original_replace(source, destination)
+    def link(source, destination):
+        events.append(("link", Path(destination)))
+        return original_link(source, destination)
+
+    def unlink(path, *args, **kwargs):
+        events.append(("unlink", Path(path)))
+        return original_unlink(path, *args, **kwargs)
 
     def sync(path, *args, **kwargs):
         events.append(("sync", Path(path)))
         return original_sync(path, *args, **kwargs)
 
-    monkeypatch.setattr(capture_script.os, "replace", replace)
+    monkeypatch.setattr(capture_script.os, "link", link)
+    monkeypatch.setattr(Path, "unlink", unlink)
     monkeypatch.setattr(capture_script, "_sync_directory", sync)
     capture_directory, _ = write_capture_directory(
         offline_response(),
@@ -1220,15 +1236,17 @@ def test_capture_directory_is_synced_after_every_final_replace(tmp_path, monkeyp
         output_root=ALLOWED_OUTPUT_RELATIVE,
         repository_root=repository,
     )
-    replacements = [event for event in events if event[0] == "replace"]
-    assert [path.name for _, path in replacements] == [
+    publications = [event for event in events if event[0] == "link"]
+    assert [path.name for _, path in publications] == [
         RESPONSE_FILENAME,
         CANDIDATE_FILENAME,
         MANIFEST_FILENAME,
     ]
-    for replacement in replacements:
-        index = events.index(replacement)
+    for publication in publications:
+        index = events.index(publication)
         assert events[index + 1] == ("sync", capture_directory)
+        assert events[index + 2][0] == "unlink"
+        assert events[index + 3] == ("sync", capture_directory)
 
 
 def test_parent_sync_failure_fails_and_cleans_created_date(tmp_path, monkeypatch):
@@ -1426,23 +1444,139 @@ def test_atomic_write_records_temp_then_final_ownership(tmp_path, monkeypatch):
         capture_directory=tmp_path,
         capture_directory_owned=True,
     )
-    original_replace = os.replace
+    original_link = os.link
     observed = []
 
-    def replace(source, final):
+    def link(source, final):
         observed.append(
             (
                 Path(source) in transaction.owned_temporary_files,
                 Path(final) in transaction.owned_files,
             )
         )
-        return original_replace(source, final)
+        return original_link(source, final)
 
-    monkeypatch.setattr(capture_script.os, "replace", replace)
+    monkeypatch.setattr(capture_script.os, "link", link)
     capture_script._atomic_write(destination, b"owned", transaction)
     assert observed == [(True, False)]
     assert temporary not in transaction.owned_temporary_files
     assert destination in transaction.owned_files
+
+
+def test_no_overwrite_publication_primitive_succeeds_when_destination_absent(
+    tmp_path,
+):
+    temporary = tmp_path / ".owned.tmp"
+    final = tmp_path / "owned.json"
+    temporary.write_bytes(b"published")
+    transaction = capture_script._CaptureTransactionState(
+        date_directory=tmp_path,
+        capture_directory=tmp_path,
+        capture_directory_owned=True,
+        owned_temporary_files={temporary},
+    )
+    capture_script._publish_no_overwrite(temporary, final, transaction)
+    assert final.read_bytes() == b"published"
+    assert not temporary.exists()
+    assert final in transaction.owned_files
+    assert temporary not in transaction.owned_temporary_files
+
+
+def test_no_overwrite_publication_primitive_preserves_existing_destination(
+    tmp_path,
+):
+    temporary = tmp_path / ".owned.tmp"
+    final = tmp_path / "foreign.json"
+    temporary.write_bytes(b"transaction")
+    final.write_bytes(b"foreign-race-winner")
+    transaction = capture_script._CaptureTransactionState(
+        date_directory=tmp_path,
+        capture_directory=tmp_path,
+        capture_directory_owned=True,
+        owned_temporary_files={temporary},
+    )
+    with pytest.raises(FotMobCaptureError, match="not overwritten"):
+        capture_script._publish_no_overwrite(temporary, final, transaction)
+    assert final.read_bytes() == b"foreign-race-winner"
+    assert temporary.read_bytes() == b"transaction"
+    assert final not in transaction.owned_files
+    assert temporary in transaction.owned_temporary_files
+
+
+def test_no_overwrite_publication_fails_closed_when_hard_links_are_unavailable(
+    tmp_path, monkeypatch
+):
+    temporary = tmp_path / ".owned.tmp"
+    final = tmp_path / "owned.json"
+    temporary.write_bytes(b"transaction")
+    transaction = capture_script._CaptureTransactionState(
+        date_directory=tmp_path,
+        capture_directory=tmp_path,
+        capture_directory_owned=True,
+        owned_temporary_files={temporary},
+    )
+    monkeypatch.setattr(
+        capture_script.os,
+        "link",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("unsupported")),
+    )
+    with pytest.raises(FotMobCaptureError, match="unavailable"):
+        capture_script._publish_no_overwrite(temporary, final, transaction)
+    assert not final.exists()
+    assert final not in transaction.owned_files
+    assert temporary in transaction.owned_temporary_files
+
+
+@pytest.mark.parametrize(
+    "raced_filename",
+    [RESPONSE_FILENAME, CANDIDATE_FILENAME, MANIFEST_FILENAME],
+)
+def test_publication_window_race_never_overwrites_foreign_final(
+    tmp_path, monkeypatch, raced_filename
+):
+    repository = repo_root(tmp_path)
+    original_link = os.link
+    raced_final = None
+    transaction_at_race = None
+
+    def race_then_link(source, destination):
+        nonlocal raced_final, transaction_at_race
+        final = Path(destination)
+        if final.name == raced_filename and raced_final is None:
+            raced_final = final
+            final.write_bytes(b"foreign-race-winner")
+        return original_link(source, destination)
+
+    original_publish = capture_script._publish_no_overwrite
+
+    def observe_transaction(temporary, final, transaction):
+        nonlocal transaction_at_race
+        if final.name == raced_filename:
+            transaction_at_race = transaction
+            assert temporary in transaction.owned_temporary_files
+            assert final not in transaction.owned_files
+        return original_publish(temporary, final, transaction)
+
+    monkeypatch.setattr(capture_script.os, "link", race_then_link)
+    monkeypatch.setattr(capture_script, "_publish_no_overwrite", observe_transaction)
+    with pytest.raises(FotMobCaptureError, match="cleanup incomplete") as error:
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert raced_final is not None
+    assert transaction_at_race is not None
+    assert raced_final.read_bytes() == b"foreign-race-winner"
+    assert raced_final not in transaction_at_race.owned_files
+    assert not raced_final.with_name(f".{raced_filename}.tmp").exists()
+    assert str(raced_final.parent) in str(error.value)
+    if raced_filename == RESPONSE_FILENAME:
+        assert not (raced_final.parent / CANDIDATE_FILENAME).exists()
+        assert not (raced_final.parent / MANIFEST_FILENAME).exists()
+    elif raced_filename == CANDIDATE_FILENAME:
+        assert not (raced_final.parent / MANIFEST_FILENAME).exists()
 
 
 def test_owned_rollback_removes_owned_files_and_directories(tmp_path, monkeypatch):
@@ -1533,16 +1667,16 @@ def test_incomplete_cleanup_is_reported_with_exact_owned_path(
         nonlocal atomic_calls
         atomic_calls += 1
         if failure_target == "temporary" and atomic_calls == 1:
-            original_replace = capture_script.os.replace
+            original_link = capture_script.os.link
 
-            def fail_replace(source, destination):
+            def fail_link(source, destination):
                 raise OSError("injected write failure")
 
-            monkeypatch.setattr(capture_script.os, "replace", fail_replace)
+            monkeypatch.setattr(capture_script.os, "link", fail_link)
             try:
                 return original_atomic(path, content, transaction)
             finally:
-                monkeypatch.setattr(capture_script.os, "replace", original_replace)
+                monkeypatch.setattr(capture_script.os, "link", original_link)
         if failure_target in {"response", "capture_directory", "date_directory"} and atomic_calls == 2:
             raise FotMobCaptureError("injected write failure")
         if failure_target == "candidate" and atomic_calls == 3:

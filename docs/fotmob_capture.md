@@ -116,11 +116,14 @@ never overwritten.
 
 New directory entries are synchronized after creation. Each file is written to
 a transaction-owned temporary file in the capture directory, its contents are
-flushed and `fsync`-ed, it is atomically renamed, and the containing directory
-entry is then synchronized. Raw evidence is written first, candidates second,
-and the manifest last. Thus a manifest is not published before its referenced
-files. This is per-file durability only; no cross-file crash atomicity is
-claimed.
+flushed and `fsync`-ed, and its final name is atomically published without
+replacement through a same-filesystem hard link. The containing directory is
+synchronized after final publication and again after the temporary name is
+removed. If hard-link publication is unavailable or the final name already
+exists, capture fails closed; there is no overwrite-capable fallback. Raw
+evidence is published first, candidates second, and the manifest last. Thus a
+manifest is not published before its referenced files. This is per-file
+durability only; no cross-file crash atomicity is claimed.
 
 Normal handled failure attempts to remove only files and directories owned by
 that transaction. Ownership is recorded only after this transaction

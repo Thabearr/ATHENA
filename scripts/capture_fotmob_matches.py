@@ -414,6 +414,35 @@ class _CaptureTransactionState:
     owned_temporary_files: set[Path] = dataclasses.field(default_factory=set)
 
 
+def _publish_no_overwrite(
+    temporary: Path,
+    final: Path,
+    transaction: _CaptureTransactionState,
+) -> None:
+    if temporary not in transaction.owned_temporary_files:
+        raise FotMobCaptureError("temporary publication path is not transaction-owned")
+    if final.parent != transaction.capture_directory:
+        raise FotMobCaptureError("final publication path is outside capture directory")
+    if final in transaction.owned_files:
+        raise FotMobCaptureError("final publication path is already transaction-owned")
+    try:
+        os.link(temporary, final)
+    except FileExistsError as exc:
+        raise FotMobCaptureError(
+            f"capture output already exists and was not overwritten: {final}"
+        ) from exc
+    except OSError as exc:
+        raise FotMobCaptureError(
+            "atomic no-overwrite publication is unavailable for "
+            f"{final.name}: {_bounded_failure(exc)}"
+        ) from exc
+    transaction.owned_files.add(final)
+    _sync_directory(final.parent)
+    temporary.unlink()
+    transaction.owned_temporary_files.remove(temporary)
+    _sync_directory(final.parent)
+
+
 def _atomic_write(
     path: Path,
     content: bytes,
@@ -428,8 +457,6 @@ def _atomic_write(
     if path.parent != transaction.capture_directory:
         raise FotMobCaptureError("capture output is outside the owned capture directory")
     temporary = path.with_name(f".{path.name}.tmp")
-    if temporary.exists() or temporary.is_symlink() or path.exists() or path.is_symlink():
-        raise FotMobCaptureError("capture output or transaction file already exists")
     try:
         try:
             handle = temporary.open("xb")
@@ -442,12 +469,7 @@ def _atomic_write(
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
-        if path.exists() or path.is_symlink():
-            raise FotMobCaptureError(f"capture output already exists: {path}")
-        os.replace(temporary, path)
-        transaction.owned_temporary_files.remove(temporary)
-        transaction.owned_files.add(path)
-        _sync_directory(path.parent)
+        _publish_no_overwrite(temporary, path, transaction)
     except Exception as exc:
         raise FotMobCaptureError(
             f"could not durably write {path.name}: {_bounded_failure(exc)}"
