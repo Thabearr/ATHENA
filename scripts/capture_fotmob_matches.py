@@ -54,6 +54,44 @@ class CapturedHttpResponse:
     content_type: str
     body: bytes
     observed_at: datetime.datetime
+    network_acquisition_performed: bool
+
+    def __post_init__(self) -> None:
+        try:
+            if type(self.status) is not int or self.status != 200:
+                raise FotMobNetworkError(
+                    "captured response status must be exact integer 200"
+                )
+            try:
+                content_type = validate_json_content_type(self.content_type)
+            except FotMobCaptureError as exc:
+                raise FotMobNetworkError(str(exc)) from exc
+            if type(self.body) is not bytes:
+                raise FotMobNetworkError("captured response body must be exact bytes")
+            if len(self.body) > MAX_RESPONSE_BYTES:
+                raise FotMobNetworkError("captured response exceeds the 16 MiB limit")
+            if not isinstance(self.observed_at, datetime.datetime):
+                raise FotMobNetworkError("captured response observed_at must be a datetime")
+            if self.observed_at.tzinfo is None or self.observed_at.utcoffset() is None:
+                raise FotMobNetworkError(
+                    "captured response observed_at must be timezone-aware"
+                )
+            if type(self.network_acquisition_performed) is not bool:
+                raise FotMobNetworkError(
+                    "captured response network provenance must be exact bool"
+                )
+            object.__setattr__(self, "content_type", content_type)
+            object.__setattr__(
+                self,
+                "observed_at",
+                self.observed_at.astimezone(datetime.timezone.utc),
+            )
+        except FotMobNetworkError:
+            raise
+        except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+            raise FotMobNetworkError(
+                f"invalid captured response: {type(exc).__name__}"
+            ) from exc
 
 
 def parse_content_length(value: Any) -> int | None:
@@ -130,6 +168,7 @@ def fetch_matches_by_date(
             content_type=validated_content_type,
             body=body,
             observed_at=observed_at.astimezone(datetime.timezone.utc),
+            network_acquisition_performed=True,
         )
     except FotMobNetworkError:
         raise
@@ -190,6 +229,181 @@ def validate_output_root(
     return expected
 
 
+def _load_kernel32() -> Any:
+    if os.name != "nt":
+        return None
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [
+            ctypes.wintypes.LPCWSTR,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
+        kernel32.FlushFileBuffers.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.FlushFileBuffers.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+        return kernel32
+    except (AttributeError, ImportError, OSError):
+        return None
+
+
+def _last_windows_error(kernel32: Any) -> int:
+    try:
+        import ctypes
+
+        return int(ctypes.get_last_error())
+    except (AttributeError, TypeError, ValueError, OSError):
+        try:
+            return int(kernel32.GetLastError())
+        except (AttributeError, TypeError, ValueError, OSError):
+            return 0
+
+
+def _sync_windows_directory(path: Path) -> None:
+    kernel32 = _load_kernel32()
+    if kernel32 is None:
+        raise FotMobCaptureError(
+            f"cannot prove directory durability on Windows: {path}"
+        )
+    handle = kernel32.CreateFileW(
+        str(path),
+        0xC0000000,  # GENERIC_READ | GENERIC_WRITE
+        0x00000007,  # FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE
+        None,
+        3,  # OPEN_EXISTING
+        0x02000000,  # FILE_FLAG_BACKUP_SEMANTICS
+        None,
+    )
+    invalid_handles = {None, 0, -1}
+    try:
+        import ctypes
+        import ctypes.wintypes
+
+        invalid_handles.add(ctypes.c_void_p(-1).value)
+        invalid_handles.add(ctypes.wintypes.HANDLE(-1).value)
+    except (AttributeError, ImportError, TypeError, ValueError):
+        pass
+    if handle in invalid_handles:
+        raise FotMobCaptureError(
+            "could not open directory for durable synchronization: "
+            f"{path} (winerror={_last_windows_error(kernel32)})"
+        )
+    failures: list[str] = []
+    try:
+        if not kernel32.FlushFileBuffers(handle):
+            failures.append(
+                "FlushFileBuffers failed "
+                f"(winerror={_last_windows_error(kernel32)})"
+            )
+    finally:
+        if not kernel32.CloseHandle(handle):
+            failures.append(
+                f"CloseHandle failed (winerror={_last_windows_error(kernel32)})"
+            )
+    if failures:
+        raise FotMobCaptureError(
+            f"could not durably synchronize directory {path}: " + "; ".join(failures)
+        )
+
+
+def _sync_directory(path: Path, *, platform_name: str | None = None) -> None:
+    platform = os.name if platform_name is None else platform_name
+    if platform == "nt":
+        _sync_windows_directory(path)
+        return
+    if platform != "posix":
+        raise FotMobCaptureError(
+            f"directory durability is unsupported on platform {platform!r}"
+        )
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        descriptor = os.open(str(path), flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise FotMobCaptureError(
+            f"could not durably synchronize directory {path}"
+        ) from exc
+
+
+def _bounded_failure(error: BaseException) -> str:
+    message = " ".join(str(error).split())
+    return f"{type(error).__name__}: {message[:240]}"
+
+
+def _ensure_directory_tree_durable(target: Path, *, boundary: Path) -> list[Path]:
+    try:
+        relative = target.relative_to(boundary)
+    except ValueError as exc:
+        raise FotMobCaptureError("durable directory target is outside repository") from exc
+    created: list[Path] = []
+    current = boundary
+    _sync_directory(current)
+    try:
+        for component in relative.parts:
+            child = current / component
+            if not child.exists():
+                child.mkdir()
+                created.append(child)
+                _sync_directory(current)
+                _sync_directory(child)
+            elif child.is_symlink() or not child.is_dir():
+                raise FotMobCaptureError(
+                    f"capture directory component is not a regular directory: {child}"
+                )
+            else:
+                _sync_directory(child)
+            current = child
+        return created
+    except Exception as operation_error:
+        cleanup_failures: list[str] = []
+        for directory in reversed(created):
+            try:
+                if directory.is_symlink():
+                    raise FotMobCaptureError("refusing to remove a symlink")
+                directory.rmdir()
+                _sync_directory(directory.parent)
+            except Exception as cleanup_error:
+                cleanup_failures.append(
+                    f"{directory}: {_bounded_failure(cleanup_error)}"
+                )
+        if cleanup_failures:
+            raise FotMobCaptureError(
+                "directory creation failed: "
+                f"{_bounded_failure(operation_error)}; cleanup incomplete: "
+                + "; ".join(cleanup_failures)
+            ) from operation_error
+        raise
+
+
+def _validate_transport_receipt(response: Any) -> CapturedHttpResponse:
+    if not isinstance(response, CapturedHttpResponse):
+        raise FotMobCaptureError("response must be CapturedHttpResponse")
+    try:
+        return CapturedHttpResponse(
+            status=response.status,
+            content_type=response.content_type,
+            body=response.body,
+            observed_at=response.observed_at,
+            network_acquisition_performed=response.network_acquisition_performed,
+        )
+    except FotMobNetworkError as exc:
+        raise FotMobCaptureError(f"invalid transport receipt: {exc}") from exc
+
+
 def _atomic_write(path: Path, content: bytes) -> None:
     if not isinstance(content, bytes):
         raise FotMobCaptureError("capture file content must be bytes")
@@ -202,40 +416,65 @@ def _atomic_write(path: Path, content: bytes) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
-    except (OSError, ValueError) as exc:
-        try:
-            if temporary.exists() and not temporary.is_symlink():
-                temporary.unlink()
-        except OSError:
-            pass
-        raise FotMobCaptureError(f"could not durably write {path.name}") from exc
+        _sync_directory(path.parent)
+    except Exception as exc:
+        raise FotMobCaptureError(
+            f"could not durably write {path.name}: {_bounded_failure(exc)}"
+        ) from exc
 
 
-def _cleanup_owned_capture(capture_directory: Path, date_directory_created: bool) -> None:
-    owned_names = {
+def _cleanup_owned_capture(
+    capture_directory: Path,
+    date_directory_created: bool,
+) -> tuple[str, ...]:
+    owned_names = (
         RESPONSE_FILENAME,
         CANDIDATE_FILENAME,
         MANIFEST_FILENAME,
         f".{RESPONSE_FILENAME}.tmp",
         f".{CANDIDATE_FILENAME}.tmp",
         f".{MANIFEST_FILENAME}.tmp",
-    }
+    )
+    failures: list[str] = []
     for name in owned_names:
         path = capture_directory / name
         try:
-            if path.exists() and not path.is_symlink() and path.is_file():
+            if path.is_symlink():
+                raise FotMobCaptureError("refusing to remove a symlink")
+            if path.exists():
+                if not path.is_file():
+                    raise FotMobCaptureError("owned capture path is not a regular file")
                 path.unlink()
-        except OSError:
-            pass
+        except Exception as exc:
+            failures.append(f"{path}: {_bounded_failure(exc)}")
+    if capture_directory.exists() and not capture_directory.is_symlink():
+        try:
+            _sync_directory(capture_directory)
+        except Exception as exc:
+            failures.append(
+                f"{capture_directory}: {_bounded_failure(exc)}"
+            )
     try:
-        capture_directory.rmdir()
-    except OSError:
-        pass
+        if capture_directory.is_symlink():
+            raise FotMobCaptureError("refusing to remove a symlink capture directory")
+        if capture_directory.exists():
+            capture_directory.rmdir()
+            _sync_directory(capture_directory.parent)
+    except Exception as exc:
+        failures.append(f"{capture_directory}: {_bounded_failure(exc)}")
     if date_directory_created:
         try:
-            capture_directory.parent.rmdir()
-        except OSError:
-            pass
+            date_directory = capture_directory.parent
+            if date_directory.is_symlink():
+                raise FotMobCaptureError("refusing to remove a symlink date directory")
+            if date_directory.exists():
+                date_directory.rmdir()
+                _sync_directory(date_directory.parent)
+        except Exception as exc:
+            failures.append(
+                f"{capture_directory.parent}: {_bounded_failure(exc)}"
+            )
+    return tuple(failures)
 
 
 def write_capture_directory(
@@ -245,18 +484,17 @@ def write_capture_directory(
     output_root: Path,
     repository_root: Path | None = None,
 ) -> tuple[Path, FotMobMatchesCaptureManifest]:
-    if not isinstance(response, CapturedHttpResponse):
-        raise FotMobCaptureError("response must be CapturedHttpResponse")
+    response = _validate_transport_receipt(response)
     date = validate_request_date(request_date)
-    root = validate_output_root(output_root, repository_root=repository_root)
-    root.mkdir(parents=True, exist_ok=True)
+    repository = (repository_root or _repository_root()).resolve(strict=True)
+    root = validate_output_root(output_root, repository_root=repository)
+    _ensure_directory_tree_durable(root, boundary=repository)
     _reject_symlink_components(root, "output root")
     date_directory = root / date
     date_directory_created = not date_directory.exists()
     if date_directory.exists() and (date_directory.is_symlink() or not date_directory.is_dir()):
         raise FotMobCaptureError("capture date directory is invalid")
-    date_directory.mkdir(exist_ok=True)
-    observed = response.observed_at.astimezone(datetime.timezone.utc)
+    observed = response.observed_at
     capture_name = (
         observed.strftime("%Y%m%dT%H%M%S%fZ")
         + "-"
@@ -265,8 +503,16 @@ def write_capture_directory(
     capture_directory = date_directory / capture_name
     if capture_directory.exists() or capture_directory.is_symlink():
         raise FotMobCaptureError("capture directory already exists")
-    capture_directory.mkdir()
     try:
+        if date_directory_created:
+            date_directory.mkdir()
+            _sync_directory(root)
+            _sync_directory(date_directory)
+        else:
+            _sync_directory(date_directory)
+        capture_directory.mkdir()
+        _sync_directory(date_directory)
+        _sync_directory(capture_directory)
         _atomic_write(capture_directory / RESPONSE_FILENAME, response.body)
         manifest = build_capture_manifest(
             response.body,
@@ -275,7 +521,7 @@ def write_capture_directory(
             http_status=response.status,
             content_type=response.content_type,
             evidence_file_path=RESPONSE_FILENAME,
-            network_acquisition_performed=True,
+            network_acquisition_performed=response.network_acquisition_performed,
         )
         _atomic_write(
             capture_directory / CANDIDATE_FILENAME,
@@ -286,8 +532,17 @@ def write_capture_directory(
             canonical_manifest_bytes(manifest),
         )
         return capture_directory, manifest
-    except Exception:
-        _cleanup_owned_capture(capture_directory, date_directory_created)
+    except Exception as operation_error:
+        cleanup_failures = _cleanup_owned_capture(
+            capture_directory,
+            date_directory_created,
+        )
+        if cleanup_failures:
+            raise FotMobCaptureError(
+                "capture operation failed: "
+                f"{_bounded_failure(operation_error)}; cleanup incomplete: "
+                + "; ".join(cleanup_failures)
+            ) from operation_error
         raise
 
 
@@ -390,6 +645,10 @@ def main(
             connection_factory=connection_factory,
             clock=clock,
         )
+        if response.network_acquisition_performed is not True:
+            raise FotMobNetworkError(
+                "live capture requires validated network acquisition provenance"
+            )
         capture, manifest = write_capture_directory(
             response,
             request_date=date,

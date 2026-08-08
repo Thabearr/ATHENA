@@ -154,6 +154,17 @@ def offline_response(raw=None):
         content_type="application/json",
         body=raw or payload(),
         observed_at=OBSERVED,
+        network_acquisition_performed=False,
+    )
+
+
+def network_response(raw=None):
+    response = FakeHttpResponse(body=raw or payload())
+    factory, _ = fake_factory(response)
+    return fetch_matches_by_date(
+        REQUEST_DATE,
+        connection_factory=factory,
+        clock=lambda: OBSERVED,
     )
 
 
@@ -161,6 +172,17 @@ def write_offline_capture(tmp_path, raw=None):
     repository = repo_root(tmp_path)
     capture_directory, built_manifest = write_capture_directory(
         offline_response(raw),
+        request_date=REQUEST_DATE,
+        output_root=ALLOWED_OUTPUT_RELATIVE,
+        repository_root=repository,
+    )
+    return repository, capture_directory, built_manifest
+
+
+def write_network_capture(tmp_path, raw=None):
+    repository = repo_root(tmp_path)
+    capture_directory, built_manifest = write_capture_directory(
+        network_response(raw),
         request_date=REQUEST_DATE,
         output_root=ALLOWED_OUTPUT_RELATIVE,
         repository_root=repository,
@@ -255,6 +277,7 @@ def test_transport_host_port_path_method_and_headers_are_fixed():
         {"User-Agent": USER_AGENT, "Accept": "application/json"},
     )
     assert captured.body == response.body
+    assert captured.network_acquisition_performed is True
     assert calls[-1] == ("close",)
 
 
@@ -294,7 +317,7 @@ def test_check_and_live_flags_are_mutually_exclusive(tmp_path):
 
 
 def test_check_mode_never_calls_network(tmp_path, capsys):
-    repository, capture_directory, _ = write_offline_capture(tmp_path)
+    repository, capture_directory, _ = write_network_capture(tmp_path)
     calls = []
 
     def forbidden(*args, **kwargs):
@@ -308,6 +331,82 @@ def test_check_mode_never_calls_network(tmp_path, capsys):
     ) == 0
     assert calls == []
     assert "UNREVIEWED" in capsys.readouterr().out
+
+
+def test_manual_response_provenance_is_false_and_immutable():
+    response = offline_response()
+    assert response.network_acquisition_performed is False
+    with pytest.raises(dataclasses.FrozenInstanceError):
+        response.network_acquisition_performed = True
+
+
+def test_writer_preserves_offline_provenance_in_manifest_bytes(tmp_path):
+    _, capture_directory, built = write_offline_capture(tmp_path)
+    assert built.safety["network_acquisition_performed"] is False
+    serialized = canonical_manifest_bytes(built)
+    assert b'"network_acquisition_performed": false' in serialized
+    assert (capture_directory / MANIFEST_FILENAME).read_bytes() == serialized
+
+
+def test_live_cli_rejects_receipt_without_network_provenance(
+    tmp_path, monkeypatch, capsys
+):
+    repository = repo_root(tmp_path)
+    monkeypatch.setattr(capture_script, "fetch_matches_by_date", lambda *a, **k: offline_response())
+    with pytest.raises(SystemExit) as error:
+        main(
+            ["--date", REQUEST_DATE, "--execute-live-network"],
+            repository_root=repository,
+        )
+    assert error.value.code == 1
+    assert "requires validated network acquisition provenance" in capsys.readouterr().err
+    assert not (repository / ALLOWED_OUTPUT_RELATIVE).exists()
+
+
+@pytest.mark.parametrize(
+    "changes, message",
+    [
+        ({"status": True}, "status"),
+        ({"status": 201}, "status"),
+        ({"content_type": "text/html"}, "Content-Type"),
+        ({"body": "not bytes"}, "body"),
+        ({"body": b"x" * (MAX_RESPONSE_BYTES + 1)}, "16 MiB"),
+        ({"observed_at": dt.datetime(2026, 8, 8, 12, 0)}, "timezone-aware"),
+        ({"observed_at": None}, "datetime"),
+        ({"network_acquisition_performed": 1}, "exact bool"),
+    ],
+)
+def test_invalid_transport_receipt_is_rejected_before_filesystem_mutation(
+    tmp_path, changes, message
+):
+    repository = repo_root(tmp_path)
+    values = {
+        "status": 200,
+        "content_type": "application/json",
+        "body": payload(),
+        "observed_at": OBSERVED,
+        "network_acquisition_performed": False,
+    }
+    values.update(changes)
+    with pytest.raises(FotMobNetworkError, match=message):
+        CapturedHttpResponse(**values)
+    assert not (repository / ALLOWED_OUTPUT_RELATIVE).exists()
+    assert list(repository.rglob("*.tmp")) == []
+
+
+def test_writer_revalidates_forged_receipt_before_filesystem_mutation(tmp_path):
+    repository = repo_root(tmp_path)
+    response = offline_response()
+    object.__setattr__(response, "status", 201)
+    with pytest.raises(FotMobCaptureError, match="invalid transport receipt"):
+        write_capture_directory(
+            response,
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert not (repository / ALLOWED_OUTPUT_RELATIVE).exists()
+    assert list(repository.rglob("*.tmp")) == []
 
 
 # HTTP response checks.
@@ -845,9 +944,19 @@ def test_offline_verifier_accepts_exact_capture(tmp_path):
     _, capture_directory, built = write_offline_capture(tmp_path)
     verified = verify_capture_directory(
         capture_directory,
-        require_network_acquisition_performed=True,
+        require_network_acquisition_performed=False,
     )
     assert verified == built
+
+
+def test_offline_capture_cannot_satisfy_required_network_provenance(tmp_path):
+    _, capture_directory, built = write_offline_capture(tmp_path)
+    assert built.safety["network_acquisition_performed"] is False
+    with pytest.raises(FotMobCaptureError, match="network acquisition provenance"):
+        verify_capture_directory(
+            capture_directory,
+            require_network_acquisition_performed=True,
+        )
 
 
 def test_verifier_detects_modified_raw_evidence(tmp_path):
@@ -1010,6 +1119,265 @@ def test_atomic_write_order_places_manifest_last(tmp_path, monkeypatch):
         repository_root=repository,
     )
     assert order == [RESPONSE_FILENAME, CANDIDATE_FILENAME, MANIFEST_FILENAME]
+
+
+@pytest.mark.parametrize(
+    "filename",
+    [RESPONSE_FILENAME, CANDIDATE_FILENAME, MANIFEST_FILENAME],
+)
+def test_file_fsync_precedes_rename_and_directory_sync(
+    tmp_path, monkeypatch, filename
+):
+    events = []
+    original_replace = os.replace
+
+    monkeypatch.setattr(
+        capture_script.os,
+        "fsync",
+        lambda descriptor: events.append(("file_fsync", descriptor)),
+    )
+
+    def replace(source, destination):
+        events.append(("replace", Path(destination).name))
+        return original_replace(source, destination)
+
+    monkeypatch.setattr(capture_script.os, "replace", replace)
+    monkeypatch.setattr(
+        capture_script,
+        "_sync_directory",
+        lambda directory: events.append(("directory_sync", Path(directory))),
+    )
+    destination = tmp_path / filename
+    capture_script._atomic_write(destination, b"evidence")
+    assert events[0][0] == "file_fsync"
+    assert events[1] == ("replace", filename)
+    assert events[2] == ("directory_sync", tmp_path)
+    assert destination.read_bytes() == b"evidence"
+
+
+def test_new_directories_are_synced_after_parent_publication(tmp_path, monkeypatch):
+    repository = repo_root(tmp_path)
+    events = []
+    original_mkdir = Path.mkdir
+    original_sync = capture_script._sync_directory
+
+    def mkdir(path, *args, **kwargs):
+        events.append(("mkdir", Path(path)))
+        return original_mkdir(path, *args, **kwargs)
+
+    def sync(path, *args, **kwargs):
+        events.append(("sync", Path(path)))
+        return original_sync(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", mkdir)
+    monkeypatch.setattr(capture_script, "_sync_directory", sync)
+    capture_directory, _ = write_capture_directory(
+        offline_response(),
+        request_date=REQUEST_DATE,
+        output_root=ALLOWED_OUTPUT_RELATIVE,
+        repository_root=repository,
+    )
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    date_directory = root / REQUEST_DATE
+    required_transitions = [
+        [("mkdir", root), ("sync", root.parent), ("sync", root)],
+        [("mkdir", date_directory), ("sync", root), ("sync", date_directory)],
+        [
+            ("mkdir", capture_directory),
+            ("sync", date_directory),
+            ("sync", capture_directory),
+        ],
+    ]
+    for transition in required_transitions:
+        start = events.index(transition[0])
+        assert events[start : start + 3] == transition
+
+
+def test_capture_directory_is_synced_after_every_final_replace(tmp_path, monkeypatch):
+    repository = repo_root(tmp_path)
+    events = []
+    original_replace = os.replace
+    original_sync = capture_script._sync_directory
+
+    def replace(source, destination):
+        events.append(("replace", Path(destination)))
+        return original_replace(source, destination)
+
+    def sync(path, *args, **kwargs):
+        events.append(("sync", Path(path)))
+        return original_sync(path, *args, **kwargs)
+
+    monkeypatch.setattr(capture_script.os, "replace", replace)
+    monkeypatch.setattr(capture_script, "_sync_directory", sync)
+    capture_directory, _ = write_capture_directory(
+        offline_response(),
+        request_date=REQUEST_DATE,
+        output_root=ALLOWED_OUTPUT_RELATIVE,
+        repository_root=repository,
+    )
+    replacements = [event for event in events if event[0] == "replace"]
+    assert [path.name for _, path in replacements] == [
+        RESPONSE_FILENAME,
+        CANDIDATE_FILENAME,
+        MANIFEST_FILENAME,
+    ]
+    for replacement in replacements:
+        index = events.index(replacement)
+        assert events[index + 1] == ("sync", capture_directory)
+
+
+def test_parent_sync_failure_fails_and_cleans_created_date(tmp_path, monkeypatch):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    root.mkdir(parents=True)
+    date_directory = root / REQUEST_DATE
+    original_sync = capture_script._sync_directory
+    failed = False
+
+    def sync(path, *args, **kwargs):
+        nonlocal failed
+        if Path(path) == root and date_directory.exists() and not failed:
+            failed = True
+            raise FotMobCaptureError("injected parent sync failure")
+        return original_sync(path, *args, **kwargs)
+
+    monkeypatch.setattr(capture_script, "_sync_directory", sync)
+    with pytest.raises(FotMobCaptureError, match="parent sync failure"):
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert not date_directory.exists()
+
+
+def test_final_directory_sync_failure_never_returns_success(tmp_path, monkeypatch):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    original_sync = capture_script._sync_directory
+    failed = False
+
+    def sync(path, *args, **kwargs):
+        nonlocal failed
+        directory = Path(path)
+        raw = directory / RESPONSE_FILENAME
+        if directory.name.startswith("20260808T") and raw.exists() and not failed:
+            failed = True
+            raise FotMobCaptureError("injected final directory sync failure")
+        return original_sync(path, *args, **kwargs)
+
+    monkeypatch.setattr(capture_script, "_sync_directory", sync)
+    with pytest.raises(FotMobCaptureError, match="final directory sync failure"):
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    date_directory = root / REQUEST_DATE
+    assert not date_directory.exists()
+
+
+def test_existing_directory_hierarchy_still_writes_capture(tmp_path):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    date_directory = root / REQUEST_DATE
+    date_directory.mkdir(parents=True)
+    capture_directory, _ = write_capture_directory(
+        offline_response(),
+        request_date=REQUEST_DATE,
+        output_root=ALLOWED_OUTPUT_RELATIVE,
+        repository_root=repository,
+    )
+    assert capture_directory.parent == date_directory
+    assert (capture_directory / MANIFEST_FILENAME).is_file()
+
+
+def test_windows_directory_sync_dispatches_and_fails_closed(tmp_path, monkeypatch):
+    calls = []
+
+    def fail(path):
+        calls.append(Path(path))
+        raise FotMobCaptureError("Windows directory sync unavailable")
+
+    monkeypatch.setattr(capture_script, "_sync_windows_directory", fail)
+    with pytest.raises(FotMobCaptureError, match="Windows directory sync unavailable"):
+        capture_script._sync_directory(tmp_path, platform_name="nt")
+    assert calls == [tmp_path]
+
+
+@pytest.mark.parametrize(
+    "failure_target",
+    ["temporary", "response", "candidate", "capture_directory", "date_directory"],
+)
+def test_incomplete_cleanup_is_reported_with_exact_owned_path(
+    tmp_path, monkeypatch, failure_target
+):
+    repository = repo_root(tmp_path)
+    root = repository / ALLOWED_OUTPUT_RELATIVE
+    root.mkdir(parents=True)
+    unrelated = root / "unrelated.txt"
+    unrelated.write_text("preserve", encoding="utf-8")
+    sibling = root / "sibling-capture"
+    sibling.mkdir()
+    sibling_file = sibling / "foreign.txt"
+    sibling_file.write_text("preserve", encoding="utf-8")
+
+    original_atomic = capture_script._atomic_write
+    atomic_calls = 0
+
+    def fail_during_write(path, content):
+        nonlocal atomic_calls
+        atomic_calls += 1
+        if failure_target == "temporary" and atomic_calls == 1:
+            path.with_name(f".{path.name}.tmp").write_bytes(b"partial")
+            raise FotMobCaptureError("injected write failure")
+        if failure_target in {"response", "capture_directory", "date_directory"} and atomic_calls == 2:
+            raise FotMobCaptureError("injected write failure")
+        if failure_target == "candidate" and atomic_calls == 3:
+            raise FotMobCaptureError("injected write failure")
+        return original_atomic(path, content)
+
+    original_unlink = Path.unlink
+    original_rmdir = Path.rmdir
+    failed_path = []
+
+    def unlink(path, *args, **kwargs):
+        should_fail = (
+            (failure_target == "temporary" and path.name == f".{RESPONSE_FILENAME}.tmp")
+            or (failure_target == "response" and path.name == RESPONSE_FILENAME)
+            or (failure_target == "candidate" and path.name == CANDIDATE_FILENAME)
+        )
+        if should_fail:
+            failed_path.append(Path(path))
+            raise OSError(f"injected unlink failure for {path}")
+        return original_unlink(path, *args, **kwargs)
+
+    def rmdir(path, *args, **kwargs):
+        should_fail = (
+            failure_target == "capture_directory" and path.name.startswith("20260808T")
+        ) or (failure_target == "date_directory" and path.name == REQUEST_DATE)
+        if should_fail:
+            failed_path.append(Path(path))
+            raise OSError(f"injected rmdir failure for {path}")
+        return original_rmdir(path, *args, **kwargs)
+
+    monkeypatch.setattr(capture_script, "_atomic_write", fail_during_write)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    monkeypatch.setattr(Path, "rmdir", rmdir)
+    with pytest.raises(FotMobCaptureError, match="cleanup incomplete") as error:
+        write_capture_directory(
+            offline_response(),
+            request_date=REQUEST_DATE,
+            output_root=ALLOWED_OUTPUT_RELATIVE,
+            repository_root=repository,
+        )
+    assert "injected write failure" in str(error.value)
+    assert failed_path
+    assert str(failed_path[0]) in str(error.value)
+    assert unrelated.read_text(encoding="utf-8") == "preserve"
+    assert sibling_file.read_text(encoding="utf-8") == "preserve"
 
 
 def test_candidate_and_rejection_tuples_must_be_immutable_and_sorted():

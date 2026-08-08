@@ -114,16 +114,26 @@ Absolute aliases outside that root, traversal, symlinked destinations, and
 symlinked parent components are rejected. Existing capture directories are
 never overwritten.
 
-Each file is written to a transaction-owned temporary file in the capture
-directory, flushed, `fsync`-ed, and atomically renamed. Raw evidence is written
-first, candidates second, and the manifest last. Thus a manifest is not
-published before its referenced files. This is per-file durability; no claim
-of cross-file crash atomicity is made. Normal handled failure cleans only
-files and directories created by that attempted transaction.
+New directory entries are synchronized after creation. Each file is written to
+a transaction-owned temporary file in the capture directory, its contents are
+flushed and `fsync`-ed, it is atomically renamed, and the containing directory
+entry is then synchronized. Raw evidence is written first, candidates second,
+and the manifest last. Thus a manifest is not published before its referenced
+files. This is per-file durability only; no cross-file crash atomicity is
+claimed.
 
-The manifest records that network acquisition actually occurred while every
-scraping, browser, credential, pricing, model, market, selection, production,
-and betting safety flag remains false.
+Normal handled failure attempts to remove only files and directories owned by
+that transaction. Cleanup failures are never silently ignored: the reported
+error preserves the original operation failure and identifies every owned path
+whose cleanup could not be completed. Unrelated and sibling files are not
+removed.
+
+The manifest records the network-acquisition provenance asserted by the
+validated transport receipt. A live transport receipt records `true`; a
+manual/offline receipt records `false`, and the persistence writer propagates
+that state rather than inventing it. Every scraping, browser, credential,
+pricing, model, market, selection, production, and betting safety flag remains
+false.
 
 ## CLI
 
@@ -147,7 +157,9 @@ Check mode verifies the exact required files, non-symlink raw evidence,
 payload size and SHA, strict JSON, regenerated canonical candidate JSON Lines,
 candidate/rejection counts and ordering, canonical manifest bytes, and
 date/source-reference consistency. It never uses the network, even when the
-machine has connectivity. Check mode and live execution cannot be combined.
+machine has connectivity. This proves byte, schema, and internal consistency;
+offline verification alone is not independent proof that an Internet request
+actually occurred. Check mode and live execution cannot be combined.
 
 ## Architectural separation
 

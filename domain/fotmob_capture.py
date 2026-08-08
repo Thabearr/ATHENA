@@ -812,7 +812,7 @@ def verify_capture_directory(
             manifest.safety["network_acquisition_performed"]
             is not require_network_acquisition_performed
         ):
-            raise FotMobCaptureError("network acquisition safety state mismatch")
+            raise FotMobCaptureError("network acquisition provenance state mismatch")
     if manifest.evidence_file_path != RESPONSE_FILENAME:
         raise FotMobCaptureError("manifest evidence path must be response.json")
     if len(raw_payload) != manifest.payload_byte_size:
