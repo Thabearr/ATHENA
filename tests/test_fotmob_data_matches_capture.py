@@ -414,18 +414,78 @@ def test_redirect_location_is_not_followed():
 
 @pytest.mark.parametrize(
     "value",
-    ["application/json", "application/json;charset=utf-8", "APPLICATION/JSON; charset=utf-8"],
+    [
+        "application/json",
+        "application/json;charset=utf-8",
+        "application/json; charset=utf-8",
+        "APPLICATION/JSON; charset=utf-8",
+        "application/json; charset=UTF-8",
+        "application/json; charset=utf-8; version=1",
+        "application/json ; charset = utf-8 ; version = 1",
+    ],
 )
 def test_json_content_types_are_accepted(value: str):
     assert validate_json_content_type(value) == value
 
 
 @pytest.mark.parametrize(
-    "value", ["text/html", "text/plain", "", " application/json", "application/json;", None]
+    "value",
+    [
+        "application/json;",
+        "application/json; charset",
+        "application/json; =utf-8",
+        "application/json; charset=",
+        "application/json; charset==utf-8",
+        "application/json; char set=utf-8",
+        "application/json; charset=utf 8",
+        'application/json; charset="utf-8"',
+        "application/json; charset=utf-8; CHARSET=utf-8",
+        "application/json; charset=utf-8\rversion=1",
+        "application/json; charset=utf-8\nversion=1",
+        "application/json; charset=utf-8\x00version=1",
+        "application/json; charset=utf-8\x1fversion=1",
+        "text/html; charset=utf-8",
+        "text/plain",
+        "",
+        " application/json",
+        "application/json ",
+        None,
+    ],
 )
 def test_non_json_or_malformed_content_types_rejected(value: Any):
     with pytest.raises(FotMobDataMatchesCaptureError):
         validate_json_content_type(value)
+
+
+def test_valid_content_type_is_preserved_string_for_string():
+    value = "APPLICATION/JSON ; Charset = UTF-8 ; Version = v1"
+    validated = validate_json_content_type(value)
+    assert validated is value
+    assert validated == value
+
+
+def test_manifest_reconstruction_rejects_malformed_content_type():
+    payload = manifest().to_dict()
+    payload["content_type"] = "application/json; charset"
+    with pytest.raises(FotMobDataMatchesCaptureError, match="token=token"):
+        manifest_from_mapping(payload)
+
+
+def test_offline_verifier_rejects_malformed_manifest_content_type(tmp_path):
+    repo, directory, _ = write_offline(tmp_path)
+    manifest_path = directory / MANIFEST_FILENAME
+    payload = json.loads(manifest_path.read_text(encoding="utf-8"))
+    payload["content_type"] = "application/json; charset==utf-8"
+    manifest_path.write_text(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(FotMobDataMatchesCaptureError, match="token=token"):
+        verify_data_matches_capture_directory(
+            directory,
+            allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+            require_network_acquisition_performed=False,
+        )
 
 
 @pytest.mark.parametrize("body", ["json", bytearray(b"json"), None, [], {}])

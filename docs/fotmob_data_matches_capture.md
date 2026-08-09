@@ -55,11 +55,15 @@ response available to the transparent independent ATHENA request.
 ## Exact raw-byte preservation
 
 Capture requires exact HTTP 200 and MIME base type `application/json`.
-Parameters such as `charset=utf-8` are retained. Redirects and all other status
-codes fail closed. The response limit is 8 MiB. An oversized Content-Length is
-rejected before the body is read, and incremental reads independently enforce
-the same maximum plus one-byte overflow check. Empty bodies and mismatched
-Content-Length values fail.
+Content-Type parameters are deliberately conservative and fail closed: each
+optional parameter must use valid ASCII `token=token` syntax, names must be
+unique case-insensitively, and malformed separators, empty names or values,
+quoted values, invalid token characters, and ASCII control characters are
+rejected. Valid values such as `charset=utf-8` are retained exactly without
+normalization. Redirects and all other status codes fail closed. The response
+limit is 8 MiB. An oversized Content-Length is rejected before the body is read,
+and incremental reads independently enforce the same maximum plus one-byte
+overflow check. Empty bodies and mismatched Content-Length values fail.
 
 `response.json` is the exact response body. It is never decoded, parsed,
 pretty-printed, stripped, normalized, line-ending-adjusted, or rewritten.

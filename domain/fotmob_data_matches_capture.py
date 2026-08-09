@@ -32,6 +32,10 @@ RAW_FILENAME = "response.json"
 MANIFEST_FILENAME = "manifest.json"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+_MEDIA_TYPE_TOKEN_RE = re.compile(
+    r"^[A-Za-z0-9!#$%&'*+.^_`|~-]+$",
+    flags=re.ASCII,
+)
 _SAFETY_KEYS = frozenset(
     {
         "network_acquisition_authorized",
@@ -116,11 +120,36 @@ def serialize_utc(value: Any) -> str:
 def validate_json_content_type(value: Any) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise FotMobDataMatchesCaptureError("Content-Type must identify JSON")
+    if any(ord(character) < 32 or ord(character) == 127 for character in value):
+        raise FotMobDataMatchesCaptureError(
+            "Content-Type must not contain ASCII control characters"
+        )
     parts = value.split(";")
     if parts[0].strip().lower() != "application/json":
         raise FotMobDataMatchesCaptureError("Content-Type must be application/json")
-    if any(not part.strip() for part in parts[1:]):
-        raise FotMobDataMatchesCaptureError("Content-Type parameters are malformed")
+    parameter_names: set[str] = set()
+    for raw_parameter in parts[1:]:
+        parameter = raw_parameter.strip()
+        if not parameter or parameter.count("=") != 1:
+            raise FotMobDataMatchesCaptureError(
+                "Content-Type parameters must use token=token syntax"
+            )
+        raw_name, raw_parameter_value = parameter.split("=", 1)
+        name = raw_name.strip()
+        parameter_value = raw_parameter_value.strip()
+        if (
+            _MEDIA_TYPE_TOKEN_RE.fullmatch(name) is None
+            or _MEDIA_TYPE_TOKEN_RE.fullmatch(parameter_value) is None
+        ):
+            raise FotMobDataMatchesCaptureError(
+                "Content-Type parameter names and values must be ASCII tokens"
+            )
+        canonical_name = name.lower()
+        if canonical_name in parameter_names:
+            raise FotMobDataMatchesCaptureError(
+                "Content-Type parameter names must be unique"
+            )
+        parameter_names.add(canonical_name)
     return value
 
 
