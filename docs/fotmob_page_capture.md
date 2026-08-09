@@ -75,12 +75,19 @@ response into a network capture.
 Local captures use:
 
 ```text
-artifacts/source-captures/fotmob-date-page/
+.cache/athena-research/fotmob-date-page-captures/
     YYYYMMDD/
         <24-character deterministic capture id>/
             page.html
             manifest.json
 ```
+
+This root is covered by the repository's existing `.cache/athena-research/`
+ignore rule, keeping raw live evidence out of normal Git staging. The first
+PR #35 live capture used the original pre-review
+`artifacts/source-captures/fotmob-date-page/` path; that local evidence remains
+preserved in place and was never claimed to have been ignored. Future captures
+use only the ignored root above.
 
 The identifier is derived from the request date, normalized observation time,
 and raw SHA-256. Existing captures are never overwritten. Absolute aliases,
@@ -112,10 +119,13 @@ data, match IDs, model data, or odds.
 Offline verification performs no network. It validates allowed-root containment,
 symlinks, the exact two files, canonical manifest schema and bytes, directory
 date and deterministic identifier, request profile, response metadata, raw size
-and SHA, provenance policy, and safety mapping. Requiring network provenance
-rejects internally constructed offline artifacts. Offline verification proves
-byte/schema/hash consistency; it does not independently prove that a network
-request occurred.
+and SHA, provenance policy, and safety mapping. It bounds `page.html` reads at
+8 MiB and `manifest.json` reads at 64 KiB: apparent oversize is rejected before
+reading, and each actual read is limited to its maximum plus one byte so a
+stat/read race also fails closed without truncation. Empty inputs fail closed.
+Requiring network provenance rejects internally constructed offline artifacts.
+Offline verification proves byte/schema/hash consistency; it does not
+independently prove that a network request occurred.
 
 ## Explicit non-goals
 

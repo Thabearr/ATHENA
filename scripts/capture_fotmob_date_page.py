@@ -41,7 +41,9 @@ from domain.fotmob_page_capture import (
 )
 
 
-ALLOWED_OUTPUT_RELATIVE = Path("artifacts/source-captures/fotmob-date-page")
+ALLOWED_OUTPUT_RELATIVE = Path(
+    ".cache/athena-research/fotmob-date-page-captures"
+)
 REQUEST_TIMEOUT_SECONDS = 30
 READ_CHUNK_BYTES = 64 * 1024
 
@@ -204,7 +206,7 @@ def validate_output_root(
     _reject_symlink_components(supplied_absolute, "output root")
     if supplied_absolute.resolve(strict=False) != expected.resolve(strict=False):
         raise FotMobPageCaptureError(
-            "output root must be artifacts/source-captures/fotmob-date-page"
+            "output root must be .cache/athena-research/fotmob-date-page-captures"
         )
     if expected.exists() and (expected.is_symlink() or not expected.is_dir()):
         raise FotMobPageCaptureError("output root must be a non-symlink directory")
@@ -605,7 +607,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--output-root",
         default=str(ALLOWED_OUTPUT_RELATIVE),
-        help="Must remain artifacts/source-captures/fotmob-date-page",
+        help="Must remain .cache/athena-research/fotmob-date-page-captures",
     )
     parser.add_argument(
         "--execute-live-network",

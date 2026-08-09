@@ -8,6 +8,7 @@ import hashlib
 import json
 import pathlib
 import re
+import stat
 import types
 from typing import Any, Mapping, Tuple
 
@@ -17,6 +18,7 @@ DATASET_NAME = "athena-fotmob-date-page-capture-v1"
 ALLOWED_HOST = "www.fotmob.com"
 HTTPS_PORT = 443
 MAX_RESPONSE_BYTES = 8 * 1024 * 1024
+MAX_MANIFEST_BYTES = 64 * 1024
 RAW_FILENAME = "page.html"
 MANIFEST_FILENAME = "manifest.json"
 REQUEST_HEADERS: Tuple[Tuple[str, str], ...] = (
@@ -430,6 +432,51 @@ def _reject_symlink_components(path: pathlib.Path, label: str) -> None:
             raise FotMobPageCaptureError(f"{label} contains a forbidden symlink")
 
 
+def _read_bounded_regular_file(
+    path: pathlib.Path,
+    *,
+    maximum_bytes: int,
+    label: str,
+    require_non_empty: bool = True,
+) -> bytes:
+    if type(maximum_bytes) is not int or maximum_bytes <= 0:
+        raise FotMobPageCaptureError("maximum_bytes must be an exact positive integer")
+    if type(require_non_empty) is not bool:
+        raise FotMobPageCaptureError("require_non_empty must be exact bool")
+    try:
+        candidate = pathlib.Path(path)
+    except (TypeError, ValueError) as exc:
+        raise FotMobPageCaptureError(f"{label} path is invalid") from exc
+    if candidate.is_symlink():
+        raise FotMobPageCaptureError(f"{label} must not be a symlink")
+    try:
+        metadata = candidate.stat()
+    except OSError as exc:
+        raise FotMobPageCaptureError(f"{label} could not be inspected") from exc
+    if not stat.S_ISREG(metadata.st_mode):
+        raise FotMobPageCaptureError(f"{label} must be a regular file")
+    if require_non_empty and metadata.st_size <= 0:
+        raise FotMobPageCaptureError(f"{label} must not be empty")
+    if metadata.st_size > maximum_bytes:
+        raise FotMobPageCaptureError(
+            f"{label} exceeds the {maximum_bytes}-byte verification limit"
+        )
+    try:
+        with candidate.open("rb") as handle:
+            content = handle.read(maximum_bytes + 1)
+    except OSError as exc:
+        raise FotMobPageCaptureError(f"{label} could not be read") from exc
+    if type(content) is not bytes:
+        raise FotMobPageCaptureError(f"{label} read did not return exact bytes")
+    if len(content) > maximum_bytes:
+        raise FotMobPageCaptureError(
+            f"{label} exceeds the {maximum_bytes}-byte verification limit"
+        )
+    if require_non_empty and not content:
+        raise FotMobPageCaptureError(f"{label} must not be empty")
+    return content
+
+
 def verify_page_capture_directory(
     capture_directory: pathlib.Path,
     *,
@@ -464,15 +511,16 @@ def verify_page_capture_directory(
         raise FotMobPageCaptureError("capture must contain exactly page.html and manifest.json")
     raw_path = capture_resolved / RAW_FILENAME
     manifest_path = capture_resolved / MANIFEST_FILENAME
-    if raw_path.is_symlink() or not raw_path.is_file():
-        raise FotMobPageCaptureError("page.html must be a regular non-symlink file")
-    if manifest_path.is_symlink() or not manifest_path.is_file():
-        raise FotMobPageCaptureError("manifest.json must be a regular non-symlink file")
-    try:
-        raw = raw_path.read_bytes()
-        manifest_bytes = manifest_path.read_bytes()
-    except OSError as exc:
-        raise FotMobPageCaptureError("capture files could not be read") from exc
+    raw = _read_bounded_regular_file(
+        raw_path,
+        maximum_bytes=MAX_RESPONSE_BYTES,
+        label="page.html",
+    )
+    manifest_bytes = _read_bounded_regular_file(
+        manifest_path,
+        maximum_bytes=MAX_MANIFEST_BYTES,
+        label="manifest.json",
+    )
     manifest = manifest_from_mapping(strict_json_loads(manifest_bytes))
     if manifest.request_date != relative.parts[0]:
         raise FotMobPageCaptureError("manifest date does not match directory")
@@ -517,6 +565,7 @@ __all__ = [
     "FotMobPageCaptureManifest",
     "HTTPS_PORT",
     "MANIFEST_FILENAME",
+    "MAX_MANIFEST_BYTES",
     "MAX_RESPONSE_BYTES",
     "RAW_FILENAME",
     "REQUEST_HEADERS",

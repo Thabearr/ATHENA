@@ -7,6 +7,7 @@ import hashlib
 import http.client
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,7 @@ from domain.fotmob_page_capture import (
     DATASET_NAME,
     HTTPS_PORT,
     MANIFEST_FILENAME,
+    MAX_MANIFEST_BYTES,
     MAX_RESPONSE_BYTES,
     RAW_FILENAME,
     REQUEST_HEADERS,
@@ -797,6 +799,148 @@ def test_verifier_accepts_exact_capture_and_rejects_missing_extra(tmp_path):
     with pytest.raises(FotMobPageCaptureError, match="exactly"):
         verify_page_capture_directory(
             directory, allowed_root=root, require_network_acquisition_performed=False
+        )
+
+
+def test_production_capture_root_is_git_ignored_and_old_root_is_not_canonical():
+    repository_root = Path(__file__).resolve().parents[1]
+    assert ALLOWED_OUTPUT_RELATIVE == Path(
+        ".cache/athena-research/fotmob-date-page-captures"
+    )
+    for filename in (RAW_FILENAME, MANIFEST_FILENAME):
+        candidate = ALLOWED_OUTPUT_RELATIVE / "example" / filename
+        checked = subprocess.run(
+            ["git", "check-ignore", "-q", candidate.as_posix()],
+            cwd=repository_root,
+            check=False,
+            capture_output=True,
+        )
+        assert checked.returncode == 0
+    old_candidate = Path(
+        "artifacts/source-captures/fotmob-date-page/example/page.html"
+    )
+    assert old_candidate.parts[:4] != ALLOWED_OUTPUT_RELATIVE.parts[:4]
+    checked_old = subprocess.run(
+        ["git", "check-ignore", "-q", old_candidate.as_posix()],
+        cwd=repository_root,
+        check=False,
+        capture_output=True,
+    )
+    assert checked_old.returncode == 1
+
+
+def test_verifier_accepts_raw_page_at_exact_limit(tmp_path):
+    body = b"x" * MAX_RESPONSE_BYTES
+    repo, directory, built = write_offline(tmp_path, body=body)
+    assert verify_page_capture_directory(
+        directory,
+        allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+        require_network_acquisition_performed=False,
+    ) == built
+
+
+def test_verifier_rejects_oversized_and_empty_raw_without_read_bytes(
+    tmp_path, monkeypatch
+):
+    repo, directory, _ = write_offline(tmp_path)
+    raw_path = directory / RAW_FILENAME
+    raw_path.write_bytes(b"x" * (MAX_RESPONSE_BYTES + 1))
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: pytest.fail("unbounded Path.read_bytes must not be used"),
+    )
+    with pytest.raises(FotMobPageCaptureError, match="verification limit"):
+        verify_page_capture_directory(
+            directory,
+            allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+            require_network_acquisition_performed=False,
+        )
+
+    raw_path.write_bytes(b"")
+    with pytest.raises(FotMobPageCaptureError, match="must not be empty"):
+        verify_page_capture_directory(
+            directory,
+            allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+            require_network_acquisition_performed=False,
+        )
+
+
+class _RecordingBoundedReader:
+    def __init__(self, content: bytes, requested: list[int]) -> None:
+        self._content = content
+        self._requested = requested
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        return False
+
+    def read(self, amount: int) -> bytes:
+        self._requested.append(amount)
+        return self._content[:amount]
+
+
+@pytest.mark.parametrize(
+    ("filename", "maximum"),
+    [
+        (RAW_FILENAME, MAX_RESPONSE_BYTES),
+        (MANIFEST_FILENAME, MAX_MANIFEST_BYTES),
+    ],
+)
+def test_verifier_detects_stat_read_growth_with_maximum_plus_one_read(
+    tmp_path, monkeypatch, filename, maximum
+):
+    repo, directory, _ = write_offline(tmp_path)
+    target = directory / filename
+    original_open = Path.open
+    requested: list[int] = []
+
+    def raced_open(path, *args, **kwargs):
+        if path == target and args and args[0] == "rb":
+            return _RecordingBoundedReader(b"x" * (maximum + 1), requested)
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", raced_open)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: pytest.fail("unbounded Path.read_bytes must not be used"),
+    )
+    with pytest.raises(FotMobPageCaptureError, match="verification limit"):
+        verify_page_capture_directory(
+            directory,
+            allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+            require_network_acquisition_performed=False,
+        )
+    assert requested == [maximum + 1]
+
+
+def test_manifest_verification_is_bounded_at_exact_and_oversized_limits(
+    tmp_path, monkeypatch
+):
+    repo, directory, _ = write_offline(tmp_path)
+    manifest_path = directory / MANIFEST_FILENAME
+    manifest_path.write_bytes(b" " * MAX_MANIFEST_BYTES)
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: pytest.fail("unbounded Path.read_bytes must not be used"),
+    )
+    with pytest.raises(FotMobPageCaptureError, match="strict UTF-8 JSON"):
+        verify_page_capture_directory(
+            directory,
+            allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+            require_network_acquisition_performed=False,
+        )
+
+    manifest_path.write_bytes(b"x" * (MAX_MANIFEST_BYTES + 1))
+    with pytest.raises(FotMobPageCaptureError, match="verification limit"):
+        verify_page_capture_directory(
+            directory,
+            allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
+            require_network_acquisition_performed=False,
         )
 
 
