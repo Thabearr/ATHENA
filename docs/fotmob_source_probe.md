@@ -27,8 +27,13 @@ The date must be an exact, valid Gregorian `YYYYMMDD` value. Host, port, path,
 query, and headers are internal constants. There is no arbitrary URL, header,
 proxy, or alternate-host input. Requests use Python's standard
 `http.client.HTTPSConnection` and default TLS certificate verification. The
-probe follows no redirect and performs no retry. The operator must run the two
-routes as separate commands.
+probe explicitly suppresses `http.client`'s automatic
+`Accept-Encoding: identity` insertion. `Host` is generated normally by
+`http.client`; the only explicit request-profile headers are the route's
+`Accept` value and `User-Agent: ATHENA/1.0`. Behavioral tests inspect the raw
+request header bytes serialized by the standard-library client. The probe
+follows no redirect and performs no retry. The operator must run the two routes
+as separate commands.
 
 Network use is fail-closed behind `--execute-live-network`. Invoking the CLI
 without that flag creates no connection and performs no DNS or socket work. The
@@ -81,3 +86,9 @@ SportyBet and all bookmaker concerns remain separate.
 
 No live result changes PR #33's code or qualifications. A successful request is
 an observation, not trust.
+
+The corrected live observations made with automatic `Accept-Encoding`
+insertion suppressed supersede PR #33's initial observations. Those initial
+observations used the same truthful explicit headers, but the standard library
+added an implicit wire header that was not represented in the canonical
+receipt.

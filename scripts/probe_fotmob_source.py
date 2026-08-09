@@ -92,7 +92,6 @@ def probe_fotmob_source(
     if not isinstance(route, FotMobProbeRoute):
         raise FotMobSourceProbeError("route must be FotMobProbeRoute")
     target = request_target_for_route(route, date)
-    headers = dict(request_headers_for_route(route))
     connection = None
     response_received = False
     try:
@@ -101,7 +100,10 @@ def probe_fotmob_source(
             HTTPS_PORT,
             timeout=REQUEST_TIMEOUT_SECONDS,
         )
-        connection.request("GET", target, headers=headers)
+        connection.putrequest("GET", target, skip_accept_encoding=True)
+        for name, value in request_headers_for_route(route):
+            connection.putheader(name, value)
+        connection.endheaders()
         response = connection.getresponse()
         response_received = True
         status = getattr(response, "status", None)

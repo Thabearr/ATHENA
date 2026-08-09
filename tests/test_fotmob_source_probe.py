@@ -4,6 +4,7 @@ import ast
 import dataclasses
 import datetime
 import hashlib
+import http.client
 import json
 from pathlib import Path
 from typing import Any
@@ -80,11 +81,28 @@ class FakeResponse:
 class FakeConnection:
     def __init__(self, response: FakeResponse) -> None:
         self.response = response
-        self.requests: list[tuple[str, str, dict[str, str]]] = []
+        self.request_lines: list[tuple[str, str, bool, bool]] = []
+        self.emitted_headers: list[tuple[str, str]] = []
+        self.endheaders_calls = 0
         self.closed = False
 
-    def request(self, method: str, target: str, *, headers: dict[str, str]) -> None:
-        self.requests.append((method, target, headers))
+    def putrequest(
+        self,
+        method: str,
+        target: str,
+        *,
+        skip_host: bool = False,
+        skip_accept_encoding: bool = False,
+    ) -> None:
+        self.request_lines.append(
+            (method, target, skip_host, skip_accept_encoding)
+        )
+
+    def putheader(self, name: str, value: str) -> None:
+        self.emitted_headers.append((name, value))
+
+    def endheaders(self) -> None:
+        self.endheaders_calls += 1
 
     def getresponse(self) -> FakeResponse:
         return self.response
@@ -107,6 +125,40 @@ class ConnectionFactory:
         connection = FakeConnection(self.response)
         self.connections.append(connection)
         return connection
+
+
+class RecordingSocket:
+    def __init__(self) -> None:
+        self.sent = bytearray()
+        self.closed = False
+
+    def sendall(self, content: bytes) -> None:
+        self.sent.extend(content)
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class RecordingHTTPSConnection(http.client.HTTPSConnection):
+    """Real stdlib request serializer with network and TLS replaced by a byte sink."""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        *,
+        timeout: int,
+        response: FakeResponse,
+    ) -> None:
+        super().__init__(host, port, timeout=timeout)
+        self.recording_socket = RecordingSocket()
+        self.response = response
+
+    def connect(self) -> None:
+        self.sock = self.recording_socket  # type: ignore[assignment]
+
+    def getresponse(self) -> FakeResponse:
+        return self.response
 
 
 def response_receipt(**changes: Any) -> FotMobSourceProbeReceipt:
@@ -391,9 +443,77 @@ def test_each_route_uses_exactly_one_fixed_https_request(route, target, accept):
     execution, factory = run_probe(enum_route)
     assert execution.receipt.transport_outcome is ProbeTransportOutcome.RESPONSE_RECEIVED
     assert factory.calls == [("www.fotmob.com", 443, cli.REQUEST_TIMEOUT_SECONDS)]
-    assert factory.connections[0].requests == [
-        ("GET", target, {"Accept": accept, "User-Agent": "ATHENA/1.0"})
+    connection = factory.connections[0]
+    assert connection.request_lines == [
+        ("GET", target, False, True)
     ]
+    assert connection.emitted_headers == [
+        ("Accept", accept),
+        ("User-Agent", "ATHENA/1.0"),
+    ]
+    assert connection.endheaders_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("route", "target", "accept"),
+    [
+        (
+            FotMobProbeRoute.MATCHES_API,
+            "/api/matches?date=20260815",
+            "application/json",
+        ),
+        (
+            FotMobProbeRoute.DATE_WEB_PAGE,
+            "/?date=20260815",
+            "text/html,application/xhtml+xml",
+        ),
+    ],
+)
+def test_stdlib_serialized_wire_profile_is_exact(route, target, accept):
+    connections: list[RecordingHTTPSConnection] = []
+
+    def factory(host: str, port: int, *, timeout: int) -> RecordingHTTPSConnection:
+        connection = RecordingHTTPSConnection(
+            host,
+            port,
+            timeout=timeout,
+            response=FakeResponse(),
+        )
+        connections.append(connection)
+        return connection
+
+    execution = cli.probe_fotmob_source(
+        request_date=DATE,
+        route=route,
+        connection_factory=factory,
+        clock=lambda: OBSERVED,
+    )
+
+    assert execution.receipt.transport_outcome is ProbeTransportOutcome.RESPONSE_RECEIVED
+    assert len(connections) == 1
+    serialized = bytes(connections[0].recording_socket.sent)
+    assert serialized.split(b"\r\n") == [
+        f"GET {target} HTTP/1.1".encode("ascii"),
+        b"Host: www.fotmob.com",
+        f"Accept: {accept}".encode("ascii"),
+        b"User-Agent: ATHENA/1.0",
+        b"",
+        b"",
+    ]
+    lowered = serialized.lower()
+    for forbidden in (
+        b"accept-encoding:",
+        b"referer:",
+        b"cookie:",
+        b"authorization:",
+        b"accept-language:",
+        b"connection:",
+        b"sec-fetch-",
+        b"sec-ch-ua",
+        b"mozilla/",
+    ):
+        assert forbidden not in lowered
+    assert serialized.count(b"GET ") == 1
 
 
 @pytest.mark.parametrize("status", [301, 302, 403, 404, 429, 500])
@@ -409,7 +529,8 @@ def test_http_failure_or_redirect_is_recorded_without_retry_or_follow(status: in
     assert execution.receipt.status_code == status
     assert execution.receipt.location == "https://elsewhere.invalid/redirect"
     assert len(factory.calls) == 1
-    assert len(factory.connections[0].requests) == 1
+    assert len(factory.connections[0].request_lines) == 1
+    assert factory.connections[0].endheaders_calls == 1
 
 
 def test_transport_failure_returns_bounded_receipt_and_never_retries():
