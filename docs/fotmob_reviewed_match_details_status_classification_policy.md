@@ -76,25 +76,31 @@ This means only that a later evaluator is allowed to inspect freshness and confl
 
 ## Frozen freshness comparison
 
-The deadline comparison itself is part of PR #60's reviewed policy contract rather than something the later evaluator may invent.
+The time comparison itself is part of PR #60's reviewed policy contract rather than something a later evaluator may invent.
 
 The exact rule is:
 
 ```text
-FRESHNESS_COMPARISON = CLASSIFIED_AT_LE_FRESH_UNTIL
+FRESHNESS_COMPARISON = POLICY_REVIEWED_AT_LE_CLASSIFIED_AT_LE_FRESH_UNTIL
 ```
 
-or equivalently:
+with the independent prospective gate:
 
 ```text
-fresh exactly when classified_at <= fresh_until
+policy_reviewed_at <= classified_at < kickoff
 ```
 
-Equality at the deadline is intentionally fresh. One microsecond later is outside the reviewed freshness window.
+For an eligible observation the time-only helper therefore returns fresh exactly when:
 
-`is_within_reviewed_freshness_window(...)` is the reusable time-only helper for that rule. It requires exact `datetime.timezone.utc`, requires observation/deadline/classification times to remain prospective and strictly pre-kickoff, and returns only a boolean. It creates no Fixture Intelligence status.
+```text
+policy_reviewed_at <= classified_at <= fresh_until
+```
 
-This split prevents a later evaluator from silently switching between `<` and `<=` at the trust boundary.
+Equality at `fresh_until` is intentionally fresh. One microsecond later is outside the reviewed freshness window. Classification before the PR #60 policy existed fails closed instead of retroactively evaluating the observation.
+
+`is_within_reviewed_freshness_window(...)` is the reusable helper for those semantics. It requires exact `datetime.timezone.utc`, verifies observation/policy/deadline/classification chronology against kickoff, and returns only a boolean. It creates no Fixture Intelligence status.
+
+This split prevents a later evaluator from silently switching between `<` and `<=`, or from backdating classification before policy review.
 
 ## REJECTED observations
 
@@ -133,7 +139,7 @@ observed_at
 
 All datetimes must already use exact `datetime.timezone.utc`.
 
-A freshness deadline may already have expired by the time policy review occurs. PR #60 records the reviewed deadline exactly; it does not rewrite history to make the observation fresh.
+A freshness deadline may already have expired by the time policy review occurs. PR #60 records the reviewed deadline exactly; it does not rewrite history to make the observation fresh. The later comparator will correctly return `False` for a policy-reviewed classification time that is already after `fresh_until`.
 
 ## Detached artifact
 
