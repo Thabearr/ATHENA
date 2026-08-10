@@ -892,3 +892,283 @@ def test_source_capability_registry_remains_unknown():
         getattr(capability, field) is CapabilityAvailability.UNKNOWN
         for field in fields
     )
+
+
+def _team_conflict_bundle_for_mutation():
+    first = _capture(
+        _payload(matches=[_match(home_id=394121, home_name="VfL Wolfsburg")]),
+        observed_second=1,
+    )
+    second = _capture(
+        _payload(
+            date="20260822",
+            matches=[
+                _match(
+                    date="20260822",
+                    match_id=2002,
+                    home_id=394121,
+                    home_name="VfL Wolfsburg (W)",
+                )
+            ],
+        ),
+        date="20260822",
+        observed_second=2,
+    )
+    return _bundle(first, second)
+
+
+def _competition_conflict_bundle_for_mutation():
+    first = _capture(observed_second=1)
+    second = _capture(
+        _payload(
+            date="20260822",
+            matches=[_match(date="20260822", match_id=2)],
+            league_name="League Ω changed",
+        ),
+        date="20260822",
+        observed_second=2,
+    )
+    return _bundle(first, second)
+
+
+def _fixture_conflict_bundle_for_mutation():
+    return _bundle(*_same_date_pair(change="home"))
+
+
+def test_bundle_rejects_per_source_candidate_count_redistribution():
+    first = _capture(observed_second=1)
+    second = _capture(
+        _payload(date="20260822", matches=[_match(date="20260822", match_id=2)]),
+        date="20260822",
+        observed_second=2,
+    )
+    bundle = _bundle(first, second)
+    assert [source.candidate_count for source in bundle.sources] == [1, 1]
+    redistributed = (
+        dataclasses.replace(bundle.sources[0], candidate_count=2),
+        dataclasses.replace(bundle.sources[1], candidate_count=0),
+    )
+    assert sum(source.candidate_count for source in redistributed) == bundle.candidate_count
+    with pytest.raises(FotMobFixtureCandidateError, match="source candidate count mismatch"):
+        dataclasses.replace(bundle, sources=redistributed)
+
+
+@pytest.mark.parametrize(
+    ("bundle_factory", "count_field", "conflicts_field"),
+    [
+        (
+            _fixture_conflict_bundle_for_mutation,
+            "fixture_identity_conflict_count",
+            "fixture_identity_conflicts",
+        ),
+        (
+            _team_conflict_bundle_for_mutation,
+            "team_identity_conflict_count",
+            "team_identity_conflicts",
+        ),
+        (
+            _competition_conflict_bundle_for_mutation,
+            "competition_identity_conflict_count",
+            "competition_identity_conflicts",
+        ),
+    ],
+)
+def test_bundle_rejects_candidate_derived_conflict_deletion(
+    bundle_factory,
+    count_field,
+    conflicts_field,
+):
+    bundle = bundle_factory()
+    assert getattr(bundle, count_field) == 1
+    with pytest.raises(FotMobFixtureCandidateError, match="candidate-derived conflicts"):
+        dataclasses.replace(
+            bundle,
+            **{count_field: 0, conflicts_field: ()},
+        )
+
+
+def _fabricated_team_conflict(bundle):
+    candidate = bundle.candidates[0]
+    manifest_sha = candidate.source_capture_manifest_sha256
+    return candidate_module.FotMobTeamIdentityConflict(
+        source_team_id=candidate.home_source_team_id,
+        variants=(
+            candidate_module.FotMobTeamIdentityVariant(
+                candidate.home_name,
+                candidate.home_long_name,
+                (manifest_sha,),
+            ),
+            candidate_module.FotMobTeamIdentityVariant(
+                candidate.home_name + " X",
+                candidate.home_long_name + " X",
+                (manifest_sha,),
+            ),
+        ),
+    )
+
+
+def _fabricated_competition_conflict(bundle):
+    candidate = bundle.candidates[0]
+    manifest_sha = candidate.source_capture_manifest_sha256
+    return candidate_module.FotMobCompetitionIdentityConflict(
+        source_league_id=candidate.source_league_id,
+        variants=(
+            candidate_module.FotMobCompetitionIdentityVariant(
+                candidate.source_competition_name,
+                candidate.source_competition_ccode,
+                candidate.source_competition_primary_id,
+                (manifest_sha,),
+            ),
+            candidate_module.FotMobCompetitionIdentityVariant(
+                candidate.source_competition_name + " X",
+                candidate.source_competition_ccode,
+                candidate.source_competition_primary_id,
+                (manifest_sha,),
+            ),
+        ),
+    )
+
+
+def _fabricated_fixture_conflict(bundle):
+    candidate = bundle.candidates[0]
+    manifest_sha = candidate.source_capture_manifest_sha256
+    return candidate_module.FotMobFixtureIdentityConflict(
+        source_match_id=candidate.source_match_id,
+        variants=(
+            candidate_module.FotMobFixtureIdentityVariant(
+                candidate.source_league_id,
+                candidate.home_source_team_id,
+                candidate.away_source_team_id,
+                candidate.kickoff_utc,
+                (manifest_sha,),
+            ),
+            candidate_module.FotMobFixtureIdentityVariant(
+                candidate.source_league_id,
+                candidate.home_source_team_id,
+                candidate.away_source_team_id + 1,
+                candidate.kickoff_utc,
+                (manifest_sha,),
+            ),
+        ),
+    )
+
+
+@pytest.mark.parametrize(
+    ("conflict_factory", "count_field", "conflicts_field"),
+    [
+        (
+            _fabricated_fixture_conflict,
+            "fixture_identity_conflict_count",
+            "fixture_identity_conflicts",
+        ),
+        (
+            _fabricated_team_conflict,
+            "team_identity_conflict_count",
+            "team_identity_conflicts",
+        ),
+        (
+            _fabricated_competition_conflict,
+            "competition_identity_conflict_count",
+            "competition_identity_conflicts",
+        ),
+    ],
+)
+def test_bundle_rejects_fabricated_conflicts(
+    conflict_factory,
+    count_field,
+    conflicts_field,
+):
+    bundle = _bundle()
+    conflict = conflict_factory(bundle)
+    with pytest.raises(FotMobFixtureCandidateError, match="candidate-derived conflicts"):
+        dataclasses.replace(
+            bundle,
+            **{count_field: 1, conflicts_field: (conflict,)},
+        )
+
+
+def test_bundle_rejects_conflict_variant_ancestry_outside_source_set():
+    bundle = _team_conflict_bundle_for_mutation()
+    conflict = bundle.team_identity_conflicts[0]
+    bad_variant = dataclasses.replace(
+        conflict.variants[0],
+        source_capture_manifest_sha256s=(ZERO_SHA,),
+    )
+    bad_conflict = dataclasses.replace(
+        conflict,
+        variants=(bad_variant, conflict.variants[1]),
+    )
+    with pytest.raises(FotMobFixtureCandidateError, match="ancestry is absent"):
+        dataclasses.replace(bundle, team_identity_conflicts=(bad_conflict,))
+
+
+def test_conflict_contracts_reject_duplicate_variant_identities():
+    team_variant = candidate_module.FotMobTeamIdentityVariant(
+        "Team",
+        "Team",
+        (ZERO_SHA,),
+    )
+    with pytest.raises(FotMobFixtureCandidateError, match="variant identities must be unique"):
+        candidate_module.FotMobTeamIdentityConflict(
+            source_team_id=1,
+            variants=(team_variant, team_variant),
+        )
+
+    competition_variant = candidate_module.FotMobCompetitionIdentityVariant(
+        "League",
+        "NGA",
+        1,
+        (ZERO_SHA,),
+    )
+    with pytest.raises(FotMobFixtureCandidateError, match="variant identities must be unique"):
+        candidate_module.FotMobCompetitionIdentityConflict(
+            source_league_id=1,
+            variants=(competition_variant, competition_variant),
+        )
+
+    fixture_variant = candidate_module.FotMobFixtureIdentityVariant(
+        1,
+        2,
+        3,
+        datetime.datetime(2026, 8, 15, 12, tzinfo=UTC),
+        (ZERO_SHA,),
+    )
+    with pytest.raises(FotMobFixtureCandidateError, match="variant identities must be unique"):
+        candidate_module.FotMobFixtureIdentityConflict(
+            source_match_id=1,
+            variants=(fixture_variant, fixture_variant),
+        )
+
+
+@pytest.mark.parametrize(
+    ("bundle_factory", "count_field", "conflicts_field"),
+    [
+        (
+            _fixture_conflict_bundle_for_mutation,
+            "fixture_identity_conflict_count",
+            "fixture_identity_conflicts",
+        ),
+        (
+            _team_conflict_bundle_for_mutation,
+            "team_identity_conflict_count",
+            "team_identity_conflicts",
+        ),
+        (
+            _competition_conflict_bundle_for_mutation,
+            "competition_identity_conflict_count",
+            "competition_identity_conflicts",
+        ),
+    ],
+)
+def test_bundle_rejects_duplicate_conflict_keys(
+    bundle_factory,
+    count_field,
+    conflicts_field,
+):
+    bundle = bundle_factory()
+    conflict = getattr(bundle, conflicts_field)[0]
+    with pytest.raises(FotMobFixtureCandidateError, match="conflict keys must be unique"):
+        dataclasses.replace(
+            bundle,
+            **{count_field: 2, conflicts_field: (conflict, conflict)},
+        )
