@@ -14,6 +14,7 @@ from typing import Any, Tuple
 from domain.fixture_catalog import serialize_utc
 from domain.reviewed_fixture_intelligence_bootstrap import (
     DATASET_NAME as BOOTSTRAP_DATASET_NAME,
+    SCHEMA_VERSION as BOOTSTRAP_SCHEMA_VERSION,
     ReviewedFixtureIntelligenceBootstrap,
     ReviewedFixtureIntelligenceBootstrapError,
     ReviewedFixtureIntelligenceIdentity,
@@ -33,6 +34,7 @@ _SAFETY_KEYS = frozenset(
         "raw_capture_authorized",
         "artifact_write_authorized",
         "automatic_review_authorized",
+        "source_qualification_authorized",
         "global_identity_resolution_authorized",
         "match_detail_probe_authorized",
         "intelligence_fact_authorized",
@@ -107,7 +109,13 @@ def _detach_identity(
             admission_sha256=value.admission_sha256,
             verification_receipt_sha256=value.verification_receipt_sha256,
         )
-    except ReviewedFixtureIntelligenceBootstrapError as exc:
+    except (
+        ReviewedFixtureIntelligenceBootstrapError,
+        AttributeError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ) as exc:
         raise ReviewedFixtureIntelligenceBootstrapArtifactError(
             "fixture identity failed exact PR #47 validation"
         ) from exc
@@ -128,7 +136,14 @@ def _revalidate_bootstrap(
         rebuilt_bytes = canonical_reviewed_fixture_intelligence_bootstrap_bytes(
             rebuilt
         )
-    except (ReviewedFixtureIntelligenceBootstrapError, TypeError, ValueError) as exc:
+    except (
+        ReviewedFixtureIntelligenceBootstrapError,
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ) as exc:
         raise ReviewedFixtureIntelligenceBootstrapArtifactError(
             "reviewed Fixture Intelligence bootstrap failed exact PR #47 revalidation"
         ) from exc
@@ -147,6 +162,10 @@ def _revalidate_bootstrap(
 class VerifiedReviewedFixtureIntelligenceBootstrapArtifact:
     """Immutable receipt proving exact canonical PR #47 bootstrap bytes matched."""
 
+    schema_version: int
+    dataset_name: str
+    bootstrap_schema_version: int
+    bootstrap_dataset_name: str
     bootstrap: ReviewedFixtureIntelligenceBootstrap
     artifact_bytes: bytes
     bootstrap_sha256: str
@@ -166,6 +185,26 @@ class VerifiedReviewedFixtureIntelligenceBootstrapArtifact:
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
+        if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
+            raise ReviewedFixtureIntelligenceBootstrapArtifactError(
+                "schema_version must be exact integer 1"
+            )
+        if self.dataset_name != DATASET_NAME:
+            raise ReviewedFixtureIntelligenceBootstrapArtifactError(
+                "dataset_name mismatch"
+            )
+        if (
+            type(self.bootstrap_schema_version) is not int
+            or self.bootstrap_schema_version != BOOTSTRAP_SCHEMA_VERSION
+        ):
+            raise ReviewedFixtureIntelligenceBootstrapArtifactError(
+                "bootstrap_schema_version does not match the exact PR #47 contract"
+            )
+        if self.bootstrap_dataset_name != BOOTSTRAP_DATASET_NAME:
+            raise ReviewedFixtureIntelligenceBootstrapArtifactError(
+                "bootstrap_dataset_name does not match the exact PR #47 contract"
+            )
+
         rebuilt = _revalidate_bootstrap(self.bootstrap)
         if type(self.artifact_bytes) is not bytes:
             raise ReviewedFixtureIntelligenceBootstrapArtifactError(
@@ -258,11 +297,12 @@ class VerifiedReviewedFixtureIntelligenceBootstrapArtifact:
 
     def to_dict(self) -> dict[str, Any]:
         # Serialize only detached fields. Historical receipt bytes must remain
-        # stable if a nested upstream object is later forcibly mutated.
+        # stable if upstream objects or module constants later change.
         return {
-            "schema_version": SCHEMA_VERSION,
-            "dataset_name": DATASET_NAME,
-            "bootstrap_dataset_name": BOOTSTRAP_DATASET_NAME,
+            "schema_version": self.schema_version,
+            "dataset_name": self.dataset_name,
+            "bootstrap_schema_version": self.bootstrap_schema_version,
+            "bootstrap_dataset_name": self.bootstrap_dataset_name,
             "bootstrap_sha256": self.bootstrap_sha256,
             "artifact_size": len(self.artifact_bytes),
             "upstream_verification_receipt_sha256": (
@@ -307,6 +347,10 @@ def verify_reviewed_fixture_intelligence_bootstrap_artifact(
     canonical = canonical_reviewed_fixture_intelligence_bootstrap_bytes(rebuilt)
     fixtures = tuple(_detach_identity(item) for item in rebuilt.fixtures)
     return VerifiedReviewedFixtureIntelligenceBootstrapArtifact(
+        schema_version=SCHEMA_VERSION,
+        dataset_name=DATASET_NAME,
+        bootstrap_schema_version=BOOTSTRAP_SCHEMA_VERSION,
+        bootstrap_dataset_name=BOOTSTRAP_DATASET_NAME,
         bootstrap=rebuilt,
         artifact_bytes=artifact_bytes,
         bootstrap_sha256=hashlib.sha256(canonical).hexdigest(),
