@@ -405,7 +405,12 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "recorded fact_sha256 values must be unique"
             )
-        source_prefix = f"/api/matchDetails?matchId={source_match_id}#/"
+
+        # PR #55 freezes the source-reference representation to
+        # FOTMOB_MATCH_DETAILS:<source_match_id>:<non-wildcard json_pointer>.
+        # Keep that exact source-scoped identity here rather than inventing an
+        # HTTP URL representation.
+        source_prefix = f"FOTMOB_MATCH_DETAILS:{source_match_id}:/"
         for item in self.decisions:
             if not item.source_reference.startswith(source_prefix):
                 raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
