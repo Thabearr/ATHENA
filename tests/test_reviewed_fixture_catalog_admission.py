@@ -353,6 +353,29 @@ def test_unreviewed_capability_expansion_also_fails_closed(
         build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
+def test_existing_canonical_bytes_do_not_re_read_later_capability_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, result = _compiled(tmp_path)
+    decision = _decision(handoff, result)
+    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
+    before = canonical_reviewed_fixture_catalog_admission_bytes(admission)
+    before_sha = sha256_reviewed_fixture_catalog_admission(admission)
+
+    current = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
+    monkeypatch.setitem(
+        SOURCE_CAPABILITY_REGISTRY,
+        REVIEWED_SOURCE_CAPABILITY,
+        dataclasses.replace(current, notes=current.notes + " Registry metadata changed."),
+    )
+
+    assert canonical_reviewed_fixture_catalog_admission_bytes(admission) == before
+    assert sha256_reviewed_fixture_catalog_admission(admission) == before_sha
+    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="source_capability_sha256"):
+        build_reviewed_fixture_catalog_admission(handoff, result, decision)
+
+
 def test_raw_fotmob_unofficial_cannot_be_used_as_admission_capability(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="source_capability must be exactly"):
