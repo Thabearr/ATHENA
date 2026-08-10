@@ -69,12 +69,17 @@ The registry entry is anchored only to repository-reviewed components:
 
 - `domain/fotmob_data_matches_schema.py` — strict structure, types, fixture ID,
   team/competition linkage and kickoff consistency.
+- `domain/fotmob_fixture_candidates.py` — provenance-backed UNREVIEWED mapping
+  of exact source match/team/competition IDs, names, kickoff and capture
+  ancestry without score/status interpretation.
 - `domain/fotmob_fixture_candidate_review.py` — exact candidate review keys,
   explicit APPROVED decisions and conflict blockers.
 - `domain/fotmob_fixture_catalog_handoff.py` — exact upstream rebuild before
   catalog-input bytes are exposed.
+- `domain/fixture_catalog.py` — strict provenance normalization and formation of
+  source-scoped `FOTMOB:<source_fixture_identifier>` fixture identity.
 - `scripts/manage_fotmob_reviewed_fixture_catalog.py` — reviewed handoff
-  preflight and hardened PR #29 compilation.
+  preflight and reconciliation before the hardened PR #29 output path.
 
 ## Safety boundary
 
