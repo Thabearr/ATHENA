@@ -51,7 +51,7 @@ Every parsed node is inventoried with a deterministic JSON-pointer-shaped path a
 - `BOOLEAN`
 - `NULL`
 
-Array members use the structural wildcard `/*`, so repeated array elements contribute to one structural path. Object-key pointer tokens use RFC 6901 escaping (`~` → `~0`, `/` → `~1`).
+Array members use the reserved structural wildcard segment `*`, producing paths such as `/events/*/minute`. Object-key tokens use RFC 6901's `~` → `~0` and `/` → `~1` escaping, plus one ATHENA extension: a literal object key `*` is escaped to `~2`. `*` is therefore never ambiguous between a literal object key and an array wildcard.
 
 The assessment records:
 
