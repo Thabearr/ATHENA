@@ -52,11 +52,15 @@ The PR #48 object is reconstructed with `dataclasses.replace(...)`, so current P
 
 The caller-presented PR #48 receipt bytes must equal the rebuilt canonical PR #48 receipt byte-for-byte. Their SHA-256 is carried into the request plan.
 
+The resulting `FotMobMatchDetailsProbePlan` is itself self-validating. It retains the exact PR #48 object and exact receipt bytes internally, while serializing only detached reviewed fields. Reconstructing the plan reruns the PR #48 chain and proves that its hashes, fixture identity, source match id, kickoff, route and transparent headers still match those upstream inputs. A manually fabricated detached plan therefore cannot become a valid probe receipt.
+
 A historical PR #48 receipt whose verification happened after kickoff remains valid for audit, but it cannot drive this probe because PR #49 independently requires:
 
 ```text
 PR #48 verified_at <= request_started_at < fixture kickoff
 ```
+
+After connection setup but immediately before `endheaders()` can send request bytes, the plan is revalidated again and the clock is checked again. If that final pre-send time reaches kickoff, the connection is closed and no request bytes are sent.
 
 The completed response observation must also be strictly before kickoff. If a response crosses the kickoff boundary, PR #49 fails closed and emits no successful response receipt.
 
@@ -80,15 +84,16 @@ The implementation:
 - does not impersonate a browser;
 - does not use `requests`, `curl_cffi`, Playwright, proxy evasion, the legacy bypass client, or the advanced scraper;
 - reads at most 4096 response bytes;
-- requires explicit exact `execute_live_network=True` before a connection can be created.
+- requires explicit exact `execute_live_network=True` before a connection can be created;
+- revalidates the exact PR #48 chain immediately before request bytes are sent.
 
 PR #49 intentionally exposes an importable operator function rather than a standalone CLI. No reviewed parser yet exists for reconstructing persisted PR #48 Python objects from arbitrary disk input, so this PR does not invent one.
 
 ## Probe receipt
 
-A successful transport records only:
+A successful transport records only detached reviewed values:
 
-- exact PR #48 receipt SHA-256;
+- exact PR #48 receipt SHA-256 and receipt byte size;
 - exact PR #47 bootstrap SHA-256;
 - source-scoped fixture identifier;
 - exact FotMob source match id;
@@ -102,6 +107,8 @@ A successful transport records only:
 - bounded sample byte count and SHA-256.
 
 The sample bytes themselves are **not** promoted, parsed, written, or exposed as football evidence by this boundary. A later controlled raw-capture PR must preserve exact bytes if the route is worth qualifying further.
+
+Receipt serialization is detached from nested PR #48 state so historical audit bytes remain stable. Constructing or reconstructing a receipt, however, revalidates its plan and therefore fails closed if the current upstream chain has been mutated or its capability revoked.
 
 Redirects are recorded as the single response and never followed. A transport failure before any response produces a metadata-only `TRANSPORT_ERROR` receipt. An error after a response has been obtained, such as response sampling failure, is not silently downgraded to a transport failure.
 
@@ -132,7 +139,7 @@ Their existence is not evidence that the route is production-safe, stable, seman
 
 ## Next safe boundary
 
-If an authorized offline/live diagnostic demonstrates a useful stable JSON response, the next narrow PR should be a **controlled raw match-details capture boundary**:
+If an authorized live diagnostic demonstrates a useful stable JSON response, the next narrow PR should be a **controlled raw match-details capture boundary**:
 
 - exact PR #49 request identity and provenance;
 - exact raw response bytes;
