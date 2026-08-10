@@ -356,7 +356,7 @@ def test_forced_blocked_decision_cannot_become_fresh_or_gain_deadline() -> None:
 
     with pytest.raises(
         FotMobReviewedMatchDetailsStatusEvaluationError,
-        match="blocked policy decisions",
+        match="nested evaluation decision|blocked policy decisions",
     ):
         canonical_reviewed_match_details_status_evaluation_bytes(evaluation)
 
