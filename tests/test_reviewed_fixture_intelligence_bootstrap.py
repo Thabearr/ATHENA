@@ -39,13 +39,17 @@ from domain.reviewed_fixture_catalog_admission import (
     ReviewedFixtureCatalogAdmissionDisposition,
     build_reviewed_fixture_catalog_admission,
     canonical_reviewed_fixture_catalog_admission_bytes,
-    sha256_reviewed_fixture_catalog_admission,
     sha256_reviewed_source_capability,
+)
+from domain.reviewed_fixture_catalog_admission_artifact import (
+    DATASET_NAME as VERIFIED_ARTIFACT_DATASET_NAME,
+    canonical_verified_admission_artifact_receipt_bytes,
+    sha256_verified_admission_artifact_receipt,
+    verify_reviewed_fixture_catalog_admission_artifact,
 )
 from domain.reviewed_fixture_intelligence_bootstrap import (
     DATASET_NAME,
     SCHEMA_VERSION,
-    ReviewedFixtureIntelligenceBootstrap,
     ReviewedFixtureIntelligenceBootstrapError,
     ReviewedFixtureIntelligenceIdentity,
     build_reviewed_fixture_intelligence_bootstrap,
@@ -62,6 +66,7 @@ from domain.source_capabilities import (
 UTC = datetime.timezone.utc
 RAW_EVIDENCE = b"exact preserved FotMob response bytes\n"
 RAW_SHA = hashlib.sha256(RAW_EVIDENCE).hexdigest()
+KICKOFF = datetime.datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
 
 def _source() -> FotMobFixtureCandidateSource:
@@ -95,7 +100,7 @@ def _candidate(source: FotMobFixtureCandidateSource) -> FotMobFixtureCandidate:
         away_source_team_id=202,
         away_name="Away FC",
         away_long_name="Away Football Club",
-        kickoff_utc=datetime.datetime(2026, 8, 15, 12, 0, tzinfo=UTC),
+        kickoff_utc=KICKOFF,
         source_capture_manifest_sha256=source.source_capture_manifest_sha256,
         source_raw_sha256=source.source_raw_sha256,
         source_request_date=source.request_date,
@@ -191,34 +196,52 @@ def _admission(
     return build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
-def test_admitted_catalog_builds_identity_only_bootstrap(tmp_path: Path) -> None:
+def _verified_artifact(
+    tmp_path: Path,
+    *,
+    verified_at: datetime.datetime | None = None,
+):
     admission = _admission(tmp_path)
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(admission)
+    artifact_bytes = canonical_reviewed_fixture_catalog_admission_bytes(admission)
+    verified = verify_reviewed_fixture_catalog_admission_artifact(
+        admission,
+        artifact_bytes,
+        verified_at=verified_at
+        or datetime.datetime(2026, 8, 10, 4, 30, tzinfo=UTC),
+    )
+    return admission, verified
+
+
+def test_verified_artifact_builds_identity_only_bootstrap(tmp_path: Path) -> None:
+    admission, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
 
     assert SCHEMA_VERSION == 1
     assert DATASET_NAME == "athena-reviewed-fixture-intelligence-bootstrap-v1"
-    assert bootstrap.admission_sha256 == sha256_reviewed_fixture_catalog_admission(
-        admission
+    assert bootstrap.verification_receipt_sha256 == (
+        sha256_verified_admission_artifact_receipt(verified)
     )
+    assert bootstrap.admission_sha256 == verified.admission_sha256
     assert bootstrap.source_capability == REVIEWED_SOURCE_CAPABILITY
     assert bootstrap.source_capability_sha256 == admission.decision.source_capability_sha256
     assert bootstrap.catalog_sha256 == admission.decision.catalog_sha256
     assert bootstrap.manifest_sha256 == admission.decision.manifest_sha256
     assert bootstrap.admission_reviewed_at == admission.decision.reviewed_at
+    assert bootstrap.artifact_verified_at == verified.verified_at
     assert [item.fixture_identifier for item in bootstrap.fixtures] == ["FOTMOB:1001"]
-    assert bootstrap.fixtures[0].kickoff == datetime.datetime(
-        2026, 8, 15, 12, 0, tzinfo=UTC
-    )
+    assert bootstrap.fixtures[0].kickoff == KICKOFF
 
 
-def test_payload_carries_exact_upstream_chain_without_football_semantics(tmp_path: Path) -> None:
-    admission = _admission(tmp_path)
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(admission)
+def test_payload_anchors_pr46_receipt_and_full_upstream_chain(tmp_path: Path) -> None:
+    admission, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
     payload = bootstrap.to_dict()
 
-    assert payload["admission_sha256"] == sha256_reviewed_fixture_catalog_admission(
-        admission
+    assert payload["verification_dataset_name"] == VERIFIED_ARTIFACT_DATASET_NAME
+    assert payload["verification_receipt_sha256"] == (
+        sha256_verified_admission_artifact_receipt(verified)
     )
+    assert payload["admission_sha256"] == verified.admission_sha256
     assert payload["candidate_bundle_sha256"] == admission.decision.candidate_bundle_sha256
     assert payload["review_bundle_sha256"] == admission.decision.review_bundle_sha256
     assert payload["handoff_sha256"] == admission.decision.handoff_sha256
@@ -229,34 +252,42 @@ def test_payload_carries_exact_upstream_chain_without_football_semantics(tmp_pat
         "fixture_identifier",
         "kickoff",
         "admission_sha256",
+        "verification_receipt_sha256",
     }
     serialized = canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap)
     for forbidden in (b"home_team", b"away_team", b"competition", b"score", b"lineup"):
         assert forbidden not in serialized
 
 
-def test_rejected_catalog_cannot_bootstrap_fixture_intelligence(tmp_path: Path) -> None:
+def test_pr45_admission_cannot_bypass_pr46_verifier(tmp_path: Path) -> None:
+    admission = _admission(tmp_path)
+    with pytest.raises(
+        ReviewedFixtureIntelligenceBootstrapError,
+        match="verified_artifact must be exact",
+    ):
+        build_reviewed_fixture_intelligence_bootstrap(admission)
+
+
+def test_rejected_catalog_cannot_bypass_verifier_into_bootstrap(tmp_path: Path) -> None:
     admission = _admission(
         tmp_path,
         ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
     )
-    with pytest.raises(
-        ReviewedFixtureIntelligenceBootstrapError,
-        match="only an ADMITTED reviewed Fixture Catalog",
-    ):
+    with pytest.raises(ReviewedFixtureIntelligenceBootstrapError, match="verified_artifact"):
         build_reviewed_fixture_intelligence_bootstrap(admission)
 
 
 def test_wrong_domain_type_is_rejected() -> None:
     with pytest.raises(
         ReviewedFixtureIntelligenceBootstrapError,
-        match="exact ReviewedFixtureCatalogAdmission",
+        match="VerifiedReviewedFixtureCatalogAdmissionArtifact",
     ):
         build_reviewed_fixture_intelligence_bootstrap(object())
 
 
 def test_exact_identity_resolution_has_no_alias_or_fuzzy_fallback(tmp_path: Path) -> None:
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(_admission(tmp_path))
+    _, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
     identity = resolve_reviewed_fixture_intelligence_identity(bootstrap, "FOTMOB:1001")
     assert type(identity) is ReviewedFixtureIntelligenceIdentity
     assert identity is bootstrap.fixtures[0]
@@ -266,21 +297,50 @@ def test_exact_identity_resolution_has_no_alias_or_fuzzy_fallback(tmp_path: Path
             resolve_reviewed_fixture_intelligence_identity(bootstrap, invalid)
 
 
-def test_bootstrap_revalidates_admission_instead_of_trusting_frozen_type(
-    tmp_path: Path,
-) -> None:
-    admission = _admission(tmp_path)
-    object.__setattr__(admission, "admitted_fixtures", ())
-
+def test_verified_artifact_is_revalidated_not_trusted_by_frozen_type(tmp_path: Path) -> None:
+    _, verified = _verified_artifact(tmp_path)
+    object.__setattr__(verified.admission, "admitted_fixtures", ())
     with pytest.raises(
         ReviewedFixtureIntelligenceBootstrapError,
-        match="failed exact revalidation",
+        match="failed exact PR #46 revalidation",
     ):
-        build_reviewed_fixture_intelligence_bootstrap(admission)
+        build_reviewed_fixture_intelligence_bootstrap(verified)
 
 
-def test_direct_bootstrap_construction_cannot_change_ancestry(tmp_path: Path) -> None:
-    valid = build_reviewed_fixture_intelligence_bootstrap(_admission(tmp_path))
+def test_mutated_verifier_safety_fails_closed(tmp_path: Path) -> None:
+    _, verified = _verified_artifact(tmp_path)
+    unsafe = dict(verified.safety)
+    unsafe["bet_authorized"] = True
+    object.__setattr__(verified, "safety", unsafe)
+    with pytest.raises(
+        ReviewedFixtureIntelligenceBootstrapError,
+        match="failed exact PR #46 revalidation",
+    ):
+        build_reviewed_fixture_intelligence_bootstrap(verified)
+
+
+def test_verification_at_or_after_kickoff_cannot_bootstrap(tmp_path: Path) -> None:
+    _, verified = _verified_artifact(tmp_path, verified_at=KICKOFF)
+    with pytest.raises(
+        ReviewedFixtureIntelligenceBootstrapError,
+        match="remain prospective at PR #46 verification time",
+    ):
+        build_reviewed_fixture_intelligence_bootstrap(verified)
+
+
+def test_direct_bootstrap_construction_cannot_change_receipt_ancestry(tmp_path: Path) -> None:
+    _, verified = _verified_artifact(tmp_path)
+    valid = build_reviewed_fixture_intelligence_bootstrap(verified)
+    with pytest.raises(
+        ReviewedFixtureIntelligenceBootstrapError,
+        match="verification_receipt_sha256 does not anchor",
+    ):
+        dataclasses.replace(valid, verification_receipt_sha256="f" * 64)
+
+
+def test_direct_bootstrap_construction_cannot_change_catalog_ancestry(tmp_path: Path) -> None:
+    _, verified = _verified_artifact(tmp_path)
+    valid = build_reviewed_fixture_intelligence_bootstrap(verified)
     with pytest.raises(
         ReviewedFixtureIntelligenceBootstrapError,
         match="catalog_sha256 does not anchor",
@@ -289,7 +349,8 @@ def test_direct_bootstrap_construction_cannot_change_ancestry(tmp_path: Path) ->
 
 
 def test_direct_bootstrap_construction_cannot_omit_admitted_fixture(tmp_path: Path) -> None:
-    valid = build_reviewed_fixture_intelligence_bootstrap(_admission(tmp_path))
+    _, verified = _verified_artifact(tmp_path)
+    valid = build_reviewed_fixture_intelligence_bootstrap(verified)
     with pytest.raises(
         ReviewedFixtureIntelligenceBootstrapError,
         match="fixtures must be a non-empty",
@@ -298,44 +359,64 @@ def test_direct_bootstrap_construction_cannot_omit_admitted_fixture(tmp_path: Pa
 
 
 def test_canonical_bytes_and_hash_are_deterministic(tmp_path: Path) -> None:
-    admission = _admission(tmp_path)
-    first = build_reviewed_fixture_intelligence_bootstrap(admission)
-    second = build_reviewed_fixture_intelligence_bootstrap(admission)
+    _, verified = _verified_artifact(tmp_path)
+    first = build_reviewed_fixture_intelligence_bootstrap(verified)
+    second = build_reviewed_fixture_intelligence_bootstrap(verified)
 
     first_bytes = canonical_reviewed_fixture_intelligence_bootstrap_bytes(first)
     second_bytes = canonical_reviewed_fixture_intelligence_bootstrap_bytes(second)
     assert first_bytes == second_bytes
-    assert first_bytes.endswith(b"\n")
+    assert first_bytes.endswith(b"\n") and not first_bytes.endswith(b"\n\n")
     assert sha256_reviewed_fixture_intelligence_bootstrap(first) == hashlib.sha256(
         first_bytes
     ).hexdigest()
 
 
-def test_capability_change_does_not_mutate_historical_bootstrap_but_blocks_new_one(
+def test_historical_bootstrap_bytes_are_detached_from_nested_artifact_mutation(
     tmp_path: Path,
 ) -> None:
-    admission = _admission(tmp_path)
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(admission)
+    _, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
     before = canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap)
+
+    object.__setattr__(verified, "admission_sha256", "f" * 64)
+    after = canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap)
+    assert after == before
+
+    with pytest.raises(
+        ReviewedFixtureIntelligenceBootstrapError,
+        match="failed exact PR #46 revalidation",
+    ):
+        build_reviewed_fixture_intelligence_bootstrap(verified)
+
+
+def test_capability_change_does_not_mutate_history_but_blocks_new_bootstrap(
+    tmp_path: Path,
+) -> None:
+    _, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
+    before = canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap)
+    receipt_before = canonical_verified_admission_artifact_receipt_bytes(verified)
     original = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
     SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY] = dataclasses.replace(
         original,
         reliable_fixture_identity=CapabilityAvailability.UNKNOWN,
     )
     try:
-        after = canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap)
-        assert after == before
+        assert canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap) == before
+        assert canonical_verified_admission_artifact_receipt_bytes(verified) == receipt_before
         with pytest.raises(
             ReviewedFixtureIntelligenceBootstrapError,
-            match="failed exact revalidation",
+            match="failed exact PR #46 revalidation",
         ):
-            build_reviewed_fixture_intelligence_bootstrap(admission)
+            build_reviewed_fixture_intelligence_bootstrap(verified)
     finally:
         SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY] = original
 
 
 def test_bootstrap_safety_is_immutable_and_all_false(tmp_path: Path) -> None:
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(_admission(tmp_path))
+    _, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
     assert bootstrap.safety
     assert set(bootstrap.safety.values()) == {False}
     assert bootstrap.safety["intelligence_fact_authorized"] is False
@@ -348,7 +429,8 @@ def test_bootstrap_safety_is_immutable_and_all_false(tmp_path: Path) -> None:
 
 
 def test_safety_true_fails_closed_on_direct_construction(tmp_path: Path) -> None:
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(_admission(tmp_path))
+    _, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
     unsafe = dict(bootstrap.safety)
     unsafe["intelligence_snapshot_authorized"] = True
     with pytest.raises(
@@ -358,7 +440,7 @@ def test_safety_true_fails_closed_on_direct_construction(tmp_path: Path) -> None
         dataclasses.replace(bootstrap, safety=unsafe)
 
 
-def test_source_module_has_no_fact_snapshot_model_pricing_or_network_boundary() -> None:
+def test_source_module_has_no_fact_snapshot_model_pricing_network_or_pr45_bypass() -> None:
     path = Path("domain/reviewed_fixture_intelligence_bootstrap.py")
     source = path.read_text(encoding="utf-8")
     tree = ast.parse(source)
@@ -369,6 +451,7 @@ def test_source_module_has_no_fact_snapshot_model_pricing_or_network_boundary() 
         elif isinstance(node, ast.ImportFrom) and node.module:
             imported_modules.add(node.module)
 
+    assert "domain.reviewed_fixture_catalog_admission_artifact" in imported_modules
     assert "domain.fixture_intelligence" not in imported_modules
     assert "domain.fixture_model_features" not in imported_modules
     for forbidden in (
@@ -380,6 +463,8 @@ def test_source_module_has_no_fact_snapshot_model_pricing_or_network_boundary() 
         "selenium",
     ):
         assert forbidden not in imported_modules
+    assert "ReviewedFixtureCatalogAdmission," not in source
+    assert "build_reviewed_fixture_catalog_admission(" not in source
     assert "build_snapshot(" not in source
     assert "FixtureIntelligenceFact" not in source
     assert "compile_fixture_catalog(" not in source
@@ -388,17 +473,8 @@ def test_source_module_has_no_fact_snapshot_model_pricing_or_network_boundary() 
     assert ".write_text(" not in source
 
 
-def test_existing_raw_unofficial_capability_is_not_the_bootstrap_identity(
-    tmp_path: Path,
-) -> None:
-    bootstrap = build_reviewed_fixture_intelligence_bootstrap(_admission(tmp_path))
+def test_raw_unofficial_capability_is_not_bootstrap_identity(tmp_path: Path) -> None:
+    _, verified = _verified_artifact(tmp_path)
+    bootstrap = build_reviewed_fixture_intelligence_bootstrap(verified)
     assert bootstrap.source_capability == "fotmob_data_matches_reviewed_catalog"
     assert bootstrap.source_capability != "fotmob_unofficial"
-
-
-def test_admission_canonical_bytes_are_not_rewritten_by_bootstrap(tmp_path: Path) -> None:
-    admission = _admission(tmp_path)
-    before = canonical_reviewed_fixture_catalog_admission_bytes(admission)
-    build_reviewed_fixture_intelligence_bootstrap(admission)
-    after = canonical_reviewed_fixture_catalog_admission_bytes(admission)
-    assert before == after
