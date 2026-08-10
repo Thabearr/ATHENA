@@ -26,6 +26,7 @@ from typing import Any
 from domain.fixture_catalog import (
     FixtureCatalogError,
     FixtureCatalogResult,
+    compile_fixture_catalog,
     parse_utc_timestamp,
     serialize_utc,
     sha256_bytes,
@@ -49,11 +50,7 @@ from domain.fotmob_fixture_catalog_handoff import (
     build_fotmob_fixture_catalog_handoff,
     sha256_fotmob_fixture_catalog_handoff,
 )
-from scripts.build_fotmob_fixture_candidates import (
-    ALLOWED_ROOT_RELATIVE,
-    _capture_path,
-    _verified_capture,
-)
+from scripts.build_fotmob_fixture_candidates import _capture_path, _verified_capture
 from scripts.manage_fixture_catalog import (
     FixtureCatalogCLIError,
     run as run_fixture_catalog,
@@ -97,8 +94,8 @@ class FotMobReviewedFixtureCatalogWorkflowResult:
 
     @property
     def summary(self) -> dict[str, Any]:
-        catalog_result = self.fixture_catalog_result
-        handoff = self.handoff
+        result = self.fixture_catalog_result
+        review = self.handoff.review_bundle
         return {
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
@@ -108,23 +105,21 @@ class FotMobReviewedFixtureCatalogWorkflowResult:
                 self.candidate_bundle
             ),
             "review_bundle_sha256": self.review_bundle_sha256,
-            "handoff_sha256": sha256_fotmob_fixture_catalog_handoff(handoff),
-            "handoff_catalog_input_sha256": handoff.catalog_input_sha256,
-            "compiler_normalized_input_sha256": (
-                catalog_result.normalized_input_sha256
-            ),
-            "catalog_sha256": sha256_bytes(catalog_result.catalog_bytes),
-            "manifest_sha256": sha256_bytes(catalog_result.manifest_bytes),
+            "handoff_sha256": sha256_fotmob_fixture_catalog_handoff(self.handoff),
+            "handoff_catalog_input_sha256": self.handoff.catalog_input_sha256,
+            "compiler_normalized_input_sha256": result.normalized_input_sha256,
+            "catalog_sha256": sha256_bytes(result.catalog_bytes),
+            "manifest_sha256": sha256_bytes(result.manifest_bytes),
             "source_capture_count": len(self.candidate_bundle.sources),
-            "candidate_count": handoff.review_bundle.candidate_count,
-            "decision_count": handoff.review_bundle.decision_count,
-            "approved_count": handoff.review_bundle.approved_count,
-            "rejected_count": handoff.review_bundle.rejected_count,
-            "unreviewed_count": handoff.review_bundle.unreviewed_count,
-            "blocked_candidate_count": handoff.review_bundle.blocked_candidate_count,
-            "fixture_count": len(catalog_result.records),
-            "as_of": serialize_utc(catalog_result.as_of),
-            "minimum_lead_seconds": catalog_result.minimum_lead_seconds,
+            "candidate_count": review.candidate_count,
+            "decision_count": review.decision_count,
+            "approved_count": review.approved_count,
+            "rejected_count": review.rejected_count,
+            "unreviewed_count": review.unreviewed_count,
+            "blocked_candidate_count": review.blocked_candidate_count,
+            "fixture_count": len(result.records),
+            "as_of": serialize_utc(result.as_of),
+            "minimum_lead_seconds": result.minimum_lead_seconds,
             "operation": {
                 "network_acquisition_performed": False,
                 "raw_capture_performed": False,
@@ -204,8 +199,12 @@ def _strict_sha256(value: Any, label: str) -> str:
 
 def _reject_symlink_components(path: Path, label: str) -> None:
     absolute = path if path.is_absolute() else Path.cwd() / path
-    current = Path(absolute.anchor) if absolute.anchor else Path.cwd()
-    parts = absolute.parts[1:] if absolute.anchor else absolute.parts
+    if absolute.anchor:
+        current = Path(absolute.anchor)
+        parts = absolute.parts[1:]
+    else:
+        current = Path.cwd()
+        parts = absolute.parts
     for part in parts:
         current = current / part
         if current.is_symlink():
@@ -222,27 +221,27 @@ def _read_decision_ledger_bytes(path: Path) -> bytes:
             "decision ledger must not be a symlink"
         )
     try:
-        metadata_before = candidate.stat()
+        before = candidate.stat()
     except OSError as exc:
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger could not be inspected"
         ) from exc
-    if not stat.S_ISREG(metadata_before.st_mode):
+    if not stat.S_ISREG(before.st_mode):
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger must be a regular file"
         )
-    if metadata_before.st_size <= 0:
+    if before.st_size <= 0:
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger must not be empty"
         )
-    if metadata_before.st_size > MAX_DECISION_LEDGER_BYTES:
+    if before.st_size > MAX_DECISION_LEDGER_BYTES:
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger exceeds the 4 MiB limit"
         )
     try:
         with candidate.open("rb") as handle:
             raw = handle.read(MAX_DECISION_LEDGER_BYTES + 1)
-        metadata_after = candidate.stat()
+        after = candidate.stat()
     except OSError as exc:
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger could not be read"
@@ -256,9 +255,9 @@ def _read_decision_ledger_bytes(path: Path) -> bytes:
             "decision ledger exceeds the 4 MiB limit"
         )
     if (
-        len(raw) != metadata_before.st_size
-        or metadata_after.st_size != metadata_before.st_size
-        or metadata_after.st_mtime_ns != metadata_before.st_mtime_ns
+        len(raw) != before.st_size
+        or after.st_size != before.st_size
+        or after.st_mtime_ns != before.st_mtime_ns
     ):
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger changed while it was being read"
@@ -280,19 +279,19 @@ def _parse_decision_record(
         raise FotMobReviewedFixtureCatalogWorkflowError(
             f"decision[{index}].source_match_id must be an exact integer"
         )
-    disposition_value = _strict_str(
+    disposition_text = _strict_str(
         payload["disposition"],
         f"decision[{index}].disposition",
         non_empty=True,
         trimmed=True,
     )
     try:
-        disposition = FixtureCandidateReviewDisposition(disposition_value)
+        disposition = FixtureCandidateReviewDisposition(disposition_text)
     except ValueError as exc:
         raise FotMobReviewedFixtureCatalogWorkflowError(
             f"decision[{index}].disposition is not APPROVED or REJECTED"
         ) from exc
-    reviewed_at_raw = _strict_str(
+    reviewed_at_text = _strict_str(
         payload["reviewed_at"],
         f"decision[{index}].reviewed_at",
         non_empty=True,
@@ -300,7 +299,7 @@ def _parse_decision_record(
     )
     try:
         reviewed_at = parse_utc_timestamp(
-            reviewed_at_raw,
+            reviewed_at_text,
             f"decision[{index}].reviewed_at",
         )
     except FixtureCatalogError as exc:
@@ -364,7 +363,10 @@ def load_review_decision_ledger(
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger keys do not match the exact workflow contract"
         )
-    if type(payload["schema_version"]) is not int or payload["schema_version"] != 1:
+    if (
+        type(payload["schema_version"]) is not int
+        or payload["schema_version"] != DECISION_LEDGER_SCHEMA_VERSION
+    ):
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "decision ledger schema_version must be exact integer 1"
         )
@@ -397,10 +399,11 @@ def _build_candidate_bundle_from_capture_directories(
     *,
     repository_root: Path,
 ) -> tuple[FotMobFixtureCandidateBundle, Path]:
-    if not isinstance(capture_directories, Sequence) or isinstance(
-        capture_directories,
-        (str, bytes),
-    ) or not capture_directories:
+    if (
+        not isinstance(capture_directories, Sequence)
+        or isinstance(capture_directories, (str, bytes))
+        or not capture_directories
+    ):
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "at least one capture directory is required"
         )
@@ -439,6 +442,7 @@ def _materialize_handoff_input(
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "handoff catalog input must be non-empty exact bytes"
         )
+    temporary: tempfile.TemporaryDirectory[str] | None = None
     try:
         temporary = tempfile.TemporaryDirectory(
             prefix=".fotmob-reviewed-catalog-input-",
@@ -450,10 +454,11 @@ def _materialize_handoff_input(
             handle.flush()
             os.fsync(handle.fileno())
     except OSError as exc:
-        try:
-            temporary.cleanup()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
+        if temporary is not None:
+            try:
+                temporary.cleanup()
+            except Exception:
+                pass
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "temporary reviewed catalog input could not be materialized"
         ) from exc
@@ -464,16 +469,15 @@ def _assert_compiler_matches_handoff(
     handoff: FotMobFixtureCatalogHandoff,
     result: FixtureCatalogResult,
 ) -> None:
-    expected = {
-        item.to_catalog_input_dict()["source_fixture_identifier"]: (
-            item.to_catalog_input_dict()
-        )
-        for item in handoff.catalog_inputs
-    }
-    if len(expected) != len(handoff.catalog_inputs):
-        raise FotMobReviewedFixtureCatalogWorkflowError(
-            "handoff contains duplicate source fixture identifiers"
-        )
+    expected: dict[str, dict[str, Any]] = {}
+    for item in handoff.catalog_inputs:
+        payload = item.to_catalog_input_dict()
+        source_id = payload["source_fixture_identifier"]
+        if source_id in expected:
+            raise FotMobReviewedFixtureCatalogWorkflowError(
+                "handoff contains duplicate source fixture identifiers"
+            )
+        expected[source_id] = payload
     if len(result.records) != len(expected):
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "compiler fixture count does not match reviewed handoff"
@@ -490,18 +494,20 @@ def _assert_compiler_matches_handoff(
                 "compiler emitted a duplicate source fixture identifier"
             )
         seen.add(record.source_fixture_identifier)
-        checks = (
-            record.fixture_identifier == f"FOTMOB:{record.source_fixture_identifier}",
-            record.home_team == payload["home_team"],
-            record.away_team == payload["away_team"],
-            record.competition == payload["competition"],
-            serialize_utc(record.kickoff) == payload["kickoff"],
-            record.source_reference == payload["source_reference"],
-            serialize_utc(record.reviewed_at) == payload["reviewed_at"],
-            record.evidence_file_path == payload["evidence_file_path"],
-            record.evidence_sha256 == payload["evidence_sha256"],
-        )
-        if not all(checks):
+        if not all(
+            (
+                record.fixture_identifier
+                == f"FOTMOB:{record.source_fixture_identifier}",
+                record.home_team == payload["home_team"],
+                record.away_team == payload["away_team"],
+                record.competition == payload["competition"],
+                serialize_utc(record.kickoff) == payload["kickoff"],
+                record.source_reference == payload["source_reference"],
+                serialize_utc(record.reviewed_at) == payload["reviewed_at"],
+                record.evidence_file_path == payload["evidence_file_path"],
+                record.evidence_sha256 == payload["evidence_sha256"],
+            )
+        ):
             raise FotMobReviewedFixtureCatalogWorkflowError(
                 "compiler normalized data differs from the reviewed handoff"
             )
@@ -509,6 +515,50 @@ def _assert_compiler_matches_handoff(
         raise FotMobReviewedFixtureCatalogWorkflowError(
             "compiler output does not cover the exact reviewed handoff"
         )
+
+
+def _assert_same_compilation(
+    preflight: FixtureCatalogResult,
+    committed: FixtureCatalogResult,
+) -> None:
+    if (
+        preflight.catalog_bytes != committed.catalog_bytes
+        or preflight.manifest_bytes != committed.manifest_bytes
+        or preflight.normalized_input_bytes != committed.normalized_input_bytes
+        or preflight.normalized_input_sha256 != committed.normalized_input_sha256
+        or preflight.records != committed.records
+        or preflight.as_of != committed.as_of
+        or preflight.minimum_lead_seconds != committed.minimum_lead_seconds
+        or preflight.generator_commit != committed.generator_commit
+        or preflight.tracked_worktree_clean != committed.tracked_worktree_clean
+    ):
+        raise FotMobReviewedFixtureCatalogWorkflowError(
+            "committed PR #29 compilation differs from the reviewed preflight"
+        )
+
+
+def _validate_mode(
+    *,
+    catalog_output: Path | None,
+    manifest_output: Path | None,
+    check_catalog: Path | None,
+    check_manifest: Path | None,
+) -> str:
+    generation = catalog_output is not None or manifest_output is not None
+    checking = check_catalog is not None or check_manifest is not None
+    if generation == checking:
+        raise FotMobReviewedFixtureCatalogWorkflowError(
+            "select exactly one of generation mode or check mode"
+        )
+    if generation and (catalog_output is None or manifest_output is None):
+        raise FotMobReviewedFixtureCatalogWorkflowError(
+            "Provide both catalog and manifest destinations for generation mode"
+        )
+    if checking and (check_catalog is None or check_manifest is None):
+        raise FotMobReviewedFixtureCatalogWorkflowError(
+            "Provide both catalog and manifest destinations for check mode"
+        )
+    return "GENERATE" if generation else "CHECK"
 
 
 def run(
@@ -527,10 +577,16 @@ def run(
 ) -> FotMobReviewedFixtureCatalogWorkflowResult:
     """Rebuild explicit review state and invoke the hardened PR #29 compiler."""
 
-    repository = (repository_root or Path(__file__).resolve().parents[1]).resolve(
-        strict=True
+    mode = _validate_mode(
+        catalog_output=catalog_output,
+        manifest_output=manifest_output,
+        check_catalog=check_catalog,
+        check_manifest=check_manifest,
     )
     try:
+        repository = (
+            repository_root or Path(__file__).resolve().parents[1]
+        ).resolve(strict=True)
         candidate_bundle, evidence_root = _build_candidate_bundle_from_capture_directories(
             capture_directories,
             repository_root=repository,
@@ -548,13 +604,24 @@ def run(
             candidate_bundle,
             review_bundle,
         )
-        research_root = evidence_root.parent
         temporary, input_path = _materialize_handoff_input(
             handoff,
-            research_root=research_root,
+            research_root=evidence_root.parent,
         )
         try:
-            result = run_fixture_catalog(
+            preflight = compile_fixture_catalog(
+                input_path=input_path,
+                evidence_root=evidence_root,
+                as_of=parse_utc_timestamp(as_of, "as_of"),
+                minimum_lead_seconds=minimum_lead_seconds,
+                code_state=code_state,
+            )
+            _assert_compiler_matches_handoff(handoff, preflight)
+            if input_path.read_bytes() != handoff.catalog_input_jsonl_bytes:
+                raise FotMobReviewedFixtureCatalogWorkflowError(
+                    "temporary handoff input changed before output commit"
+                )
+            committed = run_fixture_catalog(
                 input_path=input_path,
                 evidence_root=evidence_root,
                 as_of=as_of,
@@ -568,11 +635,12 @@ def run(
             )
             if input_path.read_bytes() != handoff.catalog_input_jsonl_bytes:
                 raise FotMobReviewedFixtureCatalogWorkflowError(
-                    "temporary handoff input changed during compilation"
+                    "temporary handoff input changed during output commit"
                 )
+            _assert_compiler_matches_handoff(handoff, committed)
+            _assert_same_compilation(preflight, committed)
         finally:
             temporary.cleanup()
-        _assert_compiler_matches_handoff(handoff, result)
     except FotMobReviewedFixtureCatalogWorkflowError:
         raise
     except (
@@ -586,7 +654,6 @@ def run(
     ) as exc:
         raise FotMobReviewedFixtureCatalogWorkflowError(str(exc)) from exc
 
-    mode = "GENERATE" if catalog_output is not None else "CHECK"
     return FotMobReviewedFixtureCatalogWorkflowResult(
         candidate_bundle=candidate_bundle,
         review_bundle_sha256=sha256_fotmob_fixture_candidate_review_bundle(
@@ -594,7 +661,7 @@ def run(
         ),
         handoff=handoff,
         decision_ledger_sha256=ledger_sha,
-        fixture_catalog_result=result,
+        fixture_catalog_result=committed,
         mode=mode,
     )
 
