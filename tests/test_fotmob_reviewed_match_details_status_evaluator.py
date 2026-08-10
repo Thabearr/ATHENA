@@ -12,6 +12,7 @@ from domain.fotmob_reviewed_match_details_field_evidence_qualification import (
 )
 from domain.fotmob_reviewed_match_details_status_classification_policy import (
     StatusClassificationPolicyDisposition,
+    canonical_reviewed_match_details_status_classification_policy_bytes,
 )
 from domain.fotmob_reviewed_match_details_status_classification_policy_semantics import (
     FRESHNESS_COMPARISON,
