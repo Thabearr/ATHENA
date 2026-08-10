@@ -1,9 +1,9 @@
 """Verified fixture-identity bootstrap for the Fixture Intelligence boundary.
 
 This module carries only fixture identity and kickoff from an exact PR #46
-verified admission artifact into a new typed boundary. It does not create
-Fixture Intelligence facts or snapshots and does not authorize any downstream
-model, pricing, selection, or betting behavior.
+verified admission artifact and its exact canonical receipt bytes into a new
+typed boundary. It does not create Fixture Intelligence facts or snapshots and
+does not authorize downstream model, pricing, selection, or betting behavior.
 """
 
 from __future__ import annotations
@@ -24,7 +24,6 @@ from domain.reviewed_fixture_catalog_admission_artifact import (
     ReviewedFixtureCatalogAdmissionArtifactError,
     VerifiedReviewedFixtureCatalogAdmissionArtifact,
     canonical_verified_admission_artifact_receipt_bytes,
-    sha256_verified_admission_artifact_receipt,
 )
 
 
@@ -105,16 +104,21 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
 
 def _revalidate_verified_artifact(
     value: Any,
+    receipt_bytes: Any,
 ) -> tuple[VerifiedReviewedFixtureCatalogAdmissionArtifact, str]:
     if type(value) is not VerifiedReviewedFixtureCatalogAdmissionArtifact:
         raise ReviewedFixtureIntelligenceBootstrapError(
             "verified_artifact must be exact VerifiedReviewedFixtureCatalogAdmissionArtifact"
         )
+    if type(receipt_bytes) is not bytes:
+        raise ReviewedFixtureIntelligenceBootstrapError(
+            "verification_receipt_bytes must be exact immutable bytes"
+        )
     try:
-        rebuilt = dataclasses.replace(value)
         supplied_receipt = canonical_verified_admission_artifact_receipt_bytes(value)
+        rebuilt = dataclasses.replace(value)
         rebuilt_receipt = canonical_verified_admission_artifact_receipt_bytes(rebuilt)
-    except ReviewedFixtureCatalogAdmissionArtifactError as exc:
+    except (ReviewedFixtureCatalogAdmissionArtifactError, TypeError, ValueError) as exc:
         raise ReviewedFixtureIntelligenceBootstrapError(
             "verified admission artifact failed exact PR #46 revalidation"
         ) from exc
@@ -122,11 +126,15 @@ def _revalidate_verified_artifact(
         raise ReviewedFixtureIntelligenceBootstrapError(
             "verified admission artifact differs from its exact PR #46 rebuild"
         )
+    if receipt_bytes != supplied_receipt:
+        raise ReviewedFixtureIntelligenceBootstrapError(
+            "verification_receipt_bytes are not the exact canonical PR #46 receipt bytes"
+        )
     if not rebuilt.admitted_fixtures:
         raise ReviewedFixtureIntelligenceBootstrapError(
             "verified admission artifact must expose admitted fixture identities"
         )
-    receipt_sha = sha256_verified_admission_artifact_receipt(rebuilt)
+    receipt_sha = hashlib.sha256(receipt_bytes).hexdigest()
     _strict_sha256(receipt_sha, "verification_receipt_sha256")
     return rebuilt, receipt_sha
 
@@ -167,6 +175,7 @@ class ReviewedFixtureIntelligenceBootstrap:
     """Self-validating identity-only handoff from PR #46 toward PR #30."""
 
     verified_artifact: VerifiedReviewedFixtureCatalogAdmissionArtifact
+    verification_receipt_bytes: bytes
     verification_receipt_sha256: str
     admission_sha256: str
     source_capability: str
@@ -183,7 +192,8 @@ class ReviewedFixtureIntelligenceBootstrap:
 
     def __post_init__(self) -> None:
         revalidated, expected_receipt_sha = _revalidate_verified_artifact(
-            self.verified_artifact
+            self.verified_artifact,
+            self.verification_receipt_bytes,
         )
         admission = revalidated.admission
         decision = admission.decision
@@ -285,6 +295,7 @@ class ReviewedFixtureIntelligenceBootstrap:
             "dataset_name": DATASET_NAME,
             "verification_dataset_name": VERIFIED_ADMISSION_ARTIFACT_DATASET_NAME,
             "verification_receipt_sha256": self.verification_receipt_sha256,
+            "verification_receipt_size": len(self.verification_receipt_bytes),
             "admission_sha256": self.admission_sha256,
             "source_capability": self.source_capability,
             "source_capability_sha256": self.source_capability_sha256,
@@ -303,10 +314,14 @@ class ReviewedFixtureIntelligenceBootstrap:
 
 def build_reviewed_fixture_intelligence_bootstrap(
     verified_artifact: Any,
+    verification_receipt_bytes: Any,
 ) -> ReviewedFixtureIntelligenceBootstrap:
-    """Build identity-only bootstrap from one exact PR #46 verified artifact."""
+    """Build identity-only bootstrap from exact PR #46 object and receipt bytes."""
 
-    revalidated, receipt_sha = _revalidate_verified_artifact(verified_artifact)
+    revalidated, receipt_sha = _revalidate_verified_artifact(
+        verified_artifact,
+        verification_receipt_bytes,
+    )
     admission = revalidated.admission
     decision = admission.decision
     fixtures = tuple(
@@ -320,6 +335,7 @@ def build_reviewed_fixture_intelligence_bootstrap(
     )
     return ReviewedFixtureIntelligenceBootstrap(
         verified_artifact=verified_artifact,
+        verification_receipt_bytes=verification_receipt_bytes,
         verification_receipt_sha256=receipt_sha,
         admission_sha256=revalidated.admission_sha256,
         source_capability=decision.source_capability,
