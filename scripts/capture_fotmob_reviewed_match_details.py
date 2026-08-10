@@ -60,7 +60,12 @@ class FotMobReviewedMatchDetailsDurableCaptureError(RuntimeError):
 
 @dataclasses.dataclass(frozen=True)
 class DurableMatchDetailsCaptureExecution:
-    """One successfully published exact PR #50 raw capture artifact."""
+    """Convenience result for one already-committed PR #50 artifact.
+
+    This wrapper is deliberately not a downstream verifier. All state-dependent
+    artifact revalidation occurs before durable publication; later consumers
+    must independently revalidate the PR #50 artifact they intend to trust.
+    """
 
     capture_directory: Path
     artifact: FotMobReviewedMatchDetailsCaptureArtifact
@@ -70,13 +75,10 @@ class DurableMatchDetailsCaptureExecution:
             raise FotMobReviewedMatchDetailsDurableCaptureError(
                 "capture_directory must be a pathlib.Path"
             )
-        try:
-            artifact = revalidate_reviewed_match_details_capture_artifact(self.artifact)
-        except FotMobReviewedMatchDetailsCaptureArtifactError as exc:
+        if type(self.artifact) is not FotMobReviewedMatchDetailsCaptureArtifact:
             raise FotMobReviewedMatchDetailsDurableCaptureError(
-                "published artifact failed exact current revalidation"
-            ) from exc
-        object.__setattr__(self, "artifact", artifact)
+                "artifact must be exact FotMobReviewedMatchDetailsCaptureArtifact"
+            )
 
 
 def _utc_clock() -> datetime.datetime:
@@ -702,6 +704,10 @@ def capture_fotmob_reviewed_match_details(
             response=captured_response,
         )
         artifact = build_reviewed_match_details_capture_artifact(raw_capture)
+
+        # The PR #50 artifact is revalidated inside the writer before the first
+        # filesystem mutation. The durable publication and exact read-back are
+        # the commit point; no live capability/state check is allowed after it.
         capture_directory = write_reviewed_match_details_capture_artifact(
             artifact,
             output_root=output_root,
