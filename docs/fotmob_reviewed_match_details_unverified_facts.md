@@ -47,18 +47,34 @@ For every PR #55 candidate, PR #57 creates exactly one `FixtureIntelligenceFact`
 
 There is no defaulting, coercion, normalization of football meaning, aliasing, fuzzy matching, conflict resolution, freshness promotion, or status upgrade.
 
+## Fixture identity binding
+
+The existing PR #30 `FixtureIntelligenceFact` type does **not** contain a fixture identifier or kickoff. Therefore the naked `facts` tuple is not an independently fixture-bound handoff.
+
+The legal PR #57 handoff is the **whole** `ReviewedMatchDetailsUnverifiedFactBundle`. It embeds the exact PR #55 candidate bundle and exposes these identities only as derived read-only properties:
+
+- `fixture_identifier`;
+- `source_match_id`;
+- `kickoff`;
+- `observed_at`;
+- `raw_sha256`.
+
+Those same derived identities are emitted at the top level of canonical PR #57 JSON and must agree with the embedded PR #55 bundle by construction.
+
+A future Fixture Intelligence snapshot boundary must consume/revalidate the whole PR #57 bundle and take fixture identity and kickoff from that bundle. It must not accept a caller-selected fixture identity for these facts and must not treat the facts as reusable across fixtures.
+
 ## Evidence file path
 
 PR #30 facts require a relative `evidence_file_path`.
 
-PR #57 does not accept a caller-selected path. It derives the exact logical raw-evidence path from the already verified PR #50 durable-capture identity:
+PR #57 does not accept a caller-selected path. It derives the exact logical raw-evidence path used by PR #51 durable publication from the already verified PR #50 capture identity:
 
 ```text
 .cache/athena-research/fotmob-reviewed-match-details-captures/
-  <source_match_id>--<observed_at>--<raw_sha256>/response.json
+  <source_match_id>--<UTC observation timestamp>--<raw_sha256>/response.json
 ```
 
-The timestamp formatting and identifier construction match PR #50's durable writer contract. The path therefore points to the exact raw bytes whose SHA-256 is already anchored through PR #52→#55.
+The timestamp formatting and identifier construction match the PR #50 capture identifier and the PR #51 durable writer contract. PR #52 then verifies the exact persisted `response.json`/`manifest.json` bytes from that historical publication before PR #53→#55 consume them.
 
 ## Self-validation
 
@@ -68,7 +84,8 @@ On construction and canonicalization it:
 
 - reconstructs the embedded PR #55 candidate bundle through its own invariants;
 - verifies candidate-bundle canonical size and SHA-256;
-- recomputes the exact PR #50 evidence path;
+- derives fixture/source/kickoff/observation/raw identity from the embedded PR #55 bundle;
+- recomputes the exact PR #51 logical evidence path;
 - reconstructs every nested PR #30 fact;
 - regenerates the expected facts from the embedded candidates;
 - requires exact one-to-one semantic equality;
@@ -104,4 +121,4 @@ Every adapter safety flag remains exact `false`.
 
 ## Next boundary
 
-A later PR may decide whether and under what independently reviewed conditions an UNVERIFIED fact can become `SUPPORTED`, `STALE`, or `CONFLICTED` and enter a Fixture Intelligence snapshot. That future boundary must preserve conflict/freshness/unknown semantics and must not silently upgrade source trust.
+A later PR must first define the reviewed field/source qualification, freshness and conflict policy required to classify these facts as `SUPPORTED`, `STALE`, or `CONFLICTED`. Only after that may a bundle-aware snapshot boundary admit the resulting facts. Unknown, stale and conflicting evidence must remain explicit; no future step may silently upgrade trust.
