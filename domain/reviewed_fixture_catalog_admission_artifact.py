@@ -91,13 +91,6 @@ def _revalidate_admission(value: Any) -> ReviewedFixtureCatalogAdmission:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
             "admission must be exact ReviewedFixtureCatalogAdmission"
         )
-    if (
-        value.decision.disposition
-        is not ReviewedFixtureCatalogAdmissionDisposition.ADMITTED
-    ):
-        raise ReviewedFixtureCatalogAdmissionArtifactError(
-            "only an ADMITTED reviewed Fixture Catalog may produce a verified artifact"
-        )
     try:
         rebuilt = build_reviewed_fixture_catalog_admission(
             value.handoff,
@@ -111,7 +104,7 @@ def _revalidate_admission(value: Any) -> ReviewedFixtureCatalogAdmission:
         ) from exc
     if rebuilt.decision.disposition is not ReviewedFixtureCatalogAdmissionDisposition.ADMITTED:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
-            "rebuilt reviewed Fixture Catalog admission is not ADMITTED"
+            "only an ADMITTED reviewed Fixture Catalog may produce a verified artifact"
         )
     if not rebuilt.admitted_fixtures:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
@@ -213,15 +206,11 @@ def verify_reviewed_fixture_catalog_admission_artifact(
         raise ReviewedFixtureCatalogAdmissionArtifactError(
             "artifact_bytes must be exact immutable bytes"
         )
-    try:
-        canonical = canonical_reviewed_fixture_catalog_admission_bytes(admission)
-    except ReviewedFixtureCatalogAdmissionError as exc:
-        raise ReviewedFixtureCatalogAdmissionArtifactError(
-            "reviewed Fixture Catalog admission canonical serialization failed"
-        ) from exc
+    rebuilt = _revalidate_admission(admission)
+    canonical = canonical_reviewed_fixture_catalog_admission_bytes(rebuilt)
     admission_sha256 = hashlib.sha256(canonical).hexdigest()
     return VerifiedReviewedFixtureCatalogAdmissionArtifact(
-        admission=admission,
+        admission=rebuilt,
         artifact_bytes=artifact_bytes,
         admission_sha256=admission_sha256,
         verified_at=verified_at,
