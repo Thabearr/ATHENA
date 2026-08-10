@@ -17,6 +17,7 @@ from domain.reviewed_fixture_catalog_admission import (
     AdmittedFixtureIdentity,
     ReviewedFixtureCatalogAdmission,
     ReviewedFixtureCatalogAdmissionDisposition,
+    ReviewedFixtureCatalogAdmissionError,
     build_reviewed_fixture_catalog_admission,
     canonical_reviewed_fixture_catalog_admission_bytes,
     sha256_reviewed_fixture_catalog_admission,
@@ -61,12 +62,11 @@ def _utc(value: Any, label: str) -> datetime.datetime:
         raise ReviewedFixtureCatalogAdmissionArtifactError(f"{label} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
         raise ReviewedFixtureCatalogAdmissionArtifactError(f"{label} must be timezone-aware")
-    normalized = value.astimezone(datetime.timezone.utc)
-    if value != normalized:
+    if value.tzinfo is not datetime.timezone.utc:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
-            f"{label} must already be normalized to UTC"
+            f"{label} must already use datetime.timezone.utc"
         )
-    return normalized
+    return value
 
 
 def _default_safety() -> dict[str, bool]:
@@ -104,9 +104,10 @@ def _revalidate_admission(value: Any) -> ReviewedFixtureCatalogAdmission:
             value.fixture_catalog_result,
             value.decision,
         )
-    except Exception as exc:
+    except ReviewedFixtureCatalogAdmissionError as exc:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
-            "reviewed Fixture Catalog admission failed current semantic revalidation"
+            "reviewed Fixture Catalog admission failed current semantic revalidation: "
+            f"{exc}"
         ) from exc
     if rebuilt.decision.disposition is not ReviewedFixtureCatalogAdmissionDisposition.ADMITTED:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
@@ -157,6 +158,7 @@ class VerifiedReviewedFixtureCatalogAdmissionArtifact:
                 "revalidated admission source capability mismatch"
             )
 
+        object.__setattr__(self, "admission", rebuilt)
         object.__setattr__(self, "verified_at", verified_at)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
