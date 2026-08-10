@@ -2,7 +2,7 @@
 
 ## Purpose
 
-PR #46 adds the next narrow ATHENA trust boundary after the reviewed Fixture Catalog admission gate in PR #45.
+PR #47 adds the next narrow ATHENA trust boundary after the reviewed Fixture Catalog admission-artifact verifier in PR #46.
 
 The reviewed FotMob fixture path is now:
 
@@ -15,60 +15,70 @@ verified PR #38 raw capture
 → PR #43 controlled PR #29 compiler workflow
 → PR #44 reviewed identity-only source capability
 → PR #45 explicit ADMITTED / REJECTED catalog admission
-→ PR #46 reviewed Fixture Intelligence identity bootstrap
+→ PR #46 exact canonical admission-artifact verification
+→ PR #47 reviewed Fixture Intelligence identity bootstrap
 → later separately reviewed Fixture Intelligence fact boundaries
 ```
 
-PR #46 does **not** promote any football fact into Fixture Intelligence. It creates a typed, deterministic, self-validating identity handoff so later fact acquisition and qualification can prove which admitted fixture they are talking about.
+PR #47 does **not** promote any football fact into Fixture Intelligence. It creates a typed, deterministic, self-validating identity handoff so later fact acquisition and qualification can prove which already-reviewed fixture they are talking about.
 
-## Why another boundary is required
+## Why PR #46 must be the input
 
 `domain/fixture_intelligence.py` intentionally defines a general deterministic snapshot contract. Its `build_snapshot(...)` primitive accepts a fixture identifier and kickoff because PR #30 defined how trusted facts are represented, not how a particular live fixture identity becomes eligible for that layer.
 
-A non-empty string passed to the generic PR #30 constructor is therefore **not** evidence that the fixture came through the reviewed FotMob catalog chain.
+PR #45 admitted an exact reviewed catalog, but PR #46 added the separate current-use check that exact canonical admission bytes still match an exact, currently revalidatable `ADMITTED` admission and emitted a deterministic verification receipt.
 
-PR #46 closes that gap for the reviewed `/api/data/matches` path without changing the meaning of PR #30. A later FotMob intelligence workflow must start from this reviewed bootstrap rather than inventing or copying a fixture identifier directly.
+PR #47 therefore does **not** accept a PR #45 admission object directly. A caller that has only `ReviewedFixtureCatalogAdmission` must first pass the PR #46 verifier. This prevents the Fixture Intelligence bootstrap from bypassing the canonical artifact-verification boundary.
+
+A non-empty raw fixture identifier, an unverified PR #45 object, or a merely type-shaped object is not proof of bootstrap eligibility.
 
 ## Accepted input
 
-The bootstrap accepts one exact `ReviewedFixtureCatalogAdmission` from PR #45 and then revalidates it by reconstructing the frozen admission object through its own PR #45 constructor.
+`build_reviewed_fixture_intelligence_bootstrap(...)` accepts only an exact `VerifiedReviewedFixtureCatalogAdmissionArtifact` from PR #46.
 
-The input must still satisfy all PR #45 invariants, including:
+Before construction succeeds, PR #47:
 
-- exact reviewed FotMob source capability;
-- exact candidate/review/handoff/catalog/manifest ancestry;
-- exact canonical PR #45 capability-profile hash;
-- exact compiler provenance reconciliation;
-- an explicit `ADMITTED` disposition;
-- a non-empty admitted fixture set;
-- prospective admission timing.
+1. reconstructs the supplied PR #46 verified artifact through its own frozen dataclass constructor;
+2. therefore re-runs PR #46's current PR #45 semantic/capability revalidation and exact admission/artifact-byte checks;
+3. canonicalizes the supplied verification receipt and the reconstructed receipt and requires byte-for-byte equality;
+4. requires a non-empty admitted fixture set;
+5. computes and captures the exact PR #46 verification-receipt SHA-256;
+6. carries forward the exact PR #45 admission SHA-256 and its candidate/review/handoff/catalog/manifest ancestry;
+7. requires every fixture still to be prospective at the **PR #46 verification timestamp**, not merely at the older PR #45 admission-review time.
 
-A merely type-shaped, mutated, rejected, stale, or capability-revoked admission fails closed.
+A stale capability profile, forcibly mutated verifier object, changed admission, changed artifact bytes, changed safety state, or verification at/after kickoff fails closed.
+
+PR #46 itself deliberately permits a historical artifact to be verified after kickoff because its job is byte/semantic verification rather than prospective Fixture Intelligence admission. PR #47 adds the stricter prospective requirement at the point where identity is allowed to enter the Fixture Intelligence bootstrap.
 
 ## Output contract
 
-The bootstrap records only source-scoped fixture identity and kickoff:
+Each bootstrapped identity contains only:
 
 ```json
 {
   "fixture_identifier": "FOTMOB:<source match id>",
   "kickoff": "<UTC timestamp>",
-  "admission_sha256": "<exact PR #45 canonical artifact SHA-256>"
+  "admission_sha256": "<exact PR #45 canonical admission SHA-256>",
+  "verification_receipt_sha256": "<exact PR #46 receipt SHA-256>"
 }
 ```
 
-For the catalog as a whole it also carries the exact:
+The bootstrap as a whole captures only detached reviewed ancestry and timestamps:
 
+- PR #46 verification dataset identity;
+- exact PR #46 verification-receipt SHA-256;
+- exact PR #46 verification timestamp;
 - PR #45 admission SHA-256;
+- PR #45 admission-review timestamp;
 - PR #44 reviewed source-capability key and capability SHA-256;
-- PR #40 candidate bundle SHA-256;
-- PR #41 review bundle SHA-256;
+- PR #40 candidate-bundle SHA-256;
+- PR #41 review-bundle SHA-256;
 - PR #42 handoff SHA-256;
 - PR #29 strict catalog SHA-256;
 - PR #29 manifest SHA-256;
-- PR #45 admission review timestamp.
+- every and only verified admitted `FOTMOB:<match id>` identity + kickoff.
 
-The fixture tuple must be every and only admitted fixture from PR #45 in deterministic catalog order. Duplicate identifiers, omissions, additions, changed kickoffs, changed ancestry, or non-FotMob identifiers fail closed.
+Duplicate identifiers, omissions, additions, changed kickoffs, changed receipt ancestry, changed catalog ancestry, or non-FotMob identifiers fail closed.
 
 ## Exact identity resolution
 
@@ -86,11 +96,13 @@ It has no:
 
 For example, `FOTMOB:1001` does not silently match `fotmob:1001`, `FOTMOB:01001`, a padded string, or a different source fixture.
 
-## Historical determinism and capability revocation
+## Historical determinism
 
-Bootstrap construction revalidates the exact PR #45 admission against the current reviewed capability profile. If that capability is later revoked or changed, a **new** bootstrap from the old admission fails closed.
+Bootstrap construction revalidates the exact PR #46 artifact against the current reviewed capability profile. If that capability is later revoked or changed, a **new** bootstrap from an old verifier object fails closed.
 
-Once a bootstrap has been validly created, its canonical bytes use the capability and admission hashes captured at construction. Merely changing the live capability registry later does not mutate the historical bootstrap artifact.
+Once a bootstrap has been validly created, its canonical serialization deliberately reads only detached scalar ancestry, timestamps, immutable fixture identities, and its own safety mapping. It does not re-read the nested PR #46 verifier object during serialization.
+
+Therefore later mutation of the live capability registry—or even a forcibly mutated nested verifier object—cannot alter the already-created bootstrap's canonical historical bytes. A new construction/revalidation from corrupted state still fails closed.
 
 Canonical bootstrap bytes are compact, sorted-key UTF-8 JSON with `allow_nan=False` and one final newline. The bootstrap SHA-256 is over those exact bytes.
 
@@ -110,11 +122,11 @@ Every downstream authorization flag remains exact immutable `False`:
 - no selection authorization;
 - no betting authorization.
 
-PR #46 imports neither the Fixture Intelligence fact/snapshot module nor the model-feature module. It performs no file writes, network requests, compiler invocation, source discovery, football-semantic interpretation, or runtime registration.
+PR #47 imports neither the Fixture Intelligence fact/snapshot module nor the model-feature module. It performs no file writes, network requests, compiler invocation, source discovery, football-semantic interpretation, or runtime registration.
 
 ## Important interpretation
 
-**Fixture identity admission is not Fixture Intelligence evidence.**
+**Verified fixture identity is not Fixture Intelligence evidence.**
 
 The bootstrap proves only that ATHENA may refer to one exact reviewed source-scoped fixture and kickoff when a later separately qualified intelligence source provides evidence about that fixture.
 
@@ -124,6 +136,6 @@ The raw `fotmob_unofficial` capability remains separate and does not become trus
 
 ## Next safe boundary
 
-A later PR may discover and qualify one richer FotMob surface, such as a match-detail route, against preserved raw evidence. That work should independently define its raw capture, schema, provenance, freshness and football-semantic contract before any fact can become `SUPPORTED` in PR #30 Fixture Intelligence.
+A later PR may discover and qualify one richer FotMob surface, such as a match-detail route, against preserved raw evidence. That work should independently define its raw capture, schema, provenance, freshness, and football-semantic contract before any fact can become `SUPPORTED` in PR #30 Fixture Intelligence.
 
-That later workflow should resolve the target fixture through the PR #46 bootstrap and must not use bootstrap identity as evidence for the fact itself.
+That later workflow should resolve the target fixture through the PR #47 bootstrap and must not use bootstrap identity as evidence for the fact itself.
