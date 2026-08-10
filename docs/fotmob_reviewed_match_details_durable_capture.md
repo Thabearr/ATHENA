@@ -51,7 +51,7 @@ The response must satisfy all of:
 
 - exact HTTP 200;
 - strict `application/json` Content-Type;
-- optional Content-Length is a canonical non-negative ASCII integer;
+- optional Content-Length is a non-negative ASCII integer;
 - declared Content-Length cannot exceed 8 MiB;
 - streamed body cannot exceed 8 MiB;
 - body is non-empty exact bytes;
@@ -110,6 +110,14 @@ Publication is fail-closed:
 - published files are read back and must exactly equal the PR #50 raw/manifest bytes.
 
 A platform on which directory durability or no-overwrite publication cannot be proven fails closed rather than degrading silently.
+
+## Commit point
+
+The PR #50 artifact is revalidated immediately before the writer begins filesystem mutation. The writer then publishes both files, performs exact read-back comparison, and synchronizes the capture/root directories.
+
+That completed durable publication is the operation's commit point. After it succeeds, the operator result wrapper performs only structural type checks. It deliberately does **not** consult the mutable current capability registry or rerun the live upstream trust chain.
+
+This prevents a capability/state change occurring after a successful durable commit from turning the API call into an error while leaving a complete capture directory behind. A later consumer that wants to trust the in-memory PR #50 artifact must independently revalidate it at that later use point; the persisted historical evidence itself remains unchanged.
 
 ## Trust semantics
 
