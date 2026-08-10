@@ -46,12 +46,14 @@ It then requires:
 - supplied PR #47 canonical object bytes = rebuilt PR #47 canonical object bytes;
 - caller-presented artifact bytes = rebuilt canonical PR #47 bytes exactly;
 - bootstrap SHA-256 = SHA-256 of those exact canonical bytes;
+- the receipt's own schema/version identity is exact;
+- the upstream PR #47 schema/version identity is exact and captured immutably;
 - all detached ancestry fields = the exact rebuilt PR #47 values;
 - every and only PR #47 fixture identity is retained;
 - `verified_at` is exact UTC and does not predate the upstream PR #46 artifact verification time;
 - every safety flag remains exact `false`.
 
-Changed whitespace, an extra newline, a missing newline, a mutated bootstrap field, a mutated nested PR #46 object, changed capability state, changed ancestry, or changed fixture set fails closed.
+Changed whitespace, an extra newline, a missing newline, a mutated bootstrap field, a mutated nested PR #46 object, changed capability state, changed ancestry, changed contract identity, or changed fixture set fails closed.
 
 ## Verification receipt
 
@@ -59,7 +61,8 @@ The receipt is `VerifiedReviewedFixtureIntelligenceBootstrapArtifact`.
 
 It records detached audit fields only:
 
-- PR #47 bootstrap dataset identity;
+- PR #48 schema version and dataset identity;
+- PR #47 bootstrap schema version and dataset identity;
 - exact PR #47 bootstrap SHA-256 and artifact byte size;
 - upstream PR #46 verification-receipt SHA-256;
 - PR #45 admission SHA-256;
@@ -78,9 +81,9 @@ It records detached audit fields only:
 
 ## Historical determinism
 
-The receipt deliberately serializes detached scalar/timestamp/fixture fields. It does not consult the nested PR #47 bootstrap during `to_dict()`.
+The receipt deliberately serializes detached schema/dataset identity, scalar ancestry, timestamps, and fixture fields. It does not consult the nested PR #47 bootstrap or live PR #47 module constants during `to_dict()`.
 
-Therefore a later forced mutation of a nested bootstrap or live capability-registry change cannot mutate an already-created verification receipt's canonical bytes. A new verification from the mutated or capability-revoked bootstrap still fails closed.
+Therefore a later forced mutation of a nested bootstrap, live capability-registry change, or runtime mutation of the imported PR #47 contract constants cannot mutate an already-created verification receipt's canonical bytes. A new verification from mutated or capability-revoked state still fails closed.
 
 This separates historical auditability from current-use eligibility.
 
@@ -102,6 +105,7 @@ Every authorization flag is immutable exact `false`, including:
 - raw capture;
 - artifact write;
 - automatic review;
+- source qualification;
 - global identity resolution;
 - match-detail probing;
 - Fixture Intelligence fact creation;
