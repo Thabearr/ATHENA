@@ -10,10 +10,15 @@ PR #43 proved that explicit PR #41 review decisions could be rebuilt through the
 fotmob_data_matches_reviewed_catalog
 ```
 
-with only:
+with the exact identity-only profile:
 
 ```text
+full_time_score          = NOT_CAPTURED
+half_time_score          = NOT_CAPTURED
+event_timestamps         = NOT_CAPTURED
 reliable_fixture_identity = CONFIRMED
+historical_coverage      = UNKNOWN
+freshness_metadata       = NOT_CAPTURED
 ```
 
 PR #45 does not broaden that claim. It decides whether one exact compiled reviewed catalog is admitted for later source-scoped fixture-identity use.
@@ -35,23 +40,27 @@ An admission decision must anchor all of these exact SHA-256 values:
 - PR #41 review bundle;
 - PR #42 reviewed handoff;
 - PR #29 strict catalog bytes;
-- PR #29 manifest bytes.
+- PR #29 manifest bytes;
+- the canonical serialized PR #44 reviewed-source capability profile.
 
-It must also identify the exact source capability key `fotmob_data_matches_reviewed_catalog`, carry a timezone-aware UTC review timestamp, a non-empty trimmed reviewer reference, and notes.
+It must also identify the exact capability key `fotmob_data_matches_reviewed_catalog`, carry a timezone-aware UTC review timestamp, a non-empty trimmed reviewer reference, and notes.
+
+The capability hash covers the full deterministic `SourceCapabilities.to_dict()` payload, including its evidence references and notes. A capability revocation, semantic expansion, or evidence-profile change therefore changes or invalidates the admission chain rather than silently inheriting an old admission.
 
 ## Revalidation before admission
 
 The domain gate does not trust a `FixtureCatalogResult` merely because it has the right Python type. It independently rechecks:
 
-1. the reviewed source-capability registration still exists and still has `reliable_fixture_identity = CONFIRMED`;
-2. compiler records are non-empty, exact provenance records, and remain deterministically sorted;
-3. compiler `as_of`, minimum lead time, clean-worktree flag, and generator commit satisfy the frozen contract;
-4. every record remained reviewed before compiler `as_of` and satisfied its declared lead time;
-5. normalized provenance JSONL bytes and SHA-256 are rebuilt exactly from the records;
-6. the strict catalog object and canonical bytes are rebuilt exactly;
-7. the manifest object and canonical bytes are rebuilt exactly;
-8. every compiler provenance field still matches the exact PR #42 reviewed handoff input: source fixture ID, team names, competition, kickoff, source reference, review timestamp, evidence path, and evidence SHA-256;
-9. the catalog-level decision hashes exactly match the revalidated handoff/catalog/manifest chain.
+1. the reviewed source-capability registration still exists and still exactly matches the identity-only PR #44 availability profile;
+2. the canonical capability-profile SHA-256 still matches the admission decision;
+3. compiler records are non-empty, exact provenance records, and remain deterministically sorted;
+4. compiler `as_of`, minimum lead time, clean-worktree flag, and generator commit satisfy the frozen contract;
+5. every record remained reviewed before compiler `as_of` and satisfied its declared lead time;
+6. normalized provenance JSONL bytes and SHA-256 are rebuilt exactly from the records;
+7. the strict catalog object and canonical bytes are rebuilt exactly;
+8. the manifest object and canonical bytes are rebuilt exactly;
+9. every compiler provenance field still matches the exact PR #42 reviewed handoff input: source fixture ID, team names, competition, kickoff, source reference, review timestamp, evidence path, and evidence SHA-256;
+10. the catalog-level decision hashes exactly match the revalidated handoff/catalog/manifest/capability chain.
 
 This deliberately repeats critical reconciliation at the promotion boundary rather than trusting an earlier successful run by assertion alone.
 
@@ -79,7 +88,7 @@ This is still only a **source-scoped fixture identity admission**. It does not e
 The admission object serializes as compact, sorted, UTF-8 JSON with `allow_nan=False` and one final newline. The serialized form records:
 
 - schema and dataset identity;
-- source-capability key;
+- source-capability key and exact capability-profile SHA-256;
 - candidate/review/handoff/catalog/manifest hashes;
 - compiler normalized-input hash;
 - generator commit;
@@ -89,7 +98,7 @@ The admission object serializes as compact, sorted, UTF-8 JSON with `allow_nan=F
 - admitted source-scoped fixture identities when disposition is `ADMITTED`;
 - downstream safety flags.
 
-The canonical admission SHA-256 therefore changes if any admitted fixture, upstream evidence identity, compiler artifact, or operator decision changes.
+The canonical admission SHA-256 therefore changes if any admitted fixture, upstream evidence identity, compiler artifact, capability profile, or operator decision changes.
 
 ## Safety boundary
 
