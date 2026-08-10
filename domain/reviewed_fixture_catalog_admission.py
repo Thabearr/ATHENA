@@ -471,7 +471,7 @@ class ReviewedFixtureCatalogAdmission:
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
             "source_capability": REVIEWED_SOURCE_CAPABILITY,
-            "source_capability_sha256": sha256_reviewed_source_capability(),
+            "source_capability_sha256": self.decision.source_capability_sha256,
             "candidate_bundle_sha256": handoff.candidate_bundle_sha256,
             "review_bundle_sha256": handoff.review_bundle_sha256,
             "handoff_sha256": sha256_fotmob_fixture_catalog_handoff(handoff),
