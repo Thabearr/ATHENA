@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import datetime
 import importlib.util
 from pathlib import Path
 
@@ -108,6 +107,12 @@ def test_exact_candidates_become_only_unverified_fixture_intelligence_facts() ->
     assert bundle.candidate_bundle_size == len(candidate_bytes)
     assert all(value is False for value in bundle.safety.values())
 
+    assert bundle.fixture_identifier == candidates.fixture_identifier
+    assert bundle.source_match_id == candidates.source_match_id
+    assert bundle.kickoff == candidates.kickoff
+    assert bundle.observed_at == candidates.observed_at
+    assert bundle.raw_sha256 == candidates.raw_sha256
+
     by_field = {item.field: item for item in bundle.facts}
     assert by_field["synthetic_metric"].value == 100
     assert by_field["synthetic_label"].value == "ok"
@@ -115,6 +120,26 @@ def test_exact_candidates_become_only_unverified_fixture_intelligence_facts() ->
     canonical = canonical_reviewed_match_details_unverified_fact_bundle_bytes(bundle)
     assert canonical.endswith(b"\n")
     assert len(sha256_reviewed_match_details_unverified_fact_bundle(bundle)) == 64
+
+
+def test_serialized_bundle_keeps_fixture_identity_at_bundle_level() -> None:
+    raw = b'{"alpha":{"value":100}}'
+    decision = _approved(
+        "/alpha/value",
+        JsonValueKind.INTEGER,
+        IntelligenceCategory.MATCH_CONTEXT,
+        "synthetic_metric",
+    )
+    bundle, candidates, _, _ = _fact_bundle(raw, (decision,))
+    payload = bundle.to_dict()
+
+    assert payload["fixture_identifier"] == candidates.fixture_identifier
+    assert payload["source_match_id"] == candidates.source_match_id
+    assert payload["kickoff"].endswith("Z")
+    assert payload["observed_at"].endswith("Z")
+    assert payload["raw_sha256"] == candidates.raw_sha256
+    assert payload["candidate_bundle"]["fixture_identifier"] == payload["fixture_identifier"]
+    assert payload["candidate_bundle"]["source_match_id"] == payload["source_match_id"]
 
 
 def test_evidence_path_is_exact_pr50_durable_response_path() -> None:
@@ -243,12 +268,12 @@ def test_pr31_blocks_model_feature_when_adapter_fact_is_unverified() -> None:
         IntelligenceCategory.FORM,
         "home_form",
     )
-    bundle, candidates, _, chain = _fact_bundle(raw, (decision,))
+    bundle, _, _, chain = _fact_bundle(raw, (decision,))
     review = chain[-2]
 
     intelligence = build_snapshot(
-        fixture_identifier=candidates.fixture_identifier,
-        kickoff=candidates.kickoff,
+        fixture_identifier=bundle.fixture_identifier,
+        kickoff=bundle.kickoff,
         as_of=review.reviewed_at,
         raw_facts=list(bundle.facts),
     )
@@ -261,7 +286,7 @@ def test_pr31_blocks_model_feature_when_adapter_fact_is_unverified() -> None:
     assert home_form.value is None
     assert ModelFeatureBlocker.UNVERIFIED_EVIDENCE_PRESENT in home_form.blockers
     assert ModelFeatureBlocker.NO_SUPPORTED_EVIDENCE in home_form.blockers
-    assert candidates.raw_sha256 in home_form.evidence_sha256s
+    assert bundle.raw_sha256 in home_form.evidence_sha256s
 
 
 def test_adapter_does_not_build_snapshot_or_supported_fact() -> None:
