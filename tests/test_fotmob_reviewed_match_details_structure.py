@@ -71,8 +71,8 @@ def test_structure_inventory_is_deterministic_and_semantics_free() -> None:
     assert len(sha256_reviewed_match_details_structure(assessment)) == 64
 
 
-def test_json_pointer_tokens_are_rfc6901_escaped() -> None:
-    raw = b'{"a/b~c":{"x":1}}'
+def test_object_tokens_and_array_wildcard_have_injective_path_identity() -> None:
+    raw = b'{"*":{"literal":1},"a/b~c*":{"x":1},"arr":[{"literal":2}]}'
     evidence, receipt, manifest = _pr52(raw)
     assessment = assess_reviewed_match_details_structure(
         evidence=evidence,
@@ -80,7 +80,11 @@ def test_json_pointer_tokens_are_rfc6901_escaped() -> None:
         manifest_bytes=manifest,
         raw_bytes=raw,
     )
-    assert _field(assessment, "/a~1b~0c/x").kinds == (JsonValueKind.INTEGER,)
+    assert _field(assessment, "/~2/literal").kinds == (JsonValueKind.INTEGER,)
+    assert _field(assessment, "/a~1b~0c~2/x").kinds == (JsonValueKind.INTEGER,)
+    assert _field(assessment, "/arr/*/literal").kinds == (JsonValueKind.INTEGER,)
+    assert len({item.json_pointer for item in assessment.fields}) == len(assessment.fields)
+    assert "/~2/literal" != "/arr/*/literal"
 
 
 def test_exact_pr52_receipt_and_exact_evidence_bytes_are_required() -> None:
