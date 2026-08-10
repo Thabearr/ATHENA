@@ -52,6 +52,14 @@ _SAFETY_KEYS = frozenset(
         "bet_authorized",
     }
 )
+_EXPECTED_CAPABILITY_AVAILABILITY = {
+    "full_time_score": CapabilityAvailability.NOT_CAPTURED,
+    "half_time_score": CapabilityAvailability.NOT_CAPTURED,
+    "event_timestamps": CapabilityAvailability.NOT_CAPTURED,
+    "reliable_fixture_identity": CapabilityAvailability.CONFIRMED,
+    "historical_coverage": CapabilityAvailability.UNKNOWN,
+    "freshness_metadata": CapabilityAvailability.NOT_CAPTURED,
+}
 
 
 class ReviewedFixtureCatalogAdmissionError(ValueError):
@@ -116,7 +124,7 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
     return types.MappingProxyType(detached)
 
 
-def _validate_reviewed_source_capability() -> None:
+def _reviewed_source_capability_payload() -> dict[str, Any]:
     capability = SOURCE_CAPABILITY_REGISTRY.get(REVIEWED_SOURCE_CAPABILITY)
     if capability is None:
         raise ReviewedFixtureCatalogAdmissionError(
@@ -126,13 +134,39 @@ def _validate_reviewed_source_capability() -> None:
         raise ReviewedFixtureCatalogAdmissionError(
             "reviewed FotMob source capability identity mismatch"
         )
-    if (
-        capability.reliable_fixture_identity
-        is not CapabilityAvailability.CONFIRMED
-    ):
+    for field_name, expected in _EXPECTED_CAPABILITY_AVAILABILITY.items():
+        if getattr(capability, field_name) is not expected:
+            raise ReviewedFixtureCatalogAdmissionError(
+                f"reviewed FotMob capability {field_name} no longer matches the identity-only PR #44 profile"
+            )
+    payload = capability.to_dict()
+    if type(payload) is not dict or payload.get("source") != REVIEWED_SOURCE_CAPABILITY:
         raise ReviewedFixtureCatalogAdmissionError(
-            "reviewed FotMob reliable fixture identity capability is not CONFIRMED"
+            "reviewed FotMob capability serialization is invalid"
         )
+    return payload
+
+
+def canonical_reviewed_source_capability_bytes() -> bytes:
+    try:
+        return (
+            json.dumps(
+                _reviewed_source_capability_payload(),
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ReviewedFixtureCatalogAdmissionError(
+            "reviewed FotMob capability serialization failed"
+        ) from exc
+
+
+def sha256_reviewed_source_capability() -> str:
+    return hashlib.sha256(canonical_reviewed_source_capability_bytes()).hexdigest()
 
 
 def _assert_compiler_matches_handoff(
@@ -200,7 +234,7 @@ def _validate_compilation(result: Any, handoff: Any) -> None:
         raise ReviewedFixtureCatalogAdmissionError(
             "fixture_catalog_result must be exact FixtureCatalogResult"
         )
-    _validate_reviewed_source_capability()
+    _reviewed_source_capability_payload()
 
     if type(result.records) is not tuple or not result.records:
         raise ReviewedFixtureCatalogAdmissionError(
@@ -232,14 +266,14 @@ def _validate_compilation(result: Any, handoff: Any) -> None:
             "compiled catalog must come from an exactly clean tracked worktree"
         )
 
+    minimum_kickoff = normalized_as_of + datetime.timedelta(
+        seconds=result.minimum_lead_seconds
+    )
     for record in ordered:
         if record.reviewed_at > normalized_as_of:
             raise ReviewedFixtureCatalogAdmissionError(
                 "compiled record reviewed_at must not be after compiler as_of"
             )
-        minimum_kickoff = normalized_as_of + datetime.timedelta(
-            seconds=result.minimum_lead_seconds
-        )
         if record.kickoff < minimum_kickoff:
             raise ReviewedFixtureCatalogAdmissionError(
                 "compiled record no longer satisfies its declared minimum lead time"
@@ -291,6 +325,7 @@ class ReviewedFixtureCatalogAdmissionDecision:
     catalog_sha256: str
     manifest_sha256: str
     source_capability: str
+    source_capability_sha256: str
     disposition: ReviewedFixtureCatalogAdmissionDisposition
     reviewed_at: datetime.datetime
     reviewer_reference: str
@@ -306,6 +341,7 @@ class ReviewedFixtureCatalogAdmissionDecision:
             raise ReviewedFixtureCatalogAdmissionError(
                 f"source_capability must be exactly {REVIEWED_SOURCE_CAPABILITY}"
             )
+        _strict_sha256(self.source_capability_sha256, "source_capability_sha256")
         if not isinstance(self.disposition, ReviewedFixtureCatalogAdmissionDisposition):
             raise ReviewedFixtureCatalogAdmissionError(
                 "disposition must be ReviewedFixtureCatalogAdmissionDisposition"
@@ -322,6 +358,7 @@ class ReviewedFixtureCatalogAdmissionDecision:
             "catalog_sha256": self.catalog_sha256,
             "manifest_sha256": self.manifest_sha256,
             "source_capability": self.source_capability,
+            "source_capability_sha256": self.source_capability_sha256,
             "disposition": self.disposition.value,
             "reviewed_at": serialize_utc(self.reviewed_at),
             "reviewer_reference": self.reviewer_reference,
@@ -381,6 +418,7 @@ class ReviewedFixtureCatalogAdmission:
             "handoff_sha256": sha256_fotmob_fixture_catalog_handoff(handoff),
             "catalog_sha256": sha256_bytes(result.catalog_bytes),
             "manifest_sha256": sha256_bytes(result.manifest_bytes),
+            "source_capability_sha256": sha256_reviewed_source_capability(),
         }
         for field_name, expected in expected_hashes.items():
             if getattr(decision, field_name) != expected:
@@ -433,6 +471,7 @@ class ReviewedFixtureCatalogAdmission:
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
             "source_capability": REVIEWED_SOURCE_CAPABILITY,
+            "source_capability_sha256": sha256_reviewed_source_capability(),
             "candidate_bundle_sha256": handoff.candidate_bundle_sha256,
             "review_bundle_sha256": handoff.review_bundle_sha256,
             "handoff_sha256": sha256_fotmob_fixture_catalog_handoff(handoff),
@@ -527,5 +566,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "build_reviewed_fixture_catalog_admission",
     "canonical_reviewed_fixture_catalog_admission_bytes",
+    "canonical_reviewed_source_capability_bytes",
     "sha256_reviewed_fixture_catalog_admission",
+    "sha256_reviewed_source_capability",
 ]
