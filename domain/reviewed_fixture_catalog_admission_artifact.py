@@ -64,7 +64,7 @@ def _utc(value: Any, label: str) -> datetime.datetime:
         raise ReviewedFixtureCatalogAdmissionArtifactError(f"{label} must be timezone-aware")
     if value.tzinfo is not datetime.timezone.utc:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
-            f"{label} must already use datetime.timezone.utc"
+            f"{label} must already be normalized to UTC using datetime.timezone.utc"
         )
     return value
 
