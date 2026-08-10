@@ -99,6 +99,10 @@ def _utc(value: Any, label: str) -> datetime.datetime:
     return value
 
 
+def _iso(value: datetime.datetime) -> str:
+    return value.isoformat().replace("+00:00", "Z")
+
+
 def _default_safety() -> Mapping[str, bool]:
     return types.MappingProxyType({key: False for key in sorted(_SAFETY_KEYS)})
 
@@ -116,18 +120,32 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
     return _default_safety()
 
 
-def _iso(value: datetime.datetime) -> str:
-    return value.isoformat().replace("+00:00", "Z")
-
-
 def _expected_evidence_file_path(
     source_match_id: str,
     observed_at: datetime.datetime,
     raw_sha256: str,
 ) -> str:
     timestamp = observed_at.strftime("%Y%m%dT%H%M%S%fZ")
-    capture_identifier = f"{source_match_id}--{timestamp}--{raw_sha256}"
-    return f"{EVIDENCE_ROOT}/{capture_identifier}/{RAW_FILENAME}"
+    identifier = f"{source_match_id}--{timestamp}--{raw_sha256}"
+    return f"{EVIDENCE_ROOT}/{identifier}/{RAW_FILENAME}"
+
+
+def _canonical_json_bytes(value: Any) -> bytes:
+    try:
+        return (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+            "field-evidence qualification serialization failed"
+        ) from exc
 
 
 def _fact_payload(fact: FixtureIntelligenceFact) -> dict[str, Any]:
@@ -148,24 +166,6 @@ def _fact_payload(fact: FixtureIntelligenceFact) -> dict[str, Any]:
         "evidence_sha256": fact.evidence_sha256,
         "notes": fact.notes,
     }
-
-
-def _canonical_json_bytes(value: Any) -> bytes:
-    try:
-        return (
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
-            "field-evidence qualification serialization failed"
-        ) from exc
 
 
 def _fact_sha256(fact: FixtureIntelligenceFact) -> str:
@@ -226,7 +226,7 @@ class MatchDetailsFieldEvidenceReviewDecision:
 
 @dataclasses.dataclass(frozen=True)
 class RecordedMatchDetailsFieldEvidenceDecision:
-    """Reviewer decision bound to the exact canonical PR #30 fact bytes."""
+    """Reviewer decision bound to the exact canonical PR #30 fact payload."""
 
     category: IntelligenceCategory
     field: str
@@ -318,11 +318,7 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
                 "fact_bundle_size must be an exact positive integer"
             )
 
-        fixture_identifier = _text(
-            self.fixture_identifier,
-            "fixture_identifier",
-            512,
-        )
+        fixture_identifier = _text(self.fixture_identifier, "fixture_identifier", 512)
         source_match_id = _text(self.source_match_id, "source_match_id", 256)
         match = _FIXTURE_RE.fullmatch(fixture_identifier)
         if match is None or match.group(1) != source_match_id:
@@ -390,28 +386,38 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "decisions must contain exact recorded decision values"
             )
-        expected = tuple(sorted(self.decisions, key=lambda item: item.key))
-        if self.decisions != expected:
+        try:
+            rebuilt_decisions = tuple(
+                dataclasses.replace(item) for item in self.decisions
+            )
+        except (
+            FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
+            AttributeError,
+            TypeError,
+            ValueError,
+        ) as exc:
+            raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+                "nested recorded decision failed invariant revalidation"
+            ) from exc
+
+        expected = tuple(sorted(rebuilt_decisions, key=lambda item: item.key))
+        if rebuilt_decisions != expected:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "decisions must be deterministically sorted"
             )
-        keys = tuple(item.key for item in self.decisions)
+        keys = tuple(item.key for item in rebuilt_decisions)
         if len(set(keys)) != len(keys):
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "decisions must target unique exact facts"
             )
-        fact_hashes = tuple(item.fact_sha256 for item in self.decisions)
+        fact_hashes = tuple(item.fact_sha256 for item in rebuilt_decisions)
         if len(set(fact_hashes)) != len(fact_hashes):
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "recorded fact_sha256 values must be unique"
             )
 
-        # PR #55 freezes the source-reference representation to
-        # FOTMOB_MATCH_DETAILS:<source_match_id>:<non-wildcard json_pointer>.
-        # Keep that exact source-scoped identity here rather than inventing an
-        # HTTP URL representation.
         source_prefix = f"FOTMOB_MATCH_DETAILS:{source_match_id}:/"
-        for item in self.decisions:
+        for item in rebuilt_decisions:
             if not item.source_reference.startswith(source_prefix):
                 raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                     "recorded source_reference does not match exact source fixture"
@@ -427,6 +433,7 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
         object.__setattr__(self, "raw_sha256", raw_sha256)
         object.__setattr__(self, "evidence_file_path", evidence_file_path)
         object.__setattr__(self, "reviewer_reference", reviewer_reference)
+        object.__setattr__(self, "decisions", rebuilt_decisions)
         object.__setattr__(self, "safety", safety)
 
     @property
@@ -539,7 +546,7 @@ def build_reviewed_match_details_field_evidence_qualification(
     reviewed_at: Any,
     reviewer_reference: Any,
 ) -> ReviewedMatchDetailsFieldEvidenceQualification:
-    """Record explicit exact-observation qualification without status promotion."""
+    """Record exact-observation qualification without changing fact status."""
 
     rebuilt, exact_fact_bundle_bytes = _revalidate_fact_bundle(
         evidence=evidence,
@@ -558,11 +565,7 @@ def build_reviewed_match_details_field_evidence_qualification(
         "semantic_reviewed_at",
     )
     reviewed_at = _utc(reviewed_at, "reviewed_at")
-    reviewer_reference = _text(
-        reviewer_reference,
-        "reviewer_reference",
-        256,
-    )
+    reviewer_reference = _text(reviewer_reference, "reviewer_reference", 256)
     if semantic_reviewed_at < rebuilt.observed_at or semantic_reviewed_at >= rebuilt.kickoff:
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
             "semantic review chronology is incompatible with exact PR #57 observation"
@@ -576,16 +579,31 @@ def build_reviewed_match_details_field_evidence_qualification(
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
             "decisions must be a non-empty immutable tuple"
         )
-    if any(type(item) is not MatchDetailsFieldEvidenceReviewDecision for item in decisions):
+    if any(
+        type(item) is not MatchDetailsFieldEvidenceReviewDecision
+        for item in decisions
+    ):
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
             "decisions must contain exact review decision values"
         )
-    sorted_decisions = tuple(sorted(decisions, key=lambda item: item.key))
-    if decisions != sorted_decisions:
+    try:
+        rebuilt_inputs = tuple(dataclasses.replace(item) for item in decisions)
+    except (
+        FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
+        AttributeError,
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+            "review decision failed invariant revalidation"
+        ) from exc
+
+    sorted_decisions = tuple(sorted(rebuilt_inputs, key=lambda item: item.key))
+    if rebuilt_inputs != sorted_decisions:
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
             "review decisions must be deterministically sorted"
         )
-    decision_keys = tuple(item.key for item in decisions)
+    decision_keys = tuple(item.key for item in rebuilt_inputs)
     if len(set(decision_keys)) != len(decision_keys):
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
             "review decisions must target unique exact facts"
@@ -611,7 +629,7 @@ def build_reviewed_match_details_field_evidence_qualification(
         )
 
     recorded: list[RecordedMatchDetailsFieldEvidenceDecision] = []
-    for decision in decisions:
+    for decision in rebuilt_inputs:
         fact = fact_by_key[decision.key]
         if fact.status is not IntelligenceFactStatus.UNVERIFIED:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
@@ -691,7 +709,7 @@ def revalidate_reviewed_match_details_field_evidence_qualification(
     qualification: Any,
     qualification_bytes: Any,
 ) -> ReviewedMatchDetailsFieldEvidenceQualification:
-    """Replay PR #52 -> #58 before trusting an existing qualification record."""
+    """Replay PR #52 -> PR #58 before consuming a qualification artifact."""
 
     if type(qualification) is not ReviewedMatchDetailsFieldEvidenceQualification:
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
