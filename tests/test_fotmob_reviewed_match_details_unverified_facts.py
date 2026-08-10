@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 from pathlib import Path
 
@@ -28,6 +29,7 @@ from domain.fotmob_reviewed_match_details_unverified_facts import (
     ReviewedMatchDetailsUnverifiedFactBundle,
     build_reviewed_match_details_unverified_fact_bundle,
     canonical_reviewed_match_details_unverified_fact_bundle_bytes,
+    revalidate_reviewed_match_details_unverified_fact_bundle,
     sha256_reviewed_match_details_unverified_fact_bundle,
 )
 
@@ -142,7 +144,7 @@ def test_serialized_bundle_keeps_fixture_identity_at_bundle_level() -> None:
     assert payload["candidate_bundle"]["source_match_id"] == payload["source_match_id"]
 
 
-def test_evidence_path_is_exact_pr50_durable_response_path() -> None:
+def test_evidence_path_is_exact_pr51_durable_response_path() -> None:
     raw = b'{"alpha":{"value":100}}'
     decision = _approved(
         "/alpha/value",
@@ -207,6 +209,77 @@ def test_pr55_candidate_bytes_and_full_semantic_rebuild_are_required() -> None:
             candidate_bundle_bytes=canonical_reviewed_match_details_unverified_candidate_bundle_bytes(
                 candidates
             ),
+        )
+
+
+def test_exact_pr57_bundle_bytes_revalidate_against_full_upstream_chain() -> None:
+    raw = b'{"alpha":{"value":100}}'
+    decision = _approved(
+        "/alpha/value",
+        JsonValueKind.INTEGER,
+        IntelligenceCategory.MATCH_CONTEXT,
+        "synthetic_metric",
+    )
+    bundle, _, _, chain = _fact_bundle(raw, (decision,))
+    evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
+    exact_bytes = canonical_reviewed_match_details_unverified_fact_bundle_bytes(bundle)
+
+    rebuilt = revalidate_reviewed_match_details_unverified_fact_bundle(
+        evidence=evidence,
+        evidence_receipt_bytes=receipt,
+        manifest_bytes=manifest,
+        raw_bytes=raw,
+        assessment=assessment,
+        assessment_bytes=assessment_bytes,
+        review=review,
+        review_bytes=review_bytes,
+        fact_bundle=bundle,
+        fact_bundle_bytes=exact_bytes,
+    )
+    assert canonical_reviewed_match_details_unverified_fact_bundle_bytes(rebuilt) == exact_bytes
+
+
+def test_coordinated_candidate_and_fact_forgery_fails_full_chain_revalidation() -> None:
+    raw = b'{"alpha":{"value":100}}'
+    decision = _approved(
+        "/alpha/value",
+        JsonValueKind.INTEGER,
+        IntelligenceCategory.MATCH_CONTEXT,
+        "synthetic_metric",
+    )
+    bundle, _, _, chain = _fact_bundle(raw, (decision,))
+    evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
+
+    object.__setattr__(bundle.candidate_bundle.candidates[0], "value", 101)
+    object.__setattr__(bundle.facts[0], "value", 101)
+    mutated_candidate_bytes = canonical_reviewed_match_details_unverified_candidate_bundle_bytes(
+        bundle.candidate_bundle
+    )
+    object.__setattr__(bundle, "candidate_bundle_size", len(mutated_candidate_bytes))
+    object.__setattr__(
+        bundle,
+        "candidate_bundle_sha256",
+        hashlib.sha256(mutated_candidate_bytes).hexdigest(),
+    )
+
+    locally_consistent_forged_bytes = (
+        canonical_reviewed_match_details_unverified_fact_bundle_bytes(bundle)
+    )
+    with pytest.raises(
+        FotMobReviewedMatchDetailsUnverifiedFactError,
+        match="full-chain revalidation",
+    ):
+        revalidate_reviewed_match_details_unverified_fact_bundle(
+            evidence=evidence,
+            evidence_receipt_bytes=receipt,
+            manifest_bytes=manifest,
+            raw_bytes=raw,
+            assessment=assessment,
+            assessment_bytes=assessment_bytes,
+            review=review,
+            review_bytes=review_bytes,
+            fact_bundle=bundle,
+            fact_bundle_bytes=locally_consistent_forged_bytes,
         )
 
 
