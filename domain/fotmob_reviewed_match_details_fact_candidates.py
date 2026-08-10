@@ -8,9 +8,11 @@ qualify the FotMob source for semantic use.
 from __future__ import annotations
 
 import dataclasses
+import datetime
 import hashlib
 import json
 import math
+import re
 import types
 from collections.abc import Mapping
 from pathlib import PurePosixPath
@@ -43,6 +45,7 @@ SOURCE_PROVIDER = "fotmob_match_details_reviewed"
 CAPTURE_ROOT = PurePosixPath(
     ".cache/athena-research/fotmob-reviewed-match-details-captures"
 )
+_FIXTURE_RE = re.compile(r"^FOTMOB:([1-9][0-9]*)$", flags=re.ASCII)
 
 _SAFETY_KEYS = frozenset(
     {
@@ -59,7 +62,7 @@ _SAFETY_KEYS = frozenset(
 
 
 class FotMobReviewedMatchDetailsFactCandidateError(ValueError):
-    pass
+    """Raised when reviewed match-details fact candidates fail closed."""
 
 
 def _canonical_json_bytes(value: Any) -> bytes:
@@ -140,6 +143,30 @@ def _strict_json_object(raw_bytes: Any) -> dict[str, Any]:
     return payload
 
 
+def _strict_utc(value: Any, label: str) -> datetime.datetime:
+    if not isinstance(value, datetime.datetime):
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            f"{label} must be a datetime"
+        )
+    if value.tzinfo is not datetime.timezone.utc:
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            f"{label} must already use exact datetime.timezone.utc"
+        )
+    return value
+
+
+def _strict_sha(value: Any, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            f"{label} must be exactly 64 lowercase hexadecimal characters"
+        )
+    return value
+
+
 def _decode_token(token: str) -> str:
     if token == "*":
         raise FotMobReviewedMatchDetailsFactCandidateError(
@@ -168,6 +195,17 @@ def _decode_token(token: str) -> str:
     return "".join(result)
 
 
+def _validate_scalar(value: Any, label: str) -> None:
+    if type(value) not in (str, int, float, bool):
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            f"{label} must be an exact non-null JSON scalar"
+        )
+    if type(value) is float and not math.isfinite(value):
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            f"{label} numeric scalar must be finite"
+        )
+
+
 def _resolve_scalar(payload: dict[str, Any], pointer: str) -> Any:
     if type(pointer) is not str or not pointer.startswith("/"):
         raise FotMobReviewedMatchDetailsFactCandidateError(
@@ -185,18 +223,7 @@ def _resolve_scalar(payload: dict[str, Any], pointer: str) -> Any:
                 "approved path is missing from exact response bytes"
             )
         current = current[key]
-    if current is None or type(current) in (dict, list):
-        raise FotMobReviewedMatchDetailsFactCandidateError(
-            "approved path did not resolve to a non-null scalar"
-        )
-    if type(current) is float and not math.isfinite(current):
-        raise FotMobReviewedMatchDetailsFactCandidateError(
-            "resolved numeric scalar must be finite"
-        )
-    if type(current) not in (str, int, float, bool):
-        raise FotMobReviewedMatchDetailsFactCandidateError(
-            "resolved value type is outside reviewed scalar kinds"
-        )
+    _validate_scalar(current, "resolved value")
     return current
 
 
@@ -214,13 +241,41 @@ def _actual_kind(value: Any) -> JsonValueKind:
     )
 
 
+def _capture_identifier_parts(
+    source_match_id: str,
+    observed_at: datetime.datetime,
+    raw_sha256: str,
+) -> str:
+    timestamp = observed_at.strftime("%Y%m%dT%H%M%S%fZ")
+    return f"{source_match_id}--{timestamp}--{raw_sha256}"
+
+
 def _capture_identifier(evidence: VerifiedPersistedFotMobMatchDetailsEvidence) -> str:
-    timestamp = evidence.observed_at.strftime("%Y%m%dT%H%M%S%fZ")
-    return f"{evidence.source_match_id}--{timestamp}--{evidence.raw_sha256}"
+    return _capture_identifier_parts(
+        evidence.source_match_id,
+        evidence.observed_at,
+        evidence.raw_sha256,
+    )
+
+
+def _evidence_path_parts(
+    source_match_id: str,
+    observed_at: datetime.datetime,
+    raw_sha256: str,
+) -> str:
+    return str(
+        CAPTURE_ROOT
+        / _capture_identifier_parts(source_match_id, observed_at, raw_sha256)
+        / "response.json"
+    )
 
 
 def _evidence_path(evidence: VerifiedPersistedFotMobMatchDetailsEvidence) -> str:
-    return str(CAPTURE_ROOT / _capture_identifier(evidence) / "response.json")
+    return _evidence_path_parts(
+        evidence.source_match_id,
+        evidence.observed_at,
+        evidence.raw_sha256,
+    )
 
 
 def _source_reference(source_match_id: str, pointer: str) -> str:
@@ -228,6 +283,24 @@ def _source_reference(source_match_id: str, pointer: str) -> str:
     if len(value) > 512:
         raise FotMobReviewedMatchDetailsFactCandidateError(
             "reviewed source_reference exceeds Fixture Intelligence limit"
+        )
+    return value
+
+
+def _validate_source_reference(value: Any, source_match_id: str) -> str:
+    if type(value) is not str:
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            "fact source_reference must be an exact string"
+        )
+    prefix = f"/api/matchDetails?matchId={source_match_id}#/"
+    if not value.startswith(prefix):
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            "fact source_reference does not match reviewed match-details identity"
+        )
+    pointer = value.split("#", 1)[1]
+    if "/*" in pointer or pointer.endswith("/*"):
+        raise FotMobReviewedMatchDetailsFactCandidateError(
+            "fact source_reference must not contain an array wildcard"
         )
     return value
 
@@ -254,6 +327,8 @@ def _fact_to_dict(fact: FixtureIntelligenceFact) -> dict[str, Any]:
 
 @dataclasses.dataclass(frozen=True)
 class ReviewedMatchDetailsFactCandidates:
+    """Detached, internally self-consistent bundle of UNVERIFIED facts only."""
+
     schema_version: int
     dataset_name: str
     field_review_sha256: str
@@ -263,6 +338,9 @@ class ReviewedMatchDetailsFactCandidates:
     raw_sha256: str
     fixture_identifier: str
     source_match_id: str
+    kickoff: datetime.datetime
+    observed_at: datetime.datetime
+    reviewed_at: datetime.datetime
     evidence_file_path: str
     facts: tuple[FixtureIntelligenceFact, ...]
     safety: Mapping[str, bool]
@@ -273,22 +351,46 @@ class ReviewedMatchDetailsFactCandidates:
         if self.dataset_name != DATASET_NAME:
             raise FotMobReviewedMatchDetailsFactCandidateError("dataset_name mismatch")
         for label in (
-            "field_review_sha256", "structure_sha256", "evidence_receipt_sha256",
-            "manifest_sha256", "raw_sha256",
+            "field_review_sha256",
+            "structure_sha256",
+            "evidence_receipt_sha256",
+            "manifest_sha256",
+            "raw_sha256",
         ):
-            value = getattr(self, label)
-            if type(value) is not str or len(value) != 64 or any(c not in "0123456789abcdef" for c in value):
-                raise FotMobReviewedMatchDetailsFactCandidateError(
-                    f"{label} must be exactly 64 lowercase hexadecimal characters"
-                )
+            _strict_sha(getattr(self, label), label)
+
         if type(self.fixture_identifier) is not str or type(self.source_match_id) is not str:
             raise FotMobReviewedMatchDetailsFactCandidateError(
                 "fixture/source identity must be exact strings"
             )
-        if type(self.evidence_file_path) is not str or not self.evidence_file_path:
+        match = _FIXTURE_RE.fullmatch(self.fixture_identifier)
+        if match is None or match.group(1) != self.source_match_id:
             raise FotMobReviewedMatchDetailsFactCandidateError(
-                "evidence_file_path must be a non-empty string"
+                "fixture_identifier/source_match_id mismatch"
             )
+
+        kickoff = _strict_utc(self.kickoff, "kickoff")
+        observed_at = _strict_utc(self.observed_at, "observed_at")
+        reviewed_at = _strict_utc(self.reviewed_at, "reviewed_at")
+        if observed_at >= kickoff:
+            raise FotMobReviewedMatchDetailsFactCandidateError(
+                "observed_at must be strictly before kickoff"
+            )
+        if reviewed_at < observed_at or reviewed_at >= kickoff:
+            raise FotMobReviewedMatchDetailsFactCandidateError(
+                "reviewed_at must follow observation and remain strictly before kickoff"
+            )
+
+        expected_path = _evidence_path_parts(
+            self.source_match_id,
+            observed_at,
+            self.raw_sha256,
+        )
+        if self.evidence_file_path != expected_path:
+            raise FotMobReviewedMatchDetailsFactCandidateError(
+                "evidence_file_path does not match deterministic PR #51 capture identity"
+            )
+
         if type(self.facts) is not tuple or not self.facts:
             raise FotMobReviewedMatchDetailsFactCandidateError(
                 "facts must be a non-empty immutable tuple"
@@ -311,6 +413,7 @@ class ReviewedMatchDetailsFactCandidates:
             raise FotMobReviewedMatchDetailsFactCandidateError(
                 "facts must be deterministically sorted"
             )
+
         semantic_targets: set[tuple[str, str]] = set()
         for fact in self.facts:
             if fact.status is not IntelligenceFactStatus.UNVERIFIED:
@@ -325,7 +428,16 @@ class ReviewedMatchDetailsFactCandidates:
                 raise FotMobReviewedMatchDetailsFactCandidateError(
                     "fact source_role mismatch"
                 )
-            if fact.evidence_sha256 != self.raw_sha256 or fact.evidence_file_path != self.evidence_file_path:
+            if fact.observed_at != observed_at:
+                raise FotMobReviewedMatchDetailsFactCandidateError(
+                    "fact observed_at must equal exact evidence observation time"
+                )
+            _validate_scalar(fact.value, "fact value")
+            _validate_source_reference(fact.source_reference, self.source_match_id)
+            if (
+                fact.evidence_sha256 != self.raw_sha256
+                or fact.evidence_file_path != self.evidence_file_path
+            ):
                 raise FotMobReviewedMatchDetailsFactCandidateError(
                     "fact evidence identity mismatch"
                 )
@@ -335,6 +447,7 @@ class ReviewedMatchDetailsFactCandidates:
                     "fact semantic targets must be unique"
                 )
             semantic_targets.add(target)
+
         if not isinstance(self.safety, Mapping) or set(self.safety) != _SAFETY_KEYS:
             raise FotMobReviewedMatchDetailsFactCandidateError("safety keys mismatch")
         for key, value in self.safety.items():
@@ -342,9 +455,15 @@ class ReviewedMatchDetailsFactCandidates:
                 raise FotMobReviewedMatchDetailsFactCandidateError(
                     f"safety[{key!r}] must be exact bool False"
                 )
+        object.__setattr__(self, "kickoff", kickoff)
+        object.__setattr__(self, "observed_at", observed_at)
+        object.__setattr__(self, "reviewed_at", reviewed_at)
         object.__setattr__(self, "safety", _default_safety())
 
     def to_dict(self) -> dict[str, Any]:
+        def iso(value: datetime.datetime) -> str:
+            return value.isoformat().replace("+00:00", "Z")
+
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
@@ -355,6 +474,9 @@ class ReviewedMatchDetailsFactCandidates:
             "raw_sha256": self.raw_sha256,
             "fixture_identifier": self.fixture_identifier,
             "source_match_id": self.source_match_id,
+            "kickoff": iso(self.kickoff),
+            "observed_at": iso(self.observed_at),
+            "reviewed_at": iso(self.reviewed_at),
             "evidence_file_path": self.evidence_file_path,
             "facts": [_fact_to_dict(item) for item in self.facts],
             "safety": dict(self.safety),
@@ -447,6 +569,7 @@ def build_reviewed_match_details_fact_candidates(
         raise FotMobReviewedMatchDetailsFactCandidateError(
             "at least one explicit PR #54 APPROVED scalar decision is required"
         )
+
     payload = _strict_json_object(raw_bytes)
     evidence_file_path = _evidence_path(evidence)
     facts: list[FixtureIntelligenceFact] = []
@@ -483,6 +606,7 @@ def build_reviewed_match_details_fact_candidates(
                 "Fixture Intelligence UNVERIFIED fact construction failed closed"
             ) from exc
         facts.append(fact)
+
     sorted_facts = tuple(
         sorted(
             facts,
@@ -503,6 +627,9 @@ def build_reviewed_match_details_fact_candidates(
         raw_sha256=rebuilt_review.raw_sha256,
         fixture_identifier=rebuilt_review.fixture_identifier,
         source_match_id=rebuilt_review.source_match_id,
+        kickoff=evidence.kickoff,
+        observed_at=evidence.observed_at,
+        reviewed_at=rebuilt_review.reviewed_at,
         evidence_file_path=evidence_file_path,
         facts=sorted_facts,
         safety=_default_safety(),
@@ -525,8 +652,12 @@ def sha256_reviewed_match_details_fact_candidates(value: Any) -> str:
 
 
 __all__ = [
-    "CAPTURE_ROOT", "DATASET_NAME", "SCHEMA_VERSION", "SOURCE_PROVIDER",
-    "FotMobReviewedMatchDetailsFactCandidateError", "ReviewedMatchDetailsFactCandidates",
+    "CAPTURE_ROOT",
+    "DATASET_NAME",
+    "SCHEMA_VERSION",
+    "SOURCE_PROVIDER",
+    "FotMobReviewedMatchDetailsFactCandidateError",
+    "ReviewedMatchDetailsFactCandidates",
     "build_reviewed_match_details_fact_candidates",
     "canonical_reviewed_match_details_fact_candidates_bytes",
     "sha256_reviewed_match_details_fact_candidates",
