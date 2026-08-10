@@ -34,6 +34,7 @@ from domain.fotmob_fixture_candidate_review import (
     FixtureCandidateReviewDisposition,
     FotMobFixtureCandidateReviewDecision,
     FotMobFixtureCandidateReviewError,
+    FotMobReviewedFixtureCatalogInput,
     build_fotmob_fixture_candidate_review_bundle,
     canonical_fotmob_fixture_candidate_bytes,
     canonical_fotmob_fixture_candidate_review_bundle_bytes,
@@ -449,6 +450,38 @@ def test_review_bundle_rejects_derived_count_mutation():
         dataclasses.replace(reviewed, unreviewed_count=1)
     with pytest.raises(FotMobFixtureCandidateReviewError):
         dataclasses.replace(reviewed, schema_version=True)
+
+
+def test_reviewed_catalog_input_requires_canonical_source_match_identifier():
+    bundle, candidate, _ = _single_bundle()
+    reviewed = build_fotmob_fixture_candidate_review_bundle(bundle, (_decision(candidate),))
+    item = reviewed.approved_catalog_inputs[0]
+    for invalid in ("abc", "001001", "+1001", " 1001 "):
+        with pytest.raises(FotMobFixtureCandidateReviewError, match="source_fixture_identifier"):
+            dataclasses.replace(item, source_fixture_identifier=invalid)
+
+
+def test_reviewed_catalog_input_requires_exact_manifest_source_reference():
+    bundle, candidate, _ = _single_bundle()
+    reviewed = build_fotmob_fixture_candidate_review_bundle(bundle, (_decision(candidate),))
+    item = reviewed.approved_catalog_inputs[0]
+    with pytest.raises(FotMobFixtureCandidateReviewError, match="source_reference"):
+        dataclasses.replace(item, source_reference="FotMob reviewed record")
+
+
+def test_review_bundle_rejects_approved_input_review_metadata_mutation():
+    bundle, candidate, _ = _single_bundle()
+    reviewed = build_fotmob_fixture_candidate_review_bundle(bundle, (_decision(candidate),))
+    item = reviewed.approved_catalog_inputs[0]
+    changed_reference = dataclasses.replace(item, reviewer_reference="operator:other-review")
+    with pytest.raises(FotMobFixtureCandidateReviewError, match="review metadata"):
+        dataclasses.replace(reviewed, approved_catalog_inputs=(changed_reference,))
+    changed_time = dataclasses.replace(
+        item,
+        reviewed_at=item.reviewed_at + datetime.timedelta(seconds=1),
+    )
+    with pytest.raises(FotMobFixtureCandidateReviewError, match="review metadata"):
+        dataclasses.replace(reviewed, approved_catalog_inputs=(changed_time,))
 
 
 def test_exact_enum_types_and_reviewer_reference_are_required():
