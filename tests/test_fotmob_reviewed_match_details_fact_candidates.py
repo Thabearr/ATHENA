@@ -109,6 +109,10 @@ def test_approved_scalars_become_only_unverified_fixture_intelligence_facts() ->
     )
     expected_path = str(CAPTURE_ROOT / expected_identifier / "response.json")
     assert bundle.evidence_file_path == expected_path
+    assert bundle.kickoff == evidence.kickoff
+    assert bundle.observed_at == evidence.observed_at
+    assert bundle.reviewed_at == REVIEWED_AT
+    assert all(fact.observed_at == evidence.observed_at for fact in bundle.facts)
     assert all(fact.evidence_file_path == expected_path for fact in bundle.facts)
     assert all(fact.evidence_sha256 == evidence.raw_sha256 for fact in bundle.facts)
     assert all(value is False for value in bundle.safety.values())
@@ -206,7 +210,6 @@ def test_runtime_value_kind_cannot_drift_from_reviewed_kind() -> None:
     decision = _approved("/alpha/value", JsonValueKind.INTEGER, "synthetic_scalar")
     chain = _chain(original, (decision,))
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
-    # Any raw-byte change is rejected by the ancestry chain before resolution.
     with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError):
         build_reviewed_match_details_fact_candidates(
             evidence=evidence,
@@ -230,3 +233,33 @@ def test_candidate_bundle_rejects_any_attempt_to_upgrade_fact_status() -> None:
     )
     with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError, match="UNVERIFIED"):
         dataclasses.replace(bundle, facts=(supported,))
+
+
+def test_detached_bundle_rejects_timestamp_path_value_and_reference_drift() -> None:
+    raw = b'{"alpha":{"value":100}}'
+    decision = _approved("/alpha/value", JsonValueKind.INTEGER, "synthetic_scalar")
+    bundle, _ = _build(raw, (decision,))
+
+    with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError, match="evidence_file_path"):
+        dataclasses.replace(bundle, evidence_file_path=".cache/athena-research/wrong/response.json")
+
+    shifted_fact = dataclasses.replace(
+        bundle.facts[0],
+        observed_at=bundle.observed_at + datetime.timedelta(seconds=1),
+    )
+    with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError, match="observed_at"):
+        dataclasses.replace(bundle, facts=(shifted_fact,))
+
+    mapping_fact = dataclasses.replace(bundle.facts[0], value={"invented": 1})
+    with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError, match="non-null JSON scalar"):
+        dataclasses.replace(bundle, facts=(mapping_fact,))
+
+    wrong_reference = dataclasses.replace(
+        bundle.facts[0],
+        source_reference="/api/matchDetails?matchId=9999#/alpha/value",
+    )
+    with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError, match="source_reference"):
+        dataclasses.replace(bundle, facts=(wrong_reference,))
+
+    with pytest.raises(FotMobReviewedMatchDetailsFactCandidateError, match="reviewed_at"):
+        dataclasses.replace(bundle, reviewed_at=bundle.kickoff)
