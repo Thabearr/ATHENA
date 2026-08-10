@@ -356,15 +356,21 @@ def resolve_reviewed_fixture_intelligence_identity(
     bootstrap: Any,
     fixture_identifier: Any,
 ) -> ReviewedFixtureIntelligenceIdentity:
-    """Resolve one exact verified identity; no aliases or fuzzy matching."""
+    """Resolve one exact verified identity after full bootstrap revalidation."""
 
     if type(bootstrap) is not ReviewedFixtureIntelligenceBootstrap:
         raise ReviewedFixtureIntelligenceBootstrapError(
             "bootstrap must be exact ReviewedFixtureIntelligenceBootstrap"
         )
+    try:
+        checked = dataclasses.replace(bootstrap)
+    except (ReviewedFixtureIntelligenceBootstrapError, TypeError, ValueError) as exc:
+        raise ReviewedFixtureIntelligenceBootstrapError(
+            "bootstrap failed exact revalidation before fixture identity resolution"
+        ) from exc
     identifier = _strict_string(fixture_identifier, "fixture_identifier")
     matches = tuple(
-        item for item in bootstrap.fixtures if item.fixture_identifier == identifier
+        item for item in checked.fixtures if item.fixture_identifier == identifier
     )
     if len(matches) != 1:
         raise ReviewedFixtureIntelligenceBootstrapError(
