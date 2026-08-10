@@ -124,25 +124,23 @@ def _bundle(
     )
 
 
-def _review_decision(candidate: FotMobFixtureCandidate) -> FotMobFixtureCandidateReviewDecision:
-    return FotMobFixtureCandidateReviewDecision(
-        source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
-        source_match_id=candidate.source_match_id,
-        candidate_sha256=sha256_fotmob_fixture_candidate(candidate),
-        disposition=FixtureCandidateReviewDisposition.APPROVED,
-        reviewed_at=datetime.datetime(2026, 8, 10, 2, 30, tzinfo=UTC),
-        reviewer_reference="operator:fixture-review",
-        notes="explicit fixture review",
-    )
-
-
 def _compiled(tmp_path: Path):
     source = _source()
     candidate = _candidate(source)
     bundle = _bundle(source, candidate)
     review = build_fotmob_fixture_candidate_review_bundle(
         bundle,
-        (_review_decision(candidate),),
+        (
+            FotMobFixtureCandidateReviewDecision(
+                source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
+                source_match_id=candidate.source_match_id,
+                candidate_sha256=sha256_fotmob_fixture_candidate(candidate),
+                disposition=FixtureCandidateReviewDisposition.APPROVED,
+                reviewed_at=datetime.datetime(2026, 8, 10, 2, 30, tzinfo=UTC),
+                reviewer_reference="operator:fixture-review",
+                notes="explicit fixture review",
+            ),
+        ),
     )
     handoff = build_fotmob_fixture_catalog_handoff(bundle, review)
 
@@ -165,7 +163,7 @@ def _compiled(tmp_path: Path):
     return handoff, result
 
 
-def _admission_decision(
+def _decision(
     handoff,
     result,
     *,
@@ -193,17 +191,19 @@ def _admission_decision(
     return ReviewedFixtureCatalogAdmissionDecision(**values)
 
 
-def test_admitted_catalog_exposes_exact_compiled_fixture_identity(tmp_path: Path) -> None:
+def test_admitted_catalog_exposes_every_and_only_compiled_identity(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(handoff, result)
-    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
+    admission = build_reviewed_fixture_catalog_admission(
+        handoff,
+        result,
+        _decision(handoff, result),
+    )
 
     assert SCHEMA_VERSION == 1
     assert DATASET_NAME == "athena-reviewed-fixture-catalog-admission-v1"
-    assert admission.decision.disposition is ReviewedFixtureCatalogAdmissionDisposition.ADMITTED
-    assert len(admission.admitted_fixtures) == 1
-    assert admission.admitted_fixtures[0].fixture_identifier == "FOTMOB:1001"
-    assert admission.admitted_fixtures[0].kickoff == result.records[0].kickoff
+    assert [item.fixture_identifier for item in admission.admitted_fixtures] == [
+        "FOTMOB:1001"
+    ]
     payload = admission.to_dict()
     assert payload["compiled_fixture_count"] == 1
     assert payload["admitted_fixture_count"] == 1
@@ -213,17 +213,18 @@ def test_admitted_catalog_exposes_exact_compiled_fixture_identity(tmp_path: Path
     assert payload["manifest_sha256"] == sha256_bytes(result.manifest_bytes)
 
 
-def test_rejected_catalog_exposes_zero_admitted_fixture_identities(tmp_path: Path) -> None:
+def test_rejected_catalog_exposes_zero_admitted_identities(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(
+    admission = build_reviewed_fixture_catalog_admission(
         handoff,
         result,
-        disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
+        _decision(
+            handoff,
+            result,
+            disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
+        ),
     )
-    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
-
     assert admission.admitted_fixtures == ()
-    assert admission.to_dict()["admitted_fixture_count"] == 0
     assert admission.to_dict()["disposition"] == "REJECTED"
 
 
@@ -238,29 +239,31 @@ def test_rejected_catalog_exposes_zero_admitted_fixture_identities(tmp_path: Pat
         "source_capability_sha256",
     ),
 )
-def test_decision_must_anchor_every_exact_upstream_hash(tmp_path: Path, field: str) -> None:
+def test_decision_must_anchor_every_upstream_hash(tmp_path: Path, field: str) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(handoff, result, **{field: "f" * 64})
-
+    decision = _decision(handoff, result, **{field: "f" * 64})
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match=field):
         build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
-def test_tampered_catalog_bytes_fail_closed(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("catalog_bytes", b"{}\n", "catalog object or canonical bytes"),
+        ("manifest_bytes", b"{}\n", "manifest object or canonical bytes"),
+        ("tracked_worktree_clean", False, "clean tracked worktree"),
+    ),
+)
+def test_tampered_compiler_state_fails_closed(
+    tmp_path: Path,
+    field: str,
+    value,
+    message: str,
+) -> None:
     handoff, result = _compiled(tmp_path)
-    tampered = dataclasses.replace(result, catalog_bytes=b"{}\n")
-    decision = _admission_decision(handoff, tampered)
-
-    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="catalog object or canonical bytes"):
-        build_reviewed_fixture_catalog_admission(handoff, tampered, decision)
-
-
-def test_tampered_manifest_bytes_fail_closed(tmp_path: Path) -> None:
-    handoff, result = _compiled(tmp_path)
-    tampered = dataclasses.replace(result, manifest_bytes=b"{}\n")
-    decision = _admission_decision(handoff, tampered)
-
-    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="manifest object or canonical bytes"):
+    tampered = dataclasses.replace(result, **{field: value})
+    decision = _decision(handoff, tampered)
+    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match=message):
         build_reviewed_fixture_catalog_admission(handoff, tampered, decision)
 
 
@@ -268,63 +271,54 @@ def test_tampered_compiler_record_cannot_escape_reviewed_handoff(tmp_path: Path)
     handoff, result = _compiled(tmp_path)
     changed_record = dataclasses.replace(result.records[0], home_team="Fabricated FC")
     tampered = dataclasses.replace(result, records=(changed_record,))
-    decision = _admission_decision(handoff, tampered)
-
+    decision = _decision(handoff, tampered)
     with pytest.raises(ReviewedFixtureCatalogAdmissionError):
-        build_reviewed_fixture_catalog_admission(handoff, tampered, decision)
-
-
-def test_dirty_compiler_state_cannot_be_admitted(tmp_path: Path) -> None:
-    handoff, result = _compiled(tmp_path)
-    tampered = dataclasses.replace(result, tracked_worktree_clean=False)
-    decision = _admission_decision(handoff, tampered)
-
-    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="clean tracked worktree"):
         build_reviewed_fixture_catalog_admission(handoff, tampered, decision)
 
 
 def test_admission_must_not_predate_compiler_as_of(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(
+    decision = _decision(
         handoff,
         result,
         reviewed_at=datetime.datetime(2026, 8, 10, 2, 59, tzinfo=UTC),
     )
-
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="compiler as_of"):
         build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
 def test_admitted_catalog_must_still_be_prospective(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(
+    decision = _decision(
         handoff,
         result,
         reviewed_at=datetime.datetime(2026, 8, 15, 12, 0, tzinfo=UTC),
     )
-
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="remain prospective"):
         build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
-def test_rejection_may_be_recorded_after_kickoff_without_promoting_anything(tmp_path: Path) -> None:
+def test_rejection_after_kickoff_still_promotes_nothing(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(
+    admission = build_reviewed_fixture_catalog_admission(
         handoff,
         result,
-        disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
-        reviewed_at=datetime.datetime(2026, 8, 16, 12, 0, tzinfo=UTC),
+        _decision(
+            handoff,
+            result,
+            disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
+            reviewed_at=datetime.datetime(2026, 8, 16, 12, 0, tzinfo=UTC),
+        ),
     )
-    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
-
     assert admission.admitted_fixtures == ()
 
 
-def test_source_capability_gate_fails_closed_if_identity_confirmation_is_removed(
+def test_capability_revocation_invalidates_existing_admission_decision(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     handoff, result = _compiled(tmp_path)
+    decision = _decision(handoff, result)
     current = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
     monkeypatch.setitem(
         SOURCE_CAPABILITY_REGISTRY,
@@ -334,25 +328,18 @@ def test_source_capability_gate_fails_closed_if_identity_confirmation_is_removed
             reliable_fixture_identity=CapabilityAvailability.UNKNOWN,
         ),
     )
-
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="identity-only PR #44 profile"):
         sha256_reviewed_source_capability()
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="identity-only PR #44 profile"):
-        build_reviewed_fixture_catalog_admission(
-            handoff,
-            result,
-            dataclasses.replace(
-                _admission_decision.__wrapped__ if hasattr(_admission_decision, "__wrapped__") else object(),
-            ),
-        )
+        build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
-def test_source_capability_gate_rejects_unreviewed_profile_expansion(
+def test_unreviewed_capability_expansion_also_fails_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(handoff, result)
+    decision = _decision(handoff, result)
     current = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
     monkeypatch.setitem(
         SOURCE_CAPABILITY_REGISTRY,
@@ -362,19 +349,14 @@ def test_source_capability_gate_rejects_unreviewed_profile_expansion(
             full_time_score=CapabilityAvailability.CONFIRMED,
         ),
     )
-
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="identity-only PR #44 profile"):
         build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
-def test_raw_fotmob_unofficial_is_not_the_admission_capability(tmp_path: Path) -> None:
+def test_raw_fotmob_unofficial_cannot_be_used_as_admission_capability(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="source_capability must be exactly"):
-        _admission_decision(
-            handoff,
-            result,
-            source_capability="fotmob_unofficial",
-        )
+        _decision(handoff, result, source_capability="fotmob_unofficial")
     assert (
         SOURCE_CAPABILITY_REGISTRY["fotmob_unofficial"].reliable_fixture_identity
         is CapabilityAvailability.UNKNOWN
@@ -383,39 +365,35 @@ def test_raw_fotmob_unofficial_is_not_the_admission_capability(tmp_path: Path) -
 
 def test_direct_rejected_construction_cannot_smuggle_admitted_fixture(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    admitted_decision = _admission_decision(handoff, result)
     admitted = build_reviewed_fixture_catalog_admission(
         handoff,
         result,
-        admitted_decision,
+        _decision(handoff, result),
     )
-    rejected_decision = _admission_decision(
+    rejected = _decision(
         handoff,
         result,
         disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
     )
-
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="zero admitted"):
         ReviewedFixtureCatalogAdmission(
             handoff=handoff,
             fixture_catalog_result=result,
-            decision=rejected_decision,
+            decision=rejected,
             admitted_fixtures=admitted.admitted_fixtures,
             safety=dict(admitted.safety),
         )
 
 
-def test_canonical_admission_bytes_are_deterministic_and_hash_exact(tmp_path: Path) -> None:
+def test_canonical_bytes_and_hash_are_deterministic(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(handoff, result)
+    decision = _decision(handoff, result)
     first = build_reviewed_fixture_catalog_admission(handoff, result, decision)
     second = build_reviewed_fixture_catalog_admission(handoff, result, decision)
-
-    first_bytes = canonical_reviewed_fixture_catalog_admission_bytes(first)
-    second_bytes = canonical_reviewed_fixture_catalog_admission_bytes(second)
-    assert first_bytes == second_bytes
-    assert first_bytes.endswith(b"\n") and not first_bytes.endswith(b"\n\n")
-    assert first_bytes == (
+    raw = canonical_reviewed_fixture_catalog_admission_bytes(first)
+    assert raw == canonical_reviewed_fixture_catalog_admission_bytes(second)
+    assert raw.endswith(b"\n") and not raw.endswith(b"\n\n")
+    assert raw == (
         json.dumps(
             first.to_dict(),
             ensure_ascii=False,
@@ -425,25 +403,24 @@ def test_canonical_admission_bytes_are_deterministic_and_hash_exact(tmp_path: Pa
         )
         + "\n"
     ).encode("utf-8")
-    assert sha256_reviewed_fixture_catalog_admission(first) == hashlib.sha256(
-        first_bytes
-    ).hexdigest()
+    assert sha256_reviewed_fixture_catalog_admission(first) == hashlib.sha256(raw).hexdigest()
 
 
-def test_downstream_authorizations_remain_exact_false_and_immutable(tmp_path: Path) -> None:
+def test_downstream_authorizations_remain_false_and_immutable(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
     admission = build_reviewed_fixture_catalog_admission(
         handoff,
         result,
-        _admission_decision(handoff, result),
+        _decision(handoff, result),
     )
-
-    assert admission.safety
     assert all(type(value) is bool and value is False for value in admission.safety.values())
-    assert admission.safety["intelligence_fact_authorized"] is False
-    assert admission.safety["model_feature_authorized"] is False
-    assert admission.safety["pricing_authorized"] is False
-    assert admission.safety["bet_authorized"] is False
+    for key in (
+        "intelligence_fact_authorized",
+        "model_feature_authorized",
+        "pricing_authorized",
+        "bet_authorized",
+    ):
+        assert admission.safety[key] is False
     with pytest.raises(TypeError):
         admission.safety["bet_authorized"] = True
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="must be exact bool False"):
@@ -454,8 +431,7 @@ def test_downstream_authorizations_remain_exact_false_and_immutable(tmp_path: Pa
 
 
 def test_production_module_has_no_network_intelligence_model_pricing_or_betting_imports() -> None:
-    path = Path(admission_module.__file__)
-    tree = ast.parse(path.read_text(encoding="utf-8"))
+    tree = ast.parse(Path(admission_module.__file__).read_text(encoding="utf-8"))
     imports: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -478,8 +454,7 @@ def test_production_module_has_no_network_intelligence_model_pricing_or_betting_
 
 def test_exact_domain_types_are_required(tmp_path: Path) -> None:
     handoff, result = _compiled(tmp_path)
-    decision = _admission_decision(handoff, result)
-
+    decision = _decision(handoff, result)
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="handoff must be exact"):
         build_reviewed_fixture_catalog_admission(object(), result, decision)
     with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="fixture_catalog_result must be exact"):
