@@ -188,6 +188,10 @@ SOURCE_CAPABILITY_REGISTRY: Dict[str, SourceCapabilities] = {
                 "competition and kickoff structure"
             ),
             (
+                "domain/fotmob_fixture_candidates.py: provenance-backed UNREVIEWED "
+                "source match, team, competition and kickoff mapping"
+            ),
+            (
                 "domain/fotmob_fixture_candidate_review.py: exact candidate "
                 "review key, conflict blockers and explicit APPROVED decision"
             ),
@@ -196,8 +200,12 @@ SOURCE_CAPABILITY_REGISTRY: Dict[str, SourceCapabilities] = {
                 "candidate bundle reconstruction before catalog input"
             ),
             (
+                "domain/fixture_catalog.py: source-scoped FOTMOB fixture identity "
+                "and strict provenance normalization"
+            ),
+            (
                 "scripts/manage_fotmob_reviewed_fixture_catalog.py: reviewed "
-                "handoff preflight and PR #29 catalog compilation"
+                "handoff preflight before PR #29 output commit"
             ),
         ),
         notes=(
