@@ -90,7 +90,11 @@ Duplicate identifiers, omissions, additions, changed kickoffs, changed receipt b
 
 `resolve_reviewed_fixture_intelligence_identity(...)` performs exact lookup only.
 
-It has no:
+Before returning any identity, the resolver reconstructs the whole bootstrap through its constructor. That reruns the PR #46 object/receipt validation, current capability check, ancestry reconciliation, exact fixture-set check, safety validation, and prospective-verification-time gate. A bootstrap whose frozen fields were forcibly mutated, or whose reviewed capability has since been revoked, therefore cannot be used for a new identity resolution merely because its Python type still matches.
+
+Historical canonical bootstrap bytes remain available for audit even when current resolution eligibility is later revoked.
+
+The resolver has no:
 
 - team-name matching;
 - alias table;
