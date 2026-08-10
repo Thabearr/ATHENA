@@ -12,7 +12,7 @@ The path is:
 reviewed fixture identity
 → PR #48 verified Fixture Intelligence bootstrap artifact
 → PR #49 reviewed one-request match-details plan
-→ PR #50 self-validating full raw response + manifest contract
+→ PR #50 self-validating full raw response + detached manifest artifact
 → later durable writer / offline schema review
 ```
 
@@ -74,6 +74,19 @@ The manifest records detached provenance only:
 The `FotMobReviewedMatchDetailsRawCapture` couples the exact body bytes to that manifest. Reconstructing the capture revalidates the manifest, raw size and raw SHA-256.
 
 Canonical manifest serialization is sorted-key, compact UTF-8 JSON with one trailing newline. The raw response bytes themselves are never embedded in the manifest.
+
+## Detached capture artifact
+
+`build_reviewed_match_details_capture_artifact(...)` is the final in-memory output of PR #50. It revalidates the raw capture and freezes:
+
+- the exact canonical manifest bytes;
+- the manifest SHA-256;
+- the raw body SHA-256;
+- the raw body size.
+
+This separation matters for the next writer boundary. A later writer can persist the exact bytes produced by PR #50 rather than recomputing a manifest from a live nested object at write time.
+
+If nested capture or manifest state is later forcibly mutated, the already-captured `manifest_bytes` remain historical audit bytes, while `revalidate_reviewed_match_details_capture_artifact(...)` fails closed for any new use. Changed manifest bytes, manifest hash, raw hash, or raw size are rejected.
 
 ## Capture identity
 
