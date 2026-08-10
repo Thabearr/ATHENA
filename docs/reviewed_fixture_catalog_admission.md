@@ -100,6 +100,8 @@ The admission object serializes as compact, sorted, UTF-8 JSON with `allow_nan=F
 
 The canonical admission SHA-256 therefore changes if any admitted fixture, upstream evidence identity, compiler artifact, capability profile, or operator decision changes.
 
+Once a decision has passed admission validation, serialization uses the capability SHA-256 captured in that immutable decision. It does not re-read the mutable global capability registry. A later registry change can block a new or revalidated admission, but it cannot silently mutate the canonical bytes or SHA-256 of the historical admission object.
+
 ## Safety boundary
 
 All downstream authorization flags remain exact `False` and immutable:
