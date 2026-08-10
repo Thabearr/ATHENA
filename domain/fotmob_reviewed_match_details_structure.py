@@ -164,7 +164,10 @@ def _kind(value: Any) -> JsonValueKind:
 
 
 def _escape_pointer_token(value: str) -> str:
-    return value.replace("~", "~0").replace("/", "~1")
+    # ATHENA reserves the literal segment '*' for array wildcards. Normal
+    # RFC-6901 escaping is extended with ~2 for a literal '*' key, after ~ is
+    # escaped first, so the mapping remains injective.
+    return value.replace("~", "~0").replace("/", "~1").replace("*", "~2")
 
 
 def _validate_pointer(value: Any) -> str:
