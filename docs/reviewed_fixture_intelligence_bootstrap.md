@@ -26,29 +26,35 @@ PR #47 does **not** promote any football fact into Fixture Intelligence. It crea
 
 `domain/fixture_intelligence.py` intentionally defines a general deterministic snapshot contract. Its `build_snapshot(...)` primitive accepts a fixture identifier and kickoff because PR #30 defined how trusted facts are represented, not how a particular live fixture identity becomes eligible for that layer.
 
-PR #45 admitted an exact reviewed catalog, but PR #46 added the separate current-use check that exact canonical admission bytes still match an exact, currently revalidatable `ADMITTED` admission and emitted a deterministic verification receipt.
+PR #45 admitted an exact reviewed catalog. PR #46 then added the separate current-use check that exact canonical admission bytes still match an exact, currently revalidatable `ADMITTED` admission and emitted a deterministic verification receipt.
 
-PR #47 therefore does **not** accept a PR #45 admission object directly. A caller that has only `ReviewedFixtureCatalogAdmission` must first pass the PR #46 verifier. This prevents the Fixture Intelligence bootstrap from bypassing the canonical artifact-verification boundary.
-
-A non-empty raw fixture identifier, an unverified PR #45 object, or a merely type-shaped object is not proof of bootstrap eligibility.
+PR #47 therefore does **not** accept a PR #45 admission object directly. A caller that has only `ReviewedFixtureCatalogAdmission` must first pass the PR #46 verifier. A non-empty raw fixture identifier, an unverified PR #45 object, or a merely type-shaped object is not proof of bootstrap eligibility.
 
 ## Accepted input
 
-`build_reviewed_fixture_intelligence_bootstrap(...)` accepts only an exact `VerifiedReviewedFixtureCatalogAdmissionArtifact` from PR #46.
+`build_reviewed_fixture_intelligence_bootstrap(...)` accepts exactly two inputs from PR #46:
+
+1. an exact `VerifiedReviewedFixtureCatalogAdmissionArtifact` object;
+2. the exact immutable canonical verification-receipt `bytes` produced for that object.
+
+The second input is deliberate. Recomputing a receipt hash from a Python object alone would not prove that the exact canonical receipt bytes presented by the previous trust boundary were unchanged.
 
 Before construction succeeds, PR #47:
 
-1. reconstructs the supplied PR #46 verified artifact through its own frozen dataclass constructor;
-2. therefore re-runs PR #46's current PR #45 semantic/capability revalidation and exact admission/artifact-byte checks;
-3. canonicalizes the supplied verification receipt and the reconstructed receipt and requires byte-for-byte equality;
-4. requires a non-empty admitted fixture set;
-5. computes and captures the exact PR #46 verification-receipt SHA-256;
-6. carries forward the exact PR #45 admission SHA-256 and its candidate/review/handoff/catalog/manifest ancestry;
-7. requires every fixture still to be prospective at the **PR #46 verification timestamp**, not merely at the older PR #45 admission-review time.
+1. requires the verifier object to be the exact PR #46 domain type;
+2. requires the receipt to be exact immutable `bytes`;
+3. canonicalizes the supplied verifier object's receipt;
+4. reconstructs the verifier object through its own PR #46 frozen dataclass constructor, thereby rerunning PR #46's current PR #45 semantic/capability revalidation and exact admission/artifact-byte checks;
+5. canonicalizes the reconstructed PR #46 receipt and requires it to equal the supplied object's canonical receipt exactly;
+6. requires the caller-provided receipt bytes to equal those canonical bytes byte-for-byte;
+7. computes SHA-256 over those exact caller-presented receipt bytes;
+8. requires a non-empty admitted fixture set;
+9. carries forward the exact PR #45 admission SHA-256 and candidate/review/handoff/catalog/manifest ancestry;
+10. requires every fixture still to be prospective at the **PR #46 verification timestamp**, not merely at the older PR #45 admission-review time.
 
-A stale capability profile, forcibly mutated verifier object, changed admission, changed artifact bytes, changed safety state, or verification at/after kickoff fails closed.
+Changed whitespace, an extra or missing newline, mutated verifier state, changed admission state, changed PR #45 artifact bytes, changed safety state, capability revocation, or verification at/after kickoff fails closed.
 
-PR #46 itself deliberately permits a historical artifact to be verified after kickoff because its job is byte/semantic verification rather than prospective Fixture Intelligence admission. PR #47 adds the stricter prospective requirement at the point where identity is allowed to enter the Fixture Intelligence bootstrap.
+PR #46 itself can verify a historical admission artifact after kickoff because its job is byte/semantic verification rather than prospective Fixture Intelligence admission. PR #47 adds the stricter prospective requirement at the point where identity is allowed into the Fixture Intelligence bootstrap.
 
 ## Output contract
 
@@ -59,14 +65,14 @@ Each bootstrapped identity contains only:
   "fixture_identifier": "FOTMOB:<source match id>",
   "kickoff": "<UTC timestamp>",
   "admission_sha256": "<exact PR #45 canonical admission SHA-256>",
-  "verification_receipt_sha256": "<exact PR #46 receipt SHA-256>"
+  "verification_receipt_sha256": "<exact presented PR #46 receipt SHA-256>"
 }
 ```
 
 The bootstrap as a whole captures only detached reviewed ancestry and timestamps:
 
 - PR #46 verification dataset identity;
-- exact PR #46 verification-receipt SHA-256;
+- exact PR #46 verification-receipt SHA-256 and byte length;
 - exact PR #46 verification timestamp;
 - PR #45 admission SHA-256;
 - PR #45 admission-review timestamp;
@@ -78,7 +84,7 @@ The bootstrap as a whole captures only detached reviewed ancestry and timestamps
 - PR #29 manifest SHA-256;
 - every and only verified admitted `FOTMOB:<match id>` identity + kickoff.
 
-Duplicate identifiers, omissions, additions, changed kickoffs, changed receipt ancestry, changed catalog ancestry, or non-FotMob identifiers fail closed.
+Duplicate identifiers, omissions, additions, changed kickoffs, changed receipt bytes, changed receipt ancestry, changed catalog ancestry, or non-FotMob identifiers fail closed.
 
 ## Exact identity resolution
 
@@ -98,11 +104,11 @@ For example, `FOTMOB:1001` does not silently match `fotmob:1001`, `FOTMOB:01001`
 
 ## Historical determinism
 
-Bootstrap construction revalidates the exact PR #46 artifact against the current reviewed capability profile. If that capability is later revoked or changed, a **new** bootstrap from an old verifier object fails closed.
+Bootstrap construction revalidates the exact PR #46 object and exact presented receipt bytes against the current reviewed capability profile. If that capability is later revoked or changed, a **new** bootstrap from an old verifier object fails closed.
 
-Once a bootstrap has been validly created, its canonical serialization deliberately reads only detached scalar ancestry, timestamps, immutable fixture identities, and its own safety mapping. It does not re-read the nested PR #46 verifier object during serialization.
+Once a bootstrap has been validly created, its canonical serialization deliberately reads only detached scalar ancestry, timestamps, receipt SHA/size, immutable fixture identities, and its own safety mapping. It does not re-read the nested PR #46 verifier object during serialization.
 
-Therefore later mutation of the live capability registry—or even a forcibly mutated nested verifier object—cannot alter the already-created bootstrap's canonical historical bytes. A new construction/revalidation from corrupted state still fails closed.
+Therefore later mutation of the live capability registry—or even forced mutation of the nested verifier object—cannot alter the already-created bootstrap's canonical historical bytes. A new construction from corrupted object state or receipt mismatch still fails closed.
 
 Canonical bootstrap bytes are compact, sorted-key UTF-8 JSON with `allow_nan=False` and one final newline. The bootstrap SHA-256 is over those exact bytes.
 
