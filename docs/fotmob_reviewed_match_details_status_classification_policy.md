@@ -74,6 +74,28 @@ ELIGIBLE_FOR_LATER_CLASSIFICATION
 
 This means only that a later evaluator is allowed to inspect freshness and conflict conditions. It does **not** mean `SUPPORTED`.
 
+## Frozen freshness comparison
+
+The deadline comparison itself is part of PR #60's reviewed policy contract rather than something the later evaluator may invent.
+
+The exact rule is:
+
+```text
+FRESHNESS_COMPARISON = CLASSIFIED_AT_LE_FRESH_UNTIL
+```
+
+or equivalently:
+
+```text
+fresh exactly when classified_at <= fresh_until
+```
+
+Equality at the deadline is intentionally fresh. One microsecond later is outside the reviewed freshness window.
+
+`is_within_reviewed_freshness_window(...)` is the reusable time-only helper for that rule. It requires exact `datetime.timezone.utc`, requires observation/deadline/classification times to remain prospective and strictly pre-kickoff, and returns only a boolean. It creates no Fixture Intelligence status.
+
+This split prevents a later evaluator from silently switching between `<` and `<=` at the trust boundary.
+
 ## REJECTED observations
 
 A PR #58 `REJECTED` observation is mechanically recorded as:
@@ -184,4 +206,4 @@ All safety flags are exact immutable `false`.
 
 The next safe boundary is a deterministic **status evaluator** that consumes exact PR #57 facts + exact revalidated PR #58 qualification + exact revalidated PR #60 policy at an explicit UTC classification timestamp.
 
-That evaluator should be able to produce only evidence-status candidates such as fresh-qualified, stale-qualified or blocked. Multi-observation conflict aggregation should remain explicit and must never silently prefer the newest value.
+That evaluator should reuse `is_within_reviewed_freshness_window(...)` and produce only evidence-status candidates such as fresh-qualified, stale-qualified or blocked. Multi-observation conflict aggregation should remain explicit and must never silently prefer the newest value.
