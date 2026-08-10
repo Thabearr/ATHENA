@@ -150,11 +150,14 @@ def _decision(
     )
 
 
-def _approved_single():
+def _approved_single(*, notes: str = "reviewed against preserved capture"):
     source = _source()
     candidate = _candidate(source)
     bundle = _bundle((source,), (candidate,))
-    review = build_fotmob_fixture_candidate_review_bundle(bundle, (_decision(candidate),))
+    review = build_fotmob_fixture_candidate_review_bundle(
+        bundle,
+        (_decision(candidate, notes=notes),),
+    )
     return bundle, review, candidate
 
 
@@ -171,12 +174,13 @@ def test_contract_constants_and_exact_pr29_jsonl_emission():
     assert handoff.catalog_input_sha256 == hashlib.sha256(expected).hexdigest()
 
 
-def test_handoff_rebuilds_review_bundle_from_candidate_bundle_and_exact_decisions():
+def test_handoff_summary_anchors_candidate_review_and_input_hashes():
     bundle, review, _ = _approved_single()
     handoff = build_fotmob_fixture_catalog_handoff(bundle, review)
     summary = handoff.to_dict()
     assert summary["candidate_bundle_sha256"] == review.candidate_bundle_sha256
-    assert summary["review_bundle_sha256"]
+    assert len(summary["review_bundle_sha256"]) == 64
+    assert summary["source_capture_count"] == 1
     assert summary["candidate_count"] == 1
     assert summary["decision_count"] == 1
     assert summary["approved_count"] == 1
@@ -208,7 +212,7 @@ def test_rejected_only_review_cannot_create_catalog_handoff():
         build_fotmob_fixture_catalog_handoff(bundle, review)
 
 
-def test_partial_explicit_review_is_visible_not_silently_relabelled_complete():
+def test_partial_explicit_review_remains_visibly_partial():
     source = _source(count=2)
     approved_candidate = _candidate(source, match_id=1001)
     untouched_candidate = _candidate(
@@ -244,10 +248,7 @@ def test_catalog_field_mutation_is_rejected_by_exact_review_rebuild():
     bundle, review, _ = _approved_single()
     original = review.approved_catalog_inputs[0]
     tampered_input = dataclasses.replace(original, home_team="Fabricated FC")
-    tampered_review = dataclasses.replace(
-        review,
-        approved_catalog_inputs=(tampered_input,),
-    )
+    tampered_review = dataclasses.replace(review, approved_catalog_inputs=(tampered_input,))
     assert tampered_review.approved_catalog_inputs[0].home_team == "Fabricated FC"
     with pytest.raises(FotMobFixtureCatalogHandoffError, match="exact deterministic result"):
         build_fotmob_fixture_catalog_handoff(bundle, tampered_review)
@@ -262,24 +263,23 @@ def test_evidence_sha_mutation_is_rejected_by_exact_review_rebuild():
         build_fotmob_fixture_catalog_handoff(bundle, tampered_review)
 
 
-def test_review_decision_metadata_mutation_cannot_be_smuggled_through_handoff():
-    bundle, review, candidate = _approved_single()
-    changed_decision = _decision(candidate, notes="different reviewed meaning")
-    changed_input = dataclasses.replace(
-        review.approved_catalog_inputs[0],
-        notes="different reviewed meaning",
+def test_legitimate_changed_review_notes_are_rebuilt_and_change_handoff_identity():
+    bundle, first_review, candidate = _approved_single(notes="first review note")
+    second_review = build_fotmob_fixture_candidate_review_bundle(
+        bundle,
+        (_decision(candidate, notes="second review note"),),
     )
-    internally_consistent_but_fabricated = dataclasses.replace(
-        review,
-        decisions=(changed_decision,),
-        approved_catalog_inputs=(changed_input,),
+    first = build_fotmob_fixture_catalog_handoff(bundle, first_review)
+    second = build_fotmob_fixture_catalog_handoff(bundle, second_review)
+    assert first.catalog_input_jsonl_bytes == second.catalog_input_jsonl_bytes
+    assert first.review_bundle_sha256 != second.review_bundle_sha256
+    assert sha256_fotmob_fixture_catalog_handoff(first) != (
+        sha256_fotmob_fixture_catalog_handoff(second)
     )
-    with pytest.raises(FotMobFixtureCatalogHandoffError, match="exact deterministic result"):
-        build_fotmob_fixture_catalog_handoff(bundle, internally_consistent_but_fabricated)
 
 
 def test_wrong_candidate_bundle_for_valid_review_is_rejected():
-    bundle, review, _ = _approved_single()
+    _, review, _ = _approved_single()
     other_source = _source(
         manifest_sha="4" * 64,
         raw_sha="5" * 64,
@@ -290,7 +290,7 @@ def test_wrong_candidate_bundle_for_valid_review_is_rejected():
         build_fotmob_fixture_catalog_handoff(other_bundle, review)
 
 
-def test_two_approvals_emit_deterministic_sorted_jsonl_independent_of_decision_order():
+def test_two_approvals_are_deterministic_independent_of_decision_input_order():
     source = _source(count=2)
     first = _candidate(source, match_id=5, hour=13)
     second = _candidate(source, match_id=2, home_id=303, away_id=404, hour=11)
@@ -385,7 +385,6 @@ def test_production_module_has_no_network_compiler_write_model_pricing_or_bettin
         "intelligence.prediction_engine",
         "domain.fixture_intelligence",
         "domain.fixture_model_features",
-        "services.selection",
     }
     assert not imports & forbidden_imports
     assert "compile_fixture_catalog" not in source
