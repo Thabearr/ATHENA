@@ -46,6 +46,7 @@ from domain.reviewed_fixture_catalog_admission import (
     build_reviewed_fixture_catalog_admission,
     canonical_reviewed_fixture_catalog_admission_bytes,
     sha256_reviewed_fixture_catalog_admission,
+    sha256_reviewed_source_capability,
 )
 from domain.source_capabilities import (
     CapabilityAvailability,
@@ -181,6 +182,7 @@ def _admission_decision(
         "catalog_sha256": sha256_bytes(result.catalog_bytes),
         "manifest_sha256": sha256_bytes(result.manifest_bytes),
         "source_capability": REVIEWED_SOURCE_CAPABILITY,
+        "source_capability_sha256": sha256_reviewed_source_capability(),
         "disposition": disposition,
         "reviewed_at": reviewed_at
         or datetime.datetime(2026, 8, 10, 4, 0, tzinfo=UTC),
@@ -206,6 +208,7 @@ def test_admitted_catalog_exposes_exact_compiled_fixture_identity(tmp_path: Path
     assert payload["compiled_fixture_count"] == 1
     assert payload["admitted_fixture_count"] == 1
     assert payload["source_capability"] == REVIEWED_SOURCE_CAPABILITY
+    assert payload["source_capability_sha256"] == sha256_reviewed_source_capability()
     assert payload["catalog_sha256"] == sha256_bytes(result.catalog_bytes)
     assert payload["manifest_sha256"] == sha256_bytes(result.manifest_bytes)
 
@@ -232,6 +235,7 @@ def test_rejected_catalog_exposes_zero_admitted_fixture_identities(tmp_path: Pat
         "handoff_sha256",
         "catalog_sha256",
         "manifest_sha256",
+        "source_capability_sha256",
     ),
 )
 def test_decision_must_anchor_every_exact_upstream_hash(tmp_path: Path, field: str) -> None:
@@ -330,9 +334,36 @@ def test_source_capability_gate_fails_closed_if_identity_confirmation_is_removed
             reliable_fixture_identity=CapabilityAvailability.UNKNOWN,
         ),
     )
-    decision = _admission_decision(handoff, result)
 
-    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="not CONFIRMED"):
+    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="identity-only PR #44 profile"):
+        sha256_reviewed_source_capability()
+    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="identity-only PR #44 profile"):
+        build_reviewed_fixture_catalog_admission(
+            handoff,
+            result,
+            dataclasses.replace(
+                _admission_decision.__wrapped__ if hasattr(_admission_decision, "__wrapped__") else object(),
+            ),
+        )
+
+
+def test_source_capability_gate_rejects_unreviewed_profile_expansion(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, result = _compiled(tmp_path)
+    decision = _admission_decision(handoff, result)
+    current = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
+    monkeypatch.setitem(
+        SOURCE_CAPABILITY_REGISTRY,
+        REVIEWED_SOURCE_CAPABILITY,
+        dataclasses.replace(
+            current,
+            full_time_score=CapabilityAvailability.CONFIRMED,
+        ),
+    )
+
+    with pytest.raises(ReviewedFixtureCatalogAdmissionError, match="identity-only PR #44 profile"):
         build_reviewed_fixture_catalog_admission(handoff, result, decision)
 
 
