@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
-import enum
 import hashlib
 import json
 import math
@@ -25,6 +24,7 @@ from domain.fixture_intelligence import (
     SourceRole,
 )
 from domain.fotmob_reviewed_match_details_field_review import (
+    MAX_APPROVED_POINTER_LENGTH,
     FieldReviewDisposition,
     FotMobReviewedMatchDetailsFieldReviewError,
     ReviewedMatchDetailsFieldSemantics,
@@ -45,6 +45,15 @@ SOURCE_PROVIDER = "fotmob_match_details_reviewed"
 MAX_RAW_BYTES = 8 * 1024 * 1024
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
+_FIELD_RE = re.compile(r"^[-a-zA-Z0-9_]+$", flags=re.ASCII)
+_SCALAR_KINDS = frozenset(
+    {
+        JsonValueKind.BOOLEAN,
+        JsonValueKind.INTEGER,
+        JsonValueKind.NUMBER,
+        JsonValueKind.STRING,
+    }
+)
 _SAFETY_KEYS = frozenset(
     {
         "source_qualification_authorized",
@@ -76,6 +85,14 @@ def _utc(value: Any, label: str) -> datetime.datetime:
     if not isinstance(value, datetime.datetime) or value.tzinfo is not datetime.timezone.utc:
         raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
             f"{label} must use exact datetime.timezone.utc"
+        )
+    return value
+
+
+def _text(value: Any, label: str, maximum: int) -> str:
+    if type(value) is not str or not value or value != value.strip() or len(value) > maximum:
+        raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+            f"{label} must be a non-empty exact trimmed string within {maximum} characters"
         )
     return value
 
@@ -122,9 +139,8 @@ def _parse_raw_object(raw_bytes: Any) -> dict[str, Any]:
             "raw_bytes must be exact non-empty immutable bytes within 8 MiB"
         )
     try:
-        text = raw_bytes.decode("utf-8", errors="strict")
         value = json.loads(
-            text,
+            raw_bytes.decode("utf-8", errors="strict"),
             object_pairs_hook=_reject_duplicate_keys,
             parse_constant=_reject_constant,
         )
@@ -139,62 +155,58 @@ def _parse_raw_object(raw_bytes: Any) -> dict[str, Any]:
             "raw response root must be a JSON object"
         )
 
-    def check_finite(item: Any) -> None:
+    def require_finite(item: Any) -> None:
         if type(item) is float and not math.isfinite(item):
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "raw response contains a non-finite number"
             )
         if type(item) is dict:
             for child in item.values():
-                check_finite(child)
+                require_finite(child)
         elif type(item) is list:
             for child in item:
-                check_finite(child)
+                require_finite(child)
 
-    check_finite(value)
+    require_finite(value)
     return value
 
 
 def _decode_pointer_token(token: str) -> str:
-    """Reverse PR #53's RFC6901 + ATHENA `~2` literal-star extension."""
+    """Reverse PR #53's RFC6901 escapes plus ATHENA's `~2` literal-star escape."""
+
     output: list[str] = []
     index = 0
+    mapping = {"0": "~", "1": "/", "2": "*"}
     while index < len(token):
-        char = token[index]
-        if char != "~":
-            output.append(char)
+        if token[index] != "~":
+            output.append(token[index])
             index += 1
             continue
-        if index + 1 >= len(token):
-            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "invalid terminal '~' in reviewed JSON pointer"
-            )
-        code = token[index + 1]
-        mapping = {"0": "~", "1": "/", "2": "*"}
-        if code not in mapping:
+        if index + 1 >= len(token) or token[index + 1] not in mapping:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "invalid reviewed JSON pointer escape"
             )
-        output.append(mapping[code])
+        output.append(mapping[token[index + 1]])
         index += 2
     return "".join(output)
 
 
-def _extract_object_path(root: dict[str, Any], pointer: str) -> Any:
+def _extract_object_path(root: dict[str, Any], pointer: Any) -> Any:
     if type(pointer) is not str or not pointer.startswith("/"):
         raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
             "approved pointer must be a non-root JSON pointer"
         )
+    if len(pointer) > MAX_APPROVED_POINTER_LENGTH:
+        raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+            "approved pointer exceeds PR #54 extraction-safe length"
+        )
     current: Any = root
     for encoded in pointer[1:].split("/"):
+        if encoded == "*":
+            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+                "array wildcard cannot be extracted as one scalar value"
+            )
         token = _decode_pointer_token(encoded)
-        if token == "*":
-            # Literal '*' object keys are encoded as '~2'; a raw '*' segment is the
-            # PR #53 array wildcard and is forbidden by PR #54.
-            if encoded == "*":
-                raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                    "array wildcard cannot be extracted as one scalar value"
-                )
         if type(current) is not dict:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "reviewed pointer traversal crossed a non-object container"
@@ -231,14 +243,8 @@ def _json_kind(value: Any) -> JsonValueKind:
     )
 
 
-def _canonical_scalar(value: Any) -> Any:
-    kind = _json_kind(value)
-    if kind not in {
-        JsonValueKind.BOOLEAN,
-        JsonValueKind.INTEGER,
-        JsonValueKind.NUMBER,
-        JsonValueKind.STRING,
-    }:
+def _canonical_scalar(value: Any) -> str | int | float | bool:
+    if _json_kind(value) not in _SCALAR_KINDS:
         raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
             "reviewed extraction must produce a non-null scalar"
         )
@@ -264,9 +270,10 @@ class UnverifiedMatchDetailsCandidate:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "category must be IntelligenceCategory"
             )
-        if type(self.field) is not str or not self.field or self.field != self.field.strip():
+        field = _text(self.field, "field", 128)
+        if _FIELD_RE.fullmatch(field) is None:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "field must be a non-empty exact trimmed string"
+                "field must match the exact PR #54 Fixture Intelligence field contract"
             )
         if self.status is not IntelligenceFactStatus.UNVERIFIED:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
@@ -277,25 +284,24 @@ class UnverifiedMatchDetailsCandidate:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "json_kind must exactly match candidate value"
             )
-        if type(self.json_pointer) is not str or not self.json_pointer.startswith("/"):
+        pointer = _text(self.json_pointer, "json_pointer", MAX_APPROVED_POINTER_LENGTH)
+        if not pointer.startswith("/") or "/*" in pointer or pointer.endswith("/*"):
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "json_pointer must be a non-root exact path"
+                "candidate json_pointer must remain an approved non-wildcard PR #54 path"
             )
         if self.source_provider != SOURCE_PROVIDER:
-            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "source_provider mismatch"
-            )
+            raise FotMobReviewedMatchDetailsUnverifiedCandidateError("source_provider mismatch")
         if self.source_role is not SourceRole.PRIMARY_FOOTBALL_CONTEXT:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "source_role must remain PRIMARY_FOOTBALL_CONTEXT"
             )
-        if type(self.source_reference) is not str or not self.source_reference:
-            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "source_reference must be a non-empty exact string"
-            )
+        source_reference = _text(self.source_reference, "source_reference", 1024)
         observed = _utc(self.observed_at, "observed_at")
         evidence_sha = _sha(self.evidence_sha256, "evidence_sha256")
+        object.__setattr__(self, "field", field)
         object.__setattr__(self, "value", value)
+        object.__setattr__(self, "json_pointer", pointer)
+        object.__setattr__(self, "source_reference", source_reference)
         object.__setattr__(self, "observed_at", observed)
         object.__setattr__(self, "evidence_sha256", evidence_sha)
 
@@ -344,14 +350,8 @@ class ReviewedMatchDetailsUnverifiedCandidateBundle:
             "raw_sha256",
         ):
             _sha(getattr(self, label), label)
-        if type(self.fixture_identifier) is not str or not self.fixture_identifier:
-            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "fixture_identifier must be a non-empty exact string"
-            )
-        if type(self.source_match_id) is not str or not self.source_match_id:
-            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
-                "source_match_id must be a non-empty exact string"
-            )
+        fixture_identifier = _text(self.fixture_identifier, "fixture_identifier", 512)
+        source_match_id = _text(self.source_match_id, "source_match_id", 256)
         observed = _utc(self.observed_at, "observed_at")
         kickoff = _utc(self.kickoff, "kickoff")
         if observed >= kickoff:
@@ -366,24 +366,50 @@ class ReviewedMatchDetailsUnverifiedCandidateBundle:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "candidates must contain exact UnverifiedMatchDetailsCandidate values"
             )
-        expected = tuple(sorted(self.candidates, key=lambda item: (item.category.value, item.field, item.json_pointer)))
-        if self.candidates != expected:
+
+        # Reconstruct every nested candidate. This is deliberately stronger than
+        # a type check: object.__setattr__ can mutate a frozen dataclass after
+        # construction, and such a forged object must never survive artifact
+        # canonicalization or downstream reuse.
+        rebuilt_candidates = tuple(dataclasses.replace(item) for item in self.candidates)
+        expected = tuple(
+            sorted(
+                rebuilt_candidates,
+                key=lambda item: (item.category.value, item.field, item.json_pointer),
+            )
+        )
+        if rebuilt_candidates != expected:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "candidates must use deterministic semantic ordering"
             )
-        targets = [(item.category.value, item.field) for item in self.candidates]
+        targets = [(item.category.value, item.field) for item in rebuilt_candidates]
+        pointers = [item.json_pointer for item in rebuilt_candidates]
         if len(set(targets)) != len(targets):
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "candidate semantic targets must be unique"
             )
-        for item in self.candidates:
+        if len(set(pointers)) != len(pointers):
+            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+                "candidate json_pointer values must be unique"
+            )
+        for item in rebuilt_candidates:
             if item.observed_at != observed or item.evidence_sha256 != self.raw_sha256:
                 raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                     "candidate evidence lineage must match bundle exactly"
                 )
+            expected_reference = (
+                f"FOTMOB_MATCH_DETAILS:{source_match_id}:{item.json_pointer}"
+            )
+            if item.source_reference != expected_reference:
+                raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+                    "candidate source_reference must match source fixture and reviewed path exactly"
+                )
         safety = _validate_safety(self.safety)
+        object.__setattr__(self, "fixture_identifier", fixture_identifier)
+        object.__setattr__(self, "source_match_id", source_match_id)
         object.__setattr__(self, "observed_at", observed)
         object.__setattr__(self, "kickoff", kickoff)
+        object.__setattr__(self, "candidates", rebuilt_candidates)
         object.__setattr__(self, "safety", safety)
 
     def to_dict(self) -> dict[str, Any]:
@@ -435,7 +461,7 @@ def _revalidate_review(
             "review_bytes must be exact immutable bytes"
         )
     try:
-        supplied = canonical_reviewed_match_details_field_semantics_bytes(review)
+        supplied_bytes = canonical_reviewed_match_details_field_semantics_bytes(review)
         rebuilt = build_reviewed_match_details_field_semantics(
             evidence=evidence,
             evidence_receipt_bytes=evidence_receipt_bytes,
@@ -452,7 +478,7 @@ def _revalidate_review(
         raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
             "PR #54 review failed exact evidence revalidation"
         ) from exc
-    if supplied != rebuilt_bytes:
+    if supplied_bytes != rebuilt_bytes:
         raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
             "supplied PR #54 review differs from exact semantic rebuild"
         )
@@ -487,6 +513,10 @@ def build_reviewed_match_details_unverified_candidates(
         review_bytes=review_bytes,
     )
     root = _parse_raw_object(raw_bytes)
+    if hashlib.sha256(raw_bytes).hexdigest() != rebuilt_review.raw_sha256:
+        raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+            "exact raw bytes do not match reviewed raw evidence SHA-256"
+        )
     approved = tuple(
         item
         for item in rebuilt_review.decisions
@@ -496,21 +526,26 @@ def build_reviewed_match_details_unverified_candidates(
         raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
             "PR #55 requires at least one explicitly APPROVED scalar decision"
         )
+
     candidates: list[UnverifiedMatchDetailsCandidate] = []
     for decision in approved:
+        if decision.category is None or decision.field is None:
+            raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
+                "APPROVED PR #54 decision lost its exact semantic target"
+            )
         value = _extract_object_path(root, decision.json_pointer)
         kind = _json_kind(value)
         if kind is not decision.expected_kind:
             raise FotMobReviewedMatchDetailsUnverifiedCandidateError(
                 "exact raw value kind differs from PR #54 approved kind"
             )
-        value = _canonical_scalar(value)
+        scalar = _canonical_scalar(value)
         candidates.append(
             UnverifiedMatchDetailsCandidate(
                 category=decision.category,
                 field=decision.field,
                 status=IntelligenceFactStatus.UNVERIFIED,
-                value=value,
+                value=scalar,
                 json_pointer=decision.json_pointer,
                 json_kind=kind,
                 source_provider=SOURCE_PROVIDER,
@@ -522,8 +557,12 @@ def build_reviewed_match_details_unverified_candidates(
                 evidence_sha256=rebuilt_review.raw_sha256,
             )
         )
+
     ordered = tuple(
-        sorted(candidates, key=lambda item: (item.category.value, item.field, item.json_pointer))
+        sorted(
+            candidates,
+            key=lambda item: (item.category.value, item.field, item.json_pointer),
+        )
     )
     return ReviewedMatchDetailsUnverifiedCandidateBundle(
         schema_version=SCHEMA_VERSION,
@@ -549,10 +588,9 @@ def canonical_reviewed_match_details_unverified_candidate_bundle_bytes(value: An
         )
     try:
         rebuilt = dataclasses.replace(value)
-        payload = rebuilt.to_dict()
         return (
             json.dumps(
-                payload,
+                rebuilt.to_dict(),
                 ensure_ascii=False,
                 allow_nan=False,
                 sort_keys=True,
@@ -576,6 +614,7 @@ def sha256_reviewed_match_details_unverified_candidate_bundle(value: Any) -> str
 
 __all__ = [
     "DATASET_NAME",
+    "MAX_RAW_BYTES",
     "SCHEMA_VERSION",
     "SOURCE_PROVIDER",
     "FotMobReviewedMatchDetailsUnverifiedCandidateError",
