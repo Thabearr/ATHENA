@@ -298,8 +298,6 @@ class FotMobMatchDetailsProbePlan:
         object.__setattr__(self, "request_started_at", started)
 
     def to_dict(self) -> dict[str, Any]:
-        # Deliberately detached: historical probe receipt bytes do not re-read
-        # mutable nested upstream objects or live capability state.
         return {
             "verification_receipt_size": len(self.verification_receipt_bytes),
             "bootstrap_verification_receipt_sha256": (
@@ -354,6 +352,32 @@ def build_match_details_probe_plan(
     )
 
 
+def canonical_match_details_probe_plan_bytes(value: Any) -> bytes:
+    if type(value) is not FotMobMatchDetailsProbePlan:
+        raise FotMobReviewedMatchDetailsProbeError(
+            "value must be exact FotMobMatchDetailsProbePlan"
+        )
+    try:
+        return (
+            json.dumps(
+                value.to_dict(),
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise FotMobReviewedMatchDetailsProbeError(
+            "match-details probe plan serialization failed"
+        ) from exc
+
+
+def sha256_match_details_probe_plan(value: Any) -> str:
+    return hashlib.sha256(canonical_match_details_probe_plan_bytes(value)).hexdigest()
+
+
 @dataclasses.dataclass(frozen=True)
 class FotMobReviewedMatchDetailsProbeReceipt:
     """Deterministic metadata/sample receipt for one diagnostic response."""
@@ -361,6 +385,8 @@ class FotMobReviewedMatchDetailsProbeReceipt:
     schema_version: int
     dataset_name: str
     plan: FotMobMatchDetailsProbePlan
+    plan_bytes: bytes
+    plan_sha256: str
     transport_outcome: ProbeTransportOutcome
     status_code: int | None
     content_type: str | None
@@ -395,6 +421,21 @@ class FotMobReviewedMatchDetailsProbeReceipt:
             raise FotMobReviewedMatchDetailsProbeError(
                 "probe plan failed exact current revalidation"
             ) from exc
+        if type(self.plan_bytes) is not bytes:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "plan_bytes must be exact immutable bytes"
+            )
+        expected_plan_bytes = canonical_match_details_probe_plan_bytes(plan)
+        if self.plan_bytes != expected_plan_bytes:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "plan_bytes are not the exact canonical bytes of the revalidated plan"
+            )
+        _strict_sha256(self.plan_sha256, "plan_sha256")
+        expected_plan_sha = hashlib.sha256(expected_plan_bytes).hexdigest()
+        if self.plan_sha256 != expected_plan_sha:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "plan_sha256 does not match exact canonical plan bytes"
+            )
         if not isinstance(self.transport_outcome, ProbeTransportOutcome):
             raise FotMobReviewedMatchDetailsProbeError(
                 "transport_outcome must be ProbeTransportOutcome"
@@ -453,10 +494,22 @@ class FotMobReviewedMatchDetailsProbeReceipt:
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
+        try:
+            plan_payload = json.loads(self.plan_bytes.decode("utf-8"))
+        except (UnicodeError, ValueError, TypeError) as exc:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "stored canonical plan bytes are no longer decodable"
+            ) from exc
+        if type(plan_payload) is not dict:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "stored canonical plan payload must remain an object"
+            )
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
-            "plan": self.plan.to_dict(),
+            "plan_sha256": self.plan_sha256,
+            "plan_size": len(self.plan_bytes),
+            "plan": plan_payload,
             "transport_outcome": self.transport_outcome.value,
             "status_code": self.status_code,
             "content_type": self.content_type,
@@ -483,10 +536,13 @@ def build_response_receipt(
         raise FotMobReviewedMatchDetailsProbeError(
             "sample must be exact bytes of at most 4096 bytes"
         )
+    plan_bytes = canonical_match_details_probe_plan_bytes(plan)
     return FotMobReviewedMatchDetailsProbeReceipt(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
         plan=plan,
+        plan_bytes=plan_bytes,
+        plan_sha256=hashlib.sha256(plan_bytes).hexdigest(),
         transport_outcome=ProbeTransportOutcome.RESPONSE_RECEIVED,
         status_code=status_code,
         content_type=content_type,
@@ -504,10 +560,13 @@ def build_transport_error_receipt(
     plan: FotMobMatchDetailsProbePlan,
     observed_at: Any,
 ) -> FotMobReviewedMatchDetailsProbeReceipt:
+    plan_bytes = canonical_match_details_probe_plan_bytes(plan)
     return FotMobReviewedMatchDetailsProbeReceipt(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
         plan=plan,
+        plan_bytes=plan_bytes,
+        plan_sha256=hashlib.sha256(plan_bytes).hexdigest(),
         transport_outcome=ProbeTransportOutcome.TRANSPORT_ERROR,
         status_code=None,
         content_type=None,
@@ -563,9 +622,11 @@ __all__ = [
     "build_match_details_probe_plan",
     "build_response_receipt",
     "build_transport_error_receipt",
+    "canonical_match_details_probe_plan_bytes",
     "canonical_match_details_probe_receipt_bytes",
     "request_headers",
     "request_target",
+    "sha256_match_details_probe_plan",
     "sha256_match_details_probe_receipt",
     "source_match_id_from_fixture_identifier",
 ]
