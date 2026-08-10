@@ -174,6 +174,50 @@ SOURCE_CAPABILITY_REGISTRY: Dict[str, SourceCapabilities] = {
             "validate or persist any score, identity, or freshness fields."
         ),
     ),
+    "fotmob_data_matches_reviewed_catalog": SourceCapabilities(
+        source="fotmob_data_matches_reviewed_catalog",
+        full_time_score=CapabilityAvailability.NOT_CAPTURED,
+        half_time_score=CapabilityAvailability.NOT_CAPTURED,
+        event_timestamps=CapabilityAvailability.NOT_CAPTURED,
+        reliable_fixture_identity=CapabilityAvailability.CONFIRMED,
+        historical_coverage=CapabilityAvailability.UNKNOWN,
+        freshness_metadata=CapabilityAvailability.NOT_CAPTURED,
+        evidence=(
+            (
+                "domain/fotmob_data_matches_schema.py: strict fixture, team, "
+                "competition and kickoff structure"
+            ),
+            (
+                "domain/fotmob_fixture_candidates.py: provenance-backed UNREVIEWED "
+                "source match, team, competition and kickoff mapping"
+            ),
+            (
+                "domain/fotmob_fixture_candidate_review.py: exact candidate "
+                "review key, conflict blockers and explicit APPROVED decision"
+            ),
+            (
+                "domain/fotmob_fixture_catalog_handoff.py: exact reviewed "
+                "candidate bundle reconstruction before catalog input"
+            ),
+            (
+                "domain/fixture_catalog.py: source-scoped FOTMOB fixture identity "
+                "and strict provenance normalization"
+            ),
+            (
+                "scripts/manage_fotmob_reviewed_fixture_catalog.py: reviewed "
+                "handoff preflight before PR #29 output commit"
+            ),
+        ),
+        notes=(
+            "This capability applies only to fixtures that pass the reviewed "
+            "PR #38 through PR #43 data-matches catalog path. Reliable fixture "
+            "identity means a source-scoped FOTMOB:<match id> identity with "
+            "reviewed teams, competition and kickoff; it does not establish "
+            "global team identity, source completeness, score semantics, source "
+            "freshness, Fixture Intelligence trust, model readiness, pricing, "
+            "selection, or betting authorization."
+        ),
+    ),
     "legacy_untagged": SourceCapabilities(
         source="legacy_untagged",
         full_time_score=CapabilityAvailability.UNKNOWN,
