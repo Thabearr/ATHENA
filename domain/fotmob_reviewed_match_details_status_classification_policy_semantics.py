@@ -10,7 +10,7 @@ from __future__ import annotations
 import datetime
 from typing import Any
 
-FRESHNESS_COMPARISON = "CLASSIFIED_AT_LE_FRESH_UNTIL"
+FRESHNESS_COMPARISON = "POLICY_REVIEWED_AT_LE_CLASSIFIED_AT_LE_FRESH_UNTIL"
 
 
 class FotMobReviewedMatchDetailsFreshnessComparisonError(ValueError):
@@ -33,18 +33,21 @@ def is_within_reviewed_freshness_window(
     *,
     classified_at: Any,
     observed_at: Any,
+    policy_reviewed_at: Any,
     fresh_until: Any,
     kickoff: Any,
 ) -> bool:
-    """Return True exactly when ``classified_at <= fresh_until``.
+    """Return True exactly when policy time <= classification <= deadline.
 
     All timestamps must be exact UTC and prospective for the same observation.
     Equality at ``fresh_until`` is intentionally fresh; one microsecond later
-    is stale for a later evaluator. This function itself emits no status.
+    is stale for a later evaluator. Classification before the reviewed policy
+    exists fails closed. This function itself emits no status.
     """
 
     classified = _utc(classified_at, "classified_at")
     observed = _utc(observed_at, "observed_at")
+    policy_reviewed = _utc(policy_reviewed_at, "policy_reviewed_at")
     deadline = _utc(fresh_until, "fresh_until")
     fixture_kickoff = _utc(kickoff, "kickoff")
 
@@ -52,13 +55,17 @@ def is_within_reviewed_freshness_window(
         raise FotMobReviewedMatchDetailsFreshnessComparisonError(
             "observed_at must remain strictly before kickoff"
         )
+    if policy_reviewed < observed or policy_reviewed >= fixture_kickoff:
+        raise FotMobReviewedMatchDetailsFreshnessComparisonError(
+            "policy_reviewed_at must not precede observation and must remain before kickoff"
+        )
     if deadline < observed or deadline >= fixture_kickoff:
         raise FotMobReviewedMatchDetailsFreshnessComparisonError(
             "fresh_until must not precede observation and must remain before kickoff"
         )
-    if classified < observed or classified >= fixture_kickoff:
+    if classified < policy_reviewed or classified >= fixture_kickoff:
         raise FotMobReviewedMatchDetailsFreshnessComparisonError(
-            "classified_at must not precede observation and must remain before kickoff"
+            "classified_at must not precede policy review and must remain before kickoff"
         )
 
     return classified <= deadline
