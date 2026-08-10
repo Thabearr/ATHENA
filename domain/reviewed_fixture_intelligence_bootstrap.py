@@ -1,9 +1,9 @@
-"""Reviewed fixture-identity bootstrap for the Fixture Intelligence boundary.
+"""Verified fixture-identity bootstrap for the Fixture Intelligence boundary.
 
-This module carries only already-admitted fixture identity and kickoff into a
-new typed boundary.  It does not create Fixture Intelligence facts or
-snapshots and does not authorize any downstream model, pricing, selection, or
-betting behavior.
+This module carries only fixture identity and kickoff from an exact PR #46
+verified admission artifact into a new typed boundary. It does not create
+Fixture Intelligence facts or snapshots and does not authorize any downstream
+model, pricing, selection, or betting behavior.
 """
 
 from __future__ import annotations
@@ -18,14 +18,13 @@ from collections.abc import Mapping
 from typing import Any, Tuple
 
 from domain.fixture_catalog import serialize_utc
-from domain.reviewed_fixture_catalog_admission import (
-    REVIEWED_SOURCE_CAPABILITY,
-    AdmittedFixtureIdentity,
-    ReviewedFixtureCatalogAdmission,
-    ReviewedFixtureCatalogAdmissionDisposition,
-    ReviewedFixtureCatalogAdmissionError,
-    canonical_reviewed_fixture_catalog_admission_bytes,
-    sha256_reviewed_fixture_catalog_admission,
+from domain.reviewed_fixture_catalog_admission import REVIEWED_SOURCE_CAPABILITY
+from domain.reviewed_fixture_catalog_admission_artifact import (
+    DATASET_NAME as VERIFIED_ADMISSION_ARTIFACT_DATASET_NAME,
+    ReviewedFixtureCatalogAdmissionArtifactError,
+    VerifiedReviewedFixtureCatalogAdmissionArtifact,
+    canonical_verified_admission_artifact_receipt_bytes,
+    sha256_verified_admission_artifact_receipt,
 )
 
 
@@ -50,7 +49,7 @@ _SAFETY_KEYS = frozenset(
 
 
 class ReviewedFixtureIntelligenceBootstrapError(ValueError):
-    """Raised when admitted fixture identity cannot enter the bootstrap."""
+    """Raised when verified fixture identity cannot enter the bootstrap."""
 
 
 def _strict_string(value: Any, label: str) -> str:
@@ -73,14 +72,18 @@ def _strict_sha256(value: Any, label: str) -> str:
     return value
 
 
-def _utc(value: Any, label: str) -> datetime.datetime:
+def _strict_utc(value: Any, label: str) -> datetime.datetime:
     if not isinstance(value, datetime.datetime):
         raise ReviewedFixtureIntelligenceBootstrapError(f"{label} must be a datetime")
     if value.tzinfo is None or value.utcoffset() is None:
         raise ReviewedFixtureIntelligenceBootstrapError(
             f"{label} must be timezone-aware"
         )
-    return value.astimezone(datetime.timezone.utc)
+    if value.tzinfo is not datetime.timezone.utc:
+        raise ReviewedFixtureIntelligenceBootstrapError(
+            f"{label} must already be normalized to datetime.timezone.utc"
+        )
+    return value
 
 
 def _default_safety() -> dict[str, bool]:
@@ -100,50 +103,42 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
     return types.MappingProxyType(detached)
 
 
-def _revalidate_admission(
-    admission: Any,
-) -> tuple[ReviewedFixtureCatalogAdmission, bytes, str]:
-    if type(admission) is not ReviewedFixtureCatalogAdmission:
+def _revalidate_verified_artifact(
+    value: Any,
+) -> tuple[VerifiedReviewedFixtureCatalogAdmissionArtifact, str]:
+    if type(value) is not VerifiedReviewedFixtureCatalogAdmissionArtifact:
         raise ReviewedFixtureIntelligenceBootstrapError(
-            "admission must be exact ReviewedFixtureCatalogAdmission"
+            "verified_artifact must be exact VerifiedReviewedFixtureCatalogAdmissionArtifact"
         )
     try:
-        revalidated = dataclasses.replace(admission)
-        original_bytes = canonical_reviewed_fixture_catalog_admission_bytes(admission)
-        rebuilt_bytes = canonical_reviewed_fixture_catalog_admission_bytes(revalidated)
-    except ReviewedFixtureCatalogAdmissionError as exc:
+        rebuilt = dataclasses.replace(value)
+        supplied_receipt = canonical_verified_admission_artifact_receipt_bytes(value)
+        rebuilt_receipt = canonical_verified_admission_artifact_receipt_bytes(rebuilt)
+    except ReviewedFixtureCatalogAdmissionArtifactError as exc:
         raise ReviewedFixtureIntelligenceBootstrapError(
-            "reviewed Fixture Catalog admission failed exact revalidation"
+            "verified admission artifact failed exact PR #46 revalidation"
         ) from exc
-    if original_bytes != rebuilt_bytes:
+    if supplied_receipt != rebuilt_receipt:
         raise ReviewedFixtureIntelligenceBootstrapError(
-            "reviewed Fixture Catalog admission changed during exact revalidation"
+            "verified admission artifact differs from its exact PR #46 rebuild"
         )
-    if (
-        admission.decision.disposition
-        is not ReviewedFixtureCatalogAdmissionDisposition.ADMITTED
-    ):
+    if not rebuilt.admitted_fixtures:
         raise ReviewedFixtureIntelligenceBootstrapError(
-            "only an ADMITTED reviewed Fixture Catalog may bootstrap Fixture Intelligence identity"
+            "verified admission artifact must expose admitted fixture identities"
         )
-    if not admission.admitted_fixtures:
-        raise ReviewedFixtureIntelligenceBootstrapError(
-            "an ADMITTED reviewed Fixture Catalog must expose admitted fixtures"
-        )
-    return (
-        revalidated,
-        original_bytes,
-        sha256_reviewed_fixture_catalog_admission(admission),
-    )
+    receipt_sha = sha256_verified_admission_artifact_receipt(rebuilt)
+    _strict_sha256(receipt_sha, "verification_receipt_sha256")
+    return rebuilt, receipt_sha
 
 
 @dataclasses.dataclass(frozen=True)
 class ReviewedFixtureIntelligenceIdentity:
-    """One exact source-scoped fixture identity proven by a reviewed admission."""
+    """One exact source-scoped fixture identity proven by PR #46 verification."""
 
     fixture_identifier: str
     kickoff: datetime.datetime
     admission_sha256: str
+    verification_receipt_sha256: str
 
     def __post_init__(self) -> None:
         _strict_string(self.fixture_identifier, "fixture_identifier")
@@ -151,22 +146,28 @@ class ReviewedFixtureIntelligenceIdentity:
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "fixture_identifier must remain source-scoped to FOTMOB"
             )
-        object.__setattr__(self, "kickoff", _utc(self.kickoff, "kickoff"))
+        object.__setattr__(self, "kickoff", _strict_utc(self.kickoff, "kickoff"))
         _strict_sha256(self.admission_sha256, "admission_sha256")
+        _strict_sha256(
+            self.verification_receipt_sha256,
+            "verification_receipt_sha256",
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "fixture_identifier": self.fixture_identifier,
             "kickoff": serialize_utc(self.kickoff),
             "admission_sha256": self.admission_sha256,
+            "verification_receipt_sha256": self.verification_receipt_sha256,
         }
 
 
 @dataclasses.dataclass(frozen=True)
 class ReviewedFixtureIntelligenceBootstrap:
-    """Self-validating identity-only handoff from PR #45 toward PR #30."""
+    """Self-validating identity-only handoff from PR #46 toward PR #30."""
 
-    admission: ReviewedFixtureCatalogAdmission
+    verified_artifact: VerifiedReviewedFixtureCatalogAdmissionArtifact
+    verification_receipt_sha256: str
     admission_sha256: str
     source_capability: str
     source_capability_sha256: str
@@ -176,17 +177,20 @@ class ReviewedFixtureIntelligenceBootstrap:
     catalog_sha256: str
     manifest_sha256: str
     admission_reviewed_at: datetime.datetime
+    artifact_verified_at: datetime.datetime
     fixtures: Tuple[ReviewedFixtureIntelligenceIdentity, ...]
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
-        revalidated, _admission_bytes, expected_admission_sha = _revalidate_admission(
-            self.admission
+        revalidated, expected_receipt_sha = _revalidate_verified_artifact(
+            self.verified_artifact
         )
-        decision = revalidated.decision
+        admission = revalidated.admission
+        decision = admission.decision
 
         expected_scalars = {
-            "admission_sha256": expected_admission_sha,
+            "verification_receipt_sha256": expected_receipt_sha,
+            "admission_sha256": revalidated.admission_sha256,
             "source_capability": decision.source_capability,
             "source_capability_sha256": decision.source_capability_sha256,
             "candidate_bundle_sha256": decision.candidate_bundle_sha256,
@@ -198,32 +202,43 @@ class ReviewedFixtureIntelligenceBootstrap:
         for field_name, expected in expected_scalars.items():
             if getattr(self, field_name) != expected:
                 raise ReviewedFixtureIntelligenceBootstrapError(
-                    f"{field_name} does not anchor the exact reviewed admission"
+                    f"{field_name} does not anchor the exact verified admission artifact"
                 )
         if self.source_capability != REVIEWED_SOURCE_CAPABILITY:
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "source_capability must be the reviewed FotMob catalog capability"
             )
-        _strict_sha256(self.admission_sha256, "admission_sha256")
-        _strict_sha256(self.source_capability_sha256, "source_capability_sha256")
-        _strict_sha256(self.candidate_bundle_sha256, "candidate_bundle_sha256")
-        _strict_sha256(self.review_bundle_sha256, "review_bundle_sha256")
-        _strict_sha256(self.handoff_sha256, "handoff_sha256")
-        _strict_sha256(self.catalog_sha256, "catalog_sha256")
-        _strict_sha256(self.manifest_sha256, "manifest_sha256")
+        for field_name in (
+            "verification_receipt_sha256",
+            "admission_sha256",
+            "source_capability_sha256",
+            "candidate_bundle_sha256",
+            "review_bundle_sha256",
+            "handoff_sha256",
+            "catalog_sha256",
+            "manifest_sha256",
+        ):
+            _strict_sha256(getattr(self, field_name), field_name)
 
-        reviewed_at = _utc(self.admission_reviewed_at, "admission_reviewed_at")
+        reviewed_at = _strict_utc(self.admission_reviewed_at, "admission_reviewed_at")
+        verified_at = _strict_utc(self.artifact_verified_at, "artifact_verified_at")
         if reviewed_at != decision.reviewed_at:
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "admission_reviewed_at must equal the exact catalog admission review time"
             )
-        object.__setattr__(self, "admission_reviewed_at", reviewed_at)
+        if verified_at != revalidated.verified_at:
+            raise ReviewedFixtureIntelligenceBootstrapError(
+                "artifact_verified_at must equal the exact PR #46 verification time"
+            )
 
         if type(self.fixtures) is not tuple or not self.fixtures:
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "fixtures must be a non-empty immutable tuple"
             )
-        if any(type(item) is not ReviewedFixtureIntelligenceIdentity for item in self.fixtures):
+        if any(
+            type(item) is not ReviewedFixtureIntelligenceIdentity
+            for item in self.fixtures
+        ):
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "fixtures must contain exact ReviewedFixtureIntelligenceIdentity values"
             )
@@ -232,17 +247,19 @@ class ReviewedFixtureIntelligenceBootstrap:
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "fixtures must not contain duplicate fixture identifiers"
             )
+
         expected_fixtures = tuple(
             ReviewedFixtureIntelligenceIdentity(
                 fixture_identifier=item.fixture_identifier,
                 kickoff=item.kickoff,
-                admission_sha256=expected_admission_sha,
+                admission_sha256=revalidated.admission_sha256,
+                verification_receipt_sha256=expected_receipt_sha,
             )
             for item in revalidated.admitted_fixtures
         )
         if self.fixtures != expected_fixtures:
             raise ReviewedFixtureIntelligenceBootstrapError(
-                "fixtures must expose every and only identity from the reviewed admission"
+                "fixtures must expose every and only identity from the verified admission artifact"
             )
         ordered = tuple(
             sorted(self.fixtures, key=lambda item: (item.kickoff, item.fixture_identifier))
@@ -251,18 +268,23 @@ class ReviewedFixtureIntelligenceBootstrap:
             raise ReviewedFixtureIntelligenceBootstrapError(
                 "fixtures must preserve deterministic admitted-catalog ordering"
             )
-        if any(self.admission_reviewed_at >= item.kickoff for item in self.fixtures):
+        if any(verified_at >= item.kickoff for item in self.fixtures):
             raise ReviewedFixtureIntelligenceBootstrapError(
-                "every bootstrapped fixture must remain prospective at admission review time"
+                "every bootstrapped fixture must remain prospective at PR #46 verification time"
             )
 
+        object.__setattr__(self, "admission_reviewed_at", reviewed_at)
+        object.__setattr__(self, "artifact_verified_at", verified_at)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
+        # Deliberately serialize only detached captured fields. Historical
+        # bootstrap bytes must not depend on later mutation of nested objects.
         return {
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
-            "admission_dataset_name": self.admission.to_dict()["dataset_name"],
+            "verification_dataset_name": VERIFIED_ADMISSION_ARTIFACT_DATASET_NAME,
+            "verification_receipt_sha256": self.verification_receipt_sha256,
             "admission_sha256": self.admission_sha256,
             "source_capability": self.source_capability,
             "source_capability_sha256": self.source_capability_sha256,
@@ -272,6 +294,7 @@ class ReviewedFixtureIntelligenceBootstrap:
             "catalog_sha256": self.catalog_sha256,
             "manifest_sha256": self.manifest_sha256,
             "admission_reviewed_at": serialize_utc(self.admission_reviewed_at),
+            "artifact_verified_at": serialize_utc(self.artifact_verified_at),
             "fixture_count": len(self.fixtures),
             "fixtures": [item.to_dict() for item in self.fixtures],
             "safety": dict(self.safety),
@@ -279,23 +302,26 @@ class ReviewedFixtureIntelligenceBootstrap:
 
 
 def build_reviewed_fixture_intelligence_bootstrap(
-    admission: Any,
+    verified_artifact: Any,
 ) -> ReviewedFixtureIntelligenceBootstrap:
-    """Build the identity-only bootstrap from one exact admitted catalog."""
+    """Build identity-only bootstrap from one exact PR #46 verified artifact."""
 
-    revalidated, _admission_bytes, admission_sha = _revalidate_admission(admission)
-    decision = revalidated.decision
+    revalidated, receipt_sha = _revalidate_verified_artifact(verified_artifact)
+    admission = revalidated.admission
+    decision = admission.decision
     fixtures = tuple(
         ReviewedFixtureIntelligenceIdentity(
             fixture_identifier=item.fixture_identifier,
             kickoff=item.kickoff,
-            admission_sha256=admission_sha,
+            admission_sha256=revalidated.admission_sha256,
+            verification_receipt_sha256=receipt_sha,
         )
         for item in revalidated.admitted_fixtures
     )
     return ReviewedFixtureIntelligenceBootstrap(
-        admission=admission,
-        admission_sha256=admission_sha,
+        verified_artifact=verified_artifact,
+        verification_receipt_sha256=receipt_sha,
+        admission_sha256=revalidated.admission_sha256,
         source_capability=decision.source_capability,
         source_capability_sha256=decision.source_capability_sha256,
         candidate_bundle_sha256=decision.candidate_bundle_sha256,
@@ -304,6 +330,7 @@ def build_reviewed_fixture_intelligence_bootstrap(
         catalog_sha256=decision.catalog_sha256,
         manifest_sha256=decision.manifest_sha256,
         admission_reviewed_at=decision.reviewed_at,
+        artifact_verified_at=revalidated.verified_at,
         fixtures=fixtures,
         safety=_default_safety(),
     )
@@ -313,7 +340,7 @@ def resolve_reviewed_fixture_intelligence_identity(
     bootstrap: Any,
     fixture_identifier: Any,
 ) -> ReviewedFixtureIntelligenceIdentity:
-    """Resolve one exact admitted identity; no aliases or fuzzy matching are allowed."""
+    """Resolve one exact verified identity; no aliases or fuzzy matching."""
 
     if type(bootstrap) is not ReviewedFixtureIntelligenceBootstrap:
         raise ReviewedFixtureIntelligenceBootstrapError(
@@ -325,7 +352,7 @@ def resolve_reviewed_fixture_intelligence_identity(
     )
     if len(matches) != 1:
         raise ReviewedFixtureIntelligenceBootstrapError(
-            "fixture_identifier is not an exact admitted Fixture Intelligence bootstrap identity"
+            "fixture_identifier is not an exact verified Fixture Intelligence bootstrap identity"
         )
     return matches[0]
 
