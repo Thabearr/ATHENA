@@ -141,10 +141,15 @@ def _facts_from_candidates(
     *,
     evidence_file_path: str,
 ) -> tuple[FixtureIntelligenceFact, ...]:
-    facts = tuple(
-        _fact_from_candidate(item, evidence_file_path=evidence_file_path)
-        for item in bundle.candidates
-    )
+    try:
+        facts = tuple(
+            _fact_from_candidate(item, evidence_file_path=evidence_file_path)
+            for item in bundle.candidates
+        )
+    except FixtureIntelligenceError as exc:
+        raise FotMobReviewedMatchDetailsUnverifiedFactError(
+            "PR #55 candidate cannot satisfy the exact PR #30 fact contract"
+        ) from exc
     return tuple(
         sorted(
             facts,
@@ -338,12 +343,50 @@ class ReviewedMatchDetailsUnverifiedFactBundle:
         object.__setattr__(self, "facts", rebuilt_facts)
         object.__setattr__(self, "safety", safety)
 
+    @property
+    def fixture_identifier(self) -> str:
+        """Exact source-scoped fixture identity inherited from PR #55."""
+
+        return self.candidate_bundle.fixture_identifier
+
+    @property
+    def source_match_id(self) -> str:
+        """Exact FotMob source match ID inherited from PR #55."""
+
+        return self.candidate_bundle.source_match_id
+
+    @property
+    def kickoff(self) -> datetime.datetime:
+        """Exact reviewed fixture kickoff inherited from PR #55."""
+
+        return self.candidate_bundle.kickoff
+
+    @property
+    def observed_at(self) -> datetime.datetime:
+        """Exact raw-evidence observation time inherited from PR #55."""
+
+        return self.candidate_bundle.observed_at
+
+    @property
+    def raw_sha256(self) -> str:
+        """Exact raw-evidence SHA-256 inherited from PR #55."""
+
+        return self.candidate_bundle.raw_sha256
+
     def to_dict(self) -> dict[str, Any]:
+        def iso(value: datetime.datetime) -> str:
+            return value.isoformat().replace("+00:00", "Z")
+
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
             "candidate_bundle_sha256": self.candidate_bundle_sha256,
             "candidate_bundle_size": self.candidate_bundle_size,
+            "fixture_identifier": self.fixture_identifier,
+            "source_match_id": self.source_match_id,
+            "kickoff": iso(self.kickoff),
+            "observed_at": iso(self.observed_at),
+            "raw_sha256": self.raw_sha256,
             "candidate_bundle": self.candidate_bundle.to_dict(),
             "evidence_file_path": self.evidence_file_path,
             "facts": [_fact_dict(item) for item in self.facts],
