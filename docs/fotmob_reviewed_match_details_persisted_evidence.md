@@ -32,7 +32,7 @@ The boundary is intentionally historical and offline. It proves that the persist
 - exact Content-Length agreement when Content-Length was captured;
 - exact all-false PR #50 safety mapping.
 
-The historical nested PR #49 plan is required to remain a JSON object and its recorded SHA/size must be structurally valid, but PR #52 does not pretend it can reconstruct the in-memory PR #48/#49 objects from the two persisted files alone.
+The historical nested PR #49 plan is required to remain a JSON object. PR #52 reconstructs that embedded plan's canonical compact/sorted JSON bytes and requires both the recorded `plan_size` and `plan_sha256` to match exactly. That proves historical embedded-plan byte identity, but PR #52 still does not pretend it can reconstruct or re-authorize the live in-memory PR #48/#49 objects from the two persisted files alone.
 
 ## Raw response semantics
 
