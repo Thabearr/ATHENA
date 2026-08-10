@@ -74,15 +74,22 @@ Every decision requires a non-empty reviewer rationale.
 
 The PR #58 artifact records a SHA-256 of each exact canonical PR #30 fact payload so the decision is tied to the exact scalar, status, provider, role, source reference, observation time, evidence path, evidence SHA and notes present in PR #57.
 
-## Prospective review time
+## Prospective chronology
 
-The qualification review timestamp must:
+PR #58 depends on both the raw observation and PR #54's semantic review, so its timestamps must preserve that ancestry.
 
-- already use exact `datetime.timezone.utc`;
-- be no earlier than the evidence observation time;
-- remain strictly before kickoff.
+The exact chronology is:
 
-A review performed at or after kickoff cannot create a prospective PR #58 qualification record.
+```text
+observed_at
+≤ semantic_reviewed_at
+≤ qualification reviewed_at
+< kickoff
+```
+
+All three timestamps must already use exact `datetime.timezone.utc`.
+
+The PR #54 `reviewed_at` is carried into the detached PR #58 artifact as `semantic_reviewed_at`. A qualification record cannot claim to predate the semantic review it depends on, and a review at or after kickoff cannot be used prospectively.
 
 ## Detached qualification artifact
 
@@ -93,15 +100,25 @@ A review performed at or after kickoff cannot create a prospective PR #58 qualif
 - source match ID;
 - kickoff;
 - observation timestamp;
+- PR #54 semantic-review timestamp;
 - raw response SHA-256;
 - exact logical `response.json` evidence path;
 - source provider and `PRIMARY_FOOTBALL_CONTEXT` role;
-- review timestamp and reviewer reference;
+- PR #58 review timestamp and reviewer reference;
 - one recorded decision per exact PR #57 fact;
 - qualified and rejected counts;
 - all safety flags exact `false`.
 
 The artifact does not embed or create new Fixture Intelligence facts.
+
+The logical evidence path is recomputed from the detached source match ID, exact UTC observation timestamp and raw SHA-256 using the same PR #51 durable-capture identity:
+
+```text
+.cache/athena-research/fotmob-reviewed-match-details-captures/
+  <source_match_id>--<UTC observed_at>--<raw_sha256>/response.json
+```
+
+A detached path mutation therefore fails local canonicalization even before full-chain replay. Recorded source references are likewise required to remain scoped to the exact source match ID.
 
 Historical canonical bytes are deterministic UTF-8 JSON using sorted keys, compact separators, `allow_nan=False`, and exactly one trailing newline.
 
