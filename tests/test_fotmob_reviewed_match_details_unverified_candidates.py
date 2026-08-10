@@ -293,3 +293,28 @@ def test_candidate_source_reference_is_exact_and_source_scoped() -> None:
     )
     assert candidate.observed_at == evidence.observed_at
     assert bundle.observed_at < bundle.kickoff
+
+
+def test_forced_nested_candidate_mutation_fails_bundle_canonicalization() -> None:
+    raw = b'{"alpha":{"value":100}}'
+    decision = _approved(
+        "/alpha/value",
+        JsonValueKind.INTEGER,
+        IntelligenceCategory.MATCH_CONTEXT,
+        "synthetic_metric",
+    )
+
+    bundle, _ = _build(raw, (decision,))
+    candidate = bundle.candidates[0]
+    object.__setattr__(candidate, "status", IntelligenceFactStatus.SUPPORTED)
+    with pytest.raises(FotMobReviewedMatchDetailsUnverifiedCandidateError, match="UNVERIFIED"):
+        canonical_reviewed_match_details_unverified_candidate_bundle_bytes(bundle)
+
+    bundle, _ = _build(raw, (decision,))
+    candidate = bundle.candidates[0]
+    object.__setattr__(candidate, "source_reference", "FOTMOB_MATCH_DETAILS:forged")
+    with pytest.raises(
+        FotMobReviewedMatchDetailsUnverifiedCandidateError,
+        match="source_reference must match",
+    ):
+        canonical_reviewed_match_details_unverified_candidate_bundle_bytes(bundle)
