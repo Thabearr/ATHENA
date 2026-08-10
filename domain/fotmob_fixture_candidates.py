@@ -316,8 +316,11 @@ class FotMobTeamIdentityConflict:
             raise FotMobFixtureCandidateError("team conflict requires at least two variants")
         if any(not isinstance(item, FotMobTeamIdentityVariant) for item in self.variants):
             raise FotMobFixtureCandidateError("team conflict variants are invalid")
-        if self.variants != tuple(sorted(self.variants, key=lambda item: (item.name, item.long_name))):
+        keys = tuple((item.name, item.long_name) for item in self.variants)
+        if keys != tuple(sorted(keys)):
             raise FotMobFixtureCandidateError("team conflict variants must be sorted")
+        if len(set(keys)) != len(keys):
+            raise FotMobFixtureCandidateError("team conflict variant identities must be unique")
 
     def to_dict(self) -> dict[str, Any]:
         return {"source_team_id": self.source_team_id, "variants": [v.to_dict() for v in self.variants]}
@@ -363,9 +366,11 @@ class FotMobCompetitionIdentityConflict:
             raise FotMobFixtureCandidateError("competition conflict requires at least two variants")
         if any(not isinstance(item, FotMobCompetitionIdentityVariant) for item in self.variants):
             raise FotMobFixtureCandidateError("competition conflict variants are invalid")
-        expected = tuple(sorted(self.variants, key=lambda item: (item.name, item.ccode, item.primary_id)))
-        if self.variants != expected:
+        keys = tuple((item.name, item.ccode, item.primary_id) for item in self.variants)
+        if keys != tuple(sorted(keys)):
             raise FotMobFixtureCandidateError("competition conflict variants must be sorted")
+        if len(set(keys)) != len(keys):
+            raise FotMobFixtureCandidateError("competition conflict variant identities must be unique")
 
     def to_dict(self) -> dict[str, Any]:
         return {"source_league_id": self.source_league_id, "variants": [v.to_dict() for v in self.variants]}
@@ -413,9 +418,11 @@ class FotMobFixtureIdentityConflict:
             raise FotMobFixtureCandidateError("fixture conflict requires at least two variants")
         if any(not isinstance(item, FotMobFixtureIdentityVariant) for item in self.variants):
             raise FotMobFixtureCandidateError("fixture conflict variants are invalid")
-        expected = tuple(sorted(self.variants, key=_fixture_variant_sort_key))
-        if self.variants != expected:
+        keys = tuple(_fixture_variant_sort_key(item) for item in self.variants)
+        if keys != tuple(sorted(keys)):
             raise FotMobFixtureCandidateError("fixture conflict variants must be sorted")
+        if len(set(keys)) != len(keys):
+            raise FotMobFixtureCandidateError("fixture conflict variant identities must be unique")
 
     def to_dict(self) -> dict[str, Any]:
         return {"source_match_id": self.source_match_id, "variants": [v.to_dict() for v in self.variants]}
@@ -472,7 +479,9 @@ class FotMobFixtureCandidateBundle:
             raise FotMobFixtureCandidateError("candidate_count mismatch")
         if sum(item.candidate_count for item in self.sources) != self.candidate_count:
             raise FotMobFixtureCandidateError("source candidate counts do not equal bundle count")
+
         source_map = {item.source_capture_manifest_sha256: item for item in self.sources}
+        source_candidate_counts = {manifest_sha: 0 for manifest_sha in source_map}
         for candidate in self.candidates:
             source = source_map.get(candidate.source_capture_manifest_sha256)
             if source is None:
@@ -483,17 +492,45 @@ class FotMobFixtureCandidateBundle:
                 or candidate.source_observed_at != source.source_observed_at
             ):
                 raise FotMobFixtureCandidateError("candidate source ancestry mismatch")
-        grouped_ids: dict[int, set[str]] = defaultdict(set)
-        for candidate in self.candidates:
-            grouped_ids[candidate.source_match_id].add(candidate.source_capture_manifest_sha256)
-        expected_duplicates = sum(1 for manifests in grouped_ids.values() if len(manifests) > 1)
+            source_candidate_counts[candidate.source_capture_manifest_sha256] += 1
+        for source in self.sources:
+            if source.candidate_count != source_candidate_counts[source.source_capture_manifest_sha256]:
+                raise FotMobFixtureCandidateError("source candidate count mismatch")
+
+        source_manifest_shas = set(source_map)
+        self._validate_conflicts(source_manifest_shas)
+
+        expected_duplicates, expected_fixture_conflicts = _make_fixture_observations(self.candidates)
+        expected_team_conflicts = _make_team_conflicts(self.candidates)
+        expected_competition_conflicts = _make_competition_conflicts(self.candidates)
         _exact_int(self.duplicate_source_match_id_count, "duplicate_source_match_id_count", minimum=0)
         if self.duplicate_source_match_id_count != expected_duplicates:
             raise FotMobFixtureCandidateError("duplicate source match ID count mismatch")
-        self._validate_conflicts()
+
+        derived_conflicts = (
+            (
+                "fixture_identity_conflict_count",
+                self.fixture_identity_conflicts,
+                expected_fixture_conflicts,
+            ),
+            (
+                "team_identity_conflict_count",
+                self.team_identity_conflicts,
+                expected_team_conflicts,
+            ),
+            (
+                "competition_identity_conflict_count",
+                self.competition_identity_conflicts,
+                expected_competition_conflicts,
+            ),
+        )
+        for label, supplied, expected in derived_conflicts:
+            if supplied != expected or getattr(self, label) != len(expected):
+                raise FotMobFixtureCandidateError(f"{label} does not match candidate-derived conflicts")
+
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
-    def _validate_conflicts(self) -> None:
+    def _validate_conflicts(self, source_manifest_shas: set[str]) -> None:
         specifications = (
             (
                 "fixture_identity_conflict_count",
@@ -517,8 +554,17 @@ class FotMobFixtureCandidateBundle:
         for label, values, expected_type, key in specifications:
             if type(values) is not tuple or any(not isinstance(item, expected_type) for item in values):
                 raise FotMobFixtureCandidateError(f"{label} conflict tuple is invalid")
-            if values != tuple(sorted(values, key=key)):
+            keys = tuple(key(item) for item in values)
+            if keys != tuple(sorted(keys)):
                 raise FotMobFixtureCandidateError(f"{label} conflicts must be sorted")
+            if len(set(keys)) != len(keys):
+                raise FotMobFixtureCandidateError(f"{label} conflict keys must be unique")
+            for conflict in values:
+                for variant in conflict.variants:
+                    if not set(variant.source_capture_manifest_sha256s).issubset(source_manifest_shas):
+                        raise FotMobFixtureCandidateError(
+                            f"{label} conflict variant source ancestry is absent"
+                        )
             count = getattr(self, label)
             _exact_int(count, label, minimum=0)
             if count != len(values):
