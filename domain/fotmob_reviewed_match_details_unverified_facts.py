@@ -292,7 +292,7 @@ class ReviewedMatchDetailsUnverifiedFactBundle:
         expected_path = _evidence_file_path(candidate_bundle)
         if type(self.evidence_file_path) is not str or self.evidence_file_path != expected_path:
             raise FotMobReviewedMatchDetailsUnverifiedFactError(
-                "evidence_file_path must equal the exact PR #50 durable response.json path"
+                "evidence_file_path must equal the exact PR #51 durable response.json path"
             )
 
         if type(self.facts) is not tuple or not self.facts:
@@ -463,6 +463,74 @@ def canonical_reviewed_match_details_unverified_fact_bundle_bytes(value: Any) ->
         ) from exc
 
 
+def revalidate_reviewed_match_details_unverified_fact_bundle(
+    *,
+    evidence: Any,
+    evidence_receipt_bytes: Any,
+    manifest_bytes: Any,
+    raw_bytes: Any,
+    assessment: Any,
+    assessment_bytes: Any,
+    review: Any,
+    review_bytes: Any,
+    fact_bundle: Any,
+    fact_bundle_bytes: Any,
+) -> ReviewedMatchDetailsUnverifiedFactBundle:
+    """Replay the exact upstream chain before trusting a supplied PR #57 bundle."""
+
+    if type(fact_bundle) is not ReviewedMatchDetailsUnverifiedFactBundle:
+        raise FotMobReviewedMatchDetailsUnverifiedFactError(
+            "fact_bundle must be exact ReviewedMatchDetailsUnverifiedFactBundle"
+        )
+    if type(fact_bundle_bytes) is not bytes:
+        raise FotMobReviewedMatchDetailsUnverifiedFactError(
+            "fact_bundle_bytes must be exact immutable bytes"
+        )
+    try:
+        supplied_bytes = canonical_reviewed_match_details_unverified_fact_bundle_bytes(
+            fact_bundle
+        )
+        candidate_bytes = canonical_reviewed_match_details_unverified_candidate_bundle_bytes(
+            fact_bundle.candidate_bundle
+        )
+        rebuilt = build_reviewed_match_details_unverified_fact_bundle(
+            evidence=evidence,
+            evidence_receipt_bytes=evidence_receipt_bytes,
+            manifest_bytes=manifest_bytes,
+            raw_bytes=raw_bytes,
+            assessment=assessment,
+            assessment_bytes=assessment_bytes,
+            review=review,
+            review_bytes=review_bytes,
+            candidate_bundle=fact_bundle.candidate_bundle,
+            candidate_bundle_bytes=candidate_bytes,
+        )
+        rebuilt_bytes = canonical_reviewed_match_details_unverified_fact_bundle_bytes(
+            rebuilt
+        )
+    except (
+        FotMobReviewedMatchDetailsUnverifiedFactError,
+        FotMobReviewedMatchDetailsUnverifiedCandidateError,
+        AttributeError,
+        KeyError,
+        TypeError,
+        ValueError,
+        OverflowError,
+    ) as exc:
+        raise FotMobReviewedMatchDetailsUnverifiedFactError(
+            "PR #57 fact bundle failed exact full-chain revalidation"
+        ) from exc
+    if supplied_bytes != rebuilt_bytes:
+        raise FotMobReviewedMatchDetailsUnverifiedFactError(
+            "supplied PR #57 fact bundle differs from exact full-chain rebuild"
+        )
+    if fact_bundle_bytes != rebuilt_bytes:
+        raise FotMobReviewedMatchDetailsUnverifiedFactError(
+            "fact_bundle_bytes are not exact canonical PR #57 bytes"
+        )
+    return rebuilt
+
+
 def sha256_reviewed_match_details_unverified_fact_bundle(value: Any) -> str:
     return hashlib.sha256(
         canonical_reviewed_match_details_unverified_fact_bundle_bytes(value)
@@ -477,5 +545,6 @@ __all__ = [
     "ReviewedMatchDetailsUnverifiedFactBundle",
     "build_reviewed_match_details_unverified_fact_bundle",
     "canonical_reviewed_match_details_unverified_fact_bundle_bytes",
+    "revalidate_reviewed_match_details_unverified_fact_bundle",
     "sha256_reviewed_match_details_unverified_fact_bundle",
 ]
