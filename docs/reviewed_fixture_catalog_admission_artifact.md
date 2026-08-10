@@ -26,13 +26,16 @@ Before verification succeeds, the gate:
 2. rebuilds the admission through the PR #45 builder, re-running its current semantic checks rather than trusting an old Python object by assertion;
 3. therefore rechecks the exact reviewed source capability and the PR #45 upstream catalog/handoff invariants;
 4. requires at least one admitted source-scoped fixture identity;
-5. regenerates the canonical PR #45 admission bytes;
-6. requires byte-for-byte equality with the presented artifact, including canonical ordering and the single terminal newline;
-7. recomputes SHA-256 over those exact canonical bytes;
-8. requires the verification timestamp not to predate the catalog-level admission review;
-9. preserves all downstream authorization flags as exact immutable `False`.
+5. serializes both the supplied admission object and the semantic rebuild canonically and requires those byte sequences to be exactly equal, so inconsistent derived state is rejected rather than silently repaired;
+6. regenerates the canonical PR #45 admission bytes from the validated rebuild;
+7. requires byte-for-byte equality with the presented artifact, including canonical ordering and the single terminal newline;
+8. recomputes SHA-256 over those exact canonical bytes;
+9. requires the verification timestamp not to predate the catalog-level admission review;
+10. preserves all downstream authorization flags as exact immutable `False`.
 
-Changed whitespace, a missing or extra newline, altered JSON content, a rejected decision, a stale capability profile, an incorrect hash, or a fabricated direct construction all fail closed.
+Changed whitespace, a missing or extra newline, altered JSON content, mutated derived admission state, a rejected decision, a stale capability profile, an incorrect hash, or a fabricated direct construction all fail closed.
+
+The supplied-object comparison is intentional. The verifier must not accept an inconsistent PR #45 object merely because it can reconstruct a correct replacement from other fields. `admitted_fixtures`, safety state, and other derived fields remain part of the exact object identity presented for verification.
 
 ## Verification receipt
 
