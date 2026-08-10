@@ -28,7 +28,10 @@ def _pr57_helper():
     helper_path = Path(__file__).with_name(
         "test_fotmob_reviewed_match_details_unverified_facts.py"
     )
-    spec = importlib.util.spec_from_file_location("_athena_pr57_qualification_helper", helper_path)
+    spec = importlib.util.spec_from_file_location(
+        "_athena_pr57_qualification_helper",
+        helper_path,
+    )
     if spec is None or spec.loader is None:
         raise RuntimeError("could not load PR #57 helper")
     module = importlib.util.module_from_spec(spec)
@@ -54,26 +57,24 @@ def _review_decisions(
     dispositions = dispositions or {}
     items = []
     for fact in fact_bundle.facts:
-        disposition = dispositions.get(
-            fact.field,
-            FieldEvidenceQualificationDisposition.QUALIFIED,
-        )
         items.append(
             MatchDetailsFieldEvidenceReviewDecision(
                 category=fact.category,
                 field=fact.field,
                 source_reference=fact.source_reference,
-                disposition=disposition,
+                disposition=dispositions.get(
+                    fact.field,
+                    FieldEvidenceQualificationDisposition.QUALIFIED,
+                ),
                 rationale=f"Explicit exact-observation review for {fact.field}.",
             )
         )
     return tuple(sorted(items, key=lambda item: item.key))
 
 
-def _reviewed_at(fact_bundle) -> datetime.datetime:
-    return fact_bundle.observed_at + (
-        (fact_bundle.kickoff - fact_bundle.observed_at) / 2
-    )
+def _qualification_reviewed_at(fact_bundle, semantic_review) -> datetime.datetime:
+    start = max(fact_bundle.observed_at, semantic_review.reviewed_at)
+    return start + ((fact_bundle.kickoff - start) / 2)
 
 
 def _build_qualification(raw: bytes, approved_decisions, dispositions=None):
@@ -91,7 +92,7 @@ def _build_qualification(raw: bytes, approved_decisions, dispositions=None):
         fact_bundle=fact_bundle,
         fact_bundle_bytes=fact_bytes,
         decisions=_review_decisions(fact_bundle, dispositions),
-        reviewed_at=_reviewed_at(fact_bundle),
+        reviewed_at=_qualification_reviewed_at(fact_bundle, review),
         reviewer_reference="ATHENA-PR58-TEST",
     )
     qualification_bytes = canonical_reviewed_match_details_field_evidence_qualification_bytes(
@@ -100,9 +101,8 @@ def _build_qualification(raw: bytes, approved_decisions, dispositions=None):
     return qualification, qualification_bytes, fact_bundle, fact_bytes, chain
 
 
-def test_exact_observation_review_records_qualified_and_rejected_without_status_promotion() -> None:
-    raw = b'{"alpha":{"label":"ok","value":100}}'
-    approved = (
+def _two_approved():
+    return (
         _approved(
             "/alpha/label",
             JsonValueKind.STRING,
@@ -116,11 +116,27 @@ def test_exact_observation_review_records_qualified_and_rejected_without_status_
             "synthetic_metric",
         ),
     )
-    qualification, _, fact_bundle, _, _ = _build_qualification(
+
+
+def _one_approved():
+    return (
+        _approved(
+            "/alpha/value",
+            JsonValueKind.INTEGER,
+            IntelligenceCategory.MATCH_CONTEXT,
+            "synthetic_metric",
+        ),
+    )
+
+
+def test_exact_observation_review_records_qualified_and_rejected_without_status_promotion() -> None:
+    raw = b'{"alpha":{"label":"ok","value":100}}'
+    qualification, _, fact_bundle, _, chain = _build_qualification(
         raw,
-        approved,
+        _two_approved(),
         {"synthetic_label": FieldEvidenceQualificationDisposition.REJECTED},
     )
+    semantic_review = chain[-2]
 
     assert type(qualification) is ReviewedMatchDetailsFieldEvidenceQualification
     assert qualification.qualification_scope == QUALIFICATION_SCOPE
@@ -131,8 +147,10 @@ def test_exact_observation_review_records_qualified_and_rejected_without_status_
     assert qualification.source_match_id == fact_bundle.source_match_id
     assert qualification.kickoff == fact_bundle.kickoff
     assert qualification.observed_at == fact_bundle.observed_at
+    assert qualification.semantic_reviewed_at == semantic_review.reviewed_at
     assert qualification.raw_sha256 == fact_bundle.raw_sha256
     assert qualification.evidence_file_path == fact_bundle.evidence_file_path
+    assert qualification.semantic_reviewed_at <= qualification.reviewed_at < qualification.kickoff
     assert all(fact.status is IntelligenceFactStatus.UNVERIFIED for fact in fact_bundle.facts)
     assert all(value is False for value in qualification.safety.values())
 
@@ -146,23 +164,10 @@ def test_exact_observation_review_records_qualified_and_rejected_without_status_
 
 def test_review_decisions_must_cover_every_and_only_exact_pr57_fact() -> None:
     raw = b'{"alpha":{"label":"ok","value":100}}'
-    approved = (
-        _approved(
-            "/alpha/label",
-            JsonValueKind.STRING,
-            IntelligenceCategory.FIXTURE_CONTEXT,
-            "synthetic_label",
-        ),
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
-    )
-    fact_bundle, fact_bytes, chain = _fact_chain(raw, approved)
+    fact_bundle, fact_bytes, chain = _fact_chain(raw, _two_approved())
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
     complete = _review_decisions(fact_bundle)
+    reviewed_at = _qualification_reviewed_at(fact_bundle, review)
 
     with pytest.raises(
         FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
@@ -180,7 +185,7 @@ def test_review_decisions_must_cover_every_and_only_exact_pr57_fact() -> None:
             fact_bundle=fact_bundle,
             fact_bundle_bytes=fact_bytes,
             decisions=complete[:-1],
-            reviewed_at=_reviewed_at(fact_bundle),
+            reviewed_at=reviewed_at,
             reviewer_reference="ATHENA-PR58-TEST",
         )
 
@@ -209,30 +214,17 @@ def test_review_decisions_must_cover_every_and_only_exact_pr57_fact() -> None:
             fact_bundle=fact_bundle,
             fact_bundle_bytes=fact_bytes,
             decisions=supplied,
-            reviewed_at=_reviewed_at(fact_bundle),
+            reviewed_at=reviewed_at,
             reviewer_reference="ATHENA-PR58-TEST",
         )
 
 
 def test_review_decisions_must_be_sorted_unique_and_explicit() -> None:
     raw = b'{"alpha":{"label":"ok","value":100}}'
-    approved = (
-        _approved(
-            "/alpha/label",
-            JsonValueKind.STRING,
-            IntelligenceCategory.FIXTURE_CONTEXT,
-            "synthetic_label",
-        ),
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
-    )
-    fact_bundle, fact_bytes, chain = _fact_chain(raw, approved)
+    fact_bundle, fact_bytes, chain = _fact_chain(raw, _two_approved())
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
     complete = _review_decisions(fact_bundle)
+    reviewed_at = _qualification_reviewed_at(fact_bundle, review)
 
     with pytest.raises(
         FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
@@ -250,7 +242,7 @@ def test_review_decisions_must_be_sorted_unique_and_explicit() -> None:
             fact_bundle=fact_bundle,
             fact_bundle_bytes=fact_bytes,
             decisions=tuple(reversed(complete)),
-            reviewed_at=_reviewed_at(fact_bundle),
+            reviewed_at=reviewed_at,
             reviewer_reference="ATHENA-PR58-TEST",
         )
 
@@ -270,22 +262,14 @@ def test_review_decisions_must_be_sorted_unique_and_explicit() -> None:
             fact_bundle=fact_bundle,
             fact_bundle_bytes=fact_bytes,
             decisions=tuple(sorted((complete[0], complete[0]), key=lambda item: item.key)),
-            reviewed_at=_reviewed_at(fact_bundle),
+            reviewed_at=reviewed_at,
             reviewer_reference="ATHENA-PR58-TEST",
         )
 
 
 def test_qualification_requires_exact_pr57_bytes_and_full_chain_revalidation() -> None:
     raw = b'{"alpha":{"value":100}}'
-    approved = (
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
-    )
-    fact_bundle, fact_bytes, chain = _fact_chain(raw, approved)
+    fact_bundle, fact_bytes, chain = _fact_chain(raw, _one_approved())
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
 
     with pytest.raises(
@@ -304,29 +288,23 @@ def test_qualification_requires_exact_pr57_bytes_and_full_chain_revalidation() -
             fact_bundle=fact_bundle,
             fact_bundle_bytes=fact_bytes + b"\n",
             decisions=_review_decisions(fact_bundle),
-            reviewed_at=_reviewed_at(fact_bundle),
+            reviewed_at=_qualification_reviewed_at(fact_bundle, review),
             reviewer_reference="ATHENA-PR58-TEST",
         )
 
 
-def test_review_time_must_be_prospective() -> None:
+def test_qualification_review_must_follow_semantic_review_and_remain_pre_kickoff() -> None:
     raw = b'{"alpha":{"value":100}}'
-    approved = (
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
-    )
-    fact_bundle, fact_bytes, chain = _fact_chain(raw, approved)
+    fact_bundle, fact_bytes, chain = _fact_chain(raw, _one_approved())
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
+    decisions = _review_decisions(fact_bundle)
 
-    for invalid in (
-        fact_bundle.observed_at - datetime.timedelta(microseconds=1),
+    invalid_times = (
+        review.reviewed_at - datetime.timedelta(microseconds=1),
         fact_bundle.kickoff,
         fact_bundle.kickoff + datetime.timedelta(microseconds=1),
-    ):
+    )
+    for invalid in invalid_times:
         with pytest.raises(
             FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
             match="reviewed_at",
@@ -342,23 +320,42 @@ def test_review_time_must_be_prospective() -> None:
                 review_bytes=review_bytes,
                 fact_bundle=fact_bundle,
                 fact_bundle_bytes=fact_bytes,
-                decisions=_review_decisions(fact_bundle),
+                decisions=decisions,
                 reviewed_at=invalid,
                 reviewer_reference="ATHENA-PR58-TEST",
             )
 
 
+def test_detached_evidence_path_and_source_fixture_are_self_validating() -> None:
+    raw = b'{"alpha":{"value":100}}'
+    qualification, _, _, _, _ = _build_qualification(raw, _one_approved())
+
+    object.__setattr__(qualification, "evidence_file_path", "forged/response.json")
+    with pytest.raises(
+        FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
+        match="durable capture identity",
+    ):
+        canonical_reviewed_match_details_field_evidence_qualification_bytes(qualification)
+
+    qualification, _, _, _, _ = _build_qualification(raw, _one_approved())
+    object.__setattr__(
+        qualification.decisions[0],
+        "source_reference",
+        "/api/matchDetails?matchId=999999#/alpha/value",
+    )
+    with pytest.raises(
+        FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
+        match="source fixture",
+    ):
+        canonical_reviewed_match_details_field_evidence_qualification_bytes(qualification)
+
+
 def test_full_chain_revalidation_rejects_mutated_recorded_fact_hash() -> None:
     raw = b'{"alpha":{"value":100}}'
-    approved = (
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
+    qualification, _, fact_bundle, fact_bytes, chain = _build_qualification(
+        raw,
+        _one_approved(),
     )
-    qualification, _, fact_bundle, fact_bytes, chain = _build_qualification(raw, approved)
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
 
     object.__setattr__(qualification.decisions[0], "fact_sha256", "0" * 64)
@@ -388,16 +385,11 @@ def test_full_chain_revalidation_rejects_mutated_recorded_fact_hash() -> None:
 def test_qualification_cannot_be_reused_for_different_exact_raw_observation() -> None:
     raw_a = b'{"alpha":{"value":100}}'
     raw_b = b'{"alpha":{"value":101}}'
-    approved = (
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
+    qualification, qualification_bytes, _, _, _ = _build_qualification(
+        raw_a,
+        _one_approved(),
     )
-    qualification, qualification_bytes, _, _, _ = _build_qualification(raw_a, approved)
-    other_bundle, other_bytes, other_chain = _fact_chain(raw_b, approved)
+    other_bundle, other_bytes, other_chain = _fact_chain(raw_b, _one_approved())
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = other_chain
 
     with pytest.raises(
@@ -422,17 +414,9 @@ def test_qualification_cannot_be_reused_for_different_exact_raw_observation() ->
 
 def test_exact_qualification_bytes_are_required() -> None:
     raw = b'{"alpha":{"value":100}}'
-    approved = (
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
-    )
     qualification, qualification_bytes, fact_bundle, fact_bytes, chain = _build_qualification(
         raw,
-        approved,
+        _one_approved(),
     )
     evidence, receipt, manifest, assessment, assessment_bytes, review, review_bytes = chain
 
@@ -474,15 +458,10 @@ def test_exact_qualification_bytes_are_required() -> None:
 
 def test_canonical_bytes_are_deterministic_and_safety_cannot_be_upgraded() -> None:
     raw = b'{"alpha":{"value":100}}'
-    approved = (
-        _approved(
-            "/alpha/value",
-            JsonValueKind.INTEGER,
-            IntelligenceCategory.MATCH_CONTEXT,
-            "synthetic_metric",
-        ),
+    qualification, qualification_bytes, _, _, _ = _build_qualification(
+        raw,
+        _one_approved(),
     )
-    qualification, qualification_bytes, _, _, _ = _build_qualification(raw, approved)
 
     assert qualification_bytes.endswith(b"\n")
     assert canonical_reviewed_match_details_field_evidence_qualification_bytes(
