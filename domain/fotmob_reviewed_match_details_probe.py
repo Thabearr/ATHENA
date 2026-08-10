@@ -1,6 +1,6 @@
 """Reviewed one-shot diagnostic contract for FotMob match-details responses.
 
-Only transport metadata and a bounded raw response sample may cross this
+Only transport metadata and a bounded response fingerprint may cross this
 boundary. Football semantics remain unreviewed and unauthorized.
 """
 
@@ -175,8 +175,11 @@ def _revalidate_verified_bootstrap_artifact(
         rebuilt_bytes = canonical_verified_bootstrap_artifact_receipt_bytes(rebuilt)
     except (
         ReviewedFixtureIntelligenceBootstrapArtifactError,
+        AttributeError,
+        KeyError,
         TypeError,
         ValueError,
+        OverflowError,
     ) as exc:
         raise FotMobReviewedMatchDetailsProbeError(
             "PR #48 verified bootstrap artifact failed current exact revalidation"
@@ -196,10 +199,24 @@ def _revalidate_verified_bootstrap_artifact(
     return rebuilt, hashlib.sha256(receipt_bytes).hexdigest()
 
 
+def _exact_fixture(value, fixture_identifier: Any):
+    source_match_id = source_match_id_from_fixture_identifier(fixture_identifier)
+    matches = tuple(
+        item for item in value.fixtures if item.fixture_identifier == fixture_identifier
+    )
+    if len(matches) != 1:
+        raise FotMobReviewedMatchDetailsProbeError(
+            "fixture_identifier is not an exact fixture in the PR #48 receipt"
+        )
+    return matches[0], source_match_id
+
+
 @dataclasses.dataclass(frozen=True)
 class FotMobMatchDetailsProbePlan:
-    """Detached request plan for one exact prospective reviewed fixture."""
+    """Self-validating request plan for one exact prospective reviewed fixture."""
 
+    verified_bootstrap_artifact: VerifiedReviewedFixtureIntelligenceBootstrapArtifact
+    verification_receipt_bytes: bytes
     bootstrap_verification_receipt_sha256: str
     bootstrap_sha256: str
     fixture_identifier: str
@@ -215,20 +232,38 @@ class FotMobMatchDetailsProbePlan:
     browser_impersonation: bool
 
     def __post_init__(self) -> None:
+        rebuilt, receipt_sha = _revalidate_verified_bootstrap_artifact(
+            self.verified_bootstrap_artifact,
+            self.verification_receipt_bytes,
+        )
+        fixture, source_match_id = _exact_fixture(rebuilt, self.fixture_identifier)
+        if self.bootstrap_verification_receipt_sha256 != receipt_sha:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "bootstrap_verification_receipt_sha256 does not match exact PR #48 bytes"
+            )
+        if self.bootstrap_sha256 != rebuilt.bootstrap_sha256:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "bootstrap_sha256 does not match the exact PR #48 receipt"
+            )
         _strict_sha256(
             self.bootstrap_verification_receipt_sha256,
             "bootstrap_verification_receipt_sha256",
         )
         _strict_sha256(self.bootstrap_sha256, "bootstrap_sha256")
-        source_match_id = source_match_id_from_fixture_identifier(
-            self.fixture_identifier
-        )
         if self.source_match_id != source_match_id:
             raise FotMobReviewedMatchDetailsProbeError(
                 "source_match_id does not match fixture_identifier"
             )
         kickoff = _strict_utc(self.kickoff, "kickoff")
+        if kickoff != fixture.kickoff:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "kickoff does not match the exact PR #48 fixture"
+            )
         started = _strict_utc(self.request_started_at, "request_started_at")
+        if started < rebuilt.verified_at:
+            raise FotMobReviewedMatchDetailsProbeError(
+                "request_started_at must not predate PR #48 verification"
+            )
         if started >= kickoff:
             raise FotMobReviewedMatchDetailsProbeError(
                 "request_started_at must be strictly before fixture kickoff"
@@ -258,11 +293,15 @@ class FotMobMatchDetailsProbePlan:
                 raise FotMobReviewedMatchDetailsProbeError(
                     f"{label} must be exact bool False"
                 )
+        object.__setattr__(self, "verified_bootstrap_artifact", rebuilt)
         object.__setattr__(self, "kickoff", kickoff)
         object.__setattr__(self, "request_started_at", started)
 
     def to_dict(self) -> dict[str, Any]:
+        # Deliberately detached: historical probe receipt bytes do not re-read
+        # mutable nested upstream objects or live capability state.
         return {
+            "verification_receipt_size": len(self.verification_receipt_bytes),
             "bootstrap_verification_receipt_sha256": (
                 self.bootstrap_verification_receipt_sha256
             ),
@@ -294,27 +333,11 @@ def build_match_details_probe_plan(
         verified_bootstrap_artifact,
         verification_receipt_bytes,
     )
-    source_match_id = source_match_id_from_fixture_identifier(fixture_identifier)
-    matches = tuple(
-        item
-        for item in rebuilt.fixtures
-        if item.fixture_identifier == fixture_identifier
-    )
-    if len(matches) != 1:
-        raise FotMobReviewedMatchDetailsProbeError(
-            "fixture_identifier is not an exact fixture in the PR #48 receipt"
-        )
-    fixture = matches[0]
+    fixture, source_match_id = _exact_fixture(rebuilt, fixture_identifier)
     started = _strict_utc(request_started_at, "request_started_at")
-    if started < rebuilt.verified_at:
-        raise FotMobReviewedMatchDetailsProbeError(
-            "request_started_at must not predate PR #48 verification"
-        )
-    if started >= fixture.kickoff:
-        raise FotMobReviewedMatchDetailsProbeError(
-            "request_started_at must be strictly before fixture kickoff"
-        )
     return FotMobMatchDetailsProbePlan(
+        verified_bootstrap_artifact=rebuilt,
+        verification_receipt_bytes=verification_receipt_bytes,
         bootstrap_verification_receipt_sha256=receipt_sha,
         bootstrap_sha256=rebuilt.bootstrap_sha256,
         fixture_identifier=fixture.fixture_identifier,
@@ -361,9 +384,16 @@ class FotMobReviewedMatchDetailsProbeReceipt:
             )
         try:
             plan = dataclasses.replace(self.plan)
-        except (FotMobReviewedMatchDetailsProbeError, TypeError, ValueError) as exc:
+        except (
+            FotMobReviewedMatchDetailsProbeError,
+            AttributeError,
+            KeyError,
+            TypeError,
+            ValueError,
+            OverflowError,
+        ) as exc:
             raise FotMobReviewedMatchDetailsProbeError(
-                "probe plan failed exact revalidation"
+                "probe plan failed exact current revalidation"
             ) from exc
         if not isinstance(self.transport_outcome, ProbeTransportOutcome):
             raise FotMobReviewedMatchDetailsProbeError(
