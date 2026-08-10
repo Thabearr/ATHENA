@@ -66,9 +66,9 @@ class DurableMatchDetailsCaptureExecution:
     artifact: FotMobReviewedMatchDetailsCaptureArtifact
 
     def __post_init__(self) -> None:
-        if type(self.capture_directory) is not Path:
+        if not isinstance(self.capture_directory, Path):
             raise FotMobReviewedMatchDetailsDurableCaptureError(
-                "capture_directory must be an exact pathlib.Path"
+                "capture_directory must be a pathlib.Path"
             )
         try:
             artifact = revalidate_reviewed_match_details_capture_artifact(self.artifact)
