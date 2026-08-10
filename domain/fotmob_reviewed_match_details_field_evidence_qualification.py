@@ -1,8 +1,8 @@
 """Exact-observation qualification for reviewed FotMob match-details facts.
 
 PR #58 consumes the complete exact PR #52 -> PR #57 chain and records an
-explicit reviewer decision for every exact PR #57 UNVERIFIED fact.  A
-QUALIFIED decision applies only to that exact observation.  It does not create
+explicit reviewer decision for every exact PR #57 UNVERIFIED fact. A
+QUALIFIED decision applies only to that exact observation. It does not create
 a source-wide capability, change fact status, build a Fixture Intelligence
 snapshot, or authorize modelling/pricing/betting behavior.
 """
@@ -26,6 +26,7 @@ from domain.fixture_intelligence import (
     SourceRole,
 )
 from domain.fotmob_reviewed_match_details_unverified_facts import (
+    EVIDENCE_ROOT,
     FotMobReviewedMatchDetailsUnverifiedFactError,
     ReviewedMatchDetailsUnverifiedFactBundle,
     SOURCE_PROVIDER,
@@ -36,6 +37,7 @@ from domain.fotmob_reviewed_match_details_unverified_facts import (
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-fotmob-reviewed-match-details-field-evidence-qualification-v1"
 QUALIFICATION_SCOPE = "EXACT_OBSERVATION_ONLY"
+RAW_FILENAME = "response.json"
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _FIXTURE_RE = re.compile(r"^FOTMOB:([1-9][0-9]*)$", flags=re.ASCII)
@@ -72,20 +74,15 @@ def _sha(value: Any, label: str) -> str:
     return value
 
 
-def _text(
-    value: Any,
-    label: str,
-    maximum: int,
-    *,
-    allow_empty: bool = False,
-) -> str:
-    if type(value) is not str or value != value.strip():
+def _text(value: Any, label: str, maximum: int) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or value != value.strip()
+        or len(value) > maximum
+    ):
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
-            f"{label} must be an exact trimmed string"
-        )
-    if (not allow_empty and not value) or len(value) > maximum:
-        raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
-            f"{label} length is outside reviewed bounds"
+            f"{label} must be a non-empty exact trimmed string within {maximum} characters"
         )
     return value
 
@@ -121,6 +118,16 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
 
 def _iso(value: datetime.datetime) -> str:
     return value.isoformat().replace("+00:00", "Z")
+
+
+def _expected_evidence_file_path(
+    source_match_id: str,
+    observed_at: datetime.datetime,
+    raw_sha256: str,
+) -> str:
+    timestamp = observed_at.strftime("%Y%m%dT%H%M%S%fZ")
+    capture_identifier = f"{source_match_id}--{timestamp}--{raw_sha256}"
+    return f"{EVIDENCE_ROOT}/{capture_identifier}/{RAW_FILENAME}"
 
 
 def _fact_payload(fact: FixtureIntelligenceFact) -> dict[str, Any]:
@@ -282,6 +289,7 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
     source_match_id: str
     kickoff: datetime.datetime
     observed_at: datetime.datetime
+    semantic_reviewed_at: datetime.datetime
     raw_sha256: str
     evidence_file_path: str
     source_provider: str
@@ -324,14 +332,22 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
 
         kickoff = _utc(self.kickoff, "kickoff")
         observed_at = _utc(self.observed_at, "observed_at")
+        semantic_reviewed_at = _utc(
+            self.semantic_reviewed_at,
+            "semantic_reviewed_at",
+        )
         reviewed_at = _utc(self.reviewed_at, "reviewed_at")
         if observed_at >= kickoff:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "observed_at must remain strictly before kickoff"
             )
-        if reviewed_at < observed_at or reviewed_at >= kickoff:
+        if semantic_reviewed_at < observed_at or semantic_reviewed_at >= kickoff:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
-                "reviewed_at must follow observation and remain strictly before kickoff"
+                "semantic_reviewed_at must follow observation and remain before kickoff"
+            )
+        if reviewed_at < semantic_reviewed_at or reviewed_at >= kickoff:
+            raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+                "reviewed_at must not precede semantic review and must remain before kickoff"
             )
 
         raw_sha256 = _sha(self.raw_sha256, "raw_sha256")
@@ -340,6 +356,15 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
             "evidence_file_path",
             1024,
         )
+        expected_path = _expected_evidence_file_path(
+            source_match_id,
+            observed_at,
+            raw_sha256,
+        )
+        if evidence_file_path != expected_path:
+            raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+                "evidence_file_path must match exact durable capture identity"
+            )
         if self.source_provider != SOURCE_PROVIDER:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "source_provider must remain exact reviewed match-details provider"
@@ -380,12 +405,19 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
             raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
                 "recorded fact_sha256 values must be unique"
             )
+        source_prefix = f"/api/matchDetails?matchId={source_match_id}#/"
+        for item in self.decisions:
+            if not item.source_reference.startswith(source_prefix):
+                raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+                    "recorded source_reference does not match exact source fixture"
+                )
 
         safety = _validate_safety(self.safety)
         object.__setattr__(self, "fixture_identifier", fixture_identifier)
         object.__setattr__(self, "source_match_id", source_match_id)
         object.__setattr__(self, "kickoff", kickoff)
         object.__setattr__(self, "observed_at", observed_at)
+        object.__setattr__(self, "semantic_reviewed_at", semantic_reviewed_at)
         object.__setattr__(self, "reviewed_at", reviewed_at)
         object.__setattr__(self, "raw_sha256", raw_sha256)
         object.__setattr__(self, "evidence_file_path", evidence_file_path)
@@ -417,6 +449,7 @@ class ReviewedMatchDetailsFieldEvidenceQualification:
             "source_match_id": self.source_match_id,
             "kickoff": _iso(self.kickoff),
             "observed_at": _iso(self.observed_at),
+            "semantic_reviewed_at": _iso(self.semantic_reviewed_at),
             "raw_sha256": self.raw_sha256,
             "evidence_file_path": self.evidence_file_path,
             "source_provider": self.source_provider,
@@ -515,15 +548,23 @@ def build_reviewed_match_details_field_evidence_qualification(
         fact_bundle=fact_bundle,
         fact_bundle_bytes=fact_bundle_bytes,
     )
+    semantic_reviewed_at = _utc(
+        getattr(review, "reviewed_at", None),
+        "semantic_reviewed_at",
+    )
     reviewed_at = _utc(reviewed_at, "reviewed_at")
     reviewer_reference = _text(
         reviewer_reference,
         "reviewer_reference",
         256,
     )
-    if reviewed_at < rebuilt.observed_at or reviewed_at >= rebuilt.kickoff:
+    if semantic_reviewed_at < rebuilt.observed_at or semantic_reviewed_at >= rebuilt.kickoff:
         raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
-            "reviewed_at must follow exact observation and remain strictly before kickoff"
+            "semantic review chronology is incompatible with exact PR #57 observation"
+        )
+    if reviewed_at < semantic_reviewed_at or reviewed_at >= rebuilt.kickoff:
+        raise FotMobReviewedMatchDetailsFieldEvidenceQualificationError(
+            "reviewed_at must not precede semantic review and must remain before kickoff"
         )
 
     if type(decisions) is not tuple or not decisions:
@@ -600,6 +641,7 @@ def build_reviewed_match_details_field_evidence_qualification(
         source_match_id=rebuilt.source_match_id,
         kickoff=rebuilt.kickoff,
         observed_at=rebuilt.observed_at,
+        semantic_reviewed_at=semantic_reviewed_at,
         raw_sha256=rebuilt.raw_sha256,
         evidence_file_path=rebuilt.evidence_file_path,
         source_provider=SOURCE_PROVIDER,
@@ -717,6 +759,7 @@ def sha256_reviewed_match_details_field_evidence_qualification(value: Any) -> st
 __all__ = [
     "DATASET_NAME",
     "QUALIFICATION_SCOPE",
+    "RAW_FILENAME",
     "SCHEMA_VERSION",
     "FieldEvidenceQualificationDisposition",
     "FotMobReviewedMatchDetailsFieldEvidenceQualificationError",
