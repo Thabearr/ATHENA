@@ -117,6 +117,17 @@ def _revalidate_admission(value: Any) -> ReviewedFixtureCatalogAdmission:
         raise ReviewedFixtureCatalogAdmissionArtifactError(
             "ADMITTED reviewed Fixture Catalog exposes no fixture identities"
         )
+    try:
+        supplied_bytes = canonical_reviewed_fixture_catalog_admission_bytes(value)
+        rebuilt_bytes = canonical_reviewed_fixture_catalog_admission_bytes(rebuilt)
+    except ReviewedFixtureCatalogAdmissionError as exc:
+        raise ReviewedFixtureCatalogAdmissionArtifactError(
+            "reviewed Fixture Catalog admission canonical comparison failed"
+        ) from exc
+    if supplied_bytes != rebuilt_bytes:
+        raise ReviewedFixtureCatalogAdmissionArtifactError(
+            "supplied admission object differs from the exact semantic rebuild"
+        )
     return rebuilt
 
 
@@ -202,7 +213,12 @@ def verify_reviewed_fixture_catalog_admission_artifact(
         raise ReviewedFixtureCatalogAdmissionArtifactError(
             "artifact_bytes must be exact immutable bytes"
         )
-    canonical = canonical_reviewed_fixture_catalog_admission_bytes(admission)
+    try:
+        canonical = canonical_reviewed_fixture_catalog_admission_bytes(admission)
+    except ReviewedFixtureCatalogAdmissionError as exc:
+        raise ReviewedFixtureCatalogAdmissionArtifactError(
+            "reviewed Fixture Catalog admission canonical serialization failed"
+        ) from exc
     admission_sha256 = hashlib.sha256(canonical).hexdigest()
     return VerifiedReviewedFixtureCatalogAdmissionArtifact(
         admission=admission,
