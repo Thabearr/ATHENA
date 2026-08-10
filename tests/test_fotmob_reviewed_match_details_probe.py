@@ -34,6 +34,7 @@ from scripts.probe_fotmob_reviewed_match_details import (
 
 UTC = datetime.timezone.utc
 REQUEST_AT = datetime.datetime(2026, 8, 10, 6, 0, tzinfo=UTC)
+SEND_AT = REQUEST_AT + datetime.timedelta(microseconds=500_000)
 OBSERVED_AT = REQUEST_AT + datetime.timedelta(seconds=1)
 KICKOFF = datetime.datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
@@ -116,7 +117,7 @@ def _factory(connection, calls):
     return build
 
 
-def test_plan_is_exactly_anchored_to_pr48_fixture_and_route(tmp_path: Path) -> None:
+def test_plan_is_self_validating_and_exactly_anchored_to_pr48(tmp_path: Path) -> None:
     verified, receipt_bytes = _upstream(tmp_path)
     plan = build_match_details_probe_plan(
         verified,
@@ -127,6 +128,8 @@ def test_plan_is_exactly_anchored_to_pr48_fixture_and_route(tmp_path: Path) -> N
     assert DATASET_NAME == "athena-fotmob-reviewed-match-details-probe-v1"
     assert source_match_id_from_fixture_identifier("FOTMOB:1001") == "1001"
     assert request_target("1001") == "/api/matchDetails?matchId=1001"
+    assert plan.verified_bootstrap_artifact is not None
+    assert plan.verification_receipt_bytes == receipt_bytes
     assert plan.fixture_identifier == "FOTMOB:1001"
     assert plan.source_match_id == "1001"
     assert plan.kickoff == KICKOFF
@@ -139,6 +142,15 @@ def test_plan_is_exactly_anchored_to_pr48_fixture_and_route(tmp_path: Path) -> N
     assert plan.x_mas_included is False
     assert plan.cookie_included is False
     assert plan.browser_impersonation is False
+
+    with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="bootstrap_sha256"):
+        dataclasses.replace(plan, bootstrap_sha256="f" * 64)
+    with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="not an exact fixture"):
+        dataclasses.replace(
+            plan,
+            fixture_identifier="FOTMOB:9999",
+            source_match_id="9999",
+        )
 
 
 def test_wrong_receipt_fixture_or_noncanonical_id_fails_closed(tmp_path: Path) -> None:
@@ -224,12 +236,13 @@ def test_one_transparent_request_returns_only_bounded_diagnostic_receipt(tmp_pat
         fixture_identifier="FOTMOB:1001",
         execute_live_network=True,
         connection_factory=_factory(connection, calls),
-        clock=_Clock(REQUEST_AT, OBSERVED_AT),
+        clock=_Clock(REQUEST_AT, SEND_AT, OBSERVED_AT),
     )
     assert calls == [(ALLOWED_HOST, 443, REQUEST_TIMEOUT_SECONDS)]
     assert connection.requests == [("GET", "/api/matchDetails?matchId=1001", True)]
     assert connection.headers == list(REQUEST_HEADERS)
     assert all(name.lower() not in {"cookie", "x-mas"} for name, _ in connection.headers)
+    assert connection.endheaders_calls == 1
     assert response.read_calls == [MAX_SAMPLE_BYTES]
     assert connection.closed is True
 
@@ -248,6 +261,22 @@ def test_one_transparent_request_returns_only_bounded_diagnostic_receipt(tmp_pat
     assert sha256_match_details_probe_receipt(receipt) == hashlib.sha256(canonical).hexdigest()
 
 
+def test_final_pre_send_gate_blocks_kickoff_crossing_before_bytes_are_sent(tmp_path: Path) -> None:
+    verified, receipt_bytes = _upstream(tmp_path)
+    connection = _Connection(response=_Response())
+    with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="request_send_at must be strictly before"):
+        probe_fotmob_reviewed_match_details(
+            verified_bootstrap_artifact=verified,
+            verification_receipt_bytes=receipt_bytes,
+            fixture_identifier="FOTMOB:1001",
+            execute_live_network=True,
+            connection_factory=_factory(connection, []),
+            clock=_Clock(REQUEST_AT, KICKOFF),
+        )
+    assert connection.endheaders_calls == 0
+    assert connection.closed is True
+
+
 def test_redirect_is_recorded_not_followed_and_transport_errors_are_distinct(tmp_path: Path) -> None:
     verified, receipt_bytes = _upstream(tmp_path)
     redirect = _Response(
@@ -263,10 +292,11 @@ def test_redirect_is_recorded_not_followed_and_transport_errors_are_distinct(tmp
         fixture_identifier="FOTMOB:1001",
         execute_live_network=True,
         connection_factory=_factory(connection, calls),
-        clock=_Clock(REQUEST_AT, OBSERVED_AT),
+        clock=_Clock(REQUEST_AT, SEND_AT, OBSERVED_AT),
     )
     assert len(calls) == 1
     assert len(connection.requests) == 1
+    assert connection.endheaders_calls == 1
     assert result.receipt.status_code == 302
     assert result.receipt.location == "https://example.invalid/no-follow"
 
@@ -277,7 +307,7 @@ def test_redirect_is_recorded_not_followed_and_transport_errors_are_distinct(tmp
         fixture_identifier="FOTMOB:1001",
         execute_live_network=True,
         connection_factory=_factory(failed, []),
-        clock=_Clock(REQUEST_AT, OBSERVED_AT),
+        clock=_Clock(REQUEST_AT, SEND_AT, OBSERVED_AT),
     )
     assert result.receipt.transport_outcome is ProbeTransportOutcome.TRANSPORT_ERROR
     assert result.receipt.status_code is None
@@ -295,7 +325,7 @@ def test_sampling_error_and_post_response_kickoff_crossing_fail_closed(tmp_path:
             fixture_identifier="FOTMOB:1001",
             execute_live_network=True,
             connection_factory=_factory(_Connection(response=response), []),
-            clock=_Clock(REQUEST_AT),
+            clock=_Clock(REQUEST_AT, SEND_AT),
         )
 
     connection = _Connection(response=_Response())
@@ -306,22 +336,30 @@ def test_sampling_error_and_post_response_kickoff_crossing_fail_closed(tmp_path:
             fixture_identifier="FOTMOB:1001",
             execute_live_network=True,
             connection_factory=_factory(connection, []),
-            clock=_Clock(REQUEST_AT, KICKOFF),
+            clock=_Clock(REQUEST_AT, SEND_AT, KICKOFF),
         )
-    assert len(connection.requests) == 1
+    assert connection.endheaders_calls == 1
     assert connection.closed is True
 
 
-def test_capability_revocation_or_mutated_pr48_state_blocks_new_plan(tmp_path: Path) -> None:
+def test_capability_revocation_or_mutated_upstream_blocks_new_plan_and_reuse(tmp_path: Path) -> None:
     verified, receipt_bytes = _upstream(tmp_path)
-    historical = canonical_verified_bootstrap_artifact_receipt_bytes(verified)
+    plan = build_match_details_probe_plan(
+        verified,
+        receipt_bytes,
+        fixture_identifier="FOTMOB:1001",
+        request_started_at=REQUEST_AT,
+    )
+    historical_plan = plan.to_dict()
     original = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
     SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY] = dataclasses.replace(
         original,
         reliable_fixture_identity=CapabilityAvailability.UNKNOWN,
     )
     try:
-        assert canonical_verified_bootstrap_artifact_receipt_bytes(verified) == historical
+        assert plan.to_dict() == historical_plan
+        with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="failed current exact revalidation"):
+            dataclasses.replace(plan)
         with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="failed current exact revalidation"):
             build_match_details_probe_plan(
                 verified,
@@ -334,13 +372,31 @@ def test_capability_revocation_or_mutated_pr48_state_blocks_new_plan(tmp_path: P
 
     fake = dataclasses.replace(verified.fixtures[0], fixture_identifier="FOTMOB:9999")
     object.__setattr__(verified, "fixtures", (fake,))
+    assert plan.to_dict() == historical_plan
     with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="failed current exact revalidation"):
-        build_match_details_probe_plan(
-            verified,
-            receipt_bytes,
-            fixture_identifier="FOTMOB:9999",
-            request_started_at=REQUEST_AT,
-        )
+        dataclasses.replace(plan)
+
+
+def test_historical_receipt_bytes_are_detached_but_new_reconstruction_fails(tmp_path: Path) -> None:
+    verified, receipt_bytes = _upstream(tmp_path)
+    connection = _Connection(response=_Response())
+    receipt = probe_fotmob_reviewed_match_details(
+        verified_bootstrap_artifact=verified,
+        verification_receipt_bytes=receipt_bytes,
+        fixture_identifier="FOTMOB:1001",
+        execute_live_network=True,
+        connection_factory=_factory(connection, []),
+        clock=_Clock(REQUEST_AT, SEND_AT, OBSERVED_AT),
+    ).receipt
+    historical = canonical_match_details_probe_receipt_bytes(receipt)
+    fake = dataclasses.replace(
+        receipt.plan.verified_bootstrap_artifact.fixtures[0],
+        fixture_identifier="FOTMOB:9999",
+    )
+    object.__setattr__(receipt.plan.verified_bootstrap_artifact, "fixtures", (fake,))
+    assert canonical_match_details_probe_receipt_bytes(receipt) == historical
+    with pytest.raises(FotMobReviewedMatchDetailsProbeError, match="probe plan failed exact current revalidation"):
+        dataclasses.replace(receipt)
 
 
 def test_plan_rejects_cookie_xmas_or_browser_impersonation_flags(tmp_path: Path) -> None:
