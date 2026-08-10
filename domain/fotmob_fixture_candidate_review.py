@@ -76,13 +76,21 @@ def _exact_int(value: Any, label: str, *, minimum: int | None = None) -> int:
     return value
 
 
-def _exact_str(value: Any, label: str, *, non_empty: bool = False, trimmed: bool = False) -> str:
+def _exact_str(
+    value: Any,
+    label: str,
+    *,
+    non_empty: bool = False,
+    trimmed: bool = False,
+) -> str:
     if type(value) is not str:
         raise FotMobFixtureCandidateReviewError(f"{label} must be an exact string")
     if non_empty and not value:
         raise FotMobFixtureCandidateReviewError(f"{label} must be non-empty")
     if trimmed and value != value.strip():
-        raise FotMobFixtureCandidateReviewError(f"{label} must not contain surrounding whitespace")
+        raise FotMobFixtureCandidateReviewError(
+            f"{label} must not contain surrounding whitespace"
+        )
     return value
 
 
@@ -107,6 +115,26 @@ def _utc(value: Any, label: str) -> datetime.datetime:
         raise FotMobFixtureCandidateReviewError(f"{label} is invalid") from exc
 
 
+def _canonical_source_match_id(value: Any) -> int:
+    text = _exact_str(
+        value,
+        "source_fixture_identifier",
+        non_empty=True,
+        trimmed=True,
+    )
+    try:
+        parsed = int(text)
+    except ValueError as exc:
+        raise FotMobFixtureCandidateReviewError(
+            "source_fixture_identifier must be a canonical decimal source match ID"
+        ) from exc
+    if str(parsed) != text:
+        raise FotMobFixtureCandidateReviewError(
+            "source_fixture_identifier must be a canonical decimal source match ID"
+        )
+    return parsed
+
+
 def _default_safety() -> dict[str, bool]:
     return {key: False for key in sorted(_SAFETY_KEYS)}
 
@@ -117,14 +145,18 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
     detached: dict[str, bool] = {}
     for key, item in value.items():
         if type(item) is not bool or item is not False:
-            raise FotMobFixtureCandidateReviewError(f"safety[{key!r}] must be exact bool False")
+            raise FotMobFixtureCandidateReviewError(
+                f"safety[{key!r}] must be exact bool False"
+            )
         detached[key] = False
     return types.MappingProxyType(detached)
 
 
 def canonical_fotmob_fixture_candidate_bytes(candidate: Any) -> bytes:
     if not isinstance(candidate, FotMobFixtureCandidate):
-        raise FotMobFixtureCandidateReviewError("candidate must be FotMobFixtureCandidate")
+        raise FotMobFixtureCandidateReviewError(
+            "candidate must be FotMobFixtureCandidate"
+        )
     try:
         return (
             json.dumps(
@@ -137,11 +169,15 @@ def canonical_fotmob_fixture_candidate_bytes(candidate: Any) -> bytes:
             + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as exc:
-        raise FotMobFixtureCandidateReviewError("candidate serialization failed") from exc
+        raise FotMobFixtureCandidateReviewError(
+            "candidate serialization failed"
+        ) from exc
 
 
 def sha256_fotmob_fixture_candidate(candidate: Any) -> str:
-    return hashlib.sha256(canonical_fotmob_fixture_candidate_bytes(candidate)).hexdigest()
+    return hashlib.sha256(
+        canonical_fotmob_fixture_candidate_bytes(candidate)
+    ).hexdigest()
 
 
 @dataclasses.dataclass(frozen=True)
@@ -158,14 +194,32 @@ class FotMobFixtureCandidateReviewDecision:
         object.__setattr__(
             self,
             "source_capture_manifest_sha256",
-            _sha256(self.source_capture_manifest_sha256, "source_capture_manifest_sha256"),
+            _sha256(
+                self.source_capture_manifest_sha256,
+                "source_capture_manifest_sha256",
+            ),
         )
         _exact_int(self.source_match_id, "source_match_id")
-        object.__setattr__(self, "candidate_sha256", _sha256(self.candidate_sha256, "candidate_sha256"))
+        object.__setattr__(
+            self,
+            "candidate_sha256",
+            _sha256(self.candidate_sha256, "candidate_sha256"),
+        )
         if type(self.disposition) is not FixtureCandidateReviewDisposition:
-            raise FotMobFixtureCandidateReviewError("disposition must be FixtureCandidateReviewDisposition")
-        object.__setattr__(self, "reviewed_at", _utc(self.reviewed_at, "reviewed_at"))
-        _exact_str(self.reviewer_reference, "reviewer_reference", non_empty=True, trimmed=True)
+            raise FotMobFixtureCandidateReviewError(
+                "disposition must be FixtureCandidateReviewDisposition"
+            )
+        object.__setattr__(
+            self,
+            "reviewed_at",
+            _utc(self.reviewed_at, "reviewed_at"),
+        )
+        _exact_str(
+            self.reviewer_reference,
+            "reviewer_reference",
+            non_empty=True,
+            trimmed=True,
+        )
         _exact_str(self.notes, "notes")
 
     @property
@@ -199,16 +253,33 @@ class FotMobFixtureCandidateReviewBlock:
         object.__setattr__(
             self,
             "source_capture_manifest_sha256",
-            _sha256(self.source_capture_manifest_sha256, "source_capture_manifest_sha256"),
+            _sha256(
+                self.source_capture_manifest_sha256,
+                "source_capture_manifest_sha256",
+            ),
         )
         _exact_int(self.source_match_id, "source_match_id")
-        object.__setattr__(self, "candidate_sha256", _sha256(self.candidate_sha256, "candidate_sha256"))
+        object.__setattr__(
+            self,
+            "candidate_sha256",
+            _sha256(self.candidate_sha256, "candidate_sha256"),
+        )
         if type(self.reasons) is not tuple or not self.reasons:
-            raise FotMobFixtureCandidateReviewError("block reasons must be a non-empty tuple")
-        if any(type(item) is not FixtureCandidateReviewBlockReason for item in self.reasons):
-            raise FotMobFixtureCandidateReviewError("block reasons contain an invalid value")
-        if self.reasons != tuple(sorted(set(self.reasons), key=lambda item: item.value)):
-            raise FotMobFixtureCandidateReviewError("block reasons must be sorted and unique")
+            raise FotMobFixtureCandidateReviewError(
+                "block reasons must be a non-empty tuple"
+            )
+        if any(
+            type(item) is not FixtureCandidateReviewBlockReason
+            for item in self.reasons
+        ):
+            raise FotMobFixtureCandidateReviewError(
+                "block reasons contain an invalid value"
+            )
+        expected = tuple(sorted(set(self.reasons), key=lambda item: item.value))
+        if self.reasons != expected:
+            raise FotMobFixtureCandidateReviewError(
+                "block reasons must be sorted and unique"
+            )
 
     @property
     def candidate_key(self) -> tuple[str, int, str]:
@@ -247,11 +318,18 @@ class FotMobReviewedFixtureCatalogInput:
         object.__setattr__(
             self,
             "source_capture_manifest_sha256",
-            _sha256(self.source_capture_manifest_sha256, "source_capture_manifest_sha256"),
+            _sha256(
+                self.source_capture_manifest_sha256,
+                "source_capture_manifest_sha256",
+            ),
         )
-        object.__setattr__(self, "candidate_sha256", _sha256(self.candidate_sha256, "candidate_sha256"))
+        object.__setattr__(
+            self,
+            "candidate_sha256",
+            _sha256(self.candidate_sha256, "candidate_sha256"),
+        )
+        _canonical_source_match_id(self.source_fixture_identifier)
         for label in (
-            "source_fixture_identifier",
             "home_team",
             "away_team",
             "competition",
@@ -259,13 +337,44 @@ class FotMobReviewedFixtureCatalogInput:
             "evidence_file_path",
             "reviewer_reference",
         ):
-            _exact_str(getattr(self, label), label, non_empty=True, trimmed=True)
+            _exact_str(
+                getattr(self, label),
+                label,
+                non_empty=True,
+                trimmed=True,
+            )
+        expected_reference = (
+            "FotMob /api/data/matches capture manifest sha256:"
+            f"{self.source_capture_manifest_sha256}"
+        )
+        if self.source_reference != expected_reference:
+            raise FotMobFixtureCandidateReviewError(
+                "source_reference must anchor the exact source capture manifest SHA-256"
+            )
         if self.home_team == self.away_team:
-            raise FotMobFixtureCandidateReviewError("home_team and away_team must differ")
+            raise FotMobFixtureCandidateReviewError(
+                "home_team and away_team must differ"
+            )
         object.__setattr__(self, "kickoff", _utc(self.kickoff, "kickoff"))
-        object.__setattr__(self, "reviewed_at", _utc(self.reviewed_at, "reviewed_at"))
-        object.__setattr__(self, "evidence_sha256", _sha256(self.evidence_sha256, "evidence_sha256"))
+        object.__setattr__(
+            self,
+            "reviewed_at",
+            _utc(self.reviewed_at, "reviewed_at"),
+        )
+        object.__setattr__(
+            self,
+            "evidence_sha256",
+            _sha256(self.evidence_sha256, "evidence_sha256"),
+        )
         _exact_str(self.notes, "notes")
+
+    @property
+    def candidate_key(self) -> tuple[str, int, str]:
+        return (
+            self.source_capture_manifest_sha256,
+            _canonical_source_match_id(self.source_fixture_identifier),
+            self.candidate_sha256,
+        )
 
     def to_catalog_input_dict(self) -> dict[str, Any]:
         return {
@@ -310,9 +419,13 @@ class FotMobFixtureCandidateReviewBundle:
 
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
-            raise FotMobFixtureCandidateReviewError("schema_version must be exact integer 1")
+            raise FotMobFixtureCandidateReviewError(
+                "schema_version must be exact integer 1"
+            )
         if self.dataset_name != DATASET_NAME:
-            raise FotMobFixtureCandidateReviewError(f"dataset_name must be {DATASET_NAME}")
+            raise FotMobFixtureCandidateReviewError(
+                f"dataset_name must be {DATASET_NAME}"
+            )
         object.__setattr__(
             self,
             "candidate_bundle_sha256",
@@ -327,59 +440,118 @@ class FotMobFixtureCandidateReviewBundle:
             "blocked_candidate_count",
         ):
             _exact_int(getattr(self, label), label, minimum=0)
+
         if type(self.blocked_candidates) is not tuple or any(
-            not isinstance(item, FotMobFixtureCandidateReviewBlock) for item in self.blocked_candidates
+            not isinstance(item, FotMobFixtureCandidateReviewBlock)
+            for item in self.blocked_candidates
         ):
-            raise FotMobFixtureCandidateReviewError("blocked_candidates must be an immutable block tuple")
+            raise FotMobFixtureCandidateReviewError(
+                "blocked_candidates must be an immutable block tuple"
+            )
         if type(self.decisions) is not tuple or any(
-            not isinstance(item, FotMobFixtureCandidateReviewDecision) for item in self.decisions
+            not isinstance(item, FotMobFixtureCandidateReviewDecision)
+            for item in self.decisions
         ):
-            raise FotMobFixtureCandidateReviewError("decisions must be an immutable decision tuple")
+            raise FotMobFixtureCandidateReviewError(
+                "decisions must be an immutable decision tuple"
+            )
         if type(self.approved_catalog_inputs) is not tuple or any(
-            not isinstance(item, FotMobReviewedFixtureCatalogInput) for item in self.approved_catalog_inputs
+            not isinstance(item, FotMobReviewedFixtureCatalogInput)
+            for item in self.approved_catalog_inputs
         ):
             raise FotMobFixtureCandidateReviewError(
                 "approved_catalog_inputs must be an immutable reviewed-input tuple"
             )
+
         block_keys = tuple(item.candidate_key for item in self.blocked_candidates)
         decision_keys = tuple(item.candidate_key for item in self.decisions)
-        if block_keys != tuple(sorted(block_keys)) or len(set(block_keys)) != len(block_keys):
-            raise FotMobFixtureCandidateReviewError("blocked candidates must be sorted and unique")
-        if decision_keys != tuple(sorted(decision_keys)) or len(set(decision_keys)) != len(decision_keys):
-            raise FotMobFixtureCandidateReviewError("decisions must be sorted and unique")
         approved_keys = tuple(
-            (item.source_capture_manifest_sha256, int(item.source_fixture_identifier), item.candidate_sha256)
-            for item in self.approved_catalog_inputs
+            item.candidate_key for item in self.approved_catalog_inputs
         )
-        if approved_keys != tuple(sorted(approved_keys)) or len(set(approved_keys)) != len(approved_keys):
-            raise FotMobFixtureCandidateReviewError("approved catalog inputs must be sorted and unique")
+        if block_keys != tuple(sorted(block_keys)) or len(set(block_keys)) != len(
+            block_keys
+        ):
+            raise FotMobFixtureCandidateReviewError(
+                "blocked candidates must be sorted and unique"
+            )
+        if decision_keys != tuple(sorted(decision_keys)) or len(
+            set(decision_keys)
+        ) != len(decision_keys):
+            raise FotMobFixtureCandidateReviewError(
+                "decisions must be sorted and unique"
+            )
+        if approved_keys != tuple(sorted(approved_keys)) or len(
+            set(approved_keys)
+        ) != len(approved_keys):
+            raise FotMobFixtureCandidateReviewError(
+                "approved catalog inputs must be sorted and unique"
+            )
+
         if self.decision_count != len(self.decisions):
             raise FotMobFixtureCandidateReviewError("decision_count mismatch")
         if self.approved_count != len(self.approved_catalog_inputs):
             raise FotMobFixtureCandidateReviewError("approved_count mismatch")
         expected_approved = sum(
-            1 for item in self.decisions if item.disposition is FixtureCandidateReviewDisposition.APPROVED
-        )
-        expected_rejected = sum(
-            1 for item in self.decisions if item.disposition is FixtureCandidateReviewDisposition.REJECTED
-        )
-        if self.approved_count != expected_approved or self.rejected_count != expected_rejected:
-            raise FotMobFixtureCandidateReviewError("decision disposition counts mismatch")
-        if self.decision_count != self.approved_count + self.rejected_count:
-            raise FotMobFixtureCandidateReviewError("decision counts do not reconcile")
-        if self.candidate_count != self.decision_count + self.unreviewed_count:
-            raise FotMobFixtureCandidateReviewError("candidate review counts do not reconcile")
-        if self.blocked_candidate_count != len(self.blocked_candidates):
-            raise FotMobFixtureCandidateReviewError("blocked_candidate_count mismatch")
-        if any(key in set(block_keys) for key in approved_keys):
-            raise FotMobFixtureCandidateReviewError("blocked candidate cannot appear in approved catalog inputs")
-        approved_decision_keys = tuple(
-            item.candidate_key
+            1
             for item in self.decisions
             if item.disposition is FixtureCandidateReviewDisposition.APPROVED
         )
+        expected_rejected = sum(
+            1
+            for item in self.decisions
+            if item.disposition is FixtureCandidateReviewDisposition.REJECTED
+        )
+        if (
+            self.approved_count != expected_approved
+            or self.rejected_count != expected_rejected
+        ):
+            raise FotMobFixtureCandidateReviewError(
+                "decision disposition counts mismatch"
+            )
+        if self.decision_count != self.approved_count + self.rejected_count:
+            raise FotMobFixtureCandidateReviewError(
+                "decision counts do not reconcile"
+            )
+        if self.candidate_count != self.decision_count + self.unreviewed_count:
+            raise FotMobFixtureCandidateReviewError(
+                "candidate review counts do not reconcile"
+            )
+        if self.blocked_candidate_count != len(self.blocked_candidates):
+            raise FotMobFixtureCandidateReviewError(
+                "blocked_candidate_count mismatch"
+            )
+
+        block_key_set = set(block_keys)
+        if any(key in block_key_set for key in approved_keys):
+            raise FotMobFixtureCandidateReviewError(
+                "blocked candidate cannot appear in approved catalog inputs"
+            )
+        approved_decisions = tuple(
+            item
+            for item in self.decisions
+            if item.disposition is FixtureCandidateReviewDisposition.APPROVED
+        )
+        approved_decision_keys = tuple(
+            item.candidate_key for item in approved_decisions
+        )
         if approved_keys != approved_decision_keys:
-            raise FotMobFixtureCandidateReviewError("approved catalog inputs do not match approved decisions")
+            raise FotMobFixtureCandidateReviewError(
+                "approved catalog inputs do not match approved decisions"
+            )
+        for decision, catalog_input in zip(
+            approved_decisions,
+            self.approved_catalog_inputs,
+            strict=True,
+        ):
+            if (
+                catalog_input.reviewed_at != decision.reviewed_at
+                or catalog_input.reviewer_reference != decision.reviewer_reference
+                or catalog_input.notes != decision.notes
+            ):
+                raise FotMobFixtureCandidateReviewError(
+                    "approved catalog input review metadata does not match its decision"
+                )
+
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
@@ -393,9 +565,13 @@ class FotMobFixtureCandidateReviewBundle:
             "rejected_count": self.rejected_count,
             "unreviewed_count": self.unreviewed_count,
             "blocked_candidate_count": self.blocked_candidate_count,
-            "blocked_candidates": [item.to_dict() for item in self.blocked_candidates],
+            "blocked_candidates": [
+                item.to_dict() for item in self.blocked_candidates
+            ],
             "decisions": [item.to_dict() for item in self.decisions],
-            "approved_catalog_inputs": [item.to_dict() for item in self.approved_catalog_inputs],
+            "approved_catalog_inputs": [
+                item.to_dict() for item in self.approved_catalog_inputs
+            ],
             "safety": dict(self.safety),
         }
 
@@ -404,7 +580,9 @@ def _catalog_string_valid(value: str) -> bool:
     return bool(value) and value == value.strip()
 
 
-def _candidate_key(candidate: FotMobFixtureCandidate) -> tuple[str, int, str]:
+def _candidate_key(
+    candidate: FotMobFixtureCandidate,
+) -> tuple[str, int, str]:
     return (
         candidate.source_capture_manifest_sha256,
         candidate.source_match_id,
@@ -415,9 +593,15 @@ def _candidate_key(candidate: FotMobFixtureCandidate) -> tuple[str, int, str]:
 def _derive_blocks(
     bundle: FotMobFixtureCandidateBundle,
 ) -> Tuple[FotMobFixtureCandidateReviewBlock, ...]:
-    source_id_counts = Counter(item.source_match_id for item in bundle.candidates)
-    fixture_conflict_ids = {item.source_match_id for item in bundle.fixture_identity_conflicts}
-    team_conflict_ids = {item.source_team_id for item in bundle.team_identity_conflicts}
+    source_id_counts = Counter(
+        item.source_match_id for item in bundle.candidates
+    )
+    fixture_conflict_ids = {
+        item.source_match_id for item in bundle.fixture_identity_conflicts
+    }
+    team_conflict_ids = {
+        item.source_team_id for item in bundle.team_identity_conflicts
+    }
     competition_conflict_ids = {
         item.source_league_id for item in bundle.competition_identity_conflicts
     }
@@ -425,23 +609,41 @@ def _derive_blocks(
     for candidate in bundle.candidates:
         reasons: set[FixtureCandidateReviewBlockReason] = set()
         if source_id_counts[candidate.source_match_id] > 1:
-            reasons.add(FixtureCandidateReviewBlockReason.DUPLICATE_SOURCE_MATCH_ID)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.DUPLICATE_SOURCE_MATCH_ID
+            )
         if candidate.source_match_id in fixture_conflict_ids:
-            reasons.add(FixtureCandidateReviewBlockReason.FIXTURE_IDENTITY_CONFLICT)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.FIXTURE_IDENTITY_CONFLICT
+            )
         if candidate.home_source_team_id in team_conflict_ids:
-            reasons.add(FixtureCandidateReviewBlockReason.HOME_TEAM_IDENTITY_CONFLICT)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.HOME_TEAM_IDENTITY_CONFLICT
+            )
         if candidate.away_source_team_id in team_conflict_ids:
-            reasons.add(FixtureCandidateReviewBlockReason.AWAY_TEAM_IDENTITY_CONFLICT)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.AWAY_TEAM_IDENTITY_CONFLICT
+            )
         if candidate.source_league_id in competition_conflict_ids:
-            reasons.add(FixtureCandidateReviewBlockReason.COMPETITION_IDENTITY_CONFLICT)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.COMPETITION_IDENTITY_CONFLICT
+            )
         if not _catalog_string_valid(candidate.home_name):
-            reasons.add(FixtureCandidateReviewBlockReason.CATALOG_HOME_TEAM_INVALID)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.CATALOG_HOME_TEAM_INVALID
+            )
         if not _catalog_string_valid(candidate.away_name):
-            reasons.add(FixtureCandidateReviewBlockReason.CATALOG_AWAY_TEAM_INVALID)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.CATALOG_AWAY_TEAM_INVALID
+            )
         if not _catalog_string_valid(candidate.source_competition_name):
-            reasons.add(FixtureCandidateReviewBlockReason.CATALOG_COMPETITION_INVALID)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.CATALOG_COMPETITION_INVALID
+            )
         if candidate.home_name == candidate.away_name:
-            reasons.add(FixtureCandidateReviewBlockReason.CATALOG_HOME_AWAY_EQUAL)
+            reasons.add(
+                FixtureCandidateReviewBlockReason.CATALOG_HOME_AWAY_EQUAL
+            )
         if reasons:
             manifest_sha, source_match_id, candidate_sha = _candidate_key(candidate)
             blocks.append(
@@ -449,7 +651,9 @@ def _derive_blocks(
                     source_capture_manifest_sha256=manifest_sha,
                     source_match_id=source_match_id,
                     candidate_sha256=candidate_sha,
-                    reasons=tuple(sorted(reasons, key=lambda item: item.value)),
+                    reasons=tuple(
+                        sorted(reasons, key=lambda item: item.value)
+                    ),
                 )
             )
     return tuple(sorted(blocks, key=lambda item: item.candidate_key))
@@ -493,26 +697,42 @@ def build_fotmob_fixture_candidate_review_bundle(
     candidate_bundle: Any,
     decisions: Sequence[FotMobFixtureCandidateReviewDecision],
 ) -> FotMobFixtureCandidateReviewBundle:
-    """Validate explicit human review decisions without automatic promotion."""
+    """Validate explicit review decisions without automatic promotion."""
 
     if not isinstance(candidate_bundle, FotMobFixtureCandidateBundle):
         raise FotMobFixtureCandidateReviewError(
             "candidate_bundle must be FotMobFixtureCandidateBundle"
         )
-    if not isinstance(decisions, Sequence) or isinstance(decisions, (str, bytes)):
-        raise FotMobFixtureCandidateReviewError("decisions must be a decision sequence")
+    if not isinstance(decisions, Sequence) or isinstance(
+        decisions,
+        (str, bytes),
+    ):
+        raise FotMobFixtureCandidateReviewError(
+            "decisions must be a decision sequence"
+        )
     supplied_decisions = tuple(decisions)
-    if any(not isinstance(item, FotMobFixtureCandidateReviewDecision) for item in supplied_decisions):
-        raise FotMobFixtureCandidateReviewError("decisions contain an invalid value")
+    if any(
+        not isinstance(item, FotMobFixtureCandidateReviewDecision)
+        for item in supplied_decisions
+    ):
+        raise FotMobFixtureCandidateReviewError(
+            "decisions contain an invalid value"
+        )
 
-    candidate_map: dict[tuple[str, int, str], FotMobFixtureCandidate] = {}
+    candidate_map: dict[
+        tuple[str, int, str], FotMobFixtureCandidate
+    ] = {}
     for candidate in candidate_bundle.candidates:
         key = _candidate_key(candidate)
         if key in candidate_map:
-            raise FotMobFixtureCandidateReviewError("candidate bundle contains an ambiguous review key")
+            raise FotMobFixtureCandidateReviewError(
+                "candidate bundle contains an ambiguous review key"
+            )
         candidate_map[key] = candidate
 
-    ordered_decisions = tuple(sorted(supplied_decisions, key=lambda item: item.candidate_key))
+    ordered_decisions = tuple(
+        sorted(supplied_decisions, key=lambda item: item.candidate_key)
+    )
     decision_keys = tuple(item.candidate_key for item in ordered_decisions)
     if len(set(decision_keys)) != len(decision_keys):
         raise FotMobFixtureCandidateReviewError("duplicate review decision")
@@ -520,7 +740,8 @@ def build_fotmob_fixture_candidate_review_bundle(
     blocked_candidates = _derive_blocks(candidate_bundle)
     blocked_keys = {item.candidate_key for item in blocked_candidates}
     source_map = {
-        item.source_capture_manifest_sha256: item for item in candidate_bundle.sources
+        item.source_capture_manifest_sha256: item
+        for item in candidate_bundle.sources
     }
     approved: list[FotMobReviewedFixtureCatalogInput] = []
     for decision in ordered_decisions:
@@ -538,20 +759,19 @@ def build_fotmob_fixture_candidate_review_bundle(
                 raise FotMobFixtureCandidateReviewError(
                     "candidate has unresolved review blockers and cannot be approved"
                 )
-            source = source_map.get(candidate.source_capture_manifest_sha256)
+            source = source_map.get(
+                candidate.source_capture_manifest_sha256
+            )
             if source is None:
-                raise FotMobFixtureCandidateReviewError("candidate source ancestry is absent")
-            approved.append(_reviewed_catalog_input(candidate, decision, source))
+                raise FotMobFixtureCandidateReviewError(
+                    "candidate source ancestry is absent"
+                )
+            approved.append(
+                _reviewed_catalog_input(candidate, decision, source)
+            )
 
     approved_inputs = tuple(
-        sorted(
-            approved,
-            key=lambda item: (
-                item.source_capture_manifest_sha256,
-                int(item.source_fixture_identifier),
-                item.candidate_sha256,
-            ),
-        )
+        sorted(approved, key=lambda item: item.candidate_key)
     )
     approved_count = len(approved_inputs)
     rejected_count = sum(
@@ -562,12 +782,16 @@ def build_fotmob_fixture_candidate_review_bundle(
     return FotMobFixtureCandidateReviewBundle(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
-        candidate_bundle_sha256=sha256_fotmob_fixture_candidate_bundle(candidate_bundle),
+        candidate_bundle_sha256=sha256_fotmob_fixture_candidate_bundle(
+            candidate_bundle
+        ),
         candidate_count=candidate_bundle.candidate_count,
         decision_count=len(ordered_decisions),
         approved_count=approved_count,
         rejected_count=rejected_count,
-        unreviewed_count=candidate_bundle.candidate_count - len(ordered_decisions),
+        unreviewed_count=(
+            candidate_bundle.candidate_count - len(ordered_decisions)
+        ),
         blocked_candidate_count=len(blocked_candidates),
         blocked_candidates=blocked_candidates,
         decisions=ordered_decisions,
@@ -576,7 +800,9 @@ def build_fotmob_fixture_candidate_review_bundle(
     )
 
 
-def canonical_fotmob_fixture_candidate_review_bundle_bytes(bundle: Any) -> bytes:
+def canonical_fotmob_fixture_candidate_review_bundle_bytes(
+    bundle: Any,
+) -> bytes:
     if not isinstance(bundle, FotMobFixtureCandidateReviewBundle):
         raise FotMobFixtureCandidateReviewError(
             "bundle must be FotMobFixtureCandidateReviewBundle"
@@ -593,7 +819,9 @@ def canonical_fotmob_fixture_candidate_review_bundle_bytes(bundle: Any) -> bytes
             + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as exc:
-        raise FotMobFixtureCandidateReviewError("review bundle serialization failed") from exc
+        raise FotMobFixtureCandidateReviewError(
+            "review bundle serialization failed"
+        ) from exc
 
 
 def sha256_fotmob_fixture_candidate_review_bundle(bundle: Any) -> str:
