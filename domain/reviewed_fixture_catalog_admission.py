@@ -148,10 +148,11 @@ def _reviewed_source_capability_payload() -> dict[str, Any]:
 
 
 def canonical_reviewed_source_capability_bytes() -> bytes:
+    payload = _reviewed_source_capability_payload()
     try:
         return (
             json.dumps(
-                _reviewed_source_capability_payload(),
+                payload,
                 ensure_ascii=False,
                 allow_nan=False,
                 sort_keys=True,
