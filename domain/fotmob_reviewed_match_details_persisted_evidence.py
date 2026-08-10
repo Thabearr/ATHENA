@@ -1,9 +1,8 @@
 """Offline verifier for persisted reviewed FotMob match-details evidence.
 
-This boundary verifies only historical file integrity and the canonical PR #50
-manifest envelope written by PR #51. It deliberately does not replay mutable
-upstream capability state and does not parse football semantics from the raw
-response body.
+This boundary verifies historical PR #51 file integrity only. It deliberately
+performs no raw response-body parsing and does not replay mutable upstream
+capability state from disk artifacts.
 """
 
 from __future__ import annotations
@@ -30,67 +29,43 @@ SCHEMA_VERSION = 1
 DATASET_NAME = "athena-fotmob-reviewed-match-details-persisted-evidence-v1"
 MAX_MANIFEST_BYTES = 1024 * 1024
 
-_SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
+_SHA_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _FIXTURE_RE = re.compile(r"^FOTMOB:([1-9][0-9]*)$", flags=re.ASCII)
 _MANIFEST_KEYS = frozenset(
     {
-        "schema_version",
-        "dataset_name",
-        "plan_sha256",
-        "plan_size",
-        "plan",
-        "fixture_identifier",
-        "source_match_id",
-        "kickoff",
-        "request_started_at",
-        "status",
-        "content_type",
-        "content_length",
-        "observed_at",
-        "network_acquisition_performed",
-        "raw_file_name",
-        "raw_sha256",
-        "raw_size",
-        "safety",
+        "schema_version", "dataset_name", "plan_sha256", "plan_size", "plan",
+        "fixture_identifier", "source_match_id", "kickoff", "request_started_at",
+        "status", "content_type", "content_length", "observed_at",
+        "network_acquisition_performed", "raw_file_name", "raw_sha256",
+        "raw_size", "safety",
     }
 )
 _CAPTURE_SAFETY_KEYS = frozenset(
     {
-        "network_transport_authorized",
-        "filesystem_write_authorized",
-        "response_body_parsing_authorized",
-        "source_qualification_authorized",
-        "football_semantics_authorized",
-        "intelligence_fact_authorized",
-        "intelligence_snapshot_authorized",
-        "model_feature_authorized",
-        "probability_authorized",
-        "pricing_authorized",
-        "selection_authorized",
+        "network_transport_authorized", "filesystem_write_authorized",
+        "response_body_parsing_authorized", "source_qualification_authorized",
+        "football_semantics_authorized", "intelligence_fact_authorized",
+        "intelligence_snapshot_authorized", "model_feature_authorized",
+        "probability_authorized", "pricing_authorized", "selection_authorized",
         "bet_authorized",
     }
 )
 _RECEIPT_SAFETY_KEYS = frozenset(
     {
-        "response_body_parsing_authorized",
-        "source_qualification_authorized",
-        "football_semantics_authorized",
-        "intelligence_fact_authorized",
-        "intelligence_snapshot_authorized",
-        "model_feature_authorized",
-        "probability_authorized",
-        "pricing_authorized",
-        "selection_authorized",
+        "response_body_parsing_authorized", "source_qualification_authorized",
+        "football_semantics_authorized", "intelligence_fact_authorized",
+        "intelligence_snapshot_authorized", "model_feature_authorized",
+        "probability_authorized", "pricing_authorized", "selection_authorized",
         "bet_authorized",
     }
 )
 
 
 class FotMobReviewedMatchDetailsPersistedEvidenceError(ValueError):
-    """Raised when historical persisted match-details evidence fails closed."""
+    pass
 
 
-def _reject_duplicate_keys(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
+def _pairs(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     for key, value in pairs:
         if type(key) is not str:
@@ -105,13 +80,31 @@ def _reject_duplicate_keys(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
     return result
 
 
-def _reject_constant(value: str) -> None:
+def _constant(value: str) -> None:
     raise FotMobReviewedMatchDetailsPersistedEvidenceError(
         f"invalid manifest JSON constant: {value}"
     )
 
 
-def _strict_manifest_json(manifest_bytes: Any) -> tuple[dict[str, Any], bytes]:
+def _canonical_json_bytes(value: Any) -> bytes:
+    try:
+        return (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
+            "canonical JSON serialization failed"
+        ) from exc
+
+
+def _manifest(manifest_bytes: Any) -> tuple[dict[str, Any], bytes]:
     if type(manifest_bytes) is not bytes:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "manifest_bytes must be exact immutable bytes"
@@ -121,11 +114,10 @@ def _strict_manifest_json(manifest_bytes: Any) -> tuple[dict[str, Any], bytes]:
             "manifest_bytes must be non-empty and at most 1 MiB"
         )
     try:
-        text = manifest_bytes.decode("utf-8", errors="strict")
         payload = json.loads(
-            text,
-            object_pairs_hook=_reject_duplicate_keys,
-            parse_constant=_reject_constant,
+            manifest_bytes.decode("utf-8", errors="strict"),
+            object_pairs_hook=_pairs,
+            parse_constant=_constant,
         )
     except FotMobReviewedMatchDetailsPersistedEvidenceError:
         raise
@@ -137,21 +129,7 @@ def _strict_manifest_json(manifest_bytes: Any) -> tuple[dict[str, Any], bytes]:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "manifest root must be a JSON object"
         )
-    try:
-        canonical = (
-            json.dumps(
-                payload,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            "manifest canonicalization failed"
-        ) from exc
+    canonical = _canonical_json_bytes(payload)
     if manifest_bytes != canonical:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "manifest_bytes are not exact canonical PR #50 manifest bytes"
@@ -160,26 +138,22 @@ def _strict_manifest_json(manifest_bytes: Any) -> tuple[dict[str, Any], bytes]:
 
 
 def _sha(value: Any, label: str) -> str:
-    if type(value) is not str or _SHA256_RE.fullmatch(value) is None:
+    if type(value) is not str or _SHA_RE.fullmatch(value) is None:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             f"{label} must be exactly 64 lowercase hexadecimal characters"
         )
     return value
 
 
-def _positive_int(value: Any, label: str, maximum: int | None = None) -> int:
-    if type(value) is not int or value <= 0:
+def _positive(value: Any, label: str, maximum: int) -> int:
+    if type(value) is not int or value <= 0 or value > maximum:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            f"{label} must be an exact positive integer"
-        )
-    if maximum is not None and value > maximum:
-        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            f"{label} exceeds its allowed maximum"
+            f"{label} must be an exact positive integer within its limit"
         )
     return value
 
 
-def _nonnegative_int_or_none(value: Any, label: str) -> int | None:
+def _optional_nonnegative(value: Any, label: str) -> int | None:
     if value is None:
         return None
     if type(value) is not int or value < 0:
@@ -189,10 +163,10 @@ def _nonnegative_int_or_none(value: Any, label: str) -> int | None:
     return value
 
 
-def _utc_text(value: Any, label: str) -> datetime.datetime:
+def _utc(value: Any, label: str) -> datetime.datetime:
     if type(value) is not str or not value.endswith("Z"):
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            f"{label} must be a canonical UTC Z timestamp string"
+            f"{label} must be a canonical UTC Z timestamp"
         )
     try:
         parsed = datetime.datetime.fromisoformat(value[:-1] + "+00:00")
@@ -200,12 +174,10 @@ def _utc_text(value: Any, label: str) -> datetime.datetime:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             f"{label} is not a valid UTC timestamp"
         ) from exc
-    if parsed.tzinfo is not datetime.timezone.utc:
-        parsed = parsed.astimezone(datetime.timezone.utc)
-    return parsed
+    return parsed.astimezone(datetime.timezone.utc)
 
 
-def _validate_capture_safety(value: Any) -> None:
+def _capture_safety(value: Any) -> None:
     if type(value) is not dict or set(value) != _CAPTURE_SAFETY_KEYS:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "persisted capture safety keys mismatch"
@@ -217,7 +189,7 @@ def _validate_capture_safety(value: Any) -> None:
             )
 
 
-def _default_receipt_safety() -> Mapping[str, bool]:
+def _receipt_safety() -> Mapping[str, bool]:
     return types.MappingProxyType({key: False for key in sorted(_RECEIPT_SAFETY_KEYS)})
 
 
@@ -248,69 +220,49 @@ class VerifiedPersistedFotMobMatchDetailsEvidence:
 
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "schema_version must be exact integer 1"
-            )
+            raise FotMobReviewedMatchDetailsPersistedEvidenceError("schema_version mismatch")
         if self.dataset_name != DATASET_NAME:
             raise FotMobReviewedMatchDetailsPersistedEvidenceError("dataset_name mismatch")
         if self.source_dataset_name != SOURCE_DATASET_NAME:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "source_dataset_name must be the PR #50 capture dataset"
-            )
+            raise FotMobReviewedMatchDetailsPersistedEvidenceError("source dataset mismatch")
         if type(self.source_schema_version) is not int or self.source_schema_version != SOURCE_SCHEMA_VERSION:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "source_schema_version mismatch"
-            )
+            raise FotMobReviewedMatchDetailsPersistedEvidenceError("source schema mismatch")
         _sha(self.manifest_sha256, "manifest_sha256")
-        _positive_int(self.manifest_size, "manifest_size", MAX_MANIFEST_BYTES)
+        _positive(self.manifest_size, "manifest_size", MAX_MANIFEST_BYTES)
         _sha(self.raw_sha256, "raw_sha256")
-        _positive_int(self.raw_size, "raw_size", MAX_RESPONSE_BYTES)
-        if type(self.fixture_identifier) is not str:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "fixture_identifier must be an exact string"
-            )
-        match = _FIXTURE_RE.fullmatch(self.fixture_identifier)
-        if match is None or self.source_match_id != match.group(1):
+        _positive(self.raw_size, "raw_size", MAX_RESPONSE_BYTES)
+        match = _FIXTURE_RE.fullmatch(self.fixture_identifier) if type(self.fixture_identifier) is str else None
+        if match is None or type(self.source_match_id) is not str or match.group(1) != self.source_match_id:
             raise FotMobReviewedMatchDetailsPersistedEvidenceError(
                 "fixture_identifier/source_match_id mismatch"
             )
         for label in ("kickoff", "request_started_at", "observed_at"):
-            value = getattr(self, label)
-            if not isinstance(value, datetime.datetime) or value.tzinfo is not datetime.timezone.utc:
+            item = getattr(self, label)
+            if not isinstance(item, datetime.datetime) or item.tzinfo is not datetime.timezone.utc:
                 raise FotMobReviewedMatchDetailsPersistedEvidenceError(
                     f"{label} must be exact timezone.utc datetime"
                 )
-        if self.request_started_at >= self.kickoff:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "request_started_at must be strictly before kickoff"
-            )
-        if self.observed_at < self.request_started_at or self.observed_at >= self.kickoff:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "observed_at timing is outside reviewed pre-kickoff bounds"
-            )
+        if self.request_started_at >= self.kickoff or self.observed_at < self.request_started_at or self.observed_at >= self.kickoff:
+            raise FotMobReviewedMatchDetailsPersistedEvidenceError("persisted capture timing mismatch")
         if type(self.status) is not int or self.status != 200:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "status must be exact integer 200"
-            )
+            raise FotMobReviewedMatchDetailsPersistedEvidenceError("status must be exact 200")
         try:
-            validated_content_type = validate_json_content_type(self.content_type)
+            content_type = validate_json_content_type(self.content_type)
         except ValueError as exc:
             raise FotMobReviewedMatchDetailsPersistedEvidenceError(str(exc)) from exc
-        content_length = _nonnegative_int_or_none(self.content_length, "content_length")
+        content_length = _optional_nonnegative(self.content_length, "content_length")
         if content_length is not None and content_length != self.raw_size:
             raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "content_length must match raw_size when present"
+                "content_length must match raw_size"
             )
         if type(self.network_acquisition_performed) is not bool or self.network_acquisition_performed is not True:
             raise FotMobReviewedMatchDetailsPersistedEvidenceError(
                 "network_acquisition_performed must be exact bool True"
             )
         if self.raw_file_name != RAW_FILENAME or self.manifest_file_name != MANIFEST_FILENAME:
-            raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-                "persisted file names must match the reviewed PR #50 contract"
-            )
+            raise FotMobReviewedMatchDetailsPersistedEvidenceError("persisted file name mismatch")
         _sha(self.plan_sha256, "plan_sha256")
-        _positive_int(self.plan_size, "plan_size", MAX_MANIFEST_BYTES)
+        _positive(self.plan_size, "plan_size", MAX_MANIFEST_BYTES)
         if not isinstance(self.safety, Mapping) or set(self.safety) != _RECEIPT_SAFETY_KEYS:
             raise FotMobReviewedMatchDetailsPersistedEvidenceError("receipt safety keys mismatch")
         for key, item in self.safety.items():
@@ -318,18 +270,13 @@ class VerifiedPersistedFotMobMatchDetailsEvidence:
                 raise FotMobReviewedMatchDetailsPersistedEvidenceError(
                     f"receipt safety[{key!r}] must be exact bool False"
                 )
-        object.__setattr__(self, "content_type", validated_content_type)
+        object.__setattr__(self, "content_type", content_type)
         object.__setattr__(self, "content_length", content_length)
-        object.__setattr__(
-            self,
-            "safety",
-            types.MappingProxyType({key: False for key in sorted(_RECEIPT_SAFETY_KEYS)}),
-        )
+        object.__setattr__(self, "safety", _receipt_safety())
 
     def to_dict(self) -> dict[str, Any]:
         def iso(value: datetime.datetime) -> str:
             return value.isoformat().replace("+00:00", "Z")
-
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
@@ -357,65 +304,61 @@ class VerifiedPersistedFotMobMatchDetailsEvidence:
 
 
 def verify_persisted_match_details_evidence(
-    *,
-    manifest_bytes: Any,
-    raw_bytes: Any,
+    *, manifest_bytes: Any, raw_bytes: Any
 ) -> VerifiedPersistedFotMobMatchDetailsEvidence:
-    """Verify exact historical PR #51 output bytes without semantic promotion."""
-
-    payload, canonical_manifest = _strict_manifest_json(manifest_bytes)
+    payload, canonical_manifest = _manifest(manifest_bytes)
     if set(payload) != _MANIFEST_KEYS:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "manifest top-level keys do not match the PR #50 contract"
         )
-    if payload.get("schema_version") != SOURCE_SCHEMA_VERSION or payload.get("dataset_name") != SOURCE_DATASET_NAME:
+    if payload["schema_version"] != SOURCE_SCHEMA_VERSION or payload["dataset_name"] != SOURCE_DATASET_NAME:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "manifest dataset/schema identity mismatch"
         )
-    if type(payload.get("plan")) is not dict:
+    if type(payload["plan"]) is not dict:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "historical plan provenance must be a JSON object"
         )
-    plan_sha = _sha(payload.get("plan_sha256"), "plan_sha256")
-    plan_size = _positive_int(payload.get("plan_size"), "plan_size", MAX_MANIFEST_BYTES)
-    fixture_identifier = payload.get("fixture_identifier")
-    source_match_id = payload.get("source_match_id")
-    if type(fixture_identifier) is not str or type(source_match_id) is not str:
+    embedded_plan_bytes = _canonical_json_bytes(payload["plan"])
+    plan_sha = _sha(payload["plan_sha256"], "plan_sha256")
+    plan_size = _positive(payload["plan_size"], "plan_size", MAX_MANIFEST_BYTES)
+    if len(embedded_plan_bytes) != plan_size:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            "fixture/source match identity must be exact strings"
+            "embedded historical plan size does not match plan_size"
         )
-    fixture_match = _FIXTURE_RE.fullmatch(fixture_identifier)
-    if fixture_match is None or fixture_match.group(1) != source_match_id:
+    if hashlib.sha256(embedded_plan_bytes).hexdigest() != plan_sha:
+        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
+            "embedded historical plan SHA-256 does not match plan_sha256"
+        )
+
+    fixture_identifier = payload["fixture_identifier"]
+    source_match_id = payload["source_match_id"]
+    match = _FIXTURE_RE.fullmatch(fixture_identifier) if type(fixture_identifier) is str else None
+    if match is None or type(source_match_id) is not str or match.group(1) != source_match_id:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "fixture_identifier/source_match_id mismatch"
         )
-    kickoff = _utc_text(payload.get("kickoff"), "kickoff")
-    started = _utc_text(payload.get("request_started_at"), "request_started_at")
-    observed = _utc_text(payload.get("observed_at"), "observed_at")
+    kickoff = _utc(payload["kickoff"], "kickoff")
+    started = _utc(payload["request_started_at"], "request_started_at")
+    observed = _utc(payload["observed_at"], "observed_at")
     if started >= kickoff or observed < started or observed >= kickoff:
-        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            "persisted capture timing is outside reviewed pre-kickoff bounds"
-        )
-    if payload.get("status") != 200:
-        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            "persisted capture requires exact HTTP 200"
-        )
+        raise FotMobReviewedMatchDetailsPersistedEvidenceError("persisted capture timing mismatch")
+    if payload["status"] != 200:
+        raise FotMobReviewedMatchDetailsPersistedEvidenceError("persisted capture requires exact HTTP 200")
     try:
-        content_type = validate_json_content_type(payload.get("content_type"))
+        content_type = validate_json_content_type(payload["content_type"])
     except ValueError as exc:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(str(exc)) from exc
-    content_length = _nonnegative_int_or_none(payload.get("content_length"), "content_length")
-    if payload.get("network_acquisition_performed") is not True:
+    content_length = _optional_nonnegative(payload["content_length"], "content_length")
+    if payload["network_acquisition_performed"] is not True:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "persisted evidence must record network acquisition performed"
         )
-    if payload.get("raw_file_name") != RAW_FILENAME:
-        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            "raw_file_name must be response.json"
-        )
-    raw_sha = _sha(payload.get("raw_sha256"), "raw_sha256")
-    raw_size = _positive_int(payload.get("raw_size"), "raw_size", MAX_RESPONSE_BYTES)
-    _validate_capture_safety(payload.get("safety"))
+    if payload["raw_file_name"] != RAW_FILENAME:
+        raise FotMobReviewedMatchDetailsPersistedEvidenceError("raw_file_name must be response.json")
+    raw_sha = _sha(payload["raw_sha256"], "raw_sha256")
+    raw_size = _positive(payload["raw_size"], "raw_size", MAX_RESPONSE_BYTES)
+    _capture_safety(payload["safety"])
 
     if type(raw_bytes) is not bytes:
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
@@ -460,7 +403,7 @@ def verify_persisted_match_details_evidence(
         manifest_file_name=MANIFEST_FILENAME,
         plan_sha256=plan_sha,
         plan_size=plan_size,
-        safety=_default_receipt_safety(),
+        safety=_receipt_safety(),
     )
 
 
@@ -469,24 +412,8 @@ def canonical_persisted_match_details_evidence_receipt_bytes(value: Any) -> byte
         raise FotMobReviewedMatchDetailsPersistedEvidenceError(
             "value must be exact VerifiedPersistedFotMobMatchDetailsEvidence"
         )
-    try:
-        rebuilt = dataclasses.replace(value)
-        return (
-            json.dumps(
-                rebuilt.to_dict(),
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-    except FotMobReviewedMatchDetailsPersistedEvidenceError:
-        raise
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise FotMobReviewedMatchDetailsPersistedEvidenceError(
-            "persisted evidence receipt serialization failed"
-        ) from exc
+    rebuilt = dataclasses.replace(value)
+    return _canonical_json_bytes(rebuilt.to_dict())
 
 
 def sha256_persisted_match_details_evidence_receipt(value: Any) -> str:
@@ -496,9 +423,7 @@ def sha256_persisted_match_details_evidence_receipt(value: Any) -> str:
 
 
 __all__ = [
-    "DATASET_NAME",
-    "MAX_MANIFEST_BYTES",
-    "SCHEMA_VERSION",
+    "DATASET_NAME", "MAX_MANIFEST_BYTES", "SCHEMA_VERSION",
     "FotMobReviewedMatchDetailsPersistedEvidenceError",
     "VerifiedPersistedFotMobMatchDetailsEvidence",
     "canonical_persisted_match_details_evidence_receipt_bytes",
