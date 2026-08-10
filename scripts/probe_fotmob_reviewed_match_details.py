@@ -129,9 +129,11 @@ def probe_fotmob_reviewed_match_details(
         for name, value in plan.request_headers:
             connection.putheader(name, value)
 
-        # Revalidate the entire PR #48 chain after connection setup and before
-        # bytes are sent. This also catches capability revocation or forced
-        # mutation that occurred after the initial plan was built.
+        # The send-time clock itself is injectable, so observe first and then
+        # revalidate the entire plan immediately before checking that time and
+        # sending bytes. Any mutation during connection/header setup or clock
+        # observation is therefore caught before endheaders().
+        request_send_at = _observed(clock, "request_send_at")
         try:
             plan = dataclasses.replace(plan)
         except (
@@ -145,7 +147,6 @@ def probe_fotmob_reviewed_match_details(
             raise FotMobReviewedMatchDetailsProbeError(
                 "probe plan failed final pre-send revalidation"
             ) from exc
-        request_send_at = _observed(clock, "request_send_at")
         if request_send_at < plan.request_started_at:
             raise FotMobReviewedMatchDetailsProbeError(
                 "request_send_at must not predate request_started_at"
