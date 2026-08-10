@@ -44,14 +44,14 @@ def _chain(raw: bytes):
     return evidence, receipt, manifest, assessment, assessment_bytes
 
 
-def _approved(pointer="/general/homeTeam/id", kind=JsonValueKind.INTEGER):
+def _approved(pointer="/alpha/value", kind=JsonValueKind.INTEGER):
     return MatchDetailsFieldReviewDecision(
         json_pointer=pointer,
         expected_kind=kind,
         disposition=FieldReviewDisposition.APPROVED,
-        category=IntelligenceCategory.FIXTURE_CONTEXT,
-        field="reviewed_home_team_source_id",
-        notes="synthetic reviewer-approved mapping for contract test",
+        category=IntelligenceCategory.MATCH_CONTEXT,
+        field="synthetic_scalar",
+        notes="synthetic reviewer-approved mapping for contract test only",
     )
 
 
@@ -72,13 +72,13 @@ def _build(raw: bytes, decisions=None):
 
 
 def test_explicit_approved_scalar_mapping_is_deterministic_but_authorizes_no_fact() -> None:
-    raw = b'{"general":{"homeTeam":{"id":100}}}'
+    raw = b'{"alpha":{"value":100}}'
     review, _ = _build(raw)
     assert len(review.decisions) == 1
     decision = review.decisions[0]
     assert decision.disposition is FieldReviewDisposition.APPROVED
-    assert decision.category is IntelligenceCategory.FIXTURE_CONTEXT
-    assert decision.field == "reviewed_home_team_source_id"
+    assert decision.category is IntelligenceCategory.MATCH_CONTEXT
+    assert decision.field == "synthetic_scalar"
     assert all(value is False for value in review.safety.values())
     canonical = canonical_reviewed_match_details_field_semantics_bytes(review)
     assert canonical.endswith(b"\n")
@@ -86,9 +86,9 @@ def test_explicit_approved_scalar_mapping_is_deterministic_but_authorizes_no_fac
 
 
 def test_rejected_path_carries_no_semantic_mapping() -> None:
-    raw = b'{"events":[{"type":"goal"}]}'
+    raw = b'{"records":[{"token":"x"}]}'
     decision = MatchDetailsFieldReviewDecision(
-        json_pointer="/events/*/type",
+        json_pointer="/records/*/token",
         expected_kind=JsonValueKind.STRING,
         disposition=FieldReviewDisposition.REJECTED,
         category=None,
@@ -102,18 +102,16 @@ def test_rejected_path_carries_no_semantic_mapping() -> None:
 
 def test_approved_array_wildcards_objects_nulls_and_ambiguous_kinds_fail_closed() -> None:
     with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match="array wildcard"):
-        _approved("/events/*/type", JsonValueKind.STRING)
+        _approved("/records/*/token", JsonValueKind.STRING)
     with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match="non-null scalar"):
-        _approved("/general", JsonValueKind.OBJECT)
+        _approved("/alpha", JsonValueKind.OBJECT)
     with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match="non-null scalar"):
         _approved("/nullable", JsonValueKind.NULL)
 
-    raw = b'{"events":[{"minute":1},{"minute":2.5}]}'
+    raw = b'{"records":[{"value":1},{"value":2.5}]}'
     evidence, receipt, manifest, assessment, assessment_bytes = _chain(raw)
-    # REJECTED may document the mixed-kind path; APPROVED cannot use the wildcard
-    # and cannot claim one exact unambiguous kind where multiple were observed.
     decision = MatchDetailsFieldReviewDecision(
-        json_pointer="/events/*/minute",
+        json_pointer="/records/*/value",
         expected_kind=JsonValueKind.INTEGER,
         disposition=FieldReviewDisposition.REJECTED,
         category=None,
@@ -135,7 +133,7 @@ def test_approved_array_wildcards_objects_nulls_and_ambiguous_kinds_fail_closed(
 
 
 def test_exact_pr53_assessment_object_and_bytes_are_required() -> None:
-    raw = b'{"general":{"homeTeam":{"id":100}}}'
+    raw = b'{"alpha":{"value":100}}'
     evidence, receipt, manifest, assessment, assessment_bytes = _chain(raw)
     with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match="exact canonical PR #53"):
         build_reviewed_match_details_field_semantics(
@@ -165,11 +163,11 @@ def test_exact_pr53_assessment_object_and_bytes_are_required() -> None:
 
 
 def test_decision_path_and_kind_must_be_observed_exactly() -> None:
-    raw = b'{"general":{"homeTeam":{"id":100}}}'
+    raw = b'{"alpha":{"value":100}}'
     evidence, receipt, manifest, assessment, assessment_bytes = _chain(raw)
     for decision, pattern in (
-        (_approved("/general/missing", JsonValueKind.INTEGER), "not observed"),
-        (_approved("/general/homeTeam/id", JsonValueKind.STRING), "expected_kind"),
+        (_approved("/alpha/missing", JsonValueKind.INTEGER), "not observed"),
+        (_approved("/alpha/value", JsonValueKind.STRING), "expected_kind"),
     ):
         with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match=pattern):
             build_reviewed_match_details_field_semantics(
@@ -186,7 +184,7 @@ def test_decision_path_and_kind_must_be_observed_exactly() -> None:
 
 
 def test_review_time_must_follow_observation_and_precede_kickoff() -> None:
-    raw = b'{"general":{"homeTeam":{"id":100}}}'
+    raw = b'{"alpha":{"value":100}}'
     evidence, receipt, manifest, assessment, assessment_bytes = _chain(raw)
     for reviewed_at in (
         evidence.observed_at - datetime.timedelta(microseconds=1),
@@ -207,16 +205,16 @@ def test_review_time_must_follow_observation_and_precede_kickoff() -> None:
 
 
 def test_duplicate_paths_and_duplicate_semantic_targets_fail_closed() -> None:
-    raw = b'{"general":{"a":1,"b":2}}'
+    raw = b'{"alpha":{"a":1,"b":2}}'
     d1 = MatchDetailsFieldReviewDecision(
-        json_pointer="/general/a",
+        json_pointer="/alpha/a",
         expected_kind=JsonValueKind.INTEGER,
         disposition=FieldReviewDisposition.APPROVED,
-        category=IntelligenceCategory.PERFORMANCE,
+        category=IntelligenceCategory.MATCH_CONTEXT,
         field="synthetic_metric",
         notes="",
     )
-    d2 = dataclasses.replace(d1, json_pointer="/general/b")
+    d2 = dataclasses.replace(d1, json_pointer="/alpha/b")
     with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match="targets must be unique"):
         _build(raw, (d1, d2))
     with pytest.raises(FotMobReviewedMatchDetailsFieldReviewError, match="unique json_pointer"):
