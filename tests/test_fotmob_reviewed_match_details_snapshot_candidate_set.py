@@ -3,12 +3,13 @@ from __future__ import annotations
 import ast
 import dataclasses
 import datetime
-import importlib.util
 import json
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
+
+from tests.support.module_loader import load_test_module
 
 from domain.fixture_intelligence import (
     FixtureIntelligenceSnapshot,
@@ -38,15 +39,7 @@ UTC = datetime.timezone.utc
 
 @lru_cache(maxsize=1)
 def _pr62_helper():
-    helper_path = Path(__file__).with_name(
-        "test_fotmob_reviewed_match_details_fact_status_materializer.py"
-    )
-    spec = importlib.util.spec_from_file_location("_athena_pr63_pr62_helper", helper_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load PR #62 helper")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return load_test_module("test_fotmob_reviewed_match_details_fact_status_materializer")
 
 
 def _chain(inputs, classified_at=None) -> ReviewedMatchDetailsMaterializationChainInput:

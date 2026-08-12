@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import datetime
-import importlib.util
 from pathlib import Path
 
 import pytest
+
+from tests.support.module_loader import load_test_module
 
 from domain.reviewed_fixture_catalog_admission import (
     canonical_reviewed_fixture_catalog_admission_bytes,
@@ -19,17 +20,7 @@ UTC = datetime.timezone.utc
 
 
 def _admission_fixture(tmp_path: Path):
-    helper_path = Path(__file__).with_name(
-        "test_reviewed_fixture_catalog_admission_artifact.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "_athena_pr46_existing_artifact_tests",
-        helper_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load existing PR #46 admission fixture helper")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_test_module("test_reviewed_fixture_catalog_admission_artifact")
     return module._admission(tmp_path)
 
 

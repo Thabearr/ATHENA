@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
-import importlib.util
 from pathlib import Path
 
 import pytest
@@ -23,17 +22,11 @@ from domain.fotmob_reviewed_match_details_probe import (
     build_match_details_probe_plan,
     canonical_match_details_probe_plan_bytes,
 )
+from tests.support.module_loader import load_test_module
 
 
 def _capture(tmp_path: Path):
-    helper = Path(__file__).with_name(
-        "test_reviewed_fixture_intelligence_bootstrap_artifact.py"
-    )
-    spec = importlib.util.spec_from_file_location("_athena_pr48_artifact_helper", helper)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load PR #48 helper")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_test_module("test_reviewed_fixture_intelligence_bootstrap_artifact")
     _, _, verified = module._verified(tmp_path)
     request_at = module.PR48_VERIFIED_AT
     plan = build_match_details_probe_plan(

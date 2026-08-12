@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
-from pathlib import Path
-
 import pytest
+
+from tests.support.module_loader import load_test_module
 
 from domain.fotmob_reviewed_match_details_persisted_evidence import (
     canonical_persisted_match_details_evidence_receipt_bytes,
@@ -20,14 +19,7 @@ from domain.fotmob_reviewed_match_details_structure import (
 
 
 def _pr52(raw: bytes):
-    helper_path = Path(__file__).with_name(
-        "test_fotmob_reviewed_match_details_persisted_evidence.py"
-    )
-    spec = importlib.util.spec_from_file_location("_athena_pr52_helper", helper_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load PR #52 helper")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_test_module("test_fotmob_reviewed_match_details_persisted_evidence")
     manifest = module._manifest_bytes(module._payload(raw))
     evidence = verify_persisted_match_details_evidence(
         manifest_bytes=manifest,

@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import dataclasses
-import importlib.util
 from pathlib import Path
 
 import pytest
+
+from tests.support.module_loader import load_test_module
 
 import domain.reviewed_fixture_intelligence_bootstrap_artifact as artifact_module
 from domain.reviewed_fixture_intelligence_bootstrap_artifact import (
@@ -14,17 +15,7 @@ from domain.reviewed_fixture_intelligence_bootstrap_artifact import (
 
 
 def _verified_fixture(tmp_path: Path):
-    helper_path = Path(__file__).with_name(
-        "test_reviewed_fixture_intelligence_bootstrap_artifact.py"
-    )
-    spec = importlib.util.spec_from_file_location(
-        "_athena_pr48_existing_bootstrap_artifact_tests",
-        helper_path,
-    )
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load existing PR #48 verifier fixture helper")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_test_module("test_reviewed_fixture_intelligence_bootstrap_artifact")
     return module._verified(tmp_path)
 
 

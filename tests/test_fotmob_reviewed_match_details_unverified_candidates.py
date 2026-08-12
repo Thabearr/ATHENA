@@ -2,10 +2,9 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
-import importlib.util
-from pathlib import Path
-
 import pytest
+
+from tests.support.module_loader import load_test_module
 
 from domain.fixture_intelligence import (
     IntelligenceCategory,
@@ -36,12 +35,7 @@ REVIEWED_AT = datetime.datetime(2026, 8, 10, 10, 1, tzinfo=UTC)
 
 
 def _pr52(raw: bytes):
-    helper_path = Path(__file__).with_name("test_fotmob_reviewed_match_details_structure.py")
-    spec = importlib.util.spec_from_file_location("_athena_pr53_candidate_helper", helper_path)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load PR #53 helper")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = load_test_module("test_fotmob_reviewed_match_details_structure")
     return module._pr52(raw)
 
 

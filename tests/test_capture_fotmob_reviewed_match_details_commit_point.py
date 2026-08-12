@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import datetime
-import importlib.util
 from pathlib import Path
 
 from domain.reviewed_fixture_intelligence_bootstrap_artifact import (
     canonical_verified_bootstrap_artifact_receipt_bytes,
 )
 import scripts.capture_fotmob_reviewed_match_details as module
+from tests.support.module_loader import load_test_module
 
 UTC = datetime.timezone.utc
 REQUEST_AT = datetime.datetime(2026, 8, 10, 6, 0, tzinfo=UTC)
@@ -16,14 +16,7 @@ OBSERVED_AT = REQUEST_AT + datetime.timedelta(seconds=1)
 
 
 def _upstream(tmp_path: Path):
-    helper = Path(__file__).with_name(
-        "test_reviewed_fixture_intelligence_bootstrap_artifact.py"
-    )
-    spec = importlib.util.spec_from_file_location("_athena_pr48_commit51_helper", helper)
-    if spec is None or spec.loader is None:
-        raise RuntimeError("could not load PR #48 helper")
-    loaded = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(loaded)
+    loaded = load_test_module("test_reviewed_fixture_intelligence_bootstrap_artifact")
     _, _, verified = loaded._verified(tmp_path)
     return verified, canonical_verified_bootstrap_artifact_receipt_bytes(verified)
 
