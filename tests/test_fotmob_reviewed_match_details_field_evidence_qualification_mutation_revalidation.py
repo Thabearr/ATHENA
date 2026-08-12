@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-import pytest
+import importlib.util
+from pathlib import Path
 
-from tests.support.module_loader import load_test_module
+import pytest
 
 from domain.fotmob_reviewed_match_details_field_evidence_qualification import (
     FotMobReviewedMatchDetailsFieldEvidenceQualificationError,
@@ -12,7 +13,18 @@ from domain.fotmob_reviewed_match_details_field_evidence_qualification import (
 
 
 def _helper():
-    return load_test_module("test_fotmob_reviewed_match_details_field_evidence_qualification")
+    helper_path = Path(__file__).with_name(
+        "test_fotmob_reviewed_match_details_field_evidence_qualification.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_athena_pr58_mutation_helper",
+        helper_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #58 helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_forced_nested_recorded_decision_mutation_fails_local_canonicalization() -> None:

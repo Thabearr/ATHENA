@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
-import pytest
+import importlib.util
+from pathlib import Path
 
-from tests.support.module_loader import load_test_module
+import pytest
 
 from domain.fixture_intelligence import (
     FixtureIntelligenceFact,
@@ -34,7 +35,15 @@ from domain.fotmob_reviewed_match_details_unverified_facts import (
 
 
 def _pr55_helper():
-    return load_test_module("test_fotmob_reviewed_match_details_unverified_candidates")
+    helper_path = Path(__file__).with_name(
+        "test_fotmob_reviewed_match_details_unverified_candidates.py"
+    )
+    spec = importlib.util.spec_from_file_location("_athena_pr55_fact_helper", helper_path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #55 helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _approved(pointer: str, kind: JsonValueKind, category: IntelligenceCategory, field: str):

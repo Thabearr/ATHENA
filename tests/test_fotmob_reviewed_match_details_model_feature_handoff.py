@@ -4,14 +4,13 @@ import ast
 import dataclasses
 import datetime
 import hashlib
+import importlib.util
 import inspect
 import json
 from functools import lru_cache
 from pathlib import Path
 
 import pytest
-
-from tests.support.module_loader import load_test_module
 
 from domain.fixture_intelligence import (
     DATASET_NAME as FIXTURE_INTELLIGENCE_DATASET_NAME,
@@ -56,7 +55,15 @@ UTC = datetime.timezone.utc
 
 @lru_cache(maxsize=1)
 def _pr65_helper():
-    return load_test_module("test_fotmob_reviewed_match_details_fixture_intelligence_snapshot")
+    path = Path(__file__).with_name(
+        "test_fotmob_reviewed_match_details_fixture_intelligence_snapshot.py"
+    )
+    spec = importlib.util.spec_from_file_location("_athena_pr66_pr65_helper", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #65 helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _pr65_result(bundle=None):

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib.util
 from pathlib import Path
 
 import pytest
-
-from tests.support.module_loader import load_test_module
 
 from domain.fotmob_reviewed_match_details_probe import (
     FotMobReviewedMatchDetailsProbeError,
@@ -18,7 +17,13 @@ from scripts.probe_fotmob_reviewed_match_details import probe_fotmob_reviewed_ma
 
 
 def _helpers():
-    return load_test_module("test_fotmob_reviewed_match_details_probe")
+    path = Path(__file__).with_name("test_fotmob_reviewed_match_details_probe.py")
+    spec = importlib.util.spec_from_file_location("_athena_pr49_probe_helpers", path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #49 test helpers")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def test_receipt_serialization_is_detached_from_forced_plan_field_mutation(tmp_path: Path) -> None:

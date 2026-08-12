@@ -4,6 +4,7 @@ import ast
 import dataclasses
 import datetime
 import hashlib
+import importlib.util
 from pathlib import Path
 
 import pytest
@@ -27,7 +28,6 @@ from domain.fotmob_reviewed_match_details_probe import (
 )
 from domain.reviewed_fixture_catalog_admission import REVIEWED_SOURCE_CAPABILITY
 from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY_REGISTRY
-from tests.support.module_loader import load_test_module
 
 UTC = datetime.timezone.utc
 REQUEST_AT = datetime.datetime(2026, 8, 10, 6, 0, tzinfo=UTC)
@@ -36,7 +36,14 @@ KICKOFF = datetime.datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
 
 def _upstream(tmp_path: Path):
-    module = load_test_module("test_reviewed_fixture_intelligence_bootstrap_artifact")
+    helper = Path(__file__).with_name(
+        "test_reviewed_fixture_intelligence_bootstrap_artifact.py"
+    )
+    spec = importlib.util.spec_from_file_location("_athena_pr48_capture_helper", helper)
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #48 helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
     _, receipt_bytes, verified = module._verified(tmp_path)
     plan = build_match_details_probe_plan(
         verified,

@@ -2,11 +2,10 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import importlib.util
 from pathlib import Path
 
 import pytest
-
-from tests.support.module_loader import load_test_module
 
 from domain.fotmob_reviewed_match_details_field_evidence_qualification import (
     FieldEvidenceQualificationDisposition,
@@ -34,7 +33,18 @@ UTC = datetime.timezone.utc
 
 
 def _pr60_helper():
-    return load_test_module("test_fotmob_reviewed_match_details_status_classification_policy")
+    helper_path = Path(__file__).with_name(
+        "test_fotmob_reviewed_match_details_status_classification_policy.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_athena_pr60_evaluator_helper",
+        helper_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #60 helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _build_inputs(dispositions=None):

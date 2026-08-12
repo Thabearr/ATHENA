@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 import datetime
+import importlib.util
 from pathlib import Path
 
 import pytest
-
-from tests.support.module_loader import load_test_module
 
 from domain.fixture_intelligence import IntelligenceCategory, IntelligenceFactStatus
 from domain.fotmob_reviewed_match_details_field_evidence_qualification import (
@@ -26,7 +25,18 @@ from domain.fotmob_reviewed_match_details_unverified_facts import (
 
 
 def _pr57_helper():
-    return load_test_module("test_fotmob_reviewed_match_details_unverified_facts")
+    helper_path = Path(__file__).with_name(
+        "test_fotmob_reviewed_match_details_unverified_facts.py"
+    )
+    spec = importlib.util.spec_from_file_location(
+        "_athena_pr57_qualification_helper",
+        helper_path,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("could not load PR #57 helper")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def _approved(pointer: str, kind: JsonValueKind, category: IntelligenceCategory, field: str):
