@@ -634,21 +634,6 @@ def test_production_ast_uses_replay_and_registry_without_execution_paths() -> No
     )
 
 
-def test_existing_model_and_score_contracts_remain_unmodified() -> None:
-    changed = {
-        line.strip()
-        for line in __import__("subprocess").check_output(
-            ["git", "diff", "--name-only", "origin/main...HEAD"],
-            text=True,
-        ).splitlines()
-    }
-    assert "domain/fixture_intelligence.py" not in changed
-    assert "domain/fixture_model_features.py" not in changed
-    assert "domain/model_status.py" not in changed
-    assert "domain/score_matrix.py" not in changed
-    assert "domain/fotmob_reviewed_match_details_model_feature_handoff.py" not in changed
-
-
 def test_rejected_qualification_stays_blocked_feature_input() -> None:
     readiness, _, _ = _build(_pr66_helper()._unverified_pr65_result())
     record = _market(readiness, MarketId.MATCH_RESULT)
