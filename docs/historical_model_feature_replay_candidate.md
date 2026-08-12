@@ -9,7 +9,7 @@ matrix, calculate probabilities, read SQLite, or authorize production use.
 ## Evidence and identity
 
 The corpus accepts immutable source CSV bytes and records each source file's
-season, league, SHA-256, byte size, and parsed row count. Its fixture and team
+season, acquisition league, SHA-256, byte size, and parsed row count. Its fixture and team
 identity functions intentionally mirror the current football-data.co.uk
 importer:
 
@@ -22,6 +22,13 @@ These identities are **source-scoped**. They do not establish that a team is
 the same as a FotMob, football-data.org, API-Football, SportyBet, or canonical
 ATHENA team. No fuzzy aliases, SQLite team state, or `team_merger` behavior is
 used.
+
+`Div` is observed metadata; the source file's requested league is acquisition
+context. When a row contains `Div`, `observed_league` and `identity_league`
+are both that normalized value. When `Div` is blank, `observed_league` is
+`null`; the requested acquisition league is retained only as
+`identity_league` to preserve importer fixture-identity parity. The corpus
+never claims the acquisition context was observed in the raw CSV.
 
 CSV parsing follows the importer’s accepted encodings, required columns, date
 formats, clock formats, score validation, and identity input semantics. A
@@ -42,6 +49,14 @@ fatigue, or Elo history.
 Therefore this corpus is not a claim of globally normalized football
 chronology. It is a bounded replay under mechanically safe source-local
 ordering.
+
+An unresolved event is not silently removed from later replay history. A
+missing source clock taints both source-scoped teams from its source date; a
+same-team/same-clock collision taints them from that clock. Every same-or-later
+dependent fixture is `BLOCKED_TEMPORAL_AMBIGUITY`, is not used to update form,
+fatigue, or Elo state, and propagates the taint to its opponent. This is
+intentionally conservative: the corpus does not invent a placement for an
+ambiguous result merely to regain continuity.
 
 ## Replayed features
 

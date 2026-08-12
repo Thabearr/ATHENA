@@ -101,6 +101,36 @@ def test_source_scoped_identity_has_exact_importer_parity_without_fuzzy_matching
     assert changed.fixtures[0].home_source_team_identifier != fixture.home_source_team_identifier
 
 
+def test_blank_div_preserves_acquisition_only_identity_context_not_observed_league():
+    raw = (
+        b"Div,Date,Time,HomeTeam,AwayTeam,FTHG,FTAG,FTR,HTHG,HTAG,HTR\n"
+        b",01/08/2020,12:00,A,B,1,0,H,0,0,D\n"
+    )
+    source = HistoricalReplaySourceInput("2020-21", "E0", raw)
+    corpus = build_historical_model_feature_replay_corpus((source,))
+    fixture = corpus.fixtures[0]
+    _, fingerprint = deterministic_fixture_identity(
+        season="2020-21",
+        league="E0",
+        match_date="2020-08-01",
+        match_time="12:00",
+        home_team="A",
+        away_team="B",
+    )
+    assert corpus.source_files[0].acquisition_league == "E0"
+    assert fixture.fixture_identifier == f"{SOURCE}:{fingerprint}"
+    assert fixture.identity_league == "E0"
+    assert fixture.observed_league is None
+    assert '"observed_league":null' in canonical_historical_model_feature_replay_corpus_bytes(corpus).decode("utf-8")
+
+
+def test_nonblank_div_remains_observed_league_and_identity_parity():
+    corpus, _, _ = _build([_row("01/08/2020", "12:00", "A", "B", 1, 0)])
+    fixture = corpus.fixtures[0]
+    assert fixture.observed_league == "E0"
+    assert fixture.identity_league == "E0"
+
+
 @pytest.mark.parametrize(
     "raw",
     [
@@ -129,6 +159,49 @@ def test_duplicate_identity_missing_time_and_same_team_collision_fail_closed_tem
         _row("01/08/2020", "12:00", "A", "C", 1, 0),
     ])
     assert all(_feature(item, ModelFeatureId.HOME_ELO).status is HistoricalFeatureReplayStatus.BLOCKED_TEMPORAL_AMBIGUITY for item in collision.fixtures)
+
+
+def test_missing_time_taints_later_team_state_and_opponent_propagation():
+    corpus, _, _ = _build([
+        _row("01/08/2020", "", "A", "B", 1, 0),
+        _row("08/08/2020", "12:00", "A", "C", 1, 0),
+        _row("15/08/2020", "12:00", "C", "D", 1, 0),
+    ])
+    first = _fixture_for(corpus, "A", "B")
+    second = _fixture_for(corpus, "A", "C")
+    third = _fixture_for(corpus, "C", "D")
+    assert _feature(first, ModelFeatureId.HOME_ELO).status is HistoricalFeatureReplayStatus.BLOCKED_TEMPORAL_AMBIGUITY
+    for fixture in (second, third):
+        assert all(
+            _feature(fixture, feature_id).status is HistoricalFeatureReplayStatus.BLOCKED_TEMPORAL_AMBIGUITY
+            for feature_id in (
+                ModelFeatureId.HOME_FORM,
+                ModelFeatureId.AWAY_FORM,
+                ModelFeatureId.HOME_ELO,
+                ModelFeatureId.AWAY_ELO,
+                ModelFeatureId.FATIGUE,
+            )
+        )
+
+
+def test_same_kickoff_collision_taints_later_team_state_without_target_result_leakage():
+    corpus, _, _ = _build([
+        _row("01/08/2020", "12:00", "A", "B", 1, 0),
+        _row("01/08/2020", "12:00", "A", "C", 1, 0),
+        _row("08/08/2020", "12:00", "A", "D", 9, 0),
+    ])
+    later = _fixture_for(corpus, "A", "D")
+    assert all(
+        _feature(later, feature_id).status is HistoricalFeatureReplayStatus.BLOCKED_TEMPORAL_AMBIGUITY
+        for feature_id in (
+            ModelFeatureId.HOME_FORM,
+            ModelFeatureId.AWAY_FORM,
+            ModelFeatureId.HOME_ELO,
+            ModelFeatureId.AWAY_ELO,
+            ModelFeatureId.FATIGUE,
+        )
+    )
+    assert _feature(later, ModelFeatureId.HOME_FORM).value is None
 
 
 def test_form_is_strict_prior_limited_scaled_and_never_defaults():

@@ -254,12 +254,12 @@ class HistoricalReplaySourceInput:
     """Execution input: one preserved source file supplied as immutable bytes."""
 
     season: str
-    league: str
+    acquisition_league: str
     raw_bytes: bytes
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "season", _season(self.season))
-        object.__setattr__(self, "league", _league(self.league))
+        object.__setattr__(self, "acquisition_league", _league(self.acquisition_league))
         if type(self.raw_bytes) is not bytes or not self.raw_bytes:
             raise _error("raw_bytes must be exact non-empty immutable bytes")
 
@@ -267,14 +267,14 @@ class HistoricalReplaySourceInput:
 @dataclasses.dataclass(frozen=True)
 class HistoricalReplaySourceFile:
     season: str
-    league: str
+    acquisition_league: str
     raw_sha256: str
     raw_size: int
     source_row_count: int
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "season", _season(self.season))
-        object.__setattr__(self, "league", _league(self.league))
+        object.__setattr__(self, "acquisition_league", _league(self.acquisition_league))
         object.__setattr__(self, "raw_sha256", _source_hash(self.raw_sha256, "raw_sha256"))
         object.__setattr__(self, "raw_size", _positive_int(self.raw_size, "raw_size"))
         object.__setattr__(self, "source_row_count", _positive_int(self.source_row_count, "source_row_count"))
@@ -321,7 +321,9 @@ class HistoricalReplayFixture:
     fixture_identifier: str
     source: str
     season: str
-    league: str
+    observed_league: str | None
+    identity_league: str
+    source_local_date: datetime.date
     source_local_kickoff: datetime.datetime | None
     kickoff_timezone_status: str
     home_source_team_identifier: str
@@ -342,7 +344,11 @@ class HistoricalReplayFixture:
         if self.source != SOURCE:
             raise _error("fixture source must remain football_data_uk_csv")
         object.__setattr__(self, "season", _season(self.season))
-        object.__setattr__(self, "league", _league(self.league))
+        if self.observed_league is not None:
+            object.__setattr__(self, "observed_league", _league(self.observed_league))
+        object.__setattr__(self, "identity_league", _league(self.identity_league))
+        if type(self.source_local_date) is not datetime.date:
+            raise _error("source_local_date must be an exact source date")
         if self.source_local_kickoff is not None:
             if type(self.source_local_kickoff) is not datetime.datetime or self.source_local_kickoff.tzinfo is not None:
                 raise _error("source_local_kickoff must be naive source-local datetime or None")
@@ -379,7 +385,9 @@ class HistoricalReplayFixture:
             "fixture_identifier": self.fixture_identifier,
             "source": self.source,
             "season": self.season,
-            "league": self.league,
+            "observed_league": self.observed_league,
+            "identity_league": self.identity_league,
+            "source_local_date": self.source_local_date.isoformat(),
             "source_local_kickoff": self.source_local_kickoff.isoformat() if self.source_local_kickoff else None,
             "kickoff_timezone_status": self.kickoff_timezone_status,
             "home_source_team_identifier": self.home_source_team_identifier,
@@ -418,8 +426,8 @@ class HistoricalReplayCorpus:
             raise _error("historical replay corpus contract identity mismatch")
         if type(self.source_files) is not tuple or not self.source_files or any(type(item) is not HistoricalReplaySourceFile for item in self.source_files):
             raise _error("source_files must be non-empty exact source records")
-        expected_files = tuple(sorted(self.source_files, key=lambda item: (item.season, item.league, item.raw_sha256)))
-        if self.source_files != expected_files or len({(item.season, item.league) for item in self.source_files}) != len(self.source_files):
+        expected_files = tuple(sorted(self.source_files, key=lambda item: (item.season, item.acquisition_league, item.raw_sha256)))
+        if self.source_files != expected_files or len({(item.season, item.acquisition_league) for item in self.source_files}) != len(self.source_files):
             raise _error("source files must be uniquely and deterministically ordered")
         if type(self.fixture_count) is not int or self.fixture_count < 0 or self.fixture_count != len(self.fixtures):
             raise _error("fixture_count must exactly equal fixture records")
@@ -463,7 +471,9 @@ class HistoricalReplayCorpus:
 class _ParsedFixture:
     fixture_identifier: str
     season: str
-    league: str
+    observed_league: str | None
+    identity_league: str
+    source_local_date: datetime.date
     source_local_kickoff: datetime.datetime | None
     home_name: str
     away_name: str
@@ -498,7 +508,8 @@ def _parse_source_input(source_input: HistoricalReplaySourceInput) -> tuple[Hist
             date = _parse_date(row.get("Date"), "Date")
             local_kickoff = _parse_local_kickoff(date, row.get("Time"))
             actual_league = str(row.get("Div") or "").strip()
-            league = _league(actual_league) if actual_league else source_input.league
+            observed_league = _league(actual_league) if actual_league else None
+            identity_league = observed_league or source_input.acquisition_league
             home = _exact_text(str(row.get("HomeTeam") or "").strip(), "HomeTeam")
             away = _exact_text(str(row.get("AwayTeam") or "").strip(), "AwayTeam")
             if home.casefold() == away.casefold():
@@ -522,7 +533,7 @@ def _parse_source_input(source_input: HistoricalReplaySourceInput) -> tuple[Hist
                 raise _error("HTR conflicts with half-time scores")
             _, fingerprint = _fixture_identity(
                 season=source_input.season,
-                league=league,
+                league=identity_league,
                 match_date=date.isoformat(),
                 match_time=str(row.get("Time") or "").strip(),
                 home=home,
@@ -532,7 +543,9 @@ def _parse_source_input(source_input: HistoricalReplaySourceInput) -> tuple[Hist
                 _ParsedFixture(
                     fixture_identifier=f"{SOURCE}:{fingerprint}",
                     season=source_input.season,
-                    league=league,
+                    observed_league=observed_league,
+                    identity_league=identity_league,
+                    source_local_date=date,
                     source_local_kickoff=local_kickoff,
                     home_name=home,
                     away_name=away,
@@ -550,7 +563,7 @@ def _parse_source_input(source_input: HistoricalReplaySourceInput) -> tuple[Hist
         raise _error("source CSV contains no data rows")
     source_file = HistoricalReplaySourceFile(
         season=source_input.season,
-        league=source_input.league,
+        acquisition_league=source_input.acquisition_league,
         raw_sha256=raw_hash,
         raw_size=len(source_input.raw_bytes),
         source_row_count=len(parsed),
@@ -635,6 +648,68 @@ def _source_corpus_sha256(source_files: Sequence[HistoricalReplaySourceFile]) ->
     return _sha256(_canonical_json_bytes([item.to_dict() for item in source_files]))
 
 
+def _is_temporally_tainted(
+    taint_starts: Mapping[int, list[datetime.date | datetime.datetime]],
+    team_id: int,
+    target: datetime.datetime,
+) -> bool:
+    """Return whether an unresolved prior event can affect ``target``.
+
+    A missing clock is only ordered to its source date, so it blocks every
+    same-or-later-date target for that team.  A same-team same-clock collision
+    is ordered through its known local clock.  This intentionally conservative
+    model never inserts an uncertain result into form, fatigue, or Elo state.
+    """
+
+    for start in taint_starts.get(team_id, []):
+        if type(start) is datetime.datetime:
+            if start <= target:
+                return True
+        elif start <= target.date():
+            return True
+    return False
+
+
+def _fixture(
+    item: _ParsedFixture,
+    *,
+    features: tuple[HistoricalReplayFeatureValue, ...],
+) -> HistoricalReplayFixture:
+    feature_map = {value.feature_id: value for value in features}
+    return HistoricalReplayFixture(
+        fixture_identifier=item.fixture_identifier,
+        source=SOURCE,
+        season=item.season,
+        observed_league=item.observed_league,
+        identity_league=item.identity_league,
+        source_local_date=item.source_local_date,
+        source_local_kickoff=item.source_local_kickoff,
+        kickoff_timezone_status=(
+            SOURCE_LOCAL_TIMEZONE_UNRESOLVED
+            if item.source_local_kickoff is not None
+            else MISSING_SOURCE_TIME
+        ),
+        home_source_team_identifier=f"{SOURCE}:team:{item.home_team_id}",
+        away_source_team_identifier=f"{SOURCE}:team:{item.away_team_id}",
+        home_team_name=item.home_name,
+        away_team_name=item.away_name,
+        home_goals=item.home_goals,
+        away_goals=item.away_goals,
+        source_file_sha256=item.source_file_sha256,
+        source_row_number=item.source_row_number,
+        features=features,
+        fatigue_pr31_semantic_equivalence=PR31_FATIGUE_SEMANTIC_EQUIVALENCE,
+        form_path_component_eligible=all(
+            feature_map[key].status is HistoricalFeatureReplayStatus.AVAILABLE_RESEARCH_REPLAY
+            for key in (ModelFeatureId.HOME_FORM, ModelFeatureId.AWAY_FORM, ModelFeatureId.FATIGUE)
+        ),
+        elo_fallback_component_eligible=all(
+            feature_map[key].status is HistoricalFeatureReplayStatus.AVAILABLE_RESEARCH_REPLAY
+            for key in (ModelFeatureId.HOME_ELO, ModelFeatureId.AWAY_ELO, ModelFeatureId.FATIGUE)
+        ),
+    )
+
+
 def build_historical_model_feature_replay_corpus(
     source_inputs: Sequence[HistoricalReplaySourceInput],
 ) -> HistoricalReplayCorpus:
@@ -643,8 +718,8 @@ def build_historical_model_feature_replay_corpus(
     if type(source_inputs) not in (tuple, list) or not source_inputs:
         raise _error("source_inputs must be a non-empty ordered sequence")
     parsed_pairs = tuple(_parse_source_input(item) for item in source_inputs)
-    source_files = tuple(sorted((pair[0] for pair in parsed_pairs), key=lambda item: (item.season, item.league, item.raw_sha256)))
-    if len({(item.season, item.league) for item in source_files}) != len(source_files):
+    source_files = tuple(sorted((pair[0] for pair in parsed_pairs), key=lambda item: (item.season, item.acquisition_league, item.raw_sha256)))
+    if len({(item.season, item.acquisition_league) for item in source_files}) != len(source_files):
         raise _error("each season/league source file may occur only once")
     parsed = [fixture for _, values in parsed_pairs for fixture in values]
     identifiers = [item.fixture_identifier for item in parsed]
@@ -663,6 +738,19 @@ def build_historical_model_feature_replay_corpus(
             collision_keys.setdefault((item.away_team_id, item.source_local_kickoff), []).append(item.fixture_identifier)
     temporal_collisions = {fixture_id for values in collision_keys.values() if len(values) > 1 for fixture_id in values}
 
+    # Unresolved fixtures are never inserted into state.  Instead their
+    # outcome taints each participating source-scoped team prospectively.  For
+    # a missing clock, only the source date is known, so every same-or-later
+    # local target is blocked.  A known-clock collision taints at that clock.
+    taint_starts: dict[int, list[datetime.date | datetime.datetime]] = {}
+    for item in parsed:
+        if item.home_team_id in ambiguous_team_ids or item.away_team_id in ambiguous_team_ids:
+            continue
+        if item.source_local_kickoff is None or item.fixture_identifier in temporal_collisions:
+            start: datetime.date | datetime.datetime = item.source_local_kickoff or item.source_local_date
+            taint_starts.setdefault(item.home_team_id, []).append(start)
+            taint_starts.setdefault(item.away_team_id, []).append(start)
+
     histories: dict[int, list[tuple[datetime.datetime, str]]] = {}
     ratings: dict[int, dict[str, int]] = {}
     fixtures: list[HistoricalReplayFixture] = []
@@ -680,6 +768,18 @@ def build_historical_model_feature_replay_corpus(
     replayed: dict[str, HistoricalReplayFixture] = {}
     for item in safe:
         assert item.source_local_kickoff is not None
+        if _is_temporally_tainted(taint_starts, item.home_team_id, item.source_local_kickoff) or _is_temporally_tainted(taint_starts, item.away_team_id, item.source_local_kickoff):
+            replayed[item.fixture_identifier] = _fixture(
+                item,
+                features=_blocked_features(HistoricalFeatureReplayStatus.BLOCKED_TEMPORAL_AMBIGUITY),
+            )
+            # Do not update either side.  In particular, a tainted team may
+            # not propagate a fabricated Elo update to an otherwise clean
+            # opponent. Its known outcome also cannot restore that opponent's
+            # clean replay state, so the ambiguity propagates prospectively.
+            taint_starts.setdefault(item.home_team_id, []).append(item.source_local_kickoff)
+            taint_starts.setdefault(item.away_team_id, []).append(item.source_local_kickoff)
+            continue
         home_history = histories.get(item.home_team_id, [])
         away_history = histories.get(item.away_team_id, [])
         home_form = _replace_feature_id(_form(home_history, item.source_local_kickoff), ModelFeatureId.HOME_FORM)
@@ -692,26 +792,7 @@ def build_historical_model_feature_replay_corpus(
         freshness = _feature(ModelFeatureId.LIVE_DATA_FRESHNESS, HistoricalFeatureReplayStatus.NOT_RECONSTRUCTIBLE_WITH_CURRENT_EVIDENCE, None, "NO_RETAINED_PRE_KICKOFF_FRESHNESS_EVIDENCE")
         feature_map = {value.feature_id: value for value in (home_form, away_form, home_elo, away_elo, fatigue, freshness)}
         feature_values = tuple(feature_map[key] for key in _REPLAY_FEATURE_IDS)
-        replayed[item.fixture_identifier] = HistoricalReplayFixture(
-            fixture_identifier=item.fixture_identifier,
-            source=SOURCE,
-            season=item.season,
-            league=item.league,
-            source_local_kickoff=item.source_local_kickoff,
-            kickoff_timezone_status=SOURCE_LOCAL_TIMEZONE_UNRESOLVED,
-            home_source_team_identifier=f"{SOURCE}:team:{item.home_team_id}",
-            away_source_team_identifier=f"{SOURCE}:team:{item.away_team_id}",
-            home_team_name=item.home_name,
-            away_team_name=item.away_name,
-            home_goals=item.home_goals,
-            away_goals=item.away_goals,
-            source_file_sha256=item.source_file_sha256,
-            source_row_number=item.source_row_number,
-            features=feature_values,
-            fatigue_pr31_semantic_equivalence=PR31_FATIGUE_SEMANTIC_EQUIVALENCE,
-            form_path_component_eligible=all(feature_map[key].status is HistoricalFeatureReplayStatus.AVAILABLE_RESEARCH_REPLAY for key in (ModelFeatureId.HOME_FORM, ModelFeatureId.AWAY_FORM, ModelFeatureId.FATIGUE)),
-            elo_fallback_component_eligible=all(feature_map[key].status is HistoricalFeatureReplayStatus.AVAILABLE_RESEARCH_REPLAY for key in (ModelFeatureId.HOME_ELO, ModelFeatureId.AWAY_ELO, ModelFeatureId.FATIGUE)),
-        )
+        replayed[item.fixture_identifier] = _fixture(item, features=feature_values)
         home_expected = _expected_score(home_rating["overall"], away_rating["overall"], home_boost=True)
         away_expected = _expected_score(away_rating["overall"], home_rating["overall"], home_boost=False)
         home_score = 1.0 if item.home_goals > item.away_goals else 0.5 if item.home_goals == item.away_goals else 0.0
@@ -731,29 +812,7 @@ def build_historical_model_feature_replay_corpus(
             continue
         status = HistoricalFeatureReplayStatus.BLOCKED_IDENTITY_AMBIGUITY if item.home_team_id in ambiguous_team_ids or item.away_team_id in ambiguous_team_ids else HistoricalFeatureReplayStatus.BLOCKED_TEMPORAL_AMBIGUITY
         features = _blocked_features(status)
-        feature_map = {value.feature_id: value for value in features}
-        fixtures.append(
-            HistoricalReplayFixture(
-                fixture_identifier=item.fixture_identifier,
-                source=SOURCE,
-                season=item.season,
-                league=item.league,
-                source_local_kickoff=item.source_local_kickoff,
-                kickoff_timezone_status=SOURCE_LOCAL_TIMEZONE_UNRESOLVED if item.source_local_kickoff else MISSING_SOURCE_TIME,
-                home_source_team_identifier=f"{SOURCE}:team:{item.home_team_id}",
-                away_source_team_identifier=f"{SOURCE}:team:{item.away_team_id}",
-                home_team_name=item.home_name,
-                away_team_name=item.away_name,
-                home_goals=item.home_goals,
-                away_goals=item.away_goals,
-                source_file_sha256=item.source_file_sha256,
-                source_row_number=item.source_row_number,
-                features=features,
-                fatigue_pr31_semantic_equivalence=PR31_FATIGUE_SEMANTIC_EQUIVALENCE,
-                form_path_component_eligible=False,
-                elo_fallback_component_eligible=False,
-            )
-        )
+        fixtures.append(_fixture(item, features=features))
     ordered_fixtures = tuple(sorted(fixtures, key=lambda item: item.fixture_identifier))
     specification = legacy_expected_goals_transform_specification()
     specification_bytes = canonical_legacy_expected_goals_transform_specification_bytes(specification)
