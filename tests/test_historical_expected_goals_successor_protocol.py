@@ -9,6 +9,8 @@ import pytest
 
 from domain.historical_expected_goals_successor_protocol import (
     CALIBRATION_BINS,
+    DETERMINISTIC_ROW_ORDER,
+    DETERMINISTIC_SUMMATION,
     ELO_INITIALIZATION_SEMANTICS,
     EVALUATION_LABEL,
     EVALUATION_SEASONS,
@@ -161,8 +163,28 @@ def test_fitting_algorithm_is_frozen_without_tuning_or_refit() -> None:
     assert fitting.objective == "SUM_INDEPENDENT_POISSON_NEGATIVE_LOG_LIKELIHOOD"
     assert fitting.regularization == "NONE"
     assert fitting.response_fit_order == ("HOME_GOALS", "AWAY_GOALS")
-    assert fitting.initial_intercept == "LOG_TRAINING_RESPONSE_MEAN"
+    assert fitting.training_row_order == DETERMINISTIC_ROW_ORDER
+    assert fitting.summation_method == DETERMINISTIC_SUMMATION
+    assert fitting.initial_intercept == (
+        "LOG_TRAINING_RESPONSE_MEAN_FAIL_IF_NONPOSITIVE_OR_NONFINITE"
+    )
     assert fitting.initial_non_intercept_coefficient == 0.0
+    assert fitting.newton_system == (
+        "XT_DIAG_MU_X_TIMES_DELTA_EQUALS_XT_TIMES_Y_MINUS_MU;"
+        "BETA_CANDIDATE_EQUALS_BETA_PLUS_STEP_TIMES_DELTA"
+    )
+    assert fitting.linear_solver == (
+        "GAUSSIAN_ELIMINATION_PARTIAL_PIVOT_MAX_ABS_LOWEST_ROW_INDEX_TIEBREAK_V1"
+    )
+    assert fitting.line_search_acceptance == (
+        "START_STEP_ONE;REJECT_IF_ANY_ABS_ETA_GT_MAX;"
+        "ACCEPT_IF_CANDIDATE_NLL_LE_CURRENT_NLL;ELSE_MULTIPLY_STEP_BY_FACTOR;"
+        "FAIL_IF_STEP_LT_MINIMUM"
+    )
+    assert fitting.convergence_rule == (
+        "AT_CURRENT_BETA_CONVERGED_IFF_MAX_ABS_GRADIENT_LE_TOLERANCE;"
+        "FAIL_IF_NOT_CONVERGED_AFTER_MAX_ITERATIONS"
+    )
     assert fitting.max_iterations == 200
     assert fitting.gradient_inf_norm_tolerance == 1e-8
     assert fitting.backtracking_factor == 0.5
@@ -170,6 +192,7 @@ def test_fitting_algorithm_is_frozen_without_tuning_or_refit() -> None:
     assert fitting.maximum_abs_linear_predictor == 20.0
     assert fitting.linear_solve_pivot_tolerance == 1e-12
     assert fitting.coefficient_rounding_places == 12
+    assert fitting.rounded_coefficients_are_evaluation_coefficients is True
     assert fitting.hyperparameter_search_authorized is False
     assert fitting.refit_after_evaluation_authorized is False
 
@@ -184,6 +207,8 @@ def test_evaluation_contract_compares_all_legacy_references() -> None:
         "STRICT_PREMATCH_ROLLING_IDENTITY_LEAGUE_BASELINE",
     )
     assert evaluation.breakdowns == ("SEASON", "IDENTITY_LEAGUE")
+    assert evaluation.evaluation_row_order == DETERMINISTIC_ROW_ORDER
+    assert evaluation.summation_method == DETERMINISTIC_SUMMATION
     assert evaluation.calibration_bins == CALIBRATION_BINS
     assert evaluation.approval_threshold is None
     assert evaluation.production_decision == "REPORT_ONLY_NO_AUTOMATIC_APPROVAL"
