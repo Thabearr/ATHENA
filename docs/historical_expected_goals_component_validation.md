@@ -61,17 +61,33 @@ Every component-eligible fixture is compared against this baseline on the same
 sample.
 
 The rolling league baseline is deliberately simple. For each exact PR #69
-`identity_league`, it uses only strictly earlier source-local fixtures to
-calculate historical mean home goals and away goals. There is no smoothing or
-fallback. The baseline is unavailable until at least one prior league fixture
-exists and both historical rates are positive and finite.
+`identity_league`, it uses only source-local fixtures that are mechanically
+proven to be earlier than the target to calculate historical mean home goals
+and away goals. There is no smoothing or fallback. The baseline is unavailable
+until at least one prior league fixture exists and both historical rates are
+positive and finite.
 
-Fixtures sharing the same source-local kickoff are evaluated in a batch before
-any outcome at that timestamp updates league state. Therefore same-time
-fixtures cannot leak results into one another.
+Known-time fixtures sharing the same source-local kickoff are evaluated in a
+batch before any outcome at that timestamp updates league state. Therefore
+same-time fixtures cannot leak results into one another.
 
-Every paired comparison stores `candidate - benchmark` NLL. Negative means the
-candidate is better; positive means it is worse; zero is an exact tie.
+A missing source clock is handled conservatively without discarding its result
+forever. If any fixture in a league/date has a missing clock, every rolling
+baseline target in that same league/date is unavailable because exact within-day
+ordering is unresolved. After that entire date is complete, all of the date's
+outcomes enter league history together. A later source-local date can therefore
+use those outcomes because the whole earlier date is mechanically prior. No
+arbitrary clock is invented.
+
+A component can legitimately have zero rolling-baseline pairs. That is stored
+as an unavailable comparison: paired count `0` and null candidate, benchmark,
+delta, and result fields. Lack of a rolling comparison does not invalidate the
+otherwise valid component evidence.
+
+Every populated paired comparison stores `candidate - benchmark` NLL. Negative
+means the candidate is better; positive means it is worse; zero is an exact
+tie. Aggregate rolling paired counts must reconcile exactly with both the
+season and league breakdowns.
 
 ## Breakdown and calibration
 
@@ -90,7 +106,8 @@ Home and away rates are calibrated in frozen bins:
 
 The open upper bound is serialized as `null`, never JSON Infinity. Each bin
 reports count, mean predicted goals, mean observed goals, and predicted minus
-observed calibration error.
+observed calibration error. Populated predicted means must remain inside their
+own bin and observed means cannot be negative.
 
 ## Interpretation boundary
 

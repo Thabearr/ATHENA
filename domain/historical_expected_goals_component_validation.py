@@ -242,14 +242,18 @@ class CalibrationBin:
         if count == 0:
             if any(item is not None for item in values):
                 raise _error("empty calibration bin must use null means/errors")
-        else:
-            if any(item is None for item in values):
-                raise _error("populated calibration bin must retain finite means/errors")
-            predicted = _finite(self.mean_predicted_goals, "mean predicted goals")
-            observed = _finite(self.mean_observed_goals, "mean observed goals")
-            error = _finite(self.calibration_error, "calibration error")
-            if error != predicted - observed:
-                raise _error("calibration error must equal predicted minus observed")
+            return
+        if any(item is None for item in values):
+            raise _error("populated calibration bin must retain finite means/errors")
+        predicted = _finite(self.mean_predicted_goals, "mean predicted goals")
+        observed = _finite(self.mean_observed_goals, "mean observed goals")
+        error = _finite(self.calibration_error, "calibration error")
+        if predicted < lower or (upper is not None and predicted >= upper):
+            raise _error("calibration mean predicted goals must remain inside its frozen bin")
+        if observed < 0.0:
+            raise _error("calibration mean observed goals must be non-negative")
+        if error != predicted - observed:
+            raise _error("calibration error must equal predicted minus observed")
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -287,6 +291,10 @@ class GoalRateMetrics:
         )
         for index, value in enumerate(values):
             _finite(value, f"goal-rate metric {index}")
+        if self.mean_predicted_home_goals <= 0.0 or self.mean_predicted_away_goals <= 0.0:
+            raise _error("mean predicted goal rates must be strictly positive")
+        if self.mean_actual_home_goals < 0.0 or self.mean_actual_away_goals < 0.0:
+            raise _error("mean actual goals must be non-negative")
         if self.home_bias != self.mean_predicted_home_goals - self.mean_actual_home_goals:
             raise _error("home bias must equal predicted minus actual")
         if self.away_bias != self.mean_predicted_away_goals - self.mean_actual_away_goals:
@@ -302,14 +310,25 @@ class GoalRateMetrics:
 class BenchmarkComparison:
     benchmark_id: str
     paired_fixture_count: int
-    candidate_mean_joint_nll: float
-    benchmark_mean_joint_nll: float
-    candidate_minus_benchmark_nll: float
-    result: ComparisonResult
+    candidate_mean_joint_nll: float | None
+    benchmark_mean_joint_nll: float | None
+    candidate_minus_benchmark_nll: float | None
+    result: ComparisonResult | None
 
     def __post_init__(self) -> None:
         _text(self.benchmark_id, "benchmark_id")
-        _positive_int(self.paired_fixture_count, "paired_fixture_count")
+        paired = _nonnegative_int(self.paired_fixture_count, "paired_fixture_count")
+        values = (
+            self.candidate_mean_joint_nll,
+            self.benchmark_mean_joint_nll,
+            self.candidate_minus_benchmark_nll,
+        )
+        if paired == 0:
+            if any(item is not None for item in values) or self.result is not None:
+                raise _error("unavailable benchmark must use zero pairs and null metrics/result")
+            return
+        if any(item is None for item in values) or not isinstance(self.result, ComparisonResult):
+            raise _error("paired benchmark must retain finite metrics and an exact result")
         candidate = _finite(self.candidate_mean_joint_nll, "candidate mean NLL")
         benchmark = _finite(self.benchmark_mean_joint_nll, "benchmark mean NLL")
         delta = _finite(self.candidate_minus_benchmark_nll, "candidate minus benchmark NLL")
@@ -325,7 +344,7 @@ class BenchmarkComparison:
             "candidate_mean_joint_nll": self.candidate_mean_joint_nll,
             "benchmark_mean_joint_nll": self.benchmark_mean_joint_nll,
             "candidate_minus_benchmark_nll": self.candidate_minus_benchmark_nll,
-            "result": self.result.value,
+            "result": None if self.result is None else self.result.value,
         }
 
 
@@ -343,13 +362,15 @@ class GroupValidationSummary:
 
     def __post_init__(self) -> None:
         _text(self.group_key, "group_key")
-        _positive_int(self.fixture_count, "group fixture_count")
+        fixture_count = _positive_int(self.fixture_count, "group fixture_count")
         candidate = _finite(self.candidate_mean_joint_nll, "group candidate NLL")
         constant = _finite(self.constant_baseline_mean_joint_nll, "group constant NLL")
         delta = _finite(self.candidate_minus_constant_nll, "group constant delta")
         if delta != candidate - constant:
             raise _error("group constant delta mismatch")
         paired = _nonnegative_int(self.rolling_paired_fixture_count, "group rolling paired count")
+        if paired > fixture_count:
+            raise _error("group rolling paired count cannot exceed group fixture count")
         rolling_values = (
             self.rolling_candidate_mean_joint_nll,
             self.rolling_baseline_mean_joint_nll,
@@ -358,14 +379,14 @@ class GroupValidationSummary:
         if paired == 0:
             if any(item is not None for item in rolling_values):
                 raise _error("group without rolling pairs must use null rolling metrics")
-        else:
-            if any(item is None for item in rolling_values):
-                raise _error("group with rolling pairs must retain rolling metrics")
-            rolling_candidate = _finite(self.rolling_candidate_mean_joint_nll, "group rolling candidate NLL")
-            rolling_baseline = _finite(self.rolling_baseline_mean_joint_nll, "group rolling baseline NLL")
-            rolling_delta = _finite(self.candidate_minus_rolling_nll, "group rolling delta")
-            if rolling_delta != rolling_candidate - rolling_baseline:
-                raise _error("group rolling delta mismatch")
+            return
+        if any(item is None for item in rolling_values):
+            raise _error("group with rolling pairs must retain rolling metrics")
+        rolling_candidate = _finite(self.rolling_candidate_mean_joint_nll, "group rolling candidate NLL")
+        rolling_baseline = _finite(self.rolling_baseline_mean_joint_nll, "group rolling baseline NLL")
+        rolling_delta = _finite(self.candidate_minus_rolling_nll, "group rolling delta")
+        if rolling_delta != rolling_candidate - rolling_baseline:
+            raise _error("group rolling delta mismatch")
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
@@ -393,6 +414,10 @@ class ComponentValidationSummary:
             raise _error("component rolling baseline identity mismatch")
         if self.constant_baseline.paired_fixture_count != self.metrics.fixture_count:
             raise _error("constant baseline must use exact component eligible fixture set")
+        if self.constant_baseline.candidate_mean_joint_nll != self.metrics.mean_joint_poisson_nll:
+            raise _error("constant baseline candidate side must equal aggregate candidate mean NLL")
+        if self.rolling_league_baseline.paired_fixture_count > self.metrics.fixture_count:
+            raise _error("rolling paired count cannot exceed component eligible fixture count")
         for groups, label in ((self.season_breakdown, "season"), (self.league_breakdown, "league")):
             if type(groups) is not tuple or not groups or any(type(item) is not GroupValidationSummary for item in groups):
                 raise _error(f"{label} breakdown must be a non-empty tuple of exact summaries")
@@ -400,6 +425,8 @@ class ComponentValidationSummary:
                 raise _error(f"{label} breakdown must be deterministically sorted")
             if sum(item.fixture_count for item in groups) != self.metrics.fixture_count:
                 raise _error(f"{label} breakdown fixture counts must reconcile to aggregate")
+            if sum(item.rolling_paired_fixture_count for item in groups) != self.rolling_league_baseline.paired_fixture_count:
+                raise _error(f"{label} rolling paired counts must reconcile to aggregate")
         for bins, label in ((self.home_calibration, "home"), (self.away_calibration, "away")):
             if type(bins) is not tuple or len(bins) != len(_CALIBRATION_BOUNDS):
                 raise _error(f"{label} calibration must retain every frozen bin")
@@ -590,43 +617,81 @@ class _Evaluation:
     rolling_joint_nll: float | None
 
 
-def _rolling_rates(fixtures: Sequence[HistoricalReplayFixture]) -> Mapping[str, tuple[float, float] | None]:
-    """Build strict prior league means in same-kickoff batches without leakage."""
+def _league_rate(state: list[int] | None) -> tuple[float, float] | None:
+    if state is None or state[0] == 0:
+        return None
+    count, home_total, away_total = state
+    home_rate = home_total / count
+    away_rate = away_total / count
+    if home_rate <= 0.0 or away_rate <= 0.0 or not math.isfinite(home_rate) or not math.isfinite(away_rate):
+        return None
+    return home_rate, away_rate
 
-    ordered = sorted(
-        (fixture for fixture in fixtures if fixture.source_local_kickoff is not None),
-        key=lambda fixture: (fixture.source_local_kickoff, fixture.fixture_identifier),
-    )
-    states: dict[str, list[int]] = {}
+
+def _update_league_state(state: list[int], fixture: HistoricalReplayFixture) -> None:
+    state[0] += 1
+    state[1] += fixture.home_goals
+    state[2] += fixture.away_goals
+
+
+def _rolling_rates(fixtures: Sequence[HistoricalReplayFixture]) -> Mapping[str, tuple[float, float] | None]:
+    """Build exact-prior league means without same-time or missing-time leakage.
+
+    A missing source clock makes every target in the same league/date unavailable
+    because the missing-time fixture may have happened before or after a known-time
+    target. Once that source-local date is complete, every dated result is safely
+    prior to later dates and is folded into league state. This avoids permanently
+    dropping evidence merely because its intra-day order was unknowable.
+    """
+
     result: dict[str, tuple[float, float] | None] = {
         fixture.fixture_identifier: None for fixture in fixtures
     }
-    index = 0
-    while index < len(ordered):
-        kickoff = ordered[index].source_local_kickoff
-        assert kickoff is not None
-        end = index
-        while end < len(ordered) and ordered[end].source_local_kickoff == kickoff:
-            end += 1
-        batch = ordered[index:end]
-        for fixture in batch:
-            state = states.get(fixture.identity_league)
-            if state is None or state[0] == 0:
-                result[fixture.fixture_identifier] = None
+    by_league: dict[str, list[HistoricalReplayFixture]] = {}
+    for fixture in fixtures:
+        by_league.setdefault(fixture.identity_league, []).append(fixture)
+
+    for league in sorted(by_league):
+        state = [0, 0, 0]
+        by_date: dict[Any, list[HistoricalReplayFixture]] = {}
+        for fixture in by_league[league]:
+            by_date.setdefault(fixture.source_local_date, []).append(fixture)
+
+        for source_date in sorted(by_date):
+            day = sorted(by_date[source_date], key=lambda item: item.fixture_identifier)
+            missing_time = [item for item in day if item.source_local_kickoff is None]
+            known_time = [item for item in day if item.source_local_kickoff is not None]
+
+            if missing_time:
+                # Exact prior membership is indeterminate for every target on this
+                # source-local date. Preserve unavailable baselines for the day,
+                # then recover deterministically for later dates once all outcomes
+                # on this date are unquestionably historical.
+                for fixture in day:
+                    result[fixture.fixture_identifier] = None
+                for fixture in day:
+                    _update_league_state(state, fixture)
                 continue
-            count, home_total, away_total = state
-            home_rate = home_total / count
-            away_rate = away_total / count
-            if home_rate > 0.0 and away_rate > 0.0 and math.isfinite(home_rate) and math.isfinite(away_rate):
-                result[fixture.fixture_identifier] = (home_rate, away_rate)
-            else:
-                result[fixture.fixture_identifier] = None
-        for fixture in batch:
-            state = states.setdefault(fixture.identity_league, [0, 0, 0])
-            state[0] += 1
-            state[1] += fixture.home_goals
-            state[2] += fixture.away_goals
-        index = end
+
+            ordered = sorted(
+                known_time,
+                key=lambda item: (item.source_local_kickoff, item.fixture_identifier),
+            )
+            index = 0
+            while index < len(ordered):
+                kickoff = ordered[index].source_local_kickoff
+                assert kickoff is not None
+                end = index
+                while end < len(ordered) and ordered[end].source_local_kickoff == kickoff:
+                    end += 1
+                batch = ordered[index:end]
+                rate = _league_rate(state)
+                for fixture in batch:
+                    result[fixture.fixture_identifier] = rate
+                for fixture in batch:
+                    _update_league_state(state, fixture)
+                index = end
+
     return types.MappingProxyType(result)
 
 
@@ -664,8 +729,17 @@ def _benchmark(
     candidate_nlls: Sequence[float],
     benchmark_nlls: Sequence[float],
 ) -> BenchmarkComparison:
-    if not candidate_nlls or len(candidate_nlls) != len(benchmark_nlls):
-        raise _error("benchmark comparison requires a non-empty exact paired sample")
+    if len(candidate_nlls) != len(benchmark_nlls):
+        raise _error("benchmark comparison requires an exact paired sample")
+    if not candidate_nlls:
+        return BenchmarkComparison(
+            benchmark_id=benchmark_id,
+            paired_fixture_count=0,
+            candidate_mean_joint_nll=None,
+            benchmark_mean_joint_nll=None,
+            candidate_minus_benchmark_nll=None,
+            result=None,
+        )
     candidate = sum(candidate_nlls) / len(candidate_nlls)
     baseline = sum(benchmark_nlls) / len(benchmark_nlls)
     delta = candidate - baseline
@@ -715,6 +789,8 @@ def _breakdown(evaluations: Sequence[_Evaluation], attribute: str) -> tuple[Grou
 
 
 def _calibration(evaluations: Sequence[_Evaluation], side: str) -> tuple[CalibrationBin, ...]:
+    if side not in {"home", "away"}:
+        raise _error("calibration side must be exactly home or away")
     bins: list[CalibrationBin] = []
     for lower, upper in _CALIBRATION_BOUNDS:
         selected: list[tuple[float, int]] = []
@@ -724,7 +800,16 @@ def _calibration(evaluations: Sequence[_Evaluation], side: str) -> tuple[Calibra
             if predicted >= lower and (upper is None or predicted < upper):
                 selected.append((predicted, observed))
         if not selected:
-            bins.append(CalibrationBin(lower=lower, upper=upper, count=0, mean_predicted_goals=None, mean_observed_goals=None, calibration_error=None))
+            bins.append(
+                CalibrationBin(
+                    lower=lower,
+                    upper=upper,
+                    count=0,
+                    mean_predicted_goals=None,
+                    mean_observed_goals=None,
+                    calibration_error=None,
+                )
+            )
             continue
         mean_predicted = sum(item[0] for item in selected) / len(selected)
         mean_observed = sum(item[1] for item in selected) / len(selected)
@@ -786,8 +871,6 @@ def _component_summary(
         [item.constant_joint_nll for item in evaluations],
     )
     rolling_paired = [item for item in evaluations if item.rolling_joint_nll is not None]
-    if not rolling_paired:
-        raise _error(f"{component.value} has no paired rolling-league benchmark fixtures")
     rolling_summary = _benchmark(
         ROLLING_BASELINE_ID,
         [item.candidate_joint_nll for item in rolling_paired],
