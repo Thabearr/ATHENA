@@ -281,10 +281,11 @@ def test_calibration_bins_boundaries_and_invalid_side():
 def test_summary_invariants_reject_impossible_rolling_reconciliation():
     _, _, _, validation, _ = _chain()
     summary = validation.form_component_summary
-    group = summary.season_breakdown[0]
-    impossible = dataclasses.replace(group, rolling_paired_fixture_count=group.fixture_count + 1)
+    rolling = summary.rolling_league_baseline
+    assert rolling.paired_fixture_count < summary.metrics.fixture_count
+    impossible = dataclasses.replace(rolling, paired_fixture_count=rolling.paired_fixture_count + 1)
     with pytest.raises(HistoricalExpectedGoalsComponentValidationError):
-        dataclasses.replace(summary, season_breakdown=(impossible,))
+        dataclasses.replace(summary, rolling_league_baseline=impossible)
 
 
 def test_no_approval_state_and_runtime_dependencies_are_forbidden():
