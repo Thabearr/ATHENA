@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import hashlib
+import datetime
 from pathlib import Path
 
 import pytest
