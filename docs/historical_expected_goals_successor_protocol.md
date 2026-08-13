@@ -107,6 +107,26 @@ Transforms are frozen before fitting:
 
 `fatigue`
 
+### Replay-semantic caveats
+
+The numerical transforms above do not upgrade the status of their historical
+inputs.
+
+PR69 reconstructs Elo deterministically from source results, and a source-scoped
+team begins its replay at 1500. That 1500 value is an **initial-state replay
+assumption, not observed football evidence**. The successor protocol therefore
+carries the exact semantic marker:
+
+`1500_REPLAY_INITIAL_STATE_ASSUMPTION_NOT_OBSERVED_EVIDENCE`
+
+PR69 also records the historical fatigue scalar with:
+
+`fatigue_pr31_semantic_equivalence = UNPROVEN`
+
+That warning is a first-class field of this protocol and must survive into any
+later trained candidate. Fitting a coefficient to the replayed scalar does not
+prove it is semantically equivalent to the generic PR31 fatigue feature.
+
 There are deliberately no:
 
 - bookmaker odds;
