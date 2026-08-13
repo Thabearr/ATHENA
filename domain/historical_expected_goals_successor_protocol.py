@@ -361,25 +361,18 @@ class HistoricalExpectedGoalsSuccessorProtocol:
             raise _error("successor eligibility rule is frozen")
         if type(self.predictors) is not tuple or len(self.predictors) != 6:
             raise _error("successor predictor set must contain six frozen predictors")
-        if tuple(item.name for item in self.predictors) != (
-            "intercept",
-            "home_elo_centered_scaled",
-            "away_elo_centered_scaled",
-            "home_form_centered",
-            "away_form_centered",
-            "fatigue_raw",
-        ):
-            raise _error("successor predictor order is frozen")
+        if self.predictors != _predictors():
+            raise _error("successor predictor specification is frozen exactly")
         if self.train_seasons != TRAIN_SEASONS or self.evaluation_seasons != EVALUATION_SEASONS:
             raise _error("chronological season split is frozen")
         if set(self.train_seasons) & set(self.evaluation_seasons):
             raise _error("training and evaluation seasons must be disjoint")
         if self.evaluation_label != EVALUATION_LABEL:
             raise _error("evaluation label must explicitly reject untouched-holdout claim")
-        if type(self.fitting) is not SuccessorFittingSpec:
-            raise _error("fitting must be exact SuccessorFittingSpec")
-        if type(self.evaluation) is not SuccessorEvaluationSpec:
-            raise _error("evaluation must be exact SuccessorEvaluationSpec")
+        if type(self.fitting) is not SuccessorFittingSpec or self.fitting != _fitting_spec():
+            raise _error("fitting specification is frozen exactly")
+        if type(self.evaluation) is not SuccessorEvaluationSpec or self.evaluation != _evaluation_spec():
+            raise _error("evaluation specification is frozen exactly")
         if self.prospective_requirement != (
             "PRODUCTION_APPROVAL_REQUIRES_FUTURE_NOT_YET_OBSERVED_EVIDENCE_AFTER_PROTOCOL_FREEZE"
         ):
