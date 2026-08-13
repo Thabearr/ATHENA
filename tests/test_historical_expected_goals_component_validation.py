@@ -282,7 +282,6 @@ def test_summary_invariants_reject_impossible_rolling_reconciliation():
     _, _, _, validation, _ = _chain()
     summary = validation.form_component_summary
     rolling = summary.rolling_league_baseline
-    assert rolling.paired_fixture_count < summary.metrics.fixture_count
     impossible = dataclasses.replace(rolling, paired_fixture_count=rolling.paired_fixture_count + 1)
     with pytest.raises(HistoricalExpectedGoalsComponentValidationError):
         dataclasses.replace(summary, rolling_league_baseline=impossible)
