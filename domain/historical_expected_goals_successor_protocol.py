@@ -18,6 +18,9 @@ from collections.abc import Mapping
 from typing import Any
 
 from domain.fixture_model_features import ModelFeatureId
+from domain.historical_model_feature_replay_candidate import (
+    PR31_FATIGUE_SEMANTIC_EQUIVALENCE,
+)
 
 
 SCHEMA_VERSION = 1
@@ -25,6 +28,9 @@ PROTOCOL_ID = "HISTORICAL_EXPECTED_GOALS_SUCCESSOR_PROTOCOL_V1"
 PROTOCOL_SCOPE = "RETROSPECTIVE_CHRONOLOGICAL_RESEARCH_PROTOCOL_ONLY"
 MODEL_FAMILY = "INDEPENDENT_POISSON_LOG_LINK_TWO_RESPONSE_GLM_V1"
 EVALUATION_LABEL = "RETROSPECTIVE_CHRONOLOGICAL_EVALUATION_NOT_UNTOUCHED_HOLDOUT"
+ELO_INITIALIZATION_SEMANTICS = (
+    "1500_REPLAY_INITIAL_STATE_ASSUMPTION_NOT_OBSERVED_EVIDENCE"
+)
 
 PR71_RECEIPT_DATASET_NAME = (
     "athena-historical-expected-goals-real-corpus-validation-receipt-v1"
@@ -325,6 +331,8 @@ class HistoricalExpectedGoalsSuccessorProtocol:
     link_function: str
     coefficient_sharing: str
     eligibility_rule: str
+    elo_initialization_semantics: str
+    fatigue_pr31_semantic_equivalence: str
     predictors: tuple[SuccessorPredictorSpec, ...]
     train_seasons: tuple[str, ...]
     evaluation_seasons: tuple[str, ...]
@@ -359,6 +367,10 @@ class HistoricalExpectedGoalsSuccessorProtocol:
             raise _error("home and away coefficient sharing is forbidden")
         if self.eligibility_rule != "PR69_FORM_PATH_COMPONENT_ELIGIBLE_AND_ELO_FALLBACK_COMPONENT_ELIGIBLE":
             raise _error("successor eligibility rule is frozen")
+        if self.elo_initialization_semantics != ELO_INITIALIZATION_SEMANTICS:
+            raise _error("Elo replay initialization semantics must remain explicit")
+        if self.fatigue_pr31_semantic_equivalence != PR31_FATIGUE_SEMANTIC_EQUIVALENCE:
+            raise _error("fatigue PR31 semantic equivalence must remain UNPROVEN")
         if type(self.predictors) is not tuple or len(self.predictors) != 6:
             raise _error("successor predictor set must contain six frozen predictors")
         if self.predictors != _predictors():
@@ -395,6 +407,8 @@ class HistoricalExpectedGoalsSuccessorProtocol:
             "link_function": self.link_function,
             "coefficient_sharing": self.coefficient_sharing,
             "eligibility_rule": self.eligibility_rule,
+            "elo_initialization_semantics": self.elo_initialization_semantics,
+            "fatigue_pr31_semantic_equivalence": self.fatigue_pr31_semantic_equivalence,
             "predictors": [item.to_dict() for item in self.predictors],
             "train_seasons": list(self.train_seasons),
             "evaluation_seasons": list(self.evaluation_seasons),
@@ -516,6 +530,8 @@ def build_historical_expected_goals_successor_protocol(
         link_function="LOG",
         coefficient_sharing="NONE_HOME_AND_AWAY_FIT_SEPARATELY",
         eligibility_rule="PR69_FORM_PATH_COMPONENT_ELIGIBLE_AND_ELO_FALLBACK_COMPONENT_ELIGIBLE",
+        elo_initialization_semantics=ELO_INITIALIZATION_SEMANTICS,
+        fatigue_pr31_semantic_equivalence=PR31_FATIGUE_SEMANTIC_EQUIVALENCE,
         predictors=_predictors(),
         train_seasons=TRAIN_SEASONS,
         evaluation_seasons=EVALUATION_SEASONS,
