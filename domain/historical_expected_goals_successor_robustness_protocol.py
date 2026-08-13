@@ -28,7 +28,11 @@ SUCCESSOR_CANDIDATE_SHA256 = "1fe9ff5f0963355bb98ae93d205a5ea3cb9aa53592601a7b06
 SUCCESSOR_CANDIDATE_SIZE = 19_956
 EVALUATION_FIXTURE_COUNT = 6_903
 IDENTITY_LEAGUES = ("B1", "D1", "E0", "F1", "G1", "I1", "N1", "P1", "SC0", "SP1", "T1")
+CLUSTER_KEYS = tuple((season, league) for season in EVALUATION_SEASONS for league in IDENTITY_LEAGUES)
 CLUSTER_COUNT = 22
+TRAINING_SEASON_COUNTS = (("2020-21", 3517), ("2021-22", 3566), ("2022-23", 3536), ("2023-24", 3511))
+EVALUATION_SEASON_COUNTS = (("2024-25", 3468), ("2025-26", 3435))
+LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS = (("2020-21", 10613), ("2021-22", 10564), ("2022-23", 10594), ("2023-24", 10619))
 CALIBRATION_BINS = (
     (0.0, 0.5),
     (0.5, 1.0),
@@ -146,9 +150,12 @@ class PairedNllRobustnessSpec:
     comparator: str
     fixture_difference: str
     full_population_fixture_count: int
+    full_estimate: str
     cluster_key: tuple[str, str]
+    cluster_keys: tuple[tuple[str, str], ...]
     cluster_count: int
     delete_cluster_estimator: str
+    delete_estimate_center: str
     jackknife_standard_error: str
     interval_multiplier: float
     interval: str
@@ -160,11 +167,16 @@ class PairedNllRobustnessSpec:
             raise _error("paired fixture difference is frozen")
         if self.full_population_fixture_count != EVALUATION_FIXTURE_COUNT:
             raise _error("paired population fixture count is frozen")
+        if self.full_estimate != "FIXTURE_WEIGHTED_ARITHMETIC_MEAN_OF_ALL_6903_PAIRED_FIXTURE_DIFFERENCES":
+            raise _error("full paired estimate definition is frozen")
         _exact_tuple(self.cluster_key, ("season", "identity_league"), "cluster key")
+        _exact_tuple(self.cluster_keys, CLUSTER_KEYS, "cluster identities")
         if self.cluster_count != CLUSTER_COUNT:
             raise _error("cluster count is frozen")
         if self.delete_cluster_estimator != "DELETE_ONE_CLUSTER_FIXTURE_WEIGHTED_MEAN_ON_REMAINING_FIXTURES":
             raise _error("delete-cluster estimator is frozen")
+        if self.delete_estimate_center != "ARITHMETIC_MEAN_OF_EXACTLY_22_DELETE_ONE_CLUSTER_ESTIMATES_UNWEIGHTED_BY_REMAINING_FIXTURE_COUNTS":
+            raise _error("delete-cluster estimate center is frozen")
         if self.jackknife_standard_error != "SQRT(((K_MINUS_1)/K)*SUM((THETA_DELETE_J_MINUS_THETA_BAR)^2))":
             raise _error("jackknife formula is frozen")
         if self.interval_multiplier != 1.96 or self.interval != "THETA_PLUS_MINUS_1_96_TIMES_JACKKNIFE_SE":
@@ -173,6 +185,7 @@ class PairedNllRobustnessSpec:
     def to_dict(self) -> dict[str, Any]:
         value = dataclasses.asdict(self)
         value["cluster_key"] = list(self.cluster_key)
+        value["cluster_keys"] = [list(item) for item in self.cluster_keys]
         return value
 
 
@@ -225,11 +238,18 @@ class FatigueAnalysisSpec:
     full_predictors: tuple[str, ...]
     ablation_predictors: tuple[str, ...]
     train_seasons: tuple[str, ...]
+    training_season_counts: tuple[tuple[str, int], ...]
     evaluation_seasons: tuple[str, ...]
+    evaluation_season_counts: tuple[tuple[str, int], ...]
+    population_membership_rule: str
+    no_fatigue_training_fixture_count: int
+    no_fatigue_evaluation_fixture_count: int
     solver_parity: str
     leave_one_training_seasons: tuple[str, ...]
+    leave_one_training_season_remaining_counts: tuple[tuple[str, int], ...]
     fatigue_semantics: str
     fatigue_pr31_semantic_equivalence: str
+    sign_stability_rule: str
     retained_predictor_transforms: tuple[str, ...]
 
     def __post_init__(self) -> None:
@@ -238,10 +258,17 @@ class FatigueAnalysisSpec:
         _exact_tuple(self.full_predictors, ("intercept", "home_elo", "away_elo", "home_form", "away_form", "fatigue"), "full predictors")
         _exact_tuple(self.ablation_predictors, ("intercept", "home_elo", "away_elo", "home_form", "away_form"), "ablation predictors")
         _exact_tuple(self.train_seasons, ("2020-21", "2021-22", "2022-23", "2023-24"), "fatigue training seasons")
+        _exact_tuple(self.training_season_counts, TRAINING_SEASON_COUNTS, "training season counts")
         _exact_tuple(self.evaluation_seasons, EVALUATION_SEASONS, "fatigue evaluation seasons")
+        _exact_tuple(self.evaluation_season_counts, EVALUATION_SEASON_COUNTS, "evaluation season counts")
+        if self.population_membership_rule != "EXACT_PR73_SUCCESSOR_ELIGIBLE_FIXTURE_SET_RECONSTRUCTED_FROM_BOUND_PR69_CORPUS":
+            raise _error("fatigue population membership rule is frozen")
+        if (self.no_fatigue_training_fixture_count, self.no_fatigue_evaluation_fixture_count) != (14130, EVALUATION_FIXTURE_COUNT):
+            raise _error("no-fatigue population counts are frozen")
         if self.solver_parity != "PR72_PR73_FROZEN_POISSON_GLM_NEWTON_LINE_SEARCH_CONVERGENCE_AND_ROUNDING":
             raise _error("fatigue solver parity is frozen")
         _exact_tuple(self.leave_one_training_seasons, self.train_seasons, "leave-one-training-season diagnostics")
+        _exact_tuple(self.leave_one_training_season_remaining_counts, LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS, "leave-one-training-season remaining counts")
         if self.fatigue_semantics != FATIGUE_SEMANTICS or self.fatigue_pr31_semantic_equivalence != FATIGUE_PR31_SEMANTIC_EQUIVALENCE:
             raise _error("fatigue semantics are frozen")
         _exact_tuple(
@@ -255,6 +282,8 @@ class FatigueAnalysisSpec:
             ),
             "fatigue ablation retained predictor transforms",
         )
+        if self.sign_stability_rule != "TRUE_IFF_EACH_OF_FOUR_OMISSION_COEFFICIENTS_HAS_SAME_STRICT_NONZERO_SIGN_AS_IMMUTABLE_PR74_FULL_MODEL_COEFFICIENT;ZERO_OR_SIGN_FLIP_IS_FALSE":
+            raise _error("fatigue sign stability rule is frozen")
 
     def to_dict(self) -> dict[str, Any]:
         value = dataclasses.asdict(self)
@@ -330,9 +359,12 @@ def _paired_nll_spec() -> PairedNllRobustnessSpec:
         comparator="PR68_ELO_FALLBACK_COMPONENT",
         fixture_difference="SUCCESSOR_JOINT_POISSON_NLL_MINUS_LEGACY_ELO_JOINT_POISSON_NLL_SAME_FIXTURE",
         full_population_fixture_count=EVALUATION_FIXTURE_COUNT,
+        full_estimate="FIXTURE_WEIGHTED_ARITHMETIC_MEAN_OF_ALL_6903_PAIRED_FIXTURE_DIFFERENCES",
         cluster_key=("season", "identity_league"),
+        cluster_keys=CLUSTER_KEYS,
         cluster_count=CLUSTER_COUNT,
         delete_cluster_estimator="DELETE_ONE_CLUSTER_FIXTURE_WEIGHTED_MEAN_ON_REMAINING_FIXTURES",
+        delete_estimate_center="ARITHMETIC_MEAN_OF_EXACTLY_22_DELETE_ONE_CLUSTER_ESTIMATES_UNWEIGHTED_BY_REMAINING_FIXTURE_COUNTS",
         jackknife_standard_error="SQRT(((K_MINUS_1)/K)*SUM((THETA_DELETE_J_MINUS_THETA_BAR)^2))",
         interval_multiplier=1.96,
         interval="THETA_PLUS_MINUS_1_96_TIMES_JACKKNIFE_SE",
@@ -361,9 +393,15 @@ def _fatigue_spec() -> FatigueAnalysisSpec:
         full_predictors=("intercept", "home_elo", "away_elo", "home_form", "away_form", "fatigue"),
         ablation_predictors=("intercept", "home_elo", "away_elo", "home_form", "away_form"),
         train_seasons=("2020-21", "2021-22", "2022-23", "2023-24"),
+        training_season_counts=TRAINING_SEASON_COUNTS,
         evaluation_seasons=EVALUATION_SEASONS,
+        evaluation_season_counts=EVALUATION_SEASON_COUNTS,
+        population_membership_rule="EXACT_PR73_SUCCESSOR_ELIGIBLE_FIXTURE_SET_RECONSTRUCTED_FROM_BOUND_PR69_CORPUS",
+        no_fatigue_training_fixture_count=14130,
+        no_fatigue_evaluation_fixture_count=EVALUATION_FIXTURE_COUNT,
         solver_parity="PR72_PR73_FROZEN_POISSON_GLM_NEWTON_LINE_SEARCH_CONVERGENCE_AND_ROUNDING",
         leave_one_training_seasons=("2020-21", "2021-22", "2022-23", "2023-24"),
+        leave_one_training_season_remaining_counts=LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS,
         fatigue_semantics=FATIGUE_SEMANTICS,
         fatigue_pr31_semantic_equivalence=FATIGUE_PR31_SEMANTIC_EQUIVALENCE,
         retained_predictor_transforms=(
@@ -373,6 +411,7 @@ def _fatigue_spec() -> FatigueAnalysisSpec:
             "home_form=VALUE_MINUS_0_5",
             "away_form=VALUE_MINUS_0_5",
         ),
+        sign_stability_rule="TRUE_IFF_EACH_OF_FOUR_OMISSION_COEFFICIENTS_HAS_SAME_STRICT_NONZERO_SIGN_AS_IMMUTABLE_PR74_FULL_MODEL_COEFFICIENT;ZERO_OR_SIGN_FLIP_IS_FALSE",
     )
 
 

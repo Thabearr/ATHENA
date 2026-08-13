@@ -11,14 +11,18 @@ import pytest
 from domain.historical_expected_goals_successor_robustness_protocol import (
     CALIBRATION_BINS,
     CLUSTER_COUNT,
+    CLUSTER_KEYS,
+    EVALUATION_SEASON_COUNTS,
     FATIGUE_PR31_SEMANTIC_EQUIVALENCE,
     FATIGUE_SEMANTICS,
     IDENTITY_LEAGUES,
     PR74_RECEIPT_SHA256,
     PROTOCOL_ID,
     PROTOCOL_SCOPE,
+    LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS,
     SUCCESSOR_CANDIDATE_SHA256,
     SUCCESSOR_CANDIDATE_SIZE,
+    TRAINING_SEASON_COUNTS,
     HistoricalExpectedGoalsSuccessorRobustnessProtocolError,
     canonical_successor_robustness_protocol_bytes,
     revalidate_successor_robustness_protocol,
@@ -29,7 +33,7 @@ from domain.historical_expected_goals_successor_robustness_protocol import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_PATH = "artifacts/research-manifests/historical-expected-goals-successor-real-corpus-receipt-v1.json"
-PROTOCOL_SHA256 = "0a547842f9c88df1fc304f719c4c38bfef69cdfbe69319dcd034b6cd3ab3af87"
+PROTOCOL_SHA256 = "844bc522d7a04164d573ff4fc369565f2757ea7ade9845324a609a6a5ec566a7"
 
 
 def _receipt_bytes() -> bytes:
@@ -61,9 +65,15 @@ def test_primary_paired_nll_cluster_jackknife_is_frozen() -> None:
     assert paired.comparator == "PR68_ELO_FALLBACK_COMPONENT"
     assert paired.fixture_difference == "SUCCESSOR_JOINT_POISSON_NLL_MINUS_LEGACY_ELO_JOINT_POISSON_NLL_SAME_FIXTURE"
     assert paired.full_population_fixture_count == 6903
+    assert paired.full_estimate == "FIXTURE_WEIGHTED_ARITHMETIC_MEAN_OF_ALL_6903_PAIRED_FIXTURE_DIFFERENCES"
     assert paired.cluster_key == ("season", "identity_league")
+    assert paired.cluster_keys == CLUSTER_KEYS == (
+        ("2024-25", "B1"), ("2024-25", "D1"), ("2024-25", "E0"), ("2024-25", "F1"), ("2024-25", "G1"), ("2024-25", "I1"), ("2024-25", "N1"), ("2024-25", "P1"), ("2024-25", "SC0"), ("2024-25", "SP1"), ("2024-25", "T1"),
+        ("2025-26", "B1"), ("2025-26", "D1"), ("2025-26", "E0"), ("2025-26", "F1"), ("2025-26", "G1"), ("2025-26", "I1"), ("2025-26", "N1"), ("2025-26", "P1"), ("2025-26", "SC0"), ("2025-26", "SP1"), ("2025-26", "T1"),
+    )
     assert paired.cluster_count == CLUSTER_COUNT == 22
     assert paired.delete_cluster_estimator == "DELETE_ONE_CLUSTER_FIXTURE_WEIGHTED_MEAN_ON_REMAINING_FIXTURES"
+    assert paired.delete_estimate_center == "ARITHMETIC_MEAN_OF_EXACTLY_22_DELETE_ONE_CLUSTER_ESTIMATES_UNWEIGHTED_BY_REMAINING_FIXTURE_COUNTS"
     assert paired.jackknife_standard_error == "SQRT(((K_MINUS_1)/K)*SUM((THETA_DELETE_J_MINUS_THETA_BAR)^2))"
     assert paired.interval_multiplier == 1.96
     assert paired.interval == "THETA_PLUS_MINUS_1_96_TIMES_JACKKNIFE_SE"
@@ -94,8 +104,14 @@ def test_sensitivity_calibration_and_fatigue_specs_are_exact() -> None:
         "away_form=VALUE_MINUS_0_5",
     )
     assert protocol.fatigue.leave_one_training_seasons == ("2020-21", "2021-22", "2022-23", "2023-24")
+    assert protocol.fatigue.population_membership_rule == "EXACT_PR73_SUCCESSOR_ELIGIBLE_FIXTURE_SET_RECONSTRUCTED_FROM_BOUND_PR69_CORPUS"
+    assert protocol.fatigue.training_season_counts == TRAINING_SEASON_COUNTS
+    assert protocol.fatigue.evaluation_season_counts == EVALUATION_SEASON_COUNTS
+    assert (protocol.fatigue.no_fatigue_training_fixture_count, protocol.fatigue.no_fatigue_evaluation_fixture_count) == (14130, 6903)
+    assert protocol.fatigue.leave_one_training_season_remaining_counts == LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS
     assert protocol.fatigue.fatigue_semantics == FATIGUE_SEMANTICS
     assert protocol.fatigue.fatigue_pr31_semantic_equivalence == FATIGUE_PR31_SEMANTIC_EQUIVALENCE == "UNPROVEN"
+    assert protocol.fatigue.sign_stability_rule == "TRUE_IFF_EACH_OF_FOUR_OMISSION_COEFFICIENTS_HAS_SAME_STRICT_NONZERO_SIGN_AS_IMMUTABLE_PR74_FULL_MODEL_COEFFICIENT;ZERO_OR_SIGN_FLIP_IS_FALSE"
 
 
 def test_protocol_is_result_free_and_authorizes_nothing_downstream() -> None:
@@ -127,6 +143,9 @@ def test_protocol_is_result_free_and_authorizes_nothing_downstream() -> None:
         lambda protocol: dataclasses.replace(protocol, evaluation_seasons=("2024-25", "2026-27")),
         lambda protocol: dataclasses.replace(protocol, safety={**dict(protocol.safety), "bet_authorized": True}),
         lambda protocol: dataclasses.replace(protocol, paired_nll=dataclasses.replace(protocol.paired_nll, interval_multiplier=2.0)),
+        lambda protocol: dataclasses.replace(protocol, paired_nll=dataclasses.replace(protocol.paired_nll, delete_estimate_center="WEIGHTED")),
+        lambda protocol: dataclasses.replace(protocol, fatigue=dataclasses.replace(protocol.fatigue, no_fatigue_training_fixture_count=14129)),
+        lambda protocol: dataclasses.replace(protocol, fatigue=dataclasses.replace(protocol.fatigue, sign_stability_rule="NONZERO_ONLY")),
     ),
 )
 def test_mutated_protocol_or_ancestry_fails_closed(mutation) -> None:
