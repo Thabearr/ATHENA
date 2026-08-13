@@ -154,6 +154,7 @@ class PairedNllRobustnessSpec:
     cluster_key: tuple[str, str]
     cluster_keys: tuple[tuple[str, str], ...]
     cluster_count: int
+    cluster_membership_rule: str
     delete_cluster_estimator: str
     delete_estimate_center: str
     jackknife_standard_error: str
@@ -173,6 +174,8 @@ class PairedNllRobustnessSpec:
         _exact_tuple(self.cluster_keys, CLUSTER_KEYS, "cluster identities")
         if self.cluster_count != CLUSTER_COUNT:
             raise _error("cluster count is frozen")
+        if self.cluster_membership_rule != "EACH_OF_EXACTLY_6903_EVALUATION_FIXTURES_BELONGS_TO_ONE_AND_ONLY_ONE_FROZEN_CLUSTER;UNKNOWN_MISSING_MERGED_OR_ALTERNATIVE_CLUSTER_FAILS_CLOSED":
+            raise _error("cluster membership rule is frozen")
         if self.delete_cluster_estimator != "DELETE_ONE_CLUSTER_FIXTURE_WEIGHTED_MEAN_ON_REMAINING_FIXTURES":
             raise _error("delete-cluster estimator is frozen")
         if self.delete_estimate_center != "ARITHMETIC_MEAN_OF_EXACTLY_22_DELETE_ONE_CLUSTER_ESTIMATES_UNWEIGHTED_BY_REMAINING_FIXTURE_COUNTS":
@@ -247,6 +250,7 @@ class FatigueAnalysisSpec:
     solver_parity: str
     leave_one_training_seasons: tuple[str, ...]
     leave_one_training_season_remaining_counts: tuple[tuple[str, int], ...]
+    leave_one_training_season_membership_rule: str
     fatigue_semantics: str
     fatigue_pr31_semantic_equivalence: str
     sign_stability_rule: str
@@ -269,6 +273,8 @@ class FatigueAnalysisSpec:
             raise _error("fatigue solver parity is frozen")
         _exact_tuple(self.leave_one_training_seasons, self.train_seasons, "leave-one-training-season diagnostics")
         _exact_tuple(self.leave_one_training_season_remaining_counts, LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS, "leave-one-training-season remaining counts")
+        if self.leave_one_training_season_membership_rule != "EXACT_PR73_ELIGIBLE_TRAINING_SET_OMIT_ONLY_THE_NAMED_TRAINING_SEASON;DO_NOT_RERUN_ELIGIBILITY;EVALUATION_SET_REMAINS_EXACTLY_6903":
+            raise _error("leave-one-training-season membership rule is frozen")
         if self.fatigue_semantics != FATIGUE_SEMANTICS or self.fatigue_pr31_semantic_equivalence != FATIGUE_PR31_SEMANTIC_EQUIVALENCE:
             raise _error("fatigue semantics are frozen")
         _exact_tuple(
@@ -363,6 +369,7 @@ def _paired_nll_spec() -> PairedNllRobustnessSpec:
         cluster_key=("season", "identity_league"),
         cluster_keys=CLUSTER_KEYS,
         cluster_count=CLUSTER_COUNT,
+        cluster_membership_rule="EACH_OF_EXACTLY_6903_EVALUATION_FIXTURES_BELONGS_TO_ONE_AND_ONLY_ONE_FROZEN_CLUSTER;UNKNOWN_MISSING_MERGED_OR_ALTERNATIVE_CLUSTER_FAILS_CLOSED",
         delete_cluster_estimator="DELETE_ONE_CLUSTER_FIXTURE_WEIGHTED_MEAN_ON_REMAINING_FIXTURES",
         delete_estimate_center="ARITHMETIC_MEAN_OF_EXACTLY_22_DELETE_ONE_CLUSTER_ESTIMATES_UNWEIGHTED_BY_REMAINING_FIXTURE_COUNTS",
         jackknife_standard_error="SQRT(((K_MINUS_1)/K)*SUM((THETA_DELETE_J_MINUS_THETA_BAR)^2))",
@@ -402,6 +409,7 @@ def _fatigue_spec() -> FatigueAnalysisSpec:
         solver_parity="PR72_PR73_FROZEN_POISSON_GLM_NEWTON_LINE_SEARCH_CONVERGENCE_AND_ROUNDING",
         leave_one_training_seasons=("2020-21", "2021-22", "2022-23", "2023-24"),
         leave_one_training_season_remaining_counts=LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS,
+        leave_one_training_season_membership_rule="EXACT_PR73_ELIGIBLE_TRAINING_SET_OMIT_ONLY_THE_NAMED_TRAINING_SEASON;DO_NOT_RERUN_ELIGIBILITY;EVALUATION_SET_REMAINS_EXACTLY_6903",
         fatigue_semantics=FATIGUE_SEMANTICS,
         fatigue_pr31_semantic_equivalence=FATIGUE_PR31_SEMANTIC_EQUIVALENCE,
         retained_predictor_transforms=(

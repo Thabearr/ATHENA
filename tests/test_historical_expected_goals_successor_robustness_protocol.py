@@ -33,7 +33,7 @@ from domain.historical_expected_goals_successor_robustness_protocol import (
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_PATH = "artifacts/research-manifests/historical-expected-goals-successor-real-corpus-receipt-v1.json"
-PROTOCOL_SHA256 = "844bc522d7a04164d573ff4fc369565f2757ea7ade9845324a609a6a5ec566a7"
+PROTOCOL_SHA256 = "eaa2fd1f906f0a18c39f972d919a0393569c85dc8ad6038cbed10819fd2c0774"
 
 
 def _receipt_bytes() -> bytes:
@@ -72,6 +72,7 @@ def test_primary_paired_nll_cluster_jackknife_is_frozen() -> None:
         ("2025-26", "B1"), ("2025-26", "D1"), ("2025-26", "E0"), ("2025-26", "F1"), ("2025-26", "G1"), ("2025-26", "I1"), ("2025-26", "N1"), ("2025-26", "P1"), ("2025-26", "SC0"), ("2025-26", "SP1"), ("2025-26", "T1"),
     )
     assert paired.cluster_count == CLUSTER_COUNT == 22
+    assert paired.cluster_membership_rule == "EACH_OF_EXACTLY_6903_EVALUATION_FIXTURES_BELONGS_TO_ONE_AND_ONLY_ONE_FROZEN_CLUSTER;UNKNOWN_MISSING_MERGED_OR_ALTERNATIVE_CLUSTER_FAILS_CLOSED"
     assert paired.delete_cluster_estimator == "DELETE_ONE_CLUSTER_FIXTURE_WEIGHTED_MEAN_ON_REMAINING_FIXTURES"
     assert paired.delete_estimate_center == "ARITHMETIC_MEAN_OF_EXACTLY_22_DELETE_ONE_CLUSTER_ESTIMATES_UNWEIGHTED_BY_REMAINING_FIXTURE_COUNTS"
     assert paired.jackknife_standard_error == "SQRT(((K_MINUS_1)/K)*SUM((THETA_DELETE_J_MINUS_THETA_BAR)^2))"
@@ -109,6 +110,7 @@ def test_sensitivity_calibration_and_fatigue_specs_are_exact() -> None:
     assert protocol.fatigue.evaluation_season_counts == EVALUATION_SEASON_COUNTS
     assert (protocol.fatigue.no_fatigue_training_fixture_count, protocol.fatigue.no_fatigue_evaluation_fixture_count) == (14130, 6903)
     assert protocol.fatigue.leave_one_training_season_remaining_counts == LEAVE_ONE_TRAINING_SEASON_REMAINING_COUNTS
+    assert protocol.fatigue.leave_one_training_season_membership_rule == "EXACT_PR73_ELIGIBLE_TRAINING_SET_OMIT_ONLY_THE_NAMED_TRAINING_SEASON;DO_NOT_RERUN_ELIGIBILITY;EVALUATION_SET_REMAINS_EXACTLY_6903"
     assert protocol.fatigue.fatigue_semantics == FATIGUE_SEMANTICS
     assert protocol.fatigue.fatigue_pr31_semantic_equivalence == FATIGUE_PR31_SEMANTIC_EQUIVALENCE == "UNPROVEN"
     assert protocol.fatigue.sign_stability_rule == "TRUE_IFF_EACH_OF_FOUR_OMISSION_COEFFICIENTS_HAS_SAME_STRICT_NONZERO_SIGN_AS_IMMUTABLE_PR74_FULL_MODEL_COEFFICIENT;ZERO_OR_SIGN_FLIP_IS_FALSE"
@@ -144,7 +146,9 @@ def test_protocol_is_result_free_and_authorizes_nothing_downstream() -> None:
         lambda protocol: dataclasses.replace(protocol, safety={**dict(protocol.safety), "bet_authorized": True}),
         lambda protocol: dataclasses.replace(protocol, paired_nll=dataclasses.replace(protocol.paired_nll, interval_multiplier=2.0)),
         lambda protocol: dataclasses.replace(protocol, paired_nll=dataclasses.replace(protocol.paired_nll, delete_estimate_center="WEIGHTED")),
+        lambda protocol: dataclasses.replace(protocol, paired_nll=dataclasses.replace(protocol.paired_nll, cluster_membership_rule="ALLOW_UNKNOWN")),
         lambda protocol: dataclasses.replace(protocol, fatigue=dataclasses.replace(protocol.fatigue, no_fatigue_training_fixture_count=14129)),
+        lambda protocol: dataclasses.replace(protocol, fatigue=dataclasses.replace(protocol.fatigue, leave_one_training_season_membership_rule="RERUN_ELIGIBILITY")),
         lambda protocol: dataclasses.replace(protocol, fatigue=dataclasses.replace(protocol.fatigue, sign_stability_rule="NONZERO_ONLY")),
     ),
 )
