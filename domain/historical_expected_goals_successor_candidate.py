@@ -219,7 +219,7 @@ class SuccessorGroupSummary:
     def __post_init__(self) -> None:
         _text(self.group_key, "group_key")
         count = _positive_int(self.fixture_count, "group fixture_count")
-        _finite(self.candidate_mean_joint_nll, "group candidate mean NLL")
+        candidate_mean = _finite(self.candidate_mean_joint_nll, "group candidate mean NLL")
         if (
             type(self.comparisons) is not tuple
             or tuple(item.benchmark_id for item in self.comparisons) != COMPARATOR_IDS
@@ -229,6 +229,8 @@ class SuccessorGroupSummary:
         for item in self.comparisons[:3]:
             if item.paired_fixture_count != count:
                 raise _error("non-rolling group comparators must use every group fixture")
+            if item.candidate_mean_joint_nll != candidate_mean:
+                raise _error("group comparator candidate NLL must match group candidate mean")
         if self.comparisons[3].paired_fixture_count > count:
             raise _error("rolling group pairs cannot exceed group fixture count")
         for item in self.comparisons:
@@ -1129,6 +1131,11 @@ def fit_historical_expected_goals_successor_fixture_set(
         raise _error("protocol training engine differs from fitter")
 
     detached = tuple(fixtures)
+    if any(type(item) is not HistoricalReplayFixture for item in detached):
+        raise _error("fixtures must contain exact HistoricalReplayFixture values")
+    identifiers = [item.fixture_identifier for item in detached]
+    if len(set(identifiers)) != len(identifiers):
+        raise _error("successor fixture identifiers must be globally unique")
     training = _ordered_eligible(protocol, detached, protocol.train_seasons)
     evaluation = _ordered_eligible(protocol, detached, protocol.evaluation_seasons)
     training_counts = _season_counts(training)
