@@ -9,9 +9,11 @@ import pytest
 
 from domain.historical_expected_goals_successor_protocol import (
     CALIBRATION_BINS,
+    ELO_INITIALIZATION_SEMANTICS,
     EVALUATION_LABEL,
     EVALUATION_SEASONS,
     MODEL_FAMILY,
+    PR31_FATIGUE_SEMANTIC_EQUIVALENCE,
     PR69_CANONICAL_SHA256,
     PR69_SOURCE_CORPUS_SHA256,
     PR70_VALIDATION_SHA256,
@@ -80,6 +82,22 @@ def test_protocol_identity_and_scope_are_frozen() -> None:
     assert protocol.response_distribution == "POISSON"
     assert protocol.link_function == "LOG"
     assert protocol.coefficient_sharing == "NONE_HOME_AND_AWAY_FIT_SEPARATELY"
+
+
+def test_replay_semantic_caveats_are_first_class_and_frozen() -> None:
+    protocol = _protocol()
+    assert protocol.elo_initialization_semantics == ELO_INITIALIZATION_SEMANTICS
+    assert protocol.elo_initialization_semantics == (
+        "1500_REPLAY_INITIAL_STATE_ASSUMPTION_NOT_OBSERVED_EVIDENCE"
+    )
+    assert protocol.fatigue_pr31_semantic_equivalence == (
+        PR31_FATIGUE_SEMANTIC_EQUIVALENCE
+    )
+    assert protocol.fatigue_pr31_semantic_equivalence == "UNPROVEN"
+    with pytest.raises(HistoricalExpectedGoalsSuccessorProtocolError):
+        dataclasses.replace(protocol, elo_initialization_semantics="OBSERVED_EVIDENCE")
+    with pytest.raises(HistoricalExpectedGoalsSuccessorProtocolError):
+        dataclasses.replace(protocol, fatigue_pr31_semantic_equivalence="PROVEN")
 
 
 def test_feature_set_order_and_transforms_are_frozen() -> None:
@@ -213,7 +231,23 @@ def test_protocol_constructor_rejects_predictor_mutation() -> None:
     protocol = _protocol()
     mutated = dataclasses.replace(protocol.predictors[1], scale=800.0)
     with pytest.raises(HistoricalExpectedGoalsSuccessorProtocolError):
-        dataclasses.replace(protocol, predictors=(protocol.predictors[0], mutated, *protocol.predictors[2:]))
+        dataclasses.replace(
+            protocol,
+            predictors=(protocol.predictors[0], mutated, *protocol.predictors[2:]),
+        )
+
+
+def test_protocol_constructor_rejects_nested_fitting_or_evaluation_mutation() -> None:
+    protocol = _protocol()
+    mutated_fitting = dataclasses.replace(protocol.fitting, algorithm="OTHER_SOLVER")
+    with pytest.raises(HistoricalExpectedGoalsSuccessorProtocolError):
+        dataclasses.replace(protocol, fitting=mutated_fitting)
+    mutated_evaluation = dataclasses.replace(
+        protocol.evaluation,
+        primary_metric="HOME_MAE",
+    )
+    with pytest.raises(HistoricalExpectedGoalsSuccessorProtocolError):
+        dataclasses.replace(protocol, evaluation=mutated_evaluation)
 
 
 def test_canonical_bytes_are_deterministic_utf8_json_with_one_newline() -> None:
