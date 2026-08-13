@@ -204,34 +204,80 @@ sum of independent Poisson negative log-likelihoods over the training sample.
 
 No regularization is used in this first protocol.
 
-Initialization for each response:
+### Deterministic row order and arithmetic
 
-- intercept = log(mean training response);
-- every non-intercept coefficient = 0.
+Before any fitting reduction, eligible rows are ordered exactly by:
+
+`source_local_kickoff ASC, fixture_identifier ASC`
+
+Every scalar reduction used by the objective, gradient, Hessian, and later
+evaluation aggregates uses Python `math.fsum` over that frozen row order.
+
+This is part of the protocol because ordinary floating-point summation order can
+otherwise change the final coefficient tail.
+
+### Initialization
+
+For each response:
+
+- intercept = `log(mean training response)`;
+- fitting fails if that mean is non-positive or non-finite;
+- every non-intercept coefficient = `0`.
 
 Fit order:
 
 1. home-goals model;
 2. away-goals model.
 
-Frozen numerical controls:
+### Exact Newton system
 
-- maximum iterations: `200`;
-- gradient infinity-norm convergence tolerance: `1e-8`;
-- backtracking factor: `0.5`;
-- minimum accepted step size: `2^-20`;
-- candidate steps with absolute linear predictor above `20` are rejected rather
-  than silently clipped into the model;
-- deterministic linear-solve pivot tolerance: `1e-12`;
-- final fitted coefficients are rounded to exactly 12 decimal places before the
-  candidate artifact is evaluated and canonicalized.
+At the current coefficient vector:
+
+`mu_i = exp(x_i beta)`
+
+The Newton direction `delta` solves:
+
+`X^T diag(mu) X delta = X^T (y - mu)`
+
+A candidate is then:
+
+`beta_candidate = beta + step * delta`
+
+The linear system is solved with deterministic Gaussian elimination using
+partial pivoting. The pivot is the row with maximum absolute pivot value; an
+exact tie chooses the lowest row index. Any required pivot with absolute value
+at or below `1e-12` fails closed.
+
+### Backtracking
+
+Backtracking starts at step `1`.
+
+A candidate step is rejected if any absolute linear predictor exceeds `20`.
+There is no silent clipping.
+
+Otherwise the candidate is accepted only when its Poisson NLL is less than or
+equal to the current NLL. If rejected, step is multiplied by `0.5` and retried.
+If the next candidate step would fall below `2^-20`, fitting fails closed.
+
+### Convergence and rounding
+
+At the current coefficient vector, a response model is converged only when:
+
+`max(abs(gradient_j)) <= 1e-8`
+
+Maximum iterations: `200`.
+
+Failure to satisfy the convergence rule within the frozen iteration budget fails
+closed. The implementation may not switch optimizers or relax the tolerance.
+
+After convergence, each coefficient is rounded to exactly 12 decimal places.
+**Those rounded coefficients are the coefficients used for all evaluation and
+canonicalization.** The unrounded internal vector cannot be used to obtain a
+more favorable score.
 
 There is no hyperparameter search.
 
 There is no post-evaluation refit in the same research boundary.
-
-If the frozen solver cannot converge under these rules, the training attempt
-fails closed. The implementation must not silently switch optimizers.
 
 ## Evaluation contract
 
@@ -241,6 +287,9 @@ Primary metric:
 
 For each evaluation fixture, home and away Poisson NLL are summed exactly as in
 the reviewed PR70 scoring rule.
+
+Evaluation rows use the same deterministic ordering and `math.fsum` reduction
+contract as training.
 
 The successor candidate must be compared against all four frozen references:
 
