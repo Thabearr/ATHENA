@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import ast
 import dataclasses
-import datetime
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -400,6 +400,41 @@ def test_rank_deficient_newton_system_fails_closed() -> None:
     with pytest.raises(HistoricalExpectedGoalsSuccessorCandidateError, match="singular"):
         fit_historical_expected_goals_successor_fixture_set(
             protocol=_protocol(), fixtures=fixtures
+        )
+
+
+def test_global_duplicate_fixture_identity_fails_even_across_train_eval_slices() -> None:
+    fixtures = list(_fixture_set())
+    training_fixture = next(item for item in fixtures if item.season == "2020-21")
+    evaluation_index = next(
+        index for index, item in enumerate(fixtures) if item.season == "2024-25"
+    )
+    fixtures[evaluation_index] = dataclasses.replace(
+        fixtures[evaluation_index], fixture_identifier=training_fixture.fixture_identifier
+    )
+    with pytest.raises(HistoricalExpectedGoalsSuccessorCandidateError, match="globally unique"):
+        fit_historical_expected_goals_successor_fixture_set(
+            protocol=_protocol(), fixtures=fixtures
+        )
+
+
+def test_group_comparator_candidate_mean_must_reconcile_to_group_candidate_mean() -> None:
+    result = fit_historical_expected_goals_successor_fixture_set(
+        protocol=_protocol(), fixtures=_fixture_set()
+    )
+    group = result.season_breakdown[0]
+    original = group.comparisons[0]
+    assert original.candidate_mean_joint_nll is not None
+    assert original.benchmark_mean_joint_nll is not None
+    mutated = dataclasses.replace(
+        original,
+        candidate_mean_joint_nll=original.candidate_mean_joint_nll + 0.1,
+        benchmark_mean_joint_nll=original.benchmark_mean_joint_nll + 0.1,
+    )
+    with pytest.raises(HistoricalExpectedGoalsSuccessorCandidateError, match="group comparator candidate NLL"):
+        dataclasses.replace(
+            group,
+            comparisons=(mutated, *group.comparisons[1:]),
         )
 
 
