@@ -31,6 +31,8 @@ EVALUATION_LABEL = "RETROSPECTIVE_CHRONOLOGICAL_EVALUATION_NOT_UNTOUCHED_HOLDOUT
 ELO_INITIALIZATION_SEMANTICS = (
     "1500_REPLAY_INITIAL_STATE_ASSUMPTION_NOT_OBSERVED_EVIDENCE"
 )
+DETERMINISTIC_ROW_ORDER = "SOURCE_LOCAL_KICKOFF_ASC_THEN_FIXTURE_IDENTIFIER_ASC"
+DETERMINISTIC_SUMMATION = "PYTHON_MATH_FSUM_FOR_EACH_SCALAR_REDUCTION"
 
 PR71_RECEIPT_DATASET_NAME = (
     "athena-historical-expected-goals-real-corpus-validation-receipt-v1"
@@ -217,8 +219,14 @@ class SuccessorFittingSpec:
     objective: str
     regularization: str
     response_fit_order: tuple[str, ...]
+    training_row_order: str
+    summation_method: str
     initial_intercept: str
     initial_non_intercept_coefficient: float
+    newton_system: str
+    linear_solver: str
+    line_search_acceptance: str
+    convergence_rule: str
     max_iterations: int
     gradient_inf_norm_tolerance: float
     backtracking_factor: float
@@ -226,14 +234,30 @@ class SuccessorFittingSpec:
     maximum_abs_linear_predictor: float
     linear_solve_pivot_tolerance: float
     coefficient_rounding_places: int
+    rounded_coefficients_are_evaluation_coefficients: bool
     hyperparameter_search_authorized: bool
     refit_after_evaluation_authorized: bool
 
     def __post_init__(self) -> None:
-        for field in ("algorithm", "objective", "regularization", "initial_intercept"):
+        for field in (
+            "algorithm",
+            "objective",
+            "regularization",
+            "training_row_order",
+            "summation_method",
+            "initial_intercept",
+            "newton_system",
+            "linear_solver",
+            "line_search_acceptance",
+            "convergence_rule",
+        ):
             _exact_text(getattr(self, field), field)
         if self.response_fit_order != ("HOME_GOALS", "AWAY_GOALS"):
             raise _error("response fit order is frozen")
+        if self.training_row_order != DETERMINISTIC_ROW_ORDER:
+            raise _error("training row order is frozen")
+        if self.summation_method != DETERMINISTIC_SUMMATION:
+            raise _error("training summation method is frozen")
         _finite_number(self.initial_non_intercept_coefficient, "initial coefficient")
         if self.initial_non_intercept_coefficient != 0.0:
             raise _error("non-intercept coefficients must initialize at exact zero")
@@ -259,6 +283,8 @@ class SuccessorFittingSpec:
             raise _error("pivot tolerance must be positive")
         if type(self.coefficient_rounding_places) is not int or self.coefficient_rounding_places != 12:
             raise _error("coefficient rounding is frozen at 12 places")
+        if self.rounded_coefficients_are_evaluation_coefficients is not True:
+            raise _error("evaluation must use the frozen rounded coefficients")
         if self.hyperparameter_search_authorized is not False:
             raise _error("hyperparameter search is not authorized")
         if self.refit_after_evaluation_authorized is not False:
@@ -273,6 +299,8 @@ class SuccessorEvaluationSpec:
     primary_metric: str
     legacy_comparators: tuple[str, ...]
     breakdowns: tuple[str, ...]
+    evaluation_row_order: str
+    summation_method: str
     calibration_bins: tuple[tuple[float, float | None], ...]
     descriptive_metrics: tuple[str, ...]
     approval_threshold: None
@@ -289,6 +317,10 @@ class SuccessorEvaluationSpec:
             raise _error("legacy comparator set/order is frozen")
         if self.breakdowns != ("SEASON", "IDENTITY_LEAGUE"):
             raise _error("evaluation breakdowns are frozen")
+        if self.evaluation_row_order != DETERMINISTIC_ROW_ORDER:
+            raise _error("evaluation row order is frozen")
+        if self.summation_method != DETERMINISTIC_SUMMATION:
+            raise _error("evaluation summation method is frozen")
         if self.calibration_bins != CALIBRATION_BINS:
             raise _error("calibration bins must retain PR70 boundaries")
         if self.descriptive_metrics != (
@@ -467,8 +499,26 @@ def _fitting_spec() -> SuccessorFittingSpec:
         objective="SUM_INDEPENDENT_POISSON_NEGATIVE_LOG_LIKELIHOOD",
         regularization="NONE",
         response_fit_order=("HOME_GOALS", "AWAY_GOALS"),
-        initial_intercept="LOG_TRAINING_RESPONSE_MEAN",
+        training_row_order=DETERMINISTIC_ROW_ORDER,
+        summation_method=DETERMINISTIC_SUMMATION,
+        initial_intercept="LOG_TRAINING_RESPONSE_MEAN_FAIL_IF_NONPOSITIVE_OR_NONFINITE",
         initial_non_intercept_coefficient=0.0,
+        newton_system=(
+            "XT_DIAG_MU_X_TIMES_DELTA_EQUALS_XT_TIMES_Y_MINUS_MU;"
+            "BETA_CANDIDATE_EQUALS_BETA_PLUS_STEP_TIMES_DELTA"
+        ),
+        linear_solver=(
+            "GAUSSIAN_ELIMINATION_PARTIAL_PIVOT_MAX_ABS_LOWEST_ROW_INDEX_TIEBREAK_V1"
+        ),
+        line_search_acceptance=(
+            "START_STEP_ONE;REJECT_IF_ANY_ABS_ETA_GT_MAX;"
+            "ACCEPT_IF_CANDIDATE_NLL_LE_CURRENT_NLL;ELSE_MULTIPLY_STEP_BY_FACTOR;"
+            "FAIL_IF_STEP_LT_MINIMUM"
+        ),
+        convergence_rule=(
+            "AT_CURRENT_BETA_CONVERGED_IFF_MAX_ABS_GRADIENT_LE_TOLERANCE;"
+            "FAIL_IF_NOT_CONVERGED_AFTER_MAX_ITERATIONS"
+        ),
         max_iterations=200,
         gradient_inf_norm_tolerance=1e-8,
         backtracking_factor=0.5,
@@ -476,6 +526,7 @@ def _fitting_spec() -> SuccessorFittingSpec:
         maximum_abs_linear_predictor=20.0,
         linear_solve_pivot_tolerance=1e-12,
         coefficient_rounding_places=12,
+        rounded_coefficients_are_evaluation_coefficients=True,
         hyperparameter_search_authorized=False,
         refit_after_evaluation_authorized=False,
     )
@@ -491,6 +542,8 @@ def _evaluation_spec() -> SuccessorEvaluationSpec:
             "STRICT_PREMATCH_ROLLING_IDENTITY_LEAGUE_BASELINE",
         ),
         breakdowns=("SEASON", "IDENTITY_LEAGUE"),
+        evaluation_row_order=DETERMINISTIC_ROW_ORDER,
+        summation_method=DETERMINISTIC_SUMMATION,
         calibration_bins=CALIBRATION_BINS,
         descriptive_metrics=(
             "MEAN_PREDICTED_HOME_GOALS",
