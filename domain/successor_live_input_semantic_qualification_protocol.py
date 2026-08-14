@@ -203,6 +203,7 @@ class HistoricalFormSemantics:
 @dataclasses.dataclass(frozen=True)
 class HistoricalFatigueSemantics:
     chronology: str
+    rest_day_measure: str
     orientation: str
     severe_threshold_days_exclusive: int
     mild_threshold_days_exclusive: int
@@ -226,6 +227,8 @@ class HistoricalEloSemantics:
     initial_overall_rating: int
     home_advantage_points: int
     logistic_divisor: float
+    home_expected_score_formula: str
+    away_expected_score_formula: str
     observed_score_win: float
     observed_score_draw: float
     observed_score_loss: float
@@ -357,10 +360,34 @@ def _ancestry() -> AncestrySpec:
 def _predictors() -> tuple[SuccessorPredictorSpec, ...]:
     return (
         SuccessorPredictorSpec("intercept", None, "CONSTANT_ONE", None, None),
-        SuccessorPredictorSpec("home_elo_centered_scaled", "home_elo", "(VALUE_MINUS_CENTER)_DIVIDED_BY_SCALE", 1500.0, 400.0),
-        SuccessorPredictorSpec("away_elo_centered_scaled", "away_elo", "(VALUE_MINUS_CENTER)_DIVIDED_BY_SCALE", 1500.0, 400.0),
-        SuccessorPredictorSpec("home_form_centered", "home_form", "VALUE_MINUS_CENTER", 0.5, None),
-        SuccessorPredictorSpec("away_form_centered", "away_form", "VALUE_MINUS_CENTER", 0.5, None),
+        SuccessorPredictorSpec(
+            "home_elo_centered_scaled",
+            "home_elo",
+            "(VALUE_MINUS_CENTER)_DIVIDED_BY_SCALE",
+            1500.0,
+            400.0,
+        ),
+        SuccessorPredictorSpec(
+            "away_elo_centered_scaled",
+            "away_elo",
+            "(VALUE_MINUS_CENTER)_DIVIDED_BY_SCALE",
+            1500.0,
+            400.0,
+        ),
+        SuccessorPredictorSpec(
+            "home_form_centered",
+            "home_form",
+            "VALUE_MINUS_CENTER",
+            0.5,
+            None,
+        ),
+        SuccessorPredictorSpec(
+            "away_form_centered",
+            "away_form",
+            "VALUE_MINUS_CENTER",
+            0.5,
+            None,
+        ),
         SuccessorPredictorSpec("fatigue_raw", "fatigue", "IDENTITY", None, None),
     )
 
@@ -383,6 +410,7 @@ def _form_semantics() -> HistoricalFormSemantics:
 def _fatigue_semantics() -> HistoricalFatigueSemantics:
     value = object.__new__(HistoricalFatigueSemantics)
     object.__setattr__(value, "chronology", "MOST_RECENT_STRICTLY_PRIOR_FIXTURE_PER_TEAM")
+    object.__setattr__(value, "rest_day_measure", "DATETIME_DELTA_DAYS_INTEGER_COMPONENT")
     object.__setattr__(value, "orientation", "HOME_REST_DAYS_MINUS_AWAY_REST_DAYS")
     object.__setattr__(value, "severe_threshold_days_exclusive", -2)
     object.__setattr__(value, "mild_threshold_days_exclusive", 0)
@@ -396,10 +424,12 @@ def _fatigue_semantics() -> HistoricalFatigueSemantics:
 
 def _elo_semantics() -> HistoricalEloSemantics:
     value = object.__new__(HistoricalEloSemantics)
-    object.__setattr__(value, "chronology", "SOURCE_LOCAL_KICKOFF_ASC_PREMATCH_STATE_ONLY")
+    object.__setattr__(value, "chronology", "SOURCE_LOCAL_KICKOFF_ASC_THEN_FIXTURE_IDENTIFIER_ASC_PREMATCH_STATE_ONLY")
     object.__setattr__(value, "initial_overall_rating", 1500)
     object.__setattr__(value, "home_advantage_points", 50)
     object.__setattr__(value, "logistic_divisor", 400.0)
+    object.__setattr__(value, "home_expected_score_formula", "1/(1+10**((away_rating-(home_rating+50))/400))")
+    object.__setattr__(value, "away_expected_score_formula", "1/(1+10**((home_rating-away_rating)/400))")
     object.__setattr__(value, "observed_score_win", 1.0)
     object.__setattr__(value, "observed_score_draw", 0.5)
     object.__setattr__(value, "observed_score_loss", 0.0)
@@ -418,17 +448,21 @@ def _evidence_requirements() -> EvidenceRequirementSpec:
     object.__setattr__(value, "pr31_available_implies_qualified", False)
     object.__setattr__(value, "equal_numeric_value_implies_qualified", False)
     object.__setattr__(value, "qualification_requires_replayable_evidence_or_exact_reviewed_contract", True)
-    object.__setattr__(value, "insufficient_proofs", (
-        "SAME_FIELD_NAME",
-        "SAME_NUMERIC_RANGE",
-        "SAME_CURRENT_VALUE",
-        "SAME_SOURCE_CATEGORY",
-        "PR31_AVAILABLE_STATUS_ONLY",
-        "ONE_HAND_CHECKED_FIXTURE",
-        "DOCUMENTATION_CLAIM_WITHOUT_EXECUTABLE_LINEAGE",
-        "PROVIDER_LABEL_ELO_ONLY",
-        "FATIGUE_VALUE_MATCH_WITHOUT_DERIVATION_PROOF",
-    ))
+    object.__setattr__(
+        value,
+        "insufficient_proofs",
+        (
+            "SAME_FIELD_NAME",
+            "SAME_NUMERIC_RANGE",
+            "SAME_CURRENT_VALUE",
+            "SAME_SOURCE_CATEGORY",
+            "PR31_AVAILABLE_STATUS_ONLY",
+            "ONE_HAND_CHECKED_FIXTURE",
+            "DOCUMENTATION_CLAIM_WITHOUT_EXECUTABLE_LINEAGE",
+            "PROVIDER_LABEL_ELO_ONLY",
+            "FATIGUE_VALUE_MATCH_WITHOUT_DERIVATION_PROOF",
+        ),
+    )
     return value
 
 
