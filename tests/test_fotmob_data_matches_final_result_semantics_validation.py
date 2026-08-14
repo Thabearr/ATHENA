@@ -69,6 +69,7 @@ def test_pr39_reviewed_inventory_metadata_is_not_invented() -> None:
     documentation = (ROOT / "docs" / "fotmob_data_matches_schema.md").read_text(
         encoding="utf-8"
     )
+    normalized = " ".join(documentation.split())
     assert _git_blob_oid(ROOT / "docs" / "fotmob_data_matches_schema.md") == (
         "2d6a48287eb5d31f3aa63936264afcd6c463bb88"
     )
@@ -78,7 +79,7 @@ def test_pr39_reviewed_inventory_metadata_is_not_invented() -> None:
     assert REVIEWED_CAPTURE_MANIFEST_SHA256 in documentation
     assert (
         "contains no reviewed started/finished evidence that establishes their football meaning"
-        in documentation
+        in normalized
     )
 
 
