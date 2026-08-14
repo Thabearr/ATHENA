@@ -65,7 +65,7 @@ def test_penalty_candidate_remains_explicitly_blocked():
     assert (r["penalty_fixture_id"],r["penalty_home_score"],r["penalty_away_score"])==(5844873,1,1)
     assert (r["penalty_home_pen_score"],r["penalty_away_pen_score"])==(5,6)
     assert r["penalty_eliminated_team_id"]==6576
-    assert r["penalty_reason_tuple"]=={"short":"Pen","shortKey":"penalties_short","long":"After penalties","longKey":"afterpenalties"}
+    assert dict(r["penalty_reason_tuple"])=={"short":"Pen","shortKey":"penalties_short","long":"After penalties","longKey":"afterpenalties"}
 
 def test_canonical_receipt_identity_is_exact():
     r=_execute(); exact=validation.canonical_fotmob_data_matches_status_reason_semantics_validation_receipt_bytes(r)
@@ -88,9 +88,12 @@ def test_raw_lineage_or_capture_order_mutation_fails_closed():
     with pytest.raises(validation.FotMobDataMatchesStatusReasonSemanticsValidationError):
         validation.execute_fotmob_data_matches_status_reason_semantics_validation(b,bm,a,am)
 
-def test_receipt_and_source_authority_remain_fail_closed():
+def test_receipt_is_deeply_immutable_and_authority_stays_fail_closed():
     r=_execute()
     assert all(type(v) is bool and v is False for v in r["safety"].values())
+    with pytest.raises(TypeError): r["final_result_semantics_qualified"]=True
+    with pytest.raises(TypeError): r["safety"]["bet_authorized"]=True
+    with pytest.raises(TypeError): r["ordinary_ft_reason_tuple"]["short"]="X"
     capability=SOURCE_CAPABILITY_REGISTRY["fotmob_data_matches_reviewed_catalog"]
     assert capability.full_time_score is CapabilityAvailability.NOT_CAPTURED
     assert capability.historical_coverage is CapabilityAvailability.UNKNOWN
