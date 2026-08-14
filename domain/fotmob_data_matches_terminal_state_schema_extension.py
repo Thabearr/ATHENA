@@ -13,6 +13,7 @@ import datetime
 import enum
 import hashlib
 import json
+import re
 import types
 from collections.abc import Mapping
 from typing import Any
@@ -25,6 +26,12 @@ from domain.fotmob_data_matches_capture import (
     serialize_utc,
     sha256_bytes,
     sha256_data_matches_capture_manifest,
+)
+from domain.fotmob_data_matches_probe import (
+    FotMobDataMatchesProbeError,
+    validate_ccode3,
+    validate_request_date,
+    validate_timezone,
 )
 from domain.fotmob_data_matches_terminal_state_schema_extension_protocol import (
     BASE_HALFS_KEYS,
@@ -65,10 +72,12 @@ _EXTENSION_TEAM_KEYS = frozenset(EXTENSION_TEAM_OPTIONAL_KEYS)
 _EXTENSION_STATUS_KEYS = frozenset(EXTENSION_STATUS_OPTIONAL_KEYS)
 _EXTENSION_HALFS_KEYS = frozenset(EXTENSION_HALFS_OPTIONAL_KEYS)
 _LIVE_TIME_KEYS = frozenset(LIVE_TIME_REQUIRED_KEYS)
+_SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 
 _SAFETY_KEYS = frozenset(
     {
         "network_acquisition_authorized",
+        "terminal_schema_extension_implementation_authorized",
         "terminal_schema_extension_qualified",
         "pr39_schema_mutation_authorized",
         "final_result_semantics_qualified",
@@ -144,6 +153,53 @@ def _checked_safety(value: Any) -> Mapping[str, bool]:
             "all PR87 safety values must be exact False",
         )
     return _default_safety()
+
+
+def _sha256(value: Any, label: str) -> str:
+    if type(value) is not str or _SHA256_RE.fullmatch(value) is None:
+        raise _error(
+            TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+            f"{label} must be exactly 64 lowercase hexadecimal characters",
+        )
+    return value
+
+
+def _utc(value: Any, label: str) -> datetime.datetime:
+    if not isinstance(value, datetime.datetime):
+        raise _error(
+            TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+            f"{label} must be a datetime",
+        )
+    try:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise _error(
+                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                f"{label} must be timezone-aware",
+            )
+        return value.astimezone(datetime.timezone.utc)
+    except FotMobDataMatchesTerminalStateSchemaExtensionError:
+        raise
+    except (AttributeError, TypeError, ValueError, OverflowError) as exc:
+        raise _error(
+            TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+            f"{label} is invalid",
+        ) from exc
+
+
+def _request_identity(
+    request_date: Any, timezone: Any, ccode3: Any
+) -> tuple[str, str, str]:
+    try:
+        return (
+            validate_request_date(request_date),
+            validate_timezone(timezone),
+            validate_ccode3(ccode3),
+        )
+    except FotMobDataMatchesProbeError as exc:
+        raise _error(
+            TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+            "assessment request identity is invalid",
+        ) from exc
 
 
 def _verify_frozen_ancestry() -> None:
@@ -293,7 +349,12 @@ def _require_no_unknown_keys(
 
 
 def _validate_live_time(value: Any, label: str) -> None:
-    if type(value) is not dict or set(value) != _LIVE_TIME_KEYS:
+    if type(value) is not dict:
+        raise _error(
+            TerminalStateSchemaExtensionStatus.BLOCKED_EXTENSION_TYPE_OR_NULLABILITY_MISMATCH,
+            f"{label} must be an exact object and must not be null",
+        )
+    if set(value) != _LIVE_TIME_KEYS:
         raise _error(
             TerminalStateSchemaExtensionStatus.BLOCKED_LIVE_TIME_SHAPE_MISMATCH,
             f"{label} must contain exactly the seven pre-registered keys",
@@ -503,107 +564,169 @@ class FotMobDataMatchesTerminalStateSchemaExtensionAssessment:
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "schema_version must be exact integer 1",
-            )
-        if self.dataset_name != DATASET_NAME:
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "dataset_name mismatch",
-            )
-        if self.implementation_scope != IMPLEMENTATION_SCOPE:
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "implementation_scope mismatch",
-            )
-        if self.implementation_state != IMPLEMENTATION_STATE:
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "implementation_state mismatch",
-            )
-        if (
-            self.status
-            is not TerminalStateSchemaExtensionStatus.QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
-        ):
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "successful assessment must carry the exact qualified structural status",
-            )
-        for label in (
-            "source_raw_size",
-            "pr39_projection_assessment_size",
-            "match_count",
-            "live_time_occurrence_count",
-        ):
-            value = getattr(self, label)
-            if type(value) is not int or value < 0:
+        try:
+            if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
                 raise _error(
                     TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                    f"{label} must be an exact non-negative integer",
+                    "schema_version must be exact integer 1",
                 )
-        for value, keys, label in (
-            (
-                self.team_extension_occurrences,
-                _EXTENSION_TEAM_KEYS,
+            if self.dataset_name != DATASET_NAME:
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "dataset_name mismatch",
+                )
+            if self.implementation_scope != IMPLEMENTATION_SCOPE:
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "implementation_scope mismatch",
+                )
+            if self.implementation_state != IMPLEMENTATION_STATE:
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "implementation_state mismatch",
+                )
+            if (
+                self.status
+                is not TerminalStateSchemaExtensionStatus.QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
+            ):
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "successful assessment must carry the exact qualified structural status",
+                )
+            manifest_sha = _sha256(
+                self.source_capture_manifest_sha256,
+                "source_capture_manifest_sha256",
+            )
+            raw_sha = _sha256(self.source_raw_sha256, "source_raw_sha256")
+            projection_sha = _sha256(
+                self.pr39_projection_assessment_sha256,
+                "pr39_projection_assessment_sha256",
+            )
+            if (
+                type(self.source_raw_size) is not int
+                or not 0 < self.source_raw_size <= MAX_RESPONSE_BYTES
+            ):
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "source_raw_size must be an exact positive integer within capture limit",
+                )
+            if (
+                type(self.pr39_projection_assessment_size) is not int
+                or self.pr39_projection_assessment_size <= 0
+            ):
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "pr39_projection_assessment_size must be an exact positive integer",
+                )
+            if type(self.match_count) is not int or self.match_count < 0:
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "match_count must be an exact non-negative integer",
+                )
+            if (
+                type(self.live_time_occurrence_count) is not int
+                or self.live_time_occurrence_count < 0
+                or self.live_time_occurrence_count > self.match_count
+            ):
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "live_time_occurrence_count is inconsistent with match_count",
+                )
+            observed_at = _utc(self.source_observed_at, "source_observed_at")
+            request_date, timezone, ccode3 = _request_identity(
+                self.request_date, self.timezone, self.ccode3
+            )
+            for value, keys, label, maximum in (
+                (
+                    self.team_extension_occurrences,
+                    _EXTENSION_TEAM_KEYS,
+                    "team_extension_occurrences",
+                    self.match_count * 2,
+                ),
+                (
+                    self.status_extension_occurrences,
+                    _EXTENSION_STATUS_KEYS,
+                    "status_extension_occurrences",
+                    self.match_count,
+                ),
+                (
+                    self.halfs_extension_occurrences,
+                    _EXTENSION_HALFS_KEYS,
+                    "halfs_extension_occurrences",
+                    self.match_count,
+                ),
+            ):
+                if not isinstance(value, Mapping) or set(value) != keys:
+                    raise _error(
+                        TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                        f"{label} keys mismatch",
+                    )
+                if any(
+                    type(item) is not int or item < 0 or item > maximum
+                    for item in value.values()
+                ):
+                    raise _error(
+                        TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                        f"{label} values are inconsistent with match_count",
+                    )
+            if self.status_extension_occurrences["liveTime"] != self.live_time_occurrence_count:
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "liveTime occurrence counts disagree",
+                )
+            if (
+                type(self.reason_semantics_qualified) is not bool
+                or self.reason_semantics_qualified
+            ):
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "reason semantics must remain exact False",
+                )
+            if (
+                type(self.final_result_semantics_qualified) is not bool
+                or self.final_result_semantics_qualified
+            ):
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "final-result semantics must remain exact False",
+                )
+            if self.next_required_boundary != NEXT_REQUIRED_BOUNDARY:
+                raise _error(
+                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+                    "next boundary mismatch",
+                )
+            object.__setattr__(self, "source_capture_manifest_sha256", manifest_sha)
+            object.__setattr__(self, "source_raw_sha256", raw_sha)
+            object.__setattr__(
+                self, "pr39_projection_assessment_sha256", projection_sha
+            )
+            object.__setattr__(self, "source_observed_at", observed_at)
+            object.__setattr__(self, "request_date", request_date)
+            object.__setattr__(self, "timezone", timezone)
+            object.__setattr__(self, "ccode3", ccode3)
+            object.__setattr__(
+                self,
                 "team_extension_occurrences",
-            ),
-            (
-                self.status_extension_occurrences,
-                _EXTENSION_STATUS_KEYS,
+                types.MappingProxyType(dict(self.team_extension_occurrences)),
+            )
+            object.__setattr__(
+                self,
                 "status_extension_occurrences",
-            ),
-            (
-                self.halfs_extension_occurrences,
-                _EXTENSION_HALFS_KEYS,
+                types.MappingProxyType(dict(self.status_extension_occurrences)),
+            )
+            object.__setattr__(
+                self,
                 "halfs_extension_occurrences",
-            ),
-        ):
-            if not isinstance(value, Mapping) or set(value) != keys:
-                raise _error(
-                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                    f"{label} keys mismatch",
-                )
-            if any(type(item) is not int or item < 0 for item in value.values()):
-                raise _error(
-                    TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                    f"{label} values must be exact non-negative integers",
-                )
-        if type(self.reason_semantics_qualified) is not bool or self.reason_semantics_qualified:
+                types.MappingProxyType(dict(self.halfs_extension_occurrences)),
+            )
+            object.__setattr__(self, "safety", _checked_safety(self.safety))
+        except FotMobDataMatchesTerminalStateSchemaExtensionError:
+            raise
+        except (AttributeError, KeyError, TypeError, ValueError, OverflowError) as exc:
             raise _error(
                 TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "reason semantics must remain exact False",
-            )
-        if (
-            type(self.final_result_semantics_qualified) is not bool
-            or self.final_result_semantics_qualified
-        ):
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "final-result semantics must remain exact False",
-            )
-        if self.next_required_boundary != NEXT_REQUIRED_BOUNDARY:
-            raise _error(
-                TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
-                "next boundary mismatch",
-            )
-        object.__setattr__(
-            self,
-            "team_extension_occurrences",
-            types.MappingProxyType(dict(self.team_extension_occurrences)),
-        )
-        object.__setattr__(
-            self,
-            "status_extension_occurrences",
-            types.MappingProxyType(dict(self.status_extension_occurrences)),
-        )
-        object.__setattr__(
-            self,
-            "halfs_extension_occurrences",
-            types.MappingProxyType(dict(self.halfs_extension_occurrences)),
-        )
-        object.__setattr__(self, "safety", _checked_safety(self.safety))
+                f"invalid terminal-state extension assessment: {type(exc).__name__}",
+            ) from exc
 
     def to_dict(self) -> dict[str, Any]:
         return {
