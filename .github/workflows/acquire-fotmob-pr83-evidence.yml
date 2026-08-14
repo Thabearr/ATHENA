@@ -26,7 +26,7 @@ jobs:
       - name: Capture first reviewed response
         run: |
           python scripts/capture_fotmob_data_matches.py \
-            --date 20260813 \
+            --date 20260814 \
             --timezone UTC \
             --ccode3 NGA \
             --execute-live-network
@@ -37,7 +37,7 @@ jobs:
       - name: Capture second reviewed response
         run: |
           python scripts/capture_fotmob_data_matches.py \
-            --date 20260813 \
+            --date 20260814 \
             --timezone UTC \
             --ccode3 NGA \
             --execute-live-network
@@ -50,7 +50,7 @@ jobs:
           import json
           from pathlib import Path
 
-          root = Path('.cache/athena-research/fotmob-data-matches-captures/20260813')
+          root = Path('.cache/athena-research/fotmob-data-matches-captures/20260814')
           captures = []
           for directory in sorted(p for p in root.iterdir() if p.is_dir()):
               manifest_path = directory / 'manifest.json'
@@ -78,12 +78,8 @@ jobs:
 
           captures.sort(key=lambda item: observed(item['manifest']['observed_at']))
           separation = (observed(captures[1]['manifest']['observed_at']) - observed(captures[0]['manifest']['observed_at'])).total_seconds()
-          if separation < 300:
-              raise SystemExit(f'observation separation {separation} < 300 seconds')
-          if captures[0]['raw_sha256'] == captures[1]['raw_sha256']:
-              raise SystemExit('raw capture SHA-256 values are identical')
-          if captures[0]['manifest_sha256'] == captures[1]['manifest_sha256']:
-              raise SystemExit('manifest SHA-256 values are identical')
+          raw_distinct = captures[0]['raw_sha256'] != captures[1]['raw_sha256']
+          manifest_distinct = captures[0]['manifest_sha256'] != captures[1]['manifest_sha256']
 
           def rows(payload):
               result = {}
@@ -133,6 +129,12 @@ jobs:
                   continue
               if any(type(value) is not int or value < 0 for value in score1):
                   continue
+              kickoff = dt.datetime.fromisoformat(status1['utcTime'].replace('Z', '+00:00'))
+              if not (
+                  observed(captures[0]['manifest']['observed_at']) > kickoff
+                  and observed(captures[1]['manifest']['observed_at']) > kickoff
+              ):
+                  continue
               eligible.append({
                   'fixture_id': fixture_id,
                   'league_id': match1.get('leagueId'),
@@ -144,14 +146,18 @@ jobs:
                   'kickoff_utc': status1.get('utcTime'),
                   'home_score': score1[0],
                   'away_score': score1[1],
+                  'status_id_first': match1.get('statusId'),
+                  'status_id_second': match2.get('statusId'),
               })
 
           summary = {
               'schema_version': 1,
-              'request_date': '20260813',
+              'request_date': '20260814',
               'timezone': 'UTC',
               'ccode3': 'NGA',
               'observation_separation_seconds': separation,
+              'raw_lineage_distinct': raw_distinct,
+              'manifest_lineage_distinct': manifest_distinct,
               'captures': [
                   {
                       'directory': item['directory'],
@@ -165,22 +171,31 @@ jobs:
               'eligible_fixture_count': len(eligible),
               'eligible_fixtures': eligible,
           }
-          if not eligible:
-              raise SystemExit('no PR83-eligible stable finished fixture found')
           out = root / 'pr83_pair_summary.json'
           out.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
           print(json.dumps(summary, indent=2, ensure_ascii=False))
+
+          if separation < 300:
+              raise SystemExit(f'observation separation {separation} < 300 seconds')
+          if not raw_distinct:
+              raise SystemExit('raw capture SHA-256 values are identical')
+          if not manifest_distinct:
+              raise SystemExit('manifest SHA-256 values are identical')
+          if not eligible:
+              raise SystemExit('no PR83-eligible stable finished fixture found')
           PY
 
       - name: Stage evidence artifact
+        if: always()
         run: |
           mkdir -p artifact
-          cp -a .cache/athena-research/fotmob-data-matches-captures/20260813 artifact/
+          cp -a .cache/athena-research/fotmob-data-matches-captures/20260814 artifact/
 
       - name: Upload exact capture evidence
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: pr83-post-finish-capture-pair
+          name: pr83-post-finish-capture-pair-20260814
           path: artifact/
           if-no-files-found: error
           retention-days: 7
