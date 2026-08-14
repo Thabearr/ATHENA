@@ -1,9 +1,10 @@
 """Pure candidate construction of the five raw successor inputs.
 
 PR #80 reproduces the form, Elo and fatigue mathematics frozen by PR #78 over
-an explicit caller-supplied source-scoped result history.  It does not claim
-that any current live source supplies a complete/equivalent corpus and it
-authorizes no expected-goals, probability, pricing, selection or betting path.
+explicit caller-supplied source-scoped final-result evidence. It intentionally
+does not prove that any current/live source supplies a complete equivalent
+history corpus and it authorizes no expected-goals, probability, pricing,
+selection, production, or betting path.
 """
 
 from __future__ import annotations
@@ -44,14 +45,14 @@ PR78_PROTOCOL_SHA256 = "97a47d431ce57468598b17fcb24e9e0e9a41fa26c80ff1f4df9e2e61
 PR78_PROTOCOL_SIZE = 4904
 PR79_ASSESSMENT_SHA256 = "aea27d67b93bf777a01c4956757ba7b31c521e9eea71006d20ca5bd4acf791f4"
 PR79_ASSESSMENT_SIZE = 6204
-CONSTRUCTION_SPEC_SHA256 = "fd83222e0d0efe04cd312634ee113cc5757565a6c943770dd6d47b0df142af8f"
-CONSTRUCTION_SPEC_SIZE = 2118
 
+SOURCE_LOCAL_TIME_BASIS = "SOURCE_LOCAL_NAIVE_DATETIME_REQUIRED_FOR_PR78_PARITY"
 HISTORY_SEMANTIC_EQUIVALENCE = (
     "UNPROVEN_UNTIL_REVIEWED_SOURCE_ADAPTER_PROVES_HISTORY_COMPLETENESS_IDENTITY_AND_CHRONOLOGY"
 )
-SOURCE_LOCAL_TIME_BASIS = "SOURCE_LOCAL_NAIVE_DATETIME_REQUIRED_FOR_PR78_PARITY"
 FEATURE_ORDER = ("home_elo", "away_elo", "home_form", "away_form", "fatigue")
+CONSTRUCTION_SPEC_SHA256 = "75fe157d1b767cf374e5c2a27cc3d96434aa12f2214fc37d7c91b1e7127eb4b7"
+CONSTRUCTION_SPEC_SIZE = 2330
 
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9:._/-]{0,255}$", re.ASCII)
@@ -77,11 +78,14 @@ _SAFETY_KEYS = frozenset(
 
 
 class ProspectiveSuccessorFeatureConstructionError(ValueError):
-    pass
+    """Raised when a prospective construction cannot be proven deterministic/safe."""
 
 
 class ConstructedFeatureStatus(str, enum.Enum):
     CONSTRUCTED_FROM_SUPPLIED_HISTORY = "CONSTRUCTED_FROM_SUPPLIED_HISTORY"
+    CONSTRUCTED_FROM_FROZEN_INITIAL_STATE_ASSUMPTION = (
+        "CONSTRUCTED_FROM_FROZEN_INITIAL_STATE_ASSUMPTION"
+    )
     MISSING_PRIOR_HISTORY = "MISSING_PRIOR_HISTORY"
 
 
@@ -96,10 +100,10 @@ def _text(value: Any, label: str, maximum: int = 1024) -> str:
 
 
 def _identifier(value: Any, label: str) -> str:
-    value = _text(value, label, 256)
-    if _ID_RE.fullmatch(value) is None:
+    result = _text(value, label, 256)
+    if _ID_RE.fullmatch(result) is None:
         raise _error(f"{label} has unsupported identity characters")
-    return value
+    return result
 
 
 def _sha(value: Any, label: str) -> str:
@@ -122,18 +126,16 @@ def _utc(value: Any, label: str) -> datetime.datetime:
 
 def _canonical(value: Any) -> bytes:
     try:
-        return (
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
     except (TypeError, ValueError, OverflowError) as exc:
         raise _error("canonical serialization failed") from exc
+    return (encoded + "\n").encode("utf-8")
 
 
 def _safety() -> Mapping[str, bool]:
@@ -156,6 +158,7 @@ def _verify_upstream() -> None:
         or len(protocol_bytes) != PR78_PROTOCOL_SIZE
     ):
         raise _error("PR78 protocol identity changed")
+
     assessment = build_successor_live_input_semantic_qualification_execution()
     assessment_bytes = canonical_successor_live_input_semantic_qualification_execution_bytes(
         assessment
@@ -165,6 +168,53 @@ def _verify_upstream() -> None:
         or len(assessment_bytes) != PR79_ASSESSMENT_SIZE
     ):
         raise _error("PR79 assessment identity changed")
+
+
+def _spec_payload() -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_name": DATASET_NAME,
+        "construction_scope": CONSTRUCTION_SCOPE,
+        "repository_main_sha": PR79_MAIN_SHA,
+        "pr78_protocol_sha256": PR78_PROTOCOL_SHA256,
+        "pr78_protocol_size": PR78_PROTOCOL_SIZE,
+        "pr79_assessment_sha256": PR79_ASSESSMENT_SHA256,
+        "pr79_assessment_size": PR79_ASSESSMENT_SIZE,
+        "source_history_contract": (
+            "CALLER_SUPPLIED_SOURCE_SCOPED_FINAL_RESULT_EVIDENCE_ONLY_NO_COMPLETENESS_CLAIM"
+        ),
+        "source_local_time_basis": SOURCE_LOCAL_TIME_BASIS,
+        "history_selection_rule": (
+            "STRICTLY_PRIOR_IN_BOTH_LOCAL_AND_UTC;"
+            "EVERY_SUPPLIED_PRIOR_RESULT_MUST_BE_OBSERVED_BY_TARGET_AS_OF"
+        ),
+        "history_order_rule": (
+            "SOURCE_LOCAL_KICKOFF_ASC_THEN_FIXTURE_IDENTIFIER_ASC;"
+            "UTC_ORDER_MUST_MATCH_EXACTLY"
+        ),
+        "duplicate_fixture_behavior": "FAIL_CLOSED",
+        "temporal_ambiguity_behavior": (
+            "FAIL_ON_RELATIVE_ORDER_DISAGREEMENT_OR_SAME_TEAM_SAME_LOCAL_OR_UTC_KICKOFF"
+        ),
+        "form_semantics": (
+            "RECENT_5_STRICTLY_PRIOR;W3_D1_L0;"
+            "round(0.10+((points/(n*3))*0.85),3);NO_DEFAULT"
+        ),
+        "fatigue_semantics": (
+            "MOST_RECENT_PRIOR_PER_TARGET_TEAM;"
+            "DIFF=(TARGET-HOME_LAST).days-(TARGET-AWAY_LAST).days;"
+            "0.30_IF_LT_-2_ELSE_0.10_IF_LT_0_ELSE_0.0;NO_DEFAULT"
+        ),
+        "elo_semantics": (
+            "PREMATCH_OVERALL;INIT_1500_ASSUMPTION;HOME_EXPECTED_PLUS50;"
+            "AWAY_EXPECTED_NO_BOOST;DIVISOR_400;W1_D0.5_L0;"
+            "K32_LT20_K24_LT50_ELSE16;int(old+delta)"
+        ),
+        "history_semantic_equivalence": HISTORY_SEMANTIC_EQUIVALENCE,
+        "output_semantic_equivalence_authorized": False,
+        "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
+        "safety": dict(_safety()),
+    }
 
 
 @dataclasses.dataclass(frozen=True)
@@ -183,21 +233,21 @@ class ProspectiveSuccessorFeatureConstructionSpecification:
     history_order_rule: str
     duplicate_fixture_behavior: str
     temporal_ambiguity_behavior: str
-    form_semantics_source: str
-    fatigue_semantics_source: str
-    elo_semantics_source: str
+    form_semantics: str
+    fatigue_semantics: str
+    elo_semantics: str
     history_semantic_equivalence: str
     output_semantic_equivalence_authorized: bool
     next_required_boundary: str
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
-        if self.to_dict(include_safety=False) != _spec_payload():
+        if self.to_dict() != _spec_payload():
             raise _error("construction specification differs from frozen PR80 contract")
         object.__setattr__(self, "safety", _checked_safety(self.safety))
 
-    def to_dict(self, *, include_safety: bool = True) -> dict[str, Any]:
-        payload = {
+    def to_dict(self) -> dict[str, Any]:
+        return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
             "construction_scope": self.construction_scope,
@@ -212,62 +262,25 @@ class ProspectiveSuccessorFeatureConstructionSpecification:
             "history_order_rule": self.history_order_rule,
             "duplicate_fixture_behavior": self.duplicate_fixture_behavior,
             "temporal_ambiguity_behavior": self.temporal_ambiguity_behavior,
-            "form_semantics_source": self.form_semantics_source,
-            "fatigue_semantics_source": self.fatigue_semantics_source,
-            "elo_semantics_source": self.elo_semantics_source,
+            "form_semantics": self.form_semantics,
+            "fatigue_semantics": self.fatigue_semantics,
+            "elo_semantics": self.elo_semantics,
             "history_semantic_equivalence": self.history_semantic_equivalence,
             "output_semantic_equivalence_authorized": self.output_semantic_equivalence_authorized,
             "next_required_boundary": self.next_required_boundary,
+            "safety": dict(self.safety),
         }
-        if include_safety:
-            payload["safety"] = dict(self.safety)
-        return payload
-
-
-def _spec_payload() -> dict[str, Any]:
-    return {
-        "schema_version": SCHEMA_VERSION,
-        "dataset_name": DATASET_NAME,
-        "construction_scope": CONSTRUCTION_SCOPE,
-        "repository_main_sha": PR79_MAIN_SHA,
-        "pr78_protocol_sha256": PR78_PROTOCOL_SHA256,
-        "pr78_protocol_size": PR78_PROTOCOL_SIZE,
-        "pr79_assessment_sha256": PR79_ASSESSMENT_SHA256,
-        "pr79_assessment_size": PR79_ASSESSMENT_SIZE,
-        "source_history_contract": (
-            "CALLER_SUPPLIED_SOURCE_SCOPED_FINAL_RESULT_EVIDENCE_ROWS;"
-            "NO_CURRENT_LIVE_SOURCE_ADAPTER_AUTHORIZED"
-        ),
-        "source_local_time_basis": SOURCE_LOCAL_TIME_BASIS,
-        "history_selection_rule": (
-            "USE_ONLY_FIXTURES_STRICTLY_PRIOR_IN_SOURCE_LOCAL_AND_UTC;"
-            "RESULT_EVIDENCE_MUST_BE_OBSERVED_BY_TARGET_AS_OF"
-        ),
-        "history_order_rule": (
-            "SOURCE_LOCAL_KICKOFF_ASC_THEN_FIXTURE_IDENTIFIER_ASC;UTC_ORDER_MUST_AGREE"
-        ),
-        "duplicate_fixture_behavior": "FAIL_CLOSED",
-        "temporal_ambiguity_behavior": (
-            "FAIL_CLOSED_ON_LOCAL_UTC_ORDER_DISAGREEMENT_OR_SAME_TEAM_SAME_KICKOFF"
-        ),
-        "form_semantics_source": "PR78_FROZEN_HISTORICAL_FORM_SEMANTICS",
-        "fatigue_semantics_source": "PR78_FROZEN_HISTORICAL_FATIGUE_SEMANTICS",
-        "elo_semantics_source": "PR78_FROZEN_HISTORICAL_ELO_SEMANTICS",
-        "history_semantic_equivalence": HISTORY_SEMANTIC_EQUIVALENCE,
-        "output_semantic_equivalence_authorized": False,
-        "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
-    }
 
 
 def build_prospective_successor_feature_construction_specification(
 ) -> ProspectiveSuccessorFeatureConstructionSpecification:
     _verify_upstream()
-    value = ProspectiveSuccessorFeatureConstructionSpecification(
-        **_spec_payload(),
-        safety=_safety(),
-    )
+    value = ProspectiveSuccessorFeatureConstructionSpecification(**_spec_payload())
     exact = canonical_prospective_successor_feature_construction_specification_bytes(value)
-    if hashlib.sha256(exact).hexdigest() != CONSTRUCTION_SPEC_SHA256 or len(exact) != CONSTRUCTION_SPEC_SIZE:
+    if (
+        hashlib.sha256(exact).hexdigest() != CONSTRUCTION_SPEC_SHA256
+        or len(exact) != CONSTRUCTION_SPEC_SIZE
+    ):
         raise _error("PR80 construction specification canonical identity changed")
     return value
 
@@ -278,10 +291,10 @@ def canonical_prospective_successor_feature_construction_specification_bytes(
     if type(value) is not ProspectiveSuccessorFeatureConstructionSpecification:
         raise _error("value must be exact construction specification")
     try:
-        value = dataclasses.replace(value)
+        rebuilt = dataclasses.replace(value)
     except (AttributeError, TypeError, ValueError) as exc:
         raise _error("construction specification failed invariant reconstruction") from exc
-    return _canonical(value.to_dict())
+    return _canonical(rebuilt.to_dict())
 
 
 def sha256_prospective_successor_feature_construction_specification(value: Any) -> str:
@@ -305,21 +318,50 @@ class ProspectiveMatchEvidence:
     evidence_reference: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "source_namespace", _identifier(self.source_namespace, "source_namespace"))
-        object.__setattr__(self, "fixture_identifier", _identifier(self.fixture_identifier, "fixture_identifier"))
-        object.__setattr__(self, "source_local_kickoff", _local(self.source_local_kickoff, "source_local_kickoff"))
+        object.__setattr__(
+            self, "source_namespace", _identifier(self.source_namespace, "source_namespace")
+        )
+        object.__setattr__(
+            self,
+            "fixture_identifier",
+            _identifier(self.fixture_identifier, "fixture_identifier"),
+        )
+        object.__setattr__(
+            self,
+            "source_local_kickoff",
+            _local(self.source_local_kickoff, "source_local_kickoff"),
+        )
         object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "kickoff_utc"))
-        object.__setattr__(self, "home_team_identifier", _identifier(self.home_team_identifier, "home_team_identifier"))
-        object.__setattr__(self, "away_team_identifier", _identifier(self.away_team_identifier, "away_team_identifier"))
+        object.__setattr__(
+            self,
+            "home_team_identifier",
+            _identifier(self.home_team_identifier, "home_team_identifier"),
+        )
+        object.__setattr__(
+            self,
+            "away_team_identifier",
+            _identifier(self.away_team_identifier, "away_team_identifier"),
+        )
         if self.home_team_identifier == self.away_team_identifier:
             raise _error("fixture cannot use the same team identity twice")
-        if type(self.home_goals) is not int or self.home_goals < 0 or type(self.away_goals) is not int or self.away_goals < 0:
+        if (
+            type(self.home_goals) is not int
+            or self.home_goals < 0
+            or type(self.away_goals) is not int
+            or self.away_goals < 0
+        ):
             raise _error("goals must be exact non-negative integers")
         object.__setattr__(self, "observed_at", _utc(self.observed_at, "observed_at"))
         if self.observed_at <= self.kickoff_utc:
             raise _error("final-result evidence must be observed after fixture kickoff")
-        object.__setattr__(self, "evidence_sha256", _sha(self.evidence_sha256, "evidence_sha256"))
-        object.__setattr__(self, "evidence_reference", _text(self.evidence_reference, "evidence_reference"))
+        object.__setattr__(
+            self, "evidence_sha256", _sha(self.evidence_sha256, "evidence_sha256")
+        )
+        object.__setattr__(
+            self,
+            "evidence_reference",
+            _text(self.evidence_reference, "evidence_reference"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -350,19 +392,43 @@ class ProspectiveTargetFixture:
     evidence_reference: str
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "source_namespace", _identifier(self.source_namespace, "source_namespace"))
-        object.__setattr__(self, "fixture_identifier", _identifier(self.fixture_identifier, "fixture_identifier"))
-        object.__setattr__(self, "source_local_kickoff", _local(self.source_local_kickoff, "source_local_kickoff"))
+        object.__setattr__(
+            self, "source_namespace", _identifier(self.source_namespace, "source_namespace")
+        )
+        object.__setattr__(
+            self,
+            "fixture_identifier",
+            _identifier(self.fixture_identifier, "fixture_identifier"),
+        )
+        object.__setattr__(
+            self,
+            "source_local_kickoff",
+            _local(self.source_local_kickoff, "source_local_kickoff"),
+        )
         object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "kickoff_utc"))
-        object.__setattr__(self, "home_team_identifier", _identifier(self.home_team_identifier, "home_team_identifier"))
-        object.__setattr__(self, "away_team_identifier", _identifier(self.away_team_identifier, "away_team_identifier"))
+        object.__setattr__(
+            self,
+            "home_team_identifier",
+            _identifier(self.home_team_identifier, "home_team_identifier"),
+        )
+        object.__setattr__(
+            self,
+            "away_team_identifier",
+            _identifier(self.away_team_identifier, "away_team_identifier"),
+        )
         if self.home_team_identifier == self.away_team_identifier:
             raise _error("target cannot use the same team identity twice")
         object.__setattr__(self, "as_of", _utc(self.as_of, "as_of"))
         if self.as_of >= self.kickoff_utc:
             raise _error("target as_of must remain strictly pre-kickoff")
-        object.__setattr__(self, "evidence_sha256", _sha(self.evidence_sha256, "evidence_sha256"))
-        object.__setattr__(self, "evidence_reference", _text(self.evidence_reference, "evidence_reference"))
+        object.__setattr__(
+            self, "evidence_sha256", _sha(self.evidence_sha256, "evidence_sha256")
+        )
+        object.__setattr__(
+            self,
+            "evidence_reference",
+            _text(self.evidence_reference, "evidence_reference"),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -383,37 +449,62 @@ class ConstructedSuccessorFeature:
     feature_id: str
     status: ConstructedFeatureStatus
     value: float | int | None
-    direct_fixture_identifiers: tuple[str, ...]
-    direct_evidence_sha256s: tuple[str, ...]
+    derivation_fixture_identifiers: tuple[str, ...]
+    derivation_evidence_sha256s: tuple[str, ...]
     construction_semantics: str
 
     def __post_init__(self) -> None:
-        if self.feature_id not in FEATURE_ORDER or not isinstance(self.status, ConstructedFeatureStatus):
+        if self.feature_id not in FEATURE_ORDER or not isinstance(
+            self.status, ConstructedFeatureStatus
+        ):
             raise _error("constructed feature identity/status mismatch")
-        if self.status is ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY:
-            if type(self.value) not in (int, float) or not math.isfinite(self.value):
-                raise _error("constructed feature value must be finite")
-        elif self.value is not None:
-            raise _error("missing feature value must be None")
-        if type(self.direct_fixture_identifiers) is not tuple or type(self.direct_evidence_sha256s) is not tuple:
+        if self.status is ConstructedFeatureStatus.MISSING_PRIOR_HISTORY:
+            if self.value is not None:
+                raise _error("missing feature value must be None")
+        elif type(self.value) not in (int, float) or not math.isfinite(self.value):
+            raise _error("constructed feature value must be finite")
+
+        if type(self.derivation_fixture_identifiers) is not tuple or type(
+            self.derivation_evidence_sha256s
+        ) is not tuple:
             raise _error("feature lineage must be immutable tuples")
-        fixtures = tuple(_identifier(item, "direct_fixture_identifier") for item in self.direct_fixture_identifiers)
-        hashes = tuple(_sha(item, "direct_evidence_sha256") for item in self.direct_evidence_sha256s)
-        if fixtures != tuple(sorted(set(fixtures))) or hashes != tuple(sorted(set(hashes))):
-            raise _error("feature lineage must be sorted and unique")
-        if self.status is ConstructedFeatureStatus.MISSING_PRIOR_HISTORY and (fixtures or hashes):
-            raise _error("missing feature cannot claim direct evidence")
-        object.__setattr__(self, "direct_fixture_identifiers", fixtures)
-        object.__setattr__(self, "direct_evidence_sha256s", hashes)
-        object.__setattr__(self, "construction_semantics", _text(self.construction_semantics, "construction_semantics", 256))
+        fixtures = tuple(
+            _identifier(item, "derivation_fixture_identifier")
+            for item in self.derivation_fixture_identifiers
+        )
+        hashes = tuple(
+            _sha(item, "derivation_evidence_sha256")
+            for item in self.derivation_evidence_sha256s
+        )
+        if fixtures != tuple(sorted(set(fixtures))):
+            raise _error("feature fixture lineage must be sorted and unique")
+        if self.status is ConstructedFeatureStatus.MISSING_PRIOR_HISTORY and (
+            fixtures or hashes
+        ):
+            raise _error("missing feature cannot claim derivation evidence")
+        if len(fixtures) != len(hashes):
+            raise _error("feature derivation fixture/hash lineage cardinality mismatch")
+        if (
+            self.status
+            is ConstructedFeatureStatus.CONSTRUCTED_FROM_FROZEN_INITIAL_STATE_ASSUMPTION
+            and (fixtures or hashes)
+        ):
+            raise _error("initial-state-only Elo cannot claim result evidence")
+        object.__setattr__(self, "derivation_fixture_identifiers", fixtures)
+        object.__setattr__(self, "derivation_evidence_sha256s", hashes)
+        object.__setattr__(
+            self,
+            "construction_semantics",
+            _text(self.construction_semantics, "construction_semantics", 512),
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "feature_id": self.feature_id,
             "status": self.status.value,
             "value": self.value,
-            "direct_fixture_identifiers": list(self.direct_fixture_identifiers),
-            "direct_evidence_sha256s": list(self.direct_evidence_sha256s),
+            "derivation_fixture_identifiers": list(self.derivation_fixture_identifiers),
+            "derivation_evidence_sha256s": list(self.derivation_evidence_sha256s),
             "construction_semantics": self.construction_semantics,
         }
 
@@ -433,7 +524,7 @@ class ProspectiveSuccessorFeatureConstructionCandidate:
     history_prefix_sha256: str
     history_prefix_size: int
     features: tuple[ConstructedSuccessorFeature, ...]
-    all_five_constructed_from_supplied_history: bool
+    all_five_values_available: bool
     all_five_exact_semantic_equivalence: bool
     history_semantic_equivalence: str
     elo_initialization_semantics: str
@@ -442,7 +533,8 @@ class ProspectiveSuccessorFeatureConstructionCandidate:
 
     def __post_init__(self) -> None:
         if (
-            self.schema_version != SCHEMA_VERSION
+            type(self.schema_version) is not int
+            or self.schema_version != SCHEMA_VERSION
             or self.dataset_name != DATASET_NAME
             or self.construction_scope != CONSTRUCTION_SCOPE
             or self.construction_state != CONSTRUCTION_STATE
@@ -454,20 +546,40 @@ class ProspectiveSuccessorFeatureConstructionCandidate:
         if type(self.target) is not ProspectiveTargetFixture:
             raise _error("candidate target type mismatch")
         object.__setattr__(self, "target", dataclasses.replace(self.target))
-        if any(type(value) is not int or value < 0 for value in (self.supplied_history_count, self.eligible_history_count)):
-            raise _error("history counts must be non-negative exact integers")
-        if self.eligible_history_count > self.supplied_history_count:
-            raise _error("eligible history cannot exceed supplied history")
-        object.__setattr__(self, "history_prefix_sha256", _sha(self.history_prefix_sha256, "history_prefix_sha256"))
+        if (
+            type(self.supplied_history_count) is not int
+            or self.supplied_history_count < 0
+            or type(self.eligible_history_count) is not int
+            or self.eligible_history_count < 0
+            or self.eligible_history_count > self.supplied_history_count
+        ):
+            raise _error("history counts are invalid")
+        object.__setattr__(
+            self, "history_prefix_sha256", _sha(self.history_prefix_sha256, "history_prefix_sha256")
+        )
         if type(self.history_prefix_size) is not int or self.history_prefix_size <= 0:
             raise _error("history_prefix_size must be positive")
-        if type(self.features) is not tuple or tuple(item.feature_id for item in self.features) != FEATURE_ORDER:
+        if (
+            type(self.features) is not tuple
+            or tuple(item.feature_id for item in self.features) != FEATURE_ORDER
+            or any(type(item) is not ConstructedSuccessorFeature for item in self.features)
+        ):
             raise _error("candidate must contain exact frozen five-feature order")
-        object.__setattr__(self, "features", tuple(dataclasses.replace(item) for item in self.features))
-        expected_all = all(item.status is ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY for item in self.features)
-        if type(self.all_five_constructed_from_supplied_history) is not bool or self.all_five_constructed_from_supplied_history is not expected_all:
-            raise _error("all-five construction summary mismatch")
-        if type(self.all_five_exact_semantic_equivalence) is not bool or self.all_five_exact_semantic_equivalence:
+        rebuilt_features = tuple(dataclasses.replace(item) for item in self.features)
+        object.__setattr__(self, "features", rebuilt_features)
+        expected_available = all(
+            item.status is not ConstructedFeatureStatus.MISSING_PRIOR_HISTORY
+            for item in rebuilt_features
+        )
+        if (
+            type(self.all_five_values_available) is not bool
+            or self.all_five_values_available is not expected_available
+        ):
+            raise _error("all-five availability summary mismatch")
+        if (
+            type(self.all_five_exact_semantic_equivalence) is not bool
+            or self.all_five_exact_semantic_equivalence is not False
+        ):
             raise _error("PR80 cannot claim live exact semantic equivalence")
         if (
             self.history_semantic_equivalence != HISTORY_SEMANTIC_EQUIVALENCE
@@ -492,7 +604,7 @@ class ProspectiveSuccessorFeatureConstructionCandidate:
             "history_prefix_sha256": self.history_prefix_sha256,
             "history_prefix_size": self.history_prefix_size,
             "features": [item.to_dict() for item in self.features],
-            "all_five_constructed_from_supplied_history": self.all_five_constructed_from_supplied_history,
+            "all_five_values_available": self.all_five_values_available,
             "all_five_exact_semantic_equivalence": self.all_five_exact_semantic_equivalence,
             "history_semantic_equivalence": self.history_semantic_equivalence,
             "elo_initialization_semantics": self.elo_initialization_semantics,
@@ -512,117 +624,192 @@ def _outcome(row: ProspectiveMatchEvidence, team: str) -> str:
 
 
 def _feature(
+    *,
     feature_id: str,
+    status: ConstructedFeatureStatus,
     value: float | int | None,
-    fixtures: Sequence[str],
-    hashes: Sequence[str],
+    rows: Sequence[ProspectiveMatchEvidence],
     semantics: str,
 ) -> ConstructedSuccessorFeature:
+    ordered = tuple(sorted(rows, key=lambda row: row.fixture_identifier))
     return ConstructedSuccessorFeature(
         feature_id=feature_id,
-        status=(
-            ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY
-            if value is not None
-            else ConstructedFeatureStatus.MISSING_PRIOR_HISTORY
-        ),
+        status=status,
         value=value,
-        direct_fixture_identifiers=tuple(sorted(set(fixtures))),
-        direct_evidence_sha256s=tuple(sorted(set(hashes))),
+        derivation_fixture_identifiers=tuple(row.fixture_identifier for row in ordered),
+        derivation_evidence_sha256s=tuple(row.evidence_sha256 for row in ordered),
         construction_semantics=semantics,
     )
 
 
-def _form(history: Sequence[ProspectiveMatchEvidence], team: str, feature_id: str) -> ConstructedSuccessorFeature:
-    recent = sorted(
-        (row for row in history if team in (row.home_team_identifier, row.away_team_identifier)),
-        key=lambda row: (row.source_local_kickoff, row.fixture_identifier),
-        reverse=True,
-    )[:5]
-    if not recent:
-        return _feature(feature_id, None, (), (), "PR78_EXACT_RECENT_FIVE_FORM_NO_DEFAULT")
-    points = sum(3 if _outcome(row, team) == "W" else 1 if _outcome(row, team) == "D" else 0 for row in recent)
-    value = round(0.10 + ((points / (len(recent) * 3)) * 0.85), 3)
+def _missing(feature_id: str, semantics: str) -> ConstructedSuccessorFeature:
     return _feature(
-        feature_id,
-        value,
-        [row.fixture_identifier for row in recent],
-        [row.evidence_sha256 for row in recent],
-        "PR78_EXACT_RECENT_FIVE_FORM_NO_DEFAULT",
+        feature_id=feature_id,
+        status=ConstructedFeatureStatus.MISSING_PRIOR_HISTORY,
+        value=None,
+        rows=(),
+        semantics=semantics,
     )
 
 
-def _fatigue(history: Sequence[ProspectiveMatchEvidence], target: ProspectiveTargetFixture) -> ConstructedSuccessorFeature:
-    home = [row for row in history if target.home_team_identifier in (row.home_team_identifier, row.away_team_identifier)]
-    away = [row for row in history if target.away_team_identifier in (row.home_team_identifier, row.away_team_identifier)]
+def _form(
+    history: Sequence[ProspectiveMatchEvidence],
+    team: str,
+    feature_id: str,
+) -> ConstructedSuccessorFeature:
+    recent = sorted(
+        (
+            row
+            for row in history
+            if team in (row.home_team_identifier, row.away_team_identifier)
+        ),
+        key=lambda row: (row.source_local_kickoff, row.fixture_identifier),
+        reverse=True,
+    )[:5]
+    semantics = "PR78_EXACT_RECENT_FIVE_FORM_NO_DEFAULT"
+    if not recent:
+        return _missing(feature_id, semantics)
+    points = sum(
+        3 if _outcome(row, team) == "W" else 1 if _outcome(row, team) == "D" else 0
+        for row in recent
+    )
+    value = round(0.10 + ((points / (len(recent) * 3)) * 0.85), 3)
+    return _feature(
+        feature_id=feature_id,
+        status=ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY,
+        value=value,
+        rows=recent,
+        semantics=semantics,
+    )
+
+
+def _fatigue(
+    history: Sequence[ProspectiveMatchEvidence],
+    target: ProspectiveTargetFixture,
+) -> ConstructedSuccessorFeature:
+    home = [
+        row
+        for row in history
+        if target.home_team_identifier
+        in (row.home_team_identifier, row.away_team_identifier)
+    ]
+    away = [
+        row
+        for row in history
+        if target.away_team_identifier
+        in (row.home_team_identifier, row.away_team_identifier)
+    ]
+    semantics = "PR78_EXACT_HOME_RELATIVE_REST_DAY_FATIGUE_NO_DEFAULT"
     if not home or not away:
-        return _feature("fatigue", None, (), (), "PR78_EXACT_HOME_RELATIVE_REST_DAY_FATIGUE_NO_DEFAULT")
-    home_last = max(home, key=lambda row: (row.source_local_kickoff, row.fixture_identifier))
-    away_last = max(away, key=lambda row: (row.source_local_kickoff, row.fixture_identifier))
+        return _missing("fatigue", semantics)
+    home_last = max(
+        home, key=lambda row: (row.source_local_kickoff, row.fixture_identifier)
+    )
+    away_last = max(
+        away, key=lambda row: (row.source_local_kickoff, row.fixture_identifier)
+    )
     difference = (
         (target.source_local_kickoff - home_last.source_local_kickoff).days
         - (target.source_local_kickoff - away_last.source_local_kickoff).days
     )
     value = 0.30 if difference < -2 else 0.10 if difference < 0 else 0.0
     return _feature(
-        "fatigue",
-        value,
-        (home_last.fixture_identifier, away_last.fixture_identifier),
-        (home_last.evidence_sha256, away_last.evidence_sha256),
-        "PR78_EXACT_HOME_RELATIVE_REST_DAY_FATIGUE_NO_DEFAULT",
+        feature_id="fatigue",
+        status=ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY,
+        value=value,
+        rows=(home_last, away_last),
+        semantics=semantics,
     )
 
 
-def _expected_score(home_rating: int, away_rating: int, home_boost: bool) -> float:
+def _expected_score(home_rating: int, away_rating: int, *, home_boost: bool) -> float:
     adjusted = home_rating + 50 if home_boost else home_rating
     return 1.0 / (1.0 + 10.0 ** ((away_rating - adjusted) / 400.0))
 
 
-def _k(matches: int) -> int:
+def _k_factor(matches: int) -> int:
     return 32 if matches < 20 else 24 if matches < 50 else 16
 
 
 def _elo(
     history: Sequence[ProspectiveMatchEvidence],
     target: ProspectiveTargetFixture,
-    prefix_sha: str,
 ) -> tuple[ConstructedSuccessorFeature, ConstructedSuccessorFeature]:
     ratings: dict[str, int] = {}
     counts: dict[str, int] = {}
+
     for row in history:
-        hr = ratings.get(row.home_team_identifier, 1500)
-        ar = ratings.get(row.away_team_identifier, 1500)
-        hc = counts.get(row.home_team_identifier, 0)
-        ac = counts.get(row.away_team_identifier, 0)
-        eh = _expected_score(hr, ar, True)
-        ea = _expected_score(ar, hr, False)
+        home_rating = ratings.get(row.home_team_identifier, 1500)
+        away_rating = ratings.get(row.away_team_identifier, 1500)
+        home_matches = counts.get(row.home_team_identifier, 0)
+        away_matches = counts.get(row.away_team_identifier, 0)
+
+        home_expected = _expected_score(home_rating, away_rating, home_boost=True)
+        away_expected = _expected_score(away_rating, home_rating, home_boost=False)
         if row.home_goals > row.away_goals:
-            ah, aa = 1.0, 0.0
+            home_score, away_score = 1.0, 0.0
         elif row.home_goals < row.away_goals:
-            ah, aa = 0.0, 1.0
+            home_score, away_score = 0.0, 1.0
         else:
-            ah = aa = 0.5
-        ratings[row.home_team_identifier] = int(hr + _k(hc) * (ah - eh))
-        ratings[row.away_team_identifier] = int(ar + _k(ac) * (aa - ea))
-        counts[row.home_team_identifier] = hc + 1
-        counts[row.away_team_identifier] = ac + 1
+            home_score = away_score = 0.5
+
+        ratings[row.home_team_identifier] = int(
+            home_rating + _k_factor(home_matches) * (home_score - home_expected)
+        )
+        ratings[row.away_team_identifier] = int(
+            away_rating + _k_factor(away_matches) * (away_score - away_expected)
+        )
+        counts[row.home_team_identifier] = home_matches + 1
+        counts[row.away_team_identifier] = away_matches + 1
+
     semantics = "PR78_EXACT_1500_PLUS50_K32_24_16_PREMATCH_ELO_REPLAY"
+
+    def make(feature_id: str, team: str) -> ConstructedSuccessorFeature:
+        seen = counts.get(team, 0) > 0
+        return _feature(
+            feature_id=feature_id,
+            status=(
+                ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY
+                if seen
+                else ConstructedFeatureStatus.CONSTRUCTED_FROM_FROZEN_INITIAL_STATE_ASSUMPTION
+            ),
+            value=ratings.get(team, 1500),
+            rows=history if seen else (),
+            semantics=semantics,
+        )
+
     return (
-        _feature("home_elo", ratings.get(target.home_team_identifier, 1500), (), (prefix_sha,), semantics),
-        _feature("away_elo", ratings.get(target.away_team_identifier, 1500), (), (prefix_sha,), semantics),
+        make("home_elo", target.home_team_identifier),
+        make("away_elo", target.away_team_identifier),
     )
+
+
+def _relative_order(
+    row_local: datetime.datetime,
+    row_utc: datetime.datetime,
+    target_local: datetime.datetime,
+    target_utc: datetime.datetime,
+) -> tuple[int, int]:
+    local = -1 if row_local < target_local else 1 if row_local > target_local else 0
+    utc = -1 if row_utc < target_utc else 1 if row_utc > target_utc else 0
+    return local, utc
 
 
 def _eligible_history(
     history: Sequence[ProspectiveMatchEvidence],
     target: ProspectiveTargetFixture,
 ) -> tuple[ProspectiveMatchEvidence, ...]:
-    if not isinstance(history, Sequence) or isinstance(history, (str, bytes, bytearray, memoryview)):
+    if not isinstance(history, Sequence) or isinstance(
+        history, (str, bytes, bytearray, memoryview)
+    ):
         raise _error("history must be an ordered sequence")
     rows = tuple(history)
     if any(type(row) is not ProspectiveMatchEvidence for row in rows):
         raise _error("history rows must be exact ProspectiveMatchEvidence")
     rows = tuple(dataclasses.replace(row) for row in rows)
+
     seen: set[str] = set()
+    prior: list[ProspectiveMatchEvidence] = []
     for row in rows:
         if row.source_namespace != target.source_namespace:
             raise _error("history/target source namespace mismatch")
@@ -631,34 +818,53 @@ def _eligible_history(
         if row.fixture_identifier in seen:
             raise _error("duplicate source fixture identifier")
         seen.add(row.fixture_identifier)
-        if (row.source_local_kickoff < target.source_local_kickoff) != (row.kickoff_utc < target.kickoff_utc):
+
+        local_relation, utc_relation = _relative_order(
+            row.source_local_kickoff,
+            row.kickoff_utc,
+            target.source_local_kickoff,
+            target.kickoff_utc,
+        )
+        if local_relation != utc_relation:
             raise _error("source-local and UTC chronology disagree relative to target")
-        if (
-            (row.source_local_kickoff == target.source_local_kickoff or row.kickoff_utc == target.kickoff_utc)
-            and (
-                target.home_team_identifier in (row.home_team_identifier, row.away_team_identifier)
-                or target.away_team_identifier in (row.home_team_identifier, row.away_team_identifier)
-            )
+
+        if local_relation == 0 and (
+            target.home_team_identifier
+            in (row.home_team_identifier, row.away_team_identifier)
+            or target.away_team_identifier
+            in (row.home_team_identifier, row.away_team_identifier)
         ):
             raise _error("target team has another supplied fixture at target kickoff")
-    eligible_unsorted = tuple(
-        row
-        for row in rows
-        if row.source_local_kickoff < target.source_local_kickoff
-        and row.kickoff_utc < target.kickoff_utc
-        and row.observed_at <= target.as_of
+
+        if local_relation < 0:
+            if row.observed_at > target.as_of:
+                raise _error(
+                    "supplied prior fixture result was not observed by target as_of"
+                )
+            prior.append(row)
+
+    local_order = tuple(
+        sorted(prior, key=lambda row: (row.source_local_kickoff, row.fixture_identifier))
     )
-    local_order = tuple(sorted(eligible_unsorted, key=lambda row: (row.source_local_kickoff, row.fixture_identifier)))
-    utc_order = tuple(sorted(eligible_unsorted, key=lambda row: (row.kickoff_utc, row.fixture_identifier)))
-    if tuple(row.fixture_identifier for row in local_order) != tuple(row.fixture_identifier for row in utc_order):
+    utc_order = tuple(
+        sorted(prior, key=lambda row: (row.kickoff_utc, row.fixture_identifier))
+    )
+    if tuple(row.fixture_identifier for row in local_order) != tuple(
+        row.fixture_identifier for row in utc_order
+    ):
         raise _error("source-local and UTC eligible-history ordering disagree")
-    occupied: set[tuple[datetime.datetime, str]] = set()
+
+    local_occupied: set[tuple[datetime.datetime, str]] = set()
+    utc_occupied: set[tuple[datetime.datetime, str]] = set()
     for row in local_order:
         for team in (row.home_team_identifier, row.away_team_identifier):
-            key = (row.source_local_kickoff, team)
-            if key in occupied:
+            local_key = (row.source_local_kickoff, team)
+            utc_key = (row.kickoff_utc, team)
+            if local_key in local_occupied or utc_key in utc_occupied:
                 raise _error("same source-scoped team has multiple fixtures at one kickoff")
-            occupied.add(key)
+            local_occupied.add(local_key)
+            utc_occupied.add(utc_key)
+
     return local_order
 
 
@@ -681,11 +887,18 @@ def build_prospective_successor_feature_construction_candidate(
         raise _error("target must be exact ProspectiveTargetFixture")
     target = dataclasses.replace(target)
     spec = build_prospective_successor_feature_construction_specification()
-    spec_bytes = canonical_prospective_successor_feature_construction_specification_bytes(spec)
-    eligible = _eligible_history(history, target)
+    spec_bytes = canonical_prospective_successor_feature_construction_specification_bytes(
+        spec
+    )
+    if not isinstance(history, Sequence) or isinstance(
+        history, (str, bytes, bytearray, memoryview)
+    ):
+        raise _error("history must be an ordered sequence")
+    supplied_history = tuple(history)
+    eligible = _eligible_history(supplied_history, target)
     prefix = _prefix_bytes(eligible)
-    prefix_sha = hashlib.sha256(prefix).hexdigest()
-    home_elo, away_elo = _elo(eligible, target, prefix_sha)
+
+    home_elo, away_elo = _elo(eligible, target)
     features = (
         home_elo,
         away_elo,
@@ -693,6 +906,7 @@ def build_prospective_successor_feature_construction_candidate(
         _form(eligible, target.away_team_identifier, "away_form"),
         _fatigue(eligible, target),
     )
+
     return ProspectiveSuccessorFeatureConstructionCandidate(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
@@ -702,13 +916,13 @@ def build_prospective_successor_feature_construction_candidate(
         construction_spec_size=len(spec_bytes),
         repository_main_sha=PR79_MAIN_SHA,
         target=target,
-        supplied_history_count=len(history),
+        supplied_history_count=len(supplied_history),
         eligible_history_count=len(eligible),
-        history_prefix_sha256=prefix_sha,
+        history_prefix_sha256=hashlib.sha256(prefix).hexdigest(),
         history_prefix_size=len(prefix),
         features=features,
-        all_five_constructed_from_supplied_history=all(
-            item.status is ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY
+        all_five_values_available=all(
+            item.status is not ConstructedFeatureStatus.MISSING_PRIOR_HISTORY
             for item in features
         ),
         all_five_exact_semantic_equivalence=False,
@@ -719,14 +933,16 @@ def build_prospective_successor_feature_construction_candidate(
     )
 
 
-def canonical_prospective_successor_feature_construction_candidate_bytes(value: Any) -> bytes:
+def canonical_prospective_successor_feature_construction_candidate_bytes(
+    value: Any,
+) -> bytes:
     if type(value) is not ProspectiveSuccessorFeatureConstructionCandidate:
         raise _error("value must be exact construction candidate")
     try:
-        value = dataclasses.replace(value)
+        rebuilt = dataclasses.replace(value)
     except (AttributeError, TypeError, ValueError) as exc:
         raise _error("construction candidate failed invariant reconstruction") from exc
-    return _canonical(value.to_dict())
+    return _canonical(rebuilt.to_dict())
 
 
 def sha256_prospective_successor_feature_construction_candidate(value: Any) -> str:
@@ -742,10 +958,16 @@ def revalidate_prospective_successor_feature_construction_candidate(
     candidate: Any,
     candidate_bytes: Any,
 ) -> ProspectiveSuccessorFeatureConstructionCandidate:
-    if type(candidate) is not ProspectiveSuccessorFeatureConstructionCandidate or type(candidate_bytes) is not bytes:
-        raise _error("candidate/candidate_bytes type mismatch")
-    supplied = canonical_prospective_successor_feature_construction_candidate_bytes(candidate)
-    rebuilt = build_prospective_successor_feature_construction_candidate(history=history, target=target)
+    if type(candidate) is not ProspectiveSuccessorFeatureConstructionCandidate:
+        raise _error("candidate must be exact ProspectiveSuccessorFeatureConstructionCandidate")
+    if type(candidate_bytes) is not bytes:
+        raise _error("candidate_bytes must be exact immutable bytes")
+    supplied = canonical_prospective_successor_feature_construction_candidate_bytes(
+        candidate
+    )
+    rebuilt = build_prospective_successor_feature_construction_candidate(
+        history=history, target=target
+    )
     exact = canonical_prospective_successor_feature_construction_candidate_bytes(rebuilt)
     if supplied != exact or candidate_bytes != exact:
         raise _error("candidate differs from exact deterministic reconstruction")
@@ -760,6 +982,8 @@ __all__ = [
     "ConstructedFeatureStatus",
     "ConstructedSuccessorFeature",
     "DATASET_NAME",
+    "FEATURE_ORDER",
+    "HISTORY_SEMANTIC_EQUIVALENCE",
     "NEXT_REQUIRED_BOUNDARY",
     "PR79_MAIN_SHA",
     "ProspectiveMatchEvidence",
