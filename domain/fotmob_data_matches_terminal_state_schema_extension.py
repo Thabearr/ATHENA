@@ -53,7 +53,7 @@ PR86_PROTOCOL_BLOB_SHA = "71b2f1a8add05929835d469df94396375a115391"
 PR39_SCHEMA_BLOB_SHA = "4dfff0eb05335895c3ee0fcaa7b8da1299ea692f"
 CANDIDATE_SOURCE_KEY = "fotmob_data_matches_reviewed_catalog"
 NEXT_REQUIRED_BOUNDARY = (
-    "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_STATUS_REASON_SEMANTICS"
+    "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_ELIMINATED_TEAM_ID_VALUE_DOMAIN_EXTENSION"
 )
 
 _BASE_TEAM_KEYS = frozenset(BASE_TEAM_KEYS)
@@ -424,6 +424,20 @@ def _validate_extension_fields_and_project(
     return projected, team_counts, status_counts, halfs_counts, live_time_count
 
 
+def _non_null_eliminated_team_id_count(payload: dict[str, Any]) -> int:
+    count = 0
+    for league in payload.get("leagues", []):
+        if type(league) is not dict:
+            continue
+        matches = league.get("matches", [])
+        if type(matches) is not list:
+            continue
+        for match in matches:
+            if type(match) is dict and match.get("eliminatedTeamId") is not None:
+                count += 1
+    return count
+
+
 def _canonical_projection(payload: dict[str, Any]) -> bytes:
     try:
         return (
@@ -642,6 +656,18 @@ def assess_fotmob_data_matches_terminal_state_schema_extension(
         halfs_counts,
         live_time_count,
     ) = _validate_extension_fields_and_project(payload)
+
+    non_null_eliminated_team_id_count = _non_null_eliminated_team_id_count(
+        projected_payload
+    )
+    if non_null_eliminated_team_id_count:
+        raise _error(
+            TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT,
+            "PR39 base projection contains "
+            f"{non_null_eliminated_team_id_count} non-null eliminatedTeamId value(s); "
+            "PR39 V1 requires null",
+        )
+
     projected_raw = _canonical_projection(projected_payload)
     projected_manifest = _projected_manifest(manifest, projected_raw)
 
