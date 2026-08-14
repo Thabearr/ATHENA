@@ -71,9 +71,9 @@ manifest SHA-256      3fe1d24a0738114c46114a815eca44c4221b53fe8da2476d5a487153ce
 ```
 
 PR #39 intentionally committed only metadata-level schema assessment. It did
-not emit fixture IDs, teams, scores, or status values. Its review explicitly
-states that the capture contained no reviewed started/finished evidence that
-established the football meaning of the score integers.
+not emit fixture IDs, teams, scores, or status values. Its review states that
+the capture contained no reviewed started/finished evidence that established
+the football meaning of the score integers.
 
 The raw capture itself remains under the repository's ignored research cache,
 which is an intentional evidence boundary rather than a missing-data problem to
@@ -87,14 +87,20 @@ least 300 seconds apart, preserve exact fixture/team/league/kickoff identity,
 carry `finished=True`, `started=True`, `cancelled=False`, have no unreviewed
 status reason, and report the same exact non-negative integer score pair.
 
-The current committed/reviewed inventory can prove none of those fixture-level
-conditions for a pair:
+The current committed/reviewed inventory cannot prove such a pair. Importantly,
+PR #84 does **not** claim that the single documented capture is or is not a
+post-finish capture at fixture level, because those fixture-level values were not
+committed by PR #39. That count stays unknown:
 
 ```text
-reviewed capture count             1
-PR83-eligible post-finish captures 0
-required post-finish captures      2
+reviewed capture count                 1
+post-finish capture count              UNKNOWN_FROM_COMMITTED_METADATA_ONLY
+PR83-eligible two-capture pair count   0
+required distinct captures per pair    2
 ```
+
+The zero applies only to a **provable PR83-eligible pair**. It is not a claim
+that zero finished fixtures existed in the ignored raw response.
 
 PR #84 therefore does **not** choose an old fixture, reconstruct a score from
 legacy code, infer a terminal state, use a website display, use search results,
@@ -108,12 +114,13 @@ one reviewed capture is currently documented.
 The canonical PR #84 receipt is compact sorted UTF-8 JSON plus one final LF:
 
 ```text
-SHA-256  e83c7ae340348db5cf0830da1db47a23a20b95690267818e4426726dccfd61a6
-size     2394 bytes
+SHA-256  b8ac94402677c8d539ac365e348fd8415d3963b6511a0db5d0564f38737f1b9a
+size     2490 bytes
 ```
 
-The receipt records the reviewed inventory metadata and the exact fail-closed
-status. It contains no fabricated fixture identifier or score.
+The receipt records the reviewed inventory metadata, preserves the unknown
+post-finish count explicitly, and records the exact fail-closed status. It
+contains no fabricated fixture identifier or score.
 
 ## Capability consequence
 
