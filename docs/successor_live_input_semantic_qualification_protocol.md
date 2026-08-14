@@ -50,9 +50,9 @@ If no strictly prior fixture exists, form is `MISSING_PRIOR_HISTORY`; there is n
 
 Historical fatigue uses each team's most recent strictly prior fixture. If either team lacks prior history, fatigue is missing rather than defaulted.
 
-Otherwise the replay computes:
+The replay measures rest with the integer `.days` component of the Python `datetime` difference for each team. It then computes:
 
-`difference_days = home_rest_days - away_rest_days`
+`difference_days = (target - home_last).days - (target - away_last).days`
 
 and maps it exactly as follows:
 
@@ -60,7 +60,7 @@ and maps it exactly as follows:
 - otherwise `difference_days < 0` -> `0.10`
 - otherwise -> `0.0`
 
-The orientation is home-relative. Matching one of the values `0.0`, `0.10`, or `0.30` is not enough to qualify a live fatigue feature. The future evaluator must prove the last-fixture identity, chronology/date semantics, missing-data behavior, orientation, and thresholds through reviewed replayable evidence or an exact reviewed implementation contract.
+The orientation is home-relative. Matching one of the values `0.0`, `0.10`, or `0.30` is not enough to qualify a live fatigue feature. The future evaluator must prove the last-fixture identity, chronology/date semantics, integer-day measurement, missing-data behavior, orientation, and thresholds through reviewed replayable evidence or an exact reviewed implementation contract.
 
 The existing factual caveat remains unchanged:
 
@@ -70,9 +70,15 @@ PR #78 defines what later evidence would have to prove; it does not claim that p
 
 ## Historical Elo meaning
 
-The historical replay uses a source-scoped chronological overall Elo state. Each unseen team starts at 1500, and the raw home/away Elo feature is the current overall rating **before** the target fixture is used to update ratings.
+The historical replay uses a source-scoped chronological overall Elo state. Safe fixtures are ordered exactly by source-local kickoff ascending with fixture identifier as the deterministic tiebreak. Each unseen team starts at 1500, and the raw home/away Elo feature is the current overall rating **before** the target fixture is used to update ratings.
 
-For the home expected score, the replay applies a +50 home advantage before the standard 400-point logistic divisor. The away calculation uses the unboosted away rating against the home rating. Observed result scores are win `1.0`, draw `0.5`, loss `0.0`.
+The exact expected-score formulas are:
+
+`expected_home = 1 / (1 + 10 ** ((away_rating - (home_rating + 50)) / 400))`
+
+`expected_away = 1 / (1 + 10 ** ((home_rating - away_rating) / 400))`
+
+The home calculation therefore carries the exact +50 home adjustment while both use the 400-point logistic divisor. Observed result scores are win `1.0`, draw `0.5`, loss `0.0`.
 
 The K schedule is exact:
 
@@ -80,7 +86,7 @@ The K schedule is exact:
 - fewer than 50 -> 24;
 - otherwise -> 16.
 
-After a fixture the rating update is converted with Python `int(old_overall + delta)`. Temporal or identity ambiguity fails closed and taints dependent replay state instead of guessing an ordering or identity.
+After a fixture the rating update is converted with Python `int(old_overall + K * (actual_score - expected_score))`. Temporal or identity ambiguity fails closed and taints dependent replay state instead of guessing an ordering or identity.
 
 The 1500 initial state is still an assumption, not observed evidence:
 
@@ -129,9 +135,9 @@ Scope:
 
 The protocol canonicalizes as UTF-8 JSON using `ensure_ascii=False`, `allow_nan=False`, sorted keys, compact separators, and exactly one trailing newline. Its frozen canonical SHA-256 is:
 
-`a8716a9c2edae97dc5e2b904265cecc98254485f830673b341dd063883358177`
+`97a47d431ce57468598b17fcb24e9e0e9a41fa26c80ff1f4df9e2e611107ed7c`
 
-Canonical size: `4,664` bytes.
+Canonical size: `4,904` bytes.
 
 The strict revalidator rebuilds the protocol and requires both the supplied object and supplied bytes to match that exact frozen contract.
 
