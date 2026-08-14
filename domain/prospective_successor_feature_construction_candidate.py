@@ -631,7 +631,13 @@ def _feature(
     rows: Sequence[ProspectiveMatchEvidence],
     semantics: str,
 ) -> ConstructedSuccessorFeature:
-    ordered = tuple(sorted(rows, key=lambda row: row.fixture_identifier))
+    by_fixture: dict[str, ProspectiveMatchEvidence] = {}
+    for row in rows:
+        existing = by_fixture.get(row.fixture_identifier)
+        if existing is not None and existing != row:
+            raise _error("feature lineage repeats a fixture with conflicting evidence")
+        by_fixture[row.fixture_identifier] = row
+    ordered = tuple(by_fixture[key] for key in sorted(by_fixture))
     return ConstructedSuccessorFeature(
         feature_id=feature_id,
         status=status,
