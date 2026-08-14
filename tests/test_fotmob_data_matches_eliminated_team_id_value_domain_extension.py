@@ -12,6 +12,7 @@ import pytest
 
 import domain.fotmob_data_matches_terminal_state_schema_extension as pr87
 from domain.fotmob_data_matches_capture import (
+    MAX_RESPONSE_BYTES,
     CapturedFotMobDataMatchesResponse,
     build_data_matches_capture_manifest,
     sha256_data_matches_capture_manifest,
@@ -252,7 +253,10 @@ def test_exact_pr85_captures_now_qualify_complete_structural_chain(
     assert sha256_data_matches_capture_manifest(manifest) == manifest_sha
 
     result = assess_fotmob_data_matches_eliminated_team_id_value_domain(raw, manifest)
-    assert result.status is EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN
+    assert (
+        result.status
+        is EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN
+    )
     assert result.source_raw_sha256 == raw_sha
     assert result.source_capture_manifest_sha256 == manifest_sha
     assert result.eliminated_team_id_occurrence_count == 183
@@ -274,7 +278,10 @@ def test_frozen_pr87_itself_remains_unchanged_and_still_rejects_real_capture(
     raw, manifest = _load_capture(capture_id)
     with pytest.raises(pr87.FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
         pr87.assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
-    assert exc_info.value.status is pr87.TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT
+    assert (
+        exc_info.value.status
+        is pr87.TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT
+    )
     assert "non-null eliminatedTeamId" in str(exc_info.value)
 
 
@@ -290,7 +297,10 @@ def test_null_and_positive_integer_domains_qualify_structurally() -> None:
 
 def test_positive_integer_need_not_equal_endpoint_team_ids() -> None:
     result = _assess_synthetic(999999)
-    assert result.status is EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN
+    assert (
+        result.status
+        is EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN
+    )
     assert result.eliminated_team_id_non_null_count == 1
 
 
@@ -299,7 +309,10 @@ def test_non_integer_non_null_values_fail_closed(bad_value: Any) -> None:
     raw = _raw_bytes(_synthetic_payload(bad_value))
     with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError) as exc_info:
         assess_fotmob_data_matches_eliminated_team_id_value_domain(raw, _manifest_for_raw(raw))
-    assert exc_info.value.status is EliminatedTeamIdValueDomainStatus.BLOCKED_ELIMINATED_TEAM_ID_TYPE_OR_NULLABILITY_MISMATCH
+    assert (
+        exc_info.value.status
+        is EliminatedTeamIdValueDomainStatus.BLOCKED_ELIMINATED_TEAM_ID_TYPE_OR_NULLABILITY_MISMATCH
+    )
 
 
 @pytest.mark.parametrize("bad_value", (0, -1, -999))
@@ -307,7 +320,10 @@ def test_nonpositive_integer_values_fail_closed(bad_value: int) -> None:
     raw = _raw_bytes(_synthetic_payload(bad_value))
     with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError) as exc_info:
         assess_fotmob_data_matches_eliminated_team_id_value_domain(raw, _manifest_for_raw(raw))
-    assert exc_info.value.status is EliminatedTeamIdValueDomainStatus.BLOCKED_ELIMINATED_TEAM_ID_NONPOSITIVE_INTEGER
+    assert (
+        exc_info.value.status
+        is EliminatedTeamIdValueDomainStatus.BLOCKED_ELIMINATED_TEAM_ID_NONPOSITIVE_INTEGER
+    )
 
 
 def test_value_domain_projection_does_not_hide_other_pr87_structural_failure() -> None:
@@ -316,7 +332,10 @@ def test_value_domain_projection_does_not_hide_other_pr87_structural_failure() -
     raw = _raw_bytes(payload)
     with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError) as exc_info:
         assess_fotmob_data_matches_eliminated_team_id_value_domain(raw, _manifest_for_raw(raw))
-    assert exc_info.value.status is EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT
+    assert (
+        exc_info.value.status
+        is EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT
+    )
     assert "BLOCKED_EXTRA_KEY_OUTSIDE_PRE_REGISTERED_SET" in str(exc_info.value)
 
 
@@ -326,7 +345,10 @@ def test_source_raw_manifest_lineage_mismatch_fails_closed() -> None:
     changed_raw = raw + b" "
     with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError) as exc_info:
         assess_fotmob_data_matches_eliminated_team_id_value_domain(changed_raw, manifest)
-    assert exc_info.value.status is EliminatedTeamIdValueDomainStatus.BLOCKED_PR85_EVIDENCE_ANCESTRY_DRIFT
+    assert (
+        exc_info.value.status
+        is EliminatedTeamIdValueDomainStatus.BLOCKED_PR85_EVIDENCE_ANCESTRY_DRIFT
+    )
 
 
 def test_assessment_is_deterministic_immutable_and_fail_closed() -> None:
@@ -335,14 +357,22 @@ def test_assessment_is_deterministic_immutable_and_fail_closed() -> None:
     first_bytes = canonical_fotmob_data_matches_eliminated_team_id_value_domain_assessment_bytes(first)
     second_bytes = canonical_fotmob_data_matches_eliminated_team_id_value_domain_assessment_bytes(second)
     assert first_bytes == second_bytes
-    assert sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(first) == hashlib.sha256(first_bytes).hexdigest()
+    assert (
+        sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(first)
+        == hashlib.sha256(first_bytes).hexdigest()
+    )
 
-    with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError):
-        dataclasses.replace(first, status_reason_semantics_qualified=True)
-    with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError):
-        dataclasses.replace(first, final_result_semantics_qualified=True)
-    with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError):
-        dataclasses.replace(first, eliminated_team_id_non_null_count=2)
+    for changes in (
+        {"status_reason_semantics_qualified": True},
+        {"final_result_semantics_qualified": True},
+        {"eliminated_team_id_non_null_count": 2},
+        {"request_date": "2026-08-15"},
+        {"timezone": ""},
+        {"ccode3": "ng"},
+        {"source_raw_size": MAX_RESPONSE_BYTES + 1},
+    ):
+        with pytest.raises(FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError):
+            dataclasses.replace(first, **changes)
 
     safety = dict(first.safety)
     safety["bet_authorized"] = True
@@ -363,7 +393,10 @@ def test_source_capability_and_all_downstream_authority_remain_unchanged() -> No
 
 def test_next_boundary_is_status_reason_semantics_preregistration_only() -> None:
     result = _assess_synthetic(11)
-    assert NEXT_REQUIRED_BOUNDARY == "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_STATUS_REASON_SEMANTICS_PROTOCOL"
+    assert (
+        NEXT_REQUIRED_BOUNDARY
+        == "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_STATUS_REASON_SEMANTICS_PROTOCOL"
+    )
     assert result.next_required_boundary == NEXT_REQUIRED_BOUNDARY
     assert result.status_reason_semantics_qualified is False
     assert result.final_result_semantics_qualified is False
