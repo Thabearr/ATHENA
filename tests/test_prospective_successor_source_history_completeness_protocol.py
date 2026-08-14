@@ -41,9 +41,9 @@ def test_protocol_is_exact_canonical_preregistered_evidence() -> None:
         protocol
     )
 
-    assert len(exact) == PROTOCOL_SIZE == 4145
+    assert len(exact) == PROTOCOL_SIZE == 4223
     assert hashlib.sha256(exact).hexdigest() == PROTOCOL_SHA256
-    assert PROTOCOL_SHA256 == "b8da8a64b5b4c689eeed7fbacb9a093a5ba7409387b6bf61db6a54d9773b96bd"
+    assert PROTOCOL_SHA256 == "9d16fcc79e9809a82ef154c75b8e263f782a4e1d4723b57cc216d893c88780ec"
     assert protocol.protocol_state == PROTOCOL_STATE
     assert protocol.protocol_state == "PRE_REGISTERED_NOT_EXECUTED_NO_SOURCE_HISTORY_QUALIFIED"
     assert protocol.next_required_boundary == NEXT_REQUIRED_BOUNDARY
@@ -145,7 +145,7 @@ def test_completeness_contract_forbids_target_team_only_elo_history() -> None:
         in COMPLETENESS_REQUIREMENTS
     )
     assert (
-        "COVER_EVERY_CALENDAR_DATE_FROM_INITIALIZATION_BOUNDARY_THROUGH_DAY_BEFORE_TARGET"
+        "COVER_EVERY_CALENDAR_DATE_FROM_INITIALIZATION_BOUNDARY_THROUGH_TARGET_SOURCE_LOCAL_DATE"
         in COMPLETENESS_REQUIREMENTS
     )
     assert (
@@ -157,6 +157,14 @@ def test_completeness_contract_forbids_target_team_only_elo_history() -> None:
 def test_adapter_contract_requires_observation_time_identity_and_final_score_semantics() -> None:
     assert (
         "ONE_FOTMOB_SOURCE_NAMESPACE_WITH_EXACT_SOURCE_FIXTURE_AND_TEAM_IDENTITIES"
+        in HISTORY_ADAPTER_REQUIREMENTS
+    )
+    assert (
+        "EXACT_KICKOFF_UTC_AND_EXPLICIT_SOURCE_LOCAL_TIME_BASIS"
+        in HISTORY_ADAPTER_REQUIREMENTS
+    )
+    assert (
+        "ONE_EXACT_REQUEST_TIMEZONE_AND_CCODE3_ACROSS_REQUIRED_DAILY_CAPTURES"
         in HISTORY_ADAPTER_REQUIREMENTS
     )
     assert (
