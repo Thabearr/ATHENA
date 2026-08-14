@@ -2,13 +2,12 @@
 
 ## Purpose
 
-PR #87 implements the additive structural layer pre-registered by PR #86.
+PR #87 implements the additive structural layer pre-registered by PR #86 while
+keeping the frozen PR #39 implementation unchanged.
 
-The frozen PR #39 schema is not edited. Instead, PR #87 accepts only the exact
-optional terminal/live fields registered in PR #86, validates their exact types,
-projects those fields away, and then re-runs the remaining payload through the
-unchanged PR #39 structural assessment. This keeps the original PR #39 contract
-as an independent base gate rather than silently widening it.
+The implementation accepts only the exact optional terminal/live fields frozen in
+PR #86, validates their structural domains, projects those extension fields away,
+and re-runs the remaining payload through the unchanged PR #39 assessment.
 
 Implementation state:
 
@@ -22,8 +21,9 @@ A successful assessment may report only:
 QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
 ```
 
-That status means only that the source capture conforms to the reviewed additive
-structural layer. It is not a football-semantic or betting-semantic qualification.
+That status means only that a payload conforms to the additive structural layer
+and the frozen PR #39 base contract. It is not final-result or settlement
+qualification.
 
 ## Exact ancestry
 
@@ -33,21 +33,22 @@ PR #87 starts from merged PR #86 main:
 11f34a1856d0cbb4b5f7a0b6b8c757fa8c07bbc9
 ```
 
-It binds the merged PR #86 protocol:
+It binds merged PR #86:
 
 ```text
-blob       71b2f1a8add05929835d469df94396375a115391
-SHA-256    6e2e0936023531ad9c0a87cde68eb0cf4c8753b27aaa8c001bcbd3fcb5daa225
-size       5639 bytes
+protocol blob  71b2f1a8add05929835d469df94396375a115391
+SHA-256        6e2e0936023531ad9c0a87cde68eb0cf4c8753b27aaa8c001bcbd3fcb5daa225
+size           5639 bytes
 ```
 
-and the unchanged PR #39 schema implementation:
+and the unchanged PR #39 implementation:
 
 ```text
-blob       4dfff0eb05335895c3ee0fcaa7b8da1299ea692f
+schema blob    4dfff0eb05335895c3ee0fcaa7b8da1299ea692f
 ```
 
-The source capability premise is also rechecked before every assessment:
+Before an assessment runs, the implementation also rechecks the reviewed source
+capability premise:
 
 ```text
 source                    fotmob_data_matches_reviewed_catalog
@@ -56,16 +57,16 @@ full_time_score           NOT_CAPTURED
 historical_coverage       UNKNOWN
 ```
 
-## Structural extension
+## PR #86 structural extension
 
-The implementation admits only these optional team fields:
+Only these optional team keys are admitted:
 
 ```text
 penScore
 redCards
 ```
 
-only these optional status fields:
+Only these optional status keys are admitted:
 
 ```text
 awarded
@@ -76,69 +77,90 @@ ongoing
 scoreStr
 ```
 
-and only this optional `status.halfs` field:
+Only this optional `status.halfs` key is admitted:
 
 ```text
 secondHalfStarted
 ```
 
-No extra key is admitted at top-level, league, match, team, status, halfs, or
-inside `liveTime`.
+The implementation enforces the exact PR #86 domains: non-negative exact
+integers for `penScore`, `redCards` and both status red-card counts; exact bools
+for `awarded` and `ongoing`; exact strings for `scoreStr` and
+`secondHalfStarted`; and an exact seven-key `liveTime` object with non-negative
+integer `addedTime`, `basePeriod`, `maxTime` and exact-string `long`, `longKey`,
+`short`, `shortKey`. Null and coercion are rejected.
 
-The exact PR #86 typing rules are enforced:
+Unknown extension keys fail closed.
 
-- `penScore`, `redCards`, and both status red-card counts: exact non-negative
-  integers, with bool rejected as an integer;
-- `awarded` and `ongoing`: exact bool;
-- `scoreStr` and `secondHalfStarted`: exact strings;
-- `liveTime`: exact object with exactly seven keys;
-- `liveTime.addedTime`, `basePeriod`, `maxTime`: exact non-negative integers;
-- `liveTime.long`, `longKey`, `short`, `shortKey`: exact strings;
-- null is rejected for every extension field.
+## Keeping PR #39 authoritative
 
-No coercion is performed.
-
-## How PR #39 remains authoritative
-
-PR #87 first validates the original PR #38 raw-byte lineage and strict JSON
-parsing. It then validates the extension fields and builds a deterministic
+PR #87 validates the original PR #38 raw byte lineage first. It uses PR #39's
+strict JSON parser, validates only the additive PR #86 fields, then creates an
 in-memory projection containing only the frozen PR #39 key shape.
 
-The projection is paired with an internal derived manifest containing the
-projection's own byte size and SHA-256. That internal object is used only to run
-the unchanged `assess_fotmob_data_matches_schema` function.
+The projection receives a derived verification manifest with its own size and
+SHA-256 and with `network_acquisition_performed=False`. It is not represented as
+a new provider capture. The resulting PR #87 assessment retains the original
+source manifest SHA, raw SHA, size, observation time and request identity.
 
-The final PR #87 assessment continues to record the **original source capture**
-manifest SHA, raw SHA, raw size, request identity, and observation time. The
-derived projection is not represented as a new source capture and creates no new
-source lineage.
+The unchanged PR #39 assessment therefore remains the final base structural gate
+for league/match identity, duplicate IDs, kickoff/timeTS consistency, base team
+and status fields, reason shape, and every other PR #39 invariant.
 
-This means PR #87 still inherits PR #39 checks for:
+## Adversarial execution against the exact PR #85 pair
 
-- exact top-level `date` / `leagues`;
-- league required/allowed keys and field types;
-- exact match keys;
-- duplicate match IDs;
-- league linkage;
-- status ID, time, timeTS, tournament-stage and eliminated-team constraints;
-- base home/away team identity and score scalar types;
-- base status shape and reason shape;
-- source kickoff UTC parsing;
-- `timeTS` / kickoff agreement;
-- kickoff UTC date / request-date agreement.
+The first implementation attempt exposed a second, independent structural issue
+that had not been part of PR #86's pre-registration.
 
-A base failure is surfaced as:
+After the registered terminal/live extra keys are removed, both preserved PR #85
+captures still fail the frozen PR #39 base contract because at least one match has
+a **non-null `eliminatedTeamId`**. PR #39 already includes this key but freezes its
+V1 value domain to null only.
+
+This is not another unknown key and it is not covered by the PR #86 terminal-key
+extension. It is a **base-field value-domain change**. ATHENA therefore does not
+silently broaden PR #39 after seeing it.
+
+The implementation reports this as:
 
 ```text
 BLOCKED_BASE_PR39_CONTRACT_DRIFT
 ```
 
-The implementation does not hide a PR #39 failure merely because the additive
-terminal schema is valid.
+with an explicit count of non-null `eliminatedTeamId` values in the projected
+capture.
+
+The exact committed PR #85 captures remain:
+
+```text
+20260814/a18e843fabe5aca74846b160
+20260814/e28d9ce746c1ef9102995517
+```
+
+Both retain their original source raw and manifest lineage. The test suite proves
+that each reaches this fail-closed base-domain blocker rather than being promoted
+through it.
+
+## Positive implementation seam
+
+The implementation is also exercised on a deterministic PR #39-compatible
+synthetic fixture where `eliminatedTeamId=None` and all pre-registered PR #86
+extension fields are present with valid types.
+
+That seam reaches:
+
+```text
+QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
+```
+
+while keeping `reason_semantics_qualified=False`,
+`final_result_semantics_qualified=False`, and every authority/safety value exact
+false. This distinguishes a functioning structural extension from the separate
+real-evidence base-domain blocker.
 
 ## Frozen failure vocabulary
 
-PR #87 uses only the status vocabulary pre-registered in PR #86:
+PR #87 uses only the PR #86 status vocabulary:
 
 ```text
 QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
@@ -149,84 +171,50 @@ BLOCKED_EXTENSION_TYPE_OR_NULLABILITY_MISMATCH
 BLOCKED_LIVE_TIME_SHAPE_MISMATCH
 ```
 
-Unknown extension keys, null/type mismatch, live-time shape mismatch, frozen-base
-drift, and upstream ancestry drift therefore remain explicit fail-closed outcomes.
-
-## Revalidation of the PR #85 evidence pair
-
-The tests execute the implementation against both exact committed PR #85
-captures:
-
-```text
-20260814/a18e843fabe5aca74846b160
-20260814/e28d9ce746c1ef9102995517
-```
-
-Each capture contains 183 match records and each now passes the additive
-structural extension layer.
-
-The test suite separately confirms that the unchanged PR #39 implementation still
-rejects those raw terminal snapshots directly. This is intentional: PR #87 is a
-separate additive layer, not a mutation of PR #39.
-
-Structural qualification does **not** clear the PR #83 reason gate.
+No new permissive status is invented to bypass the unexpected
+`eliminatedTeamId` evidence.
 
 ## Semantic boundary
 
-PR #87 does not interpret any of the newly admitted field names.
-
-It does not qualify:
+PR #87 does not interpret any terminal/live field name and does not qualify:
 
 - `status.reason`;
 - `FT` or penalties reason labels;
-- regulation-time result;
-- extra-time result;
-- penalty-shootout result;
+- `eliminatedTeamId` meaning;
+- regulation-time, extra-time or penalty-shootout result;
 - awarded-match meaning;
-- red-card meaning;
-- live-time meaning;
-- score-string meaning;
+- red-card or live-time meaning;
 - bookmaker settlement;
 - final-result semantics.
 
-Therefore the reviewed source capability remains:
+The independent PR #83 `status.reason` gate is therefore still unresolved, but it
+is **not yet the immediate next boundary**. The newly observed PR #39 base-domain
+issue must be reviewed first.
+
+`full_time_score` remains `NOT_CAPTURED` and `historical_coverage` remains
+`UNKNOWN`.
+
+## Next required boundary
 
 ```text
-full_time_score = NOT_CAPTURED
-historical_coverage = UNKNOWN
+PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_ELIMINATED_TEAM_ID_VALUE_DOMAIN_EXTENSION
 ```
 
-and the next boundary is:
+That next PR must freeze exactly which non-null `eliminatedTeamId` values are
+structurally admissible, their type/nullability rules, evidence basis, fail-closed
+outcomes and semantic exclusions before any implementation may broaden the
+frozen null-only PR #39 V1 domain.
 
-```text
-PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_STATUS_REASON_SEMANTICS
-```
-
-That next step must freeze the exact evidence and interpretation rules for
-`status.reason` before the preserved PR #85 pair can be reconsidered under the
-PR #83 final-result semantics protocol.
+Only after that separate boundary is implemented and the PR #85 pair can pass the
+complete structural chain should ATHENA proceed to the independent
+`status.reason` semantics gate.
 
 ## Safety
 
-The implementation performs no network acquisition. It imports no network
-client, provider/worker path, score matrix, probability, pricing, selection,
-SportyBet, production, or betting module.
+PR #87 performs no network acquisition and changes no PR #39, source-capability,
+model, probability, pricing, selection, production or betting file.
 
-A structural success does not authorize:
-
-- PR #39 mutation;
-- source capability promotion;
-- final-result semantics;
-- source-history completeness;
-- PR #80 constructor input;
-- successor-model execution;
-- expected-goals production use;
-- score-matrix or probability inference;
-- calibration for production;
-- pricing;
-- market activation;
-- selection;
-- production;
-- betting.
-
-All safety/authority values remain exact `false`.
+Structural success creates no authority for source capability promotion,
+source-history completeness, PR #80 input, successor execution, expected goals,
+score matrix, probability/calibration, pricing, market activation, selection,
+production or betting. All such values remain exact `false`.
