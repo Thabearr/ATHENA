@@ -40,10 +40,10 @@ def test_assessment_is_exact_canonical_fail_closed_evidence() -> None:
     assert value.assessment_executed is True
     assert value.history_adapter_materialized is False
     assert value.history_rows_materialized == 0
-    assert len(exact) == ASSESSMENT_SIZE == 3763
+    assert len(exact) == ASSESSMENT_SIZE == 3766
     assert hashlib.sha256(exact).hexdigest() == ASSESSMENT_SHA256
     assert ASSESSMENT_SHA256 == (
-        "de8f7398c588a210a9073e23ff67c81b9d8c38b6afc5d5b3c5e72b0c71f0a231"
+        "450031e15fbb5878ee87ff7def69e549d0ec47fa94fc80dcb56e0b005408e807"
     )
     assert set(value.safety.values()) == {False}
 
@@ -56,7 +56,7 @@ def test_assessment_binds_exact_pr81_and_reviewed_source_blobs() -> None:
         ROOT / "domain" / "fotmob_data_matches_schema.py": "4dfff0eb05335895c3ee0fcaa7b8da1299ea692f",
         ROOT / "domain" / "fotmob_reviewed_match_details_capture.py": "22e9b8c111abc38dae043b3274a4b8b2c7b90047",
     }
-    assert {_git_blob_oid(path) for path in expected} == set(expected.values())
+    assert {path: _git_blob_oid(path) for path in expected} == expected
 
     value = build_prospective_successor_source_history_completeness_assessment()
     assert value.repository_main_sha == "aeac6c3b54c5c39c73f6aadf27a3cd012475a4ed"
@@ -137,11 +137,11 @@ def test_later_corpus_specific_gates_are_not_falsely_claimed_as_observed_failure
     )
 
 
-def test_smallest_missing_boundary_is_post_match_final_result_evidence() -> None:
+def test_smallest_missing_boundary_targets_existing_data_matches_score_ambiguity() -> None:
     value = build_prospective_successor_source_history_completeness_assessment()
     assert value.smallest_missing_reviewed_boundary == SMALLEST_MISSING_REVIEWED_BOUNDARY
     assert SMALLEST_MISSING_REVIEWED_BOUNDARY == (
-        "BUILD_REVIEWED_FOTMOB_POST_MATCH_FINAL_RESULT_EVIDENCE_BOUNDARY"
+        "BUILD_REVIEWED_FOTMOB_DATA_MATCHES_FINAL_RESULT_SEMANTICS_BOUNDARY"
     )
 
 
@@ -159,7 +159,7 @@ def test_assessment_rejects_status_materialization_and_safety_mutations() -> Non
 
     with pytest.raises(
         ProspectiveSuccessorSourceHistoryCompletenessAssessmentError,
-        match="differs from frozen PR82 result",
+        match="history_adapter_materialized must remain exact False",
     ):
         dataclasses.replace(value, history_adapter_materialized=True)
 
@@ -170,6 +170,15 @@ def test_assessment_rejects_status_materialization_and_safety_mutations() -> Non
         match="differs from frozen PR82 result",
     ):
         dataclasses.replace(value, safety=safety)
+
+
+def test_assessment_rejects_malformed_status_types_fail_closed() -> None:
+    value = build_prospective_successor_source_history_completeness_assessment()
+    with pytest.raises(
+        ProspectiveSuccessorSourceHistoryCompletenessAssessmentError,
+        match="primary_status must be an exact PR81 qualification status",
+    ):
+        dataclasses.replace(value, primary_status="BLOCKED_CURRENT_REVIEWED_SOURCE_NO_FINAL_SCORE_SEMANTICS")
 
 
 def test_assessment_rejects_mutated_pr81_identity(monkeypatch) -> None:
