@@ -1,9 +1,9 @@
 """Execute PR83 against ATHENA's currently reviewed FotMob evidence inventory.
 
 This boundary is deliberately evidence-limited.  It does not acquire new network
-material.  It records that the only committed/reviewed data-matches evidence
-known by the PR39 lineage is insufficient to satisfy PR83's two distinct
-post-finish capture requirement, so final-result semantics remain unqualified.
+material.  It records that the committed/reviewed data-matches evidence known
+by the PR39 lineage cannot establish a PR83-eligible two-capture post-finish
+pair, so final-result semantics remain unqualified.
 """
 
 from __future__ import annotations
@@ -41,15 +41,17 @@ CANDIDATE_SOURCE_KEY = "fotmob_data_matches_reviewed_catalog"
 
 # PR39's reviewed schema documentation records exactly one reviewed PR38 capture.
 # Its raw body remains deliberately ignored research state rather than committed
-# fixture-level evidence.  PR39 emitted metadata only and explicitly stated that
-# the capture contained no reviewed started/finished evidence establishing score
-# meaning.
+# fixture-level evidence.  PR39 emitted metadata only and did not establish a
+# PR83-eligible finished observation.  The exact number of post-finish captures
+# cannot be reconstructed from committed metadata, so it remains UNKNOWN rather
+# than being guessed as zero or one.
 REVIEWED_INVENTORY_BASIS = (
     "PR39_DOCUMENTED_SINGLE_REVIEWED_DATA_MATCHES_CAPTURE_METADATA_ONLY"
 )
 REVIEWED_CAPTURE_COUNT = 1
-REVIEWED_POST_FINISH_CAPTURE_COUNT = 0
-REQUIRED_POST_FINISH_CAPTURE_COUNT = 2
+REVIEWED_POST_FINISH_CAPTURE_COUNT = "UNKNOWN_FROM_COMMITTED_METADATA_ONLY"
+REVIEWED_PR83_ELIGIBLE_CAPTURE_PAIR_COUNT = 0
+REQUIRED_DISTINCT_POST_FINISH_CAPTURES_PER_PAIR = 2
 REVIEWED_CAPTURE_REQUEST_DATE = "20260815"
 REVIEWED_CAPTURE_RAW_SHA256 = (
     "6eabfb341d29f3b5db0833972a9aaf7dbd97df150ccecde09f6f67396bc73b27"
@@ -93,8 +95,8 @@ _SAFETY_KEYS = frozenset(
     }
 )
 
-VALIDATION_SHA256 = "e83c7ae340348db5cf0830da1db47a23a20b95690267818e4426726dccfd61a6"
-VALIDATION_SIZE = 2394
+VALIDATION_SHA256 = "b8ac94402677c8d539ac365e348fd8415d3963b6511a0db5d0564f38737f1b9a"
+VALIDATION_SIZE = 2490
 
 
 class FotMobDataMatchesFinalResultSemanticsValidationError(ValueError):
@@ -178,7 +180,12 @@ def _payload() -> dict[str, Any]:
         "reviewed_inventory_basis": REVIEWED_INVENTORY_BASIS,
         "reviewed_capture_count": REVIEWED_CAPTURE_COUNT,
         "reviewed_post_finish_capture_count": REVIEWED_POST_FINISH_CAPTURE_COUNT,
-        "required_post_finish_capture_count": REQUIRED_POST_FINISH_CAPTURE_COUNT,
+        "reviewed_pr83_eligible_capture_pair_count": (
+            REVIEWED_PR83_ELIGIBLE_CAPTURE_PAIR_COUNT
+        ),
+        "required_distinct_post_finish_captures_per_pair": (
+            REQUIRED_DISTINCT_POST_FINISH_CAPTURES_PER_PAIR
+        ),
         "reviewed_capture_request_date": REVIEWED_CAPTURE_REQUEST_DATE,
         "reviewed_capture_raw_sha256": REVIEWED_CAPTURE_RAW_SHA256,
         "reviewed_capture_raw_size": REVIEWED_CAPTURE_RAW_SIZE,
@@ -212,8 +219,9 @@ class FotMobDataMatchesFinalResultSemanticsValidation:
     candidate_source_key: str
     reviewed_inventory_basis: str
     reviewed_capture_count: int
-    reviewed_post_finish_capture_count: int
-    required_post_finish_capture_count: int
+    reviewed_post_finish_capture_count: str
+    reviewed_pr83_eligible_capture_pair_count: int
+    required_distinct_post_finish_captures_per_pair: int
     reviewed_capture_request_date: str
     reviewed_capture_raw_sha256: str
     reviewed_capture_raw_size: int
@@ -247,7 +255,12 @@ class FotMobDataMatchesFinalResultSemanticsValidation:
             "reviewed_inventory_basis": self.reviewed_inventory_basis,
             "reviewed_capture_count": self.reviewed_capture_count,
             "reviewed_post_finish_capture_count": self.reviewed_post_finish_capture_count,
-            "required_post_finish_capture_count": self.required_post_finish_capture_count,
+            "reviewed_pr83_eligible_capture_pair_count": (
+                self.reviewed_pr83_eligible_capture_pair_count
+            ),
+            "required_distinct_post_finish_captures_per_pair": (
+                self.required_distinct_post_finish_captures_per_pair
+            ),
             "reviewed_capture_request_date": self.reviewed_capture_request_date,
             "reviewed_capture_raw_sha256": self.reviewed_capture_raw_sha256,
             "reviewed_capture_raw_size": self.reviewed_capture_raw_size,
@@ -285,7 +298,12 @@ def build_fotmob_data_matches_final_result_semantics_validation(
         reviewed_inventory_basis=payload["reviewed_inventory_basis"],
         reviewed_capture_count=payload["reviewed_capture_count"],
         reviewed_post_finish_capture_count=payload["reviewed_post_finish_capture_count"],
-        required_post_finish_capture_count=payload["required_post_finish_capture_count"],
+        reviewed_pr83_eligible_capture_pair_count=payload[
+            "reviewed_pr83_eligible_capture_pair_count"
+        ],
+        required_distinct_post_finish_captures_per_pair=payload[
+            "required_distinct_post_finish_captures_per_pair"
+        ],
         reviewed_capture_request_date=payload["reviewed_capture_request_date"],
         reviewed_capture_raw_sha256=payload["reviewed_capture_raw_sha256"],
         reviewed_capture_raw_size=payload["reviewed_capture_raw_size"],
