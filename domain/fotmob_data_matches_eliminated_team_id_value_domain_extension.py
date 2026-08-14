@@ -1,11 +1,10 @@
 """Implement the reviewed FotMob ``eliminatedTeamId`` structural value domain.
 
 PR #89 implements only the value-domain widening pre-registered by PR #88.
-PR #39 and PR #87 remain frozen and unchanged.  The implementation validates
-``eliminatedTeamId`` as ``null`` or an exact positive integer, projects accepted
-non-null values to ``null`` only for the purpose of re-running the frozen PR #87
-structural chain, and preserves the original source-capture lineage in its own
-assessment.  No football semantics or downstream authority is created here.
+PR #39 and PR #87 remain frozen and unchanged. Accepted non-null values are
+projected to ``null`` only so the unchanged PR #87 structural chain can be
+re-run; the PR #89 receipt remains bound to the original source capture.
+No football semantics or downstream authority is created here.
 """
 
 from __future__ import annotations
@@ -31,6 +30,12 @@ from domain.fotmob_data_matches_capture import (
     serialize_utc,
     sha256_bytes,
     sha256_data_matches_capture_manifest,
+)
+from domain.fotmob_data_matches_probe import (
+    FotMobDataMatchesProbeError,
+    validate_ccode3,
+    validate_request_date,
+    validate_timezone,
 )
 from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY_REGISTRY
 
@@ -106,7 +111,7 @@ if tuple(item.value for item in EliminatedTeamIdValueDomainStatus) != pr88_proto
 
 
 class FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError(ValueError):
-    """Raised when the PR #88 value-domain implementation fails closed."""
+    """Raised when the frozen PR #88 value-domain implementation fails closed."""
 
     def __init__(self, status: EliminatedTeamIdValueDomainStatus, message: str) -> None:
         if not isinstance(status, EliminatedTeamIdValueDomainStatus):
@@ -171,6 +176,24 @@ def _utc(value: Any, label: str) -> datetime.datetime:
         ) from exc
 
 
+def _request_identity(
+    request_date: Any,
+    timezone: Any,
+    ccode3: Any,
+) -> tuple[str, str, str]:
+    try:
+        return (
+            validate_request_date(request_date),
+            validate_timezone(timezone),
+            validate_ccode3(ccode3),
+        )
+    except FotMobDataMatchesProbeError as exc:
+        raise _error(
+            EliminatedTeamIdValueDomainStatus.BLOCKED_PR85_EVIDENCE_ANCESTRY_DRIFT,
+            "assessment request identity is invalid",
+        ) from exc
+
+
 def _verify_frozen_ancestry() -> None:
     if pr88_protocol.PR39_SCHEMA_BLOB_SHA != PR39_SCHEMA_BLOB_SHA:
         raise _error(
@@ -197,15 +220,20 @@ def _verify_frozen_ancestry() -> None:
         )
     try:
         protocol = pr88_protocol.build_fotmob_data_matches_eliminated_team_id_value_domain_protocol()
-        exact = pr88_protocol.canonical_fotmob_data_matches_eliminated_team_id_value_domain_protocol_bytes(
-            protocol
+        exact = (
+            pr88_protocol.canonical_fotmob_data_matches_eliminated_team_id_value_domain_protocol_bytes(
+                protocol
+            )
         )
     except Exception as exc:
         raise _error(
             EliminatedTeamIdValueDomainStatus.BLOCKED_PR85_EVIDENCE_ANCESTRY_DRIFT,
             "PR88 protocol or its frozen evidence ancestry no longer revalidates",
         ) from exc
-    if hashlib.sha256(exact).hexdigest() != PR88_PROTOCOL_SHA256 or len(exact) != PR88_PROTOCOL_SIZE:
+    if (
+        hashlib.sha256(exact).hexdigest() != PR88_PROTOCOL_SHA256
+        or len(exact) != PR88_PROTOCOL_SIZE
+    ):
         raise _error(
             EliminatedTeamIdValueDomainStatus.BLOCKED_PR85_EVIDENCE_ANCESTRY_DRIFT,
             "PR88 canonical protocol identity changed",
@@ -222,6 +250,7 @@ def _verify_frozen_ancestry() -> None:
             EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
             "PR87 next boundary changed",
         )
+
     capability = SOURCE_CAPABILITY_REGISTRY.get(CANDIDATE_SOURCE_KEY)
     if capability is None:
         raise _error(
@@ -339,6 +368,7 @@ def _validate_and_project_eliminated_team_id(
                     EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                     f"{label} is missing from the frozen PR39 match contract",
                 )
+
             total_count += 1
             value = source_match["eliminatedTeamId"]
             if value is None:
@@ -447,11 +477,15 @@ class FotMobDataMatchesEliminatedTeamIdValueDomainAssessment:
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "implementation_state mismatch",
             )
-        if self.status is not EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN:
+        if (
+            self.status
+            is not EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN
+        ):
             raise _error(
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "successful assessment must carry the exact qualified structural status",
             )
+
         for label, value in (
             ("source_capture_manifest_sha256", self.source_capture_manifest_sha256),
             ("source_raw_sha256", self.source_raw_sha256),
@@ -459,16 +493,29 @@ class FotMobDataMatchesEliminatedTeamIdValueDomainAssessment:
             ("pr87_assessment_sha256", self.pr87_assessment_sha256),
         ):
             _sha256(value, label)
-        for label, value in (
-            ("source_raw_size", self.source_raw_size),
-            ("pr87_projection_raw_size", self.pr87_projection_raw_size),
-            ("pr87_assessment_size", self.pr87_assessment_size),
+
+        if (
+            type(self.source_raw_size) is not int
+            or not 0 < self.source_raw_size <= MAX_RESPONSE_BYTES
         ):
-            if type(value) is not int or value <= 0:
-                raise _error(
-                    EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
-                    f"{label} must be an exact positive integer",
-                )
+            raise _error(
+                EliminatedTeamIdValueDomainStatus.BLOCKED_PR85_EVIDENCE_ANCESTRY_DRIFT,
+                "source_raw_size must be an exact positive integer within capture limit",
+            )
+        if (
+            type(self.pr87_projection_raw_size) is not int
+            or not 0 < self.pr87_projection_raw_size <= MAX_RESPONSE_BYTES
+        ):
+            raise _error(
+                EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
+                "pr87_projection_raw_size must be an exact positive integer within capture limit",
+            )
+        if type(self.pr87_assessment_size) is not int or self.pr87_assessment_size <= 0:
+            raise _error(
+                EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
+                "pr87_assessment_size must be an exact positive integer",
+            )
+
         for label, value in (
             ("eliminated_team_id_occurrence_count", self.eliminated_team_id_occurrence_count),
             ("eliminated_team_id_null_count", self.eliminated_team_id_null_count),
@@ -480,7 +527,10 @@ class FotMobDataMatchesEliminatedTeamIdValueDomainAssessment:
                     EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                     f"{label} must be an exact non-negative integer",
                 )
-        if self.eliminated_team_id_null_count + self.eliminated_team_id_non_null_count != self.eliminated_team_id_occurrence_count:
+        if (
+            self.eliminated_team_id_null_count + self.eliminated_team_id_non_null_count
+            != self.eliminated_team_id_occurrence_count
+        ):
             raise _error(
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "eliminatedTeamId occurrence counts disagree",
@@ -490,6 +540,7 @@ class FotMobDataMatchesEliminatedTeamIdValueDomainAssessment:
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "eliminatedTeamId occurrence count must equal the PR87 match count",
             )
+
         if (
             type(self.status_reason_semantics_qualified) is not bool
             or self.status_reason_semantics_qualified
@@ -498,7 +549,10 @@ class FotMobDataMatchesEliminatedTeamIdValueDomainAssessment:
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "status.reason semantics must remain exact False",
             )
-        if type(self.final_result_semantics_qualified) is not bool or self.final_result_semantics_qualified:
+        if (
+            type(self.final_result_semantics_qualified) is not bool
+            or self.final_result_semantics_qualified
+        ):
             raise _error(
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "final-result semantics must remain exact False",
@@ -508,8 +562,17 @@ class FotMobDataMatchesEliminatedTeamIdValueDomainAssessment:
                 EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
                 "next boundary mismatch",
             )
+
         observed_at = _utc(self.source_observed_at, "source_observed_at")
+        request_date, timezone, ccode3 = _request_identity(
+            self.request_date,
+            self.timezone,
+            self.ccode3,
+        )
         object.__setattr__(self, "source_observed_at", observed_at)
+        object.__setattr__(self, "request_date", request_date)
+        object.__setattr__(self, "timezone", timezone)
+        object.__setattr__(self, "ccode3", ccode3)
         object.__setattr__(self, "safety", _checked_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
@@ -564,12 +627,16 @@ def assess_fotmob_data_matches_eliminated_team_id_value_domain(
     projected_manifest = _projected_manifest(manifest, projected_raw)
 
     try:
-        pr87_assessment = pr87_implementation.assess_fotmob_data_matches_terminal_state_schema_extension(
-            projected_raw,
-            projected_manifest,
+        pr87_assessment = (
+            pr87_implementation.assess_fotmob_data_matches_terminal_state_schema_extension(
+                projected_raw,
+                projected_manifest,
+            )
         )
-        pr87_bytes = pr87_implementation.canonical_fotmob_data_matches_terminal_state_schema_extension_assessment_bytes(
-            pr87_assessment
+        pr87_bytes = (
+            pr87_implementation.canonical_fotmob_data_matches_terminal_state_schema_extension_assessment_bytes(
+                pr87_assessment
+            )
         )
     except pr87_implementation.FotMobDataMatchesTerminalStateSchemaExtensionError as exc:
         raise _error(
@@ -578,7 +645,10 @@ def assess_fotmob_data_matches_eliminated_team_id_value_domain(
             f"{exc.status.value}",
         ) from exc
 
-    if pr87_assessment.status is not pr87_implementation.TerminalStateSchemaExtensionStatus.QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION:
+    if (
+        pr87_assessment.status
+        is not pr87_implementation.TerminalStateSchemaExtensionStatus.QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
+    ):
         raise _error(
             EliminatedTeamIdValueDomainStatus.BLOCKED_PR87_IMPLEMENTATION_ANCESTRY_DRIFT,
             "frozen PR87 structural chain did not return its qualified status",
