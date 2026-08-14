@@ -72,7 +72,7 @@ _NON_REACHED_STATUSES = (
 )
 
 SMALLEST_MISSING_REVIEWED_BOUNDARY = (
-    "BUILD_REVIEWED_FOTMOB_POST_MATCH_FINAL_RESULT_EVIDENCE_BOUNDARY"
+    "BUILD_REVIEWED_FOTMOB_DATA_MATCHES_FINAL_RESULT_SEMANTICS_BOUNDARY"
 )
 
 _SAFETY_KEYS = frozenset(
@@ -96,8 +96,8 @@ _SAFETY_KEYS = frozenset(
     }
 )
 
-ASSESSMENT_SHA256 = "de8f7398c588a210a9073e23ff67c81b9d8c38b6afc5d5b3c5e72b0c71f0a231"
-ASSESSMENT_SIZE = 3763
+ASSESSMENT_SHA256 = "450031e15fbb5878ee87ff7def69e549d0ec47fa94fc80dcb56e0b005408e807"
+ASSESSMENT_SIZE = 3766
 
 
 class ProspectiveSuccessorSourceHistoryCompletenessAssessmentError(ValueError):
@@ -146,10 +146,8 @@ class SourceHistoryGateResult:
             raise _error("gate_id must be exact non-empty text")
         if self.outcome not in {"BLOCKED", "UNPROVEN", "NOT_REACHED"}:
             raise _error("gate outcome is outside the frozen PR82 vocabulary")
-        if self.status is not None and not isinstance(
-            self.status, SourceHistoryQualificationStatus
-        ):
-            raise _error("gate status must be a PR81 qualification status or None")
+        if self.status is not None and type(self.status) is not SourceHistoryQualificationStatus:
+            raise _error("gate status must be an exact PR81 qualification status or None")
         if self.outcome == "NOT_REACHED" and self.status is not None:
             raise _error("not-reached gates must not claim a blocker was observed")
         if self.outcome != "NOT_REACHED" and self.status is None:
@@ -295,6 +293,29 @@ class ProspectiveSuccessorSourceHistoryCompletenessAssessment:
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
+        if type(self.primary_status) is not SourceHistoryQualificationStatus:
+            raise _error("primary_status must be an exact PR81 qualification status")
+        if type(self.blocking_statuses) is not tuple or any(
+            type(item) is not SourceHistoryQualificationStatus for item in self.blocking_statuses
+        ):
+            raise _error("blocking_statuses must be an exact immutable PR81 status tuple")
+        if type(self.non_reached_statuses) is not tuple or any(
+            type(item) is not SourceHistoryQualificationStatus for item in self.non_reached_statuses
+        ):
+            raise _error("non_reached_statuses must be an exact immutable PR81 status tuple")
+        if type(self.gate_results) is not tuple or any(
+            type(item) is not SourceHistoryGateResult for item in self.gate_results
+        ):
+            raise _error("gate_results must be an exact immutable PR82 gate tuple")
+        if type(self.assessment_executed) is not bool or self.assessment_executed is not True:
+            raise _error("assessment_executed must remain exact True")
+        if (
+            type(self.history_adapter_materialized) is not bool
+            or self.history_adapter_materialized is not False
+        ):
+            raise _error("history_adapter_materialized must remain exact False")
+        if type(self.history_rows_materialized) is not int or self.history_rows_materialized != 0:
+            raise _error("history_rows_materialized must remain exact zero")
         if self.to_dict() != _payload():
             raise _error("source-history completeness assessment differs from frozen PR82 result")
         object.__setattr__(self, "source_blob_shas", types.MappingProxyType(dict(_SOURCE_BLOBS)))
