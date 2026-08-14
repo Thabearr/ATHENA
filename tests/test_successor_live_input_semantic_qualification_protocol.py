@@ -41,8 +41,8 @@ PR77_RECEIPT_PATH = Path(
     "artifacts/research-manifests/"
     "historical-expected-goals-successor-robustness-real-corpus-receipt-v1.json"
 )
-EXPECTED_PROTOCOL_SHA256 = "a8716a9c2edae97dc5e2b904265cecc98254485f830673b341dd063883358177"
-EXPECTED_PROTOCOL_SIZE = 4664
+EXPECTED_PROTOCOL_SHA256 = "97a47d431ce57468598b17fcb24e9e0e9a41fa26c80ff1f4df9e2e611107ed7c"
+EXPECTED_PROTOCOL_SIZE = 4904
 
 
 def _protocol():
@@ -81,7 +81,17 @@ def test_protocol_identity_canonical_hash_and_size_are_frozen() -> None:
     assert hashlib.sha256(raw).hexdigest() == EXPECTED_PROTOCOL_SHA256
     assert sha256_successor_live_input_semantic_qualification_protocol(protocol) == EXPECTED_PROTOCOL_SHA256
     assert raw.endswith(b"\n") and not raw.endswith(b"\n\n")
-    assert raw == (json.dumps(protocol.to_dict(), ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+    expected = (
+        json.dumps(
+            protocol.to_dict(),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    assert raw == expected
 
 
 def test_successor_predictor_set_order_and_transforms_are_exact() -> None:
@@ -124,6 +134,7 @@ def test_historical_fatigue_semantics_are_exact_and_unproven_live() -> None:
     protocol = _protocol()
     fatigue = protocol.fatigue_semantics
     assert fatigue.chronology == "MOST_RECENT_STRICTLY_PRIOR_FIXTURE_PER_TEAM"
+    assert fatigue.rest_day_measure == "DATETIME_DELTA_DAYS_INTEGER_COMPONENT"
     assert fatigue.orientation == "HOME_REST_DAYS_MINUS_AWAY_REST_DAYS"
     assert fatigue.severe_threshold_days_exclusive == -2
     assert fatigue.mild_threshold_days_exclusive == 0
@@ -134,10 +145,12 @@ def test_historical_fatigue_semantics_are_exact_and_unproven_live() -> None:
 
 def test_historical_elo_semantics_are_exact_and_assumption_is_preserved() -> None:
     elo = _protocol().elo_semantics
-    assert elo.chronology == "SOURCE_LOCAL_KICKOFF_ASC_PREMATCH_STATE_ONLY"
+    assert elo.chronology == "SOURCE_LOCAL_KICKOFF_ASC_THEN_FIXTURE_IDENTIFIER_ASC_PREMATCH_STATE_ONLY"
     assert elo.initial_overall_rating == 1500
     assert elo.home_advantage_points == 50
     assert elo.logistic_divisor == 400.0
+    assert elo.home_expected_score_formula == "1/(1+10**((away_rating-(home_rating+50))/400))"
+    assert elo.away_expected_score_formula == "1/(1+10**((home_rating-away_rating)/400))"
     assert (elo.observed_score_win, elo.observed_score_draw, elo.observed_score_loss) == (1.0, 0.5, 0.0)
     assert elo.k_schedule == ((20, 32), (50, 24), (None, 16))
     assert elo.update_rule == "int(old_overall+K*(actual_score-expected_score))"
@@ -156,6 +169,11 @@ def test_qualification_vocabulary_distinguishes_unavailable_provenance_and_misma
     }
     assert protocol.aggregate_role == AGGREGATE_ROLE
     assert "NEVER_MODEL_OR_PRODUCTION_AUTHORIZATION" in protocol.aggregate_role
+    with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
+        dataclasses.replace(
+            protocol,
+            qualification_statuses=protocol.qualification_statuses + ("APPROVED",),
+        )
 
 
 def test_available_or_equal_numeric_value_never_implies_semantic_qualification() -> None:
@@ -169,6 +187,10 @@ def test_available_or_equal_numeric_value_never_implies_semantic_qualification()
     assert "SAME_CURRENT_VALUE" in requirements.insufficient_proofs
     assert "PROVIDER_LABEL_ELO_ONLY" in requirements.insufficient_proofs
     assert "FATIGUE_VALUE_MATCH_WITHOUT_DERIVATION_PROOF" in requirements.insufficient_proofs
+    with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
+        dataclasses.replace(requirements, pr31_available_implies_qualified=True)
+    with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
+        dataclasses.replace(requirements, equal_numeric_value_implies_qualified=True)
 
 
 def test_protocol_is_result_free_and_every_safety_flag_is_false() -> None:
@@ -195,14 +217,23 @@ def test_protocol_is_result_free_and_every_safety_flag_is_false() -> None:
 def test_revalidator_accepts_only_exact_protocol_and_exact_bytes() -> None:
     protocol = _protocol()
     raw = canonical_successor_live_input_semantic_qualification_protocol_bytes(protocol)
-    rebuilt = revalidate_successor_live_input_semantic_qualification_protocol(protocol=protocol, protocol_bytes=raw)
+    rebuilt = revalidate_successor_live_input_semantic_qualification_protocol(
+        protocol=protocol,
+        protocol_bytes=raw,
+    )
     assert rebuilt == protocol
     mutated = bytearray(raw)
     mutated[-2] = ord(" ") if mutated[-2] != ord(" ") else ord("\t")
     with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
-        revalidate_successor_live_input_semantic_qualification_protocol(protocol=protocol, protocol_bytes=bytes(mutated))
+        revalidate_successor_live_input_semantic_qualification_protocol(
+            protocol=protocol,
+            protocol_bytes=bytes(mutated),
+        )
     with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
-        revalidate_successor_live_input_semantic_qualification_protocol(protocol=protocol, protocol_bytes=bytearray(raw))  # type: ignore[arg-type]
+        revalidate_successor_live_input_semantic_qualification_protocol(
+            protocol=protocol,
+            protocol_bytes=bytearray(raw),  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.parametrize(
@@ -248,9 +279,12 @@ def test_reordered_omitted_or_freshness_added_predictors_fail_closed() -> None:
         dataclasses.replace(protocol, predictors=tuple(reversed(protocol.predictors)))
     with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
         dataclasses.replace(protocol, predictors=protocol.predictors[:-1])
-    extra = dataclasses.replace(protocol.predictors[-1], name="freshness_raw", source_feature_id="fatigue")
     with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
-        dataclasses.replace(protocol, predictors=protocol.predictors + (extra,))
+        dataclasses.replace(
+            protocol.predictors[-1],
+            name="live_data_freshness_raw",
+            source_feature_id="live_data_freshness",
+        )
 
 
 @pytest.mark.parametrize(
@@ -262,13 +296,17 @@ def test_reordered_omitted_or_freshness_added_predictors_fail_closed() -> None:
         ("form_semantics", {"span": 1.0}),
         ("form_semantics", {"rounding_places": 4}),
         ("form_semantics", {"missing_history_behavior": "DEFAULT_ZERO"}),
+        ("fatigue_semantics", {"rest_day_measure": "FLOAT_DAYS"}),
         ("fatigue_semantics", {"severe_threshold_days_exclusive": -3}),
         ("fatigue_semantics", {"mild_threshold_days_exclusive": 1}),
         ("fatigue_semantics", {"orientation": "AWAY_REST_DAYS_MINUS_HOME_REST_DAYS"}),
         ("fatigue_semantics", {"missing_history_behavior": "DEFAULT_ZERO"}),
+        ("elo_semantics", {"chronology": "POSTMATCH_ORDER"}),
         ("elo_semantics", {"initial_overall_rating": 1400}),
         ("elo_semantics", {"home_advantage_points": 0}),
         ("elo_semantics", {"logistic_divisor": 800.0}),
+        ("elo_semantics", {"home_expected_score_formula": "DIFFERENT"}),
+        ("elo_semantics", {"away_expected_score_formula": "DIFFERENT"}),
         ("elo_semantics", {"k_schedule": ((20, 30), (50, 24), (None, 16))}),
         ("elo_semantics", {"update_rule": "round(old_overall+delta)"}),
         ("elo_semantics", {"pre_match_feature_rule": "POST_MATCH_RATING"}),
@@ -293,7 +331,7 @@ def test_safety_promotion_and_result_promotion_fail_closed() -> None:
         dataclasses.replace(protocol, fatigue_pr31_semantic_equivalence="PROVEN")
 
 
-def test_nan_in_protocol_components_is_rejected() -> None:
+def test_nan_and_infinity_in_predictor_components_are_rejected() -> None:
     with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
         dataclasses.replace(_protocol().predictors[1], scale=float("nan"))
     with pytest.raises(SuccessorLiveInputSemanticQualificationProtocolError):
