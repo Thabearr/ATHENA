@@ -44,10 +44,10 @@ def test_validation_is_exact_fail_closed_canonical_receipt() -> None:
         "EXECUTED_FAIL_CLOSED_INSUFFICIENT_POST_FINISH_OBSERVATIONS"
     )
     assert value.validation_state == VALIDATION_STATE
-    assert len(exact) == VALIDATION_SIZE == 2394
+    assert len(exact) == VALIDATION_SIZE == 2490
     assert hashlib.sha256(exact).hexdigest() == VALIDATION_SHA256
     assert VALIDATION_SHA256 == (
-        "e83c7ae340348db5cf0830da1db47a23a20b95690267818e4426726dccfd61a6"
+        "b8ac94402677c8d539ac365e348fd8415d3963b6511a0db5d0564f38737f1b9a"
     )
     assert set(value.safety.values()) == {False}
 
@@ -83,12 +83,15 @@ def test_pr39_reviewed_inventory_metadata_is_not_invented() -> None:
     )
 
 
-def test_execution_stops_at_insufficient_post_finish_observations() -> None:
+def test_execution_stops_without_guessing_post_finish_capture_count() -> None:
     value = build_fotmob_data_matches_final_result_semantics_validation()
 
     assert value.reviewed_capture_count == 1
-    assert value.reviewed_post_finish_capture_count == 0
-    assert value.required_post_finish_capture_count == 2
+    assert value.reviewed_post_finish_capture_count == (
+        "UNKNOWN_FROM_COMMITTED_METADATA_ONLY"
+    )
+    assert value.reviewed_pr83_eligible_capture_pair_count == 0
+    assert value.required_distinct_post_finish_captures_per_pair == 2
     assert value.reviewed_capture_fixture_values_available_in_committed_reviewed_evidence is False
     assert value.reviewed_capture_started_finished_semantics_available is False
     assert value.status == (
@@ -110,7 +113,7 @@ def test_source_capability_remains_fail_closed() -> None:
     assert value.safety["source_capability_update_authorized"] is False
 
 
-def test_no_fixture_or_score_is_fabricated_from_metadata_only_inventory() -> None:
+def test_no_fixture_score_or_terminal_state_is_fabricated() -> None:
     value = build_fotmob_data_matches_final_result_semantics_validation()
     keys = set(value.to_dict())
     assert "fixture_id" not in keys
@@ -143,7 +146,13 @@ def test_validation_rejects_positive_or_inventory_mutations() -> None:
         FotMobDataMatchesFinalResultSemanticsValidationError,
         match="differs from frozen PR84 receipt",
     ):
-        dataclasses.replace(value, reviewed_post_finish_capture_count=2)
+        dataclasses.replace(value, reviewed_pr83_eligible_capture_pair_count=1)
+
+    with pytest.raises(
+        FotMobDataMatchesFinalResultSemanticsValidationError,
+        match="differs from frozen PR84 receipt",
+    ):
+        dataclasses.replace(value, reviewed_post_finish_capture_count="1")
 
     safety = dict(value.safety)
     safety["source_capability_update_authorized"] = True
