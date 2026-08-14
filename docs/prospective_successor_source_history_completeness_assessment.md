@@ -35,8 +35,8 @@ current source state:
 The canonical PR #82 assessment is sorted compact UTF-8 JSON plus a final newline:
 
 - SHA-256:
-  `de8f7398c588a210a9073e23ff67c81b9d8c38b6afc5d5b3c5e72b0c71f0a231`;
-- size: `3,763` bytes.
+  `450031e15fbb5878ee87ff7def69e549d0ec47fa94fc80dcb56e0b005408e807`;
+- size: `3,766` bytes.
 
 ## Executed result
 
@@ -122,16 +122,23 @@ into a fabricated negative observation.
 The next engineering boundary is frozen as:
 
 ```text
-BUILD_REVIEWED_FOTMOB_POST_MATCH_FINAL_RESULT_EVIDENCE_BOUNDARY
+BUILD_REVIEWED_FOTMOB_DATA_MATCHES_FINAL_RESULT_SEMANTICS_BOUNDARY
 ```
 
-That boundary must be distinct from the current strictly pre-kickoff match-details
-capture contract. It should establish provenance-backed post-match final-result
-semantics before ATHENA attempts historical completeness, Elo initialization,
-league mapping, or PR #80 feature construction.
+This is smaller and cleaner than creating a second match-details capture path.
+ATHENA already has a reviewed `/api/data/matches` capture and strict schema in
+which fixture identity, kickoff, team identity, competition identity, status, and
+score-shaped fields are structurally visible. The missing step is to prove the
+meaning of the score values when the source status reports a finished fixture.
 
-A future result source may use reviewed FotMob evidence, but it may not obtain
-qualification merely because legacy workers once parsed score fields.
+That future boundary must establish provenance-backed finished/final-result
+semantics without promoting a raw scalar merely because it looks like a plausible
+score. Only after that ambiguity is resolved should ATHENA attempt historical
+coverage, Elo initialization, eleven-league mapping, or PR #80 feature
+construction.
+
+The strictly pre-kickoff reviewed match-details chain remains unchanged and is not
+repurposed for post-match evidence.
 
 ## Safety
 
