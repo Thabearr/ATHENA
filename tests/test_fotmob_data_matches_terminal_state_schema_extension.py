@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import ast
 import dataclasses
+import datetime
 import hashlib
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -19,11 +21,9 @@ from domain.fotmob_data_matches_capture import (
 from domain.fotmob_data_matches_post_finish_capture_pair_evidence import (
     FIRST_CAPTURE_ID,
     FIRST_MANIFEST_SHA256,
-    FIRST_MATCH_COUNT,
     FIRST_RAW_SHA256,
     SECOND_CAPTURE_ID,
     SECOND_MANIFEST_SHA256,
-    SECOND_MATCH_COUNT,
     SECOND_RAW_SHA256,
 )
 from domain.fotmob_data_matches_terminal_state_schema_extension import (
@@ -40,6 +40,12 @@ from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY
 ROOT = Path(__file__).resolve().parents[1]
 EVIDENCE_ROOT = ROOT / "evidence" / "fotmob_data_matches" / "pr83_post_finish_pair"
 DATE_ROOT = EVIDENCE_ROOT / "20260814"
+SYNTHETIC_DATE = "20260815"
+SYNTHETIC_KICKOFF = "2026-08-15T12:00:00.000Z"
+SYNTHETIC_KICKOFF_MS = 1786795200000
+SYNTHETIC_OBSERVED = datetime.datetime(
+    2026, 8, 15, 13, 0, 0, tzinfo=datetime.timezone.utc
+)
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -60,28 +66,31 @@ def _load_capture(capture_id: str):
     return raw, manifest
 
 
-def _mutated_manifest(raw: bytes, original_manifest):
+def _manifest_for_raw(
+    raw: bytes,
+    *,
+    observed_at: datetime.datetime = SYNTHETIC_OBSERVED,
+    network: bool = False,
+):
     response = CapturedFotMobDataMatchesResponse(
-        status=original_manifest.status,
-        content_type=original_manifest.content_type,
+        status=200,
+        content_type="application/json; charset=utf-8",
         content_length=len(raw),
         body=raw,
-        observed_at=original_manifest.observed_at,
-        network_acquisition_performed=original_manifest.network_acquisition_performed,
+        observed_at=observed_at,
+        network_acquisition_performed=network,
     )
     return build_data_matches_capture_manifest(
         response,
-        request_date=original_manifest.request_date,
-        timezone=original_manifest.timezone,
-        ccode3=original_manifest.ccode3,
+        request_date=SYNTHETIC_DATE,
+        timezone="UTC",
+        ccode3="NGA",
     )
 
 
-def _mutate_raw(raw: bytes, mutator):
-    payload = json.loads(raw)
-    mutator(payload)
+def _raw_bytes(value: Any) -> bytes:
     return json.dumps(
-        payload,
+        value,
         ensure_ascii=False,
         allow_nan=False,
         sort_keys=True,
@@ -89,11 +98,97 @@ def _mutate_raw(raw: bytes, mutator):
     ).encode("utf-8")
 
 
-def _first_match(payload):
-    for league in payload["leagues"]:
-        if league["matches"]:
-            return league["matches"][0]
-    raise AssertionError("expected at least one match")
+def _synthetic_payload() -> dict[str, Any]:
+    return {
+        "date": SYNTHETIC_DATE,
+        "leagues": [
+            {
+                "ccode": "ENG",
+                "id": 42,
+                "internalRank": 1,
+                "matches": [
+                    {
+                        "away": {
+                            "id": 12,
+                            "longName": "Away",
+                            "name": "Away",
+                            "penScore": 0,
+                            "redCards": 0,
+                            "score": 1,
+                        },
+                        "eliminatedTeamId": None,
+                        "home": {
+                            "id": 11,
+                            "longName": "Home",
+                            "name": "Home",
+                            "penScore": 0,
+                            "redCards": 1,
+                            "score": 2,
+                        },
+                        "id": 1001,
+                        "leagueId": 42,
+                        "status": {
+                            "awarded": False,
+                            "cancelled": False,
+                            "finished": True,
+                            "halfs": {
+                                "firstHalfStarted": "2026-08-15T12:00:00Z",
+                                "secondHalfStarted": "2026-08-15T13:00:00Z",
+                            },
+                            "liveTime": {
+                                "addedTime": 0,
+                                "basePeriod": 90,
+                                "long": "",
+                                "longKey": "",
+                                "maxTime": 90,
+                                "short": "",
+                                "shortKey": "",
+                            },
+                            "numberOfAwayRedCards": 0,
+                            "numberOfHomeRedCards": 1,
+                            "ongoing": False,
+                            "periodLength": 45,
+                            "reason": {
+                                "long": "Full-Time",
+                                "longKey": "finished",
+                                "short": "FT",
+                                "shortKey": "fulltime_short",
+                            },
+                            "scoreStr": "2 - 1",
+                            "started": True,
+                            "utcTime": SYNTHETIC_KICKOFF,
+                        },
+                        "statusId": 6,
+                        "time": "15.08.2026 12:00",
+                        "timeTS": SYNTHETIC_KICKOFF_MS,
+                        "tournamentStage": "",
+                    }
+                ],
+                "name": "Example competition",
+                "primaryId": 42,
+                "simpleLeague": False,
+            }
+        ],
+    }
+
+
+def _synthetic_raw_and_manifest():
+    raw = _raw_bytes(_synthetic_payload())
+    return raw, _manifest_for_raw(raw)
+
+
+def _first_match(payload: dict[str, Any]) -> dict[str, Any]:
+    return payload["leagues"][0]["matches"][0]
+
+
+def _non_null_eliminated_team_id_count(raw: bytes) -> int:
+    payload = json.loads(raw)
+    return sum(
+        1
+        for league in payload["leagues"]
+        for match in league["matches"]
+        if match["eliminatedTeamId"] is not None
+    )
 
 
 def test_exact_pr86_and_pr39_ancestry_is_frozen() -> None:
@@ -113,36 +208,56 @@ def test_exact_pr86_and_pr39_ancestry_is_frozen() -> None:
 
 
 @pytest.mark.parametrize(
-    ("capture_id", "expected_raw_sha", "expected_manifest_sha", "expected_match_count"),
+    ("capture_id", "expected_raw_sha", "expected_manifest_sha"),
     (
-        (FIRST_CAPTURE_ID, FIRST_RAW_SHA256, FIRST_MANIFEST_SHA256, FIRST_MATCH_COUNT),
-        (SECOND_CAPTURE_ID, SECOND_RAW_SHA256, SECOND_MANIFEST_SHA256, SECOND_MATCH_COUNT),
+        (FIRST_CAPTURE_ID, FIRST_RAW_SHA256, FIRST_MANIFEST_SHA256),
+        (SECOND_CAPTURE_ID, SECOND_RAW_SHA256, SECOND_MANIFEST_SHA256),
     ),
 )
-def test_pr85_terminal_captures_qualify_structural_extension(
+def test_pr85_terminal_captures_fail_closed_on_non_null_eliminated_team_id(
     capture_id: str,
     expected_raw_sha: str,
     expected_manifest_sha: str,
-    expected_match_count: int,
 ) -> None:
     raw, manifest = _load_capture(capture_id)
+    assert manifest.raw_sha256 == expected_raw_sha
+    from domain.fotmob_data_matches_capture import sha256_data_matches_capture_manifest
+
+    assert sha256_data_matches_capture_manifest(manifest) == expected_manifest_sha
+    assert _non_null_eliminated_team_id_count(raw) > 0
+
+    with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
+    assert (
+        exc_info.value.status
+        is TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT
+    )
+    assert "non-null eliminatedTeamId" in str(exc_info.value)
+
+
+def test_synthetic_pr39_compatible_terminal_payload_qualifies_extension_only() -> None:
+    raw, manifest = _synthetic_raw_and_manifest()
     result = assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
 
     assert (
         result.status
         is TerminalStateSchemaExtensionStatus.QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION
     )
-    assert result.source_raw_sha256 == expected_raw_sha
-    assert result.source_capture_manifest_sha256 == expected_manifest_sha
-    assert result.match_count == expected_match_count == 183
-    assert sum(result.team_extension_occurrences.values()) > 0
-    assert sum(result.status_extension_occurrences.values()) > 0
-    assert sum(result.halfs_extension_occurrences.values()) > 0
+    assert result.match_count == 1
+    assert dict(result.team_extension_occurrences) == {"penScore": 2, "redCards": 2}
+    assert dict(result.status_extension_occurrences) == {
+        "awarded": 1,
+        "liveTime": 1,
+        "numberOfAwayRedCards": 1,
+        "numberOfHomeRedCards": 1,
+        "ongoing": 1,
+        "scoreStr": 1,
+    }
+    assert dict(result.halfs_extension_occurrences) == {"secondHalfStarted": 1}
+    assert result.live_time_occurrence_count == 1
     assert result.reason_semantics_qualified is False
     assert result.final_result_semantics_qualified is False
-    assert result.next_required_boundary == (
-        "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_STATUS_REASON_SEMANTICS"
-    )
+    assert result.next_required_boundary == NEXT_REQUIRED_BOUNDARY
     assert set(result.safety.values()) == {False}
 
 
@@ -156,15 +271,13 @@ def test_frozen_pr39_still_rejects_terminal_snapshot_without_extension(
 
 
 def test_unregistered_extra_key_fails_closed() -> None:
-    raw, manifest = _load_capture(FIRST_CAPTURE_ID)
+    payload = _synthetic_payload()
+    _first_match(payload)["home"]["invented"] = 1
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
 
-    def mutate(payload):
-        _first_match(payload)["home"]["invented"] = 1
-
-    changed = _mutate_raw(raw, mutate)
-    changed_manifest = _mutated_manifest(changed, manifest)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
-        assess_fotmob_data_matches_terminal_state_schema_extension(changed, changed_manifest)
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
     assert (
         exc_info.value.status
         is TerminalStateSchemaExtensionStatus.BLOCKED_EXTRA_KEY_OUTSIDE_PRE_REGISTERED_SET
@@ -172,16 +285,14 @@ def test_unregistered_extra_key_fails_closed() -> None:
 
 
 @pytest.mark.parametrize("bad_value", (None, True, -1, 1.5, "1"))
-def test_extension_integer_type_and_nullability_fail_closed(bad_value) -> None:
-    raw, manifest = _load_capture(FIRST_CAPTURE_ID)
+def test_extension_integer_type_and_nullability_fail_closed(bad_value: Any) -> None:
+    payload = _synthetic_payload()
+    _first_match(payload)["home"]["penScore"] = bad_value
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
 
-    def mutate(payload):
-        _first_match(payload)["home"]["penScore"] = bad_value
-
-    changed = _mutate_raw(raw, mutate)
-    changed_manifest = _mutated_manifest(changed, manifest)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
-        assess_fotmob_data_matches_terminal_state_schema_extension(changed, changed_manifest)
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
     assert (
         exc_info.value.status
         is TerminalStateSchemaExtensionStatus.BLOCKED_EXTENSION_TYPE_OR_NULLABILITY_MISMATCH
@@ -189,16 +300,14 @@ def test_extension_integer_type_and_nullability_fail_closed(bad_value) -> None:
 
 
 @pytest.mark.parametrize("bad_value", (None, 0, 1, "false"))
-def test_extension_bool_type_and_nullability_fail_closed(bad_value) -> None:
-    raw, manifest = _load_capture(FIRST_CAPTURE_ID)
+def test_extension_bool_type_and_nullability_fail_closed(bad_value: Any) -> None:
+    payload = _synthetic_payload()
+    _first_match(payload)["status"]["awarded"] = bad_value
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
 
-    def mutate(payload):
-        _first_match(payload)["status"]["awarded"] = bad_value
-
-    changed = _mutate_raw(raw, mutate)
-    changed_manifest = _mutated_manifest(changed, manifest)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
-        assess_fotmob_data_matches_terminal_state_schema_extension(changed, changed_manifest)
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
     assert (
         exc_info.value.status
         is TerminalStateSchemaExtensionStatus.BLOCKED_EXTENSION_TYPE_OR_NULLABILITY_MISMATCH
@@ -206,43 +315,23 @@ def test_extension_bool_type_and_nullability_fail_closed(bad_value) -> None:
 
 
 def test_live_time_shape_fails_closed_for_missing_or_extra_keys() -> None:
-    raw, manifest = _load_capture(FIRST_CAPTURE_ID)
-
-    def add_missing(payload):
-        _first_match(payload)["status"]["liveTime"] = {
-            "addedTime": 0,
-            "basePeriod": 90,
-            "long": "",
-            "longKey": "",
-            "maxTime": 90,
-            "short": "",
-        }
-
-    changed = _mutate_raw(raw, add_missing)
-    changed_manifest = _mutated_manifest(changed, manifest)
+    payload = _synthetic_payload()
+    del _first_match(payload)["status"]["liveTime"]["shortKey"]
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
-        assess_fotmob_data_matches_terminal_state_schema_extension(changed, changed_manifest)
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
     assert (
         exc_info.value.status
         is TerminalStateSchemaExtensionStatus.BLOCKED_LIVE_TIME_SHAPE_MISMATCH
     )
 
-    def add_extra(payload):
-        _first_match(payload)["status"]["liveTime"] = {
-            "addedTime": 0,
-            "basePeriod": 90,
-            "long": "",
-            "longKey": "",
-            "maxTime": 90,
-            "short": "",
-            "shortKey": "",
-            "invented": 0,
-        }
-
-    changed = _mutate_raw(raw, add_extra)
-    changed_manifest = _mutated_manifest(changed, manifest)
+    payload = _synthetic_payload()
+    _first_match(payload)["status"]["liveTime"]["invented"] = 0
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
-        assess_fotmob_data_matches_terminal_state_schema_extension(changed, changed_manifest)
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
     assert (
         exc_info.value.status
         is TerminalStateSchemaExtensionStatus.BLOCKED_LIVE_TIME_SHAPE_MISMATCH
@@ -250,15 +339,13 @@ def test_live_time_shape_fails_closed_for_missing_or_extra_keys() -> None:
 
 
 def test_pr39_base_invariant_failure_is_not_hidden_by_extension() -> None:
-    raw, manifest = _load_capture(FIRST_CAPTURE_ID)
+    payload = _synthetic_payload()
+    _first_match(payload)["timeTS"] += 1
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
 
-    def mutate(payload):
-        _first_match(payload)["timeTS"] += 1
-
-    changed = _mutate_raw(raw, mutate)
-    changed_manifest = _mutated_manifest(changed, manifest)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
-        assess_fotmob_data_matches_terminal_state_schema_extension(changed, changed_manifest)
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
     assert (
         exc_info.value.status
         is TerminalStateSchemaExtensionStatus.BLOCKED_BASE_PR39_CONTRACT_DRIFT
@@ -266,7 +353,7 @@ def test_pr39_base_invariant_failure_is_not_hidden_by_extension() -> None:
 
 
 def test_structural_success_cannot_promote_reason_or_final_result_semantics() -> None:
-    raw, manifest = _load_capture(FIRST_CAPTURE_ID)
+    raw, manifest = _synthetic_raw_and_manifest()
     result = assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
 
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError):
@@ -280,9 +367,9 @@ def test_structural_success_cannot_promote_reason_or_final_result_semantics() ->
     assert capability.historical_coverage is CapabilityAvailability.UNKNOWN
 
 
-def test_next_boundary_is_exact_and_status_vocabulary_is_frozen() -> None:
+def test_next_boundary_and_status_vocabulary_are_exact() -> None:
     assert NEXT_REQUIRED_BOUNDARY == (
-        "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_STATUS_REASON_SEMANTICS"
+        "PRE_REGISTER_REVIEWED_FOTMOB_DATA_MATCHES_ELIMINATED_TEAM_ID_VALUE_DOMAIN_EXTENSION"
     )
     assert tuple(item.value for item in TerminalStateSchemaExtensionStatus) == (
         "QUALIFIED_STRUCTURAL_TERMINAL_STATE_SCHEMA_EXTENSION",
