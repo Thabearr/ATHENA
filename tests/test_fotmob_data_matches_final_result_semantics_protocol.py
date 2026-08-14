@@ -133,10 +133,8 @@ def test_terminal_score_stability_rules_are_pre_registered() -> None:
     assert value.score_rule == (
         "HOME_AND_AWAY_SCORE_MUST_BE_EXACT_NONNEGATIVE_INTEGERS"
     )
-    assert value.minimum_repeat_separation_seconds == (
-        MINIMUM_REPEAT_SEPARATION_SECONDS
-        == 300
-    )
+    assert value.minimum_repeat_separation_seconds == MINIMUM_REPEAT_SEPARATION_SECONDS
+    assert MINIMUM_REPEAT_SEPARATION_SECONDS == 300
     assert value.observation_rule == (
         "AT_LEAST_TWO_DISTINCT_POST_KICKOFF_FINISHED_CAPTURES_WITH_DISTINCT_CAPTURE_LINEAGE"
     )
