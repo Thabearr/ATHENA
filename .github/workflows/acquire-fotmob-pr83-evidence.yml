@@ -1,0 +1,186 @@
+name: Acquire FotMob PR83 evidence
+
+on:
+  push:
+    branches:
+      - feature/fotmob-pr83-post-finish-capture-pair
+    paths:
+      - .github/workflows/acquire-fotmob-pr83-evidence.yml
+
+permissions:
+  contents: read
+
+jobs:
+  acquire:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Capture first reviewed response
+        run: |
+          python scripts/capture_fotmob_data_matches.py \
+            --date 20260813 \
+            --timezone UTC \
+            --ccode3 NGA \
+            --execute-live-network
+
+      - name: Preserve minimum observation separation
+        run: sleep 310
+
+      - name: Capture second reviewed response
+        run: |
+          python scripts/capture_fotmob_data_matches.py \
+            --date 20260813 \
+            --timezone UTC \
+            --ccode3 NGA \
+            --execute-live-network
+
+      - name: Build deterministic PR83 pair summary
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import hashlib
+          import json
+          from pathlib import Path
+
+          root = Path('.cache/athena-research/fotmob-data-matches-captures/20260813')
+          captures = []
+          for directory in sorted(p for p in root.iterdir() if p.is_dir()):
+              manifest_path = directory / 'manifest.json'
+              raw_path = directory / 'response.json'
+              if not manifest_path.is_file() or not raw_path.is_file():
+                  continue
+              manifest_bytes = manifest_path.read_bytes()
+              raw = raw_path.read_bytes()
+              manifest = json.loads(manifest_bytes)
+              payload = json.loads(raw)
+              captures.append({
+                  'directory': directory.name,
+                  'manifest': manifest,
+                  'manifest_sha256': hashlib.sha256(manifest_bytes).hexdigest(),
+                  'raw_sha256': hashlib.sha256(raw).hexdigest(),
+                  'raw_size': len(raw),
+                  'payload': payload,
+              })
+
+          if len(captures) != 2:
+              raise SystemExit(f'expected exactly two captures, found {len(captures)}')
+
+          def observed(value):
+              return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
+
+          captures.sort(key=lambda item: observed(item['manifest']['observed_at']))
+          separation = (observed(captures[1]['manifest']['observed_at']) - observed(captures[0]['manifest']['observed_at'])).total_seconds()
+          if separation < 300:
+              raise SystemExit(f'observation separation {separation} < 300 seconds')
+          if captures[0]['raw_sha256'] == captures[1]['raw_sha256']:
+              raise SystemExit('raw capture SHA-256 values are identical')
+          if captures[0]['manifest_sha256'] == captures[1]['manifest_sha256']:
+              raise SystemExit('manifest SHA-256 values are identical')
+
+          def rows(payload):
+              result = {}
+              for league in payload.get('leagues', []):
+                  for match in league.get('matches', []):
+                      result[match.get('id')] = (league, match)
+              return result
+
+          first = rows(captures[0]['payload'])
+          second = rows(captures[1]['payload'])
+          eligible = []
+          for fixture_id in sorted(set(first) & set(second)):
+              league1, match1 = first[fixture_id]
+              league2, match2 = second[fixture_id]
+              status1 = match1.get('status') or {}
+              status2 = match2.get('status') or {}
+              if not (
+                  status1.get('finished') is True
+                  and status2.get('finished') is True
+                  and status1.get('started') is True
+                  and status2.get('started') is True
+                  and status1.get('cancelled') is False
+                  and status2.get('cancelled') is False
+                  and 'reason' not in status1
+                  and 'reason' not in status2
+              ):
+                  continue
+              identity1 = (
+                  match1.get('id'),
+                  match1.get('leagueId'),
+                  (match1.get('home') or {}).get('id'),
+                  (match1.get('away') or {}).get('id'),
+                  status1.get('utcTime'),
+              )
+              identity2 = (
+                  match2.get('id'),
+                  match2.get('leagueId'),
+                  (match2.get('home') or {}).get('id'),
+                  (match2.get('away') or {}).get('id'),
+                  status2.get('utcTime'),
+              )
+              if identity1 != identity2:
+                  continue
+              score1 = ((match1.get('home') or {}).get('score'), (match1.get('away') or {}).get('score'))
+              score2 = ((match2.get('home') or {}).get('score'), (match2.get('away') or {}).get('score'))
+              if score1 != score2:
+                  continue
+              if any(type(value) is not int or value < 0 for value in score1):
+                  continue
+              eligible.append({
+                  'fixture_id': fixture_id,
+                  'league_id': match1.get('leagueId'),
+                  'league_name': league1.get('name'),
+                  'home_team_id': (match1.get('home') or {}).get('id'),
+                  'home_team_name': (match1.get('home') or {}).get('name'),
+                  'away_team_id': (match1.get('away') or {}).get('id'),
+                  'away_team_name': (match1.get('away') or {}).get('name'),
+                  'kickoff_utc': status1.get('utcTime'),
+                  'home_score': score1[0],
+                  'away_score': score1[1],
+              })
+
+          summary = {
+              'schema_version': 1,
+              'request_date': '20260813',
+              'timezone': 'UTC',
+              'ccode3': 'NGA',
+              'observation_separation_seconds': separation,
+              'captures': [
+                  {
+                      'directory': item['directory'],
+                      'observed_at': item['manifest']['observed_at'],
+                      'raw_sha256': item['raw_sha256'],
+                      'raw_size': item['raw_size'],
+                      'manifest_sha256': item['manifest_sha256'],
+                  }
+                  for item in captures
+              ],
+              'eligible_fixture_count': len(eligible),
+              'eligible_fixtures': eligible,
+          }
+          if not eligible:
+              raise SystemExit('no PR83-eligible stable finished fixture found')
+          out = root / 'pr83_pair_summary.json'
+          out.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
+          print(json.dumps(summary, indent=2, ensure_ascii=False))
+          PY
+
+      - name: Stage evidence artifact
+        run: |
+          mkdir -p artifact
+          cp -a .cache/athena-research/fotmob-data-matches-captures/20260813 artifact/
+
+      - name: Upload exact capture evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr83-post-finish-capture-pair
+          path: artifact/
+          if-no-files-found: error
+          retention-days: 7
