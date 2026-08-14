@@ -451,6 +451,7 @@ def _projected_manifest(
         return dataclasses.replace(
             source_manifest,
             content_length=content_length,
+            network_acquisition_performed=False,
             raw_sha256=sha256_bytes(projected_raw),
             raw_size=len(projected_raw),
         )
