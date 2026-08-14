@@ -1,4 +1,4 @@
-name: Acquire FotMob PR83 evidence
+name: Materialize FotMob PR83 evidence
 
 on:
   push:
@@ -8,194 +8,43 @@ on:
       - .github/workflows/acquire-fotmob-pr83-evidence.yml
 
 permissions:
-  contents: read
+  actions: read
+  contents: write
 
 jobs:
-  acquire:
+  materialize:
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 5
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          ref: feature/fotmob-pr83-post-finish-capture-pair
+          fetch-depth: 0
 
-      - name: Capture first reviewed response
+      - name: Download exact reviewed acquisition artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
-          python scripts/capture_fotmob_data_matches.py \
-            --date 20260814 \
-            --timezone UTC \
-            --ccode3 NGA \
-            --execute-live-network
+          gh run download 31822859656 \
+            --repo "$GITHUB_REPOSITORY" \
+            --name pr83-post-finish-capture-pair-20260814 \
+            --dir recovered
 
-      - name: Preserve minimum observation separation
-        run: sleep 310
-
-      - name: Capture second reviewed response
+      - name: Verify exact capture lineage
         run: |
-          python scripts/capture_fotmob_data_matches.py \
-            --date 20260814 \
-            --timezone UTC \
-            --ccode3 NGA \
-            --execute-live-network
+          test "$(sha256sum recovered/20260814/a18e843fabe5aca74846b160/response.json | cut -d' ' -f1)" = "fbcf24729973dbe7153c87fe9f37bd988aaca14ad10cce6b260ac7df650ff80f"
+          test "$(sha256sum recovered/20260814/a18e843fabe5aca74846b160/manifest.json | cut -d' ' -f1)" = "27bfb5dc90c67a305bdb045a7ff33010d87c4109925384d3e6d2a6e058d7b302"
+          test "$(sha256sum recovered/20260814/e28d9ce746c1ef9102995517/response.json | cut -d' ' -f1)" = "175c6f94788fbf676e08a288ff0c46a995cd8798d60e4bc5044076e3c9713f8d"
+          test "$(sha256sum recovered/20260814/e28d9ce746c1ef9102995517/manifest.json | cut -d' ' -f1)" = "d60501a5b7b1b4e5c810a0a0463bdcecb3a0b806110ad4542c314f8fe536824e"
 
-      - name: Build deterministic PR83 pair summary
+      - name: Preserve evidence in branch and remove one-shot workflow
         run: |
-          python - <<'PY'
-          import datetime as dt
-          import hashlib
-          import json
-          from pathlib import Path
-
-          root = Path('.cache/athena-research/fotmob-data-matches-captures/20260814')
-          captures = []
-          for directory in sorted(p for p in root.iterdir() if p.is_dir()):
-              manifest_path = directory / 'manifest.json'
-              raw_path = directory / 'response.json'
-              if not manifest_path.is_file() or not raw_path.is_file():
-                  continue
-              manifest_bytes = manifest_path.read_bytes()
-              raw = raw_path.read_bytes()
-              manifest = json.loads(manifest_bytes)
-              payload = json.loads(raw)
-              captures.append({
-                  'directory': directory.name,
-                  'manifest': manifest,
-                  'manifest_sha256': hashlib.sha256(manifest_bytes).hexdigest(),
-                  'raw_sha256': hashlib.sha256(raw).hexdigest(),
-                  'raw_size': len(raw),
-                  'payload': payload,
-              })
-
-          if len(captures) != 2:
-              raise SystemExit(f'expected exactly two captures, found {len(captures)}')
-
-          def observed(value):
-              return dt.datetime.fromisoformat(value.replace('Z', '+00:00'))
-
-          captures.sort(key=lambda item: observed(item['manifest']['observed_at']))
-          separation = (observed(captures[1]['manifest']['observed_at']) - observed(captures[0]['manifest']['observed_at'])).total_seconds()
-          raw_distinct = captures[0]['raw_sha256'] != captures[1]['raw_sha256']
-          manifest_distinct = captures[0]['manifest_sha256'] != captures[1]['manifest_sha256']
-
-          def rows(payload):
-              result = {}
-              for league in payload.get('leagues', []):
-                  for match in league.get('matches', []):
-                      result[match.get('id')] = (league, match)
-              return result
-
-          first = rows(captures[0]['payload'])
-          second = rows(captures[1]['payload'])
-          eligible = []
-          for fixture_id in sorted(set(first) & set(second)):
-              league1, match1 = first[fixture_id]
-              league2, match2 = second[fixture_id]
-              status1 = match1.get('status') or {}
-              status2 = match2.get('status') or {}
-              if not (
-                  status1.get('finished') is True
-                  and status2.get('finished') is True
-                  and status1.get('started') is True
-                  and status2.get('started') is True
-                  and status1.get('cancelled') is False
-                  and status2.get('cancelled') is False
-                  and 'reason' not in status1
-                  and 'reason' not in status2
-              ):
-                  continue
-              identity1 = (
-                  match1.get('id'),
-                  match1.get('leagueId'),
-                  (match1.get('home') or {}).get('id'),
-                  (match1.get('away') or {}).get('id'),
-                  status1.get('utcTime'),
-              )
-              identity2 = (
-                  match2.get('id'),
-                  match2.get('leagueId'),
-                  (match2.get('home') or {}).get('id'),
-                  (match2.get('away') or {}).get('id'),
-                  status2.get('utcTime'),
-              )
-              if identity1 != identity2:
-                  continue
-              score1 = ((match1.get('home') or {}).get('score'), (match1.get('away') or {}).get('score'))
-              score2 = ((match2.get('home') or {}).get('score'), (match2.get('away') or {}).get('score'))
-              if score1 != score2:
-                  continue
-              if any(type(value) is not int or value < 0 for value in score1):
-                  continue
-              kickoff = dt.datetime.fromisoformat(status1['utcTime'].replace('Z', '+00:00'))
-              if not (
-                  observed(captures[0]['manifest']['observed_at']) > kickoff
-                  and observed(captures[1]['manifest']['observed_at']) > kickoff
-              ):
-                  continue
-              eligible.append({
-                  'fixture_id': fixture_id,
-                  'league_id': match1.get('leagueId'),
-                  'league_name': league1.get('name'),
-                  'home_team_id': (match1.get('home') or {}).get('id'),
-                  'home_team_name': (match1.get('home') or {}).get('name'),
-                  'away_team_id': (match1.get('away') or {}).get('id'),
-                  'away_team_name': (match1.get('away') or {}).get('name'),
-                  'kickoff_utc': status1.get('utcTime'),
-                  'home_score': score1[0],
-                  'away_score': score1[1],
-                  'status_id_first': match1.get('statusId'),
-                  'status_id_second': match2.get('statusId'),
-              })
-
-          summary = {
-              'schema_version': 1,
-              'request_date': '20260814',
-              'timezone': 'UTC',
-              'ccode3': 'NGA',
-              'observation_separation_seconds': separation,
-              'raw_lineage_distinct': raw_distinct,
-              'manifest_lineage_distinct': manifest_distinct,
-              'captures': [
-                  {
-                      'directory': item['directory'],
-                      'observed_at': item['manifest']['observed_at'],
-                      'raw_sha256': item['raw_sha256'],
-                      'raw_size': item['raw_size'],
-                      'manifest_sha256': item['manifest_sha256'],
-                  }
-                  for item in captures
-              ],
-              'eligible_fixture_count': len(eligible),
-              'eligible_fixtures': eligible,
-          }
-          out = root / 'pr83_pair_summary.json'
-          out.write_text(json.dumps(summary, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8')
-          print(json.dumps(summary, indent=2, ensure_ascii=False))
-
-          if separation < 300:
-              raise SystemExit(f'observation separation {separation} < 300 seconds')
-          if not raw_distinct:
-              raise SystemExit('raw capture SHA-256 values are identical')
-          if not manifest_distinct:
-              raise SystemExit('manifest SHA-256 values are identical')
-          if not eligible:
-              raise SystemExit('no PR83-eligible stable finished fixture found')
-          PY
-
-      - name: Stage evidence artifact
-        if: always()
-        run: |
-          mkdir -p artifact
-          cp -a .cache/athena-research/fotmob-data-matches-captures/20260814 artifact/
-
-      - name: Upload exact capture evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: pr83-post-finish-capture-pair-20260814
-          path: artifact/
-          if-no-files-found: error
-          retention-days: 7
+          mkdir -p evidence/fotmob_data_matches/pr83_post_finish_pair
+          cp -a recovered/20260814 evidence/fotmob_data_matches/pr83_post_finish_pair/
+          git rm .github/workflows/acquire-fotmob-pr83-evidence.yml
+          git add evidence/fotmob_data_matches/pr83_post_finish_pair/20260814
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Preserve reviewed FotMob PR83 capture pair evidence"
+          git push origin HEAD:feature/fotmob-pr83-post-finish-capture-pair
