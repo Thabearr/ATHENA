@@ -42,8 +42,8 @@ STABLE_FINISHED_IDENTITY_SCORE_PAIR_COUNT=29
 ORDINARY_FT_REASON_QUALIFIED_COUNT=28
 PENALTY_REASON_BLOCKED_COUNT=1
 OTHER_REASON_BLOCKED_COUNT=0
-ORDINARY_FT_REASON_TUPLE={"short":"FT","shortKey":"fulltime_short","long":"Full-Time","longKey":"finished"}
-PENALTY_REASON_TUPLE={"short":"Pen","shortKey":"penalties_short","long":"After penalties","longKey":"afterpenalties"}
+ORDINARY_FT_REASON_TUPLE=types.MappingProxyType({"short":"FT","shortKey":"fulltime_short","long":"Full-Time","longKey":"finished"})
+PENALTY_REASON_TUPLE=types.MappingProxyType({"short":"Pen","shortKey":"penalties_short","long":"After penalties","longKey":"afterpenalties"})
 PENALTY_FIXTURE_ID=5844873
 PENALTY_HOME_SCORE,PENALTY_AWAY_SCORE=1,1
 PENALTY_HOME_PEN_SCORE,PENALTY_AWAY_PEN_SCORE=5,6
@@ -67,8 +67,18 @@ _SAFETY_KEYS=frozenset({
 class FotMobDataMatchesStatusReasonSemanticsValidationError(ValueError): pass
 def _error(msg:str): return FotMobDataMatchesStatusReasonSemanticsValidationError(msg)
 def _safety(): return {k:False for k in sorted(_SAFETY_KEYS)}
+def _plain(v:Any)->Any:
+    if isinstance(v,Mapping): return {k:_plain(x) for k,x in v.items()}
+    if isinstance(v,(tuple,list)): return [_plain(x) for x in v]
+    return v
 def _canonical(v:Any)->bytes:
-    return (json.dumps(v,ensure_ascii=False,allow_nan=False,sort_keys=True,separators=(",",":"))+"\n").encode()
+    return (json.dumps(_plain(v),ensure_ascii=False,allow_nan=False,sort_keys=True,separators=(",",":"))+"\n").encode()
+def _freeze_receipt(v:Mapping[str,Any])->Mapping[str,Any]:
+    out=dict(v)
+    out["ordinary_ft_reason_tuple"]=types.MappingProxyType(dict(out["ordinary_ft_reason_tuple"]))
+    out["penalty_reason_tuple"]=types.MappingProxyType(dict(out["penalty_reason_tuple"]))
+    out["safety"]=types.MappingProxyType(dict(out["safety"]))
+    return types.MappingProxyType(out)
 
 def _expected()->dict[str,Any]:
     return {
@@ -179,8 +189,8 @@ def execute_fotmob_data_matches_status_reason_semantics_validation(first_raw_jso
       if (x["fixture_id"],x["home_score"],x["away_score"],x["home_pen_score"],x["away_pen_score"],x["eliminated_team_id"],x["reason"])!=(5844873,1,1,5,6,6576,PENALTY_REASON_TUPLE): raise _error("penalty evidence changed")
     receipt=_expected(); b=_canonical(receipt)
     if hashlib.sha256(b).hexdigest()!=RECEIPT_SHA256 or len(b)!=RECEIPT_SIZE: raise _error("canonical receipt identity changed")
-    return types.MappingProxyType(receipt)
+    return _freeze_receipt(receipt)
 
 def canonical_fotmob_data_matches_status_reason_semantics_validation_receipt_bytes(value:Mapping[str,Any])->bytes:
-    if not isinstance(value,Mapping) or dict(value)!=_expected(): raise _error("receipt differs from exact PR91 outcome")
-    return _canonical(dict(value))
+    if not isinstance(value,Mapping) or _plain(value)!=_expected(): raise _error("receipt differs from exact PR91 outcome")
+    return _canonical(value)
