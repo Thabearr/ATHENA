@@ -62,7 +62,7 @@ def _row(
     evidence_sha256: str | None = None,
 ) -> ProspectiveMatchEvidence:
     utc_day = day if utc_day is None else utc_day
-    observed_day = day if observed_day is None else observed_day
+    observed_day = utc_day if observed_day is None else observed_day
     return ProspectiveMatchEvidence(
         source_namespace="reviewed-source",
         fixture_identifier=fixture,
