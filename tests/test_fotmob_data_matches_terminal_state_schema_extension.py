@@ -16,6 +16,7 @@ import domain.fotmob_data_matches_terminal_state_schema_extension_protocol as pr
 from domain.fotmob_data_matches_capture import (
     CapturedFotMobDataMatchesResponse,
     build_data_matches_capture_manifest,
+    sha256_data_matches_capture_manifest,
     verify_data_matches_capture_directory,
 )
 from domain.fotmob_data_matches_post_finish_capture_pair_evidence import (
@@ -46,6 +47,30 @@ SYNTHETIC_KICKOFF_MS = 1786795200000
 SYNTHETIC_OBSERVED = datetime.datetime(
     2026, 8, 15, 13, 0, 0, tzinfo=datetime.timezone.utc
 )
+SAFETY_KEYS = {
+    "network_acquisition_authorized",
+    "terminal_schema_extension_implementation_authorized",
+    "terminal_schema_extension_qualified",
+    "pr39_schema_mutation_authorized",
+    "final_result_semantics_qualified",
+    "source_capability_update_authorized",
+    "source_history_adapter_approved",
+    "source_history_completeness_proven",
+    "pr80_constructor_input_authorized",
+    "successor_live_inputs_qualified",
+    "successor_candidate_approved",
+    "expected_goals_transform_approved",
+    "expected_goals_production_authorized",
+    "score_matrix_authorized",
+    "probability_inference_authorized",
+    "probability_adjustment_authorized",
+    "calibration_for_production_authorized",
+    "pricing_authorized",
+    "market_activation_authorized",
+    "selection_authorized",
+    "production_approval_authorized",
+    "bet_authorized",
+}
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -221,8 +246,6 @@ def test_pr85_terminal_captures_fail_closed_on_non_null_eliminated_team_id(
 ) -> None:
     raw, manifest = _load_capture(capture_id)
     assert manifest.raw_sha256 == expected_raw_sha
-    from domain.fotmob_data_matches_capture import sha256_data_matches_capture_manifest
-
     assert sha256_data_matches_capture_manifest(manifest) == expected_manifest_sha
     assert _non_null_eliminated_team_id_count(raw) > 0
 
@@ -258,7 +281,8 @@ def test_synthetic_pr39_compatible_terminal_payload_qualifies_extension_only() -
     assert result.reason_semantics_qualified is False
     assert result.final_result_semantics_qualified is False
     assert result.next_required_boundary == NEXT_REQUIRED_BOUNDARY
-    assert set(result.safety.values()) == {False}
+    assert set(result.safety) == SAFETY_KEYS
+    assert all(type(value) is bool and value is False for value in result.safety.values())
 
 
 @pytest.mark.parametrize("capture_id", (FIRST_CAPTURE_ID, SECOND_CAPTURE_ID))
@@ -314,6 +338,21 @@ def test_extension_bool_type_and_nullability_fail_closed(bad_value: Any) -> None
     )
 
 
+@pytest.mark.parametrize("bad_value", (None, [], "live", 1, True))
+def test_live_time_object_type_and_nullability_fail_closed(bad_value: Any) -> None:
+    payload = _synthetic_payload()
+    _first_match(payload)["status"]["liveTime"] = bad_value
+    raw = _raw_bytes(payload)
+    manifest = _manifest_for_raw(raw)
+
+    with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError) as exc_info:
+        assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
+    assert (
+        exc_info.value.status
+        is TerminalStateSchemaExtensionStatus.BLOCKED_EXTENSION_TYPE_OR_NULLABILITY_MISMATCH
+    )
+
+
 def test_live_time_shape_fails_closed_for_missing_or_extra_keys() -> None:
     payload = _synthetic_payload()
     del _first_match(payload)["status"]["liveTime"]["shortKey"]
@@ -352,7 +391,7 @@ def test_pr39_base_invariant_failure_is_not_hidden_by_extension() -> None:
     )
 
 
-def test_structural_success_cannot_promote_reason_or_final_result_semantics() -> None:
+def test_structural_success_assessment_is_immutable_and_fail_closed() -> None:
     raw, manifest = _synthetic_raw_and_manifest()
     result = assess_fotmob_data_matches_terminal_state_schema_extension(raw, manifest)
 
@@ -360,6 +399,20 @@ def test_structural_success_cannot_promote_reason_or_final_result_semantics() ->
         dataclasses.replace(result, reason_semantics_qualified=True)
     with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError):
         dataclasses.replace(result, final_result_semantics_qualified=True)
+    with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError):
+        dataclasses.replace(result, source_raw_sha256="0" * 63)
+    with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError):
+        dataclasses.replace(result, source_raw_size=0)
+
+    bad_counts = dict(result.status_extension_occurrences)
+    bad_counts["liveTime"] = 2
+    with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError):
+        dataclasses.replace(result, status_extension_occurrences=bad_counts)
+
+    safety = dict(result.safety)
+    safety["terminal_schema_extension_qualified"] = True
+    with pytest.raises(FotMobDataMatchesTerminalStateSchemaExtensionError):
+        dataclasses.replace(result, safety=safety)
 
     capability = SOURCE_CAPABILITY_REGISTRY["fotmob_data_matches_reviewed_catalog"]
     assert capability.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
