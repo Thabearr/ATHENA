@@ -2,229 +2,257 @@
 
 ## Purpose
 
-PR #80 implements the next boundary identified by PR #79:
+PR #80 is the first boundary after PR #79's fail-closed live-input semantic
+qualification result.
 
-`BUILD_REVIEWED_EXACT_PROSPECTIVE_SUCCESSOR_FEATURE_CONSTRUCTION`.
+PR #79 proved that ATHENA's reviewed FotMob -> Fixture Intelligence -> PR31
+chain preserves finite source scalars and their evidence ancestry, but does not
+prove that `home_elo`, `away_elo`, `home_form`, `away_form`, and `fatigue`
+were mathematically constructed the same way as the historical inputs used to
+fit the reviewed successor expected-goals candidate.
 
-PR #79 proved that the current reviewed FotMob -> Fixture Intelligence -> PR31
-path preserves reviewed finite scalar observations but does not prove that
-`home_elo`, `away_elo`, `home_form`, `away_form`, or `fatigue` were derived
-using the exact mathematics used to train the validated historical successor.
+PR #80 does **not** loosen that conclusion. Instead, it provides a pure
+deterministic constructor that can create those five raw successor inputs from
+explicit source-scoped prior final-result evidence using the exact mathematics
+frozen by PR #78.
 
-PR #80 therefore stops trusting opaque provider feature scalars and implements
-the five raw successor inputs directly from explicit source-scoped match-result
-history supplied by a caller.
+The intended path is now:
 
-This is still a **candidate construction boundary**. No current live source is
-authorized by this PR to populate a complete history corpus, and no output is
-declared semantically qualified for the successor model.
+```text
+reviewed source history adapter + completeness proof       <-- later boundary
+    -> exact PR80 prospective feature construction
+    -> semantic qualification against frozen successor inputs
+    -> later successor expected-goals shadow inference
+    -> later calibration / score-matrix / probability work
+    -> later exact pricing and decision gates
+```
 
-## Frozen ancestry
+This PR stops at the pure construction boundary.
 
-PR #80 is based on merged `main`:
+## Exact ancestry
 
-`d118fa702856d267bb6dc49301ebaee2a50dd533`
+The constructor binds the exact upstream reviewed artifacts:
 
-It mechanically revalidates the exact canonical PR #78 semantic protocol:
+- repository main after PR #79:
+  `d118fa702856d267bb6dc49301ebaee2a50dd533`;
+- PR #78 canonical semantic protocol SHA-256:
+  `97a47d431ce57468598b17fcb24e9e0e9a41fa26c80ff1f4df9e2e611107ed7c`;
+- PR #78 canonical protocol size: `4,904` bytes;
+- PR #79 canonical semantic assessment SHA-256:
+  `aea27d67b93bf777a01c4956757ba7b31c521e9eea71006d20ca5bd4acf791f4`;
+- PR #79 canonical assessment size: `6,204` bytes.
+
+The PR #80 construction specification itself is canonical sorted compact UTF-8
+JSON with a final newline:
 
 - SHA-256:
-  `97a47d431ce57468598b17fcb24e9e0e9a41fa26c80ff1f4df9e2e611107ed7c`
-- size: `4,904` bytes
+  `75fe157d1b767cf374e5c2a27cc3d96434aa12f2214fc37d7c91b1e7127eb4b7`;
+- size: `2,330` bytes.
 
-and the exact canonical PR #79 fail-closed assessment:
-
-- SHA-256:
-  `aea27d67b93bf777a01c4956757ba7b31c521e9eea71006d20ca5bd4acf791f4`
-- size: `6,204` bytes
-
-The frozen PR #80 construction specification is:
-
-- dataset:
-  `athena-prospective-successor-feature-construction-candidate-v1`
-- scope:
-  `PURE_CALLER_SUPPLIED_SOURCE_SCOPED_HISTORY_TO_FROZEN_SUCCESSOR_RAW_FEATURES_ONLY`
-- canonical SHA-256:
-  `fd83222e0d0efe04cd312634ee113cc5757565a6c943770dd6d47b0df142af8f`
-- canonical size: `2,118` bytes
-
-Changing the specification without deliberately updating its canonical identity
-fails closed.
+The builder revalidates the exact PR #78 and PR #79 canonical identities before
+constructing a candidate.
 
 ## Input contract
 
-The constructor accepts only explicit immutable in-memory evidence records. It
-does not read the database, filesystem, network, providers, APIs, or legacy
-analysis services.
+The constructor accepts only explicit caller-supplied immutable evidence
+objects. It performs no acquisition.
 
-Every prior result record carries:
+Each prior result row carries:
 
-- one exact source namespace;
-- one exact source fixture identifier;
-- source-local naive kickoff datetime;
-- exact UTC kickoff datetime;
-- exact source-scoped home and away team identifiers;
-- final home and away goals;
-- UTC evidence observation time;
+- one source namespace;
+- exact source fixture identifier;
+- naive source-local kickoff;
+- exact UTC kickoff;
+- source-scoped home and away team identifiers;
+- explicit final home and away goals;
+- UTC observation time for the final-result evidence;
 - evidence SHA-256;
 - evidence reference.
 
-The target carries the same source namespace and source-scoped identities plus
-source-local kickoff, UTC kickoff, a strictly pre-kickoff `as_of`, evidence
-SHA-256, and evidence reference.
+The target fixture carries the same source namespace and source-scoped identity
+basis, local and UTC kickoff, a strictly pre-kickoff `as_of`, and target
+evidence ancestry.
 
-A result observation must occur after that result fixture's kickoff. This does
-not by itself prove provider full-time semantics; the later reviewed source
-adapter must establish that. PR #80 only defines the normalized construction
-contract.
+The source namespace must match across the target and every supplied history
+row. Cross-source team or fixture identity is not inferred.
 
-## Chronology
+## Historical mathematics reproduced exactly
 
-The training replay used source-local kickoff chronology. PR #80 preserves that
-basis and additionally requires UTC chronology to agree.
-
-A history row is usable only when:
-
-1. its source-local kickoff is strictly before the target source-local kickoff;
-2. its UTC kickoff is strictly before the target UTC kickoff;
-3. its final-result evidence was observed no later than target `as_of`.
-
-If source-local and UTC disagree on whether a fixture is prior to the target,
-construction fails closed.
-
-Eligible history is ordered by:
-
-`source_local_kickoff ASC, fixture_identifier ASC`.
-
-Sorting the same rows by UTC kickoff must produce the same fixture order.
-Otherwise the history is temporally ambiguous and construction fails closed.
-
-A source-scoped team cannot have two eligible fixtures at the same source-local
-kickoff. Duplicate source fixture identifiers, a target fixture inside prior
-history, cross-source history, or another supplied target-team fixture at the
-target kickoff also fail closed.
-
-## Form
-
-PR #80 reproduces the PR #78 / PR #69 historical form construction exactly.
+### Form
 
 For each target team:
 
-1. select strictly prior eligible fixtures containing that exact source-scoped
-   team identity;
+1. use only strictly prior eligible fixtures;
 2. order most recent first;
 3. take at most five;
 4. score win = 3, draw = 1, loss = 0;
-5. compute
+5. compute:
 
-   `round(0.10 + ((points / (n * 3)) * 0.85), 3)`.
+```text
+round(0.10 + ((points / (n * 3)) * 0.85), 3)
+```
 
-If there is no prior fixture, form is `MISSING_PRIOR_HISTORY`.
+No prior fixture means `MISSING_PRIOR_HISTORY`. There is no `0.50` or other
+default.
 
-There is **no 0.50 fallback** for missing history, database errors, provider
-absence, or any other uncertainty.
+### Fatigue
 
-The feature records the exact fixture identifiers and evidence SHA-256 values
-used in its five-match window.
+Use the most recent strictly prior fixture for each target team.
 
-## Fatigue
+```text
+difference =
+    (target_local_kickoff - home_last_local_kickoff).days
+    -
+    (target_local_kickoff - away_last_local_kickoff).days
+```
 
-PR #80 reproduces the frozen home-relative historical fatigue rule.
+Then:
 
-For each target team, use the most recent strictly prior eligible fixture. If
-either team has no prior fixture, fatigue is `MISSING_PRIOR_HISTORY`.
+```text
+0.30 if difference < -2
+0.10 if difference < 0
+0.00 otherwise
+```
 
-Otherwise:
+If either target team lacks prior history, fatigue is
+`MISSING_PRIOR_HISTORY`. There is no default.
 
-`difference = (target - home_last).days - (target - away_last).days`
+### Elo
 
-and:
+Replay every eligible supplied result chronologically using the frozen PR #78 /
+PR #69 semantics:
 
-- `difference < -2` -> `0.30`
-- `difference < 0` -> `0.10`
-- otherwise -> `0.0`
-
-The calculation uses the integer `.days` component of the source-local datetime
-delta exactly as frozen by PR #78.
-
-The feature records the exact two prior fixture identities and their evidence
-hashes. No no-data value is silently converted to neutral fatigue.
-
-## Elo
-
-PR #80 reproduces the frozen historical overall Elo replay:
-
-- initial rating = `1500`;
-- home advantage = `+50`;
-- logistic divisor = `400`;
-- actual result = `1.0 / 0.5 / 0.0`;
+- overall rating starts at `1500`;
+- `1500` is an explicit replay initial-state assumption, not observed evidence;
+- home expected score applies `+50` home advantage;
+- away expected score uses no home boost;
+- logistic divisor is `400`;
+- observed score is win `1.0`, draw `0.5`, loss `0.0`;
 - K = `32` before 20 matches;
 - K = `24` from 20 through 49;
 - K = `16` from 50 onward;
-- update =
-  `int(old_overall + K * (actual_score - expected_score))`;
-- target feature = current overall rating before target fixture update.
+- update is `int(old + K * (actual - expected))`;
+- target Elo is the current overall rating before the target fixture.
 
-Every eligible source fixture is replayed chronologically. The two target Elo
-features therefore depend on the complete supplied history prefix, not only on
-the target teams' direct fixtures. Their lineage is the canonical SHA-256 of the
-entire eligible history prefix.
+An unseen target team may therefore have Elo `1500` with status
+`CONSTRUCTED_FROM_FROZEN_INITIAL_STATE_ASSUMPTION`. That is not presented as
+observed source evidence.
 
-The initialization caveat remains exactly:
+## Temporal and observation-time safety
 
-`1500_REPLAY_INITIAL_STATE_ASSUMPTION_NOT_OBSERVED_EVIDENCE`.
+PR #80 is stricter than simply sorting rows.
 
-## Why the output is not yet live-qualified
+For every supplied history row, source-local and UTC chronology relative to the
+target must agree. For the eligible prior prefix, the complete local ordering
+and UTC ordering must also agree exactly.
 
-Correct mathematics over an explicit supplied corpus is necessary but not
-sufficient.
+The constructor fails closed when:
 
-PR #80 does **not** prove that any existing provider or database can supply:
+- a duplicate source fixture identifier exists;
+- the target fixture appears in result history;
+- source namespaces differ;
+- local and UTC chronology disagree;
+- one source-scoped team appears in multiple supplied fixtures at the same
+  source-local or UTC kickoff;
+- a target team has another supplied fixture at the target kickoff;
+- a supplied prior fixture's final result was not yet observed by the target
+  `as_of`.
 
-- a complete prior fixture corpus;
-- final-result semantics;
-- exact source-team identity continuity;
-- complete source history from an appropriate Elo initialization boundary;
-- source-local chronology equivalent to the historical training construction;
-- conflict-free evidence across the complete prefix.
+The last rule matters. A known prior fixture whose final result was unavailable
+at the analysis time is not silently dropped from Elo/form/fatigue state.
 
-Therefore every artifact records:
+Rows genuinely after the target are ignored by construction, but remain visible
+in `supplied_history_count`.
 
-`all_five_exact_semantic_equivalence = false`
+## Determinism and lineage
 
-even when all five numeric values can be constructed from a synthetic or
-caller-supplied corpus.
+The eligible prefix is sorted deterministically and canonicalized with its
+source-local time basis and Elo initialization semantics. The candidate records
+its exact prefix byte size and SHA-256.
 
-The fixed caveat is:
+Each feature records the fixture identifiers and evidence SHA-256 values used
+for its derivation:
 
-`UNPROVEN_UNTIL_REVIEWED_SOURCE_ADAPTER_PROVES_HISTORY_COMPLETENESS_IDENTITY_AND_CHRONOLOGY`.
+- form records the relevant recent-five rows;
+- fatigue records the latest rows for the two target teams;
+- Elo records the complete eligible replay prefix when the target team has
+  participated in that history;
+- an assumption-only `1500` Elo claims no result-evidence lineage.
 
-This prevents a caller from treating "we can calculate the formula" as "the live
-feature is now approved for the successor".
+Multiple fixtures may legitimately share the same capture/evidence SHA-256; the
+parallel fixture/hash lineage therefore preserves duplicate evidence hashes
+rather than pretending they are distinct captures.
 
-## Determinism and evidence lineage
+Revalidation rebuilds the candidate from the original history and target and
+requires exact canonical bytes. Mutated history, target, candidate, or
+non-canonical bytes fail closed.
 
-The constructor:
+## What this PR proves
 
-- rebuilds frozen dataclass inputs before use;
-- canonicalizes eligible history independently of caller ordering;
-- produces a canonical history-prefix SHA-256;
-- records supplied and eligible history counts;
-- records exact direct form/fatigue fixture lineage;
-- records the history-prefix identity for Elo;
-- uses compact sorted UTF-8 JSON with one final newline;
-- rejects NaN/infinity through the canonical serializer;
-- provides full candidate reconstruction/revalidation.
+PR #80 proves that ATHENA can deterministically construct the five raw successor
+inputs with the exact historical mathematics **if** it is supplied an adequate
+source-scoped prior-result history.
 
-The tests also cross-check the five synthetic PR #80 values against PR #69's
-historical replay on the exact same match sequence. This is intended to detect
-drift in the form, Elo, or fatigue mathematics.
+The synthetic parity test builds the same small history through the PR #69
+historical replay and the PR #80 prospective constructor and requires exact
+equality for:
 
-## Safety
+- `home_elo`;
+- `away_elo`;
+- `home_form`;
+- `away_form`;
+- `fatigue`.
 
-PR #80 creates no expected goals, score matrix, probability, calibration,
-price, market activation, selection, or bet.
+This is a mathematical-construction proof, not a live-source qualification.
 
-All downstream authorization remains exact `false`, including:
+## What this PR deliberately does not prove
+
+The central caveat remains:
+
+```text
+UNPROVEN_UNTIL_REVIEWED_SOURCE_ADAPTER_PROVES_HISTORY_COMPLETENESS_IDENTITY_AND_CHRONOLOGY
+```
+
+A caller could provide an incomplete history. PR #80 has no independent source
+adapter and cannot know whether an omitted past fixture exists.
+
+Therefore:
+
+- `all_five_exact_semantic_equivalence` is always `false`;
+- source-history adapter approval is `false`;
+- source-history completeness proof is `false`;
+- successor live-input qualification is `false`.
+
+PR #80 does not use the opaque provider-supplied PR31 form/Elo/fatigue scalars
+that PR #79 found insufficiently proven.
+
+## Prohibited behavior
+
+This boundary does not:
+
+- make network requests;
+- scrape or browse;
+- call FotMob or SportyBet;
+- read a database;
+- write a database;
+- create fixture intelligence;
+- call PR31's provider-scalar handoff;
+- execute the successor expected-goals model;
+- call `ScoreMatrix`;
+- calculate market probabilities;
+- calibrate production probabilities;
+- acquire bookmaker odds;
+- calculate edge, EV, Kelly, or stake;
+- activate a market;
+- select a bet or accumulator;
+- authorize `BET`.
+
+The module imports only the reviewed PR #78/#79 semantic artifacts needed for
+ancestry verification plus Python standard-library code.
+
+## Safety contract
+
+Every downstream authorization remains exact boolean `false`, including:
 
 - source-history adapter approval;
 - source-history completeness proof;
@@ -234,30 +262,28 @@ All downstream authorization remains exact `false`, including:
 - expected-goals production use;
 - score matrix;
 - probability inference and adjustment;
-- calibration for production;
+- production calibration;
 - pricing;
 - market activation;
 - selection;
 - production approval;
 - betting.
 
+Constructing all five numeric values is therefore **not** production approval.
+
 ## Next boundary
 
-The next required boundary is frozen as:
+The next required boundary is:
 
-`BUILD_REVIEWED_SOURCE_HISTORY_ADAPTER_AND_COMPLETENESS_PROOF`.
+```text
+BUILD_REVIEWED_SOURCE_HISTORY_ADAPTER_AND_COMPLETENESS_PROOF
+```
 
-That boundary must identify a real reviewed source path capable of producing the
-PR #80 normalized result-history contract and prove, rather than assume:
+That work must determine which reviewed prospective source can supply the
+required prior final-result history, preserve source-scoped fixture/team
+identity, prove chronology and observation-time semantics, and establish a
+defensible completeness rule before PR #80 output can be promoted to exact
+successor input equivalence.
 
-- result finality;
-- team identity continuity;
-- complete history coverage through target `as_of`;
-- chronology;
-- source-local/UTC linkage;
-- the Elo initialization/corpus boundary.
-
-Only after that source-specific proof may ATHENA reconsider whether the five
-constructed values satisfy PR #78 exact semantic equivalence. Even then,
-expected-goals execution and production authorization remain separately reviewed
-boundaries.
+No source should be accepted merely because its numbers happen to match a
+sample calculation.
