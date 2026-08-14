@@ -194,6 +194,23 @@ def test_fatigue_uses_exact_home_relative_rest_day_thresholds(home_day, away_day
     assert features["fatigue"].status is ConstructedFeatureStatus.CONSTRUCTED_FROM_SUPPLIED_HISTORY
 
 
+def test_fatigue_accepts_one_shared_latest_fixture_for_both_target_teams():
+    history = (
+        _row("older-a", 2, "A", "X", 1, 0),
+        _row("older-b", 3, "B", "Y", 0, 0),
+        _row("shared-last", 10, "A", "B", 1, 1),
+    )
+    features = _feature_map(
+        build_prospective_successor_feature_construction_candidate(
+            history=history, target=_target()
+        )
+    )
+    fatigue = features["fatigue"]
+    assert fatigue.value == 0.0
+    assert fatigue.derivation_fixture_identifiers == ("shared-last",)
+    assert fatigue.derivation_evidence_sha256s == (_hash("shared-last"),)
+
+
 def test_first_elo_update_matches_frozen_plus50_and_unboosted_away_equations():
     history = (
         _row("a-win", 1, "A", "C", 1, 0),
