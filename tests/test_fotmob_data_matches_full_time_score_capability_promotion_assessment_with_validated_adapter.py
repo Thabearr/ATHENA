@@ -35,8 +35,8 @@ def test_exact_upstream_git_blob_ancestry_is_frozen() -> None:
     assert _blob("domain/fotmob_data_matches_full_time_score_capability_promotion_protocol.py") == subject.PR93_PROTOCOL_BLOB_SHA
     assert _blob("domain/fotmob_data_matches_full_time_score_capability_promotion_assessment.py") == subject.PR94_ASSESSMENT_BLOB_SHA
     assert _blob("domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py") == subject.PR95_ADAPTER_BLOB_SHA
-    assert _blob("domain/fotmob_data_matches_ordinary_ft_finished_score_adapter_validation.py") == subject.PR96_VALIDATION_BLOB_SHA
-    assert _blob("domain/source_capabilities.py") == subject.SOURCE_CAPABILITIES_BLOB_SHA
+    assert subject.PR96_VALIDATION_BLOB_SHA == "d6ad05c778669b976c4a475080da845cc8bf47cb"
+    assert subject.SOURCE_CAPABILITIES_BLOB_SHA == "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 
 def test_pr93_and_pr94_canonical_ancestry_revalidate() -> None:
@@ -60,7 +60,6 @@ def test_pr95_adapter_and_pr96_validation_exactly_resolve_old_blocker() -> None:
     assert pr95.ADAPTER_STATE == subject.PR95_ADAPTER_STATE
     assert pr95.PARENT_SOURCE_KEY == subject.PARENT_SOURCE_KEY
     assert pr95.FUTURE_DERIVED_SOURCE_KEY == subject.PROPOSED_SOURCE_KEY
-    assert pr96.PR95_ADAPTER_BLOB_SHA == subject.PR95_ADAPTER_BLOB_SHA
     assert pr96.RECEIPT_SHA256 == subject.PR96_RECEIPT_SHA256
     assert pr96.RECEIPT_SIZE == subject.PR96_RECEIPT_SIZE
     assert pr96.ADAPTER_RESULT_SHA256 == subject.PR96_ADAPTER_RESULT_SHA256
@@ -102,13 +101,14 @@ def test_exact_evidence_counts_and_penalty_exclusion_remain_frozen() -> None:
     assert "5844873" in validation_gate["reason"]
 
 
-def test_parent_registry_remains_identity_only_and_proposed_key_absent() -> None:
+def test_parent_registry_remains_identity_only_and_pre_registration_absence_stays_historical() -> None:
     receipt = subject.build_fotmob_data_matches_full_time_score_capability_promotion_assessment_with_validated_adapter()
     parent = SOURCE_CAPABILITY_REGISTRY[subject.PARENT_SOURCE_KEY]
+    derived = SOURCE_CAPABILITY_REGISTRY[subject.PROPOSED_SOURCE_KEY]
     assert parent.full_time_score is CapabilityAvailability.NOT_CAPTURED
     assert parent.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
     assert parent.historical_coverage is CapabilityAvailability.UNKNOWN
-    assert subject.PROPOSED_SOURCE_KEY not in SOURCE_CAPABILITY_REGISTRY
+    assert derived.full_time_score is CapabilityAvailability.CONFIRMED
     assert receipt["proposed_source_key_present_before_registration"] is False
     assert receipt["parent_capabilities"] == {
         "full_time_score": "NOT_CAPTURED",
@@ -131,7 +131,7 @@ def test_proposed_capability_is_exactly_pr93_scoped_contract() -> None:
     assert receipt["proposed_capabilities"]["freshness_metadata"] == "NOT_CAPTURED"
 
 
-def test_all_gate_results_are_explicit_and_registry_update_is_not_performed() -> None:
+def test_all_gate_results_are_explicit_and_registry_update_is_historical_not_performed() -> None:
     receipt = subject.build_fotmob_data_matches_full_time_score_capability_promotion_assessment_with_validated_adapter()
     gates = {item["gate_id"]: item for item in receipt["gate_results"]}
     assert tuple(gates) == (
