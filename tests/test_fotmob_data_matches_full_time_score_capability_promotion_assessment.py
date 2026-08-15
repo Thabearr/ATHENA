@@ -38,7 +38,6 @@ from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PR93_PROTOCOL_BLOB_SHA = "c9b5d47674283e2a8f2d54a68966b97fbd418047"
 SOURCE_CAPABILITIES_BLOB_SHA = "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 SAFETY_KEYS = {
     "network_acquisition_authorized",
@@ -100,18 +99,18 @@ def test_exact_assessment_identity_and_base_tree_are_frozen() -> None:
     assert revalidate_fotmob_data_matches_full_time_score_capability_promotion_assessment(value) == value
 
 
-def test_exact_pr93_and_source_capability_blob_ancestry_is_unchanged() -> None:
-    assert (
-        _git_blob_sha(
-            ROOT / "domain" / "fotmob_data_matches_full_time_score_capability_promotion_protocol.py"
-        )
-        == PR93_PROTOCOL_BLOB_SHA
-    )
+def test_pr93_canonical_identity_and_source_capability_ancestry_are_unchanged() -> None:
     assert _git_blob_sha(ROOT / "domain" / "source_capabilities.py") == SOURCE_CAPABILITIES_BLOB_SHA
     assert pr93.PROTOCOL_SHA256 == (
         "8606367857915046eb27b9f2bf751514e52e266966b23caf598d1fedbf6b4009"
     )
     assert pr93.PROTOCOL_SIZE == 6458
+    protocol = pr93.build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
+    exact = pr93.canonical_fotmob_data_matches_full_time_score_capability_promotion_protocol_bytes(
+        protocol
+    )
+    assert hashlib.sha256(exact).hexdigest() == pr93.PROTOCOL_SHA256
+    assert len(exact) == pr93.PROTOCOL_SIZE
 
 
 def test_assessment_fails_closed_on_exact_missing_reusable_adapter_boundary() -> None:
