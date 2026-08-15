@@ -41,36 +41,76 @@ cookie path, or request identity is introduced.
 
 ## Append-only research evidence
 
-Campaign evidence lives only under the ignored research root:
+Campaign control/evidence lives only under the ignored research root:
 
 `.cache/athena-research/fotmob-ordinary-ft-source-history-campaign-v1/`
 
-Two distinct canonical JSONL artifacts are used:
+The durable artifacts are:
 
 - `campaign-index.jsonl` — successful qualifying slot captures;
-- `failure-journal.jsonl` — failed attempts and terminal slot blockers.
+- `failure-journal.jsonl` — failed attempts and terminal slot blockers;
+- `inflight-attempt.json` — a single durable pre-request intent marker;
+- `runner.lock` — concurrent execution guard.
 
-Both share one global contiguous `sequence` and SHA-256 hash chain. Every entry
-binds the previous entry hash. On every append the runner reloads and validates
-both files, appends with `O_APPEND`, fsyncs the file and containing directory,
-then reloads the combined evidence again. Torn, non-canonical, reordered,
-duplicated, hash-invalid, symlinked, or concurrently changed evidence fails
-closed.
+The index and failure journal share one global contiguous `sequence` and SHA-256
+hash chain. Every entry binds the previous entry hash. On every append the runner
+reloads and validates both files, appends with `O_APPEND`, fsyncs the file and
+containing directory, then reloads the combined evidence again. Torn,
+non-canonical, reordered, duplicated, hash-invalid, symlinked, or concurrently
+changed evidence fails closed.
 
 A successful index entry contains the exact PR #101 lineage fields: request
 date, slot, capture identifier, raw SHA-256, raw size, manifest SHA-256, and UTC
 observation time. Failed attempts are never erased by later success.
 
-The live executor also uses a fixed `runner.lock` in the research directory.
-An existing lock blocks concurrent execution. A lock left by an interrupted
-process must be manually inspected before removal; the runner will not guess
-that a lock is stale.
+## Crash/restart attempt accounting
+
+Before **every** network request the live executor writes and durably fsyncs
+`inflight-attempt.json`. The canonical marker binds:
+
+- runner identity;
+- current append-only evidence sequence and previous entry SHA-256;
+- request date;
+- slot;
+- attempt number;
+- UTC attempt-start time;
+- its own SHA-256.
+
+The request is not allowed to start until that marker has been written,
+directory-synced, reread, and revalidated.
+
+After a normal success or failure, the corresponding append-only outcome entry
+is committed first. Only after the outcome rereads successfully is the in-flight
+marker removed and the directory synced.
+
+This ordering closes the crash window that would otherwise allow an unaccounted
+request or durable raw capture to be silently repeated after restart:
+
+- if the process dies before an outcome is journaled, the in-flight marker
+  remains and **automatic retry is forbidden**;
+- if a durable capture exists but the append-only outcome is absent, the runner
+  reports `UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION` and performs no
+  new request;
+- if the process dies after the append-only outcome is durable but before marker
+  deletion, the next locked execution verifies that the marker exactly matches
+  that one recorded outcome and safely removes the stale marker without
+  repeating the completed attempt;
+- marker/evidence disagreement fails closed as `INFLIGHT_ATTEMPT_STATE_CONFLICT`.
+
+An unresolved in-flight attempt is intentionally **not guessed into success or
+failure**. Its capture/network state must be explicitly reconciled in a later
+reviewed evidence action before the campaign can continue.
+
+The live executor also uses a fixed `runner.lock`. An existing lock blocks
+concurrent execution. A lock left by an interrupted process must be manually
+inspected before removal; the runner will not guess that a lock is stale.
 
 ## Resume and timing behavior
 
-Resume state is derived only from revalidated append-only evidence. A slot that
-already succeeded is never requested again. Failed attempts resume at the exact
-next attempt number and retain the frozen retry delay across process restarts.
+Resume state is derived only from revalidated append-only evidence plus the
+validated in-flight marker. A slot that already succeeded is never requested
+again. Failed attempts resume at the exact next attempt number and retain the
+frozen retry delay across process restarts.
 
 Before each request the runner enforces the maximum of:
 

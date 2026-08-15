@@ -1,9 +1,9 @@
 """Live executor for the frozen FotMob ordinary-FT source-history campaign.
 
 The runner reuses the reviewed single-request data-matches transport. Network
-execution requires an explicit flag. Campaign state is resumable from two
-canonical append-only research artifacts outside Git: a success index and a
-failure journal with one global hash chain.
+execution requires an explicit flag. Campaign state is resumable from canonical
+append-only research evidence plus one durable in-flight attempt marker that
+prevents crash/restart from silently repeating an unaccounted request.
 """
 
 from __future__ import annotations
@@ -23,6 +23,7 @@ import hashlib
 import json
 import os
 import stat
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Callable, Iterator
 
@@ -30,6 +31,8 @@ import domain.fotmob_data_matches_capture as capture_contract
 import domain.fotmob_ordinary_ft_source_history_acquisition_protocol as pr101
 from domain.fotmob_data_matches_capture import (
     FotMobDataMatchesCaptureError,
+    parse_utc_timestamp,
+    serialize_utc,
     sha256_data_matches_capture_manifest,
     verify_data_matches_capture_directory,
 )
@@ -40,6 +43,7 @@ from domain.fotmob_ordinary_ft_source_history_acquisition_runner import (
     CCODE3,
     FAILURE_JOURNAL_FILENAME,
     NEXT_REQUIRED_BOUNDARY,
+    RUNNER_ID,
     TIMEZONE,
     CampaignProgress,
     CampaignSlot,
@@ -61,6 +65,25 @@ import scripts.capture_fotmob_data_matches as capture_runtime
 EXPECTED_CAPTURE_SCRIPT_BLOB_SHA = "10b8858ab62f2708bd564d578a627c43718e5a12"
 EXPECTED_CAPTURE_CONTRACT_BLOB_SHA = "ca2149395de868104666620173b55a880b10c729"
 MAX_WAIT_RECHECKS = 8
+
+INFLIGHT_ATTEMPT_FILENAME = "inflight-attempt.json"
+INFLIGHT_ATTEMPT_SCHEMA_VERSION = 1
+MAX_INFLIGHT_ATTEMPT_BYTES = 4096
+_INFLIGHT_KEYS = frozenset(
+    {
+        "schema_version",
+        "runner_id",
+        "evidence_sequence",
+        "previous_entry_sha256",
+        "request_date",
+        "slot",
+        "attempt",
+        "attempt_started_at_utc",
+        "intent_sha256",
+    }
+)
+_ZERO_SHA256 = "0" * 64
+_HEX = frozenset("0123456789abcdef")
 
 
 class FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError(RuntimeError):
@@ -167,21 +190,34 @@ def _ensure_campaign_root(*, repository_root: Path | None = None) -> Path:
     return root
 
 
+def _regular_single_link(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise _error(f"{label} must not be a symlink")
+    if not path.exists():
+        return
+    try:
+        details = path.stat()
+    except OSError as exc:
+        raise _error(f"{label} metadata could not be read") from exc
+    if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+        raise _error(f"{label} must be a single-link regular file")
+
+
 def _evidence_path(root: Path, filename: str) -> Path:
     if filename not in {CAMPAIGN_INDEX_FILENAME, FAILURE_JOURNAL_FILENAME}:
         raise _error("campaign evidence filename is not authorized")
     path = root / filename
     if path.parent != root:
         raise _error("campaign evidence path escaped campaign root")
-    if path.is_symlink():
-        raise _error("campaign evidence file must not be a symlink")
-    if path.exists():
-        try:
-            details = path.stat()
-        except OSError as exc:
-            raise _error("campaign evidence metadata could not be read") from exc
-        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
-            raise _error("campaign evidence must be a single-link regular file")
+    _regular_single_link(path, "campaign evidence")
+    return path
+
+
+def _inflight_path(root: Path) -> Path:
+    path = root / INFLIGHT_ATTEMPT_FILENAME
+    if path.parent != root:
+        raise _error("in-flight attempt path escaped campaign root")
+    _regular_single_link(path, "in-flight attempt marker")
     return path
 
 
@@ -221,11 +257,11 @@ def _write_all(descriptor: int, content: bytes) -> None:
         while offset < len(content):
             written = os.write(descriptor, content[offset:])
             if written <= 0:
-                raise OSError("append write made no progress")
+                raise OSError("write made no progress")
             offset += written
         os.fsync(descriptor)
     except OSError as exc:
-        raise _error("could not durably append campaign evidence") from exc
+        raise _error("could not durably write campaign control/evidence") from exc
 
 
 def _append_entry(
@@ -272,6 +308,301 @@ def _append_entry(
     if tuple(reloaded) != tuple(expected):
         raise _error("campaign evidence did not revalidate after durable append")
     return reloaded
+
+
+def _canonical_json(value: Mapping[str, Any]) -> bytes:
+    try:
+        return (
+            json.dumps(
+                dict(value),
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _error("in-flight attempt serialization failed") from exc
+
+
+def _valid_sha(value: Any, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in _HEX for character in value)
+    ):
+        raise _error(f"{label} must be exactly 64 lowercase hexadecimal characters")
+    return value
+
+
+def _strict_json(content: bytes) -> dict[str, Any]:
+    if type(content) is not bytes or not content or len(content) > MAX_INFLIGHT_ATTEMPT_BYTES:
+        raise _error("in-flight attempt marker size/framing is invalid")
+    if not content.endswith(b"\n"):
+        raise _error("in-flight attempt marker is torn")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise _error("in-flight attempt marker must be UTF-8") from exc
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, item in items:
+            if key in result:
+                raise _error("in-flight attempt marker contains duplicate JSON keys")
+            result[key] = item
+        return result
+
+    def constant(token: str) -> None:
+        raise _error(f"in-flight attempt marker constant {token!r} is forbidden")
+
+    try:
+        value = json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
+    except FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError:
+        raise
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise _error("in-flight attempt marker JSON is invalid") from exc
+    if type(value) is not dict:
+        raise _error("in-flight attempt marker must be a JSON object")
+    return value
+
+
+def _validate_inflight_intent(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _error("in-flight attempt marker must be a mapping")
+    plain = dict(value)
+    if set(plain) != _INFLIGHT_KEYS:
+        raise _error("in-flight attempt marker keys mismatch")
+    if plain["schema_version"] != INFLIGHT_ATTEMPT_SCHEMA_VERSION or type(plain["schema_version"]) is not int:
+        raise _error("in-flight attempt marker schema_version mismatch")
+    if plain["runner_id"] != RUNNER_ID:
+        raise _error("in-flight attempt marker runner_id mismatch")
+    if type(plain["evidence_sequence"]) is not int or plain["evidence_sequence"] < 0:
+        raise _error("in-flight evidence_sequence must be an exact non-negative integer")
+    _valid_sha(plain["previous_entry_sha256"], "previous_entry_sha256")
+    request_date = plain["request_date"]
+    if (
+        type(request_date) is not str
+        or len(request_date) != 8
+        or not request_date.isascii()
+        or not request_date.isdigit()
+    ):
+        raise _error("in-flight request_date must be canonical YYYYMMDD")
+    if plain["slot"] not in {"A", "B"}:
+        raise _error("in-flight slot must be exactly A or B")
+    if type(plain["attempt"]) is not int or not 1 <= plain["attempt"] <= 3:
+        raise _error("in-flight attempt must be exact integer 1..3")
+    try:
+        started = parse_utc_timestamp(
+            plain["attempt_started_at_utc"], "attempt_started_at_utc"
+        )
+    except Exception as exc:
+        raise _error("in-flight attempt_started_at_utc is invalid") from exc
+    canonical_started = serialize_utc(started)
+    if canonical_started != plain["attempt_started_at_utc"]:
+        raise _error("in-flight attempt timestamp is not canonical UTC")
+    claimed = _valid_sha(plain["intent_sha256"], "intent_sha256")
+    unsigned = dict(plain)
+    unsigned.pop("intent_sha256")
+    expected = hashlib.sha256(_canonical_json(unsigned)).hexdigest()
+    if claimed != expected:
+        raise _error("in-flight attempt marker SHA-256 mismatch")
+    return plain
+
+
+def _load_inflight_intent(root: Path) -> dict[str, Any] | None:
+    path = _inflight_path(root)
+    if not path.exists():
+        return None
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise _error("could not read in-flight attempt marker") from exc
+    value = _strict_json(raw)
+    plain = _validate_inflight_intent(value)
+    if _canonical_json(plain) != raw:
+        raise _error("in-flight attempt marker is not canonical JSON")
+    return plain
+
+
+def _previous_evidence_hash(entries: tuple[Any, ...]) -> str:
+    if not entries:
+        return _ZERO_SHA256
+    return _valid_sha(entries[-1]["entry_sha256"], "entry_sha256")
+
+
+def _build_inflight_intent(
+    entries: tuple[Any, ...],
+    *,
+    slot: CampaignSlot,
+    attempt: int,
+    attempt_started_at: datetime.datetime,
+) -> dict[str, Any]:
+    progress = campaign_progress(entries)
+    if progress.complete or progress.blocked:
+        raise _error("cannot begin an attempt from completed/blocked campaign state")
+    if progress.next_slot != slot or progress.next_attempt != attempt:
+        raise _error("in-flight attempt does not match exact next campaign slot/attempt")
+    try:
+        started = serialize_utc(attempt_started_at)
+    except Exception as exc:
+        raise _error("in-flight attempt start must be timezone-aware") from exc
+    unsigned = {
+        "schema_version": INFLIGHT_ATTEMPT_SCHEMA_VERSION,
+        "runner_id": RUNNER_ID,
+        "evidence_sequence": len(entries),
+        "previous_entry_sha256": _previous_evidence_hash(entries),
+        "request_date": slot.request_date,
+        "slot": slot.slot,
+        "attempt": attempt,
+        "attempt_started_at_utc": started,
+    }
+    return {
+        **unsigned,
+        "intent_sha256": hashlib.sha256(_canonical_json(unsigned)).hexdigest(),
+    }
+
+
+def _create_inflight_intent(
+    entries: tuple[Any, ...],
+    *,
+    slot: CampaignSlot,
+    attempt: int,
+    attempt_started_at: datetime.datetime,
+    root: Path,
+) -> dict[str, Any]:
+    intent = _validate_inflight_intent(
+        _build_inflight_intent(
+            entries,
+            slot=slot,
+            attempt=attempt,
+            attempt_started_at=attempt_started_at,
+        )
+    )
+    encoded = _canonical_json(intent)
+    path = _inflight_path(root)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except FileExistsError as exc:
+        raise _error("in-flight attempt marker already exists") from exc
+    except OSError as exc:
+        raise _error("could not create in-flight attempt marker") from exc
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+            raise _error("in-flight attempt descriptor is not a single-link regular file")
+        _write_all(descriptor, encoded)
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            raise _error("could not close in-flight attempt marker") from exc
+    try:
+        capture_runtime._sync_directory(root)
+    except FotMobDataMatchesCaptureError as exc:
+        raise _error("could not durably synchronize in-flight attempt marker") from exc
+    persisted = _load_inflight_intent(root)
+    if persisted != intent:
+        raise _error("in-flight attempt marker did not revalidate after durable write")
+    return intent
+
+
+def _remove_inflight_intent(root: Path, expected: Mapping[str, Any]) -> None:
+    path = _inflight_path(root)
+    persisted = _load_inflight_intent(root)
+    if persisted is None:
+        raise _error("in-flight attempt marker disappeared before outcome commit")
+    if persisted != dict(expected):
+        raise _error("in-flight attempt marker changed before outcome commit")
+    try:
+        path.unlink()
+        capture_runtime._sync_directory(root)
+    except (OSError, FotMobDataMatchesCaptureError) as exc:
+        raise _error("could not durably clear completed in-flight attempt marker") from exc
+
+
+def _intent_matches_pending_state(
+    entries: tuple[Any, ...], intent: Mapping[str, Any]
+) -> bool:
+    if len(entries) != intent["evidence_sequence"]:
+        return False
+    if _previous_evidence_hash(entries) != intent["previous_entry_sha256"]:
+        return False
+    progress = campaign_progress(entries)
+    if progress.complete or progress.blocked or progress.next_slot is None:
+        return False
+    return (
+        progress.next_slot.request_date == intent["request_date"]
+        and progress.next_slot.slot == intent["slot"]
+        and progress.next_attempt == intent["attempt"]
+    )
+
+
+def _intent_matches_recorded_outcome(
+    entries: tuple[Any, ...], intent: Mapping[str, Any]
+) -> bool:
+    sequence = intent["evidence_sequence"]
+    if len(entries) != sequence + 1:
+        return False
+    outcome = entries[-1]
+    return (
+        outcome["sequence"] == sequence + 1
+        and outcome["previous_entry_sha256"] == intent["previous_entry_sha256"]
+        and outcome["event_type"] in {"SLOT_SUCCEEDED", "ATTEMPT_FAILED"}
+        and outcome["request_date"] == intent["request_date"]
+        and outcome["slot"] == intent["slot"]
+        and outcome["attempt"] == intent["attempt"]
+        and outcome["attempt_started_at_utc"] == intent["attempt_started_at_utc"]
+    )
+
+
+def _reconcile_completed_inflight_marker(
+    entries: tuple[Any, ...],
+    *,
+    root: Path,
+) -> tuple[Any, ...]:
+    intent = _load_inflight_intent(root)
+    if intent is None:
+        return entries
+    if _intent_matches_recorded_outcome(entries, intent):
+        _remove_inflight_intent(root, intent)
+        return entries
+    if _intent_matches_pending_state(entries, intent):
+        raise _error(
+            "UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION: a request may "
+            "have started without a durable campaign outcome; automatic retry is forbidden"
+        )
+    raise _error(
+        "INFLIGHT_ATTEMPT_STATE_CONFLICT: marker and append-only campaign evidence disagree"
+    )
+
+
+def _inflight_status(
+    entries: tuple[Any, ...],
+    *,
+    root: Path,
+) -> dict[str, Any] | None:
+    intent = _load_inflight_intent(root)
+    if intent is None:
+        return None
+    if _intent_matches_recorded_outcome(entries, intent):
+        reason = "RECORDED_OUTCOME_PENDING_SAFE_MARKER_CLEANUP"
+    elif _intent_matches_pending_state(entries, intent):
+        reason = "UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION"
+    else:
+        reason = "INFLIGHT_ATTEMPT_STATE_CONFLICT"
+    return {
+        "reason": reason,
+        "request_date": intent["request_date"],
+        "slot": intent["slot"],
+        "attempt": intent["attempt"],
+        "attempt_started_at_utc": intent["attempt_started_at_utc"],
+        "intent_sha256": intent["intent_sha256"],
+    }
 
 
 def _lock_payload() -> bytes:
@@ -427,7 +758,9 @@ def _execute_next_slot_locked(
     clock: Callable[[], datetime.datetime],
     sleeper: Callable[[float], None],
 ) -> CampaignProgress:
+    root = _ensure_campaign_root(repository_root=repository_root)
     entries = load_campaign_entries(repository_root=repository_root, create_root=True)
+    entries = _reconcile_completed_inflight_marker(entries, root=root)
     progress = campaign_progress(entries)
     if progress.complete:
         return progress
@@ -455,6 +788,13 @@ def _execute_next_slot_locked(
             raise _error(f"campaign pair window blocked: {exc}") from exc
 
         attempt_started_at = eligible_at
+        intent = _create_inflight_intent(
+            entries,
+            slot=slot,
+            attempt=attempt,
+            attempt_started_at=attempt_started_at,
+            root=root,
+        )
         capture_directory: Path | None = None
         manifest_sha256: str | None = None
         try:
@@ -493,6 +833,7 @@ def _execute_next_slot_locked(
                 observed_at=manifest.observed_at,
             )
             entries = _append_entry(entries, entry, repository_root=repository_root)
+            _remove_inflight_intent(root, intent)
             return campaign_progress(entries)
         except FotMobOrdinaryFtSourceHistoryPairWindowError as exc:
             entries = _record_failure(
@@ -507,6 +848,7 @@ def _execute_next_slot_locked(
                 capture_id=(None if capture_directory is None else capture_directory.name),
                 manifest_sha256=manifest_sha256,
             )
+            _remove_inflight_intent(root, intent)
             progress = campaign_progress(entries)
             if exc.reason == "PAIR_OBSERVATION_TOO_LATE" and not progress.blocked:
                 entries = _record_block(
@@ -544,6 +886,7 @@ def _execute_next_slot_locked(
                 capture_id=(None if capture_directory is None else capture_directory.name),
                 manifest_sha256=manifest_sha256,
             )
+            _remove_inflight_intent(root, intent)
             progress = campaign_progress(entries)
             if progress.blocked:
                 raise _error(f"campaign is blocked: {progress.block_reason}") from exc
@@ -604,9 +947,10 @@ def execute_campaign(
         sleeper = time.sleep
 
     with campaign_lock(repository_root=repository):
-        initial = campaign_progress(
-            load_campaign_entries(repository_root=repository, create_root=True)
-        )
+        root = _ensure_campaign_root(repository_root=repository)
+        entries = load_campaign_entries(repository_root=repository, create_root=True)
+        entries = _reconcile_completed_inflight_marker(entries, root=root)
+        initial = campaign_progress(entries)
         if initial.blocked:
             raise _error(f"campaign is blocked: {initial.block_reason}")
         starting_completed = initial.completed_slots
@@ -630,17 +974,23 @@ def execute_campaign(
 
 def campaign_status(*, repository_root: Path | None = None) -> dict[str, Any]:
     _verify_runtime_pins()
+    root = validate_campaign_root(repository_root=repository_root)
     entries = load_campaign_entries(repository_root=repository_root, create_root=False)
     progress = campaign_progress(entries)
     state = runner_state()
+    inflight = None if not root.exists() else _inflight_status(entries, root=root)
+    effective_blocked = progress.blocked or inflight is not None
+    block_reason = progress.block_reason if progress.blocked else (
+        None if inflight is None else inflight["reason"]
+    )
     return {
         "runner_id": state["runner_id"],
         "runner_state": state["runner_state"],
         "completed_slots": progress.completed_slots,
         "total_slots": progress.total_slots,
-        "complete": progress.complete,
-        "blocked": progress.blocked,
-        "block_reason": progress.block_reason,
+        "complete": progress.complete and inflight is None,
+        "blocked": effective_blocked,
+        "block_reason": block_reason,
         "next_slot": (
             None
             if progress.next_slot is None
@@ -651,6 +1001,7 @@ def campaign_status(*, repository_root: Path | None = None) -> dict[str, Any]:
                 "attempt": progress.next_attempt,
             }
         ),
+        "inflight_attempt": inflight,
         "network_acquisition_performed_by_this_status_command": False,
         "historical_coverage_proven": False,
         "next_required_boundary": NEXT_REQUIRED_BOUNDARY,

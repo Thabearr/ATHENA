@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -98,6 +99,14 @@ def _tiny_plan(monkeypatch):
     return plan
 
 
+def _campaign_root(tmp_path: Path) -> Path:
+    return tmp_path / runner_domain.CAMPAIGN_ROOT_RELATIVE
+
+
+def _inflight_path(tmp_path: Path) -> Path:
+    return _campaign_root(tmp_path) / module.INFLIGHT_ATTEMPT_FILENAME
+
+
 def test_live_execution_requires_explicit_true(tmp_path: Path) -> None:
     with pytest.raises(
         module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError,
@@ -133,13 +142,14 @@ def test_one_slot_reuses_exact_utc_nga_transport_and_appends_success_index(
         {"request_date": "20200801", "timezone": "UTC", "ccode3": "NGA"}
     ]
 
-    root = tmp_path / runner_domain.CAMPAIGN_ROOT_RELATIVE
+    root = _campaign_root(tmp_path)
     index = root / runner_domain.CAMPAIGN_INDEX_FILENAME
     failures = root / runner_domain.FAILURE_JOURNAL_FILENAME
     assert index.exists()
     assert index.read_bytes().count(b"\n") == 1
     assert not failures.exists()
     assert not (root / runner_domain.CAMPAIGN_LOCK_FILENAME).exists()
+    assert not _inflight_path(tmp_path).exists()
 
     entries = module.load_campaign_entries(repository_root=tmp_path)
     assert len(entries) == 1
@@ -176,8 +186,9 @@ def test_failed_attempt_is_durable_then_exact_60_second_retry_succeeds(
     assert entries[0]["attempt"] == 1
     assert entries[1]["attempt"] == 2
     assert entries[1]["previous_entry_sha256"] == entries[0]["entry_sha256"]
+    assert not _inflight_path(tmp_path).exists()
 
-    root = tmp_path / runner_domain.CAMPAIGN_ROOT_RELATIVE
+    root = _campaign_root(tmp_path)
     assert (root / runner_domain.FAILURE_JOURNAL_FILENAME).exists()
     assert (root / runner_domain.CAMPAIGN_INDEX_FILENAME).exists()
 
@@ -211,6 +222,7 @@ def test_three_failed_attempts_use_60_then_300_and_block(
     progress = campaign_progress(entries)
     assert progress.blocked is True
     assert progress.block_reason == "ATTEMPTS_EXHAUSTED"
+    assert not _inflight_path(tmp_path).exists()
 
 
 def test_slot_b_waits_for_frozen_300_second_pair_minimum(
@@ -318,9 +330,161 @@ def test_chunked_execution_stops_after_requested_new_successes(
     assert transport.calls == 1
 
 
+def test_crash_after_durable_capture_leaves_inflight_marker_and_blocks_duplicate_request(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    _tiny_plan(monkeypatch)
+    clock = _MutableClock()
+    transport = _FakeTransport(clock)
+
+    def crash_after_write(**kwargs):
+        raise module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError(
+            "synthetic crash after durable capture"
+        )
+
+    with pytest.raises(
+        module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError,
+        match="synthetic crash",
+    ):
+        module.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=transport.fetch,
+            writer=transport.write,
+            verifier=crash_after_write,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    assert transport.calls == 1
+    assert _inflight_path(tmp_path).exists()
+    captures = list(
+        (tmp_path / module.capture_runtime.ALLOWED_OUTPUT_RELATIVE / "20200801").iterdir()
+    )
+    assert len(captures) == 1
+    assert module.load_campaign_entries(repository_root=tmp_path) == ()
+
+    second_fetch_called = False
+
+    def second_fetch(**kwargs):
+        nonlocal second_fetch_called
+        second_fetch_called = True
+        raise AssertionError("unresolved in-flight attempt must block before fetch")
+
+    with pytest.raises(
+        module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError,
+        match="UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION",
+    ):
+        module.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=second_fetch,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+    assert second_fetch_called is False
+
+    status = module.campaign_status(repository_root=tmp_path)
+    assert status["blocked"] is True
+    assert status["block_reason"] == "UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION"
+    assert status["inflight_attempt"]["request_date"] == "20200801"
+    assert status["inflight_attempt"]["slot"] == "A"
+    assert status["inflight_attempt"]["attempt"] == 1
+
+
+def test_crash_after_outcome_append_is_auto_cleaned_without_repeating_completed_slot(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    plan = _tiny_plan(monkeypatch)
+    clock = _MutableClock()
+    transport = _FakeTransport(clock)
+    original_remove = module._remove_inflight_intent
+
+    def crash_before_marker_cleanup(root, expected):
+        raise module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError(
+            "synthetic crash after outcome append"
+        )
+
+    monkeypatch.setattr(module, "_remove_inflight_intent", crash_before_marker_cleanup)
+    with pytest.raises(
+        module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError,
+        match="after outcome append",
+    ):
+        module.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=transport.fetch,
+            writer=transport.write,
+            verifier=transport.verify,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    assert transport.calls == 1
+    assert _inflight_path(tmp_path).exists()
+    entries = module.load_campaign_entries(repository_root=tmp_path)
+    assert len(entries) == 1
+    assert entries[0]["event_type"] == "SLOT_SUCCEEDED"
+
+    status = module.campaign_status(repository_root=tmp_path)
+    assert status["block_reason"] == "RECORDED_OUTCOME_PENDING_SAFE_MARKER_CLEANUP"
+
+    monkeypatch.setattr(module, "_remove_inflight_intent", original_remove)
+    progress = module.execute_next_campaign_slot(
+        execute_live_network=True,
+        repository_root=tmp_path,
+        fetcher=transport.fetch,
+        writer=transport.write,
+        verifier=transport.verify,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert progress.complete is True
+    assert transport.calls == 2
+    assert transport.fetch_args[0]["request_date"] == plan[0].request_date
+    assert transport.fetch_args[1]["request_date"] == plan[1].request_date
+    assert not _inflight_path(tmp_path).exists()
+
+
+def test_tampered_inflight_marker_fails_closed(tmp_path: Path, monkeypatch) -> None:
+    _tiny_plan(monkeypatch)
+    clock = _MutableClock()
+    transport = _FakeTransport(clock)
+
+    def crash(**kwargs):
+        raise module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError("stop")
+
+    with pytest.raises(module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError):
+        module.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=transport.fetch,
+            writer=transport.write,
+            verifier=crash,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+
+    path = _inflight_path(tmp_path)
+    marker = json.loads(path.read_text(encoding="utf-8"))
+    marker["attempt"] = 2
+    path.write_text(
+        json.dumps(marker, sort_keys=True, separators=(",", ":")) + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(
+        module.FotMobOrdinaryFtSourceHistoryAcquisitionLiveRunnerError,
+        match="SHA-256 mismatch",
+    ):
+        module.campaign_status(repository_root=tmp_path)
+
+
 def test_existing_lock_refuses_concurrent_execution(tmp_path: Path, monkeypatch) -> None:
     _tiny_plan(monkeypatch)
-    root = tmp_path / runner_domain.CAMPAIGN_ROOT_RELATIVE
+    root = _campaign_root(tmp_path)
     root.mkdir(parents=True)
     (root / runner_domain.CAMPAIGN_LOCK_FILENAME).write_text("stale-or-live\n")
 
@@ -367,6 +531,7 @@ def test_status_is_network_free_on_empty_campaign(tmp_path: Path) -> None:
     assert status["total_slots"] == 4410
     assert status["complete"] is False
     assert status["blocked"] is False
+    assert status["inflight_attempt"] is None
     assert status["network_acquisition_performed_by_this_status_command"] is False
     assert status["historical_coverage_proven"] is False
 
