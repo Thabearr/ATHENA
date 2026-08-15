@@ -54,6 +54,8 @@ INITIAL_CANDIDATES = {
     "T1": (71, "TUR"),
 }
 
+# PR #105 frozen discovery counts, used only as a cross-check that the exact
+# wrapper/name aggregation being qualified is the same preserved evidence.
 PR105_DISCOVERY_COUNTS = {
     "B1": (1_940, 1_933, 2, 5, 25, 11),
     "D1": (1_836, 1_835, 0, 1, 1, 2),
@@ -172,7 +174,7 @@ def build_qualification_receipt(artifact_zip: Path) -> dict[str, Any]:
     observations: list[dict[str, Any]] = []
     response_file_count = 0
     request_dates: set[str] = set()
-    wrapper_owner: dict[int, int] = {}
+    all_wrapper_primary_ids: dict[int, set[object]] = {}
     wrapper_primary_id_conflicts = 0
     parent_primary_id_conflicts = 0
     match_wrapper_identity_conflicts = 0
@@ -194,10 +196,8 @@ def build_qualification_receipt(artifact_zip: Path) -> dict[str, Any]:
                 if not isinstance(matches, list):
                     raise ValueError("league matches must be a list")
 
-                if isinstance(league_id, int) and league_id in wrapper_owner:
-                    expected_primary_id = wrapper_owner[league_id]
-                    if primary_id != expected_primary_id:
-                        wrapper_primary_id_conflicts += 1
+                if isinstance(league_id, int):
+                    all_wrapper_primary_ids.setdefault(league_id, set()).add(primary_id)
 
                 if isinstance(parent_id, int) and parent_id in pid_to_code and primary_id != parent_id:
                     parent_primary_id_conflicts += 1
@@ -207,14 +207,12 @@ def build_qualification_receipt(artifact_zip: Path) -> dict[str, Any]:
 
                 if not isinstance(league_id, int) or league_id <= 0:
                     raise ValueError("target league wrapper id is malformed")
+                if primary_id not in pid_to_code:
+                    raise ValueError("target primaryId is malformed")
                 if not isinstance(league.get("ccode"), str):
                     raise ValueError("target country code is malformed")
                 if not isinstance(league.get("name"), str) or not league["name"]:
                     raise ValueError("target display name is malformed")
-
-                owner = wrapper_owner.setdefault(league_id, primary_id)
-                if owner != primary_id:
-                    wrapper_primary_id_conflicts += 1
 
                 aggregate = aggregates[primary_id]
                 aggregate["ccodes"].add(league["ccode"])
@@ -254,6 +252,12 @@ def build_qualification_receipt(artifact_zip: Path) -> dict[str, Any]:
                         "match_league_ids": sorted(match_league_ids),
                     }
                 )
+
+    for primary_id, aggregate in aggregates.items():
+        for wrapper_id in aggregate["league_ids"]:
+            observed_primary_ids = all_wrapper_primary_ids.get(wrapper_id, set())
+            if observed_primary_ids != {primary_id}:
+                wrapper_primary_id_conflicts += 1
 
     projection = _projection_bytes(observations)
     records: list[dict[str, Any]] = []
@@ -301,7 +305,9 @@ def build_qualification_receipt(artifact_zip: Path) -> dict[str, Any]:
                 "capture_count": len(aggregate["captures"]),
                 "unique_fixture_ids": unique_fixture_ids,
                 "qualified_ordinary_ft_fixture_ids": qualified_ordinary_ft_fixture_ids,
-                "blocked_nonordinary_finished_fixture_ids": blocked_nonordinary_finished_fixture_ids,
+                "blocked_nonordinary_finished_fixture_ids": (
+                    blocked_nonordinary_finished_fixture_ids
+                ),
                 "unresolved_nonresult_fixture_ids": unresolved_nonresult_fixture_ids,
                 "wrapper_count_matches_pr105": True,
                 "name_variant_count_matches_pr105": True,
@@ -370,8 +376,12 @@ def build_qualification_receipt(artifact_zip: Path) -> dict[str, Any]:
             "mapping_evidence_projection_sha256": hashlib.sha256(projection).hexdigest(),
             "mapping_evidence_projection_size_bytes": len(projection),
         },
-        "qualification_state": "EXECUTED_INITIAL_ELEVEN_PRIMARY_ID_COMPETITION_MAPPING_QUALIFIED",
-        "mapping_semantics": "FOTMOB_PRIMARY_ID_IS_SOURCE_SCOPED_COMPETITION_FAMILY_IDENTITY",
+        "qualification_state": (
+            "EXECUTED_INITIAL_ELEVEN_PRIMARY_ID_COMPETITION_MAPPING_QUALIFIED"
+        ),
+        "mapping_semantics": (
+            "FOTMOB_PRIMARY_ID_IS_SOURCE_SCOPED_COMPETITION_FAMILY_IDENTITY"
+        ),
         "records": records,
         "checks": {
             "initial_candidate_count": 11,
