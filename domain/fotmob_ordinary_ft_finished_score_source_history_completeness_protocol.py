@@ -2,11 +2,10 @@
 
 PR #99 binds the frozen PR #81 source-history completeness contract to the
 separate derived FotMob ordinary-FT finished-score capability registered by
-PR #98.  The derived source now has reviewed source-reported finished-score
-semantics, but historical coverage remains UNKNOWN.  This protocol therefore
-freezes the next evidence boundary without authorizing source history,
-successor features, modelling, probability inference, pricing, selection,
-production, or betting.
+PR #98. The derived source now has reviewed source-reported finished-score
+semantics, but historical coverage remains UNKNOWN. This protocol freezes the
+next evidence boundary without authorizing source history, successor features,
+modelling, probability inference, pricing, selection, production, or betting.
 """
 from __future__ import annotations
 
@@ -118,8 +117,8 @@ _SAFETY_KEYS = frozenset(
     }
 )
 
-PROTOCOL_SHA256 = "ac922634b999a4e8bdb186df3ac2fc1291c130aca405956ea611c5cc582d9e15"
-PROTOCOL_SIZE = 5048
+PROTOCOL_SHA256 = "edddd7445bb9bb6ed2db4778b6ab48da9489ae6efac822b6e6c139992275bf87"
+PROTOCOL_SIZE = 5741
 
 
 class FotMobOrdinaryFtFinishedScoreSourceHistoryCompletenessProtocolError(ValueError):
@@ -195,8 +194,12 @@ def _payload() -> dict[str, Any]:
         "historical_coverage_rule": HISTORICAL_COVERAGE_RULE,
         "frozen_model_league_codes": list(pr81.FROZEN_MODEL_LEAGUE_CODES),
         "elo_initialization_semantics": pr81.ELO_INITIALIZATION_SEMANTICS,
+        "pr81_initialization_boundary_rule": pr81.INITIALIZATION_BOUNDARY_RULE,
+        "pr81_league_universe_rule": pr81.LEAGUE_UNIVERSE_RULE,
+        "pr81_result_semantics_rule": pr81.RESULT_SEMANTICS_RULE,
         "pr81_history_adapter_requirements": list(pr81.HISTORY_ADAPTER_REQUIREMENTS),
         "pr81_completeness_requirements": list(pr81.COMPLETENESS_REQUIREMENTS),
+        "pr81_status_vocabulary": list(pr81.STATUS_VOCABULARY),
         "derived_source_additional_requirements": list(DERIVED_SOURCE_ADDITIONAL_REQUIREMENTS),
         "qualification_status_vocabulary": list(QUALIFICATION_STATUS_VOCABULARY),
         "current_pre_execution_disposition": CURRENT_PRE_EXECUTION_DISPOSITION,
