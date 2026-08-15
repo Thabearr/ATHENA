@@ -105,7 +105,11 @@ The frozen future key:
 fotmob_data_matches_reviewed_ordinary_ft_finished_score
 ```
 
-is not currently registered.
+was absent from the source-capability registry in the exact assessed PR #93 main
+tree. That absence is an **assessment-time fact** frozen by the exact base commit
+and tree, not a permanent runtime invariant. A later separately reviewed
+registration of this derived key must not invalidate the historical PR #94
+receipt, so PR #94 does not dynamically require the key to remain absent forever.
 
 ### PR92 ordinary-FT evidence scope — PASS
 
