@@ -256,8 +256,8 @@ def _verify_upstream() -> None:
         raise _error("parent reliable fixture identity is no longer confirmed")
     if parent.full_time_score is not CapabilityAvailability.NOT_CAPTURED:
         raise _error("parent full-time-score capability changed before PR93 execution")
-    if PROPOSED_SOURCE_KEY in SOURCE_CAPABILITY_REGISTRY:
-        raise _error("proposed derived source key already exists before PR93 execution")
+    # Proposed-key absence is a PR93 pre-registration fact. A later reviewed
+    # registration of the derived key must not invalidate this historical protocol.
 
 
 def _payload() -> dict[str, Any]:
