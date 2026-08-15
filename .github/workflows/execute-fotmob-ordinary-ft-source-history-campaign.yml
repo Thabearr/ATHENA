@@ -1,0 +1,386 @@
+name: Execute Reviewed FotMob Ordinary-FT Source-History Campaign
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: athena-fotmob-ordinary-ft-source-history-campaign-v1
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.number == 103 &&
+      github.event.comment.user.login == 'Thabearr' &&
+      startsWith(github.event.comment.body, '/athena-run-fotmob-history')
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+
+    steps:
+      - name: Validate one-shot owner command and current main
+        id: guard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const controlPr = 103;
+            if (context.issue.number !== controlPr) {
+              core.setFailed(`Campaign execution is bound only to PR #${controlPr}.`);
+              return;
+            }
+
+            const body = String(context.payload.comment.body || '').replace(/\r\n/g, '\n');
+            const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
+            if (lines.length !== 3 || lines[0] !== '/athena-run-fotmob-history') {
+              core.setFailed('Campaign command framing is invalid.');
+              return;
+            }
+            const shaMatch = /^main-sha: ([0-9a-f]{40})$/.exec(lines[1]);
+            if (!shaMatch) {
+              core.setFailed('Campaign command must contain one exact lowercase 40-hex main-sha.');
+              return;
+            }
+            if (lines[2] !== 'confirm: EXECUTE_4410_LIVE_CAPTURES') {
+              core.setFailed('Campaign command is missing the exact execution confirmation token.');
+              return;
+            }
+            const expectedMain = shaMatch[1];
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: controlPr,
+            });
+            if (!pr.merged_at || pr.state !== 'closed') {
+              core.setFailed('Campaign control PR must already be merged and closed.');
+              return;
+            }
+
+            const { data: repository } = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${repository.default_branch}`,
+            });
+            if (ref.object.sha !== expectedMain) {
+              core.setFailed(
+                `Current ${repository.default_branch}=${ref.object.sha} differs from requested ${expectedMain}.`
+              );
+              return;
+            }
+
+            const markerPrefix = '<!-- ATHENA_FOTMOB_HISTORY_EXECUTION_ATTEMPT_V1 -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: controlPr,
+              per_page: 100,
+            });
+            const priorMarker = comments.find(
+              (comment) => String(comment.body || '').startsWith(markerPrefix)
+            );
+            if (priorMarker) {
+              core.setFailed(
+                `A prior campaign execution attempt marker already exists at comment ${priorMarker.id}; ` +
+                'automatic replay is forbidden and requires reviewed reconciliation.'
+              );
+              return;
+            }
+
+            const marker = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: controlPr,
+              body: [
+                markerPrefix,
+                'ATHENA reviewed FotMob source-history campaign execution attempt started.',
+                `run-id: ${context.runId}`,
+                `main-sha: ${expectedMain}`,
+                `command-comment-id: ${context.payload.comment.id}`,
+                'state: ATTEMPT_STARTED_NO_RESULT_YET',
+                'Automatic replay is forbidden if this run does not complete cleanly.',
+              ].join('\n'),
+            });
+
+            core.setOutput('main_sha', expectedMain);
+            core.setOutput('marker_comment_id', String(marker.data.id));
+
+      - name: Check out exact authorized main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.guard.outputs.main_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify reviewed execution, capture, and dependency blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.main_sha }}"
+          test "$(git rev-parse HEAD:domain/fotmob_ordinary_ft_source_history_acquisition_runner.py)" = "533b339bcb2d6721dae55c699327b53eabbffb09"
+          test "$(git rev-parse HEAD:scripts/run_fotmob_ordinary_ft_source_history_acquisition.py)" = "6f067b8f069a760248a3b0b624c88d4f91aaa7ef"
+          test "$(git rev-parse HEAD:domain/fotmob_ordinary_ft_source_history_acquisition_protocol.py)" = "39541b351d2990f7ebb9572a8c9c674c85864284"
+          test "$(git rev-parse HEAD:scripts/capture_fotmob_data_matches.py)" = "10b8858ab62f2708bd564d578a627c43718e5a12"
+          test "$(git rev-parse HEAD:domain/fotmob_data_matches_capture.py)" = "ca2149395de868104666620173b55a880b10c729"
+          test "$(git rev-parse HEAD:requirements.txt)" = "54d24a55dfa4c73ba3910d333257cfd2e68daf4b"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Validate empty network-free campaign preflight
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_fotmob_ordinary_ft_source_history_acquisition.py --status > campaign-preflight-status.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          status = json.loads(Path('campaign-preflight-status.json').read_text(encoding='utf-8'))
+          expected = {
+              'completed_slots': 0,
+              'total_slots': 4410,
+              'complete': False,
+              'blocked': False,
+              'inflight_attempt': None,
+              'historical_coverage_proven': False,
+              'network_acquisition_performed_by_this_status_command': False,
+          }
+          for key, value in expected.items():
+              if status.get(key) != value:
+                  raise SystemExit(f'preflight {key}={status.get(key)!r}, expected {value!r}')
+          PY
+
+      - name: Record execution metadata
+        env:
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'schema_version': 1,
+              'execution_boundary': 'EXECUTE_REVIEWED_FOTMOB_ORDINARY_FT_SOURCE_HISTORY_ACQUISITION_CAMPAIGN',
+              'authorized_main_sha': os.environ['AUTHORIZED_MAIN_SHA'],
+              'github_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'github_run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'runner_domain_blob_sha': '533b339bcb2d6721dae55c699327b53eabbffb09',
+              'live_runner_blob_sha': '6f067b8f069a760248a3b0b624c88d4f91aaa7ef',
+              'protocol_blob_sha': '39541b351d2990f7ebb9572a8c9c674c85864284',
+              'capture_script_blob_sha': '10b8858ab62f2708bd564d578a627c43718e5a12',
+              'capture_contract_blob_sha': 'ca2149395de868104666620173b55a880b10c729',
+              'requirements_blob_sha': '54d24a55dfa4c73ba3910d333257cfd2e68daf4b',
+              'required_successful_slots': 4410,
+              'request_timezone': 'UTC',
+              'ccode3': 'NGA',
+              'started_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+          }
+          Path('campaign-execution-metadata.json').write_text(
+              json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Execute full reviewed live-network campaign
+        id: execute_campaign
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          python scripts/run_fotmob_ordinary_ft_source_history_acquisition.py \
+            --execute-live-network 2>&1 | tee campaign-run.log
+          runner_exit=${PIPESTATUS[0]}
+          echo "exit_code=${runner_exit}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Capture network-free post-run status
+        id: post_status
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          python scripts/run_fotmob_ordinary_ft_source_history_acquisition.py \
+            --status > campaign-post-status.json 2> campaign-post-status.stderr
+          status_exit=$?
+          echo "exit_code=${status_exit}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Package immutable research evidence snapshot
+        id: package
+        if: always()
+        shell: bash
+        env:
+          RUNNER_EXIT_CODE: ${{ steps.execute_campaign.outputs.exit_code }}
+          STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p campaign-artifact
+          for path in \
+            campaign-preflight-status.json \
+            campaign-execution-metadata.json \
+            campaign-run.log \
+            campaign-post-status.json \
+            campaign-post-status.stderr
+          do
+            if [ -f "$path" ]; then
+              cp "$path" campaign-artifact/
+            fi
+          done
+
+          if [ -d .cache/athena-research ]; then
+            tar --sort=name --mtime='UTC 1970-01-01' --owner=0 --group=0 --numeric-owner \
+              -czf campaign-artifact/athena-research-cache.tar.gz .cache/athena-research
+            sha256sum campaign-artifact/athena-research-cache.tar.gz \
+              > campaign-artifact/athena-research-cache.tar.gz.sha256
+          else
+            printf 'ABSENT\n' > campaign-artifact/athena-research-cache.absent
+          fi
+
+          python - <<'PY'
+          import datetime
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'schema_version': 1,
+              'execution_boundary': 'EXECUTE_REVIEWED_FOTMOB_ORDINARY_FT_SOURCE_HISTORY_ACQUISITION_CAMPAIGN',
+              'authorized_main_sha': os.environ.get('AUTHORIZED_MAIN_SHA', ''),
+              'github_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'github_run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'runner_exit_code': os.environ.get('RUNNER_EXIT_CODE', ''),
+              'status_exit_code': os.environ.get('STATUS_EXIT_CODE', ''),
+              'packaged_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+              'artifact_is_research_evidence_only': True,
+              'historical_coverage_claimed_by_workflow': False,
+              'downstream_authority_granted': False,
+          }
+          Path('campaign-artifact/execution-envelope.json').write_text(
+              json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          sha256sum campaign-artifact/* > campaign-artifact/files.sha256
+
+      - name: Upload campaign evidence even on failure
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fotmob-ordinary-ft-source-history-campaign-${{ github.run_id }}
+          path: campaign-artifact/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Verify complete campaign state
+        id: verify
+        if: always()
+        env:
+          RUNNER_EXIT_CODE: ${{ steps.execute_campaign.outputs.exit_code }}
+          STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_EXIT_CODE}" = "0"
+          test "${STATUS_EXIT_CODE}" = "0"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          status = json.loads(Path('campaign-post-status.json').read_text(encoding='utf-8'))
+          required = {
+              'completed_slots': 4410,
+              'total_slots': 4410,
+              'complete': True,
+              'blocked': False,
+              'block_reason': None,
+              'inflight_attempt': None,
+              'historical_coverage_proven': False,
+              'network_acquisition_performed_by_this_status_command': False,
+          }
+          for key, expected in required.items():
+              if status.get(key) != expected:
+                  raise SystemExit(f'post-run {key}={status.get(key)!r}, expected {expected!r}')
+
+          index = Path('.cache/athena-research/fotmob-ordinary-ft-source-history-campaign-v1/campaign-index.jsonl')
+          if not index.is_file():
+              raise SystemExit('campaign index is missing')
+          if index.read_bytes().count(b'\n') != 4410:
+              raise SystemExit('campaign index does not contain exactly 4410 successful slot entries')
+          if Path('.cache/athena-research/fotmob-ordinary-ft-source-history-campaign-v1/inflight-attempt.json').exists():
+              raise SystemExit('in-flight attempt marker remains after reported completion')
+          if Path('.cache/athena-research/fotmob-ordinary-ft-source-history-campaign-v1/runner.lock').exists():
+              raise SystemExit('runner lock remains after reported completion')
+          PY
+
+      - name: Record execution result on control PR
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+          RUNNER_EXIT_CODE: ${{ steps.execute_campaign.outputs.exit_code }}
+          STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        with:
+          script: |
+            const marker = '<!-- ATHENA_FOTMOB_HISTORY_EXECUTION_RESULT_V1 -->';
+            const evidencePreserved =
+              process.env.PACKAGE_OUTCOME === 'success' &&
+              process.env.UPLOAD_OUTCOME === 'success';
+            const campaignVerified = process.env.VERIFY_OUTCOME === 'success';
+            const outcome = evidencePreserved && campaignVerified
+              ? 'EXECUTION_COMPLETED_4410_SLOTS_EVIDENCE_ARTIFACT_PRESERVED'
+              : 'EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 103,
+              body: [
+                marker,
+                'ATHENA reviewed FotMob source-history campaign execution result.',
+                `run-id: ${context.runId}`,
+                `main-sha: ${process.env.AUTHORIZED_MAIN_SHA || ''}`,
+                `runner-exit-code: ${process.env.RUNNER_EXIT_CODE || 'unavailable'}`,
+                `status-exit-code: ${process.env.STATUS_EXIT_CODE || 'unavailable'}`,
+                `package-outcome: ${process.env.PACKAGE_OUTCOME || 'unavailable'}`,
+                `artifact-upload-outcome: ${process.env.UPLOAD_OUTCOME || 'unavailable'}`,
+                `verification-outcome: ${process.env.VERIFY_OUTCOME || 'unavailable'}`,
+                `state: ${outcome}`,
+                `artifact-name: fotmob-ordinary-ft-source-history-campaign-${context.runId}`,
+                'This workflow does not itself claim historical completeness or downstream authority.',
+              ].join('\n'),
+            });
