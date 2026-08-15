@@ -145,16 +145,15 @@ def test_pr92_and_pr91_evidence_counts_are_exact() -> None:
     )
 
 
-def test_parent_capability_stays_identity_only_and_proposed_key_is_absent() -> None:
+def test_parent_capability_stays_identity_only() -> None:
     parent = SOURCE_CAPABILITY_REGISTRY[PARENT_SOURCE_KEY]
     assert _capability_dict(parent) == dict(PARENT_REQUIRED_CAPABILITIES)
     assert parent.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
     assert parent.full_time_score is CapabilityAvailability.NOT_CAPTURED
     assert parent.historical_coverage is CapabilityAvailability.UNKNOWN
-    assert PROPOSED_SOURCE_KEY not in SOURCE_CAPABILITY_REGISTRY
 
 
-def test_reusable_prospective_adapter_is_required_and_currently_absent() -> None:
+def test_reusable_prospective_adapter_requirement_and_preregistration_state_are_frozen() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
     assert value.reusable_adapter_module_path == REUSABLE_ADAPTER_MODULE_PATH == (
         "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py"
@@ -162,7 +161,6 @@ def test_reusable_prospective_adapter_is_required_and_currently_absent() -> None
     assert value.current_reusable_adapter_state == CURRENT_REUSABLE_ADAPTER_STATE == (
         "ABSENT_NOT_IMPLEMENTED_AT_PR93_PRE_REGISTRATION"
     )
-    assert not (ROOT / REUSABLE_ADAPTER_MODULE_PATH).exists()
     assert value.reusable_adapter_rule == REUSABLE_ADAPTER_RULE
     assert "REUSABLE_REVIEWED_PROSPECTIVE" in REUSABLE_ADAPTER_RULE
     assert "NOT_ONE_OFF_EVIDENCE_RECEIPT" in REUSABLE_ADAPTER_RULE
@@ -172,13 +170,12 @@ def test_reusable_prospective_adapter_is_required_and_currently_absent() -> None
     )
 
 
-def test_future_adapter_is_required_registry_evidence_even_though_absent_today() -> None:
+def test_future_adapter_is_required_registry_evidence() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
     assert value.future_required_adapter_evidence == FUTURE_REQUIRED_ADAPTER_EVIDENCE
     assert FUTURE_REQUIRED_ADAPTER_EVIDENCE in value.proposed_evidence
     adapter_path = FUTURE_REQUIRED_ADAPTER_EVIDENCE.split(":", 1)[0]
     assert adapter_path == REUSABLE_ADAPTER_MODULE_PATH
-    assert not (ROOT / adapter_path).exists()
 
 
 def test_protocol_registers_a_new_scoped_key_not_a_parent_mutation() -> None:
