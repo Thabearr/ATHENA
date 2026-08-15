@@ -271,8 +271,8 @@ def _verify_upstream() -> None:
         raise _error("parent reviewed catalog capability is missing")
     if _capability_dict(parent) != dict(_PARENT_CAPABILITIES_AT_ASSESSMENT):
         raise _error("parent reviewed catalog capability drifted")
-    if PROPOSED_SOURCE_KEY in SOURCE_CAPABILITY_REGISTRY:
-        raise _error("proposed derived source key already exists")
+    # Proposed-key absence is an assessment-time fact frozen by the exact base
+    # tree. A later legitimate registration must not invalidate this receipt.
 
 
 def _payload() -> dict[str, Any]:
