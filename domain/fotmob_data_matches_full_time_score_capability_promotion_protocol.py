@@ -49,6 +49,9 @@ CURRENT_REUSABLE_ADAPTER_STATE = "ABSENT_NOT_IMPLEMENTED_AT_PR93_PRE_REGISTRATIO
 REUSABLE_ADAPTER_RULE = (
     "SOURCE_CAPABILITY_PROMOTION_REQUIRES_REUSABLE_REVIEWED_PROSPECTIVE_ORDINARY_FT_FINISHED_SCORE_ADAPTER_NOT_ONE_OFF_EVIDENCE_RECEIPT"
 )
+FUTURE_REQUIRED_ADAPTER_EVIDENCE = (
+    "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py: reusable reviewed prospective ordinary-FT finished-score gate"
+)
 
 PARENT_REQUIRED_CAPABILITIES = types.MappingProxyType(
     {
@@ -89,6 +92,7 @@ PROPOSED_EVIDENCE = (
     "domain/fotmob_data_matches_status_reason_semantics_validation.py: exact reviewed ordinary-FT reason gate and penalty exclusion",
     "domain/fotmob_data_matches_eliminated_team_id_value_domain_extension.py: reviewed structural chain over preserved PR85 captures",
     "domain/fotmob_data_matches_capture.py: provenance-bound reviewed capture manifests",
+    FUTURE_REQUIRED_ADAPTER_EVIDENCE,
 )
 PROPOSED_NOTES = (
     "Derived reviewed adapter capability only. CONFIRMED full_time_score means "
@@ -160,8 +164,8 @@ _SAFETY_KEYS = frozenset(
     }
 )
 
-PROTOCOL_SHA256 = "1a291349ecee28b0d4e5216daf495ebff61e1247724df17502c99641d3f55b38"
-PROTOCOL_SIZE = 6163
+PROTOCOL_SHA256 = "8606367857915046eb27b9f2bf751514e52e266966b23caf598d1fedbf6b4009"
+PROTOCOL_SIZE = 6458
 
 
 class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocolError(ValueError):
@@ -279,6 +283,7 @@ def _payload() -> dict[str, Any]:
         "reusable_adapter_module_path": REUSABLE_ADAPTER_MODULE_PATH,
         "current_reusable_adapter_state": CURRENT_REUSABLE_ADAPTER_STATE,
         "reusable_adapter_rule": REUSABLE_ADAPTER_RULE,
+        "future_required_adapter_evidence": FUTURE_REQUIRED_ADAPTER_EVIDENCE,
         "parent_required_capabilities": dict(PARENT_REQUIRED_CAPABILITIES),
         "proposed_capabilities": dict(PROPOSED_CAPABILITIES),
         "promotion_scope_rule": PROMOTION_SCOPE_RULE,
@@ -318,6 +323,7 @@ class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocol:
     reusable_adapter_module_path: str
     current_reusable_adapter_state: str
     reusable_adapter_rule: str
+    future_required_adapter_evidence: str
     parent_required_capabilities: Mapping[str, str]
     proposed_capabilities: Mapping[str, str]
     promotion_scope_rule: str
@@ -346,6 +352,8 @@ class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocol:
                 raise _error(f"{label} must be an exact positive integer")
         if self.parent_source_key == self.proposed_source_key:
             raise _error("derived capability key must not equal the parent key")
+        if self.future_required_adapter_evidence not in self.proposed_evidence:
+            raise _error("future reusable adapter evidence must be part of proposed registry evidence")
         if self.to_dict() != _payload():
             raise _error("full-time-score capability promotion protocol differs from frozen PR93 payload")
         object.__setattr__(
@@ -383,6 +391,7 @@ class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocol:
             "reusable_adapter_module_path": self.reusable_adapter_module_path,
             "current_reusable_adapter_state": self.current_reusable_adapter_state,
             "reusable_adapter_rule": self.reusable_adapter_rule,
+            "future_required_adapter_evidence": self.future_required_adapter_evidence,
             "parent_required_capabilities": dict(self.parent_required_capabilities),
             "proposed_capabilities": dict(self.proposed_capabilities),
             "promotion_scope_rule": self.promotion_scope_rule,
@@ -443,6 +452,7 @@ __all__ = [
     "CURRENT_REUSABLE_ADAPTER_STATE",
     "EXCLUDED_PENALTY_COUNT",
     "EXCLUDED_PENALTY_FIXTURE_ID",
+    "FUTURE_REQUIRED_ADAPTER_EVIDENCE",
     "HISTORICAL_COVERAGE_RULE",
     "NEXT_REQUIRED_BOUNDARY",
     "PARENT_NON_MUTATION_RULE",
