@@ -1,7 +1,7 @@
 """Execute the reviewed PR95 ordinary-FT finished-score adapter on exact PR85 evidence.
 
 This boundary validates the reusable adapter against the preserved two-capture
-post-finish evidence pair. It freezes only adapter execution evidence. It does not
+post-finish evidence pair and freezes the exact deterministic result. It does not
 register a source capability, mutate the parent reviewed catalog, prove historical
 coverage, or authorize model, pricing, selection, production, or betting use.
 """
@@ -49,15 +49,26 @@ SECOND_MANIFEST_SHA256 = "d60501a5b7b1b4e5c810a0a0463bdcecb3a0b806110ad4542c314f
 SECOND_RAW_SIZE = 114964
 SECOND_OBSERVED_AT = "2026-08-14T17:17:13.043248Z"
 OBSERVATION_SEPARATION_MICROSECONDS = 310_605_739
+
+ADAPTER_RESULT_SHA256 = "7e3fcb2c8a4fa8f883ec7dcac2fd15ea8d2f1aa359c5c5f42ab7eaf604bdce27"
+ADAPTER_RESULT_SIZE = 22570
+QUALIFIED_SCORES_PROJECTION_SHA256 = "ffdb20556808a1a6459d959b050e3aa5780f3c017d6971adf0c17a3c91ce03ab"
+TERMINAL_CANDIDATE_UNION_COUNT = 29
 QUALIFIED_COUNT = 28
 PENALTY_FIXTURE_ID = 5844873
 ORDINARY_ANCHOR_FIXTURE_ID = 5186581
 ORDINARY_ANCHOR_HOME_SCORE = 3
 ORDINARY_ANCHOR_AWAY_SCORE = 1
+PENALTY_BLOCK_STATUS = (
+    pr95.AdapterFixtureStatus.BLOCKED_PENALTY_REASON_REQUIRES_SEPARATE_SCORE_SEMANTICS.value
+)
+BLOCKED_FIXTURE_IDS_BY_STATUS = types.MappingProxyType({PENALTY_BLOCK_STATUS: (PENALTY_FIXTURE_ID,)})
 
 NEXT_REQUIRED_BOUNDARY = (
     "EXECUTE_REVIEWED_FOTMOB_DATA_MATCHES_FULL_TIME_SCORE_CAPABILITY_PROMOTION_ASSESSMENT_WITH_VALIDATED_ADAPTER"
 )
+RECEIPT_SHA256 = "09dd9fdff1eddb7b421e968c8de93262b09ce526adeb3d3b95050ddf1f2d4562"
+RECEIPT_SIZE = 3610
 
 _SAFETY_KEYS = frozenset(
     {
@@ -93,7 +104,7 @@ _SAFETY_KEYS = frozenset(
 
 
 class FotMobDataMatchesOrdinaryFtFinishedScoreAdapterValidationError(ValueError):
-    pass
+    """Raised when the exact PR96 execution or receipt drifts."""
 
 
 def _error(message: str) -> FotMobDataMatchesOrdinaryFtFinishedScoreAdapterValidationError:
@@ -126,6 +137,63 @@ def _canonical(value: Any) -> bytes:
 
 def _safety() -> Mapping[str, bool]:
     return types.MappingProxyType({key: False for key in sorted(_SAFETY_KEYS)})
+
+
+def _expected() -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_name": DATASET_NAME,
+        "execution_scope": EXECUTION_SCOPE,
+        "execution_state": EXECUTION_STATE,
+        "repository_main_sha": REPOSITORY_MAIN_SHA,
+        "parent_source_key": PARENT_SOURCE_KEY,
+        "proposed_source_key": PROPOSED_SOURCE_KEY,
+        "pr95_adapter_blob_sha": PR95_ADAPTER_BLOB_SHA,
+        "pr85_evidence_blob_sha": PR85_EVIDENCE_BLOB_SHA,
+        "source_capabilities_blob_sha": SOURCE_CAPABILITIES_BLOB_SHA,
+        "request_date": REQUEST_DATE,
+        "timezone": TIMEZONE,
+        "ccode3": CCODE3,
+        "first_capture_id": FIRST_CAPTURE_ID,
+        "first_raw_sha256": FIRST_RAW_SHA256,
+        "first_manifest_sha256": FIRST_MANIFEST_SHA256,
+        "first_raw_size": FIRST_RAW_SIZE,
+        "first_observed_at": FIRST_OBSERVED_AT,
+        "second_capture_id": SECOND_CAPTURE_ID,
+        "second_raw_sha256": SECOND_RAW_SHA256,
+        "second_manifest_sha256": SECOND_MANIFEST_SHA256,
+        "second_raw_size": SECOND_RAW_SIZE,
+        "second_observed_at": SECOND_OBSERVED_AT,
+        "observation_separation_microseconds": OBSERVATION_SEPARATION_MICROSECONDS,
+        "adapter_result_sha256": ADAPTER_RESULT_SHA256,
+        "adapter_result_size": ADAPTER_RESULT_SIZE,
+        "qualified_scores_projection_sha256": QUALIFIED_SCORES_PROJECTION_SHA256,
+        "pair_status": pr95.AdapterPairStatus.QUALIFIED_WITH_ORDINARY_FT_SCORES.value,
+        "terminal_candidate_union_count": TERMINAL_CANDIDATE_UNION_COUNT,
+        "qualified_count": QUALIFIED_COUNT,
+        "blocked_fixture_ids_by_status": dict(BLOCKED_FIXTURE_IDS_BY_STATUS),
+        "penalty_fixture_id": PENALTY_FIXTURE_ID,
+        "ordinary_anchor_fixture_id": ORDINARY_ANCHOR_FIXTURE_ID,
+        "ordinary_anchor_score": (ORDINARY_ANCHOR_HOME_SCORE, ORDINARY_ANCHOR_AWAY_SCORE),
+        "adapter_validation_qualified": True,
+        "source_capability_registration_performed": False,
+        "parent_source_full_time_score": "NOT_CAPTURED",
+        "parent_source_historical_coverage": "UNKNOWN",
+        "proposed_source_key_registered": False,
+        "semantic_scope_rule": pr95.SEMANTIC_SCOPE_RULE,
+        "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
+        "safety": dict(_safety()),
+    }
+
+
+def _freeze(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    out = dict(value)
+    out["blocked_fixture_ids_by_status"] = types.MappingProxyType(
+        {key: tuple(items) for key, items in value["blocked_fixture_ids_by_status"].items()}
+    )
+    out["ordinary_anchor_score"] = tuple(value["ordinary_anchor_score"])
+    out["safety"] = types.MappingProxyType(dict(value["safety"]))
+    return types.MappingProxyType(out)
 
 
 def _verify_registry() -> None:
@@ -192,6 +260,8 @@ def execute_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation(
     second_raw_json: bytes,
     second_manifest: FotMobDataMatchesCaptureManifest,
 ) -> Mapping[str, Any]:
+    """Execute PR95 on the exact preserved PR85 pair and return the frozen PR96 receipt."""
+
     _verify_adapter_ancestry()
     _verify_registry()
     _verify_manifest(
@@ -227,13 +297,14 @@ def execute_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation(
 
     if result.pair_status is not pr95.AdapterPairStatus.QUALIFIED_WITH_ORDINARY_FT_SCORES:
         raise _error("PR95 exact pair no longer qualifies")
+    if result.terminal_candidate_union_count != TERMINAL_CANDIDATE_UNION_COUNT:
+        raise _error("PR95 terminal candidate union count changed")
     if result.qualified_count != QUALIFIED_COUNT or len(result.qualified_scores) != QUALIFIED_COUNT:
         raise _error("PR95 exact qualified count changed")
-    penalty_status = pr95.AdapterFixtureStatus.BLOCKED_PENALTY_REASON_REQUIRES_SEPARATE_SCORE_SEMANTICS.value
+    if dict(result.blocked_fixture_ids_by_status) != dict(BLOCKED_FIXTURE_IDS_BY_STATUS):
+        raise _error("PR95 exact blocked-fixture disposition changed")
     if PENALTY_FIXTURE_ID in {item.fixture_id for item in result.qualified_scores}:
         raise _error("reviewed penalty fixture escaped into ordinary-FT output")
-    if PENALTY_FIXTURE_ID not in result.blocked_fixture_ids_by_status.get(penalty_status, ()):
-        raise _error("reviewed penalty fixture lost its explicit blocker")
     anchor = next((item for item in result.qualified_scores if item.fixture_id == ORDINARY_ANCHOR_FIXTURE_ID), None)
     if anchor is None or (anchor.home_score, anchor.away_score) != (
         ORDINARY_ANCHOR_HOME_SCORE,
@@ -246,74 +317,28 @@ def execute_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation(
         raise _error("PR95 adapter safety boundary changed")
 
     adapter_bytes = pr95.canonical_fotmob_data_matches_ordinary_ft_finished_score_adapter_result_bytes(result)
+    if hashlib.sha256(adapter_bytes).hexdigest() != ADAPTER_RESULT_SHA256 or len(adapter_bytes) != ADAPTER_RESULT_SIZE:
+        raise _error("PR95 canonical adapter result changed")
     qualified_bytes = _qualified_projection_bytes(result)
-    blocked = {
-        key: tuple(value)
-        for key, value in sorted(result.blocked_fixture_ids_by_status.items())
-    }
-    receipt = {
-        "schema_version": SCHEMA_VERSION,
-        "dataset_name": DATASET_NAME,
-        "execution_scope": EXECUTION_SCOPE,
-        "execution_state": EXECUTION_STATE,
-        "repository_main_sha": REPOSITORY_MAIN_SHA,
-        "parent_source_key": PARENT_SOURCE_KEY,
-        "proposed_source_key": PROPOSED_SOURCE_KEY,
-        "pr95_adapter_blob_sha": PR95_ADAPTER_BLOB_SHA,
-        "pr85_evidence_blob_sha": PR85_EVIDENCE_BLOB_SHA,
-        "source_capabilities_blob_sha": SOURCE_CAPABILITIES_BLOB_SHA,
-        "request_date": REQUEST_DATE,
-        "timezone": TIMEZONE,
-        "ccode3": CCODE3,
-        "first_capture_id": FIRST_CAPTURE_ID,
-        "first_raw_sha256": FIRST_RAW_SHA256,
-        "first_manifest_sha256": FIRST_MANIFEST_SHA256,
-        "first_raw_size": FIRST_RAW_SIZE,
-        "first_observed_at": FIRST_OBSERVED_AT,
-        "second_capture_id": SECOND_CAPTURE_ID,
-        "second_raw_sha256": SECOND_RAW_SHA256,
-        "second_manifest_sha256": SECOND_MANIFEST_SHA256,
-        "second_raw_size": SECOND_RAW_SIZE,
-        "second_observed_at": SECOND_OBSERVED_AT,
-        "observation_separation_microseconds": OBSERVATION_SEPARATION_MICROSECONDS,
-        "adapter_result_sha256": hashlib.sha256(adapter_bytes).hexdigest(),
-        "adapter_result_size": len(adapter_bytes),
-        "qualified_scores_projection_sha256": hashlib.sha256(qualified_bytes).hexdigest(),
-        "pair_status": result.pair_status.value,
-        "terminal_candidate_union_count": result.terminal_candidate_union_count,
-        "qualified_count": result.qualified_count,
-        "blocked_fixture_ids_by_status": blocked,
-        "penalty_fixture_id": PENALTY_FIXTURE_ID,
-        "ordinary_anchor_fixture_id": ORDINARY_ANCHOR_FIXTURE_ID,
-        "ordinary_anchor_score": (ORDINARY_ANCHOR_HOME_SCORE, ORDINARY_ANCHOR_AWAY_SCORE),
-        "adapter_validation_qualified": True,
-        "source_capability_registration_performed": False,
-        "parent_source_full_time_score": "NOT_CAPTURED",
-        "parent_source_historical_coverage": "UNKNOWN",
-        "proposed_source_key_registered": False,
-        "semantic_scope_rule": result.semantic_scope_rule,
-        "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
-        "safety": dict(_safety()),
-    }
-    return _freeze(receipt)
+    if hashlib.sha256(qualified_bytes).hexdigest() != QUALIFIED_SCORES_PROJECTION_SHA256:
+        raise _error("PR95 qualified-score projection changed")
 
-
-def _freeze(value: Mapping[str, Any]) -> Mapping[str, Any]:
-    out = dict(value)
-    out["blocked_fixture_ids_by_status"] = types.MappingProxyType(
-        {key: tuple(items) for key, items in value["blocked_fixture_ids_by_status"].items()}
-    )
-    out["ordinary_anchor_score"] = tuple(value["ordinary_anchor_score"])
-    out["safety"] = types.MappingProxyType(dict(value["safety"]))
-    return types.MappingProxyType(out)
+    expected = _expected()
+    exact = _canonical(expected)
+    if hashlib.sha256(exact).hexdigest() != RECEIPT_SHA256 or len(exact) != RECEIPT_SIZE:
+        raise _error("PR96 canonical receipt identity changed")
+    return _freeze(expected)
 
 
 def canonical_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation_receipt_bytes(
     value: Mapping[str, Any],
 ) -> bytes:
-    if not isinstance(value, Mapping):
-        raise _error("PR96 receipt must be a mapping")
-    return _canonical(value)
+    if not isinstance(value, Mapping) or _plain(value) != _plain(_expected()):
+        raise _error("receipt differs from the exact PR96 outcome")
+    exact = _canonical(value)
+    if hashlib.sha256(exact).hexdigest() != RECEIPT_SHA256 or len(exact) != RECEIPT_SIZE:
+        raise _error("PR96 canonical receipt identity changed")
+    return exact
 
 
 def sha256_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation_receipt(
@@ -325,6 +350,9 @@ def sha256_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation_rec
 
 
 __all__ = [
+    "ADAPTER_RESULT_SHA256",
+    "ADAPTER_RESULT_SIZE",
+    "BLOCKED_FIXTURE_IDS_BY_STATUS",
     "DATASET_NAME",
     "EXECUTION_SCOPE",
     "EXECUTION_STATE",
@@ -332,7 +360,11 @@ __all__ = [
     "PENALTY_FIXTURE_ID",
     "PR95_ADAPTER_BLOB_SHA",
     "QUALIFIED_COUNT",
+    "QUALIFIED_SCORES_PROJECTION_SHA256",
+    "RECEIPT_SHA256",
+    "RECEIPT_SIZE",
     "REPOSITORY_MAIN_SHA",
+    "TERMINAL_CANDIDATE_UNION_COUNT",
     "FotMobDataMatchesOrdinaryFtFinishedScoreAdapterValidationError",
     "canonical_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation_receipt_bytes",
     "execute_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation",
