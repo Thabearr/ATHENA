@@ -20,9 +20,9 @@ def test_protocol_is_exact_canonical_preregistered_evidence() -> None:
 
     assert value["protocol_state"] == "PRE_REGISTERED_NOT_EXECUTED_HISTORICAL_COVERAGE_UNPROVEN"
     assert value["current_pre_execution_disposition"] == "BLOCKED_HISTORICAL_COVERAGE_UNPROVEN"
-    assert len(exact) == protocol.PROTOCOL_SIZE == 5048
+    assert len(exact) == protocol.PROTOCOL_SIZE == 5741
     assert hashlib.sha256(exact).hexdigest() == protocol.PROTOCOL_SHA256 == (
-        "ac922634b999a4e8bdb186df3ac2fc1291c130aca405956ea611c5cc582d9e15"
+        "edddd7445bb9bb6ed2db4778b6ab48da9489ae6efac822b6e6c139992275bf87"
     )
     assert set(value["safety"].values()) == {False}
 
@@ -51,13 +51,17 @@ def test_protocol_binds_registered_derived_source_without_mutating_parent() -> N
     assert value["parent_source_facts"]["historical_coverage"] == "UNKNOWN"
 
 
-def test_protocol_reuses_pr81_completeness_contract_without_weakening_it() -> None:
+def test_protocol_reuses_full_pr81_contract_without_weakening_it() -> None:
     value = protocol.build_fotmob_ordinary_ft_finished_score_source_history_completeness_protocol()
 
     assert tuple(value["frozen_model_league_codes"]) == tuple(pr81.FROZEN_MODEL_LEAGUE_CODES)
     assert value["elo_initialization_semantics"] == pr81.ELO_INITIALIZATION_SEMANTICS
+    assert value["pr81_initialization_boundary_rule"] == pr81.INITIALIZATION_BOUNDARY_RULE
+    assert value["pr81_league_universe_rule"] == pr81.LEAGUE_UNIVERSE_RULE
+    assert value["pr81_result_semantics_rule"] == pr81.RESULT_SEMANTICS_RULE
     assert tuple(value["pr81_history_adapter_requirements"]) == tuple(pr81.HISTORY_ADAPTER_REQUIREMENTS)
     assert tuple(value["pr81_completeness_requirements"]) == tuple(pr81.COMPLETENESS_REQUIREMENTS)
+    assert tuple(value["pr81_status_vocabulary"]) == tuple(pr81.STATUS_VOCABULARY)
     assert (
         "NO_SILENT_FILTERING_TO_ONLY_TARGET_TEAMS_BECAUSE_ELO_REPLAY_DEPENDS_ON_OPPONENT_STATE"
         in value["pr81_completeness_requirements"]
