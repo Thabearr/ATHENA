@@ -67,11 +67,17 @@ def test_execution_lane_permissions_and_evidence_are_fail_closed() -> None:
     assert "issues: write" in text
     assert "contents: write" not in text
     assert "actions/upload-artifact@v4" in text
+    assert "id: upload" in text
     assert "if: always()" in text
     assert "retention-days: 30" in text
     assert "athena-research-cache.tar.gz" in text
     assert "historical_coverage_claimed_by_workflow': False" in text
     assert "downstream_authority_granted': False" in text
+    assert "PACKAGE_OUTCOME: ${{ steps.package.outcome }}" in text
+    assert "UPLOAD_OUTCOME: ${{ steps.upload.outcome }}" in text
+    assert "process.env.PACKAGE_OUTCOME === 'success'" in text
+    assert "process.env.UPLOAD_OUTCOME === 'success'" in text
+    assert "EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY" in text
 
 
 def test_execution_lane_documentation_keeps_capability_boundary_closed() -> None:
