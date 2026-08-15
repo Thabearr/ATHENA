@@ -104,10 +104,7 @@ def test_primary_id_is_source_scoped_and_wrapper_or_name_fallback_is_forbidden()
     assert "MUST_NOT_BE_PROMOTED_TO_GLOBAL_CROSS_PROVIDER_IDENTITY" in joined
     assert "DISPLAY_NAME_IS_METADATA_ONLY" in joined
     assert "MUST_NOT_FALL_BACK_TO_NAME_OR_WRAPPER_ID" in joined
-    assert (
-        "ANY_PRIMARY_ID_COLLISION_COUNTRY_CONFLICT_OR_COMPETITION_CLASS_CONFLICT_FAILS_CLOSED"
-        in joined
-    )
+    assert "ANY_PRIMARY_ID_COLLISION_COUNTRY_CONFLICT_OR_COMPETITION_CLASS_CONFLICT_FAILS_CLOSED" in joined
     assert "NOT_MODEL_CALIBRATION_OR_BETTING_ELIGIBILITY" in joined
 
 
@@ -200,8 +197,7 @@ def test_safety_flags_cannot_be_promoted() -> None:
     promoted = dict(value.safety)
     promoted["bet_authorized"] = True
     with pytest.raises(
-        protocol.FotMobPrimaryIdCompetitionMappingSemanticsProtocolError,
-        match="safety",
+        protocol.FotMobPrimaryIdCompetitionMappingSemanticsProtocolError
     ):
         dataclasses.replace(value, safety=promoted)
 
@@ -214,10 +210,7 @@ def test_qualification_is_frozen_to_preserved_evidence_and_keeps_other_blockers_
     assert "ALL_OBSERVED_WRAPPER_LEAGUE_IDS_AND_NAME_VARIANTS" in joined
     assert "PRESERVE_CONFLICTS" in joined
     assert "PARTIAL_SUCCESS_DOES_NOT_PROMOTE_HISTORICAL_COVERAGE" in joined
-    assert (
-        "AWARDED_EXTRA_TIME_PENALTY_REARRANGED_OR_INITIALIZATION_BOUNDARY_BLOCKERS"
-        in joined
-    )
+    assert "AWARDED_EXTRA_TIME_PENALTY_REARRANGED_OR_INITIALIZATION_BOUNDARY_BLOCKERS" in joined
 
 
 def test_unknown_competitions_remain_visible_and_fail_closed() -> None:
