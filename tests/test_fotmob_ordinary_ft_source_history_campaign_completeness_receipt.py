@@ -6,6 +6,8 @@ import hashlib
 import json
 from pathlib import Path
 
+import domain.fotmob_ordinary_ft_source_history_acquisition_protocol as pr101
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 RECEIPT_PATH = (
@@ -14,8 +16,8 @@ RECEIPT_PATH = (
     / "research-manifests"
     / "fotmob-ordinary-ft-source-history-campaign-completeness-receipt-v1.json"
 )
-RECEIPT_SHA256 = "dd29df3ac81ba3fa1bdf5006c723c865ff6456f93cf57e6655d6d743c1d0cca3"
-RECEIPT_SIZE = 11617
+RECEIPT_SHA256 = "a8c5a704e06853d6debfc029653132ca201b98c1fc8a32b3e3095db18f8e1363"
+RECEIPT_SIZE = 11995
 QUALIFIED_ROW_PROJECTION_SHA256 = (
     "5cec30f37dd58f654c94f4fb9190a7098683cee0d1ab073e179e6177b37ec8c8"
 )
@@ -122,10 +124,74 @@ def test_campaign_integrity_is_complete_without_claiming_history_completeness() 
     assert receipt["historical_coverage_proven"] is False
 
 
-def test_target_corpus_is_stable_but_contains_special_result_blockers() -> None:
+def test_pr101_did_not_pre_register_primary_id_as_cross_season_mapping_semantics() -> None:
+    protocol = pr101.build_fotmob_ordinary_ft_source_history_acquisition_protocol()
+    assert protocol["league_mapping_rule"] == (
+        "ALL_ELEVEN_MAPPINGS_ARE_PRE_REGISTERED_CANDIDATES_AND_MUST_BE_PROVEN_"
+        "FROM_CAPTURED_FOTMOB_LEAGUE_ID_NAME_COUNTRY_EVIDENCE_BEFORE_COMPLETENESS"
+    )
+    assert len(protocol["league_mappings"]) == 11
+    for mapping in protocol["league_mappings"]:
+        assert set(mapping) == {
+            "model_league_code",
+            "fotmob_league_id",
+            "expected_name",
+            "expected_country",
+            "mapping_state",
+        }
+        assert mapping["mapping_state"] == (
+            "PRE_REGISTERED_DISCOVERY_ONLY_REQUIRES_CAPTURE_PROOF"
+        )
+        assert "primaryId" not in mapping
+        assert "primary_id" not in mapping
+
+
+def test_primary_id_evidence_is_preserved_as_discovery_not_qualification() -> None:
+    receipt, _ = _receipt()
+    mapping = receipt["league_mapping_evidence"]
+    assert mapping["mapping_proven"] is False
+    assert mapping["mapping_semantics"] == (
+        "DISCOVERY_ONLY_FROZEN_CANDIDATE_ROOT_PRIMARY_ID_PLUS_COUNTRY_LINEAGE_"
+        "REQUIRES_SEPARATE_REVIEW"
+    )
+    assert mapping["full_projection_sha256"] == (
+        "cd4e83157310cd9652c302f48d3e611867a6ad4e0616ddfe0e858863468c1e32"
+    )
+    assert mapping["full_projection_size_bytes"] == 5_911
+
+    records = {item["model_league_code"]: item for item in mapping["records"]}
+    expected = {
+        "B1": (40, "BEL"),
+        "D1": (54, "GER"),
+        "E0": (47, "ENG"),
+        "F1": (53, "FRA"),
+        "G1": (135, "GRE"),
+        "I1": (55, "ITA"),
+        "N1": (57, "NED"),
+        "P1": (61, "POR"),
+        "SC0": (64, "SCO"),
+        "SP1": (87, "ESP"),
+        "T1": (71, "TUR"),
+    }
+    assert set(records) == set(expected)
+
+    for model_code, (primary_id, country_code) in expected.items():
+        record = records[model_code]
+        assert record["fotmob_primary_id"] == primary_id
+        assert record["expected_country_code"] == country_code
+        assert record["observed_country_codes"] == [country_code]
+        assert record["unique_fixture_ids"] >= record["qualified_ordinary_ft_fixture_ids"]
+        assert record["observed_wrapper_league_id_count"] >= 1
+        assert record["observed_name_variant_count"] >= 1
+
+
+def test_discovery_corpus_is_stable_but_contains_special_result_blockers() -> None:
     receipt, _ = _receipt()
     corpus = receipt["target_corpus"]
 
+    assert corpus["mapping_basis"] == (
+        "DISCOVERY_ONLY_FROZEN_CANDIDATE_ROOT_PRIMARY_ID_PLUS_COUNTRY_LINEAGE"
+    )
     assert corpus["frozen_model_league_codes"] == [
         "B1", "D1", "E0", "F1", "G1", "I1", "N1", "P1", "SC0", "SP1", "T1"
     ]
@@ -153,38 +219,6 @@ def test_target_corpus_is_stable_but_contains_special_result_blockers() -> None:
     assert corpus["cross_date_rearranged_fixture_id_count"] == 250
     assert corpus["cross_date_kickoff_change_fixture_id_count"] == 250
     assert corpus["duplicate_terminal_awarded_fixture_id"] == 3932603
-
-
-def test_all_eleven_primary_competition_mappings_are_evidence_bound() -> None:
-    receipt, _ = _receipt()
-    mapping = receipt["league_mapping_evidence"]
-    assert mapping["full_projection_sha256"] == "cd4e83157310cd9652c302f48d3e611867a6ad4e0616ddfe0e858863468c1e32"
-    assert mapping["full_projection_size_bytes"] == 5_911
-    records = {item["model_league_code"]: item for item in mapping["records"]}
-
-    expected = {
-        "B1": (40, "BEL"),
-        "D1": (54, "GER"),
-        "E0": (47, "ENG"),
-        "F1": (53, "FRA"),
-        "G1": (135, "GRE"),
-        "I1": (55, "ITA"),
-        "N1": (57, "NED"),
-        "P1": (61, "POR"),
-        "SC0": (64, "SCO"),
-        "SP1": (87, "ESP"),
-        "T1": (71, "TUR"),
-    }
-    assert set(records) == set(expected)
-
-    for model_code, (primary_id, country_code) in expected.items():
-        record = records[model_code]
-        assert record["fotmob_primary_id"] == primary_id
-        assert record["expected_country_code"] == country_code
-        assert record["observed_country_codes"] == [country_code]
-        assert record["unique_fixture_ids"] >= record["qualified_ordinary_ft_fixture_ids"]
-        assert record["observed_wrapper_league_id_count"] >= 1
-        assert record["observed_name_variant_count"] >= 1
 
 
 def test_special_and_unresolved_states_are_not_silently_coerced() -> None:
@@ -227,37 +261,40 @@ def test_fail_closed_gate_result_and_next_boundary_are_frozen() -> None:
     assert receipt["assessment_state"] == (
         "EXECUTED_FAIL_CLOSED_HISTORICAL_COVERAGE_NOT_QUALIFIED"
     )
-    assert receipt["primary_status"] == (
-        "BLOCKED_NON_ORDINARY_FT_RESULT_REQUIRES_SEPARATE_REVIEW"
-    )
+    assert receipt["primary_status"] == "BLOCKED_LEAGUE_MAPPING_UNPROVEN"
 
     assert gates["DERIVED_SCORE_CAPABILITY"]["outcome"] == "PASSED"
     assert gates["CAMPAIGN_EXECUTION_EVIDENCE"]["outcome"] == "PASSED"
     assert gates["DAILY_DATE_COVERAGE"]["outcome"] == "PASSED"
-    assert gates["ELEVEN_LEAGUE_MAPPING"]["outcome"] == "PASSED"
-    assert gates["ELO_INITIALIZATION_BOUNDARY"] == {
-        "gate_id": "ELO_INITIALIZATION_BOUNDARY",
+    assert gates["ELEVEN_LEAGUE_MAPPING"] == {
+        "gate_id": "ELEVEN_LEAGUE_MAPPING",
         "outcome": "UNPROVEN",
-        "status": "BLOCKED_INITIALIZATION_BOUNDARY_UNPROVEN",
+        "status": "BLOCKED_LEAGUE_MAPPING_UNPROVEN",
         "reason": (
-            "CAMPAIGN_START_20200801_PRECEDES_OR_EQUALS_THE_FIRST_CAPTURED_TARGET_FIXTURE_DATES_"
-            "BUT_EXACT_PR69_REPLAY_START_EQUIVALENCE_HAS_NOT_YET_BEEN_REPLAYED_FROM_A_COMPLETE_"
-            "ADMISSIBLE_FOTMOB_ROWSET"
+            "ALL_ELEVEN_FROZEN_CANDIDATE_ROOT_IDS_ARE_OBSERVED_AS_FOTMOB_PRIMARY_ID_WITH_"
+            "EXPECTED_COUNTRY_LINEAGE_BUT_PR101_DID_NOT_PRE_REGISTER_PRIMARY_ID_AS_THE_"
+            "CANONICAL_CROSS_SEASON_MAPPING_FIELD_AND_WRAPPER_IDS_OR_NAMES_VARY"
         ),
     }
+    assert gates["ELO_INITIALIZATION_BOUNDARY"]["outcome"] == "UNPROVEN"
+    assert gates["ELO_INITIALIZATION_BOUNDARY"]["status"] == (
+        "BLOCKED_INITIALIZATION_BOUNDARY_UNPROVEN"
+    )
     assert gates["FINISHED_RESULT_EVIDENCE_COVERAGE"]["outcome"] == "BLOCKED"
     assert gates["FINISHED_RESULT_EVIDENCE_COVERAGE"]["status"] == (
         "BLOCKED_NON_ORDINARY_FT_RESULT_REQUIRES_SEPARATE_REVIEW"
     )
     assert gates["NON_ORDINARY_FT_RESULT_STATES"]["outcome"] == "BLOCKED"
-    assert gates["IDENTITY_AND_CHRONOLOGY_CONFLICTS"]["outcome"] == "UNPROVEN"
+    assert gates["IDENTITY_AND_CHRONOLOGY_CONFLICTS"]["outcome"] == "BLOCKED"
+    assert gates["IDENTITY_AND_CHRONOLOGY_CONFLICTS"]["status"] == (
+        "BLOCKED_IDENTITY_OR_CHRONOLOGY_CONFLICT"
+    )
     assert gates["HISTORICAL_COVERAGE"]["outcome"] == "BLOCKED"
 
     assert receipt["historical_coverage_proven"] is False
     assert receipt["source_capability_registry_mutation_performed"] is False
     assert receipt["history_adapter_materialized"] is False
     assert receipt["next_required_boundary"] == (
-        "PRE_REGISTER_REVIEWED_FOTMOB_SOURCE_HISTORY_SPECIAL_RESULT_AND_"
-        "REARRANGEMENT_DISPOSITION_PROTOCOL"
+        "PRE_REGISTER_REVIEWED_FOTMOB_PRIMARY_ID_COMPETITION_MAPPING_SEMANTICS_PROTOCOL"
     )
     assert all(value is False for value in receipt["safety"].values())
