@@ -23,6 +23,7 @@ from domain.fotmob_data_matches_ordinary_ft_finished_score_adapter_validation im
     RECEIPT_SHA256,
     RECEIPT_SIZE,
     REPOSITORY_MAIN_SHA,
+    SOURCE_CAPABILITIES_BLOB_SHA,
     TERMINAL_CANDIDATE_UNION_COUNT,
     FotMobDataMatchesOrdinaryFtFinishedScoreAdapterValidationError,
     canonical_fotmob_data_matches_ordinary_ft_finished_score_adapter_validation_receipt_bytes,
@@ -41,8 +42,8 @@ PENALTY_STATUS = "BLOCKED_PENALTY_REASON_REQUIRES_SEPARATE_SCORE_SEMANTICS"
 UPSTREAM_BLOBS = {
     "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py": "868563206e09010fce74b4ba7954028930baad54",
     "domain/fotmob_data_matches_post_finish_capture_pair_evidence.py": "7b74e9893071ef47ea425b4f106d92b0c5e1ddc2",
-    "domain/source_capabilities.py": "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96",
 }
+HISTORICAL_SOURCE_CAPABILITIES_BLOB = "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -77,6 +78,7 @@ def test_exact_identity_and_upstream_blob_ancestry() -> None:
     assert PR95_ADAPTER_BLOB_SHA == UPSTREAM_BLOBS["domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py"]
     for relative, expected in UPSTREAM_BLOBS.items():
         assert _git_blob_sha(ROOT / relative) == expected
+    assert SOURCE_CAPABILITIES_BLOB_SHA == HISTORICAL_SOURCE_CAPABILITIES_BLOB
 
 
 def test_exact_pr85_pair_freezes_validated_adapter_result() -> None:
@@ -180,13 +182,14 @@ def test_exact_capture_lineage_and_order_fail_closed() -> None:
         )
 
 
-def test_source_registry_remains_unpromoted() -> None:
+def test_historical_receipt_survives_later_reviewed_registration() -> None:
     receipt = _receipt()
     parent = SOURCE_CAPABILITY_REGISTRY["fotmob_data_matches_reviewed_catalog"]
+    derived = SOURCE_CAPABILITY_REGISTRY[PROPOSED_SOURCE_KEY]
     assert parent.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
     assert parent.full_time_score is CapabilityAvailability.NOT_CAPTURED
     assert parent.historical_coverage is CapabilityAvailability.UNKNOWN
-    assert PROPOSED_SOURCE_KEY not in SOURCE_CAPABILITY_REGISTRY
+    assert derived.full_time_score is CapabilityAvailability.CONFIRMED
     assert receipt["source_capability_registration_performed"] is False
     assert receipt["proposed_source_key_registered"] is False
     assert receipt["parent_source_full_time_score"] == "NOT_CAPTURED"
