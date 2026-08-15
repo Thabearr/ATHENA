@@ -9,14 +9,17 @@ preserved PR #85 capture pair carry stable source-reported finished-score
 semantics under the frozen PR #83 contract. The one penalties fixture remains
 excluded.
 
-That evidence is strong enough to consider a reviewed score-capability surface,
-but it is **not** broad enough to rewrite the existing source-wide reviewed
-catalog capability as though every terminal FotMob fixture were now understood.
+That is enough to justify designing a reviewed score-capability surface, but not
+enough to claim that ATHENA currently has a reusable score adapter. PR #92 is an
+evidence execution bound to the exact preserved pair; source capabilities must
+describe what a current adapter can reproducibly capture, not merely what one
+frozen receipt happened to prove.
 
-For that reason, PR #93 freezes a safer promotion design:
+PR #93 therefore freezes two protections before any capability registration:
 
 ```text
 REGISTER_NEW_DERIVED_ADAPTER_SCOPED_SOURCE_KEY_DO_NOT_MUTATE_PARENT
+SOURCE_CAPABILITY_PROMOTION_REQUIRES_REUSABLE_REVIEWED_PROSPECTIVE_ORDINARY_FT_FINISHED_SCORE_ADAPTER_NOT_ONE_OFF_EVIDENCE_RECEIPT
 ```
 
 No registry update is performed in this PR.
@@ -49,6 +52,30 @@ penalty fixture excluded                       1
 excluded penalty fixture id              5844873
 ```
 
+## Why a reusable adapter is mandatory
+
+The existing PR #92 executor proves the exact preserved evidence pair. It is not
+a prospective source adapter that can take a new reviewed capture and expose a
+qualified ordinary-FT finished score under the same contract.
+
+A source-capability registry entry would therefore be premature unless a
+reusable reviewed adapter exists first. PR #93 freezes the future module path:
+
+```text
+domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py
+```
+
+and records the current pre-registration state as:
+
+```text
+ABSENT_NOT_IMPLEMENTED_AT_PR93_PRE_REGISTRATION
+```
+
+The future execution assessment must fail closed with
+`BLOCKED_REUSABLE_REVIEWED_SCORE_ADAPTER_NOT_IMPLEMENTED` while that prerequisite
+is still missing. A one-off evidence receipt is never sufficient by itself to
+promote a reusable source capability.
+
 ## Why the parent source key stays unchanged
 
 The current parent capability key is:
@@ -58,7 +85,7 @@ fotmob_data_matches_reviewed_catalog
 ```
 
 It was deliberately created as an adapter-scoped identity capability. Its
-current contract is still:
+current contract remains:
 
 ```text
 full_time_score           NOT_CAPTURED
@@ -73,19 +100,19 @@ Mutating that parent entry to `full_time_score = CONFIRMED` would overstate the
 reviewed evidence because the penalties case remains outside the qualified score
 semantics. It would also blur the older identity-only catalog contract.
 
-PR #93 therefore freezes a new derived source key instead:
+PR #93 therefore freezes a future derived source key instead:
 
 ```text
 fotmob_data_matches_reviewed_ordinary_ft_finished_score
 ```
 
-The parent entry must remain byte-for-byte governed by its existing source
-capability contract until a separate future review explicitly changes it.
+The parent entry remains unchanged.
 
 ## Proposed derived capability
 
-If the future execution assessment qualifies the registration, the derived key
-may have exactly these capability values:
+Only after a reusable prospective adapter exists and a separate execution
+assessment qualifies the registration may the derived key be considered for
+these exact values:
 
 ```text
 full_time_score           CONFIRMED
@@ -96,7 +123,7 @@ historical_coverage       UNKNOWN
 freshness_metadata        NOT_CAPTURED
 ```
 
-For this derived adapter only, `CONFIRMED full_time_score` has a deliberately
+For this derived adapter only, `CONFIRMED full_time_score` has the deliberately
 narrow definition:
 
 ```text
@@ -117,14 +144,14 @@ PENALTY_OR_OTHER_UNREVIEWED_REASON_FIXTURES_MUST_NOT_ENTER_DERIVED_CAPABILITY
 
 Fixture `5844873` therefore remains outside the proposed derived capability.
 Its ordinary score pair, penalty fields and `Pen` reason must not be silently
-reinterpreted by this promotion layer.
+reinterpreted by this layer.
 
-Any future terminal reason not covered by the exact reviewed ordinary `FT` gate
-must also remain outside the derived capability until separately reviewed.
+Any future terminal reason outside the exact reviewed ordinary `FT` gate must
+also remain excluded until separately reviewed.
 
 ## Frozen evidence strings
 
-A later registry implementation, if separately authorized, must use only the
+A later registry implementation, if separately authorized, may cite only the
 reviewed repository evidence frozen here:
 
 ```text
@@ -134,8 +161,9 @@ domain/fotmob_data_matches_eliminated_team_id_value_domain_extension.py: reviewe
 domain/fotmob_data_matches_capture.py: provenance-bound reviewed capture manifests
 ```
 
-The notes are also pre-registered and explicitly preserve the scope, penalty
-exclusion, historical-coverage uncertainty, and downstream safety boundary.
+The registered notes are pre-frozen to state that the score capability is
+reachable only through a reusable reviewed prospective adapter and that all
+broader semantics and downstream authority remain excluded.
 
 ## Qualification requirements
 
@@ -147,7 +175,8 @@ qualified registration outcome:
 - the parent reviewed-catalog entry still has `full_time_score = NOT_CAPTURED`
   and remains identity-only;
 - the proposed derived source key does not already exist;
-- only the exact PR #92 ordinary-FT gate is admitted;
+- a reusable reviewed prospective ordinary-FT finished-score adapter exists;
+- only the exact PR #92 ordinary-FT gate is admitted by that adapter;
 - the penalty fixture and any other unreviewed reason are excluded;
 - promotion is expressed as a new derived adapter-scoped key, not a parent
   mutation;
@@ -165,21 +194,23 @@ QUALIFIED_SCOPED_ORDINARY_FT_FULL_TIME_SCORE_CAPABILITY_REGISTRATION
 BLOCKED_PR92_EVIDENCE_ANCESTRY_DRIFT
 BLOCKED_PARENT_SOURCE_CAPABILITY_DRIFT
 BLOCKED_PROPOSED_SOURCE_KEY_ALREADY_EXISTS
+BLOCKED_REUSABLE_REVIEWED_SCORE_ADAPTER_NOT_IMPLEMENTED
 BLOCKED_PROPOSED_CAPABILITY_SCOPE_OVERCLAIM
 BLOCKED_PENALTY_OR_UNREVIEWED_REASON_INCLUDED
 ```
 
-A future `QUALIFIED_...REGISTRATION` status will mean only that the exact
-proposed derived capability is safe to register. It will not itself mutate the
-registry or authorize any downstream use.
+A future `QUALIFIED_...REGISTRATION` status means only that the exact proposed
+derived capability is safe to register. It does not itself mutate the registry
+or authorize downstream use.
 
 ## Safety boundary
 
 PR #93 performs no network acquisition and no source-capability registry update.
-It does not mutate the parent source key. It does not qualify penalties,
-regulation-time, extra-time, settlement, global reason semantics, historical
-coverage, source history, successor inputs, modelling, probabilities,
-calibration, pricing, market activation, selection, production or betting.
+It does not mutate the parent source key or create the prospective score adapter.
+It does not qualify penalties, regulation-time, extra-time, settlement, global
+reason semantics, historical coverage, source history, successor inputs,
+modelling, probabilities, calibration, pricing, market activation, selection,
+production or betting.
 
 Every authority flag remains exact `false`.
 
@@ -189,8 +220,8 @@ Every authority flag remains exact `false`.
 protocol id FOTMOB_DATA_MATCHES_FULL_TIME_SCORE_CAPABILITY_PROMOTION_PROTOCOL_V1
 scope       PRE_REGISTERED_REVIEWED_SCOPED_FULL_TIME_SCORE_CAPABILITY_PROMOTION_ONLY
 state       PRE_REGISTERED_NOT_EXECUTED_NO_SOURCE_CAPABILITY_CHANGE
-SHA-256     504287e45e614b6b47c5e730c3d50fd2a354be90863acc4b70025a7fd53d9549
-size        5618 bytes
+SHA-256     1a291349ecee28b0d4e5216daf495ebff61e1247724df17502c99641d3f55b38
+size        6163 bytes
 ```
 
 ## Next required boundary
@@ -199,6 +230,9 @@ size        5618 bytes
 EXECUTE_REVIEWED_FOTMOB_DATA_MATCHES_FULL_TIME_SCORE_CAPABILITY_PROMOTION_ASSESSMENT
 ```
 
-That execution must determine whether the exact scoped registration pre-frozen
-here is currently qualified. Even a qualified assessment must still leave the
-actual registry unchanged until a separate implementation boundary is reviewed.
+Given the frozen current state, that execution is expected to fail closed on the
+missing reusable adapter unless repository authority changes before execution.
+The assessment must report that blocker rather than weakening the protocol. The
+smallest following engineering boundary would then be the separately reviewed
+prospective ordinary-FT score adapter; registry registration remains a later
+step.
