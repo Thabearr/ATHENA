@@ -206,8 +206,8 @@ def _verify_registry() -> None:
         raise _error("parent full_time_score must remain NOT_CAPTURED")
     if parent.historical_coverage is not CapabilityAvailability.UNKNOWN:
         raise _error("parent historical coverage must remain UNKNOWN")
-    if PROPOSED_SOURCE_KEY in SOURCE_CAPABILITY_REGISTRY:
-        raise _error("derived adapter-scoped source key already exists before reviewed registration")
+    # Derived-key absence is a PR96 execution-time fact frozen in the receipt.
+    # A later reviewed registration must not invalidate this historical result.
 
 
 def _verify_adapter_ancestry() -> None:
