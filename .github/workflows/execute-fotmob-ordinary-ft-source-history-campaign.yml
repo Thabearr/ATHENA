@@ -120,7 +120,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify reviewed execution and capture blobs
+      - name: Verify reviewed execution, capture, and dependency blobs
         shell: bash
         run: |
           set -euo pipefail
@@ -130,6 +130,7 @@ jobs:
           test "$(git rev-parse HEAD:domain/fotmob_ordinary_ft_source_history_acquisition_protocol.py)" = "39541b351d2990f7ebb9572a8c9c674c85864284"
           test "$(git rev-parse HEAD:scripts/capture_fotmob_data_matches.py)" = "10b8858ab62f2708bd564d578a627c43718e5a12"
           test "$(git rev-parse HEAD:domain/fotmob_data_matches_capture.py)" = "ca2149395de868104666620173b55a880b10c729"
+          test "$(git rev-parse HEAD:requirements.txt)" = "54d24a55dfa4c73ba3910d333257cfd2e68daf4b"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
@@ -194,6 +195,7 @@ jobs:
               'protocol_blob_sha': '39541b351d2990f7ebb9572a8c9c674c85864284',
               'capture_script_blob_sha': '10b8858ab62f2708bd564d578a627c43718e5a12',
               'capture_contract_blob_sha': 'ca2149395de868104666620173b55a880b10c729',
+              'requirements_blob_sha': '54d24a55dfa4c73ba3910d333257cfd2e68daf4b',
               'required_successful_slots': 4410,
               'request_timezone': 'UTC',
               'ccode3': 'NGA',
