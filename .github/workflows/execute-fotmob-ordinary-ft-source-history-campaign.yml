@@ -291,6 +291,7 @@ jobs:
           sha256sum campaign-artifact/* > campaign-artifact/files.sha256
 
       - name: Upload campaign evidence even on failure
+        id: upload
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -348,11 +349,17 @@ jobs:
           AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
           RUNNER_EXIT_CODE: ${{ steps.execute_campaign.outputs.exit_code }}
           STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
           VERIFY_OUTCOME: ${{ steps.verify.outcome }}
         with:
           script: |
             const marker = '<!-- ATHENA_FOTMOB_HISTORY_EXECUTION_RESULT_V1 -->';
-            const outcome = process.env.VERIFY_OUTCOME === 'success'
+            const evidencePreserved =
+              process.env.PACKAGE_OUTCOME === 'success' &&
+              process.env.UPLOAD_OUTCOME === 'success';
+            const campaignVerified = process.env.VERIFY_OUTCOME === 'success';
+            const outcome = evidencePreserved && campaignVerified
               ? 'EXECUTION_COMPLETED_4410_SLOTS_EVIDENCE_ARTIFACT_PRESERVED'
               : 'EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY';
             await github.rest.issues.createComment({
@@ -366,6 +373,8 @@ jobs:
                 `main-sha: ${process.env.AUTHORIZED_MAIN_SHA || ''}`,
                 `runner-exit-code: ${process.env.RUNNER_EXIT_CODE || 'unavailable'}`,
                 `status-exit-code: ${process.env.STATUS_EXIT_CODE || 'unavailable'}`,
+                `package-outcome: ${process.env.PACKAGE_OUTCOME || 'unavailable'}`,
+                `artifact-upload-outcome: ${process.env.UPLOAD_OUTCOME || 'unavailable'}`,
                 `verification-outcome: ${process.env.VERIFY_OUTCOME || 'unavailable'}`,
                 `state: ${outcome}`,
                 `artifact-name: fotmob-ordinary-ft-source-history-campaign-${context.runId}`,
