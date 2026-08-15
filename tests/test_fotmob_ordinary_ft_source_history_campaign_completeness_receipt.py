@@ -125,7 +125,7 @@ def test_campaign_integrity_is_complete_without_claiming_history_completeness() 
 
 
 def test_pr101_did_not_pre_register_primary_id_as_cross_season_mapping_semantics() -> None:
-    protocol = pr101.build_fotmob_ordinary_ft_source_history_acquisition_protocol()
+    protocol = pr101.build_fotmob_ordinary_ft_source_history_acquisition_protocol().to_dict()
     assert protocol["league_mapping_rule"] == (
         "ALL_ELEVEN_MAPPINGS_ARE_PRE_REGISTERED_CANDIDATES_AND_MUST_BE_PROVEN_"
         "FROM_CAPTURED_FOTMOB_LEAGUE_ID_NAME_COUNTRY_EVIDENCE_BEFORE_COMPLETENESS"
