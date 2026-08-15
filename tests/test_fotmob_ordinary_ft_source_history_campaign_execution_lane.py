@@ -65,7 +65,9 @@ def test_execution_lane_permissions_and_evidence_are_fail_closed() -> None:
     text = _workflow()
     assert "contents: read" in text
     assert "issues: write" in text
+    assert "pull-requests: read" in text
     assert "contents: write" not in text
+    assert "pull-requests: write" not in text
     assert "actions/upload-artifact@v4" in text
     assert "id: upload" in text
     assert "if: always()" in text
