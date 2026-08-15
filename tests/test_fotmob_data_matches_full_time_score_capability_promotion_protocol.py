@@ -12,6 +12,7 @@ import domain.fotmob_data_matches_final_result_semantics_protocol as pr83
 import domain.fotmob_data_matches_final_result_semantics_validation_with_reason_gate as pr92
 import domain.fotmob_data_matches_status_reason_semantics_validation as pr91
 from domain.fotmob_data_matches_full_time_score_capability_promotion_protocol import (
+    CURRENT_REUSABLE_ADAPTER_STATE,
     EXCLUDED_PENALTY_COUNT,
     EXCLUDED_PENALTY_FIXTURE_ID,
     HISTORICAL_COVERAGE_RULE,
@@ -34,6 +35,8 @@ from domain.fotmob_data_matches_full_time_score_capability_promotion_protocol im
     QUALIFICATION_REQUIREMENTS,
     QUALIFIED_ORDINARY_FT_COUNT,
     REPOSITORY_MAIN_SHA,
+    REUSABLE_ADAPTER_MODULE_PATH,
+    REUSABLE_ADAPTER_RULE,
     SEMANTIC_EXCLUSION_RULE,
     STATUS_VOCABULARY,
     FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocolError,
@@ -150,6 +153,24 @@ def test_parent_capability_stays_identity_only_and_proposed_key_is_absent() -> N
     assert PROPOSED_SOURCE_KEY not in SOURCE_CAPABILITY_REGISTRY
 
 
+def test_reusable_prospective_adapter_is_required_and_currently_absent() -> None:
+    value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
+    assert value.reusable_adapter_module_path == REUSABLE_ADAPTER_MODULE_PATH == (
+        "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py"
+    )
+    assert value.current_reusable_adapter_state == CURRENT_REUSABLE_ADAPTER_STATE == (
+        "ABSENT_NOT_IMPLEMENTED_AT_PR93_PRE_REGISTRATION"
+    )
+    assert not (ROOT / REUSABLE_ADAPTER_MODULE_PATH).exists()
+    assert value.reusable_adapter_rule == REUSABLE_ADAPTER_RULE
+    assert "REUSABLE_REVIEWED_PROSPECTIVE" in REUSABLE_ADAPTER_RULE
+    assert "NOT_ONE_OFF_EVIDENCE_RECEIPT" in REUSABLE_ADAPTER_RULE
+    assert (
+        "REQUIRE_REUSABLE_REVIEWED_PROSPECTIVE_ORDINARY_FT_FINISHED_SCORE_ADAPTER_BEFORE_REGISTRY_PROMOTION"
+        in QUALIFICATION_REQUIREMENTS
+    )
+
+
 def test_protocol_registers_a_new_scoped_key_not_a_parent_mutation() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
     assert value.parent_source_key == PARENT_SOURCE_KEY == "fotmob_data_matches_reviewed_catalog"
@@ -186,6 +207,7 @@ def test_scope_and_penalty_exclusions_are_frozen() -> None:
     assert value.semantic_exclusion_rule == SEMANTIC_EXCLUSION_RULE
     assert "PENALTY_OR_OTHER_UNREVIEWED_REASON_FIXTURES_MUST_NOT_ENTER" in PENALTY_EXCLUSION_RULE
     for phrase in (
+        "reusable reviewed prospective adapter",
         "regulation-time",
         "extra-time",
         "penalty-score",
@@ -215,9 +237,9 @@ def test_exact_protocol_identity_and_state() -> None:
     assert PROTOCOL_SCOPE == "PRE_REGISTERED_REVIEWED_SCOPED_FULL_TIME_SCORE_CAPABILITY_PROMOTION_ONLY"
     assert PROTOCOL_STATE == "PRE_REGISTERED_NOT_EXECUTED_NO_SOURCE_CAPABILITY_CHANGE"
     assert hashlib.sha256(exact).hexdigest() == PROTOCOL_SHA256 == (
-        "504287e45e614b6b47c5e730c3d50fd2a354be90863acc4b70025a7fd53d9549"
+        "1a291349ecee28b0d4e5216daf495ebff61e1247724df17502c99641d3f55b38"
     )
-    assert len(exact) == PROTOCOL_SIZE == 5618
+    assert len(exact) == PROTOCOL_SIZE == 6163
     assert revalidate_fotmob_data_matches_full_time_score_capability_promotion_protocol(value) == value
 
 
@@ -228,6 +250,7 @@ def test_status_vocabulary_and_next_boundary_are_exact() -> None:
         "BLOCKED_PR92_EVIDENCE_ANCESTRY_DRIFT",
         "BLOCKED_PARENT_SOURCE_CAPABILITY_DRIFT",
         "BLOCKED_PROPOSED_SOURCE_KEY_ALREADY_EXISTS",
+        "BLOCKED_REUSABLE_REVIEWED_SCORE_ADAPTER_NOT_IMPLEMENTED",
         "BLOCKED_PROPOSED_CAPABILITY_SCOPE_OVERCLAIM",
         "BLOCKED_PENALTY_OR_UNREVIEWED_REASON_INCLUDED",
     )
@@ -252,6 +275,8 @@ def test_every_authority_remains_exact_false() -> None:
         ("excluded_penalty_fixture_id", 1),
         ("proposed_source_key", PARENT_SOURCE_KEY),
         ("promotion_mode", "MUTATE_PARENT"),
+        ("current_reusable_adapter_state", "IMPLEMENTED"),
+        ("reusable_adapter_rule", "ONE_OFF_RECEIPT_IS_ENOUGH"),
         ("next_required_boundary", "SKIP_EXECUTION"),
     ),
 )
