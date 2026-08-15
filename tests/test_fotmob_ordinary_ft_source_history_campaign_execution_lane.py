@@ -67,9 +67,9 @@ def test_execution_lane_permissions_and_evidence_are_fail_closed() -> None:
     text = _workflow()
     assert "contents: read" in text
     assert "issues: write" in text
-    assert "pull-requests: read" in text
+    assert "pull-requests: write" in text
+    assert "pull-requests: read" not in text
     assert "contents: write" not in text
-    assert "pull-requests: write" not in text
     assert "actions/upload-artifact@v4" in text
     assert "id: upload" in text
     assert "if: always()" in text
@@ -90,3 +90,5 @@ def test_execution_lane_documentation_keeps_capability_boundary_closed() -> None
     assert "does **not** promote `historical_coverage`" in text
     assert "Model, probability, pricing, selection, production, and BET authority remain false" in text
     assert "reviewed campaign execution receipt/assessment" in text
+    assert "closed pull-request conversation" in text
+    assert "CONTROL_PLANE_GUARD_FAILED_NO_NETWORK_ACQUISITION" in text
