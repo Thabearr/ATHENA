@@ -15,6 +15,7 @@ from domain.fotmob_data_matches_full_time_score_capability_promotion_protocol im
     CURRENT_REUSABLE_ADAPTER_STATE,
     EXCLUDED_PENALTY_COUNT,
     EXCLUDED_PENALTY_FIXTURE_ID,
+    FUTURE_REQUIRED_ADAPTER_EVIDENCE,
     HISTORICAL_COVERAGE_RULE,
     NEXT_REQUIRED_BOUNDARY,
     PARENT_NON_MUTATION_RULE,
@@ -171,6 +172,15 @@ def test_reusable_prospective_adapter_is_required_and_currently_absent() -> None
     )
 
 
+def test_future_adapter_is_required_registry_evidence_even_though_absent_today() -> None:
+    value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
+    assert value.future_required_adapter_evidence == FUTURE_REQUIRED_ADAPTER_EVIDENCE
+    assert FUTURE_REQUIRED_ADAPTER_EVIDENCE in value.proposed_evidence
+    adapter_path = FUTURE_REQUIRED_ADAPTER_EVIDENCE.split(":", 1)[0]
+    assert adapter_path == REUSABLE_ADAPTER_MODULE_PATH
+    assert not (ROOT / adapter_path).exists()
+
+
 def test_protocol_registers_a_new_scoped_key_not_a_parent_mutation() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
     assert value.parent_source_key == PARENT_SOURCE_KEY == "fotmob_data_matches_reviewed_catalog"
@@ -222,10 +232,11 @@ def test_scope_and_penalty_exclusions_are_frozen() -> None:
         assert phrase in PROPOSED_NOTES
 
 
-def test_proposed_evidence_is_repository_reviewed_only() -> None:
+def test_existing_proposed_evidence_is_reviewed_and_future_adapter_evidence_is_explicit() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_protocol()
     assert value.proposed_evidence == PROPOSED_EVIDENCE
-    for item in PROPOSED_EVIDENCE:
+    assert PROPOSED_EVIDENCE[-1] == FUTURE_REQUIRED_ADAPTER_EVIDENCE
+    for item in PROPOSED_EVIDENCE[:-1]:
         path = item.split(":", 1)[0]
         assert (ROOT / path).is_file()
 
@@ -237,9 +248,9 @@ def test_exact_protocol_identity_and_state() -> None:
     assert PROTOCOL_SCOPE == "PRE_REGISTERED_REVIEWED_SCOPED_FULL_TIME_SCORE_CAPABILITY_PROMOTION_ONLY"
     assert PROTOCOL_STATE == "PRE_REGISTERED_NOT_EXECUTED_NO_SOURCE_CAPABILITY_CHANGE"
     assert hashlib.sha256(exact).hexdigest() == PROTOCOL_SHA256 == (
-        "1a291349ecee28b0d4e5216daf495ebff61e1247724df17502c99641d3f55b38"
+        "8606367857915046eb27b9f2bf751514e52e266966b23caf598d1fedbf6b4009"
     )
-    assert len(exact) == PROTOCOL_SIZE == 6163
+    assert len(exact) == PROTOCOL_SIZE == 6458
     assert revalidate_fotmob_data_matches_full_time_score_capability_promotion_protocol(value) == value
 
 
@@ -277,6 +288,7 @@ def test_every_authority_remains_exact_false() -> None:
         ("promotion_mode", "MUTATE_PARENT"),
         ("current_reusable_adapter_state", "IMPLEMENTED"),
         ("reusable_adapter_rule", "ONE_OFF_RECEIPT_IS_ENOUGH"),
+        ("future_required_adapter_evidence", "missing"),
         ("next_required_boundary", "SKIP_EXECUTION"),
     ),
 )
