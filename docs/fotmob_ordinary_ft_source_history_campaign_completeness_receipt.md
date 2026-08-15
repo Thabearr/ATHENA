@@ -64,13 +64,15 @@ The campaign index itself is `3,316,829` bytes with SHA-256
 The acquisition campaign therefore succeeded completely. This fact does not,
 by itself, establish historical source completeness.
 
-## Eleven-league mapping evidence
+## Eleven-league mapping discovery remains unproven
 
-All eleven frozen model-league candidates are observed under the exact
-pre-registered FotMob primary competition IDs and expected country-code
-lineage:
+The corpus provides strong mapping **discovery evidence**, but the mapping gate
+does not pass in this boundary.
 
-| Model league | FotMob primary ID | Country |
+All eleven frozen candidate root IDs are observed as FotMob `primaryId` values
+with the expected country-code lineage:
+
+| Model league | Frozen candidate root | Country |
 |---|---:|---|
 | B1 | 40 | BEL |
 | D1 | 54 | GER |
@@ -84,16 +86,33 @@ lineage:
 | SP1 | 87 | ESP |
 | T1 | 71 | TUR |
 
-The receipt preserves aggregate wrapper/name evidence and binds the full mapping projection by SHA-256 `cd4e83157310cd9652c302f48d3e611867a6ad4e0616ddfe0e858863468c1e32` (5,911 canonical bytes).
-This matters because Belgium, Greece, the Netherlands, and Scotland expose
-season/playoff wrapper IDs while retaining the frozen primary competition
-identity. The mapping result is therefore anchored to FotMob primary ID plus
-country-code lineage, not to a claim that every wrapper ID or display name is
-globally constant.
+The receipt preserves aggregate wrapper/name evidence and binds the full
+discovery projection by SHA-256
+`cd4e83157310cd9652c302f48d3e611867a6ad4e0616ddfe0e858863468c1e32`
+(5,911 canonical bytes).
 
-## Corpus result
+That evidence also shows why qualification must remain separate: Belgium,
+Greece, the Netherlands, and Scotland expose season/playoff wrapper
+`league.id` values while retaining the candidate root as `primaryId`, and
+several display names vary across the interval.
 
-Across the eleven mapped competition families, the reviewed corpus contains:
+PR #101 pre-registered a candidate `fotmob_league_id` plus name/country
+mapping. It did **not** pre-authorize `primaryId` as the canonical cross-season
+competition identity. Promoting the newly observed `primaryId` relationship
+inside this post-result assessment would change the mapping semantics after
+seeing the evidence.
+
+Therefore the correct gate state is:
+
+`BLOCKED_LEAGUE_MAPPING_UNPROVEN`
+
+The `primaryId` plus country-code grouping used below remains discovery-only
+until a separate reviewed protocol qualifies those semantics.
+
+## Discovery-only corpus result
+
+Using the frozen candidate root `primaryId` plus expected country lineage only
+as a discovery grouping, the corpus contains:
 
 - `21,388` unique source fixture IDs;
 - `21,640` fixture-date occurrences;
@@ -103,8 +122,8 @@ Across the eleven mapped competition families, the reviewed corpus contains:
 - `21` additional source fixtures that never produce an admissible finished
   ordinary-FT result inside the captured interval.
 
-The deterministic ordinary-FT row projection is not committed. Its canonical
-receipt anchor is:
+The deterministic ordinary-FT discovery projection is not committed. Its
+canonical receipt anchor is:
 
 - rows: `21,336`
 - size: `14,997,331` bytes
@@ -114,15 +133,14 @@ Within every same-date A/B pair there are zero fixture-presence, identity,
 score, or reason drifts. There are also zero duplicate fixture IDs within a
 capture, zero request-date/kickoff-UTC-date mismatches, zero duplicate
 qualified-row identity keys, and zero same-team/same-kickoff ambiguity among
-qualified rows.
+the discovery rows.
 
-## Why completeness still fails closed
+These facts do not override the unproven competition-mapping gate.
 
-The primary result is:
+## Additional observed completeness blockers
 
-`BLOCKED_NON_ORDINARY_FT_RESULT_REQUIRES_SEPARATE_REVIEW`
-
-The 31 unique finished blockers are:
+The discovery grouping exposes `31` unique finished fixtures outside the
+current reviewed ordinary-FT semantics:
 
 - `25` unique awarded-win fixtures (`26` source-date observations because
   fixture `3932603` appears terminal on two scheduled dates);
@@ -130,33 +148,66 @@ The 31 unique finished blockers are:
 - `3` after-penalties fixtures.
 
 The current reviewed adapter deliberately does not reinterpret any of these as
-ordinary full-time history. The tracked receipt preserves every blocker fixture ID and binds the full fixture-level projection by SHA-256 `d5f70aad76424a01249365da09d450b4fb7f27f3d03ab546e8b9783784f5a96b`.
+ordinary full-time history. The tracked receipt preserves every blocker fixture
+ID and binds the full fixture-level projection by SHA-256
+`d5f70aad76424a01249365da09d450b4fb7f27f3d03ab546e8b9783784f5a96b`.
 
 A further `21` source fixtures remain outside an admissible result row:
-`13` abandoned, `6` cancelled, and `2` postponed. Their fixture IDs are preserved and the full state projection is bound by SHA-256 `153cca2a970bce982eecab45c2df5fbaf1df099d081c45f7c3195bb1580b8593` rather than silently treating those source dates as zero-fixture dates.
+`13` abandoned, `6` cancelled, and `2` postponed. Their fixture IDs are
+preserved and the full state projection is bound by SHA-256
+`153cca2a970bce982eecab45c2df5fbaf1df099d081c45f7c3195bb1580b8593`.
+They are not silently interpreted as zero-fixture dates.
 
-Cross-date evidence additionally shows `250` fixture IDs whose kickoff changes
-across request dates. Static source fixture/team/competition identity remains
-stable for those IDs, but the schedule changes require explicit
-rearrangement/chronology disposition. Fixture `3932603` is especially important:
-the same awarded source fixture appears as terminal on two scheduled dates.
+These observations preserve:
+
+`BLOCKED_NON_ORDINARY_FT_RESULT_REQUIRES_SEPARATE_REVIEW`
+
+## Identity and chronology is an observed blocker
+
+Cross-date evidence shows `250` source fixture IDs whose kickoff changes across
+request dates. Static source fixture/team/competition identity remains stable
+for those IDs, but PR #101 froze a stricter rule: the same fixture ID across
+captures must have stable teams, competition, **and kickoff**, or a conflict
+must be raised.
+
+The evidence therefore reaches an actual blocked state rather than merely an
+unknown state:
+
+`BLOCKED_IDENTITY_OR_CHRONOLOGY_CONFLICT`
+
+Fixture `3932603` is especially important: the same awarded source fixture
+appears as terminal on two scheduled dates. A later boundary must explicitly
+disposition rearranged/rescheduled evidence before replay can consume it.
+
+## Initialization remains unproven
 
 The frozen PR #69 Elo replay initialization equivalence also remains unproven.
 The campaign begins at `2020-08-01`, but ATHENA does not infer equivalence merely
 because the capture window is early enough. A positive initialization claim
-requires replay from a complete admissible FotMob history rowset.
+requires replay from a complete admissible and correctly mapped FotMob history
+rowset.
+
+The state remains:
+
+`BLOCKED_INITIALIZATION_BOUNDARY_UNPROVEN`
 
 ## Gate result
 
-The campaign-execution, daily-date coverage, derived score capability, and
-eleven-league mapping gates pass.
+The campaign-execution, daily-date coverage, and already-reviewed derived score
+capability gates pass.
 
-The finished-result and non-ordinary-result gates block on the 31 special
-finished fixtures. Identity/chronology remains unproven because rearranged
-fixtures need a reviewed disposition, and the Elo initialization boundary
-remains unproven until a complete admissible rowset exists.
+The eleven-league mapping gate remains unproven because `primaryId` cross-season
+semantics were discovered by this corpus rather than pre-qualified. The
+finished-result and non-ordinary-result gates are blocked by the 31 observed
+special finished fixtures. Identity/chronology is blocked by the 250 observed
+kickoff changes pending explicit rearrangement disposition. The Elo
+initialization boundary remains unproven.
 
-Therefore:
+The primary status is therefore:
+
+`BLOCKED_LEAGUE_MAPPING_UNPROVEN`
+
+and overall:
 
 `historical_coverage_proven = false`
 
@@ -165,28 +216,34 @@ materialized in this boundary.
 
 ## Canonical receipt
 
-The tracked canonical receipt is sorted compact UTF-8 JSON plus a final newline:
+The corrected tracked canonical receipt is sorted compact UTF-8 JSON plus a
+final newline:
 
 - dataset:
   `athena-fotmob-ordinary-ft-source-history-campaign-completeness-receipt-v1`
 - SHA-256:
-  `dd29df3ac81ba3fa1bdf5006c723c865ff6456f93cf57e6655d6d743c1d0cca3`
+  `a8c5a704e06853d6debfc029653132ca201b98c1fc8a32b3e3095db18f8e1363`
 - size:
-  `11,617` bytes
+  `11,995` bytes
 
 The large raw campaign artifact remains outside Git. The receipt binds it by
 GitHub artifact identity, digest, nested research-cache digest, campaign-index
-digest, and deterministic qualified-row projection digest.
+digest, and deterministic discovery-row projection digest.
 
 ## Next reviewed boundary
 
 The smallest next boundary is:
 
-`PRE_REGISTER_REVIEWED_FOTMOB_SOURCE_HISTORY_SPECIAL_RESULT_AND_REARRANGEMENT_DISPOSITION_PROTOCOL`
+`PRE_REGISTER_REVIEWED_FOTMOB_PRIMARY_ID_COMPETITION_MAPPING_SEMANTICS_PROTOCOL`
 
-That boundary should pre-register the exact treatment of awarded, after-extra-
-time, after-penalties, abandoned, cancelled, postponed, and rearranged fixture
-states before any later completeness reassessment.
+That protocol should freeze, **before qualification**, exactly whether and under
+what evidence conditions FotMob `primaryId` may bridge season/playoff wrapper
+league IDs to one model-league family. It must bind country lineage, allowed
+wrapper/name drift, collision behavior, and fail-closed ambiguity handling.
+
+Only after that mapping semantic is reviewed should ATHENA proceed to the
+already-discovered special-result/rearrangement dispositions and the later
+PR #69 initialization-equivalence proof.
 
 ## Safety
 
