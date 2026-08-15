@@ -23,6 +23,7 @@ from domain.prospective_successor_source_history_completeness_protocol import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+HISTORICAL_SOURCE_CAPABILITIES_BLOB = "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 
 def _git_blob_oid(path: Path) -> str:
@@ -49,18 +50,17 @@ def test_assessment_is_exact_canonical_fail_closed_evidence() -> None:
 
 
 def test_assessment_binds_exact_pr81_and_reviewed_source_blobs() -> None:
-    expected = {
+    expected_current_unchanged = {
         ROOT / "domain" / "prospective_successor_source_history_completeness_protocol.py": "6d9fc8a32d99cd4013836b2378f85b7dfe971d84",
-        ROOT / "domain" / "source_capabilities.py": "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96",
         ROOT / "domain" / "fotmob_data_matches_capture.py": "ca2149395de868104666620173b55a880b10c729",
         ROOT / "domain" / "fotmob_data_matches_schema.py": "4dfff0eb05335895c3ee0fcaa7b8da1299ea692f",
         ROOT / "domain" / "fotmob_reviewed_match_details_capture.py": "22e9b8c111abc38dae043b3274a4b8b2c7b90047",
     }
-    assert {path: _git_blob_oid(path) for path in expected} == expected
+    assert {path: _git_blob_oid(path) for path in expected_current_unchanged} == expected_current_unchanged
 
     value = build_prospective_successor_source_history_completeness_assessment()
     assert value.repository_main_sha == "aeac6c3b54c5c39c73f6aadf27a3cd012475a4ed"
-    assert value.pr81_protocol_blob_sha == expected[
+    assert value.pr81_protocol_blob_sha == expected_current_unchanged[
         ROOT / "domain" / "prospective_successor_source_history_completeness_protocol.py"
     ]
     assert value.pr81_protocol_sha256 == (
@@ -68,16 +68,16 @@ def test_assessment_binds_exact_pr81_and_reviewed_source_blobs() -> None:
     )
     assert value.pr81_protocol_size == 4223
     assert value.source_blob_shas == {
-        "fotmob_data_matches_capture": expected[
+        "fotmob_data_matches_capture": expected_current_unchanged[
             ROOT / "domain" / "fotmob_data_matches_capture.py"
         ],
-        "fotmob_data_matches_schema": expected[
+        "fotmob_data_matches_schema": expected_current_unchanged[
             ROOT / "domain" / "fotmob_data_matches_schema.py"
         ],
-        "fotmob_reviewed_match_details_capture": expected[
+        "fotmob_reviewed_match_details_capture": expected_current_unchanged[
             ROOT / "domain" / "fotmob_reviewed_match_details_capture.py"
         ],
-        "source_capabilities": expected[ROOT / "domain" / "source_capabilities.py"],
+        "source_capabilities": HISTORICAL_SOURCE_CAPABILITIES_BLOB,
     }
 
 
