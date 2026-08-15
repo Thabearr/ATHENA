@@ -14,13 +14,13 @@ It now has reviewed source-reported finished-score semantics for fixtures that p
 
 The protocol binds:
 
-- PR #81 source-history adapter/completeness requirements;
+- the complete PR #81 protocol identity, initialization rule, eleven-league universe rule, result-semantics rule, history-adapter requirements, completeness requirements, and status vocabulary;
 - PR #93 scoped score-capability semantics and exclusions;
 - PR #96 exact reusable-adapter validation receipt;
 - PR #97 qualified capability-registration assessment;
 - PR #98 registered source-capability state.
 
-The PR #81 completeness contract remains intact. In particular, future execution must still prove the exact Elo initialization boundary, all eleven frozen model-league mappings, every required source-local calendar date, reviewed final-result evidence for every in-scope finished fixture, chronology/identity consistency, and no target-team-only filtering.
+The PR #81 completeness contract remains intact. Future execution must still prove the exact Elo initialization boundary, all eleven frozen model-league mappings, every required source-local calendar date, reviewed final-result evidence for every in-scope finished fixture, chronology/identity consistency, and no target-team-only filtering.
 
 ## Derived source facts
 
@@ -41,6 +41,8 @@ The parent `fotmob_data_matches_reviewed_catalog` remains unchanged with `full_t
 
 Any in-scope historical fixture that cannot pass the reviewed ordinary-FT gate blocks completeness unless a separate reviewed semantic boundary qualifies that result state. Penalty or other unreviewed-reason fixtures cannot be silently dropped or mapped into the derived source history.
 
+The PR #81 result-semantics rule is preserved as frozen ancestry rather than rewritten. The new protocol also freezes PR #93's narrower reviewed score scope so the execution boundary cannot silently reinterpret the registered capability as regulation-time, extra-time, penalty, settlement, or global reason semantics.
+
 ## No legacy substitution
 
 The unreviewed legacy `fotmob_historical` capability cannot substitute for this derived reviewed source. No other source may be mixed in to fill missing dates, identities, or scores. The source-history replay must remain source-scoped and provenance-complete.
@@ -56,12 +58,12 @@ No source-history adapter is approved, completeness is not proven, PR #80 constr
 ## Canonical identity
 
 - Protocol ID: `FOTMOB_ORDINARY_FT_FINISHED_SCORE_SOURCE_HISTORY_COMPLETENESS_PROTOCOL_V1`
-- Canonical SHA-256: `ac922634b999a4e8bdb186df3ac2fc1291c130aca405956ea611c5cc582d9e15`
-- Canonical size: `5048` bytes
+- Canonical SHA-256: `edddd7445bb9bb6ed2db4778b6ab48da9489ae6efac822b6e6c139992275bf87`
+- Canonical size: `5741` bytes
 - Exact repository main anchor: `db8bc1eb1b4a5b35751d70a14e0fe07157fe149f`
 
 ## Next boundary
 
 `EXECUTE_REVIEWED_FOTMOB_ORDINARY_FT_FINISHED_SCORE_SOURCE_HISTORY_COMPLETENESS_ASSESSMENT`
 
-That execution should assess the registered derived source against the frozen completeness gates and fail closed wherever historical coverage, initialization boundary, league mapping, required dates, result evidence, or identity/chronology remains unproven. It should not acquire or fabricate missing history as part of the assessment.
+That execution should assess the registered derived source against the frozen completeness gates and fail closed wherever historical coverage, initialization boundary, league mapping, required dates, result evidence, non-ordinary-FT result states, or identity/chronology remains unproven. It should not acquire or fabricate missing history as part of the assessment.
