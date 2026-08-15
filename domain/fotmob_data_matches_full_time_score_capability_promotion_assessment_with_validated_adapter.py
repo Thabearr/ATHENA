@@ -373,8 +373,8 @@ def _verify_upstream() -> None:
         raise _error("parent reliable fixture identity must remain CONFIRMED")
     if parent.historical_coverage is not CapabilityAvailability.UNKNOWN:
         raise _error("parent historical coverage must remain UNKNOWN")
-    if PROPOSED_SOURCE_KEY in SOURCE_CAPABILITY_REGISTRY:
-        raise _error("derived source key already exists before the separate registration boundary")
+    # Derived-key absence is a PR97 assessed-tree fact frozen in the receipt.
+    # A later reviewed registration must not invalidate this historical assessment.
 
 
 def build_fotmob_data_matches_full_time_score_capability_promotion_assessment_with_validated_adapter(
