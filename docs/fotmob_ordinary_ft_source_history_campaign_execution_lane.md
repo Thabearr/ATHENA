@@ -39,11 +39,19 @@ Before checkout or network use, the workflow verifies that:
 
 Once those checks pass, the workflow writes a durable control-plane attempt marker comment **before** any campaign network request. Any later attempt marker blocks automatic replay. A failed, interrupted, cancelled, or partially completed run therefore requires explicit reviewed reconciliation rather than silently starting the campaign again from an empty hosted runner.
 
+## Closed-PR audit permission repair
+
+The first authorized execution trigger, GitHub Actions run `31886383132`, failed in the guard before checkout or network use because the workflow token could not create the durable attempt marker on the already-closed pull-request conversation. GitHub returned HTTP 403 `Resource not accessible by integration` while the token had `issues: write` but only `pull-requests: read`.
+
+That run is reconciled as `CONTROL_PLANE_GUARD_FAILED_NO_NETWORK_ACQUISITION`: the live network step was skipped and zero campaign captures were started. Failure evidence was preserved in artifact `9247360330`, named `fotmob-ordinary-ft-source-history-campaign-31886383132`.
+
+The control lane therefore requires `pull-requests: write` solely for durable marker/result comments on the closed pull-request conversation. This does not grant Git contents write authority and does not permit branch mutation, merge, source-capability mutation, or campaign execution outside the existing exact owner command and SHA gates.
+
 ## Exact checkout and runtime pins
 
-The job checks out the authorized `main` SHA with persisted Git credentials disabled. It then verifies the exact Git blob identities of the reviewed runner, protocol, capture script, and capture contract before installing dependencies or allowing live execution.
+The job checks out the authorized `main` SHA with persisted Git credentials disabled. It then verifies the exact Git blob identities of the reviewed runner, protocol, capture script, capture contract, and dependency manifest before installing dependencies or allowing live execution.
 
-The workflow itself has only `contents: read` and `issues: write` permissions. Issue write permission exists only for durable start/result audit comments. The workflow cannot push commits, mutate branches, merge pull requests, alter source capabilities, or write campaign evidence into Git.
+The workflow permissions are narrowly scoped to `contents: read`, `issues: write`, and `pull-requests: write`. The pull-request write permission exists only so the workflow can persist durable audit comments on the merged/closed control PR. The workflow cannot push commits, mutate branches, merge pull requests, alter source capabilities, or write campaign evidence into Git.
 
 ## Preflight
 
@@ -104,12 +112,12 @@ Even then, the workflow does **not** promote `historical_coverage` or claim sour
 
 ## Safety boundary
 
-Installing this control plane does not itself perform network acquisition and does not establish historical coverage. Model, probability, pricing, selection, production, and BET authority remain false.
+Installing or repairing this control plane does not itself perform network acquisition and does not establish historical coverage. Model, probability, pricing, selection, production, and BET authority remain false.
 
 The intended sequence is:
 
-1. merge this reviewed execution-lane PR;
+1. merge the reviewed execution-lane/control-plane repair PR;
 2. verify branch cleanup and exact new `main`;
-3. post the exact one-shot owner command using that `main` SHA;
+3. post a fresh exact one-shot owner command using that new `main` SHA;
 4. preserve and inspect the resulting GitHub Actions evidence artifact;
 5. only then create a reviewed campaign execution receipt/assessment.
