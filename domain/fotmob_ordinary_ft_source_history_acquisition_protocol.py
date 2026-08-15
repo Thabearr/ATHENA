@@ -1,11 +1,14 @@
 """Pre-register the reviewed FotMob ordinary-FT source-history acquisition campaign.
 
-This boundary freezes the exact acquisition interval, request identity, repeated
-capture schedule, eleven candidate league mappings, lineage, failure handling,
-non-ordinary-result dispositions, and chronology/identity rules before any
-history campaign runner exists or any network acquisition is authorized.
-"""
+PR #101 freezes a bounded source-history acquisition plan and performs no
+network acquisition. The protocol binds the exact reviewed data-matches
+request/capture path, the six-season PR #69 replay envelope, the eleven reviewed
+FotMob competition mappings, repeated-capture lineage, failure handling, and
+fail-closed result/identity/chronology rules.
 
+Historical coverage remains UNKNOWN. No source-history, model, probability,
+pricing, selection, production, or betting authority is granted.
+"""
 from __future__ import annotations
 
 import dataclasses
@@ -15,6 +18,7 @@ import types
 from collections.abc import Mapping
 from typing import Any
 
+import domain.fotmob_data_matches_final_result_semantics_protocol as pr83
 import domain.fotmob_ordinary_ft_finished_score_source_history_completeness_assessment as pr100
 from domain import fotmob_data_matches_capture as capture_contract
 from domain import fotmob_data_matches_probe as probe_contract
@@ -36,20 +40,30 @@ REVIEWED_ORDINARY_FT_ADAPTER_BLOB_SHA = "868563206e09010fce74b4ba7954028930baad5
 CAPTURE_CONTRACT_BLOB_SHA = "ca2149395de868104666620173b55a880b10c729"
 CAPTURE_SCRIPT_BLOB_SHA = "10b8858ab62f2708bd564d578a627c43718e5a12"
 PROBE_CONTRACT_BLOB_SHA = "c39bdea2ef65b26c3212471f6996831c4c845826"
+PR83_PROTOCOL_BLOB_SHA = "25f8045524badcb90239df59ac9c47f36fcffe34"
+PR83_PROTOCOL_SHA256 = "572dde2f5ba8e68c96188ec2df3cc1fdcfa554aa1023aa56e8b8f8b225d7194b"
+PR83_PROTOCOL_SIZE = 3995
+
+PR69_SOURCE_CORPUS_SHA256 = "c273b4bff2b611e95248133340ff84803ce238814d5dfa7ded5f39fd3d6e25a0"
+PR69_SOURCE_FILE_COUNT = 66
+PR69_SOURCE_FIXTURE_COUNT = 21226
+PR69_SEASONS = ("2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26")
 
 DERIVED_SOURCE_KEY = "fotmob_data_matches_reviewed_ordinary_ft_finished_score"
 PARENT_SOURCE_KEY = "fotmob_data_matches_reviewed_catalog"
 
 ACQUISITION_START_SOURCE_LOCAL_DATE = "2020-08-01"
-ACQUISITION_END_SOURCE_LOCAL_DATE = "2026-08-14"
-INCLUSIVE_CALENDAR_DATE_COUNT = 2205
+ACQUISITION_END_SOURCE_LOCAL_DATE = "2026-05-24"
+INCLUSIVE_CALENDAR_DATE_COUNT = 2123
 CAPTURE_SLOTS_PER_DATE = 2
-REQUIRED_SUCCESSFUL_CAPTURE_COUNT = 4410
+REQUIRED_SUCCESSFUL_CAPTURE_COUNT = 4246
 
-MAPPING_STATE = "PRE_REGISTERED_DISCOVERY_ONLY_REQUIRES_CAPTURE_PROOF"
+MAPPING_STATE = (
+    "PRE_REGISTERED_REVIEWED_OFFICIAL_FOTMOB_MAPPING_REQUIRES_CAPTURE_CONFIRMATION"
+)
 LEAGUE_MAPPING_RULE = (
-    "ALL_ELEVEN_MAPPINGS_ARE_PRE_REGISTERED_CANDIDATES_AND_MUST_BE_PROVEN_"
-    "FROM_CAPTURED_FOTMOB_LEAGUE_ID_NAME_COUNTRY_EVIDENCE_BEFORE_COMPLETENESS"
+    "ALL_ELEVEN_REVIEWED_OFFICIAL_FOTMOB_MAPPINGS_ARE_FROZEN_CANDIDATES_AND_"
+    "MUST_MATCH_CAPTURED_LEAGUE_ID_BEFORE_CORPUS_QUALIFICATION"
 )
 
 LINEAGE_REQUIREMENTS = (
@@ -60,6 +74,7 @@ LINEAGE_REQUIREMENTS = (
     "CAMPAIGN_INDEX_AND_FAILURE_JOURNAL_MUST_BE_CANONICAL_APPEND_ONLY_RESEARCH_EVIDENCE_OUTSIDE_GIT",
     "NO_RAW_CAPTURE_OR_CAMPAIGN_EVIDENCE_MAY_BE_COMMITTED_TO_GIT_FOR_CONVENIENCE",
     "NO_SUCCESSFUL_CAPTURE_MAY_REPLACE_OR_ERASE_A_FAILED_ATTEMPT_RECORD",
+    "THE_TWO_ADAPTER_INPUTS_FOR_A_DATE_MUST_HAVE_DISTINCT_CAPTURE_MANIFEST_SHA256_AND_DISTINCT_RAW_SHA256_OR_THAT_DATE_CANNOT_QUALIFY",
 )
 
 FAILURE_HANDLING_RULES = (
@@ -83,7 +98,7 @@ CHRONOLOGY_IDENTITY_RULES = (
     "FOTMOB_FIXTURE_AND_TEAM_IDS_REMAIN_SOURCE_SCOPED_AND_MUST_NOT_BE_PROMOTED_TO_GLOBAL_CANONICAL_IDENTITY",
     "THE_SAME_FIXTURE_ID_ACROSS_CAPTURES_MUST_HAVE_STABLE_TEAMS_COMPETITION_AND_KICKOFF_OR_RAISE_A_CONFLICT",
     "DUPLICATE_FIXTURE_ID_OR_SAME_TEAM_SAME_KICKOFF_AMBIGUITY_FAILS_CLOSED",
-    "REQUEST_DATE_TIMEZONE_AND_FIXTURE_KICKOFF_UTC_MUST_BE_MUTUALLY_CONSISTENT_OR_EXPLICITLY_DISPOSITIONED",
+    "REQUEST_DATE_EUROPE_LONDON_AND_FIXTURE_KICKOFF_UTC_MUST_BE_MUTUALLY_CONSISTENT_OR_EXPLICITLY_DISPOSITIONED",
     "TEAM_IDENTITY_CONTINUITY_ACROSS_SEASONS_MUST_USE_EXACT_SOURCE_TEAM_IDS_NOT_NAME_FUZZING",
     "NO_TARGET_FIXTURE_MAY_APPEAR_IN_ITS_OWN_PRIOR_RESULT_HISTORY",
     "REPLAY_ORDER_MUST_BE_KICKOFF_UTC_ASCENDING_THEN_SOURCE_FIXTURE_ID_ASCENDING_AFTER_CHRONOLOGY_QUALIFICATION",
@@ -91,8 +106,8 @@ CHRONOLOGY_IDENTITY_RULES = (
 
 QUALIFICATION_RULES = (
     "PROTOCOL_PRE_REGISTRATION_DOES_NOT_PROVE_THE_PR69_INITIALIZATION_BOUNDARY",
-    "PROTOCOL_PRE_REGISTRATION_DOES_NOT_PROVE_ANY_OF_THE_ELEVEN_LEAGUE_MAPPINGS",
-    "ALL_2205_REQUIRED_DATES_AND_4410_SUCCESSFUL_CAPTURE_SLOTS_MUST_BE_ACCOUNTED_FOR_BEFORE_DAILY_COVERAGE_CAN_PASS",
+    "THE_ELEVEN_OFFICIAL_FOTMOB_MAPPING_CANDIDATES_ARE_REVIEWED_AND_FROZEN_BUT_EACH_MUST_MATCH_CAPTURED_LEAGUE_ID_BEFORE_CORPUS_QUALIFICATION",
+    "ALL_2123_REQUIRED_DATES_AND_4246_SUCCESSFUL_CAPTURE_SLOTS_MUST_BE_ACCOUNTED_FOR_BEFORE_DAILY_COVERAGE_CAN_PASS",
     "CAPTURE_PAIR_DRIFT_MUST_BE_RECONCILED_OR_BLOCKED_BEFORE_A_DATE_CAN_SUPPORT_HISTORY",
     "HISTORICAL_COVERAGE_REMAINS_UNKNOWN_UNTIL_A_LATER_REVIEWED_ASSESSMENT_PASSES_EVERY_PR99_COMPLETENESS_GATE",
     "NO_CAMPAIGN_RESULT_MAY_DIRECTLY_AUTHORIZE_MODEL_PROBABILITY_PRICING_SELECTION_PRODUCTION_OR_BETTING",
@@ -126,8 +141,8 @@ _SAFETY_KEYS = frozenset(
     }
 )
 
-PROTOCOL_SHA256 = "cfd8542df66c9e8fbe748f0559d67c336d41e441f3b4de8d6601ac1087cad3a6"
-PROTOCOL_SIZE = 8511
+PROTOCOL_SHA256 = "6baeb5bc8fd03fb20024a20266092c85886c21e66da493b3100510ec871b5ebb"
+PROTOCOL_SIZE = 9959
 
 
 class FotMobOrdinaryFtSourceHistoryAcquisitionProtocolError(ValueError):
@@ -170,100 +185,94 @@ class FotMobLeagueMappingCandidate:
     fotmob_league_id: int
     expected_name: str
     expected_country: str
+    official_fotmob_path: str
     mapping_state: str
 
     def __post_init__(self) -> None:
-        if (
-            type(self.model_league_code) is not str
-            or not self.model_league_code
-            or self.model_league_code != self.model_league_code.strip()
-        ):
+        if type(self.model_league_code) is not str or not self.model_league_code:
             raise _error("model_league_code must be exact non-empty text")
         if type(self.fotmob_league_id) is not int or self.fotmob_league_id <= 0:
             raise _error("fotmob_league_id must be an exact positive integer")
-        for label, value in (
-            ("expected_name", self.expected_name),
-            ("expected_country", self.expected_country),
-        ):
+        for label in ("expected_name", "expected_country", "official_fotmob_path"):
+            value = getattr(self, label)
             if type(value) is not str or not value or value != value.strip():
                 raise _error(f"{label} must be exact non-empty text")
+        if not self.official_fotmob_path.startswith(
+            f"/leagues/{self.fotmob_league_id}/"
+        ):
+            raise _error("official_fotmob_path must bind the exact FotMob league id")
         if self.mapping_state != MAPPING_STATE:
-            raise _error("league mapping state must remain unqualified discovery-only")
-
-    def to_dict(self) -> dict[str, Any]:
-        return dataclasses.asdict(self)
+            raise _error("league mapping state must remain reviewed and capture-confirmed")
 
 
 def _league_mappings() -> tuple[FotMobLeagueMappingCandidate, ...]:
-    return (
-        FotMobLeagueMappingCandidate("B1", 40, "First Division A", "Belgium", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("D1", 54, "Bundesliga", "Germany", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("E0", 47, "Premier League", "England", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("F1", 53, "Ligue 1", "France", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("G1", 135, "Super League 1", "Greece", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("I1", 55, "Serie A", "Italy", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("N1", 57, "Eredivisie", "Netherlands", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("P1", 61, "Liga Portugal", "Portugal", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("SC0", 64, "Premiership", "Scotland", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("SP1", 87, "LaLiga", "Spain", MAPPING_STATE),
-        FotMobLeagueMappingCandidate("T1", 71, "Super Lig", "Türkiye", MAPPING_STATE),
+    rows = (
+        ("B1", 40, "First Division A", "Belgium", "/leagues/40/overview"),
+        ("D1", 54, "Bundesliga", "Germany", "/leagues/54/overview"),
+        ("E0", 47, "Premier League", "England", "/leagues/47/overview"),
+        ("F1", 53, "Ligue 1", "France", "/leagues/53/overview"),
+        ("G1", 135, "Super League 1", "Greece", "/leagues/135/overview"),
+        ("I1", 55, "Serie A", "Italy", "/leagues/55/overview"),
+        ("N1", 57, "Eredivisie", "Netherlands", "/leagues/57/overview"),
+        ("P1", 61, "Liga Portugal", "Portugal", "/leagues/61/overview"),
+        ("SC0", 64, "Premiership", "Scotland", "/leagues/64/overview"),
+        ("SP1", 87, "LaLiga", "Spain", "/leagues/87/overview"),
+        ("T1", 71, "Super Lig", "Türkiye", "/leagues/71/overview"),
+    )
+    return tuple(
+        FotMobLeagueMappingCandidate(*row, MAPPING_STATE) for row in rows
     )
 
 
-def _request_identity() -> Mapping[str, Any]:
-    return types.MappingProxyType(
-        {
-            "method": "GET",
-            "scheme": "https",
-            "host": "www.fotmob.com",
-            "port": 443,
-            "path": "/api/data/matches",
-            "date_parameter_format": "YYYYMMDD",
-            "timezone": "UTC",
-            "ccode3": "NGA",
-            "request_headers_contract": "EXACT_DOMAIN_CAPTURE_REQUEST_HEADERS",
-            "redirects_authorized": False,
-            "cookies_authorized": False,
-            "browser_impersonation_authorized": False,
-            "proxy_evasion_authorized": False,
-        }
-    )
+def _request_identity() -> dict[str, Any]:
+    return {
+        "method": "GET",
+        "scheme": "https",
+        "host": "www.fotmob.com",
+        "port": 443,
+        "path": "/api/data/matches",
+        "date_parameter_format": "YYYYMMDD",
+        "timezone": "Europe/London",
+        "ccode3": "GBR",
+        "request_headers": [["Accept", "application/json"], ["User-Agent", "ATHENA/1.0"]],
+        "x_mas_included": False,
+        "redirects_authorized": False,
+        "cookies_authorized": False,
+        "browser_impersonation_authorized": False,
+        "proxy_evasion_authorized": False,
+    }
 
 
-def _acquisition_interval() -> Mapping[str, Any]:
-    return types.MappingProxyType(
-        {
-            "start_source_local_date": ACQUISITION_START_SOURCE_LOCAL_DATE,
-            "end_source_local_date": ACQUISITION_END_SOURCE_LOCAL_DATE,
-            "inclusive_calendar_date_count": INCLUSIVE_CALENDAR_DATE_COUNT,
-            "date_order": "ASCENDING",
-            "source_local_date_basis": "EXACT_REQUEST_TIMEZONE_UTC",
-            "start_boundary_role": (
-                "FROZEN_CANDIDATE_PR69_EQUIVALENCE_LOWER_BOUND_REQUIRES_POST_ACQUISITION_PROOF"
-            ),
-            "end_boundary_role": "LAST_COMPLETE_UTC_SOURCE_DATE_BEFORE_PROTOCOL_CREATION_DAY",
-            "future_extension_authorized": False,
-        }
-    )
+def _acquisition_interval() -> dict[str, Any]:
+    return {
+        "start_source_local_date": ACQUISITION_START_SOURCE_LOCAL_DATE,
+        "end_source_local_date": ACQUISITION_END_SOURCE_LOCAL_DATE,
+        "inclusive_calendar_date_count": INCLUSIVE_CALENDAR_DATE_COUNT,
+        "date_order": "ASCENDING",
+        "source_local_date_basis": "EXACT_REQUEST_TIMEZONE_EUROPE_LONDON",
+        "start_boundary_role": (
+            "FROZEN_CANDIDATE_PR69_EQUIVALENCE_LOWER_BOUND_REQUIRES_POST_ACQUISITION_PROOF"
+        ),
+        "end_boundary_role": (
+            "FROZEN_SIX_SEASON_PR69_2020_21_THROUGH_2025_26_REPLAY_ENVELOPE_END"
+        ),
+        "future_extension_authorized": False,
+    }
 
 
-def _capture_schedule() -> Mapping[str, Any]:
-    return types.MappingProxyType(
-        {
-            "capture_slots_per_date": CAPTURE_SLOTS_PER_DATE,
-            "slot_labels": ("A", "B"),
-            "pass_order": (
-                "ALL_SLOT_A_DATES_ASCENDING_THEN_ALL_SLOT_B_DATES_ASCENDING"
-            ),
-            "minimum_same_date_slot_separation_seconds": 300,
-            "maximum_same_date_slot_separation_seconds": 86400,
-            "minimum_inter_request_seconds": 1.0,
-            "maximum_attempts_per_slot": 3,
-            "retry_delays_seconds": (60, 300),
-            "required_successful_capture_count": REQUIRED_SUCCESSFUL_CAPTURE_COUNT,
-            "failed_attempts_count_as_success": False,
-        }
-    )
+def _capture_schedule() -> dict[str, Any]:
+    return {
+        "capture_slots_per_date": CAPTURE_SLOTS_PER_DATE,
+        "slot_labels": ["A", "B"],
+        "pass_order": "ALL_SLOT_A_DATES_ASCENDING_THEN_ALL_SLOT_B_DATES_ASCENDING",
+        "minimum_same_date_slot_separation_seconds": 300,
+        "maximum_same_date_slot_separation_seconds": 86400,
+        "minimum_inter_request_seconds": 1.0,
+        "maximum_attempts_per_slot": 3,
+        "retry_delays_seconds": [60, 300],
+        "required_successful_capture_count": REQUIRED_SUCCESSFUL_CAPTURE_COUNT,
+        "failed_attempts_count_as_success": False,
+    }
 
 
 def _protocol_payload() -> dict[str, Any]:
@@ -282,16 +291,19 @@ def _protocol_payload() -> dict[str, Any]:
         "capture_contract_blob_sha": CAPTURE_CONTRACT_BLOB_SHA,
         "capture_script_blob_sha": CAPTURE_SCRIPT_BLOB_SHA,
         "probe_contract_blob_sha": PROBE_CONTRACT_BLOB_SHA,
+        "pr83_protocol_blob_sha": PR83_PROTOCOL_BLOB_SHA,
+        "pr83_protocol_sha256": PR83_PROTOCOL_SHA256,
+        "pr83_protocol_size": PR83_PROTOCOL_SIZE,
+        "pr69_source_corpus_sha256": PR69_SOURCE_CORPUS_SHA256,
+        "pr69_source_file_count": PR69_SOURCE_FILE_COUNT,
+        "pr69_source_fixture_count": PR69_SOURCE_FIXTURE_COUNT,
+        "pr69_seasons": list(PR69_SEASONS),
         "derived_source_key": DERIVED_SOURCE_KEY,
         "parent_source_key": PARENT_SOURCE_KEY,
-        "request_identity": dict(_request_identity()),
-        "acquisition_interval": dict(_acquisition_interval()),
-        "capture_schedule": {
-            **dict(_capture_schedule()),
-            "slot_labels": list(_capture_schedule()["slot_labels"]),
-            "retry_delays_seconds": list(_capture_schedule()["retry_delays_seconds"]),
-        },
-        "league_mappings": [mapping.to_dict() for mapping in _league_mappings()],
+        "request_identity": _request_identity(),
+        "acquisition_interval": _acquisition_interval(),
+        "capture_schedule": _capture_schedule(),
+        "league_mappings": [dataclasses.asdict(item) for item in _league_mappings()],
         "league_mapping_rule": LEAGUE_MAPPING_RULE,
         "lineage_requirements": list(LINEAGE_REQUIREMENTS),
         "failure_handling_rules": list(FAILURE_HANDLING_RULES),
@@ -330,6 +342,14 @@ def _verify_upstream() -> None:
     ):
         raise _error("PR100 next acquisition boundary changed")
 
+    if (pr83.PROTOCOL_SHA256, pr83.PROTOCOL_SIZE) != (
+        PR83_PROTOCOL_SHA256,
+        PR83_PROTOCOL_SIZE,
+    ):
+        raise _error("PR83 final-result semantics protocol identity changed")
+    if pr83.MINIMUM_REPEAT_SEPARATION_SECONDS != 300:
+        raise _error("PR83 repeated-capture separation changed")
+
     derived = SOURCE_CAPABILITY_REGISTRY.get(DERIVED_SOURCE_KEY)
     parent = SOURCE_CAPABILITY_REGISTRY.get(PARENT_SOURCE_KEY)
     if derived is None or parent is None:
@@ -360,6 +380,11 @@ def _verify_upstream() -> None:
     ):
         raise _error("reviewed FotMob capture contract changed")
 
+    if tuple(item.model_league_code for item in _league_mappings()) != tuple(
+        assessment.frozen_model_league_codes
+    ):
+        raise _error("reviewed FotMob mappings do not cover the frozen eleven-league universe")
+
 
 @dataclasses.dataclass(frozen=True)
 class FotMobOrdinaryFtSourceHistoryAcquisitionProtocol:
@@ -377,6 +402,13 @@ class FotMobOrdinaryFtSourceHistoryAcquisitionProtocol:
     capture_contract_blob_sha: str
     capture_script_blob_sha: str
     probe_contract_blob_sha: str
+    pr83_protocol_blob_sha: str
+    pr83_protocol_sha256: str
+    pr83_protocol_size: int
+    pr69_source_corpus_sha256: str
+    pr69_source_file_count: int
+    pr69_source_fixture_count: int
+    pr69_seasons: tuple[str, ...]
     derived_source_key: str
     parent_source_key: str
     request_identity: Mapping[str, Any]
@@ -395,6 +427,40 @@ class FotMobOrdinaryFtSourceHistoryAcquisitionProtocol:
     next_required_boundary: str
     safety: Mapping[str, bool]
 
+    def to_dict(self) -> dict[str, Any]:
+        scalar_names = (
+            "schema_version", "protocol_id", "protocol_scope", "protocol_state",
+            "repository_main_sha", "pr100_assessment_blob_sha",
+            "pr100_assessment_sha256", "pr100_assessment_size",
+            "pr99_protocol_blob_sha", "source_capabilities_blob_sha",
+            "reviewed_ordinary_ft_adapter_blob_sha", "capture_contract_blob_sha",
+            "capture_script_blob_sha", "probe_contract_blob_sha",
+            "pr83_protocol_blob_sha", "pr83_protocol_sha256", "pr83_protocol_size",
+            "pr69_source_corpus_sha256", "pr69_source_file_count",
+            "pr69_source_fixture_count", "derived_source_key", "parent_source_key",
+            "league_mapping_rule", "network_acquisition_performed",
+            "campaign_runner_implemented", "history_rows_materialized",
+            "next_required_boundary",
+        )
+        return {
+            **{name: getattr(self, name) for name in scalar_names},
+            "pr69_seasons": list(self.pr69_seasons),
+            "request_identity": dict(self.request_identity),
+            "acquisition_interval": dict(self.acquisition_interval),
+            "capture_schedule": {
+                **dict(self.capture_schedule),
+                "slot_labels": list(self.capture_schedule["slot_labels"]),
+                "retry_delays_seconds": list(self.capture_schedule["retry_delays_seconds"]),
+            },
+            "league_mappings": [dataclasses.asdict(item) for item in self.league_mappings],
+            "lineage_requirements": list(self.lineage_requirements),
+            "failure_handling_rules": list(self.failure_handling_rules),
+            "non_ordinary_ft_rules": list(self.non_ordinary_ft_rules),
+            "chronology_identity_rules": list(self.chronology_identity_rules),
+            "qualification_rules": list(self.qualification_rules),
+            "safety": dict(self.safety),
+        }
+
     def __post_init__(self) -> None:
         if self.to_dict() != _protocol_payload():
             raise _error("source-history acquisition protocol differs from frozen PR101 contract")
@@ -404,57 +470,13 @@ class FotMobOrdinaryFtSourceHistoryAcquisitionProtocol:
             raise _error("campaign_runner_implemented must remain exact False")
         if type(self.history_rows_materialized) is not int or self.history_rows_materialized != 0:
             raise _error("history_rows_materialized must remain exact integer zero")
-        object.__setattr__(
-            self, "request_identity", types.MappingProxyType(dict(self.request_identity))
-        )
+        object.__setattr__(self, "request_identity", types.MappingProxyType(dict(self.request_identity)))
+        object.__setattr__(self, "acquisition_interval", types.MappingProxyType(dict(self.acquisition_interval)))
         schedule = dict(self.capture_schedule)
         schedule["slot_labels"] = tuple(schedule["slot_labels"])
         schedule["retry_delays_seconds"] = tuple(schedule["retry_delays_seconds"])
-        object.__setattr__(
-            self, "capture_schedule", types.MappingProxyType(schedule)
-        )
-        object.__setattr__(
-            self, "acquisition_interval", types.MappingProxyType(dict(self.acquisition_interval))
-        )
+        object.__setattr__(self, "capture_schedule", types.MappingProxyType(schedule))
         object.__setattr__(self, "safety", _checked_safety(self.safety))
-
-    def to_dict(self) -> dict[str, Any]:
-        schedule = dict(self.capture_schedule)
-        schedule["slot_labels"] = list(schedule["slot_labels"])
-        schedule["retry_delays_seconds"] = list(schedule["retry_delays_seconds"])
-        return {
-            "schema_version": self.schema_version,
-            "protocol_id": self.protocol_id,
-            "protocol_scope": self.protocol_scope,
-            "protocol_state": self.protocol_state,
-            "repository_main_sha": self.repository_main_sha,
-            "pr100_assessment_blob_sha": self.pr100_assessment_blob_sha,
-            "pr100_assessment_sha256": self.pr100_assessment_sha256,
-            "pr100_assessment_size": self.pr100_assessment_size,
-            "pr99_protocol_blob_sha": self.pr99_protocol_blob_sha,
-            "source_capabilities_blob_sha": self.source_capabilities_blob_sha,
-            "reviewed_ordinary_ft_adapter_blob_sha": self.reviewed_ordinary_ft_adapter_blob_sha,
-            "capture_contract_blob_sha": self.capture_contract_blob_sha,
-            "capture_script_blob_sha": self.capture_script_blob_sha,
-            "probe_contract_blob_sha": self.probe_contract_blob_sha,
-            "derived_source_key": self.derived_source_key,
-            "parent_source_key": self.parent_source_key,
-            "request_identity": dict(self.request_identity),
-            "acquisition_interval": dict(self.acquisition_interval),
-            "capture_schedule": schedule,
-            "league_mappings": [mapping.to_dict() for mapping in self.league_mappings],
-            "league_mapping_rule": self.league_mapping_rule,
-            "lineage_requirements": list(self.lineage_requirements),
-            "failure_handling_rules": list(self.failure_handling_rules),
-            "non_ordinary_ft_rules": list(self.non_ordinary_ft_rules),
-            "chronology_identity_rules": list(self.chronology_identity_rules),
-            "qualification_rules": list(self.qualification_rules),
-            "network_acquisition_performed": self.network_acquisition_performed,
-            "campaign_runner_implemented": self.campaign_runner_implemented,
-            "history_rows_materialized": self.history_rows_materialized,
-            "next_required_boundary": self.next_required_boundary,
-            "safety": dict(self.safety),
-        }
 
 
 def build_fotmob_ordinary_ft_source_history_acquisition_protocol(
@@ -464,7 +486,7 @@ def build_fotmob_ordinary_ft_source_history_acquisition_protocol(
     schedule = dict(payload["capture_schedule"])
     schedule["slot_labels"] = tuple(schedule["slot_labels"])
     schedule["retry_delays_seconds"] = tuple(schedule["retry_delays_seconds"])
-    return FotMobOrdinaryFtSourceHistoryAcquisitionProtocol(
+    value = FotMobOrdinaryFtSourceHistoryAcquisitionProtocol(
         schema_version=payload["schema_version"],
         protocol_id=payload["protocol_id"],
         protocol_scope=payload["protocol_scope"],
@@ -475,23 +497,23 @@ def build_fotmob_ordinary_ft_source_history_acquisition_protocol(
         pr100_assessment_size=payload["pr100_assessment_size"],
         pr99_protocol_blob_sha=payload["pr99_protocol_blob_sha"],
         source_capabilities_blob_sha=payload["source_capabilities_blob_sha"],
-        reviewed_ordinary_ft_adapter_blob_sha=payload[
-            "reviewed_ordinary_ft_adapter_blob_sha"
-        ],
+        reviewed_ordinary_ft_adapter_blob_sha=payload["reviewed_ordinary_ft_adapter_blob_sha"],
         capture_contract_blob_sha=payload["capture_contract_blob_sha"],
         capture_script_blob_sha=payload["capture_script_blob_sha"],
         probe_contract_blob_sha=payload["probe_contract_blob_sha"],
+        pr83_protocol_blob_sha=payload["pr83_protocol_blob_sha"],
+        pr83_protocol_sha256=payload["pr83_protocol_sha256"],
+        pr83_protocol_size=payload["pr83_protocol_size"],
+        pr69_source_corpus_sha256=payload["pr69_source_corpus_sha256"],
+        pr69_source_file_count=payload["pr69_source_file_count"],
+        pr69_source_fixture_count=payload["pr69_source_fixture_count"],
+        pr69_seasons=tuple(payload["pr69_seasons"]),
         derived_source_key=payload["derived_source_key"],
         parent_source_key=payload["parent_source_key"],
         request_identity=types.MappingProxyType(dict(payload["request_identity"])),
-        acquisition_interval=types.MappingProxyType(
-            dict(payload["acquisition_interval"])
-        ),
+        acquisition_interval=types.MappingProxyType(dict(payload["acquisition_interval"])),
         capture_schedule=types.MappingProxyType(schedule),
-        league_mappings=tuple(
-            FotMobLeagueMappingCandidate(**mapping)
-            for mapping in payload["league_mappings"]
-        ),
+        league_mappings=tuple(FotMobLeagueMappingCandidate(**item) for item in payload["league_mappings"]),
         league_mapping_rule=payload["league_mapping_rule"],
         lineage_requirements=tuple(payload["lineage_requirements"]),
         failure_handling_rules=tuple(payload["failure_handling_rules"]),
@@ -504,6 +526,10 @@ def build_fotmob_ordinary_ft_source_history_acquisition_protocol(
         next_required_boundary=payload["next_required_boundary"],
         safety=types.MappingProxyType(dict(payload["safety"])),
     )
+    exact = _canonical(value.to_dict())
+    if len(exact) != PROTOCOL_SIZE or hashlib.sha256(exact).hexdigest() != PROTOCOL_SHA256:
+        raise _error("PR101 canonical acquisition protocol identity changed")
+    return value
 
 
 def canonical_fotmob_ordinary_ft_source_history_acquisition_protocol_bytes(
@@ -511,4 +537,34 @@ def canonical_fotmob_ordinary_ft_source_history_acquisition_protocol_bytes(
 ) -> bytes:
     if type(value) is not FotMobOrdinaryFtSourceHistoryAcquisitionProtocol:
         raise _error("acquisition protocol must be the exact PR101 protocol type")
-    return _canonical(value.to_dict())
+    exact = _canonical(value.to_dict())
+    if len(exact) != PROTOCOL_SIZE or hashlib.sha256(exact).hexdigest() != PROTOCOL_SHA256:
+        raise _error("PR101 canonical acquisition protocol identity changed")
+    return exact
+
+
+def sha256_fotmob_ordinary_ft_source_history_acquisition_protocol(
+    value: FotMobOrdinaryFtSourceHistoryAcquisitionProtocol,
+) -> str:
+    return hashlib.sha256(
+        canonical_fotmob_ordinary_ft_source_history_acquisition_protocol_bytes(value)
+    ).hexdigest()
+
+
+__all__ = [
+    "ACQUISITION_END_SOURCE_LOCAL_DATE",
+    "ACQUISITION_START_SOURCE_LOCAL_DATE",
+    "CAPTURE_SLOTS_PER_DATE",
+    "INCLUSIVE_CALENDAR_DATE_COUNT",
+    "MAPPING_STATE",
+    "NEXT_REQUIRED_BOUNDARY",
+    "PROTOCOL_SHA256",
+    "PROTOCOL_SIZE",
+    "REQUIRED_SUCCESSFUL_CAPTURE_COUNT",
+    "FotMobLeagueMappingCandidate",
+    "FotMobOrdinaryFtSourceHistoryAcquisitionProtocol",
+    "FotMobOrdinaryFtSourceHistoryAcquisitionProtocolError",
+    "build_fotmob_ordinary_ft_source_history_acquisition_protocol",
+    "canonical_fotmob_ordinary_ft_source_history_acquisition_protocol_bytes",
+    "sha256_fotmob_ordinary_ft_source_history_acquisition_protocol",
+]
