@@ -1,10 +1,10 @@
 """Pre-register a reviewed scoped FotMob full-time-score capability promotion.
 
-PR #93 does not mutate the existing reviewed catalog capability.  It freezes a
-future decision boundary for a *derived adapter-scoped* source key whose
-``full_time_score`` capability may be CONFIRMED only for fixtures that pass the
-exact PR #92 ordinary-FT finished-score gate.  Penalty/unreviewed-reason
-fixtures, historical coverage and every downstream authority remain excluded.
+PR #93 freezes a future decision boundary only.  The existing reviewed catalog
+capability stays identity-only.  A future CONFIRMED score capability must live
+under a derived adapter-scoped source key, must exclude penalty/unreviewed-reason
+fixtures, and must be backed by a reusable prospective adapter rather than a
+one-off evidence receipt.  No registry or downstream authority changes here.
 """
 
 from __future__ import annotations
@@ -44,6 +44,12 @@ EXCLUDED_PENALTY_COUNT = 1
 EXCLUDED_PENALTY_FIXTURE_ID = 5844873
 
 PROMOTION_MODE = "REGISTER_NEW_DERIVED_ADAPTER_SCOPED_SOURCE_KEY_DO_NOT_MUTATE_PARENT"
+REUSABLE_ADAPTER_MODULE_PATH = "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py"
+CURRENT_REUSABLE_ADAPTER_STATE = "ABSENT_NOT_IMPLEMENTED_AT_PR93_PRE_REGISTRATION"
+REUSABLE_ADAPTER_RULE = (
+    "SOURCE_CAPABILITY_PROMOTION_REQUIRES_REUSABLE_REVIEWED_PROSPECTIVE_ORDINARY_FT_FINISHED_SCORE_ADAPTER_NOT_ONE_OFF_EVIDENCE_RECEIPT"
+)
+
 PARENT_REQUIRED_CAPABILITIES = types.MappingProxyType(
     {
         "full_time_score": "NOT_CAPTURED",
@@ -87,11 +93,12 @@ PROPOSED_EVIDENCE = (
 PROPOSED_NOTES = (
     "Derived reviewed adapter capability only. CONFIRMED full_time_score means "
     "source-reported finished score for fixtures that pass the exact PR92 "
-    "ordinary-FT gate. It does not apply to penalty or other unreviewed-reason "
-    "fixtures and does not establish regulation-time, extra-time, penalty-score, "
-    "bookmaker-settlement, historical-coverage, source-freshness, model-readiness, "
-    "pricing, selection, or betting authority. Parent "
-    "fotmob_data_matches_reviewed_catalog remains unchanged."
+    "ordinary-FT gate through a reusable reviewed prospective adapter. It does "
+    "not apply to penalty or other unreviewed-reason fixtures and does not "
+    "establish regulation-time, extra-time, penalty-score, bookmaker-settlement, "
+    "historical-coverage, source-freshness, model-readiness, pricing, selection, "
+    "or betting authority. Parent fotmob_data_matches_reviewed_catalog remains "
+    "unchanged."
 )
 
 QUALIFICATION_REQUIREMENTS = (
@@ -99,6 +106,7 @@ QUALIFICATION_REQUIREMENTS = (
     "VERIFY_EXACT_PR91_REASON_GATE_AND_PR83_SEMANTIC_SCOPE_ANCESTRY",
     "REQUIRE_PARENT_REVIEWED_CATALOG_CAPABILITY_TO_REMAIN_IDENTITY_ONLY_WITH_FULL_TIME_SCORE_NOT_CAPTURED",
     "REQUIRE_PROPOSED_DERIVED_SOURCE_KEY_TO_BE_ABSENT_BEFORE_REGISTRATION",
+    "REQUIRE_REUSABLE_REVIEWED_PROSPECTIVE_ORDINARY_FT_FINISHED_SCORE_ADAPTER_BEFORE_REGISTRY_PROMOTION",
     "QUALIFY_ONLY_THE_EXACT_PR92_ORDINARY_FT_GATE_NOT_ALL_DATA_MATCHES_FIXTURES",
     "EXCLUDE_THE_PR91_PENALTY_FIXTURE_AND_ANY_OTHER_UNREVIEWED_REASON_FROM_THE_DERIVED_CAPABILITY",
     "REGISTER_A_NEW_DERIVED_ADAPTER_SCOPED_SOURCE_KEY_INSTEAD_OF_MUTATING_THE_PARENT_SOURCE_KEY",
@@ -112,10 +120,10 @@ STATUS_VOCABULARY = (
     "BLOCKED_PR92_EVIDENCE_ANCESTRY_DRIFT",
     "BLOCKED_PARENT_SOURCE_CAPABILITY_DRIFT",
     "BLOCKED_PROPOSED_SOURCE_KEY_ALREADY_EXISTS",
+    "BLOCKED_REUSABLE_REVIEWED_SCORE_ADAPTER_NOT_IMPLEMENTED",
     "BLOCKED_PROPOSED_CAPABILITY_SCOPE_OVERCLAIM",
     "BLOCKED_PENALTY_OR_UNREVIEWED_REASON_INCLUDED",
 )
-
 NEXT_REQUIRED_BOUNDARY = (
     "EXECUTE_REVIEWED_FOTMOB_DATA_MATCHES_FULL_TIME_SCORE_CAPABILITY_PROMOTION_ASSESSMENT"
 )
@@ -152,8 +160,8 @@ _SAFETY_KEYS = frozenset(
     }
 )
 
-PROTOCOL_SHA256 = "504287e45e614b6b47c5e730c3d50fd2a354be90863acc4b70025a7fd53d9549"
-PROTOCOL_SIZE = 5618
+PROTOCOL_SHA256 = "1a291349ecee28b0d4e5216daf495ebff61e1247724df17502c99641d3f55b38"
+PROTOCOL_SIZE = 6163
 
 
 class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocolError(ValueError):
@@ -223,8 +231,6 @@ def _verify_upstream() -> None:
         raise _error("PR92 qualified status escaped frozen PR83 semantics")
     if pr92.SEMANTIC_SCOPE_RULE != pr83.SEMANTIC_SCOPE_RULE:
         raise _error("PR92/PR83 semantic scope ancestry changed")
-    if pr92.global_source_full_time_score_capability_promoted if hasattr(pr92, "global_source_full_time_score_capability_promoted") else False:
-        raise _error("PR92 unexpectedly promoted the global source capability")
 
     if (
         pr91.ORDINARY_FT_REASON_QUALIFIED_COUNT,
@@ -270,6 +276,9 @@ def _payload() -> dict[str, Any]:
         "excluded_penalty_count": EXCLUDED_PENALTY_COUNT,
         "excluded_penalty_fixture_id": EXCLUDED_PENALTY_FIXTURE_ID,
         "promotion_mode": PROMOTION_MODE,
+        "reusable_adapter_module_path": REUSABLE_ADAPTER_MODULE_PATH,
+        "current_reusable_adapter_state": CURRENT_REUSABLE_ADAPTER_STATE,
+        "reusable_adapter_rule": REUSABLE_ADAPTER_RULE,
         "parent_required_capabilities": dict(PARENT_REQUIRED_CAPABILITIES),
         "proposed_capabilities": dict(PROPOSED_CAPABILITIES),
         "promotion_scope_rule": PROMOTION_SCOPE_RULE,
@@ -306,6 +315,9 @@ class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocol:
     excluded_penalty_count: int
     excluded_penalty_fixture_id: int
     promotion_mode: str
+    reusable_adapter_module_path: str
+    current_reusable_adapter_state: str
+    reusable_adapter_rule: str
     parent_required_capabilities: Mapping[str, str]
     proposed_capabilities: Mapping[str, str]
     promotion_scope_rule: str
@@ -368,6 +380,9 @@ class FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocol:
             "excluded_penalty_count": self.excluded_penalty_count,
             "excluded_penalty_fixture_id": self.excluded_penalty_fixture_id,
             "promotion_mode": self.promotion_mode,
+            "reusable_adapter_module_path": self.reusable_adapter_module_path,
+            "current_reusable_adapter_state": self.current_reusable_adapter_state,
+            "reusable_adapter_rule": self.reusable_adapter_rule,
             "parent_required_capabilities": dict(self.parent_required_capabilities),
             "proposed_capabilities": dict(self.proposed_capabilities),
             "promotion_scope_rule": self.promotion_scope_rule,
@@ -397,9 +412,7 @@ def build_fotmob_data_matches_full_time_score_capability_promotion_protocol(
             "safety": _safety(),
         }
     )
-    exact = canonical_fotmob_data_matches_full_time_score_capability_promotion_protocol_bytes(
-        value
-    )
+    exact = canonical_fotmob_data_matches_full_time_score_capability_promotion_protocol_bytes(value)
     if hashlib.sha256(exact).hexdigest() != PROTOCOL_SHA256 or len(exact) != PROTOCOL_SIZE:
         raise _error("PR93 capability-promotion canonical identity changed")
     return value
@@ -427,6 +440,7 @@ def revalidate_fotmob_data_matches_full_time_score_capability_promotion_protocol
 
 
 __all__ = [
+    "CURRENT_REUSABLE_ADAPTER_STATE",
     "EXCLUDED_PENALTY_COUNT",
     "EXCLUDED_PENALTY_FIXTURE_ID",
     "HISTORICAL_COVERAGE_RULE",
@@ -449,6 +463,8 @@ __all__ = [
     "QUALIFICATION_REQUIREMENTS",
     "QUALIFIED_ORDINARY_FT_COUNT",
     "REPOSITORY_MAIN_SHA",
+    "REUSABLE_ADAPTER_MODULE_PATH",
+    "REUSABLE_ADAPTER_RULE",
     "SEMANTIC_EXCLUSION_RULE",
     "STATUS_VOCABULARY",
     "FotMobDataMatchesFullTimeScoreCapabilityPromotionProtocol",
