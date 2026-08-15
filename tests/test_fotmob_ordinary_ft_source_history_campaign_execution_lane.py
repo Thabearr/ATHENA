@@ -35,7 +35,7 @@ def test_execution_lane_is_one_shot_and_requires_merged_control_pr() -> None:
     assert "cancel-in-progress: false" in text
 
 
-def test_execution_lane_pins_exact_reviewed_runner_and_capture_blobs() -> None:
+def test_execution_lane_pins_exact_reviewed_runner_capture_and_dependencies() -> None:
     text = _workflow()
     for blob in (
         "533b339bcb2d6721dae55c699327b53eabbffb09",
@@ -43,9 +43,11 @@ def test_execution_lane_pins_exact_reviewed_runner_and_capture_blobs() -> None:
         "39541b351d2990f7ebb9572a8c9c674c85864284",
         "10b8858ab62f2708bd564d578a627c43718e5a12",
         "ca2149395de868104666620173b55a880b10c729",
+        "54d24a55dfa4c73ba3910d333257cfd2e68daf4b",
     ):
         assert blob in text
     assert "persist-credentials: false" in text
+    assert "requirements_blob_sha" in text
 
 
 def test_execution_lane_uses_only_full_reviewed_live_command() -> None:
