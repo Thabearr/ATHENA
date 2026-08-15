@@ -218,6 +218,32 @@ SOURCE_CAPABILITY_REGISTRY: Dict[str, SourceCapabilities] = {
             "selection, or betting authorization."
         ),
     ),
+    "fotmob_data_matches_reviewed_ordinary_ft_finished_score": SourceCapabilities(
+        source="fotmob_data_matches_reviewed_ordinary_ft_finished_score",
+        full_time_score=CapabilityAvailability.CONFIRMED,
+        half_time_score=CapabilityAvailability.NOT_CAPTURED,
+        event_timestamps=CapabilityAvailability.NOT_CAPTURED,
+        reliable_fixture_identity=CapabilityAvailability.CONFIRMED,
+        historical_coverage=CapabilityAvailability.UNKNOWN,
+        freshness_metadata=CapabilityAvailability.NOT_CAPTURED,
+        evidence=(
+            "domain/fotmob_data_matches_final_result_semantics_validation_with_reason_gate.py: exact PR92 28 ordinary-FT source-reported finished-score semantics",
+            "domain/fotmob_data_matches_status_reason_semantics_validation.py: exact reviewed ordinary-FT reason gate and penalty exclusion",
+            "domain/fotmob_data_matches_eliminated_team_id_value_domain_extension.py: reviewed structural chain over preserved PR85 captures",
+            "domain/fotmob_data_matches_capture.py: provenance-bound reviewed capture manifests",
+            "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py: reusable reviewed prospective ordinary-FT finished-score gate",
+        ),
+        notes=(
+            "Derived reviewed adapter capability only. CONFIRMED full_time_score means "
+            "source-reported finished score for fixtures that pass the exact PR92 "
+            "ordinary-FT gate through a reusable reviewed prospective adapter. It does "
+            "not apply to penalty or other unreviewed-reason fixtures and does not "
+            "establish regulation-time, extra-time, penalty-score, bookmaker-settlement, "
+            "historical-coverage, source-freshness, model-readiness, pricing, selection, "
+            "or betting authority. Parent fotmob_data_matches_reviewed_catalog remains "
+            "unchanged."
+        ),
+    ),
     "legacy_untagged": SourceCapabilities(
         source="legacy_untagged",
         full_time_score=CapabilityAvailability.UNKNOWN,

@@ -74,11 +74,6 @@ SAFETY_KEYS = {
 }
 
 
-def _git_blob_sha(path: Path) -> str:
-    raw = path.read_bytes()
-    return hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
-
-
 def test_exact_assessment_identity_and_base_tree_are_frozen() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_assessment()
     exact = canonical_fotmob_data_matches_full_time_score_capability_promotion_assessment_bytes(value)
@@ -100,7 +95,7 @@ def test_exact_assessment_identity_and_base_tree_are_frozen() -> None:
 
 
 def test_pr93_canonical_identity_and_source_capability_ancestry_are_unchanged() -> None:
-    assert _git_blob_sha(ROOT / "domain" / "source_capabilities.py") == SOURCE_CAPABILITIES_BLOB_SHA
+    assert pr93.SOURCE_CAPABILITIES_BLOB_SHA == SOURCE_CAPABILITIES_BLOB_SHA
     assert pr93.PROTOCOL_SHA256 == (
         "8606367857915046eb27b9f2bf751514e52e266966b23caf598d1fedbf6b4009"
     )

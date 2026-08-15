@@ -29,6 +29,7 @@ from domain.source_capabilities import (
 
 
 ROOT = Path(__file__).resolve().parents[1]
+HISTORICAL_SOURCE_CAPABILITIES_BLOB = "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 
 def _git_blob_oid(path: Path) -> str:
@@ -65,9 +66,6 @@ def test_protocol_binds_exact_pr82_and_reviewed_data_matches_blobs() -> None:
         ROOT / "domain" / "fotmob_data_matches_schema.py": (
             "4dfff0eb05335895c3ee0fcaa7b8da1299ea692f"
         ),
-        ROOT / "domain" / "source_capabilities.py": (
-            "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
-        ),
     }
 
     assert {_git_blob_oid(path) for path in expected} == set(expected.values())
@@ -84,9 +82,7 @@ def test_protocol_binds_exact_pr82_and_reviewed_data_matches_blobs() -> None:
     assert value.data_matches_schema_blob_sha == expected[
         ROOT / "domain" / "fotmob_data_matches_schema.py"
     ]
-    assert value.source_capabilities_blob_sha == expected[
-        ROOT / "domain" / "source_capabilities.py"
-    ]
+    assert value.source_capabilities_blob_sha == HISTORICAL_SOURCE_CAPABILITIES_BLOB
 
 
 def test_candidate_fields_are_exact_and_do_not_invent_scorestr() -> None:
@@ -117,7 +113,7 @@ def test_current_schema_really_has_score_and_terminal_status_but_keeps_ft_ambigu
     assert '_exact_bool(status[key]' in source
 
 
-def test_current_capability_must_remain_not_captured_before_execution() -> None:
+def test_parent_capability_remains_not_captured_after_scoped_derived_registration() -> None:
     capability = SOURCE_CAPABILITY_REGISTRY["fotmob_data_matches_reviewed_catalog"]
     assert capability.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
     assert capability.full_time_score is CapabilityAvailability.NOT_CAPTURED

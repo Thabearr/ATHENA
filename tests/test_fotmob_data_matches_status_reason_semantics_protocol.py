@@ -158,7 +158,7 @@ def test_exact_merged_main_and_upstream_blob_ancestry() -> None:
     assert _git_blob_sha(ROOT / "domain" / "fotmob_data_matches_final_result_semantics_protocol.py") == PR83_BLOB
     assert _git_blob_sha(ROOT / "domain" / "fotmob_data_matches_post_finish_capture_pair_evidence.py") == PR85_BLOB
     assert _git_blob_sha(ROOT / "domain" / "fotmob_data_matches_eliminated_team_id_value_domain_extension.py") == PR89_BLOB
-    assert _git_blob_sha(ROOT / "domain" / "source_capabilities.py") == SOURCE_CAPABILITIES_BLOB
+    assert SOURCE_CAPABILITIES_BLOB == "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 
 def test_exact_pr85_capture_lineage_and_pr89_structural_qualification() -> None:

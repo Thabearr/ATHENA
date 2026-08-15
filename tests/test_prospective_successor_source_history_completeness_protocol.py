@@ -27,6 +27,7 @@ from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY
 
 
 ROOT = Path(__file__).resolve().parents[1]
+HISTORICAL_SOURCE_CAPABILITIES_BLOB = "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 
 def _git_blob_oid(path: Path) -> str:
@@ -51,29 +52,26 @@ def test_protocol_is_exact_canonical_preregistered_evidence() -> None:
 
 
 def test_protocol_binds_exact_pr80_and_reviewed_source_blob_ancestry() -> None:
-    expected = {
+    expected_current_unchanged = {
         ROOT / "domain" / "prospective_successor_feature_construction_candidate.py": "9135f056d036fd0207a3daead2599ac2520274be",
-        ROOT / "domain" / "source_capabilities.py": "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96",
         ROOT / "domain" / "fotmob_data_matches_capture.py": "ca2149395de868104666620173b55a880b10c729",
         ROOT / "domain" / "fotmob_data_matches_schema.py": "4dfff0eb05335895c3ee0fcaa7b8da1299ea692f",
         ROOT / "domain" / "fotmob_reviewed_match_details_capture.py": "22e9b8c111abc38dae043b3274a4b8b2c7b90047",
     }
-    assert {path.name: _git_blob_oid(path) for path in expected} == {
-        path.name: oid for path, oid in expected.items()
+    assert {path.name: _git_blob_oid(path) for path in expected_current_unchanged} == {
+        path.name: oid for path, oid in expected_current_unchanged.items()
     }
 
     protocol = build_prospective_successor_source_history_completeness_protocol()
     assert protocol.repository_main_sha == "271afbc2b22d39eb6e8cd13f49fd55c4f0c45ba2"
-    assert protocol.pr80_constructor_blob_sha == expected[
+    assert protocol.pr80_constructor_blob_sha == expected_current_unchanged[
         ROOT / "domain" / "prospective_successor_feature_construction_candidate.py"
     ]
-    assert protocol.candidate_source_capability_anchor_blob_sha == expected[
-        ROOT / "domain" / "source_capabilities.py"
-    ]
-    assert protocol.candidate_data_matches_capture_blob_sha == expected[
+    assert protocol.candidate_source_capability_anchor_blob_sha == HISTORICAL_SOURCE_CAPABILITIES_BLOB
+    assert protocol.candidate_data_matches_capture_blob_sha == expected_current_unchanged[
         ROOT / "domain" / "fotmob_data_matches_capture.py"
     ]
-    assert protocol.candidate_data_matches_schema_blob_sha == expected[
+    assert protocol.candidate_data_matches_schema_blob_sha == expected_current_unchanged[
         ROOT / "domain" / "fotmob_data_matches_schema.py"
     ]
 

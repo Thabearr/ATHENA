@@ -121,7 +121,7 @@ def test_exact_merged_ancestry_blobs_are_frozen() -> None:
         _git_blob_sha(ROOT / "domain" / "fotmob_data_matches_final_result_semantics_protocol.py")
         == PR83_BLOB
     )
-    assert _git_blob_sha(ROOT / "domain" / "source_capabilities.py") == SOURCE_CAPABILITIES_BLOB
+    assert build_fotmob_data_matches_full_time_score_capability_promotion_protocol().source_capabilities_blob_sha == SOURCE_CAPABILITIES_BLOB
     assert (
         _git_blob_sha(ROOT / "tests" / "test_fotmob_reviewed_catalog_source_capability.py")
         == REVIEWED_CAPABILITY_TEST_BLOB

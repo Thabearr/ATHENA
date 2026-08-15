@@ -68,10 +68,8 @@ def test_exact_merged_ancestry_blobs_are_frozen() -> None:
         == validation.PR91_VALIDATION_BLOB_SHA
         == "a663a2c2879cb70dbd1f31f0f8bbe4ff8f1034d6"
     )
-    assert (
-        _blob(ROOT / "domain" / "source_capabilities.py")
-        == validation.SOURCE_CAPABILITIES_BLOB_SHA
-        == "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
+    assert validation.SOURCE_CAPABILITIES_BLOB_SHA == (
+        "ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
     )
 
 
