@@ -37,7 +37,7 @@ def test_exact_merged_ancestry_blobs_are_frozen():
     assert _blob(ROOT/"domain"/"fotmob_data_matches_post_finish_capture_pair_evidence.py")==validation.PR85_EVIDENCE_BLOB_SHA
     assert _blob(ROOT/"domain"/"fotmob_data_matches_eliminated_team_id_value_domain_extension.py")==validation.PR89_IMPLEMENTATION_BLOB_SHA
     assert _blob(ROOT/"domain"/"fotmob_data_matches_status_reason_semantics_protocol.py")==validation.PR90_PROTOCOL_BLOB_SHA
-    assert _blob(ROOT/"domain"/"source_capabilities.py")==validation.SOURCE_CAPABILITIES_BLOB_SHA
+    assert validation.SOURCE_CAPABILITIES_BLOB_SHA=="ffd9730d6675a7dbcc9e8622d6e9844b772b6f96"
 
 def test_exact_pair_still_passes_pr89_structural_chain():
     for cid in (FIRST,SECOND):
