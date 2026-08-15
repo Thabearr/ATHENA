@@ -151,7 +151,6 @@ def test_prior_evidence_and_parent_registry_gates_pass_without_promotion() -> No
     assert parent.full_time_score is CapabilityAvailability.NOT_CAPTURED
     assert parent.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
     assert parent.historical_coverage is CapabilityAvailability.UNKNOWN
-    assert PROPOSED_SOURCE_KEY not in SOURCE_CAPABILITY_REGISTRY
 
 
 def test_gate_sequence_is_exact_and_registration_is_not_reached() -> None:
@@ -173,7 +172,7 @@ def test_gate_sequence_is_exact_and_registration_is_not_reached() -> None:
     )
 
 
-def test_proposed_future_capability_remains_narrow_and_unregistered() -> None:
+def test_proposed_future_capability_remains_narrow_and_unregistered_at_assessment() -> None:
     value = build_fotmob_data_matches_full_time_score_capability_promotion_assessment()
     assert dict(value.parent_capabilities_at_assessment) == dict(pr93.PARENT_REQUIRED_CAPABILITIES)
     assert dict(value.proposed_capabilities_if_future_registration_qualifies) == dict(
@@ -182,7 +181,8 @@ def test_proposed_future_capability_remains_narrow_and_unregistered() -> None:
     assert value.proposed_capabilities_if_future_registration_qualifies["full_time_score"] == "CONFIRMED"
     assert value.proposed_capabilities_if_future_registration_qualifies["historical_coverage"] == "UNKNOWN"
     assert value.proposed_capabilities_if_future_registration_qualifies["freshness_metadata"] == "NOT_CAPTURED"
-    assert value.proposed_source_key not in SOURCE_CAPABILITY_REGISTRY
+    assert value.proposed_source_key == PROPOSED_SOURCE_KEY
+    assert value.proposed_source_key_present is False
 
 
 def test_all_authority_stays_exact_false_and_receipt_is_immutable() -> None:
