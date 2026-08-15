@@ -35,6 +35,12 @@ from domain.fotmob_data_matches_capture import (
     sha256_bytes,
     sha256_data_matches_capture_manifest,
 )
+from domain.fotmob_data_matches_probe import (
+    FotMobDataMatchesProbeError,
+    validate_ccode3,
+    validate_request_date,
+    validate_timezone,
+)
 from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY_REGISTRY
 
 
@@ -157,6 +163,33 @@ def _checked_safety(value: Any) -> Mapping[str, bool]:
     return _default_safety()
 
 
+def _sha256(value: Any, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise _error(
+            AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION,
+            f"{label} must be exactly 64 lowercase hexadecimal characters",
+        )
+    return value
+
+
+def _request_identity(request_date: Any, timezone: Any, ccode3: Any) -> tuple[str, str, str]:
+    try:
+        return (
+            validate_request_date(request_date),
+            validate_timezone(timezone),
+            validate_ccode3(ccode3),
+        )
+    except FotMobDataMatchesProbeError as exc:
+        raise _error(
+            AdapterPairStatus.BLOCKED_CAPTURE_LINEAGE_OR_REQUEST_IDENTITY,
+            "adapter request identity is invalid",
+        ) from exc
+
+
 def _utc(value: Any, label: str) -> datetime.datetime:
     if not isinstance(value, datetime.datetime):
         raise _error(AdapterPairStatus.BLOCKED_CAPTURE_LINEAGE_OR_REQUEST_IDENTITY, f"{label} must be datetime")
@@ -174,6 +207,11 @@ def _utc(value: Any, label: str) -> datetime.datetime:
             AdapterPairStatus.BLOCKED_CAPTURE_LINEAGE_OR_REQUEST_IDENTITY,
             f"{label} is invalid",
         ) from exc
+
+
+def _separation_microseconds(first: datetime.datetime, second: datetime.datetime) -> int:
+    delta = second - first
+    return delta.days * 86_400_000_000 + delta.seconds * 1_000_000 + delta.microseconds
 
 
 def _verify_upstream() -> None:
@@ -279,6 +317,7 @@ def _payload(raw_json: bytes) -> Mapping[str, Any]:
 
 def _terminal_index(payload: Mapping[str, Any], observed_at: datetime.datetime) -> dict[int, dict[str, Any]]:
     result: dict[int, dict[str, Any]] = {}
+    seen_fixture_ids: set[int] = set()
     for league in payload["leagues"]:
         if type(league) is not dict or type(league.get("matches")) is not list:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "reviewed league shape changed")
@@ -286,8 +325,9 @@ def _terminal_index(payload: Mapping[str, Any], observed_at: datetime.datetime) 
             if type(match) is not dict:
                 raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "reviewed match shape changed")
             fixture_id = match.get("id")
-            if type(fixture_id) is not int or fixture_id < 1 or fixture_id in result:
+            if type(fixture_id) is not int or fixture_id < 1 or fixture_id in seen_fixture_ids:
                 raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "fixture id is invalid or duplicated")
+            seen_fixture_ids.add(fixture_id)
             status = match.get("status")
             home = match.get("home")
             away = match.get("away")
@@ -382,11 +422,9 @@ class OrdinaryFtFinishedScore:
                 raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, f"{label} must be a non-negative exact integer")
         if dict(self.reason) != dict(ORDINARY_FT_REASON_TUPLE):
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "qualified score escaped exact ordinary-FT reason tuple")
-        object.__setattr__(self, "reason", types.MappingProxyType(dict(ORDINARY_FT_REASON_TUPLE)))
-        object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "kickoff_utc"))
-        object.__setattr__(self, "first_observed_at", _utc(self.first_observed_at, "first_observed_at"))
-        object.__setattr__(self, "second_observed_at", _utc(self.second_observed_at, "second_observed_at"))
-        if self.second_observed_at <= self.first_observed_at:
+        first_observed = _utc(self.first_observed_at, "first_observed_at")
+        second_observed = _utc(self.second_observed_at, "second_observed_at")
+        if second_observed <= first_observed:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "qualified observation order changed")
         for label, value in (
             ("first_raw_sha256", self.first_raw_sha256),
@@ -394,8 +432,13 @@ class OrdinaryFtFinishedScore:
             ("first_manifest_sha256", self.first_manifest_sha256),
             ("second_manifest_sha256", self.second_manifest_sha256),
         ):
-            if type(value) is not str or len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
-                raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, f"{label} must be lowercase SHA-256")
+            _sha256(value, label)
+        if self.first_raw_sha256 == self.second_raw_sha256 or self.first_manifest_sha256 == self.second_manifest_sha256:
+            raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "qualified score requires distinct capture lineages")
+        object.__setattr__(self, "reason", types.MappingProxyType(dict(ORDINARY_FT_REASON_TUPLE)))
+        object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "kickoff_utc"))
+        object.__setattr__(self, "first_observed_at", first_observed)
+        object.__setattr__(self, "second_observed_at", second_observed)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -456,8 +499,32 @@ class FotMobDataMatchesOrdinaryFtFinishedScoreAdapterResult:
             AdapterPairStatus.NO_QUALIFIED_ORDINARY_FT_SCORES,
         }:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "successful result cannot carry pair-level blocker")
-        if type(self.observation_separation_microseconds) is not int or self.observation_separation_microseconds < MINIMUM_REPEAT_SEPARATION_SECONDS * 1_000_000:
-            raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "successful result has insufficient repeat separation")
+
+        request_date, timezone, ccode3 = _request_identity(self.request_date, self.timezone, self.ccode3)
+        for label, value in (
+            ("first_raw_sha256", self.first_raw_sha256),
+            ("second_raw_sha256", self.second_raw_sha256),
+            ("first_manifest_sha256", self.first_manifest_sha256),
+            ("second_manifest_sha256", self.second_manifest_sha256),
+            ("first_pr89_assessment_sha256", self.first_pr89_assessment_sha256),
+            ("second_pr89_assessment_sha256", self.second_pr89_assessment_sha256),
+        ):
+            _sha256(value, label)
+        if self.first_raw_sha256 == self.second_raw_sha256 or self.first_manifest_sha256 == self.second_manifest_sha256:
+            raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "successful result requires distinct capture lineages")
+
+        first_observed = _utc(self.first_observed_at, "first_observed_at")
+        second_observed = _utc(self.second_observed_at, "second_observed_at")
+        if second_observed <= first_observed:
+            raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "successful result observation order changed")
+        exact_separation = _separation_microseconds(first_observed, second_observed)
+        if (
+            type(self.observation_separation_microseconds) is not int
+            or self.observation_separation_microseconds != exact_separation
+            or exact_separation < MINIMUM_REPEAT_SEPARATION_SECONDS * 1_000_000
+        ):
+            raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "successful result repeat separation changed")
+
         if type(self.terminal_candidate_union_count) is not int or self.terminal_candidate_union_count < 0:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "terminal_candidate_union_count is invalid")
         if type(self.qualified_count) is not int or self.qualified_count < 0 or self.qualified_count != len(self.qualified_scores):
@@ -472,12 +539,18 @@ class FotMobDataMatchesOrdinaryFtFinishedScoreAdapterResult:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "adapter must not perform source capability registration")
         if self.next_required_boundary != NEXT_REQUIRED_BOUNDARY:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "next boundary changed")
+
         if not isinstance(self.blocked_fixture_ids_by_status, Mapping):
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "blocked fixture mapping is invalid")
         frozen_blocked: dict[str, tuple[int, ...]] = {}
         seen: set[int] = set()
+        blocked_vocabulary = {
+            item.value
+            for item in AdapterFixtureStatus
+            if item is not AdapterFixtureStatus.QUALIFIED_ORDINARY_FT_SOURCE_REPORTED_FINISHED_SCORE
+        }
         for status, fixture_ids in self.blocked_fixture_ids_by_status.items():
-            if status not in {item.value for item in AdapterFixtureStatus if item is not AdapterFixtureStatus.QUALIFIED_ORDINARY_FT_SOURCE_REPORTED_FINISHED_SCORE}:
+            if status not in blocked_vocabulary:
                 raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "blocked fixture status is outside adapter vocabulary")
             if type(fixture_ids) is not tuple or any(type(item) is not int or item < 1 for item in fixture_ids):
                 raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "blocked fixture ids must be positive exact integers")
@@ -487,17 +560,36 @@ class FotMobDataMatchesOrdinaryFtFinishedScoreAdapterResult:
                 raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "fixture cannot carry multiple terminal adapter dispositions")
             seen.update(fixture_ids)
             frozen_blocked[status] = fixture_ids
-        qualified_ids = tuple(item.fixture_id for item in self.qualified_scores)
+
+        qualified_copy = tuple(dataclasses.replace(item) for item in self.qualified_scores)
+        qualified_ids = tuple(item.fixture_id for item in qualified_copy)
         if tuple(sorted(set(qualified_ids))) != qualified_ids:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "qualified fixture ids must be unique and sorted")
         if seen.intersection(qualified_ids):
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "qualified fixture cannot also be blocked")
         if len(seen) + len(qualified_ids) != self.terminal_candidate_union_count:
             raise _error(AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION, "fixture disposition counts do not cover candidate union")
+        for item in qualified_copy:
+            if (
+                item.first_raw_sha256 != self.first_raw_sha256
+                or item.second_raw_sha256 != self.second_raw_sha256
+                or item.first_manifest_sha256 != self.first_manifest_sha256
+                or item.second_manifest_sha256 != self.second_manifest_sha256
+                or item.first_observed_at != first_observed
+                or item.second_observed_at != second_observed
+            ):
+                raise _error(
+                    AdapterPairStatus.BLOCKED_STRUCTURAL_REVALIDATION,
+                    "qualified score lineage must match its adapter pair result",
+                )
+
+        object.__setattr__(self, "request_date", request_date)
+        object.__setattr__(self, "timezone", timezone)
+        object.__setattr__(self, "ccode3", ccode3)
+        object.__setattr__(self, "first_observed_at", first_observed)
+        object.__setattr__(self, "second_observed_at", second_observed)
         object.__setattr__(self, "blocked_fixture_ids_by_status", types.MappingProxyType(dict(frozen_blocked)))
-        object.__setattr__(self, "qualified_scores", tuple(dataclasses.replace(item) for item in self.qualified_scores))
-        object.__setattr__(self, "first_observed_at", _utc(self.first_observed_at, "first_observed_at"))
-        object.__setattr__(self, "second_observed_at", _utc(self.second_observed_at, "second_observed_at"))
+        object.__setattr__(self, "qualified_scores", qualified_copy)
         object.__setattr__(self, "safety", _checked_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
@@ -558,11 +650,9 @@ def adapt_fotmob_data_matches_ordinary_ft_finished_scores(
             AdapterPairStatus.BLOCKED_CAPTURE_LINEAGE_OR_REQUEST_IDENTITY,
             "capture pair must have distinct raw and manifest lineages",
         )
-    separation = second_manifest.observed_at - first_manifest.observed_at
-    separation_microseconds = (
-        separation.days * 86_400_000_000
-        + separation.seconds * 1_000_000
-        + separation.microseconds
+    separation_microseconds = _separation_microseconds(
+        first_manifest.observed_at,
+        second_manifest.observed_at,
     )
     if second_manifest.observed_at <= first_manifest.observed_at or separation_microseconds < MINIMUM_REPEAT_SEPARATION_SECONDS * 1_000_000:
         raise _error(
