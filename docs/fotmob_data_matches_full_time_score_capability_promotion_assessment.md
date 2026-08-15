@@ -43,7 +43,7 @@ Exact assessed tree:
 20347b1521283ea0988b263978027143bb31e255
 ```
 
-PR #93 protocol identity:
+PR #93 merged protocol identity:
 
 ```text
 blob       c9b5d47674283e2a8f2d54a68966b97fbd418047
@@ -67,6 +67,25 @@ The exact PR #94 base tree was independently enumerated during review and still
 contains no reviewed adapter at that path. PR #94 freezes that observation in the
 receipt rather than introducing a dynamic filesystem assertion that would make
 this historical receipt fail once the future adapter is legitimately added.
+
+## PR93 historical-state compatibility hardening
+
+Final review found two time-varying assertions in the merged PR #93 implementation
+and tests: they required the proposed derived source key and future adapter path to
+remain absent in the *current* repository forever. Those assertions accurately
+described PR #93's pre-registration moment, but would make the full historical test
+suite fail after the very future adapter/registration that PR #93 pre-registered.
+
+PR #94 therefore narrows those checks from permanent runtime invariants to
+historical pre-registration facts. The PR #93 canonical protocol payload, SHA-256,
+size, proposed capability contract, status vocabulary, penalty exclusion, parent
+non-mutation rule, and every authority flag are unchanged. The existing parent
+capability is still dynamically checked because PR #93 explicitly requires that
+parent entry to remain unchanged.
+
+This compatibility hardening does not implement the adapter, register the derived
+key, or weaken any qualification gate. It only prevents legitimate future progress
+from retroactively invalidating PR #93's historical receipt.
 
 ## Gates executed
 
@@ -126,7 +145,7 @@ No penalty or unreviewed-reason fixture is admitted by this assessment.
 ### Reusable prospective score adapter — BLOCKED
 
 PR #93 explicitly requires a reusable reviewed prospective adapter rather than a
-one-off evidence receipt. No such adapter currently exists in the assessed tree.
+one-off evidence receipt. No such adapter exists in the exact assessed tree.
 
 Therefore the assessment returns:
 
