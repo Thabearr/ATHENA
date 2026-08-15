@@ -151,8 +151,7 @@ def _reject_symlink_components(path: Path, label: str) -> None:
 
 
 def validate_campaign_root(
-    *,
-    repository_root: Path | None = None,
+    *, repository_root: Path | None = None,
 ) -> Path:
     try:
         supplied_repository = Path(repository_root or _repository_root())
@@ -232,9 +231,7 @@ def _read_evidence_file(root: Path, filename: str) -> bytes:
 
 
 def load_campaign_entries(
-    *,
-    repository_root: Path | None = None,
-    create_root: bool = False,
+    *, repository_root: Path | None = None, create_root: bool = False,
 ) -> tuple[Any, ...]:
     root = (
         _ensure_campaign_root(repository_root=repository_root)
@@ -265,10 +262,7 @@ def _write_all(descriptor: int, content: bytes) -> None:
 
 
 def _append_entry(
-    entries: tuple[Any, ...],
-    entry: Any,
-    *,
-    repository_root: Path | None = None,
+    entries: tuple[Any, ...], entry: Any, *, repository_root: Path | None = None,
 ) -> tuple[Any, ...]:
     root = _ensure_campaign_root(repository_root=repository_root)
     current = load_campaign_entries(repository_root=repository_root, create_root=True)
@@ -314,11 +308,8 @@ def _canonical_json(value: Mapping[str, Any]) -> bytes:
     try:
         return (
             json.dumps(
-                dict(value),
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
+                dict(value), ensure_ascii=False, allow_nan=False,
+                sort_keys=True, separators=(",", ":"),
             )
             + "\n"
         ).encode("utf-8")
@@ -374,7 +365,10 @@ def _validate_inflight_intent(value: Any) -> dict[str, Any]:
     plain = dict(value)
     if set(plain) != _INFLIGHT_KEYS:
         raise _error("in-flight attempt marker keys mismatch")
-    if plain["schema_version"] != INFLIGHT_ATTEMPT_SCHEMA_VERSION or type(plain["schema_version"]) is not int:
+    if (
+        plain["schema_version"] != INFLIGHT_ATTEMPT_SCHEMA_VERSION
+        or type(plain["schema_version"]) is not int
+    ):
         raise _error("in-flight attempt marker schema_version mismatch")
     if plain["runner_id"] != RUNNER_ID:
         raise _error("in-flight attempt marker runner_id mismatch")
@@ -399,8 +393,7 @@ def _validate_inflight_intent(value: Any) -> dict[str, Any]:
         )
     except Exception as exc:
         raise _error("in-flight attempt_started_at_utc is invalid") from exc
-    canonical_started = serialize_utc(started)
-    if canonical_started != plain["attempt_started_at_utc"]:
+    if serialize_utc(started) != plain["attempt_started_at_utc"]:
         raise _error("in-flight attempt timestamp is not canonical UTC")
     claimed = _valid_sha(plain["intent_sha256"], "intent_sha256")
     unsigned = dict(plain)
@@ -419,8 +412,7 @@ def _load_inflight_intent(root: Path) -> dict[str, Any] | None:
         raw = path.read_bytes()
     except OSError as exc:
         raise _error("could not read in-flight attempt marker") from exc
-    value = _strict_json(raw)
-    plain = _validate_inflight_intent(value)
+    plain = _validate_inflight_intent(_strict_json(raw))
     if _canonical_json(plain) != raw:
         raise _error("in-flight attempt marker is not canonical JSON")
     return plain
@@ -433,10 +425,7 @@ def _previous_evidence_hash(entries: tuple[Any, ...]) -> str:
 
 
 def _build_inflight_intent(
-    entries: tuple[Any, ...],
-    *,
-    slot: CampaignSlot,
-    attempt: int,
+    entries: tuple[Any, ...], *, slot: CampaignSlot, attempt: int,
     attempt_started_at: datetime.datetime,
 ) -> dict[str, Any]:
     progress = campaign_progress(entries)
@@ -465,18 +454,12 @@ def _build_inflight_intent(
 
 
 def _create_inflight_intent(
-    entries: tuple[Any, ...],
-    *,
-    slot: CampaignSlot,
-    attempt: int,
-    attempt_started_at: datetime.datetime,
-    root: Path,
+    entries: tuple[Any, ...], *, slot: CampaignSlot, attempt: int,
+    attempt_started_at: datetime.datetime, root: Path,
 ) -> dict[str, Any]:
     intent = _validate_inflight_intent(
         _build_inflight_intent(
-            entries,
-            slot=slot,
-            attempt=attempt,
+            entries, slot=slot, attempt=attempt,
             attempt_started_at=attempt_started_at,
         )
     )
@@ -549,6 +532,15 @@ def _intent_matches_recorded_outcome(
     if len(entries) != sequence + 1:
         return False
     outcome = entries[-1]
+    try:
+        intent_started = parse_utc_timestamp(
+            intent["attempt_started_at_utc"], "intent_attempt_started_at_utc"
+        )
+        actual_started = parse_utc_timestamp(
+            outcome["attempt_started_at_utc"], "outcome_attempt_started_at_utc"
+        )
+    except Exception:
+        return False
     return (
         outcome["sequence"] == sequence + 1
         and outcome["previous_entry_sha256"] == intent["previous_entry_sha256"]
@@ -556,14 +548,12 @@ def _intent_matches_recorded_outcome(
         and outcome["request_date"] == intent["request_date"]
         and outcome["slot"] == intent["slot"]
         and outcome["attempt"] == intent["attempt"]
-        and outcome["attempt_started_at_utc"] == intent["attempt_started_at_utc"]
+        and actual_started >= intent_started
     )
 
 
 def _reconcile_completed_inflight_marker(
-    entries: tuple[Any, ...],
-    *,
-    root: Path,
+    entries: tuple[Any, ...], *, root: Path,
 ) -> tuple[Any, ...]:
     intent = _load_inflight_intent(root)
     if intent is None:
@@ -582,9 +572,7 @@ def _reconcile_completed_inflight_marker(
 
 
 def _inflight_status(
-    entries: tuple[Any, ...],
-    *,
-    root: Path,
+    entries: tuple[Any, ...], *, root: Path,
 ) -> dict[str, Any] | None:
     intent = _load_inflight_intent(root)
     if intent is None:
@@ -609,10 +597,7 @@ def _lock_payload() -> bytes:
     return (
         json.dumps(
             {"pid": os.getpid(), "runner_id": runner_state()["runner_id"]},
-            ensure_ascii=False,
-            allow_nan=False,
-            sort_keys=True,
-            separators=(",", ":"),
+            ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":"),
         )
         + "\n"
     ).encode("utf-8")
@@ -620,8 +605,7 @@ def _lock_payload() -> bytes:
 
 @contextlib.contextmanager
 def campaign_lock(
-    *,
-    repository_root: Path | None = None,
+    *, repository_root: Path | None = None,
 ) -> Iterator[Path]:
     root = _ensure_campaign_root(repository_root=repository_root)
     path = root / CAMPAIGN_LOCK_FILENAME
@@ -663,9 +647,7 @@ def campaign_lock(
 
 
 def _wait_until_eligible(
-    entries: tuple[Any, ...],
-    *,
-    clock: Callable[[], datetime.datetime],
+    entries: tuple[Any, ...], *, clock: Callable[[], datetime.datetime],
     sleeper: Callable[[float], None],
 ) -> datetime.datetime:
     for _ in range(MAX_WAIT_RECHECKS):
@@ -678,10 +660,7 @@ def _wait_until_eligible(
 
 
 def _verified_capture_evidence(
-    *,
-    capture_directory: Path,
-    request_date: str,
-    repository_root: Path,
+    *, capture_directory: Path, request_date: str, repository_root: Path,
 ) -> tuple[Any, str]:
     allowed_root = repository_root / capture_runtime.ALLOWED_OUTPUT_RELATIVE
     manifest = verify_data_matches_capture_directory(
@@ -695,68 +674,42 @@ def _verified_capture_evidence(
         or manifest.ccode3 != CCODE3
     ):
         raise _error("persisted capture request identity differs from frozen campaign")
-    manifest_sha256 = sha256_data_matches_capture_manifest(manifest)
-    return manifest, manifest_sha256
+    return manifest, sha256_data_matches_capture_manifest(manifest)
 
 
 def _record_failure(
-    entries: tuple[Any, ...],
-    *,
-    slot: CampaignSlot,
-    attempt: int,
-    attempt_started_at: datetime.datetime,
-    recorded_at: datetime.datetime,
-    error_kind: str,
-    error_message: str,
-    repository_root: Path,
-    capture_id: str | None = None,
-    manifest_sha256: str | None = None,
+    entries: tuple[Any, ...], *, slot: CampaignSlot, attempt: int,
+    attempt_started_at: datetime.datetime, recorded_at: datetime.datetime,
+    error_kind: str, error_message: str, repository_root: Path,
+    capture_id: str | None = None, manifest_sha256: str | None = None,
 ) -> tuple[Any, ...]:
     entry = build_attempt_failed_entry(
-        entries,
-        slot=slot,
-        attempt=attempt,
-        attempt_started_at=attempt_started_at,
-        recorded_at=recorded_at,
-        error_kind=error_kind,
-        error_message=error_message,
-        capture_id=capture_id,
-        manifest_sha256=manifest_sha256,
+        entries, slot=slot, attempt=attempt,
+        attempt_started_at=attempt_started_at, recorded_at=recorded_at,
+        error_kind=error_kind, error_message=error_message,
+        capture_id=capture_id, manifest_sha256=manifest_sha256,
     )
     return _append_entry(entries, entry, repository_root=repository_root)
 
 
 def _record_block(
-    entries: tuple[Any, ...],
-    *,
-    slot: CampaignSlot,
-    recorded_at: datetime.datetime,
-    error_kind: str,
-    error_message: str,
-    repository_root: Path,
-    capture_id: str | None = None,
+    entries: tuple[Any, ...], *, slot: CampaignSlot,
+    recorded_at: datetime.datetime, error_kind: str, error_message: str,
+    repository_root: Path, capture_id: str | None = None,
     manifest_sha256: str | None = None,
 ) -> tuple[Any, ...]:
     entry = build_slot_blocked_entry(
-        entries,
-        slot=slot,
-        recorded_at=recorded_at,
-        error_kind=error_kind,
-        error_message=error_message,
-        capture_id=capture_id,
-        manifest_sha256=manifest_sha256,
+        entries, slot=slot, recorded_at=recorded_at,
+        error_kind=error_kind, error_message=error_message,
+        capture_id=capture_id, manifest_sha256=manifest_sha256,
     )
     return _append_entry(entries, entry, repository_root=repository_root)
 
 
 def _execute_next_slot_locked(
-    *,
-    repository_root: Path,
-    fetcher: Callable[..., Any],
-    writer: Callable[..., Any],
-    verifier: Callable[..., Any],
-    clock: Callable[[], datetime.datetime],
-    sleeper: Callable[[float], None],
+    *, repository_root: Path, fetcher: Callable[..., Any],
+    writer: Callable[..., Any], verifier: Callable[..., Any],
+    clock: Callable[[], datetime.datetime], sleeper: Callable[[float], None],
 ) -> CampaignProgress:
     root = _ensure_campaign_root(repository_root=repository_root)
     entries = load_campaign_entries(repository_root=repository_root, create_root=True)
@@ -775,75 +728,57 @@ def _execute_next_slot_locked(
         attempt = progress.next_attempt
 
         try:
-            eligible_at = _wait_until_eligible(entries, clock=clock, sleeper=sleeper)
+            intent_time = _wait_until_eligible(entries, clock=clock, sleeper=sleeper)
         except FotMobOrdinaryFtSourceHistoryPairWindowError as exc:
             entries = _record_block(
-                entries,
-                slot=slot,
-                recorded_at=clock(),
-                error_kind=exc.reason,
-                error_message=str(exc),
-                repository_root=repository_root,
+                entries, slot=slot, recorded_at=clock(), error_kind=exc.reason,
+                error_message=str(exc), repository_root=repository_root,
             )
             raise _error(f"campaign pair window blocked: {exc}") from exc
 
-        attempt_started_at = eligible_at
         intent = _create_inflight_intent(
-            entries,
-            slot=slot,
-            attempt=attempt,
-            attempt_started_at=attempt_started_at,
-            root=root,
+            entries, slot=slot, attempt=attempt,
+            attempt_started_at=intent_time, root=root,
         )
+        # The durable intent is necessarily written before the HTTP call. Take a
+        # fresh timestamp after its fsync/revalidation so inter-request spacing
+        # is measured from the actual controlled request invocation boundary,
+        # not from the earlier marker-write boundary.
+        attempt_started_at = clock()
         capture_directory: Path | None = None
         manifest_sha256: str | None = None
         try:
             response = fetcher(
-                request_date=slot.request_date,
-                timezone=TIMEZONE,
-                ccode3=CCODE3,
+                request_date=slot.request_date, timezone=TIMEZONE, ccode3=CCODE3,
             )
             if getattr(response, "network_acquisition_performed", None) is not True:
                 raise _error("live fetch did not preserve network acquisition provenance")
             capture_directory, _ = writer(
-                response,
-                request_date=slot.request_date,
-                timezone=TIMEZONE,
-                ccode3=CCODE3,
-                repository_root=repository_root,
+                response, request_date=slot.request_date,
+                timezone=TIMEZONE, ccode3=CCODE3, repository_root=repository_root,
             )
             if not isinstance(capture_directory, Path):
                 capture_directory = Path(capture_directory)
             manifest, manifest_sha256 = verifier(
-                capture_directory=capture_directory,
-                request_date=slot.request_date,
+                capture_directory=capture_directory, request_date=slot.request_date,
                 repository_root=repository_root,
             )
             validate_success_observation(entries, slot, manifest.observed_at)
             entry = build_slot_succeeded_entry(
-                entries,
-                slot=slot,
-                attempt=attempt,
-                attempt_started_at=attempt_started_at,
-                recorded_at=clock(),
+                entries, slot=slot, attempt=attempt,
+                attempt_started_at=attempt_started_at, recorded_at=clock(),
                 capture_id=capture_directory.name,
-                raw_sha256=manifest.raw_sha256,
-                raw_size=manifest.raw_size,
-                manifest_sha256=manifest_sha256,
-                observed_at=manifest.observed_at,
+                raw_sha256=manifest.raw_sha256, raw_size=manifest.raw_size,
+                manifest_sha256=manifest_sha256, observed_at=manifest.observed_at,
             )
             entries = _append_entry(entries, entry, repository_root=repository_root)
             _remove_inflight_intent(root, intent)
             return campaign_progress(entries)
         except FotMobOrdinaryFtSourceHistoryPairWindowError as exc:
             entries = _record_failure(
-                entries,
-                slot=slot,
-                attempt=attempt,
-                attempt_started_at=attempt_started_at,
-                recorded_at=clock(),
-                error_kind=exc.reason,
-                error_message=str(exc),
+                entries, slot=slot, attempt=attempt,
+                attempt_started_at=attempt_started_at, recorded_at=clock(),
+                error_kind=exc.reason, error_message=str(exc),
                 repository_root=repository_root,
                 capture_id=(None if capture_directory is None else capture_directory.name),
                 manifest_sha256=manifest_sha256,
@@ -852,9 +787,7 @@ def _execute_next_slot_locked(
             progress = campaign_progress(entries)
             if exc.reason == "PAIR_OBSERVATION_TOO_LATE" and not progress.blocked:
                 entries = _record_block(
-                    entries,
-                    slot=slot,
-                    recorded_at=clock(),
+                    entries, slot=slot, recorded_at=clock(),
                     error_kind="PAIR_WINDOW_EXPIRED_AFTER_CAPTURE",
                     error_message=(
                         "persisted capture exists but slot B can no longer satisfy "
@@ -875,14 +808,10 @@ def _execute_next_slot_locked(
             TimeoutError,
         ) as exc:
             entries = _record_failure(
-                entries,
-                slot=slot,
-                attempt=attempt,
-                attempt_started_at=attempt_started_at,
-                recorded_at=clock(),
+                entries, slot=slot, attempt=attempt,
+                attempt_started_at=attempt_started_at, recorded_at=clock(),
                 error_kind="ACQUISITION_ATTEMPT_FAILED",
-                error_message=_bounded_failure(exc),
-                repository_root=repository_root,
+                error_message=_bounded_failure(exc), repository_root=repository_root,
                 capture_id=(None if capture_directory is None else capture_directory.name),
                 manifest_sha256=manifest_sha256,
             )
@@ -894,9 +823,7 @@ def _execute_next_slot_locked(
 
 
 def execute_next_campaign_slot(
-    *,
-    execute_live_network: bool,
-    repository_root: Path | None = None,
+    *, execute_live_network: bool, repository_root: Path | None = None,
     fetcher: Callable[..., Any] = capture_runtime.fetch_fotmob_data_matches,
     writer: Callable[..., Any] = capture_runtime.write_data_matches_capture_directory,
     verifier: Callable[..., Any] = _verified_capture_evidence,
@@ -909,23 +836,16 @@ def execute_next_campaign_slot(
     repository = Path(repository_root or _repository_root()).resolve(strict=True)
     if sleeper is None:
         import time
-
         sleeper = time.sleep
     with campaign_lock(repository_root=repository):
         return _execute_next_slot_locked(
-            repository_root=repository,
-            fetcher=fetcher,
-            writer=writer,
-            verifier=verifier,
-            clock=clock,
-            sleeper=sleeper,
+            repository_root=repository, fetcher=fetcher, writer=writer,
+            verifier=verifier, clock=clock, sleeper=sleeper,
         )
 
 
 def execute_campaign(
-    *,
-    execute_live_network: bool,
-    repository_root: Path | None = None,
+    *, execute_live_network: bool, repository_root: Path | None = None,
     max_successful_slots: int | None = None,
     fetcher: Callable[..., Any] = capture_runtime.fetch_fotmob_data_matches,
     writer: Callable[..., Any] = capture_runtime.write_data_matches_capture_directory,
@@ -943,7 +863,6 @@ def execute_campaign(
     repository = Path(repository_root or _repository_root()).resolve(strict=True)
     if sleeper is None:
         import time
-
         sleeper = time.sleep
 
     with campaign_lock(repository_root=repository):
@@ -962,12 +881,8 @@ def execute_campaign(
             ):
                 break
             progress = _execute_next_slot_locked(
-                repository_root=repository,
-                fetcher=fetcher,
-                writer=writer,
-                verifier=verifier,
-                clock=clock,
-                sleeper=sleeper,
+                repository_root=repository, fetcher=fetcher, writer=writer,
+                verifier=verifier, clock=clock, sleeper=sleeper,
             )
         return progress
 
@@ -992,9 +907,7 @@ def campaign_status(*, repository_root: Path | None = None) -> dict[str, Any]:
         "blocked": effective_blocked,
         "block_reason": block_reason,
         "next_slot": (
-            None
-            if progress.next_slot is None
-            else {
+            None if progress.next_slot is None else {
                 "ordinal": progress.next_slot.ordinal,
                 "request_date": progress.next_slot.request_date,
                 "slot": progress.next_slot.slot,
@@ -1017,28 +930,22 @@ def build_parser() -> argparse.ArgumentParser:
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
-        "--status",
-        action="store_true",
+        "--status", action="store_true",
         help="Revalidate and print campaign progress without network access",
     )
     mode.add_argument(
-        "--execute-live-network",
-        action="store_true",
+        "--execute-live-network", action="store_true",
         help="Authorize the frozen live FotMob campaign transport",
     )
     parser.add_argument(
-        "--max-successful-slots",
-        type=int,
-        default=None,
+        "--max-successful-slots", type=int, default=None,
         help="Optional positive chunk size for resumable live execution",
     )
     return parser
 
 
 def main(
-    argv: list[str] | None = None,
-    *,
-    repository_root: Path | None = None,
+    argv: list[str] | None = None, *, repository_root: Path | None = None,
 ) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -1049,8 +956,7 @@ def main(
             result: Any = campaign_status(repository_root=repository_root)
         else:
             progress = execute_campaign(
-                execute_live_network=True,
-                repository_root=repository_root,
+                execute_live_network=True, repository_root=repository_root,
                 max_successful_slots=args.max_successful_slots,
             )
             result = {

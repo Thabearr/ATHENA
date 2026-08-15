@@ -73,11 +73,16 @@ Before **every** network request the live executor writes and durably fsyncs
 - request date;
 - slot;
 - attempt number;
-- UTC attempt-start time;
+- UTC controlled-attempt intent time;
 - its own SHA-256.
 
 The request is not allowed to start until that marker has been written,
-directory-synced, reread, and revalidated.
+directory-synced, reread, and revalidated. Immediately after that durable marker
+commit, the executor takes a **fresh clock reading immediately before calling the
+reviewed fetcher**. That later timestamp is the `attempt_started_at_utc` persisted
+in the append-only success/failure outcome and is therefore the timestamp used
+for the frozen 1.0-second inter-request gate. This avoids counting variable
+marker-fsync latency as if it occurred after the HTTP request began.
 
 After a normal success or failure, the corresponding append-only outcome entry
 is committed first. Only after the outcome rereads successfully is the in-flight
@@ -92,9 +97,10 @@ request or durable raw capture to be silently repeated after restart:
   reports `UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION` and performs no
   new request;
 - if the process dies after the append-only outcome is durable but before marker
-  deletion, the next locked execution verifies that the marker exactly matches
-  that one recorded outcome and safely removes the stale marker without
-  repeating the completed attempt;
+  deletion, the next locked execution verifies that the marker exactly identifies
+  that one outcome, including that the actual request-start timestamp is not
+  earlier than the durable intent timestamp, and safely removes the stale marker
+  without repeating the completed attempt;
 - marker/evidence disagreement fails closed as `INFLIGHT_ATTEMPT_STATE_CONFLICT`.
 
 An unresolved in-flight attempt is intentionally **not guessed into success or
@@ -117,6 +123,10 @@ Before each request the runner enforces the maximum of:
 1. the frozen `1.0s` inter-request spacing;
 2. any outstanding `60s` or `300s` retry delay;
 3. any wait required to reach the same-date `300s` A/B minimum.
+
+The 1.0-second rule is measured from the actual controlled fetch invocation
+boundary persisted in the prior append-only outcome—not from the earlier
+pre-request intent-marker timestamp.
 
 If slot B has already exceeded the `86400s` upper bound before a request, the
 runner appends an explicit terminal blocker and performs no network request. If
