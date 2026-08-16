@@ -1194,8 +1194,8 @@ def test_status_mode_is_network_inert(tmp_path: Path, monkeypatch, capsys) -> No
     assert output["pr69_source_local_time_basis_resolved"] is False
 
 
-def _reseal_entry(entry: Mapping[str, object], **updates: object):
-    plain = dict(entry)
+def _reseal_entry(entry, **updates: object):
+    plain = contract._plain(entry)
     plain.update(updates)
     plain.pop("entry_sha256", None)
     plain["entry_sha256"] = hashlib.sha256(contract.canonical_bytes(plain)).hexdigest()
