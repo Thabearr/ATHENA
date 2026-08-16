@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """Deterministically partition the existing pytest file suite across CI shards.
 
-The sharder preserves the same file-discovery boundary as ``pytest tests`` while
-running each test file exactly once across isolated GitHub Actions runners. Files
-are assigned with deterministic largest-first greedy balancing using file size as
-a cheap, result-independent proxy for work. Runtime durations are reported by CI
-and may support a later reviewed weighting refinement without dropping coverage.
+The sharder preserves ATHENA's configured ``pytest tests`` file-discovery boundary
+(``python_files = test_*.py``) while running each test file exactly once across
+isolated GitHub Actions runners. Files are assigned with deterministic largest-first
+greedy balancing using file size as a cheap, result-independent proxy for work.
+Runtime durations are reported by CI and may support a later reviewed weighting
+refinement without dropping coverage.
 """
 from __future__ import annotations
 
@@ -15,7 +16,7 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-PYTEST_FILE_PATTERNS = ("test_*.py", "*_test.py")
+PYTEST_FILE_PATTERN = "test_*.py"
 
 
 class PytestShardError(ValueError):
@@ -41,7 +42,7 @@ def discover_test_files(repository_root: Path) -> tuple[Path, ...]:
             continue
         if any(part == "__pycache__" for part in path.parts):
             continue
-        if not any(fnmatch.fnmatchcase(path.name, pattern) for pattern in PYTEST_FILE_PATTERNS):
+        if not fnmatch.fnmatchcase(path.name, PYTEST_FILE_PATTERN):
             continue
         relative = path.relative_to(root)
         if "\n" in relative.as_posix() or "\r" in relative.as_posix():
