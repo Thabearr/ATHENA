@@ -33,7 +33,6 @@ jobs:
               core.setFailed(`Campaign execution is bound only to PR #${controlPr}.`);
               return;
             }
-
             const body = String(context.payload.comment.body || '').replace(/\r\n/g, '\n');
             const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
             if (lines.length !== 3 || lines[0] !== '/athena-run-pr69-time-basis-evidence') {
@@ -50,7 +49,6 @@ jobs:
               return;
             }
             const expectedMain = shaMatch[1];
-
             const { data: pr } = await github.rest.pulls.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -60,7 +58,6 @@ jobs:
               core.setFailed('Campaign control PR must already be merged and closed.');
               return;
             }
-
             const { data: repository } = await github.rest.repos.get({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -71,12 +68,9 @@ jobs:
               ref: `heads/${repository.default_branch}`,
             });
             if (ref.object.sha !== expectedMain) {
-              core.setFailed(
-                `Current ${repository.default_branch}=${ref.object.sha} differs from requested ${expectedMain}.`
-              );
+              core.setFailed(`Current ${repository.default_branch}=${ref.object.sha} differs from requested ${expectedMain}.`);
               return;
             }
-
             const markerPrefix = '<!-- ATHENA_PR69_PRIMARY_TIME_BASIS_EVIDENCE_EXECUTION_ATTEMPT_V1 -->';
             const comments = await github.paginate(github.rest.issues.listComments, {
               owner: context.repo.owner,
@@ -94,7 +88,6 @@ jobs:
               );
               return;
             }
-
             const marker = await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -109,7 +102,6 @@ jobs:
                 'Automatic replay is forbidden if this run does not complete cleanly.',
               ].join('\n'),
             });
-
             core.setOutput('main_sha', expectedMain);
             core.setOutput('marker_comment_id', String(marker.data.id));
 
@@ -154,7 +146,6 @@ jobs:
           python - <<'PY'
           import json
           from pathlib import Path
-
           status = json.loads(Path('campaign-preflight-status.json').read_text(encoding='utf-8'))
           expected = {
               'completed_slots': 0,
@@ -193,7 +184,6 @@ jobs:
           import json
           import os
           from pathlib import Path
-
           payload = {
               'schema_version': 1,
               'execution_boundary': 'EXECUTE_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_CAMPAIGN',
@@ -231,8 +221,7 @@ jobs:
               'bet_authorized': False,
           }
           Path('campaign-execution-metadata.json').write_text(
-              json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n',
-              encoding='utf-8',
+              json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8'
           )
           PY
 
@@ -280,7 +269,6 @@ jobs:
           import hashlib
           import json
           from pathlib import Path
-
           archive = Path('artifact-staging/pr69-primary-time-basis-evidence.tar')
           raw = archive.read_bytes()
           metadata = {
@@ -290,8 +278,7 @@ jobs:
               'archive_size': len(raw),
           }
           Path('artifact-staging/package-metadata.json').write_text(
-              json.dumps(metadata, sort_keys=True, separators=(',', ':')) + '\n',
-              encoding='utf-8',
+              json.dumps(metadata, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8'
           )
           PY
 
@@ -301,6 +288,7 @@ jobs:
         env:
           CAMPAIGN_EXIT_CODE: ${{ steps.campaign.outputs.exit_code }}
           POST_STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
         shell: bash
         run: |
           set +e
@@ -308,16 +296,20 @@ jobs:
           import json
           import os
           from pathlib import Path
-
           failures = []
           def require(condition, message):
               if not condition:
                   failures.append(message)
-
           campaign_exit = os.environ.get('CAMPAIGN_EXIT_CODE', '')
           post_exit = os.environ.get('POST_STATUS_EXIT_CODE', '')
+          package_outcome = os.environ.get('PACKAGE_OUTCOME', '')
           require(campaign_exit == '0', f'campaign exit code was {campaign_exit!r}')
           require(post_exit == '0', f'post-status exit code was {post_exit!r}')
+          require(package_outcome == 'success', f'package step outcome was {package_outcome!r}')
+          archive = Path('artifact-staging/pr69-primary-time-basis-evidence.tar')
+          package_metadata = Path('artifact-staging/package-metadata.json')
+          require(archive.is_file(), 'evidence archive is missing')
+          require(package_metadata.is_file(), 'package metadata is missing')
 
           status = None
           path = Path('campaign-post-status.json')
@@ -328,7 +320,6 @@ jobs:
                   failures.append(f'post-status JSON could not be parsed: {type(exc).__name__}: {exc}')
           else:
               failures.append('post-status JSON is missing')
-
           if isinstance(status, dict):
               require(status.get('completed_slots') == 8, 'completed_slots is not 8')
               require(status.get('total_slots') == 8, 'total_slots is not 8')
@@ -381,7 +372,6 @@ jobs:
                   failures.append(f'campaign index could not be validated: {type(exc).__name__}: {exc}')
           require(not (root / 'inflight-attempt.json').exists(), 'inflight marker remains')
           require(not (root / 'runner.lock').exists(), 'runner lock remains')
-
           assessment = {
               'schema_version': 1,
               'boundary': 'EXECUTE_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_CAMPAIGN',
@@ -398,9 +388,9 @@ jobs:
               'bet_authorized': False,
           }
           Path('campaign-state-assessment.json').write_text(
-              json.dumps(assessment, sort_keys=True, separators=(',', ':')) + '\n',
-              encoding='utf-8',
+              json.dumps(assessment, sort_keys=True, separators=(',', ':')) + '\n', encoding='utf-8'
           )
+          Path('artifact-staging').mkdir(exist_ok=True)
           Path('artifact-staging/campaign-state-assessment.json').write_bytes(
               Path('campaign-state-assessment.json').read_bytes()
           )
@@ -426,6 +416,7 @@ jobs:
           AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
           CAMPAIGN_EXIT_CODE: ${{ steps.campaign.outputs.exit_code }}
           POST_STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
           STATE_OK: ${{ steps.assess.outputs.state_ok }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
           ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
@@ -434,8 +425,9 @@ jobs:
         with:
           script: |
             const stateOk = process.env.STATE_OK === 'true';
+            const packageOk = process.env.PACKAGE_OUTCOME === 'success';
             const uploadOk = process.env.UPLOAD_OUTCOME === 'success' && Boolean(process.env.ARTIFACT_ID);
-            const qualified = stateOk && uploadOk;
+            const qualified = stateOk && packageOk && uploadOk;
             const state = qualified
               ? 'PRIMARY_EVIDENCE_CAMPAIGN_EXECUTED_AND_PRESERVED_PENDING_SEMANTIC_QUALIFICATION'
               : 'EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY';
@@ -448,6 +440,7 @@ jobs:
               `state: ${state}`,
               `campaign-exit-code: ${process.env.CAMPAIGN_EXIT_CODE || 'unavailable'}`,
               `post-status-exit-code: ${process.env.POST_STATUS_EXIT_CODE || 'unavailable'}`,
+              `package-outcome: ${process.env.PACKAGE_OUTCOME || 'unavailable'}`,
               `artifact-upload-outcome: ${process.env.UPLOAD_OUTCOME || 'unavailable'}`,
               `artifact-id: ${process.env.ARTIFACT_ID || 'unavailable'}`,
               `artifact-digest: ${process.env.ARTIFACT_DIGEST || 'unavailable'}`,
