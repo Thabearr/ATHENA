@@ -31,7 +31,7 @@ NEXT_REQUIRED_BOUNDARY = (
 
 PR134_PROTOCOL_SHA256 = "b3cc9a8e5ca05f199b7e404fa8288074e77d76fa5f21224c5bddb48ca1aac411"
 PR134_PROTOCOL_SIZE = 5_809
-PR134_PROTOCOL_BLOB_SHA = "e296d2ff77a7e331e20521695f85155323489219"
+PR134_PROTOCOL_BLOB_SHA = "57cc133a7fb9daa76c5d5d8e9156903e583c6575"
 PR119_EXECUTOR_BLOB_SHA = "2409676b4993a25024e2e8554e84e3525e7c5e6e"
 EXPECTED_ROW_COUNT = 21_326
 SOURCE_NAMESPACE = "fotmob_data_matches_reviewed_ordinary_ft_finished_score"
@@ -397,7 +397,7 @@ def construct_utc_native_feature_projection(
 
 
 def _verify_upstream() -> None:
-    protocol = pr134.build_fotmob_utc_native_successor_feature_construction_protocol()
+    pr134.build_fotmob_utc_native_successor_feature_construction_protocol()
     raw = pr134.canonical_fotmob_utc_native_successor_feature_construction_protocol_bytes()
     if (hashlib.sha256(raw).hexdigest(), len(raw)) != (
         PR134_PROTOCOL_SHA256,
