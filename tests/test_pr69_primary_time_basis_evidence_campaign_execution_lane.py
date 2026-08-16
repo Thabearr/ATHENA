@@ -22,6 +22,18 @@ def test_execution_workflow_is_valid_yaml() -> None:
     assert yaml.compose(_workflow()) is not None
 
 
+def test_execution_lane_pins_all_external_actions_to_exact_commits() -> None:
+    text = _workflow()
+    assert "actions/checkout@11d5960a326750d5838078e36cf38b85af677262" in text
+    assert "actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065" in text
+    assert text.count("actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b") == 2
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in text
+    assert "actions/checkout@v4" not in text
+    assert "actions/setup-python@v5" not in text
+    assert "actions/github-script@v7" not in text
+    assert "actions/upload-artifact@v4" not in text
+
+
 def test_execution_lane_is_issue_comment_only_and_bound_to_pr128_owner() -> None:
     text = _workflow()
     assert "issue_comment:" in text
@@ -124,7 +136,7 @@ def test_failure_paths_preserve_post_status_package_and_artifact() -> None:
     assert "Capture network-free post-run status" in text
     assert "Package immutable execution evidence" in text
     assert "Assess preserved campaign state without semantic interpretation" in text
-    assert "actions/upload-artifact@v4" in text
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in text
     assert "if: always()" in text
     assert "retention-days: 30" in text
     assert "pr69-primary-time-basis-evidence-campaign-${{ github.run_id }}" in text
