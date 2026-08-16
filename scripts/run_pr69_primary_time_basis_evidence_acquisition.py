@@ -2,9 +2,10 @@
 
 The module is inert on import. Live transport requires explicit authorization and uses
 only the exact four PR124 football-data.co.uk targets. Public live entry points bind the
-reviewed HTTPS transport and real wall-clock timing sources directly; synthetic fetchers
-and clocks exist only behind internal test seams. Campaign evidence is append-only,
-resumable, and fail-closed around any request whose durable outcome is uncertain.
+reviewed HTTPS transport, real wall-clock timing sources, and the actual ATHENA repository
+root directly; synthetic fetchers, clocks, and alternate roots exist only behind internal
+test seams. Campaign evidence is append-only, resumable, and fail-closed around any request
+whose durable outcome is uncertain.
 """
 from __future__ import annotations
 
@@ -95,6 +96,28 @@ def _reject_symlink_components(path: Path, label: str) -> None:
         current = current / part
         if current.is_symlink():
             raise _error(f"{label} contains a forbidden symlink")
+
+
+def _trusted_repository_root(repository_root: Path | None) -> Path:
+    """Bind supported live execution to the repository that contains this runner."""
+    try:
+        trusted = _repository_root().resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise _error("trusted ATHENA repository root could not be resolved") from exc
+    if repository_root is None:
+        return trusted
+    try:
+        supplied = Path(repository_root)
+    except (TypeError, ValueError) as exc:
+        raise _error("trusted live execution repository root is invalid") from exc
+    _reject_symlink_components(supplied, "trusted live execution repository root")
+    try:
+        resolved = supplied.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise _error("trusted live execution repository root is invalid") from exc
+    if resolved != trusted:
+        raise _error("trusted live execution forbids repository root override")
+    return trusted
 
 
 def _load_kernel32() -> Any:
@@ -1235,7 +1258,7 @@ def execute_next_campaign_slot(
     if clock is not _clock or (sleeper is not None and sleeper is not time.sleep):
         raise _error("trusted live execution forbids clock or sleeper injection")
     contract.runner_descriptor()
-    repository = Path(repository_root or _repository_root()).resolve(strict=True)
+    repository = _trusted_repository_root(repository_root)
     if sleeper is None:
         sleeper = time.sleep
     with campaign_lock(repository_root=repository) as root:
@@ -1266,7 +1289,7 @@ def execute_campaign(
     ):
         raise _error("max_successful_slots must be an exact positive integer")
     contract.runner_descriptor()
-    repository = Path(repository_root or _repository_root()).resolve(strict=True)
+    repository = _trusted_repository_root(repository_root)
     if sleeper is None:
         sleeper = time.sleep
     with campaign_lock(repository_root=repository) as root:
