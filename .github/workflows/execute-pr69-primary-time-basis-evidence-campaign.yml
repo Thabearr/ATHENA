@@ -1,0 +1,472 @@
+name: Execute Reviewed PR69 Primary Time-Basis Evidence Campaign
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: athena-pr69-primary-time-basis-evidence-campaign-v1
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.number == 128 &&
+      github.event.comment.user.login == 'Thabearr' &&
+      startsWith(github.event.comment.body, '/athena-run-pr69-time-basis-evidence')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Validate one-shot owner command and current main
+        id: guard
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const controlPr = 128;
+            if (context.issue.number !== controlPr) {
+              core.setFailed(`Campaign execution is bound only to PR #${controlPr}.`);
+              return;
+            }
+
+            const body = String(context.payload.comment.body || '').replace(/\r\n/g, '\n');
+            const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
+            if (lines.length !== 3 || lines[0] !== '/athena-run-pr69-time-basis-evidence') {
+              core.setFailed('Campaign command framing is invalid.');
+              return;
+            }
+            const shaMatch = /^main-sha: ([0-9a-f]{40})$/.exec(lines[1]);
+            if (!shaMatch) {
+              core.setFailed('Campaign command must contain one exact lowercase 40-hex main-sha.');
+              return;
+            }
+            if (lines[2] !== 'confirm: EXECUTE_8_PRIMARY_TIME_BASIS_CAPTURES') {
+              core.setFailed('Campaign command is missing the exact execution confirmation token.');
+              return;
+            }
+            const expectedMain = shaMatch[1];
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: controlPr,
+            });
+            if (!pr.merged_at || pr.state !== 'closed') {
+              core.setFailed('Campaign control PR must already be merged and closed.');
+              return;
+            }
+
+            const { data: repository } = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${repository.default_branch}`,
+            });
+            if (ref.object.sha !== expectedMain) {
+              core.setFailed(
+                `Current ${repository.default_branch}=${ref.object.sha} differs from requested ${expectedMain}.`
+              );
+              return;
+            }
+
+            const markerPrefix = '<!-- ATHENA_PR69_PRIMARY_TIME_BASIS_EVIDENCE_EXECUTION_ATTEMPT_V1 -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: controlPr,
+              per_page: 100,
+            });
+            const priorMarker = comments.find(
+              (comment) => String(comment.body || '').startsWith(markerPrefix)
+            );
+            if (priorMarker) {
+              core.setFailed(
+                `A prior campaign execution attempt marker already exists at comment ${priorMarker.id}; ` +
+                'automatic replay is forbidden and requires reviewed reconciliation.'
+              );
+              return;
+            }
+
+            const marker = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: controlPr,
+              body: [
+                markerPrefix,
+                'ATHENA reviewed PR69 primary time-basis evidence campaign execution attempt started.',
+                `run-id: ${context.runId}`,
+                `main-sha: ${expectedMain}`,
+                `command-comment-id: ${context.payload.comment.id}`,
+                'state: ATTEMPT_STARTED_NO_RESULT_YET',
+                'Automatic replay is forbidden if this run does not complete cleanly.',
+              ].join('\n'),
+            });
+
+            core.setOutput('main_sha', expectedMain);
+            core.setOutput('marker_comment_id', String(marker.data.id));
+
+      - name: Check out exact authorized main
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.guard.outputs.main_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify reviewed runner, protocol, and dependency blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.main_sha }}"
+          test "$(git rev-parse HEAD:domain/pr69_primary_time_basis_evidence_acquisition_runner.py)" = "6a990059cdc86297bb58a328afd4cb1fcd2c35d1"
+          test "$(git rev-parse HEAD:scripts/run_pr69_primary_time_basis_evidence_acquisition.py)" = "4b9bfd0a1acc25ad3568d5087b94fa3bd3e98e97"
+          test "$(git rev-parse HEAD:domain/pr69_primary_time_basis_evidence_acquisition_protocol.py)" = "df1a25227b8fee5fbbb21dce7f5f8be5d2464954"
+          test "$(git rev-parse HEAD:requirements.txt)" = "54d24a55dfa4c73ba3910d333257cfd2e68daf4b"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Validate empty network-free campaign preflight
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_pr69_primary_time_basis_evidence_acquisition.py --status > campaign-preflight-status.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          status = json.loads(Path('campaign-preflight-status.json').read_text(encoding='utf-8'))
+          expected = {
+              'completed_slots': 0,
+              'total_slots': 8,
+              'complete': False,
+              'blocked': False,
+              'inflight_attempt': None,
+              'network_acquisition_performed_by_this_status_command': False,
+              'semantic_extraction_performed': False,
+              'historical_effective_scope_qualified': False,
+              'pr69_source_local_time_basis_resolved': False,
+              'pr80_constructor_input_authorized': False,
+              'model_training_authorized': False,
+              'probability_inference_authorized': False,
+              'pricing_authorized': False,
+              'selection_authorized': False,
+              'production_approval_authorized': False,
+              'bet_authorized': False,
+          }
+          for key, value in expected.items():
+              if status.get(key) != value:
+                  raise SystemExit(f'preflight {key}={status.get(key)!r}, expected {value!r}')
+          next_slot = status.get('next_slot')
+          if not isinstance(next_slot, dict) or next_slot.get('ordinal') != 1:
+              raise SystemExit(f'preflight next_slot is not exact slot 1: {next_slot!r}')
+          PY
+
+      - name: Record execution metadata
+        env:
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'schema_version': 1,
+              'execution_boundary': 'EXECUTE_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_CAMPAIGN',
+              'authorized_main_sha': os.environ['AUTHORIZED_MAIN_SHA'],
+              'github_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'github_run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'runner_contract_blob_sha': '6a990059cdc86297bb58a328afd4cb1fcd2c35d1',
+              'live_executor_blob_sha': '4b9bfd0a1acc25ad3568d5087b94fa3bd3e98e97',
+              'protocol_blob_sha': 'df1a25227b8fee5fbbb21dce7f5f8be5d2464954',
+              'requirements_blob_sha': '54d24a55dfa4c73ba3910d333257cfd2e68daf4b',
+              'primary_origin': 'https://www.football-data.co.uk',
+              'request_headers': [
+                  ['Accept', 'text/plain,text/html;q=0.9,*/*;q=0.1'],
+                  ['Accept-Encoding', 'identity'],
+                  ['User-Agent', 'ATHENA/1.0'],
+              ],
+              'successful_capture_target': 8,
+              'target_count': 4,
+              'slot_labels': ['A', 'B'],
+              'minimum_pair_separation_seconds': 300,
+              'maximum_pair_separation_seconds': 3600,
+              'minimum_inter_request_seconds': 1,
+              'maximum_attempts_per_slot': 3,
+              'retry_delays_seconds': [60, 300],
+              'capture_root': '.cache/athena-research/pr69-primary-time-basis-evidence',
+              'recorded_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              'semantic_extraction_authorized': False,
+              'pr69_time_basis_resolution_authorized': False,
+              'pr80_authorized': False,
+              'model_authorized': False,
+              'probability_authorized': False,
+              'pricing_authorized': False,
+              'selection_authorized': False,
+              'production_authorized': False,
+              'bet_authorized': False,
+          }
+          Path('campaign-execution-metadata.json').write_text(
+              json.dumps(payload, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Execute exact reviewed eight-slot live campaign
+        id: campaign
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          python scripts/run_pr69_primary_time_basis_evidence_acquisition.py --execute-reviewed-protocol > campaign-execution.log 2>&1
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Capture network-free post-run status
+        id: post_status
+        if: always()
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          python scripts/run_pr69_primary_time_basis_evidence_acquisition.py --status > campaign-post-status.json 2> campaign-post-status.stderr
+          rc=$?
+          echo "exit_code=$rc" >> "$GITHUB_OUTPUT"
+          exit 0
+
+      - name: Package immutable execution evidence
+        id: package
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p artifact-staging
+          for item in campaign-preflight-status.json campaign-execution-metadata.json campaign-execution.log campaign-post-status.json campaign-post-status.stderr; do
+            if [ -f "$item" ]; then cp "$item" artifact-staging/; fi
+          done
+          if [ -d .cache/athena-research/pr69-primary-time-basis-evidence ]; then
+            tar -C . -cf artifact-staging/pr69-primary-time-basis-evidence.tar .cache/athena-research/pr69-primary-time-basis-evidence
+          else
+            tar -cf artifact-staging/pr69-primary-time-basis-evidence.tar --files-from /dev/null
+          fi
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          archive = Path('artifact-staging/pr69-primary-time-basis-evidence.tar')
+          raw = archive.read_bytes()
+          metadata = {
+              'schema_version': 1,
+              'archive_filename': archive.name,
+              'archive_sha256': hashlib.sha256(raw).hexdigest(),
+              'archive_size': len(raw),
+          }
+          Path('artifact-staging/package-metadata.json').write_text(
+              json.dumps(metadata, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Assess preserved campaign state without semantic interpretation
+        id: assess
+        if: always()
+        env:
+          CAMPAIGN_EXIT_CODE: ${{ steps.campaign.outputs.exit_code }}
+          POST_STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+        shell: bash
+        run: |
+          set +e
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          failures = []
+          def require(condition, message):
+              if not condition:
+                  failures.append(message)
+
+          campaign_exit = os.environ.get('CAMPAIGN_EXIT_CODE', '')
+          post_exit = os.environ.get('POST_STATUS_EXIT_CODE', '')
+          require(campaign_exit == '0', f'campaign exit code was {campaign_exit!r}')
+          require(post_exit == '0', f'post-status exit code was {post_exit!r}')
+
+          status = None
+          path = Path('campaign-post-status.json')
+          if path.is_file():
+              try:
+                  status = json.loads(path.read_text(encoding='utf-8'))
+              except Exception as exc:
+                  failures.append(f'post-status JSON could not be parsed: {type(exc).__name__}: {exc}')
+          else:
+              failures.append('post-status JSON is missing')
+
+          if isinstance(status, dict):
+              require(status.get('completed_slots') == 8, 'completed_slots is not 8')
+              require(status.get('total_slots') == 8, 'total_slots is not 8')
+              require(status.get('complete') is True, 'complete is not true')
+              require(status.get('blocked') is False, 'blocked is not false')
+              require(status.get('block_reason') is None, 'block_reason is not null')
+              require(status.get('inflight_attempt') is None, 'inflight_attempt is not null')
+              require(status.get('next_slot') is None, 'next_slot is not null after completion')
+              require(status.get('network_acquisition_performed_by_this_status_command') is False,
+                      'post status command did network acquisition')
+              for key in (
+                  'semantic_extraction_performed',
+                  'historical_effective_scope_qualified',
+                  'pr69_source_local_time_basis_resolved',
+                  'pr80_constructor_input_authorized',
+                  'model_training_authorized',
+                  'probability_inference_authorized',
+                  'pricing_authorized',
+                  'selection_authorized',
+                  'production_approval_authorized',
+                  'bet_authorized',
+              ):
+                  require(status.get(key) is False, f'{key} is not false')
+              pairs = status.get('pair_drift_table')
+              require(isinstance(pairs, list) and len(pairs) == 4,
+                      'pair_drift_table does not contain exactly four targets')
+              if isinstance(pairs, list):
+                  for row in pairs:
+                      require(isinstance(row, dict), 'pair row is not an object')
+                      if not isinstance(row, dict):
+                          continue
+                      separation = row.get('separation_seconds')
+                      require(isinstance(separation, (int, float)) and 300 <= separation <= 3600,
+                              f'pair separation is outside frozen window: {separation!r}')
+                      for key in ('slot_a_raw_sha256', 'slot_b_raw_sha256'):
+                          value = row.get(key)
+                          require(isinstance(value, str) and len(value) == 64,
+                                  f'{key} is not a 64-character digest')
+
+          root = Path('.cache/athena-research/pr69-primary-time-basis-evidence')
+          index = root / 'campaign-index.jsonl'
+          require(index.is_file(), 'campaign-index.jsonl is missing')
+          if index.is_file():
+              try:
+                  rows = [json.loads(line) for line in index.read_text(encoding='utf-8').splitlines()]
+                  require(len(rows) == 8, f'campaign index contains {len(rows)} rows instead of 8')
+                  require(all(row.get('event_type') == 'SLOT_SUCCEEDED' for row in rows),
+                          'campaign index contains a non-success event')
+              except Exception as exc:
+                  failures.append(f'campaign index could not be validated: {type(exc).__name__}: {exc}')
+          require(not (root / 'inflight-attempt.json').exists(), 'inflight marker remains')
+          require(not (root / 'runner.lock').exists(), 'runner lock remains')
+
+          assessment = {
+              'schema_version': 1,
+              'boundary': 'EXECUTE_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_CAMPAIGN',
+              'execution_state_valid': not failures,
+              'failures': failures,
+              'semantic_interpretation_performed': False,
+              'pr69_source_local_time_basis_resolved': False,
+              'pr80_authorized': False,
+              'model_authorized': False,
+              'probability_authorized': False,
+              'pricing_authorized': False,
+              'selection_authorized': False,
+              'production_authorized': False,
+              'bet_authorized': False,
+          }
+          Path('campaign-state-assessment.json').write_text(
+              json.dumps(assessment, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          Path('artifact-staging/campaign-state-assessment.json').write_bytes(
+              Path('campaign-state-assessment.json').read_bytes()
+          )
+          with Path(os.environ['GITHUB_OUTPUT']).open('a', encoding='utf-8') as output:
+              output.write(f"state_ok={'true' if not failures else 'false'}\n")
+          PY
+          exit 0
+
+      - name: Upload preserved campaign evidence artifact
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr69-primary-time-basis-evidence-campaign-${{ github.run_id }}
+          path: artifact-staging/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Publish durable execution result and enforce qualification gate
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+          CAMPAIGN_EXIT_CODE: ${{ steps.campaign.outputs.exit_code }}
+          POST_STATUS_EXIT_CODE: ${{ steps.post_status.outputs.exit_code }}
+          STATE_OK: ${{ steps.assess.outputs.state_ok }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          ARTIFACT_ID: ${{ steps.upload.outputs.artifact-id }}
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+          ARTIFACT_DIGEST: ${{ steps.upload.outputs.artifact-digest }}
+        with:
+          script: |
+            const stateOk = process.env.STATE_OK === 'true';
+            const uploadOk = process.env.UPLOAD_OUTCOME === 'success' && Boolean(process.env.ARTIFACT_ID);
+            const qualified = stateOk && uploadOk;
+            const state = qualified
+              ? 'PRIMARY_EVIDENCE_CAMPAIGN_EXECUTED_AND_PRESERVED_PENDING_SEMANTIC_QUALIFICATION'
+              : 'EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY';
+            const resultPrefix = '<!-- ATHENA_PR69_PRIMARY_TIME_BASIS_EVIDENCE_EXECUTION_RESULT_V1 -->';
+            const body = [
+              resultPrefix,
+              'ATHENA reviewed PR69 primary time-basis evidence campaign execution result.',
+              `run-id: ${context.runId}`,
+              `main-sha: ${process.env.AUTHORIZED_MAIN_SHA || 'unavailable'}`,
+              `state: ${state}`,
+              `campaign-exit-code: ${process.env.CAMPAIGN_EXIT_CODE || 'unavailable'}`,
+              `post-status-exit-code: ${process.env.POST_STATUS_EXIT_CODE || 'unavailable'}`,
+              `artifact-upload-outcome: ${process.env.UPLOAD_OUTCOME || 'unavailable'}`,
+              `artifact-id: ${process.env.ARTIFACT_ID || 'unavailable'}`,
+              `artifact-digest: ${process.env.ARTIFACT_DIGEST || 'unavailable'}`,
+              `artifact-url: ${process.env.ARTIFACT_URL || 'unavailable'}`,
+              'semantic-extraction: false',
+              'historical-effective-scope-qualification: false',
+              'pr69-source-local-time-basis-resolution: false',
+              'pr80-constructor-input: false',
+              'model/probability/pricing/selection/production/BET authority: false',
+              qualified
+                ? 'Next step: review the preserved artifact under a separate semantic/effective-scope qualification boundary.'
+                : 'Automatic replay is forbidden. Review the preserved artifact and reconcile this attempt before any retry.',
+            ].join('\n');
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 128,
+              body,
+            });
+            if (!qualified) {
+              core.setFailed('Campaign execution did not satisfy the preserved-evidence qualification gate.');
+            }
