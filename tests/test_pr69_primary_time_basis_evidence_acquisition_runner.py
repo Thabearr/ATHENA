@@ -383,6 +383,29 @@ def test_public_live_execution_rejects_clock_and_sleeper_injection(tmp_path: Pat
         )
 
 
+def test_public_live_execution_rejects_repository_root_override(tmp_path: Path) -> None:
+    trusted = runner._repository_root().resolve(strict=True)
+    assert runner._trusted_repository_root(None) == trusted
+    assert runner._trusted_repository_root(trusted) == trusted
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="repository root override",
+    ):
+        _PRODUCTION_EXECUTE_NEXT_CAMPAIGN_SLOT(
+            execute_live_network=True,
+            repository_root=tmp_path,
+        )
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="repository root override",
+    ):
+        _PRODUCTION_EXECUTE_CAMPAIGN(
+            execute_live_network=True,
+            repository_root=tmp_path,
+        )
+    assert not (tmp_path / ".cache").exists()
+
+
 def test_one_slot_persists_raw_manifest_and_global_index(
     tmp_path: Path, monkeypatch
 ) -> None:
