@@ -16,8 +16,13 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
+  test_shard:
+    name: test shard ${{ matrix.shard }} of 8
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
 
     steps:
       - name: Checkout repository
@@ -35,12 +40,58 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Run tests
-        run: python -m pytest tests -q
+      - name: Select deterministic test-file shard
+        env:
+          SHARD_NUMBER: ${{ matrix.shard }}
+          SHARD_COUNT: "8"
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          shard_number = int(os.environ["SHARD_NUMBER"])
+          shard_count = int(os.environ["SHARD_COUNT"])
+          files = sorted(Path("tests").rglob("test_*.py"))
+          if not files:
+              raise SystemExit("no pytest files discovered under tests/")
+          selected = files[shard_number - 1 :: shard_count]
+          if not selected:
+              raise SystemExit(
+                  f"test shard {shard_number}/{shard_count} selected no files"
+              )
+          Path(".pytest-shard-files").write_text(
+              "".join(f"{path.as_posix()}\n" for path in selected),
+              encoding="utf-8",
+          )
+          print(
+              f"shard {shard_number}/{shard_count}: "
+              f"{len(selected)} of {len(files)} test files"
+          )
+          for path in selected:
+              print(path.as_posix())
+          PY
+
+      - name: Run test shard
         env:
           # Keep subprocess `python -m ...` checks rooted in the checkout even
           # when a hosted runner enables Python's safe-path mode.
           PYTHONPATH: ${{ github.workspace }}
+        run: |
+          mapfile -t test_files < .pytest-shard-files
+          python -m pytest -q --durations=20 "${test_files[@]}"
+
+  syntax:
+    name: syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Validate Python syntax
         run: >-
@@ -48,3 +99,22 @@ jobs:
           api config core database domain engine intelligence models
           providers reports repositories scripts services tools workers
           build_acca.py
+
+  test:
+    name: test
+    if: always()
+    needs:
+      - test_shard
+      - syntax
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Verify all hosted test gates
+        env:
+          SHARD_RESULT: ${{ needs.test_shard.result }}
+          SYNTAX_RESULT: ${{ needs.syntax.result }}
+        run: |
+          echo "test shards: ${SHARD_RESULT}"
+          echo "syntax: ${SYNTAX_RESULT}"
+          test "${SHARD_RESULT}" = "success"
+          test "${SYNTAX_RESULT}" = "success"
