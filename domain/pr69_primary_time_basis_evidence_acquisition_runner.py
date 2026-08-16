@@ -345,12 +345,22 @@ def build_success_entry(*, sequence: int, previous_entry_sha256: str,
     if type(sequence) is not int or sequence < 1:
         raise _error("sequence must be a positive integer")
     previous = _sha(previous_entry_sha256, "previous entry sha256")
+    recorded = recorded_at.astimezone(datetime.timezone.utc) if (
+        isinstance(recorded_at, datetime.datetime)
+        and recorded_at.tzinfo is not None
+        and recorded_at.utcoffset() is not None
+    ) else None
+    if recorded is None:
+        raise _error("success recorded_at must be timezone-aware")
+    observed = parse_utc(checked["observed_at_utc"], "observed_at_utc")
+    if recorded < observed:
+        raise _error("success record precedes capture observation")
     body = {
         "schema_version": SCHEMA_VERSION, "runner_id": RUNNER_ID, "sequence": sequence,
         "previous_entry_sha256": previous, "event_type": "SLOT_SUCCEEDED",
         "target_id": slot.target_id, "slot": slot.slot, "attempt": checked["attempt"],
         "attempt_started_at_utc": checked["request_started_at_utc"],
-        "recorded_at_utc": serialize_utc(recorded_at),
+        "recorded_at_utc": serialize_utc(recorded),
         "manifest_sha256": _sha(manifest_hash, "manifest sha256"),
         "raw_sha256": checked["raw_sha256"], "raw_size": checked["raw_size"],
         "observed_at_utc": checked["observed_at_utc"],
@@ -364,6 +374,7 @@ def validate_success_entries(entries: Sequence[Mapping[str, Any]]) -> tuple[Mapp
     if len(entries) > len(plan):
         raise _error("campaign index has too many successes")
     previous = "0" * 64
+    previous_recorded: datetime.datetime | None = None
     checked_entries: list[Mapping[str, Any]] = []
     for index, raw in enumerate(entries):
         if not isinstance(raw, Mapping) or set(raw) != _SUCCESS_KEYS:
@@ -387,9 +398,14 @@ def validate_success_entries(entries: Sequence[Mapping[str, Any]]) -> tuple[Mapp
             raise _error("campaign success entry hash mismatch")
         if type(entry["attempt"]) is not int or not 1 <= entry["attempt"] <= MAXIMUM_ATTEMPTS_PER_SLOT:
             raise _error("campaign attempt is invalid")
-        parse_utc(entry["attempt_started_at_utc"], "attempt_started_at_utc")
-        parse_utc(entry["recorded_at_utc"], "recorded_at_utc")
-        parse_utc(entry["observed_at_utc"], "observed_at_utc")
+        started = parse_utc(entry["attempt_started_at_utc"], "attempt_started_at_utc")
+        recorded = parse_utc(entry["recorded_at_utc"], "recorded_at_utc")
+        observed = parse_utc(entry["observed_at_utc"], "observed_at_utc")
+        if not started <= observed <= recorded:
+            raise _error("campaign success timestamps are out of order")
+        if previous_recorded is not None and recorded < previous_recorded:
+            raise _error("campaign success recorded timestamps move backwards")
+        previous_recorded = recorded
         _sha(entry["manifest_sha256"], "manifest sha256")
         _sha(entry["raw_sha256"], "raw sha256")
         if type(entry["raw_size"]) is not int or not 0 < entry["raw_size"] <= MAX_RESPONSE_BYTES:
@@ -432,6 +448,10 @@ def pair_wait_seconds(entries: Sequence[Mapping[str, Any]], slot: CampaignSlot,
         raise _error("pair-window clock must be timezone-aware")
     current = now.astimezone(datetime.timezone.utc)
     elapsed = (current - a_time).total_seconds()
+    if elapsed < 0:
+        raise PR69PrimaryTimeBasisEvidencePairWindowError(
+            "RUNNER_CLOCK_PRECEDES_SLOT_A", "runner clock precedes slot A observation"
+        )
     if elapsed > MAXIMUM_PAIR_SEPARATION_SECONDS:
         raise PR69PrimaryTimeBasisEvidencePairWindowError(
             "PAIR_WINDOW_EXPIRED", "slot B pair window expired"
@@ -450,6 +470,7 @@ def runner_descriptor() -> Mapping[str, Any]:
         "pr124_protocol_size": PR124_PROTOCOL_SIZE,
         "campaign_root": CAPTURE_ROOT_RELATIVE,
         "required_successful_capture_count": REQUIRED_SUCCESSFUL_CAPTURE_COUNT,
+        "campaign_runner_implemented": True,
         "network_acquisition_performed": False,
         "semantic_extraction_performed": False,
         "historical_effective_scope_qualified": False,
