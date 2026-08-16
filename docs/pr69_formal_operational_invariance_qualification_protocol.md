@@ -43,6 +43,12 @@ It revalidates:
 
 PR120 and PR80 are pinned here only to freeze the definitions of the time-sensitive operations that a later reference proof must preserve. Their FotMob candidate observations/results are not execution evidence for this boundary.
 
+The machine contract keeps those roles separate:
+
+- **assumption evidence** may establish the admissible PR69 reference-transformation family and is restricted to PR132/PR69 primary lineage, primary-source time semantics with proven scope, or a machine-checkable assumption proof grounded in PR69/primary-source provenance;
+- **operation-definition inputs** may specify what must remain invariant, using the exact PR122 contract plus pinned PR120/PR80 operation semantics;
+- operation-definition inputs cannot define, widen, or rescue the reference-transformation family.
+
 Frozen proof scope is exactly the PR69 reference corpus:
 
 - 66 football-data.co.uk files
@@ -60,6 +66,8 @@ The phrase “formal invariance” must not become a way to assume the missing t
 A later execution must first prove an **admissible reference-transformation family**: the exact set or bounded schedule of clock transformations that primary/provenanced evidence permits over every relevant PR69 timestamp and effective period. Only after that family is established may ATHENA ask whether the PR69 replay operations are invariant under every transformation in it.
 
 If no transformation family can be proven from admissible evidence, execution fails at the assumption gate with `BLOCKED_INVARIANCE_ASSUMPTIONS_UNPROVEN`. It may not invent a plausible ±1 hour, ±2 hour, DST, UK, country, league, venue, or IANA-zone envelope merely because such a rule seems reasonable.
+
+PR120/PR80 operation definitions are **not** admissible assumption evidence. They define the operations to test after the assumption gate; they cannot supply a timezone, offset family, effective period, or DST schedule.
 
 ### Examples of admissible representations
 
@@ -101,7 +109,8 @@ A later execution must report at minimum:
 - PR69 target-row boundaries considered;
 - PASS / FAIL / NOT_REACHED for every operation gate;
 - a concrete counterexample identity for every failed gate;
-- the exact assumption/evidence bundle used to define the reference-transformation family.
+- the exact assumption/evidence bundle used to define the reference-transformation family;
+- assumption-evidence references and operation-definition inputs as separate accounting fields.
 
 It must explicitly prove that no FotMob candidate row was inspected to derive the reference invariance result.
 
@@ -142,8 +151,8 @@ Every authority remains false at pre-registration:
 
 SHA-256:
 
-`d4cacdc85f8d2be5746853a89c00fe8d6521075234a9009469a6385f346be513`
+`25bd2c255be53f938d4820f2896ec70d9330f7c2aaef42c976a582825cbfc5d2`
 
 Canonical size:
 
-`5,841` bytes
+`6,305` bytes
