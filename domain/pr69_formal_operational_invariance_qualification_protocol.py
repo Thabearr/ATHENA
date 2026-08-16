@@ -1,9 +1,11 @@
 """Pre-register the PR69 formal operational-invariance qualification.
 
-This protocol is result-free. It freezes the exact proof boundary required by
-PR122 after PR132 established that direct primary clock semantics remain
-ambiguous. It does not assume a timezone or offset, execute invariance, compare
-results to fit a clock, or authorize PR80/model/probability/pricing/selection/
+This protocol is result-free and reference-only. It freezes the exact second
+route allowed by PR122 after PR132 established that direct primary clock
+semantics remain ambiguous. A later execution may prove that PR69's own
+pre-match time-sensitive operations are invariant across every admissible
+reference-clock transformation. It must not inspect FotMob candidate rows,
+infer a timezone/offset, or authorize PR80/model/probability/pricing/selection/
 production/BET use.
 """
 from __future__ import annotations
@@ -21,7 +23,7 @@ import domain.prospective_successor_feature_construction_candidate as pr80
 
 SCHEMA_VERSION = 1
 PROTOCOL_ID = "REVIEWED_PR69_FORMAL_OPERATIONAL_INVARIANCE_QUALIFICATION_PROTOCOL_V1"
-PROTOCOL_SCOPE = "PRE_REGISTERED_PR69_FORMAL_OPERATIONAL_INVARIANCE_PROOF_ONLY"
+PROTOCOL_SCOPE = "PRE_REGISTERED_PR69_REFERENCE_ONLY_FORMAL_OPERATIONAL_INVARIANCE_PROOF"
 PROTOCOL_STATE = (
     "PRE_REGISTERED_NOT_EXECUTED_PR69_FORMAL_OPERATIONAL_INVARIANCE_UNQUALIFIED"
 )
@@ -45,8 +47,9 @@ PR80_CONSTRUCTOR_BLOB_SHA = "9135f056d036fd0207a3daead2599ac2520274be"
 PR69_SOURCE_FILE_COUNT = 66
 PR69_SOURCE_TOTAL_BYTES = 10_006_877
 PR69_SOURCE_FIXTURE_COUNT = 21_226
-PR119_FOTMOB_HISTORY_ROW_COUNT = 21_326
-HISTORICAL_REQUEST_DATE_END = "2026-08-14"
+PR69_SEASONS = (
+    "2020-21", "2021-22", "2022-23", "2023-24", "2024-25", "2025-26"
+)
 MODEL_LEAGUE_CODES = (
     "B1", "D1", "E0", "F1", "G1", "I1", "N1", "P1", "SC0", "SP1", "T1"
 )
@@ -80,8 +83,8 @@ QUALIFICATION_STATUS_VOCABULARY = (
     "BLOCKED_TIME_BASIS_SCOPE_OR_EFFECTIVE_PERIOD_AMBIGUOUS",
 )
 
-PROTOCOL_SHA256 = "6da4f4e9e2557724011eda56a156977cf20c5506a1ac1a0a794822fbc81eb2f0"
-PROTOCOL_SIZE = 5_560
+PROTOCOL_SHA256 = "d4cacdc85f8d2be5746853a89c00fe8d6521075234a9009469a6385f346be513"
+PROTOCOL_SIZE = 5_841
 
 
 class PR69FormalOperationalInvarianceProtocolError(ValueError):
@@ -137,15 +140,16 @@ def _payload() -> dict[str, Any]:
             "pr69_source_file_count": PR69_SOURCE_FILE_COUNT,
             "pr69_source_total_bytes": PR69_SOURCE_TOTAL_BYTES,
             "pr69_source_fixture_count": PR69_SOURCE_FIXTURE_COUNT,
-            "pr119_fotmob_history_row_count": PR119_FOTMOB_HISTORY_ROW_COUNT,
-            "historical_request_date_end": HISTORICAL_REQUEST_DATE_END,
+            "pr69_seasons": list(PR69_SEASONS),
             "model_league_codes": list(MODEL_LEAGUE_CODES),
             "full_athena_competition_universe_claimed": False,
+            "fotmob_candidate_rows_in_scope": False,
+            "fotmob_candidate_time_basis_assessed": False,
         },
         "assumption_proof_contract": {
             "must_precede_operation_proof": True,
             "must_be_admissible_evidence_backed": True,
-            "must_cover_every_reference_timestamp_and_target_boundary": True,
+            "must_cover_every_pr69_reference_timestamp_and_pr69_target_boundary": True,
             "must_define_effective_period_and_version_scope": True,
             "must_define_deterministic_mapping_or_offset_schedule": True,
             "may_normalize_named_zone_or_source_rule_to_exact_offset_schedule": True,
@@ -157,7 +161,10 @@ def _payload() -> dict[str, Any]:
             "no_proven_transformation_family_means_fail_before_operation_checks": True,
         },
         "operation_proof_contract": {
-            "quantifier": "FOR_EVERY_TRANSFORMATION_IN_THE_PROVEN_ADMISSIBLE_FAMILY",
+            "quantifier": (
+                "FOR_EVERY_PR69_ROW_AND_EVERY_TRANSFORMATION_IN_THE_PROVEN_"
+                "ADMISSIBLE_REFERENCE_FAMILY"
+            ),
             "strict_prior_membership_invariance": True,
             "form_ordering_and_fixture_id_tiebreak_invariance": True,
             "elo_ordering_and_fixture_id_tiebreak_invariance": True,
@@ -174,28 +181,29 @@ def _payload() -> dict[str, Any]:
             "equal_numeric_feature_outputs_alone_are_insufficient": True,
         },
         "execution_accounting_contract": {
-            "must_report_reference_rows_considered": True,
-            "must_report_candidate_history_rows_considered": True,
-            "must_report_target_boundaries_considered": True,
+            "must_report_pr69_reference_rows_considered": True,
+            "must_report_pr69_target_boundaries_considered": True,
             "must_report_each_operation_gate_pass_fail_not_reached": True,
             "must_report_counterexample_identity_for_any_failed_gate": True,
             "must_preserve_raw_source_times_without_rewrite": True,
             "must_not_train_or_tune_model_from_invariance_execution": True,
+            "must_not_inspect_fotmob_candidate_rows_for_reference_invariance_result": True,
         },
         "admissible_evidence": [
             "EXACT_PR132_V2_SEMANTIC_QUALIFICATION_RECEIPT_AND_PRIMARY_CAPTURE_LINEAGE",
             "EXACT_FROZEN_PR69_RAW_SOURCE_BYTES_AND_PR114_HASHED_REBUILD_EVIDENCE",
-            "EXACT_FROZEN_PR119_FOTMOB_HISTORY_AND_PR120_TIME_OPERATION_CONTRACT",
+            "EXACT_PR120_AND_PR80_TIME_OPERATION_SEMANTICS_AS_DEFINITION_ONLY_NOT_CANDIDATE_RESULTS",
             "PRIMARY_SOURCE_TIME_SEMANTICS_WITH_PROVEN_EFFECTIVE_SCOPE",
-            "MACHINE_CHECKABLE_TRANSFORMATION_ASSUMPTION_PROOF_WITH_ADMISSIBLE_PROVENANCE",
+            "MACHINE_CHECKABLE_REFERENCE_TRANSFORMATION_ASSUMPTION_PROOF_WITH_ADMISSIBLE_PROVENANCE",
         ],
         "forbidden_shortcuts": [
             "DO_NOT_ASSUME_A_FIXED_OFFSET_DST_RULE_OR_NAMED_ZONE_WITHOUT_ADMISSIBLE_EVIDENCE",
             "DO_NOT_TREAT_FOTMOB_EUROPE_OSLO_AS_PR69_REFERENCE_EVIDENCE",
+            "DO_NOT_INSPECT_OR_COMPARE_FOTMOB_CANDIDATE_ROWS_IN_THIS_REFERENCE_INVARIANCE_EXECUTION",
             "DO_NOT_INFER_TIME_BASIS_FROM_COUNTRY_LEAGUE_TEAM_VENUE_OR_COMMON_PRACTICE",
             "DO_NOT_USE_EQUAL_ORDERING_OR_EQUAL_FEATURE_VALUES_TO_PROVE_TRANSFORMATION_ASSUMPTIONS",
             "DO_NOT_HIDE_DAY_BOUNDARY_OR_DST_COUNTEREXAMPLES_BEHIND_AGGREGATE_COUNTS",
-            "DO_NOT_REWRITE_PR69_PR80_PR119_OR_PR120_SEMANTICS_AFTER_OBSERVING_RESULTS",
+            "DO_NOT_REWRITE_PR69_PR80_PR120_OR_PR132_SEMANTICS_AFTER_OBSERVING_RESULTS",
             "DO_NOT_AUTHORIZE_MODEL_PROBABILITY_PRICING_SELECTION_PRODUCTION_OR_BET_FROM_PRE_REGISTRATION",
         ],
         "qualification_status_vocabulary": list(QUALIFICATION_STATUS_VOCABULARY),
@@ -212,9 +220,13 @@ def _verify_upstream() -> None:
         PR132_RECEIPT_SIZE,
     ):
         raise _error("PR132 receipt identity changed")
-    if _git_blob_sha(pr132.RECEIPT_PATH if hasattr(pr132, "RECEIPT_PATH") else Path(
-        "artifacts/research-manifests/pr69-primary-time-basis-semantic-qualification-v2.json"
-    )) != PR132_RECEIPT_BLOB_SHA:
+    receipt_path = (
+        Path(pr132.__file__).resolve().parents[1]
+        / "artifacts"
+        / "research-manifests"
+        / "pr69-primary-time-basis-semantic-qualification-v2.json"
+    )
+    if _git_blob_sha(receipt_path) != PR132_RECEIPT_BLOB_SHA:
         raise _error("PR132 checked-in receipt blob changed")
     if _git_blob_sha(Path(pr132.__file__)) != PR132_QUALIFICATION_BLOB_SHA:
         raise _error("PR132 qualification implementation blob changed")
@@ -235,10 +247,20 @@ def _verify_upstream() -> None:
         PR122_PROTOCOL_BLOB_SHA,
     ):
         raise _error("PR122 protocol identity changed")
-    if "QUALIFIED_FORMAL_OPERATIONAL_INVARIANCE_WITHOUT_NAMED_TIMEZONE" not in (
-        pr122.QUALIFICATION_STATUS_VOCABULARY
+    if (
+        pr122.PR69_SOURCE_FILE_COUNT,
+        pr122.PR69_SOURCE_TOTAL_BYTES,
+        pr122.PR69_SOURCE_FIXTURE_COUNT,
+        tuple(pr122.SEASONS),
+        tuple(pr122.MODEL_LEAGUE_CODES),
+    ) != (
+        PR69_SOURCE_FILE_COUNT,
+        PR69_SOURCE_TOTAL_BYTES,
+        PR69_SOURCE_FIXTURE_COUNT,
+        PR69_SEASONS,
+        MODEL_LEAGUE_CODES,
     ):
-        raise _error("PR122 no longer admits the formal invariance result")
+        raise _error("PR122 frozen PR69 scope changed")
     for status in QUALIFICATION_STATUS_VOCABULARY:
         if status not in pr122.QUALIFICATION_STATUS_VOCABULARY:
             raise _error("formal invariance status is outside frozen PR122 vocabulary")
@@ -252,16 +274,13 @@ def _verify_upstream() -> None:
         PR120_PROTOCOL_SIZE,
         PR120_PROTOCOL_BLOB_SHA,
     ):
-        raise _error("PR120 operation contract identity changed")
-    if pr120.FROZEN_HISTORY_ROW_COUNT != PR119_FOTMOB_HISTORY_ROW_COUNT:
-        raise _error("PR120 frozen FotMob history row count changed")
-    if pr120.HISTORICAL_REQUEST_DATE_END != HISTORICAL_REQUEST_DATE_END:
-        raise _error("PR120 historical ceiling changed")
-    if tuple(pr120.MODEL_LEAGUE_CODES) != MODEL_LEAGUE_CODES:
-        raise _error("PR120 model-family scope changed")
-
+        raise _error("PR120 time-operation contract identity changed")
     if _git_blob_sha(Path(pr80.__file__)) != PR80_CONSTRUCTOR_BLOB_SHA:
         raise _error("PR80 constructor implementation blob changed")
+    if pr80.SOURCE_LOCAL_TIME_BASIS != (
+        "SOURCE_LOCAL_NAIVE_DATETIME_REQUIRED_FOR_PR78_PARITY"
+    ):
+        raise _error("PR80 source-local time basis changed")
 
 
 def build_pr69_formal_operational_invariance_qualification_protocol() -> dict[str, Any]:
