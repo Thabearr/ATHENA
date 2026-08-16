@@ -4,7 +4,7 @@
 
 This PR pre-registers the second route already allowed by the frozen PR122 source-local time-basis protocol after PR132 established that the direct primary-source route remains unresolved.
 
-It is **result-free**. It does not execute an invariance assessment, infer a timezone or offset, normalize historical source bytes, authorize PR80 input, train a model, calculate probabilities, inspect prices, make selections, or authorize BET.
+It is **result-free and reference-only**. It does not execute an invariance assessment, infer a timezone or offset, normalize historical source bytes, inspect or compare FotMob candidate rows, authorize PR80 input, train a model, calculate probabilities, inspect prices, make selections, or authorize BET.
 
 Protocol state:
 
@@ -13,6 +13,16 @@ Protocol state:
 Next boundary:
 
 `EXECUTE_REVIEWED_PR69_FORMAL_OPERATIONAL_INVARIANCE_QUALIFICATION`
+
+## Why this boundary is reference-only
+
+PR120's gate order is explicit:
+
+1. resolve the PR69 source-local reference basis **or prove source-independent invariance**;
+2. only then assess whether the FotMob `Europe/Oslo` naive representation is admissible;
+3. only after that perform FotMob-vs-reference strict-prior, ordering, rest-day and fatigue equivalence checks.
+
+Therefore this protocol may prove only that PR69's own pre-match operations are independent of the unresolved reference-clock transformation. It cannot inspect the 21,326 PR119 FotMob candidate rows or use their agreement/disagreement to obtain the reference result. Candidate semantic equivalence remains a later PR120/PR121-lineage boundary.
 
 ## Exact ancestry
 
@@ -31,17 +41,23 @@ It revalidates:
 - PR120 implementation blob: `e07616e99c0beaf2a95bcaec96d02616b21c378f`
 - PR80 constructor implementation blob: `9135f056d036fd0207a3daead2599ac2520274be`
 
-Frozen research scope remains:
+PR120 and PR80 are pinned here only to freeze the definitions of the time-sensitive operations that a later reference proof must preserve. Their FotMob candidate observations/results are not execution evidence for this boundary.
 
-- PR69: 66 football-data.co.uk files / 10,006,877 bytes / 21,226 fixtures
-- PR119: 21,326 qualified FotMob historical rows through `2026-08-14`
+Frozen proof scope is exactly the PR69 reference corpus:
+
+- 66 football-data.co.uk files
+- 10,006,877 source bytes
+- 21,226 fixtures
+- seasons 2020-21 through 2025-26
 - the existing eleven historical/model families only; this is **not** ATHENA's full competition universe
+- FotMob candidate rows in scope: **false**
+- FotMob candidate time basis assessed: **false**
 
 ## Why the proof has two stages
 
 The phrase “formal invariance” must not become a way to assume the missing timezone indirectly.
 
-A later execution must first prove an **admissible transformation family**: the exact set or bounded schedule of clock transformations that primary/provenanced evidence permits over the frozen historical scope. Only after that family is established may ATHENA ask whether the model-feature operations are invariant under every transformation in it.
+A later execution must first prove an **admissible reference-transformation family**: the exact set or bounded schedule of clock transformations that primary/provenanced evidence permits over every relevant PR69 timestamp and effective period. Only after that family is established may ATHENA ask whether the PR69 replay operations are invariant under every transformation in it.
 
 If no transformation family can be proven from admissible evidence, execution fails at the assumption gate with `BLOCKED_INVARIANCE_ASSUMPTIONS_UNPROVEN`. It may not invent a plausible ±1 hour, ±2 hour, DST, UK, country, league, venue, or IANA-zone envelope merely because such a rule seems reasonable.
 
@@ -51,14 +67,14 @@ A future evidence bundle may establish, for example:
 
 - one globally additive offset;
 - a finite piecewise offset schedule whose transitions and effective periods are proven;
-- a named-zone rule converted into its exact offset schedule for the frozen timestamps;
+- a named-zone rule converted into its exact offset schedule for the frozen PR69 timestamps;
 - another deterministic source-defined civil-time mapping.
 
 These are **representation shapes, not assumptions supplied by this protocol**. Every member, bound, transition and effective period used in execution must itself be evidenced.
 
 ## Required operation-level proof
 
-For **every transformation in the proven admissible family**, a later execution must prove all of the frozen PR122/PR120 time-sensitive operations:
+For **every PR69 row and every transformation in the proven admissible reference family**, a later execution must prove all of the frozen PR122 time-sensitive operations whose definitions are pinned by PR120/PR80:
 
 1. strict-prior membership;
 2. form ordering and exact fixture-identifier tiebreak behavior;
@@ -73,7 +89,7 @@ This distinction matters because chronology can remain ordered while fatigue cha
 - zero ordering disagreements is not sufficient;
 - equal observed form/Elo/fatigue outputs is not sufficient;
 - aggregate agreement counts are not sufficient;
-- a global additive offset may cancel exactly only **after** the evidence has proven that the allowed family really is globally additive.
+- a global additive offset may cancel exactly only **after** the evidence has proven that the allowed reference family really is globally additive.
 
 For bounded/time-varying transformations, the machine-checkable proof must ensure that ordering intervals cannot cross equality except where the frozen fixture-ID tiebreak already resolves an exact tie, and that every allowed transformed datetime delta retains the same integer-day component, rest difference and fatigue bucket.
 
@@ -81,14 +97,15 @@ For bounded/time-varying transformations, the machine-checkable proof must ensur
 
 A later execution must report at minimum:
 
-- reference rows considered;
-- candidate FotMob history rows considered;
-- target boundaries considered;
+- PR69 reference rows considered;
+- PR69 target-row boundaries considered;
 - PASS / FAIL / NOT_REACHED for every operation gate;
 - a concrete counterexample identity for every failed gate;
-- the exact assumption/evidence bundle used to define the transformation family.
+- the exact assumption/evidence bundle used to define the reference-transformation family.
 
-Raw PR69 source date/time text remains immutable. The invariance execution cannot train/tune the successor model or use its result quality to choose a convenient clock interpretation.
+It must explicitly prove that no FotMob candidate row was inspected to derive the reference invariance result.
+
+Raw PR69 source date/time text remains immutable. The invariance execution cannot train/tune the successor model or use result quality to choose a convenient clock interpretation.
 
 ## Result vocabulary
 
@@ -103,9 +120,9 @@ No post-result status vocabulary may be invented to rescue a failed proof.
 
 ## Parallel successor work
 
-This protocol belongs only to the frozen PR69 → PR120/PR80 equivalence lineage. A separately reviewed FotMob-native UTC successor path may progress in parallel, but it cannot be counted as this invariance proof, cannot resolve PR69, and cannot retroactively authorize PR80 source-local parity.
+A separately reviewed FotMob-native UTC successor path may progress in parallel, but it cannot be counted as this invariance proof, cannot resolve PR69, and cannot retroactively authorize PR80 source-local parity.
 
-Keeping those lines separate lets ATHENA move toward real prospective analytical output without rewriting historical evidence conclusions.
+If the PR69 invariance execution later qualifies, the existing PR120 semantic-equivalence lineage may resume from its reference gate and separately assess FotMob candidate-time admissibility and operation-level equivalence.
 
 ## Safety
 
@@ -125,8 +142,8 @@ Every authority remains false at pre-registration:
 
 SHA-256:
 
-`6da4f4e9e2557724011eda56a156977cf20c5506a1ac1a0a794822fbc81eb2f0`
+`d4cacdc85f8d2be5746853a89c00fe8d6521075234a9009469a6385f346be513`
 
 Canonical size:
 
-`5,560` bytes
+`5,841` bytes
