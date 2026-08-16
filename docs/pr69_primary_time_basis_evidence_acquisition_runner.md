@@ -91,6 +91,8 @@ The runner preserves the frozen pass order, requires at least one second between
 
 Before any new request intent is created, current UTC time must be at or after every relevant durable campaign timestamp already recorded: request starts, durable record times, and successful observation times. Clock rollback therefore fails closed even between different target-A captures, not only during same-target A/B timing. The supported live API also rejects custom clocks and sleepers, preventing a caller from manufacturing the frozen timing windows.
 
+After the inflight marker is durably persisted, the runner samples request-start time and revalidates the entire timing gate again immediately before transport. The request-start time may not precede the durable intent timestamp, prior durable campaign evidence must still be temporally valid, and the inter-request/retry/pair window must still permit the request. If the clock rolls backward or the pair window expires while the inflight marker is being persisted, the marker is cleared without issuing a request; an expired pair window is then durably blocked.
+
 ## Durability and no-overwrite behavior
 
 The repository/campaign path is constrained beneath the exact capture root. Symlink path components are rejected. Journal, lock, inflight, raw-response and manifest files must be ordinary single-link files where they already exist; append/create operations use no-follow behavior where the platform provides it. New directory entries and evidence files are durably synchronized. Evidence files use exclusive creation. A runner lock prevents concurrent execution.
