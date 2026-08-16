@@ -31,10 +31,8 @@ def _quarantine_legacy_staking_record(record):
         return record
 
     item = dict(record)
+    item.pop("legacy_kelly_stake_pct_before_runtime_gate", None)
     if "kelly_stake_pct" in item:
-        legacy_kelly = item.get("kelly_stake_pct")
-        if legacy_kelly is not None:
-            item["legacy_kelly_stake_pct_before_runtime_gate"] = legacy_kelly
         item["kelly_stake_pct"] = None
     return item
 
@@ -51,10 +49,8 @@ def apply_runtime_authorization(analysis: dict) -> dict:
     if safe.get("decision_status") != DecisionStatus.BET.value:
         return safe
 
+    safe.pop("legacy_kelly_stake_pct_before_runtime_gate", None)
     safe["legacy_decision_status_before_runtime_gate"] = DecisionStatus.BET.value
-    safe["legacy_kelly_stake_pct_before_runtime_gate"] = safe.get(
-        "kelly_stake_pct"
-    )
     safe["decision_status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
     safe["accumulator_eligible_selection"] = None
     safe["kelly_stake_pct"] = None
@@ -243,9 +239,6 @@ class AnalysisPipeline:
                     ),
                     "legacy_decision_status_before_runtime_gate": analysis.get(
                         "legacy_decision_status_before_runtime_gate"
-                    ),
-                    "legacy_kelly_stake_pct_before_runtime_gate": analysis.get(
-                        "legacy_kelly_stake_pct_before_runtime_gate"
                     ),
                     "runtime_authorization_state": analysis.get(
                         "runtime_authorization_state"
