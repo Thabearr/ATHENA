@@ -338,6 +338,28 @@ def test_public_live_execution_api_has_no_fetcher_injection(tmp_path: Path) -> N
     assert calls == 0
 
 
+def test_public_live_execution_rejects_clock_and_sleeper_injection(tmp_path: Path) -> None:
+    clock = MutableClock()
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="forbids clock or sleeper injection",
+    ):
+        _PRODUCTION_EXECUTE_NEXT_CAMPAIGN_SLOT(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            clock=clock,
+        )
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="forbids clock or sleeper injection",
+    ):
+        _PRODUCTION_EXECUTE_CAMPAIGN(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            sleeper=lambda seconds: None,
+        )
+
+
 def test_one_slot_persists_raw_manifest_and_global_index(
     tmp_path: Path, monkeypatch
 ) -> None:
