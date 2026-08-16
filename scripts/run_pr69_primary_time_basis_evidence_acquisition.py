@@ -2,9 +2,9 @@
 
 The module is inert on import. Live transport requires explicit authorization and uses
 only the exact four PR124 football-data.co.uk targets. Public live entry points bind the
-reviewed HTTPS transport directly; synthetic fetchers exist only behind internal test
-seams. Campaign evidence is append-only, resumable, and fail-closed around any request
-whose durable outcome is uncertain.
+reviewed HTTPS transport and real wall-clock timing sources directly; synthetic fetchers
+and clocks exist only behind internal test seams. Campaign evidence is append-only,
+resumable, and fail-closed around any request whose durable outcome is uncertain.
 """
 from __future__ import annotations
 
@@ -1181,9 +1181,11 @@ def execute_next_campaign_slot(
     clock: Callable[[], datetime.datetime] = _clock,
     sleeper: Callable[[float], None] | None = None,
 ) -> contract.CampaignProgress:
-    """Execute one trusted campaign slot using only the reviewed HTTPS transport."""
+    """Execute one trusted campaign slot using only reviewed transport and timing."""
     if execute_live_network is not True:
         raise _error("live network execution requires exact True authorization")
+    if clock is not _clock or (sleeper is not None and sleeper is not time.sleep):
+        raise _error("trusted live execution forbids clock or sleeper injection")
     contract.runner_descriptor()
     repository = Path(repository_root or _repository_root()).resolve(strict=True)
     if sleeper is None:
@@ -1193,8 +1195,8 @@ def execute_next_campaign_slot(
             repository_root=repository,
             root=root,
             fetcher=fetch_primary_evidence,
-            clock=clock,
-            sleeper=sleeper,
+            clock=_clock,
+            sleeper=time.sleep,
         )
 
 
@@ -1206,9 +1208,11 @@ def execute_campaign(
     clock: Callable[[], datetime.datetime] = _clock,
     sleeper: Callable[[float], None] | None = None,
 ) -> contract.CampaignProgress:
-    """Execute the trusted reviewed campaign using only the reviewed HTTPS transport."""
+    """Execute the trusted reviewed campaign using only reviewed transport and timing."""
     if execute_live_network is not True:
         raise _error("live network execution requires exact True authorization")
+    if clock is not _clock or (sleeper is not None and sleeper is not time.sleep):
+        raise _error("trusted live execution forbids clock or sleeper injection")
     if max_successful_slots is not None and (
         type(max_successful_slots) is not int or max_successful_slots <= 0
     ):
@@ -1237,8 +1241,8 @@ def execute_campaign(
                 repository_root=repository,
                 root=root,
                 fetcher=fetch_primary_evidence,
-                clock=clock,
-                sleeper=sleeper,
+                clock=_clock,
+                sleeper=time.sleep,
             )
         return progress
 
