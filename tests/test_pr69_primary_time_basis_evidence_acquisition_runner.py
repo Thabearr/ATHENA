@@ -1192,3 +1192,163 @@ def test_status_mode_is_network_inert(tmp_path: Path, monkeypatch, capsys) -> No
     assert output["network_acquisition_performed_by_this_status_command"] is False
     assert output["completed_slots"] == 0
     assert output["pr69_source_local_time_basis_resolved"] is False
+
+
+def _reseal_entry(entry: Mapping[str, object], **updates: object):
+    plain = dict(entry)
+    plain.update(updates)
+    plain.pop("entry_sha256", None)
+    plain["entry_sha256"] = hashlib.sha256(contract.canonical_bytes(plain)).hexdigest()
+    return plain
+
+
+def test_persisted_entries_reject_inter_request_start_violation(monkeypatch) -> None:
+    plan = _two_target_a_plan(monkeypatch)
+    raw_a = b"first"
+    manifest_a = _manifest(plan[0], 1, T0, T0 + datetime.timedelta(seconds=0.1), raw_a)
+    first = contract.build_slot_succeeded_entry(
+        (),
+        slot=plan[0],
+        attempt=1,
+        attempt_started_at=T0,
+        recorded_at=T0 + datetime.timedelta(seconds=0.2),
+        manifest_sha256=contract.manifest_sha256(manifest_a),
+        raw_sha256=manifest_a["raw_sha256"],
+        raw_size=len(raw_a),
+        observed_at=T0 + datetime.timedelta(seconds=0.1),
+    )
+    raw_b = b"second"
+    valid_start = T0 + datetime.timedelta(seconds=1)
+    manifest_b = _manifest(
+        plan[1], 1, valid_start, valid_start + datetime.timedelta(seconds=0.1), raw_b
+    )
+    second = contract.build_slot_succeeded_entry(
+        (first,),
+        slot=plan[1],
+        attempt=1,
+        attempt_started_at=valid_start,
+        recorded_at=valid_start + datetime.timedelta(seconds=0.2),
+        manifest_sha256=contract.manifest_sha256(manifest_b),
+        raw_sha256=manifest_b["raw_sha256"],
+        raw_size=len(raw_b),
+        observed_at=valid_start + datetime.timedelta(seconds=0.1),
+    )
+    tampered = _reseal_entry(
+        second,
+        attempt_started_at_utc=contract.serialize_utc(
+            T0 + datetime.timedelta(seconds=0.5)
+        ),
+    )
+    with pytest.raises(
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+        match="inter-request separation",
+    ):
+        contract.validate_campaign_entries((first, tampered))
+
+
+def test_persisted_entries_reject_shortened_durable_retry_delay(monkeypatch) -> None:
+    plan = _tiny_plan(monkeypatch)
+    failure = contract.build_attempt_failed_entry(
+        (),
+        slot=plan[0],
+        attempt=1,
+        attempt_started_at=T0,
+        recorded_at=T0 + datetime.timedelta(seconds=1),
+        error_kind="NETWORK_FAILURE",
+        error_message="timeout",
+    )
+    valid_start = T0 + datetime.timedelta(seconds=61)
+    raw = b"retry"
+    manifest = _manifest(
+        plan[0], 2, valid_start, valid_start + datetime.timedelta(seconds=1), raw
+    )
+    success = contract.build_slot_succeeded_entry(
+        (failure,),
+        slot=plan[0],
+        attempt=2,
+        attempt_started_at=valid_start,
+        recorded_at=valid_start + datetime.timedelta(seconds=2),
+        manifest_sha256=contract.manifest_sha256(manifest),
+        raw_sha256=manifest["raw_sha256"],
+        raw_size=len(raw),
+        observed_at=valid_start + datetime.timedelta(seconds=1),
+    )
+    tampered = _reseal_entry(
+        success,
+        attempt_started_at_utc=contract.serialize_utc(
+            T0 + datetime.timedelta(seconds=60.5)
+        ),
+    )
+    with pytest.raises(
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+        match="retry violates frozen durable retry delay",
+    ):
+        contract.validate_campaign_entries((failure, tampered))
+
+
+def test_persisted_entries_reject_slot_b_request_before_pair_window(monkeypatch) -> None:
+    plan = _tiny_plan(monkeypatch)
+    raw_a = b"a"
+    observed_a = T0 + datetime.timedelta(seconds=0.25)
+    manifest_a = _manifest(plan[0], 1, T0, observed_a, raw_a)
+    first = contract.build_slot_succeeded_entry(
+        (),
+        slot=plan[0],
+        attempt=1,
+        attempt_started_at=T0,
+        recorded_at=T0 + datetime.timedelta(seconds=0.5),
+        manifest_sha256=contract.manifest_sha256(manifest_a),
+        raw_sha256=manifest_a["raw_sha256"],
+        raw_size=len(raw_a),
+        observed_at=observed_a,
+    )
+    valid_start = observed_a + datetime.timedelta(seconds=300)
+    observed_b = valid_start + datetime.timedelta(seconds=0.25)
+    raw_b = b"b"
+    manifest_b = _manifest(plan[1], 1, valid_start, observed_b, raw_b)
+    second = contract.build_slot_succeeded_entry(
+        (first,),
+        slot=plan[1],
+        attempt=1,
+        attempt_started_at=valid_start,
+        recorded_at=observed_b + datetime.timedelta(seconds=0.25),
+        manifest_sha256=contract.manifest_sha256(manifest_b),
+        raw_sha256=manifest_b["raw_sha256"],
+        raw_size=len(raw_b),
+        observed_at=observed_b,
+    )
+    tampered = _reseal_entry(
+        second,
+        attempt_started_at_utc=contract.serialize_utc(
+            observed_a + datetime.timedelta(seconds=299.5)
+        ),
+    )
+    with pytest.raises(
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+        match="request start violates frozen pair window",
+    ):
+        contract.validate_campaign_entries((first, tampered))
+
+
+def test_indexed_request_start_must_match_manifest(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _capture_one_a(tmp_path, monkeypatch)
+    root = tmp_path / contract.CAPTURE_ROOT_RELATIVE
+    index_path = root / contract.CAMPAIGN_INDEX_FILENAME
+    entry = json.loads(index_path.read_text(encoding="utf-8"))
+    original_start = contract.parse_utc(
+        entry["attempt_started_at_utc"], "attempt_started_at_utc"
+    )
+    tampered = _reseal_entry(
+        entry,
+        attempt_started_at_utc=contract.serialize_utc(
+            original_start - datetime.timedelta(seconds=1)
+        ),
+    )
+    index_path.write_bytes(contract.canonical_bytes(tampered))
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="campaign index does not match durable capture evidence",
+    ):
+        runner.campaign_status(repository_root=tmp_path)
