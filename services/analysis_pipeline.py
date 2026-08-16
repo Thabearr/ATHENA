@@ -31,15 +31,19 @@ def apply_runtime_authorization(analysis: dict) -> dict:
     The legacy analyzer remains useful for diagnostics while the reviewed
     successor pipeline is being completed, but it must not outrun the reviewed
     model/source/pricing authorization chain. Analytical evidence is preserved;
-    only execution authority is removed.
+    only execution and staking authority are removed.
     """
     safe = dict(analysis or {})
     if safe.get("decision_status") != DecisionStatus.BET.value:
         return safe
 
-    safe["analytical_decision_status"] = DecisionStatus.BET.value
+    safe["legacy_decision_status_before_runtime_gate"] = DecisionStatus.BET.value
+    safe["legacy_kelly_stake_pct_before_runtime_gate"] = safe.get(
+        "kelly_stake_pct"
+    )
     safe["decision_status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
     safe["accumulator_eligible_selection"] = None
+    safe["kelly_stake_pct"] = None
     safe["runtime_authorization_state"] = LEGACY_RUNTIME_AUTHORIZATION_STATE
     safe["runtime_authorization_reasons"] = [LEGACY_RUNTIME_BET_BLOCK_REASON]
 
@@ -63,7 +67,7 @@ def apply_runtime_authorization(analysis: dict) -> dict:
     report = safe.get("evidence_report")
     if isinstance(report, dict):
         report = dict(report)
-        report["analytical_decision_before_runtime_gate"] = report.get(
+        report["legacy_decision_status_before_runtime_gate"] = report.get(
             "final_decision"
         )
         report["final_decision"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
@@ -212,8 +216,11 @@ class AnalysisPipeline:
                         "decision_status",
                         DecisionStatus.NO_BET.value,
                     ),
-                    "analytical_decision_status": analysis.get(
-                        "analytical_decision_status"
+                    "legacy_decision_status_before_runtime_gate": analysis.get(
+                        "legacy_decision_status_before_runtime_gate"
+                    ),
+                    "legacy_kelly_stake_pct_before_runtime_gate": analysis.get(
+                        "legacy_kelly_stake_pct_before_runtime_gate"
                     ),
                     "runtime_authorization_state": analysis.get(
                         "runtime_authorization_state"
