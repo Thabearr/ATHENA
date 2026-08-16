@@ -20,6 +20,8 @@ This implementation exists only to execute the already-reviewed acquisition cont
 
 Importing the runner is network-inert. The CLI requires an explicit mode: `--status` performs no network access, while `--execute-reviewed-protocol` authorizes only the frozen campaign. Programmatic live execution requires the exact boolean `execute_live_network=True`.
 
+The supported live-execution entry points bind the reviewed `fetch_primary_evidence` transport, the runner's real UTC wall clock, and `time.sleep` directly. They do not accept a caller-supplied fetcher, and they reject caller-supplied clock or sleeper substitutions. Synthetic transport and timing are confined to the private orchestration seam used by tests against temporary repositories, so synthetic bytes cannot enter the supported trusted acquisition path while masquerading as primary evidence.
+
 ## Frozen campaign
 
 The plan is exactly eight successful capture slots in this order:
@@ -37,7 +39,7 @@ The runner does not expose a source-set override. The capture root remains exact
 
 `.cache/athena-research/pr69-primary-time-basis-evidence`
 
-Each target/slot owns one immutable directory containing `response.bin` and `manifest.json`. Existing indexed evidence is reverified rather than overwritten. A partial, complete-but-unindexed, or otherwise inconsistent capture blocks; it is never silently promoted or deleted. Raw evidence remains outside Git.
+Each target/slot owns one immutable directory containing exactly `response.bin` and `manifest.json`. Existing indexed evidence is reverified rather than overwritten. Before network access, the runner scans the entire frozen capture tree rather than only the next slot. A partial, future-slot, complete-but-unindexed, unexpected-file, unexpected-directory, post-completion orphan, or otherwise inconsistent capture blocks; it is never silently promoted or deleted. Raw evidence remains outside Git.
 
 ## Transparent HTTP transport
 
@@ -87,7 +89,7 @@ A complete raw response/manifest directory is not itself permission to invent a 
 
 The runner preserves the frozen pass order, requires at least one second between request starts, and uses the successful slot-A observation timestamp as the pair anchor. Before slot B, it waits until at least 300 seconds have elapsed and records a durable `SLOT_BLOCKED` event if the 3,600-second upper bound has already expired. A response whose final observation falls outside the same 300–3,600 second window is not promoted to a successful capture.
 
-Clock rollback relative to recorded request/failure/A-slot evidence fails closed instead of creating a synthetic wait.
+Before any new request intent is created, current UTC time must be at or after every relevant durable campaign timestamp already recorded: request starts, durable record times, and successful observation times. Clock rollback therefore fails closed even between different target-A captures, not only during same-target A/B timing. The supported live API also rejects custom clocks and sleepers, preventing a caller from manufacturing the frozen timing windows.
 
 ## Durability and no-overwrite behavior
 
