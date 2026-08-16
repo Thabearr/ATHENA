@@ -18,10 +18,10 @@ def test_protocol_revalidates_exact_upstream_and_canonical_identity():
     assert protocol["protocol_scope"] == (
         "PRE_REGISTERED_PR69_REFERENCE_ONLY_FORMAL_OPERATIONAL_INVARIANCE_PROOF"
     )
-    assert len(raw) == p.PROTOCOL_SIZE == 5841
+    assert len(raw) == p.PROTOCOL_SIZE == 6305
     assert hashlib.sha256(raw).hexdigest() == p.PROTOCOL_SHA256
     assert p.PROTOCOL_SHA256 == (
-        "d4cacdc85f8d2be5746853a89c00fe8d6521075234a9009469a6385f346be513"
+        "25bd2c255be53f938d4820f2896ec70d9330f7c2aaef42c976a582825cbfc5d2"
     )
 
 
@@ -49,7 +49,38 @@ def test_assumption_proof_must_exist_before_operation_checks():
     assert assumptions["must_define_effective_period_and_version_scope"] is True
     assert assumptions["unbounded_or_plausibility_only_offset_envelope_forbidden"] is True
     assert assumptions["country_league_venue_or_cross_source_guessing_forbidden"] is True
+    assert (
+        assumptions[
+            "fotmob_history_or_display_clock_as_pr69_reference_evidence_forbidden"
+        ]
+        is True
+    )
+    assert (
+        assumptions[
+            "operation_definition_inputs_cannot_define_transformation_family"
+        ]
+        is True
+    )
     assert assumptions["no_proven_transformation_family_means_fail_before_operation_checks"] is True
+
+
+def test_assumption_evidence_is_separate_from_operation_definitions():
+    protocol = _protocol()
+    assumptions = protocol["assumption_evidence"]
+    definitions = protocol["operation_definition_inputs"]
+
+    assert all("PR120" not in item and "PR80" not in item for item in assumptions)
+    assert all("FOTMOB" not in item for item in assumptions)
+    assert "EXACT_PR122_INVARIANCE_ROUTE_CONTRACT" in definitions
+    assert (
+        "EXACT_PR120_TIME_OPERATION_SEMANTICS_AS_DEFINITION_ONLY_NOT_CANDIDATE_RESULTS"
+        in definitions
+    )
+    assert "EXACT_PR80_CONSTRUCTOR_TIME_SENSITIVE_OPERATION_SEMANTICS" in definitions
+    assert (
+        "DO_NOT_USE_PR120_OR_PR80_OPERATION_DEFINITIONS_TO_DEFINE_THE_REFERENCE_TRANSFORMATION_FAMILY"
+        in protocol["forbidden_shortcuts"]
+    )
 
 
 def test_protocol_does_not_pre_assume_global_or_dst_offset_model():
@@ -135,6 +166,12 @@ def test_execution_accounting_requires_counterexamples_and_no_training():
 
     assert accounting["must_report_each_operation_gate_pass_fail_not_reached"] is True
     assert accounting["must_report_counterexample_identity_for_any_failed_gate"] is True
+    assert (
+        accounting[
+            "must_report_assumption_evidence_and_operation_definitions_separately"
+        ]
+        is True
+    )
     assert accounting["must_preserve_raw_source_times_without_rewrite"] is True
     assert accounting["must_not_train_or_tune_model_from_invariance_execution"] is True
 
