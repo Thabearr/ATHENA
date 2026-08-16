@@ -28,7 +28,7 @@ PR #122 admitted a positive result by either:
    frozen scope.
 
 Neither qualifying bundle is available to this execution. The qualification
-therefore stops at the first evidence gate.
+therefore stops at the first admissible-evidence gate.
 
 ## Frozen ancestry
 
@@ -65,19 +65,74 @@ The preserved scope remains exactly:
 
 Those eleven codes are not claimed to be ATHENA's full competition universe.
 
+## Execution-output accounting
+
+PR #122 explicitly requires an evidence inventory, a primary-evidence conflict
+table, and row-coverage accounting. PR #123 now records all three rather than
+only the blocker result.
+
+The evidence inventory freezes all `66` season/league source-file keys in
+season-major / league-major deterministic order and binds them to the existing
+PR #69 / PR #114 source-byte ancestry:
+
+- source-corpus SHA-256
+  `c273b4bff2b611e95248133340ff84803ce238814d5dfa7ded5f39fd3d6e25a0`;
+- canonical replay SHA-256
+  `b44166b9543a8f436e62a644efc5316ad12fcc260a4c2c5908ad112928bedfe3`;
+- canonical replay size `39,952,730` bytes.
+
+The frozen raw source bytes continue to preserve the original Date/Time text.
+Because the admissible reference-evidence gate blocks first, this execution does
+not claim that it re-inspected or normalized those row-level Date/Time values.
+
+The primary-evidence conflict table is empty because there are zero admissible
+primary time-basis records to compare.
+
+Row accounting is therefore:
+
+- total frozen PR #69 fixture rows: `21,226`;
+- mapped by a direct reference rule: `0`;
+- covered by a formal invariance proof: `0`;
+- unresolved: `21,226`.
+
+This is accounting, not a claim that the rows themselves were rematerialized or
+replayed in this PR.
+
+## Primary-source discovery versus admissible evidence
+
+During review, the current official football-data.co.uk `notes.txt` surface was
+located at:
+
+`https://www.football-data.co.uk/notes.txt`
+
+The primary page describes the `Time` column as:
+
+`Time = Time of match kick off`
+
+That is useful discovery, but it is **not** promoted to admissible PR #122
+reference evidence here. This execution does not possess a reviewed exact
+raw-byte capture/hash for that documentation and the page does not establish a
+proven historical effective scope covering the frozen 2020-21 through 2025-26
+corpus. The receipt therefore records it only as a non-admissible primary
+discovery candidate.
+
+This distinction matters: finding an official page is not the same as proving a
+timezone, fixed offset, or source-defined civil-time rule for every historical
+row.
+
 ## Evidence gate
 
 The exact execution inputs record:
 
 - exact PR #122 protocol supplied: `true`;
 - exact PR #69 source-corpus ancestry revalidated: `true`;
-- provenanced primary time-basis evidence bundle supplied: `false`;
+- provenanced reviewed primary time-basis evidence bundle supplied: `false`;
 - formal operational-invariance proof bundle supplied: `false`;
 - secondary-source authority used: `false`;
 - FotMob candidate clock used as reference evidence: `false`;
 - source bytes mutated: `false`.
 
-The admissible primary time-basis evidence record count is therefore `0`.
+The admissible primary time-basis evidence record count remains `0`.
 
 No direct reference-rule shape is selected. No effective period is asserted. No
 row is claimed to be mapped under a timezone rule.
@@ -107,8 +162,8 @@ timezone.
 
 ## Interpretation
 
-This result means only that the reviewed evidence needed by PR #122 is not yet
-available.
+This result means that the reviewed evidence package required by PR #122 is not
+yet available.
 
 It does **not** prove that the PR #69 clock is UTC, UK civil time, a named IANA
 timezone, a fixed offset, or any other rule.
@@ -128,11 +183,11 @@ is refined to the actionable evidence blocker:
 
 Canonical receipt SHA-256:
 
-`4cd3f3ecbddbe23f0c29a4c86831083405290658d0cc20f14d134fc55e5e91db`
+`ff95a545963b52b6bd63236b6b98f5589ea3d104f424ed37a5e9fe1ce4376d27`
 
 Canonical receipt size:
 
-`4,077` bytes.
+`6,596` bytes.
 
 The receipt is stored at:
 
