@@ -25,6 +25,20 @@ LEGACY_RUNTIME_BET_BLOCK_REASON = (
 )
 
 
+def _quarantine_legacy_staking_record(record):
+    """Copy one exported market record and remove actionable staking advice."""
+    if not isinstance(record, dict):
+        return record
+
+    item = dict(record)
+    if "kelly_stake_pct" in item:
+        legacy_kelly = item.get("kelly_stake_pct")
+        if legacy_kelly is not None:
+            item["legacy_kelly_stake_pct_before_runtime_gate"] = legacy_kelly
+        item["kelly_stake_pct"] = None
+    return item
+
+
 def apply_runtime_authorization(analysis: dict) -> dict:
     """Fail closed when the legacy analyzer attempts to emit an executable BET.
 
@@ -52,10 +66,16 @@ def apply_runtime_authorization(analysis: dict) -> dict:
         reasons.append(LEGACY_RUNTIME_BET_BLOCK_REASON)
     safe["no_bet_reasons"] = reasons
 
+    if "viable_markets" in safe:
+        safe["viable_markets"] = [
+            _quarantine_legacy_staking_record(market)
+            for market in (safe.get("viable_markets") or [])
+        ]
+
     verdicts = []
     for verdict in safe.get("reasoning_verdicts") or []:
         if isinstance(verdict, dict):
-            item = dict(verdict)
+            item = _quarantine_legacy_staking_record(verdict)
             if item.get("status") == DecisionStatus.BET.value:
                 item["status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
             verdicts.append(item)
@@ -78,6 +98,11 @@ def apply_runtime_authorization(analysis: dict) -> dict:
         report["runtime_authorization_state"] = (
             LEGACY_RUNTIME_AUTHORIZATION_STATE
         )
+        if "market_evaluations" in report:
+            report["market_evaluations"] = [
+                _quarantine_legacy_staking_record(evaluation)
+                for evaluation in (report.get("market_evaluations") or [])
+            ]
         safe["evidence_report"] = report
 
     return safe
