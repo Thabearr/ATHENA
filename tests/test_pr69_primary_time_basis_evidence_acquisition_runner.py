@@ -444,8 +444,8 @@ def test_runner_clock_before_slot_a_fails_closed(tmp_path: Path, monkeypatch) ->
     clock.value = a - datetime.timedelta(seconds=1)
     calls = fetcher.calls
     with pytest.raises(
-        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
-        match="pair window blocked",
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+        match="clock precedes",
     ):
         runner.execute_next_campaign_slot(
             execute_live_network=True,
