@@ -5,6 +5,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_PATH = ROOT / ".github" / "workflows" / "athena-patch-bridge.yml"
+DOC_PATH = ROOT / "docs" / "patch_bridge_bounded_validation.md"
 
 
 def _text() -> str:
@@ -76,3 +77,13 @@ def test_patch_bridge_still_serializes_writes_per_pull_request() -> None:
     text = _text()
     assert "group: athena-patch-${{ github.event.issue.number }}" in text
     assert "cancel-in-progress: false" in text
+
+
+def test_docs_keep_stacked_prs_behind_main_full_suite() -> None:
+    docs = DOC_PATH.read_text(encoding="utf-8")
+    assert "stacked draft whose base is not `main`" in docs
+    assert "must be retargeted to `main`" in docs
+    assert (
+        "does not claim that the pull request has passed its final full-suite merge gate"
+        in docs
+    )
