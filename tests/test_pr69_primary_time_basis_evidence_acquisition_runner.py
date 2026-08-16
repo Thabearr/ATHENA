@@ -34,6 +34,21 @@ class MutableClock:
         self.advance(seconds)
 
 
+class SequenceClock:
+    def __init__(self, *values: datetime.datetime):
+        if not values:
+            raise ValueError("at least one clock value is required")
+        self.values = list(values)
+        self.index = 0
+
+    def __call__(self) -> datetime.datetime:
+        if self.index < len(self.values):
+            value = self.values[self.index]
+            self.index += 1
+            return value
+        return self.values[-1]
+
+
 def _tiny_plan(monkeypatch):
     actual = contract.campaign_slots()[0]
     plan = (
@@ -135,7 +150,9 @@ def _install_private_synthetic_execution_seam(monkeypatch):
     """Keep synthetic fetchers out of the trusted public live-execution API.
 
     Existing state-machine tests use the private locked seam against tmp_path roots. Calls
-    without a synthetic fetcher still exercise the production public wrapper.
+    without a synthetic fetcher still exercise the production public wrapper. Any private
+    synthetic call that accidentally reaches a real wait fails immediately instead of
+    sleeping in hosted CI.
     """
 
     def execute_next_for_test(
@@ -162,7 +179,13 @@ def _install_private_synthetic_execution_seam(monkeypatch):
             )
         contract.runner_descriptor()
         repository = Path(repository_root or runner._repository_root()).resolve(strict=True)
-        actual_sleeper = runner.time.sleep if sleeper is None else sleeper
+
+        def forbidden_real_wait(seconds: float) -> None:
+            raise AssertionError(
+                f"synthetic runner test attempted a real wait of {seconds} seconds"
+            )
+
+        actual_sleeper = forbidden_real_wait if sleeper is None else sleeper
         with runner.campaign_lock(repository_root=repository) as root:
             return runner._execute_next_slot_locked(
                 repository_root=repository,
@@ -603,6 +626,71 @@ def test_clock_rollback_after_slow_success_blocks_next_target_before_network(
             sleeper=clock.sleep,
         )
     assert fetcher.calls == calls
+
+
+def test_clock_rollback_between_intent_and_request_blocks_before_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _tiny_plan(monkeypatch)
+    clock = SequenceClock(T0, T0 - datetime.timedelta(seconds=1))
+    calls = 0
+
+    def forbidden_fetch(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("network must not run")
+
+    with pytest.raises(
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+        match="durable inflight intent",
+    ):
+        runner.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=forbidden_fetch,
+            clock=clock,
+        )
+    assert calls == 0
+    root = tmp_path / contract.CAPTURE_ROOT_RELATIVE
+    assert not (root / runner.INFLIGHT_ATTEMPT_FILENAME).exists()
+    assert runner.load_campaign_entries(repository_root=tmp_path) == ()
+
+
+def test_pair_window_expiry_after_inflight_blocks_before_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _, _, _, _ = _capture_one_a(tmp_path, monkeypatch)
+    entries = runner.load_campaign_entries(repository_root=tmp_path)
+    a = contract.parse_utc(entries[-1]["detail"]["observed_at_utc"], "a")
+    clock = SequenceClock(
+        a + datetime.timedelta(seconds=300),
+        a + datetime.timedelta(seconds=3601),
+    )
+    calls = 0
+
+    def forbidden_fetch(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("network must not run")
+
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="pair window blocked before request",
+    ):
+        runner.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=forbidden_fetch,
+            clock=clock,
+        )
+    assert calls == 0
+    entries = runner.load_campaign_entries(repository_root=tmp_path)
+    assert entries[-1]["event_type"] == "SLOT_BLOCKED"
+    assert entries[-1]["detail"]["error_kind"] == (
+        "PAIR_WINDOW_EXPIRED_BEFORE_REQUEST"
+    )
+    root = tmp_path / contract.CAPTURE_ROOT_RELATIVE
+    assert not (root / runner.INFLIGHT_ATTEMPT_FILENAME).exists()
 
 
 def test_pending_inflight_attempt_blocks_automatic_retry(
