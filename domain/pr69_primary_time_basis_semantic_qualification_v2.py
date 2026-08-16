@@ -1,14 +1,18 @@
 """Qualify the preserved PR69 primary time-basis evidence campaign V2.
 
 This module records the reviewed semantic result of the exact preserved V2
-campaign. It does not infer a CSV timezone from generic site clock wording and
-it does not authorize PR80/model/probability/pricing/selection/BET use.
+campaign under the already-frozen PR122 and PR124 contracts. It does not infer
+a CSV timezone from generic site-clock wording, backdate current documentation,
+or authorize PR80/model/probability/pricing/selection/BET use.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 from typing import Any
+
+import domain.pr69_primary_time_basis_evidence_acquisition_protocol as pr124
+import domain.pr69_source_local_time_basis_resolution_protocol as pr122
 
 SCHEMA_VERSION = 2
 QUALIFICATION_ID = "PR69_PRIMARY_TIME_BASIS_SEMANTIC_QUALIFICATION_V2"
@@ -18,7 +22,7 @@ QUALIFICATION_SCOPE = (
 QUALIFICATION_STATE = (
     "EXECUTED_PRIMARY_EVIDENCE_ADMISSIBLE_DIRECT_TIME_BASIS_UNRESOLVED"
 )
-PRIMARY_STATUS = "BLOCKED_NO_EXPLICIT_CSV_TIME_BASIS_OR_HISTORICAL_EFFECTIVE_SCOPE"
+PRIMARY_STATUS = "BLOCKED_TIME_BASIS_SCOPE_OR_EFFECTIVE_PERIOD_AMBIGUOUS"
 BASE_MAIN_SHA = "4a2ca10af4b14194253ba6fc84bca780e2b03d58"
 
 PR122_PROTOCOL_SHA256 = "d3bf061ade81bb1b60f38e98f5fa3c8c21ba5bf6652879f2cc19e151b53aee4a"
@@ -134,8 +138,8 @@ SEMANTIC_RECORDS: tuple[dict[str, Any], ...] = (
         "raw_sha256": TARGETS[3]["raw_sha256"],
         "line": 194,
         "byte_start": 14_268,
-        "byte_end": 14_293,
-        "text": "Latest fixtures uploaded:",
+        "byte_end": 14_317,
+        "text": "Latest fixtures uploaded: 14/08/26 11:26 UK time.",
         "classification": "ADMISSIBLE_PRIMARY_SITE_CLOCK_CONTEXT_ONLY",
         "establishes_csv_time_basis": False,
         "establishes_historical_effective_scope": False,
@@ -156,7 +160,7 @@ DIRECT_ROUTE = {
 FORMAL_INVARIANCE_ROUTE = {
     "executed": False,
     "assumptions_proven": False,
-    "status": "NOT_REACHED_DIRECT_PRIMARY_SEMANTICS_REMAIN_UNRESOLVED",
+    "status": "REQUIRED_NOT_EXECUTED_DIRECT_PRIMARY_SEMANTICS_UNRESOLVED",
 }
 
 SAFETY = {
@@ -174,9 +178,13 @@ SAFETY = {
 }
 
 NEXT_REQUIRED_BOUNDARY = (
-    "PRE_REGISTER_FOTMOB_NATIVE_SUCCESSOR_FEATURE_TIME_BASIS_PROTOCOL_OR_"
-    "SEPARATELY_PROVEN_PR69_INVARIANCE_ROUTE"
+    "PRE_REGISTER_REVIEWED_PR69_FORMAL_OPERATIONAL_INVARIANCE_QUALIFICATION_PROTOCOL"
 )
+
+CANONICAL_RECEIPT_SHA256 = (
+    "cbdf0bbf9e31d44e0d00125bd10d714272ac6046386cf52f1d9d27b3ab84bb8d"
+)
+CANONICAL_RECEIPT_SIZE = 5_422
 
 
 def qualification_receipt() -> dict[str, Any]:
@@ -238,7 +246,31 @@ def canonical_receipt_sha256() -> str:
     return hashlib.sha256(canonical_receipt_bytes()).hexdigest()
 
 
+def _validate_frozen_upstream_contracts() -> None:
+    assert pr122.PROTOCOL_SHA256 == PR122_PROTOCOL_SHA256
+    assert pr124.PROTOCOL_SHA256 == PR124_PROTOCOL_SHA256
+    assert PRIMARY_STATUS in pr122.QUALIFICATION_STATUS_VOCABULARY
+    assert (
+        "IF_DIRECT_REFERENCE_SEMANTICS_CANNOT_BE_RECOVERED_REQUIRE_FORMAL_OPERATIONAL_INVARIANCE_ACROSS_EVERY_ADMISSIBLE_REFERENCE_TRANSFORMATION"
+        in pr122.QUALIFICATION_REQUIREMENTS
+    )
+    protocol = pr124.build_pr69_primary_time_basis_evidence_acquisition_protocol()
+    assert protocol.admissibility_contract[
+        "timezone_or_offset_or_civil_time_rule_must_be_explicit_for_direct_resolution"
+    ] is True
+    assert protocol.admissibility_contract[
+        "historical_effective_scope_must_be_separately_proven"
+    ] is True
+    assert protocol.admissibility_contract[
+        "site_clock_wording_alone_proves_csv_time_basis"
+    ] is False
+    assert protocol.effective_scope_contract[
+        "current_documentation_must_not_be_backdated_without_primary_scope_evidence"
+    ] is True
+
+
 def validate_qualification() -> None:
+    _validate_frozen_upstream_contracts()
     receipt = qualification_receipt()
     targets = receipt["capture_assessment"]["targets"]
     assert len(targets) == 4
@@ -247,6 +279,8 @@ def validate_qualification() -> None:
     assert all(300 <= item["pair_separation_seconds"] <= 3600 for item in targets)
     assert DIRECT_ROUTE["mapped_rows"] + DIRECT_ROUTE["unresolved_rows"] == PR69_SOURCE_FIXTURE_COUNT
     assert DIRECT_ROUTE["unresolved_rows"] == PR69_SOURCE_FIXTURE_COUNT
+    assert FORMAL_INVARIANCE_ROUTE["executed"] is False
+    assert FORMAL_INVARIANCE_ROUTE["assumptions_proven"] is False
     assert all(not value for value in SAFETY.values())
     assert all(
         record["establishes_csv_time_basis"] is False
@@ -254,3 +288,5 @@ def validate_qualification() -> None:
         if record["classification"] != "ADMISSIBLE_PRIMARY_FIELD_SEMANTIC"
         or record["record_id"] == "NOTES_TIME_FIELD_MEANING"
     )
+    assert canonical_receipt_sha256() == CANONICAL_RECEIPT_SHA256
+    assert len(canonical_receipt_bytes()) == CANONICAL_RECEIPT_SIZE
