@@ -42,6 +42,8 @@ def test_v2_lane_binds_exact_failed_receipt_artifact_and_fix() -> None:
         "ce87f13cb72a917c0a01e4bbede87e4123d85861d5ee1cd98667bb802d380db7",
         "EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY",
         "github.rest.actions.getArtifact",
+        "priorArtifact.digest !== expectedArtifactDigest",
+        "String(priorArtifact.workflow_run?.id || '') !== priorRunId",
         "ATHENA_PR69_PRIMARY_TIME_BASIS_EVIDENCE_EXECUTION_ATTEMPT_V2",
     )
     for value in required:
