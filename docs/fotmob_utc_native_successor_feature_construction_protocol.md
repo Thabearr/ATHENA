@@ -161,3 +161,9 @@ SHA-256:
 Canonical size:
 
 `5,809` bytes.
+
+## Current-main revalidation
+
+PR #132 merged into `main` at `cc00218a2639af4e2987d43d0a77450929c89e18` after this protocol's first exact-head review. PR #132 changes a separate PR69 semantic-qualification lineage and does not alter this protocol's PR119/PR80 evidence dependencies. The protocol module, tests, canonical SHA-256 and canonical size above remain unchanged.
+
+This documentation-only head refresh exists so hosted synthetic-merge CI revalidates the unchanged protocol against the new authoritative `main` before any merge decision.
