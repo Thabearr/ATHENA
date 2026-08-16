@@ -1,8 +1,10 @@
 """Live executor for the reviewed PR69 primary time-basis evidence campaign.
 
 The module is inert on import. Live transport requires explicit authorization and uses
-only the exact four PR124 football-data.co.uk targets. Campaign evidence is append-only,
-resumable, and fail-closed around any request whose durable outcome is uncertain.
+only the exact four PR124 football-data.co.uk targets. Public live entry points bind the
+reviewed HTTPS transport directly; synthetic fetchers exist only behind internal test
+seams. Campaign evidence is append-only, resumable, and fail-closed around any request
+whose durable outcome is uncertain.
 """
 from __future__ import annotations
 
@@ -649,15 +651,71 @@ def _capture_directory(root: Path, slot: contract.CampaignSlot) -> Path:
 def _validate_no_unindexed_capture(
     entries: tuple[Mapping[str, Any], ...], *, root: Path
 ) -> None:
-    progress = contract.campaign_progress(entries)
-    if progress.complete or progress.next_slot is None:
-        return
-    directory = _capture_directory(root, progress.next_slot)
-    if directory.exists() or directory.is_symlink():
-        raise _error(
-            "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: automatic promotion or "
-            "overwrite of existing capture evidence is forbidden"
-        )
+    """Reject any capture-tree state not justified by the append-only journal.
+
+    This scans the entire frozen tree rather than only the next campaign slot. A future
+    slot, partial target, extra file/directory, or post-completion orphan is therefore a
+    blocker before any subsequent network request can start.
+    """
+    plan = contract.campaign_slots()
+    target_slots: dict[str, set[str]] = {}
+    for slot in plan:
+        target_slots.setdefault(slot.target_id, set()).add(slot.slot)
+    success_keys = {
+        (entry["target_id"], entry["slot"])
+        for entry in entries
+        if entry["event_type"] == "SLOT_SUCCEEDED"
+    }
+    allowed_root_files = {
+        contract.CAMPAIGN_INDEX_FILENAME,
+        contract.FAILURE_JOURNAL_FILENAME,
+        contract.RUNNER_LOCK_FILENAME,
+        INFLIGHT_ATTEMPT_FILENAME,
+    }
+    try:
+        root_children = tuple(root.iterdir())
+    except OSError as exc:
+        raise _error("campaign capture tree could not be enumerated") from exc
+
+    for child in root_children:
+        if child.name in allowed_root_files:
+            continue
+        if child.name not in target_slots:
+            raise _error(
+                "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: unexpected campaign "
+                f"root entry {child.name!r} is not authorized"
+            )
+        if child.is_symlink() or not child.is_dir():
+            raise _error(
+                "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: target capture entry "
+                "must be a non-symlink directory"
+            )
+        try:
+            slot_children = tuple(child.iterdir())
+        except OSError as exc:
+            raise _error("target capture directory could not be enumerated") from exc
+        for slot_child in slot_children:
+            key = (child.name, slot_child.name)
+            if slot_child.name not in target_slots[child.name] or key not in success_keys:
+                raise _error(
+                    "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: unindexed or "
+                    f"unexpected capture slot {child.name}/{slot_child.name} exists"
+                )
+            if slot_child.is_symlink() or not slot_child.is_dir():
+                raise _error(
+                    "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: indexed capture slot "
+                    "must remain a non-symlink directory"
+                )
+        if not any(target_id == child.name for target_id, _ in success_keys):
+            raise _error(
+                "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: target directory exists "
+                "without any indexed successful capture"
+            )
+
+    for target_id, slot_label in success_keys:
+        directory = root / target_id / slot_label
+        if directory.is_symlink() or not directory.is_dir():
+            raise _error("indexed capture directory is missing or invalid")
 
 
 def _load_manifest(path: Path, slot: contract.CampaignSlot) -> tuple[Mapping[str, Any], bytes]:
@@ -679,6 +737,13 @@ def _verify_capture(
     directory = _capture_directory(root, slot)
     if directory.is_symlink() or not directory.is_dir():
         raise _error("capture directory is missing or invalid")
+    try:
+        names = {entry.name for entry in directory.iterdir()}
+    except OSError as exc:
+        raise _error("capture directory could not be enumerated") from exc
+    expected_names = {contract.RAW_BODY_FILENAME, contract.MANIFEST_FILENAME}
+    if names != expected_names:
+        raise _error("capture directory contains missing or unexpected evidence files")
     raw_path = directory / contract.RAW_BODY_FILENAME
     manifest_path = directory / contract.MANIFEST_FILENAME
     _regular_single_link(raw_path, "raw response")
@@ -789,6 +854,36 @@ def _record_block(
     return _append_entry(entries, entry, repository_root=repository_root)
 
 
+def _validate_clock_not_before_durable_evidence(
+    entries: tuple[Mapping[str, Any], ...], now: datetime.datetime
+) -> None:
+    if not entries:
+        return
+    current = contract.parse_utc(contract.serialize_utc(now), "now")
+    durable_times: list[datetime.datetime] = []
+    for entry in entries:
+        durable_times.append(
+            contract.parse_utc(entry["recorded_at_utc"], "recorded_at_utc")
+        )
+        if entry["attempt_started_at_utc"] is not None:
+            durable_times.append(
+                contract.parse_utc(
+                    entry["attempt_started_at_utc"], "attempt_started_at_utc"
+                )
+            )
+        if entry["event_type"] == "SLOT_SUCCEEDED":
+            durable_times.append(
+                contract.parse_utc(
+                    entry["detail"]["observed_at_utc"], "observed_at_utc"
+                )
+            )
+    latest = max(durable_times)
+    if current < latest:
+        raise contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError(
+            "runner clock precedes latest durable campaign evidence timestamp"
+        )
+
+
 def _wait_until_eligible(
     entries: tuple[Mapping[str, Any], ...],
     *,
@@ -797,6 +892,7 @@ def _wait_until_eligible(
 ) -> datetime.datetime:
     for _ in range(MAX_WAIT_RECHECKS):
         now = clock()
+        _validate_clock_not_before_durable_evidence(entries, now)
         wait = contract.seconds_until_next_request_eligible(entries, now)
         if wait <= 0:
             return now
@@ -941,6 +1037,11 @@ def _execute_next_slot_locked(
     clock: Callable[[], datetime.datetime],
     sleeper: Callable[[float], None],
 ) -> contract.CampaignProgress:
+    """Internal orchestration seam.
+
+    Trusted callers must pass ``fetch_primary_evidence``. Tests may exercise the state
+    machine with a synthetic fetcher only by calling this private seam in temporary roots.
+    """
     entries = load_campaign_entries(repository_root=repository_root, create_root=True)
     _verify_indexed_captures(root, entries)
     entries = _reconcile_completed_inflight(entries, root=root)
@@ -1077,10 +1178,10 @@ def execute_next_campaign_slot(
     *,
     execute_live_network: bool,
     repository_root: Path | None = None,
-    fetcher: Callable[..., FetchResult] = fetch_primary_evidence,
     clock: Callable[[], datetime.datetime] = _clock,
     sleeper: Callable[[float], None] | None = None,
 ) -> contract.CampaignProgress:
+    """Execute one trusted campaign slot using only the reviewed HTTPS transport."""
     if execute_live_network is not True:
         raise _error("live network execution requires exact True authorization")
     contract.runner_descriptor()
@@ -1091,7 +1192,7 @@ def execute_next_campaign_slot(
         return _execute_next_slot_locked(
             repository_root=repository,
             root=root,
-            fetcher=fetcher,
+            fetcher=fetch_primary_evidence,
             clock=clock,
             sleeper=sleeper,
         )
@@ -1102,10 +1203,10 @@ def execute_campaign(
     execute_live_network: bool,
     repository_root: Path | None = None,
     max_successful_slots: int | None = None,
-    fetcher: Callable[..., FetchResult] = fetch_primary_evidence,
     clock: Callable[[], datetime.datetime] = _clock,
     sleeper: Callable[[float], None] | None = None,
 ) -> contract.CampaignProgress:
+    """Execute the trusted reviewed campaign using only the reviewed HTTPS transport."""
     if execute_live_network is not True:
         raise _error("live network execution requires exact True authorization")
     if max_successful_slots is not None and (
@@ -1135,7 +1236,7 @@ def execute_campaign(
             progress = _execute_next_slot_locked(
                 repository_root=repository,
                 root=root,
-                fetcher=fetcher,
+                fetcher=fetch_primary_evidence,
                 clock=clock,
                 sleeper=sleeper,
             )
