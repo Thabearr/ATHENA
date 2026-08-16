@@ -18,7 +18,7 @@ The runner pins and revalidates the exact PR #124 acquisition protocol:
 
 This implementation exists only to execute the already-reviewed acquisition contract deterministically and preserve the resulting raw primary evidence. It does not interpret a captured statement, infer a timezone, backdate current documentation, resolve PR69 source-local semantics, compare FotMob time, authorize PR80 input, train a model, produce probabilities, price a market, select a bet, approve production, or authorize BET.
 
-Importing the runner is network-inert. CLI execution without `--execute-reviewed-protocol` prints the frozen runner descriptor and performs zero network requests. Programmatic live execution requires the exact boolean `execute_live_network=True`.
+Importing the runner is network-inert. The CLI requires an explicit mode: `--status` performs no network access, while `--execute-reviewed-protocol` authorizes only the frozen campaign. Programmatic live execution requires the exact boolean `execute_live_network=True`.
 
 ## Frozen campaign
 
@@ -37,7 +37,7 @@ The runner does not expose a source-set override. The capture root remains exact
 
 `.cache/athena-research/pr69-primary-time-basis-evidence`
 
-Each target/slot owns one immutable directory containing `response.bin` and `manifest.json`. Existing complete evidence is verified rather than overwritten; incomplete or inconsistent evidence blocks. Raw evidence remains outside Git.
+Each target/slot owns one immutable directory containing `response.bin` and `manifest.json`. Existing indexed evidence is reverified rather than overwritten. A partial, complete-but-unindexed, or otherwise inconsistent capture blocks; it is never silently promoted or deleted. Raw evidence remains outside Git.
 
 ## Transparent HTTP transport
 
@@ -67,23 +67,37 @@ Every successful manifest binds:
 - `response.bin` filename;
 - exact raw SHA-256 and byte size.
 
-The campaign index is canonical JSONL and hash-seals every successful slot. On resume, indexed captures are re-read and rehashed against their manifests. A complete durable next-slot capture that exists before its index publication can be reconciled without making a duplicate network request. A partial capture never triggers automatic deletion or replacement.
+The campaign index and failure journal are separate canonical JSONL files but form one global sequence and SHA-256 hash chain. On every resume, the two files are merged by sequence and fully revalidated for exact pass order, contiguous attempts, terminal blockers, timestamps, and hash ancestry. Every indexed success is then re-read from disk and rehashed against its manifest.
 
-Failed request attempts are canonical durable evidence in `failure-journal.jsonl`; retries use the frozen 60-second and 300-second delays. Up to three attempts are allowed per slot.
+Known request failures are durably appended to `failure-journal.jsonl`; retries use the frozen 60-second and 300-second delays measured from the durable failed-attempt record, so a process restart cannot shorten the retry delay. Three failed attempts for one slot are terminal.
+
+## Inflight request safety
+
+Before any HTTP call, the runner durably writes a self-hashed `inflight-attempt.json` marker that binds the exact pending evidence sequence/hash, target, slot, attempt, and intent timestamp.
+
+The marker is cleared only after the request outcome is durably committed to the append-only campaign evidence. On restart:
+
+- if the matching success/failure outcome is already durably recorded, the stale marker may be safely cleared;
+- if the marker still matches a pending campaign state, the runner returns `UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION` and performs **no automatic retry**;
+- if marker and journal disagree, execution blocks as an evidence-state conflict.
+
+A complete raw response/manifest directory is not itself permission to invent a successful journal event. A complete-but-unindexed capture without a matching durable outcome blocks for explicit review. This prevents a crash after the network call from silently causing either a duplicate request or an inferred success.
 
 ## Timing
 
-The runner preserves the frozen pass order, requires at least one second between request starts, and uses the successful slot-A observation timestamp as the pair anchor. Before slot B, it waits until at least 300 seconds have elapsed and refuses to start after the 3,600-second upper bound. A response whose final observation falls outside the same 300–3,600 second window is not promoted to a successful capture.
+The runner preserves the frozen pass order, requires at least one second between request starts, and uses the successful slot-A observation timestamp as the pair anchor. Before slot B, it waits until at least 300 seconds have elapsed and records a durable `SLOT_BLOCKED` event if the 3,600-second upper bound has already expired. A response whose final observation falls outside the same 300–3,600 second window is not promoted to a successful capture.
+
+Clock rollback relative to recorded request/failure/A-slot evidence fails closed instead of creating a synthetic wait.
 
 ## Durability and no-overwrite behavior
 
-The repository/campaign path is constrained beneath the exact capture root and symlink/non-directory path components are rejected. New directory entries and evidence files are durably synchronized. Evidence files use exclusive creation. A runner lock prevents concurrent execution.
+The repository/campaign path is constrained beneath the exact capture root. Symlink path components are rejected. Journal, lock, inflight, raw-response and manifest files must be ordinary single-link files where they already exist; append/create operations use no-follow behavior where the platform provides it. New directory entries and evidence files are durably synchronized. Evidence files use exclusive creation. A runner lock prevents concurrent execution.
 
-If a persistence operation becomes indeterminate, the runner fails rather than deleting evidence and retrying the network call. This is intentional: preventing an unaccounted duplicate request is more important than automatic recovery.
+If persistence becomes indeterminate after a request may have started, the inflight marker deliberately remains. The runner does not manufacture a failure event, remove partial evidence, or issue a replacement request. Preventing an unaccounted duplicate request is more important than automatic recovery.
 
 ## Execution output
 
-After a separately reviewed execution, the campaign status can report completed slots, failed-attempt count, and the A/B pair-separation table. That output is acquisition evidence only. Semantic extraction, historical effective-scope qualification, conflict resolution, and PR69 time-basis resolution remain later reviewed boundaries.
+After a separately reviewed execution, `--status` can report completed slots, blocker/inflight state, the next exact slot/attempt, and an A/B pair table containing separation and raw-hash equality. That output remains acquisition evidence only. Semantic extraction, historical effective-scope qualification, conflict resolution, and PR69 time-basis resolution are later reviewed boundaries.
 
 ## Safety
 
@@ -104,4 +118,4 @@ The implementation keeps all downstream authority false:
 
 `EXECUTE_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_CAMPAIGN`
 
-Execution must use this exact reviewed runner head after hosted synthetic-merge CI passes. The captured bytes still cannot resolve PR69 by themselves; a later qualification boundary must inspect the primary statements, their exact byte/line locations, pair drift, conflicts, and historical effective scope.
+Execution must use the exact reviewed PR #125 head after hosted synthetic-merge CI passes. Captured bytes still cannot resolve PR69 by themselves; a later qualification boundary must inspect exact primary statements and byte/line locations, pair drift, conflicts, and historical effective scope.
