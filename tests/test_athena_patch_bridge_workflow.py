@@ -16,14 +16,20 @@ def test_patch_bridge_workflow_parses_as_yaml() -> None:
     parsed = yaml.safe_load(_text())
     assert isinstance(parsed, dict)
     assert parsed["name"] == "ATHENA Patch Bridge"
-    assert set(parsed["jobs"]) == {"validate", "commit"}
+    assert set(parsed["jobs"]) == {
+        "validate",
+        "synthetic_test_shard",
+        "synthetic_syntax",
+        "commit",
+    }
 
 
-def test_patch_bridge_keeps_fail_closed_patch_and_path_guards() -> None:
+def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
     text = _text()
     required = (
         "Patch Bridge only accepts same-repository pull requests.",
         "Patch Bridge only writes to draft pull requests.",
+        "GitHub synthetic merge SHA is unavailable.",
         "Stale patch: base-sha=",
         "Patch SHA-256 mismatch",
         "git apply --check --whitespace=error-all athena.patch",
@@ -31,31 +37,55 @@ def test_patch_bridge_keeps_fail_closed_patch_and_path_guards() -> None:
         "Changed path is outside the allowlist",
         "Binary patches are forbidden",
         "Pull-request head changed after validation.",
+        "Pull-request base changed after validation.",
         "Validated patch artifact SHA-256 mismatch",
     )
     for marker in required:
         assert marker in text
 
 
-def test_patch_bridge_uses_bounded_pre_push_validation_not_monolithic_suite() -> None:
+def test_patch_bridge_pins_exact_synthetic_merge_parent_pair() -> None:
+    text = _text()
+    assert "EXPECTED_HEAD_SHA" in text
+    assert "EXPECTED_BASE_SHA" in text
+    assert "EXPECTED_MERGE_SHA" in text
+    assert "refs/pull/${{ github.event.issue.number }}/merge" in text
+    assert 'test "${parents}" = "${EXPECTED_BASE_SHA} ${EXPECTED_HEAD_SHA}"' in text
+    assert 'test "$(git rev-parse HEAD)" = "${EXPECTED_MERGE_SHA}"' in text
+
+
+def test_patch_bridge_runs_full_suite_in_eight_parallel_synthetic_shards() -> None:
+    parsed = yaml.safe_load(_text())
     text = _text()
 
     assert "python -m pytest tests -q" not in text
-    assert "Run bounded pre-push validation" in text
-    assert "python -m compileall -q" in text
-    assert "git diff --check HEAD^ HEAD" in text
-    assert "mapfile -t changed_tests" in text
-    assert "git diff --name-only HEAD^ HEAD -- tests" in text
-    assert "python -m pytest -q --durations=20 \"${changed_tests[@]}\"" in text
-    assert (
-        "Normal sharded pull-request CI remains the authoritative full-suite gate."
-        in text
-    )
+    matrix = parsed["jobs"]["synthetic_test_shard"]["strategy"]["matrix"]
+    assert matrix["shard"] == [1, 2, 3, 4, 5, 6, 7, 8]
+    assert "files = sorted(Path(\"tests\").rglob(\"test_*.py\"))" in text
+    assert "selected = files[shard_number - 1 :: shard_count]" in text
+    assert 'python -m pytest -q --durations=20 "${test_files[@]}"' in text
+    assert "Validate synthetic Python syntax" in text
+
+
+def test_patch_bridge_refuses_push_unless_tested_and_pushed_merge_trees_match() -> None:
+    text = _text()
+    assert "git write-tree" in text
+    assert "git merge-tree --write-tree" in text
+    assert "EXPECTED_TREE_SHA" in text
+    assert 'test "${actual_tree}" = "${EXPECTED_TREE_SHA}"' in text
+    commit_needs = yaml.safe_load(_text())["jobs"]["commit"]["needs"]
+    assert set(commit_needs) == {
+        "validate",
+        "synthetic_test_shard",
+        "synthetic_syntax",
+    }
 
 
 def test_patch_bridge_has_bounded_job_timeouts() -> None:
     parsed = yaml.safe_load(_text())
-    assert parsed["jobs"]["validate"]["timeout-minutes"] == 10
+    assert parsed["jobs"]["validate"]["timeout-minutes"] == 5
+    assert parsed["jobs"]["synthetic_test_shard"]["timeout-minutes"] == 20
+    assert parsed["jobs"]["synthetic_syntax"]["timeout-minutes"] == 5
     assert parsed["jobs"]["commit"]["timeout-minutes"] == 5
 
 
@@ -79,11 +109,11 @@ def test_patch_bridge_still_serializes_writes_per_pull_request() -> None:
     assert "cancel-in-progress: false" in text
 
 
-def test_docs_keep_stacked_prs_behind_main_full_suite() -> None:
+def test_patch_bridge_does_not_depend_on_post_push_bot_ci_or_comment_receipt() -> None:
+    text = _text()
+    assert "Report success" not in text
+    assert "issues: write" not in text
     docs = DOC_PATH.read_text(encoding="utf-8")
-    assert "stacked draft whose base is not `main`" in docs
-    assert "must be retargeted to `main`" in docs
-    assert (
-        "does not claim that the pull request has passed its final full-suite merge gate"
-        in docs
-    )
+    assert "GITHUB_TOKEN" in docs
+    assert "action_required" in docs
+    assert "before the bridge is allowed to push" in docs
