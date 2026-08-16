@@ -51,11 +51,11 @@ def test_first_fixture_uses_explicit_missing_and_initial_state_semantics() -> No
     assert summary["record_count"] == 1
     assert record["kickoff_utc"] == "2026-01-01T12:00:00Z"
     assert record["home_form"] == {
-        "status": "MISSING_PRIOR_HISTORY",
+        "status": "MISSING",
         "value": None,
     }
     assert record["away_form"] == {
-        "status": "MISSING_PRIOR_HISTORY",
+        "status": "MISSING",
         "value": None,
     }
     assert record["home_elo"] == {
@@ -66,7 +66,7 @@ def test_first_fixture_uses_explicit_missing_and_initial_state_semantics() -> No
     }
     assert record["away_elo"]["value"] == 1500
     assert record["fatigue"] == {
-        "status": "MISSING_PRIOR_HISTORY",
+        "status": "MISSING",
         "value": None,
         "home_rest_days": None,
         "away_rest_days": None,
@@ -91,7 +91,7 @@ def test_strictly_prior_form_and_asymmetric_overall_elo_are_used() -> None:
         "status": "CONSTRUCTED_FROM_STRICTLY_PRIOR_UTC_HISTORY",
         "value": 0.95,
     }
-    assert second["away_form"]["status"] == "MISSING_PRIOR_HISTORY"
+    assert second["away_form"]["status"] == "MISSING"
     assert second["home_elo"] == {
         "status": "CONSTRUCTED_FROM_STRICTLY_PRIOR_UTC_HISTORY",
         "value": 1513,
@@ -99,7 +99,7 @@ def test_strictly_prior_form_and_asymmetric_overall_elo_are_used() -> None:
         "rating_component": "OVERALL",
     }
     assert second["away_elo"]["value"] == 1500
-    assert second["fatigue"]["status"] == "MISSING_PRIOR_HISTORY"
+    assert second["fatigue"]["status"] == "MISSING"
 
 
 def test_away_elo_update_uses_no_home_advantage_boost() -> None:

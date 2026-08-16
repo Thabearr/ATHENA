@@ -134,7 +134,7 @@ def _k_factor(matches: int) -> int:
 def _form_value(history: list[tuple[dt.datetime, int, int]]) -> tuple[str, float | None]:
     recent = history[-5:]
     if not recent:
-        return "MISSING_PRIOR_HISTORY", None
+        return "MISSING", None
     points = 0
     for _, goals_for, goals_against in recent:
         if goals_for > goals_against:
@@ -151,7 +151,7 @@ def _fatigue_value(
     away_history: list[tuple[dt.datetime, int, int]],
 ) -> tuple[str, float | None, int | None, int | None, int | None]:
     if not home_history or not away_history:
-        return "MISSING_PRIOR_HISTORY", None, None, None, None
+        return "MISSING", None, None, None, None
     home_rest = (target - home_history[-1][0]).days
     away_rest = (target - away_history[-1][0]).days
     if home_rest < 0 or away_rest < 0:
