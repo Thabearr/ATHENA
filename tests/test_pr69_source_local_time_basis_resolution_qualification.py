@@ -13,10 +13,10 @@ def _receipt():
 def test_receipt_is_exact_canonical_identity() -> None:
     receipt = _receipt()
     raw = q.canonical_pr69_source_local_time_basis_resolution_qualification_receipt_bytes()
-    assert len(raw) == q.RECEIPT_SIZE == 6_596
+    assert len(raw) == q.RECEIPT_SIZE == 12_025
     assert hashlib.sha256(raw).hexdigest() == q.RECEIPT_SHA256
     assert q.RECEIPT_SHA256 == (
-        "ff95a545963b52b6bd63236b6b98f5589ea3d104f424ed37a5e9fe1ce4376d27"
+        "a3736753862781efc9d8ce6c15aa814185b73ed14fea82c4e8ebaa10a3ab656c"
     )
     assert receipt["qualification_state"] == q.QUALIFICATION_STATE
 
@@ -45,6 +45,22 @@ def test_execution_output_contract_inventory_and_accounting_are_present() -> Non
     assert len(set(keys)) == 66
     assert keys[0] == "2020-21:B1"
     assert keys[-1] == "2025-26:T1"
+    hashes = inventory["pr69_source_file_sha256"]
+    assert len(hashes) == 66
+    assert list(hashes)[0] == "2020-21/B1"
+    assert list(hashes)[-1] == "2025-26/T1"
+    assert hashes["2020-21/B1"] == (
+        "6e74a3f376c67b18bc40175aaf4d87b553ed8d10335ec48e6c0d805fd0117687"
+    )
+    assert hashes["2025-26/T1"] == (
+        "d35e97d42b53ca870b13683da3998aa2758eeb43280fbe71d5d935bae47cdd23"
+    )
+    assert inventory["pr69_source_file_sha256_manifest_sha256"] == (
+        q.PR69_SOURCE_FILE_SHA256_MANIFEST_SHA256
+    )
+    assert q.PR69_SOURCE_FILE_SHA256_MANIFEST_SHA256 == (
+        "4d04a22f6bd29c0f56c37c8f2e8301f2c90a02516e04ac677d3b6c3d7656501a"
+    )
     assert inventory["pr69_source_bytes_identity"] == {
         "source_file_count": 66,
         "source_total_bytes": 10_006_877,
