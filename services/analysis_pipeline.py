@@ -15,6 +15,69 @@ logger = logging.getLogger("athena.analysis_pipeline")
 # their status ever gets updated to finished.
 MAX_MATCH_DURATION_HOURS = 3
 
+LEGACY_RUNTIME_AUTHORIZATION_STATE = (
+    "ANALYSIS_ONLY_REVIEWED_SUCCESSOR_RUNTIME_NOT_AUTHORIZED"
+)
+LEGACY_RUNTIME_BET_BLOCK_REASON = (
+    "The legacy heuristic MatchAnalyst path is analysis-only. Reviewed "
+    "successor model, source, pricing, selection, and BET authorization has "
+    "not been granted to this runtime path."
+)
+
+
+def apply_runtime_authorization(analysis: dict) -> dict:
+    """Fail closed when the legacy analyzer attempts to emit an executable BET.
+
+    The legacy analyzer remains useful for diagnostics while the reviewed
+    successor pipeline is being completed, but it must not outrun the reviewed
+    model/source/pricing authorization chain. Analytical evidence is preserved;
+    only execution authority is removed.
+    """
+    safe = dict(analysis or {})
+    if safe.get("decision_status") != DecisionStatus.BET.value:
+        return safe
+
+    safe["analytical_decision_status"] = DecisionStatus.BET.value
+    safe["decision_status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+    safe["accumulator_eligible_selection"] = None
+    safe["runtime_authorization_state"] = LEGACY_RUNTIME_AUTHORIZATION_STATE
+    safe["runtime_authorization_reasons"] = [LEGACY_RUNTIME_BET_BLOCK_REASON]
+
+    reasons = list(safe.get("no_bet_reasons") or [])
+    if LEGACY_RUNTIME_BET_BLOCK_REASON not in reasons:
+        reasons.append(LEGACY_RUNTIME_BET_BLOCK_REASON)
+    safe["no_bet_reasons"] = reasons
+
+    verdicts = []
+    for verdict in safe.get("reasoning_verdicts") or []:
+        if isinstance(verdict, dict):
+            item = dict(verdict)
+            if item.get("status") == DecisionStatus.BET.value:
+                item["status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+            verdicts.append(item)
+        else:
+            verdicts.append(verdict)
+    if "reasoning_verdicts" in safe:
+        safe["reasoning_verdicts"] = verdicts
+
+    report = safe.get("evidence_report")
+    if isinstance(report, dict):
+        report = dict(report)
+        report["analytical_decision_before_runtime_gate"] = report.get(
+            "final_decision"
+        )
+        report["final_decision"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+        report_reasons = list(report.get("decision_reasons") or [])
+        if LEGACY_RUNTIME_BET_BLOCK_REASON not in report_reasons:
+            report_reasons.append(LEGACY_RUNTIME_BET_BLOCK_REASON)
+        report["decision_reasons"] = report_reasons
+        report["runtime_authorization_state"] = (
+            LEGACY_RUNTIME_AUTHORIZATION_STATE
+        )
+        safe["evidence_report"] = report
+
+    return safe
+
 
 class AnalysisPipeline:
     def __init__(self, match_analyst: MatchAnalyst, form_service: TeamFormService):
@@ -127,13 +190,17 @@ class AnalysisPipeline:
 
             if fix.get("bookmaker_odds") is not None:
                 context_payload["bookmaker_odds"] = fix["bookmaker_odds"]
-            
+
             if "home_pre_elo" in fix and fix["home_pre_elo"] is not None:
                 context_payload["home_pre_elo"] = fix["home_pre_elo"]
                 context_payload["away_pre_elo"] = fix["away_pre_elo"]
 
             try:
-                analysis = self.analyst.compile_master_fixture_prediction(context_payload)
+                analysis = apply_runtime_authorization(
+                    self.analyst.compile_master_fixture_prediction(
+                        context_payload
+                    )
+                )
                 analyzed_batch.append({
                     "fixture_id": fix.get("fixture_id", 0),
                     "fixture": f"{home_team} vs {away_team}",
@@ -144,6 +211,15 @@ class AnalysisPipeline:
                     "decision_status": analysis.get(
                         "decision_status",
                         DecisionStatus.NO_BET.value,
+                    ),
+                    "analytical_decision_status": analysis.get(
+                        "analytical_decision_status"
+                    ),
+                    "runtime_authorization_state": analysis.get(
+                        "runtime_authorization_state"
+                    ),
+                    "runtime_authorization_reasons": analysis.get(
+                        "runtime_authorization_reasons", []
                     ),
                     "upset_alert": analysis.get("upset_alert", False),
                     "risk_score": analysis.get("risk_score", 0.0),
