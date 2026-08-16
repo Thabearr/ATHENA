@@ -17,7 +17,13 @@ concurrency:
 
 jobs:
   test:
+    name: pytest shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
 
     steps:
       - name: Checkout repository
@@ -35,12 +41,44 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Select test shard
+        id: shard
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/select_pytest_shard.py \
+            --total-shards 4 \
+            --shard-index "${{ matrix.shard }}" \
+            --summary > "${RUNNER_TEMP}/pytest-shard.txt"
+          test -s "${RUNNER_TEMP}/pytest-shard.txt"
+          echo "Selected $(wc -l < "${RUNNER_TEMP}/pytest-shard.txt") test files"
+          cat "${RUNNER_TEMP}/pytest-shard.txt"
+
       - name: Run tests
-        run: python -m pytest tests -q
+        shell: bash
+        run: |
+          set -euo pipefail
+          mapfile -t TEST_FILES < "${RUNNER_TEMP}/pytest-shard.txt"
+          test "${#TEST_FILES[@]}" -gt 0
+          python -m pytest "${TEST_FILES[@]}" -q --durations=25
         env:
           # Keep subprocess `python -m ...` checks rooted in the checkout even
           # when a hosted runner enables Python's safe-path mode.
           PYTHONPATH: ${{ github.workspace }}
+
+  syntax:
+    name: validate Python syntax
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
 
       - name: Validate Python syntax
         run: >-
