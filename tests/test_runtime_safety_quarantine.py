@@ -15,6 +15,7 @@ def _bet_analysis() -> dict:
     return {
         "decision_status": DecisionStatus.BET.value,
         "recommended_analytical_verdict": "DC_1X",
+        "kelly_stake_pct": 0.75,
         "accumulator_eligible_selection": {
             "verdict": "DC_1X",
             "bookmaker_odds": 1.5,
@@ -39,10 +40,16 @@ def test_legacy_bet_is_downgraded_without_erasing_analysis() -> None:
 
     assert original["decision_status"] == DecisionStatus.BET.value
     assert original["accumulator_eligible_selection"] is not None
+    assert original["kelly_stake_pct"] == 0.75
 
-    assert safe["analytical_decision_status"] == DecisionStatus.BET.value
+    assert (
+        safe["legacy_decision_status_before_runtime_gate"]
+        == DecisionStatus.BET.value
+    )
+    assert safe["legacy_kelly_stake_pct_before_runtime_gate"] == 0.75
     assert safe["decision_status"] == DecisionStatus.ANALYTICAL_CANDIDATE.value
     assert safe["accumulator_eligible_selection"] is None
+    assert safe["kelly_stake_pct"] is None
     assert safe["runtime_authorization_state"] == LEGACY_RUNTIME_AUTHORIZATION_STATE
     assert safe["runtime_authorization_reasons"] == [
         LEGACY_RUNTIME_BET_BLOCK_REASON
@@ -53,7 +60,7 @@ def test_legacy_bet_is_downgraded_without_erasing_analysis() -> None:
         == DecisionStatus.ANALYTICAL_CANDIDATE.value
     )
     assert (
-        safe["evidence_report"]["analytical_decision_before_runtime_gate"]
+        safe["evidence_report"]["legacy_decision_status_before_runtime_gate"]
         == DecisionStatus.BET.value
     )
     assert (
@@ -101,7 +108,12 @@ def test_pipeline_applies_runtime_gate_before_export() -> None:
     assert len(rows) == 1
     row = rows[0]
     assert row["decision_status"] == DecisionStatus.ANALYTICAL_CANDIDATE.value
-    assert row["analytical_decision_status"] == DecisionStatus.BET.value
+    assert (
+        row["legacy_decision_status_before_runtime_gate"]
+        == DecisionStatus.BET.value
+    )
+    assert row["legacy_kelly_stake_pct_before_runtime_gate"] == 0.75
+    assert row["kelly_stake_pct"] is None
     assert row["accumulator_eligible_selection"] is None
     assert row["runtime_authorization_state"] == LEGACY_RUNTIME_AUTHORIZATION_STATE
 
