@@ -13,10 +13,10 @@ def _receipt():
 def test_receipt_is_exact_canonical_identity() -> None:
     receipt = _receipt()
     raw = q.canonical_pr69_source_local_time_basis_resolution_qualification_receipt_bytes()
-    assert len(raw) == q.RECEIPT_SIZE == 4_077
+    assert len(raw) == q.RECEIPT_SIZE == 6_596
     assert hashlib.sha256(raw).hexdigest() == q.RECEIPT_SHA256
     assert q.RECEIPT_SHA256 == (
-        "4cd3f3ecbddbe23f0c29a4c86831083405290658d0cc20f14d134fc55e5e91db"
+        "ff95a545963b52b6bd63236b6b98f5589ea3d104f424ed37a5e9fe1ce4376d27"
     )
     assert receipt["qualification_state"] == q.QUALIFICATION_STATE
 
@@ -37,6 +37,64 @@ def test_execution_revalidates_exact_pr122_and_pr69_scope() -> None:
     assert receipt["frozen_scope"]["full_athena_competition_universe_claimed"] is False
 
 
+def test_execution_output_contract_inventory_and_accounting_are_present() -> None:
+    receipt = _receipt()
+    inventory = receipt["evidence_inventory"]
+    keys = inventory["pr69_source_file_keys"]
+    assert len(keys) == inventory["pr69_source_file_key_count"] == 66
+    assert len(set(keys)) == 66
+    assert keys[0] == "2020-21:B1"
+    assert keys[-1] == "2025-26:T1"
+    assert inventory["pr69_source_bytes_identity"] == {
+        "source_file_count": 66,
+        "source_total_bytes": 10_006_877,
+        "source_fixture_count": 21_226,
+        "source_corpus_sha256": (
+            "c273b4bff2b611e95248133340ff84803ce238814d5dfa7ded5f39fd3d6e25a0"
+        ),
+        "canonical_replay_sha256": (
+            "b44166b9543a8f436e62a644efc5316ad12fcc260a4c2c5908ad112928bedfe3"
+        ),
+        "canonical_replay_size_bytes": 39_952_730,
+    }
+    assert inventory["raw_date_time_text_preserved_by_frozen_source_bytes"] is True
+    assert inventory["raw_date_time_text_reinspection_performed"] is False
+    assert receipt["primary_evidence_conflict_table"] == []
+    coverage = receipt["row_coverage_accounting"]
+    assert coverage["total_pr69_fixture_rows"] == 21_226
+    assert coverage["direct_reference_rule_mapped_rows"] == 0
+    assert coverage["formal_invariance_proven_rows"] == 0
+    assert coverage["unresolved_rows"] == 21_226
+
+
+def test_current_official_notes_candidate_is_discovery_only_not_authority() -> None:
+    receipt = _receipt()
+    candidates = receipt["evidence_inventory"][
+        "non_admissible_primary_discovery_candidates"
+    ]
+    assert candidates == [
+        {
+            "url": q.DISCOVERY_URL,
+            "discovered_at_utc": q.DISCOVERY_CAPTURED_AT_UTC,
+            "primary_origin": "football-data.co.uk",
+            "observed_time_field_description": q.DISCOVERY_TIME_FIELD_DESCRIPTION,
+            "raw_bytes_preserved": False,
+            "raw_sha256": None,
+            "historical_effective_scope_proven": False,
+            "admissible_under_pr122": False,
+            "rejection_reason": (
+                "RAW_BYTES_HASH_AND_HISTORICAL_EFFECTIVE_SCOPE_NOT_PRESERVED_IN_A_REVIEWED_EVIDENCE_BUNDLE"
+            ),
+        }
+    ]
+    assert receipt["evidence_assessment"][
+        "non_admissible_primary_discovery_candidate_count"
+    ] == 1
+    assert receipt["evidence_assessment"][
+        "admissible_primary_time_basis_evidence_record_count"
+    ] == 0
+
+
 def test_qualification_fails_closed_at_missing_admissible_evidence_gate() -> None:
     receipt = _receipt()
     assert receipt["qualification_state"] == (
@@ -51,9 +109,7 @@ def test_qualification_fails_closed_at_missing_admissible_evidence_gate() -> Non
     assert receipt["execution_inputs"][
         "formal_operational_invariance_proof_bundle_supplied"
     ] is False
-    assert receipt["evidence_assessment"][
-        "admissible_primary_time_basis_evidence_record_count"
-    ] == 0
+    assert receipt["gate_results"]["EVIDENCE_INVENTORY_AND_ROW_ACCOUNTING"] == "PASSED"
     assert receipt["gate_results"][
         "ADMISSIBLE_PRIMARY_TIME_BASIS_EVIDENCE_AVAILABLE"
     ] == q.QUALIFICATION_STATUS
