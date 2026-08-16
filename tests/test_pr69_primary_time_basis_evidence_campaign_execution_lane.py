@@ -125,6 +125,8 @@ def test_failure_paths_preserve_post_status_package_and_artifact() -> None:
     assert "pr69-primary-time-basis-evidence.tar" in text
     assert "package-metadata.json" in text
     assert "archive_sha256" in text
+    assert "PACKAGE_OUTCOME: ${{ steps.package.outcome }}" in text
+    assert "package_outcome == 'success'" in text
 
 
 def test_success_gate_requires_exact_eight_captures_pairs_and_clean_state() -> None:
@@ -141,11 +143,14 @@ def test_success_gate_requires_exact_eight_captures_pairs_and_clean_state() -> N
     assert "row.get('event_type') == 'SLOT_SUCCEEDED'" in text
     assert "not (root / 'inflight-attempt.json').exists()" in text
     assert "not (root / 'runner.lock').exists()" in text
+    assert "archive.is_file()" in text
+    assert "package_metadata.is_file()" in text
 
 
-def test_final_result_requires_artifact_and_never_promotes_semantics() -> None:
+def test_final_result_requires_package_artifact_and_never_promotes_semantics() -> None:
     text = _workflow()
-    assert "const qualified = stateOk && uploadOk;" in text
+    assert "const packageOk = process.env.PACKAGE_OUTCOME === 'success';" in text
+    assert "const qualified = stateOk && packageOk && uploadOk;" in text
     assert "PRIMARY_EVIDENCE_CAMPAIGN_EXECUTED_AND_PRESERVED_PENDING_SEMANTIC_QUALIFICATION" in text
     assert "EXECUTION_NOT_QUALIFIED_REVIEW_ARTIFACT_BEFORE_ANY_RETRY" in text
     assert "semantic-extraction: false" in text
