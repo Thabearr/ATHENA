@@ -69,7 +69,7 @@ Every successful manifest binds:
 - `response.bin` filename;
 - exact raw SHA-256 and byte size.
 
-The campaign index and failure journal are separate canonical JSONL files but form one global sequence and SHA-256 hash chain. On every resume, the two files are merged by sequence and fully revalidated for exact pass order, contiguous attempts, terminal blockers, timestamps, and hash ancestry. Every indexed success is then re-read from disk and rehashed against its manifest.
+The campaign index and failure journal are separate canonical JSONL files but form one global sequence and SHA-256 hash chain. On every resume, the two files are merged by sequence and fully revalidated for exact pass order, contiguous attempts, terminal blockers, timestamps, frozen request-start spacing, durable retry delays, slot-B request-start pair eligibility, and hash ancestry. Every indexed success is then re-read from disk and rehashed against its manifest, and the journal's `attempt_started_at_utc` must exactly equal the immutable manifest's `request_started_at_utc`.
 
 Known request failures are durably appended to `failure-journal.jsonl`; retries use the frozen 60-second and 300-second delays measured from the durable failed-attempt record, so a process restart cannot shorten the retry delay. Three failed attempts for one slot are terminal.
 
@@ -88,6 +88,8 @@ A complete raw response/manifest directory is not itself permission to invent a 
 ## Timing
 
 The runner preserves the frozen pass order, requires at least one second between request starts, and uses the successful slot-A observation timestamp as the pair anchor. Before slot B, it waits until at least 300 seconds have elapsed and records a durable `SLOT_BLOCKED` event if the 3,600-second upper bound has already expired. A response whose final observation falls outside the same 300–3,600 second window is not promoted to a successful capture.
+
+Those timing rules are not merely prospective waits. Persisted evidence is rejected if consecutive request starts are less than one second apart, if a retry starts before the prior durable failure record plus its frozen 60/300-second delay, or if a slot-B request itself starts outside the 300–3,600 second window anchored to the successful slot-A observation. This prevents a re-sealed journal from retroactively claiming a schedule that the frozen protocol would not have allowed.
 
 Before any new request intent is created, current UTC time must be at or after every relevant durable campaign timestamp already recorded: request starts, durable record times, and successful observation times. Clock rollback therefore fails closed even between different target-A captures, not only during same-target A/B timing. The supported live API also rejects custom clocks and sleepers, preventing a caller from manufacturing the frozen timing windows.
 
