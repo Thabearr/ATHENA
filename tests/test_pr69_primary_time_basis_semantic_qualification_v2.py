@@ -1,6 +1,17 @@
 import json
+from pathlib import Path
 
 import domain.pr69_primary_time_basis_semantic_qualification_v2 as q
+
+
+RECEIPT_PATH = Path(
+    "artifacts/research-manifests/"
+    "pr69-primary-time-basis-semantic-qualification-v2.json"
+)
+EXPECTED_RECEIPT_SHA256 = (
+    "9676fce4ecf755a85022d74a6514c8dd395cb8e1f204f588a2917bf28d8f6e48"
+)
+EXPECTED_RECEIPT_SIZE = 5_443
 
 
 def test_exact_v2_artifact_and_protocol_lineage_are_frozen():
@@ -62,10 +73,10 @@ def test_no_cross_source_or_downstream_authority_is_created():
     assert all(value is False for value in q.SAFETY.values())
 
 
-def test_receipt_is_deterministic_and_validates():
+def test_checked_in_receipt_is_exact_canonical_bytes():
     q.validate_qualification()
-    first = q.canonical_receipt_bytes()
-    second = q.canonical_receipt_bytes()
-    assert first == second
-    assert json.loads(first) == q.qualification_receipt()
-    assert len(q.canonical_receipt_sha256()) == 64
+    raw = RECEIPT_PATH.read_bytes()
+    assert raw == q.canonical_receipt_bytes()
+    assert len(raw) == EXPECTED_RECEIPT_SIZE
+    assert q.canonical_receipt_sha256() == EXPECTED_RECEIPT_SHA256
+    assert json.loads(raw) == q.qualification_receipt()
