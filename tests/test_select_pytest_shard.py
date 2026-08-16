@@ -7,6 +7,13 @@ import pytest
 from scripts import select_pytest_shard as sharder
 
 
+def _write_pytest_ini(root: Path, *, python_files: str = "test_*.py") -> None:
+    (root / "pytest.ini").write_text(
+        f"[pytest]\ntestpaths = tests\npython_files = {python_files}\n",
+        encoding="utf-8",
+    )
+
+
 def _write_test(root: Path, relative: str, size: int) -> Path:
     path = root / relative
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -16,6 +23,7 @@ def _write_test(root: Path, relative: str, size: int) -> Path:
 
 
 def test_assignment_is_deterministic_complete_disjoint_and_balanced(tmp_path: Path) -> None:
+    _write_pytest_ini(tmp_path)
     sizes = (100, 200, 300, 400, 500, 600, 700, 800)
     expected = set()
     for index, size in enumerate(sizes):
@@ -32,12 +40,12 @@ def test_assignment_is_deterministic_complete_disjoint_and_balanced(tmp_path: Pa
     assert len(flattened) == len(expected)
     assert all(assignment.paths for assignment in first)
 
-    # Largest-first greedy allocation should keep this synthetic suite close in weight.
     loads = [assignment.total_bytes for assignment in first]
     assert max(loads) - min(loads) <= max(sizes)
 
 
 def test_discovery_matches_repository_pytest_python_file_pattern(tmp_path: Path) -> None:
+    _write_pytest_ini(tmp_path)
     _write_test(tmp_path, "tests/test_alpha.py", 100)
     _write_test(tmp_path, "tests/nested/test_beta.py", 100)
     _write_test(tmp_path, "tests/nested/gamma_test.py", 100)
@@ -47,7 +55,15 @@ def test_discovery_matches_repository_pytest_python_file_pattern(tmp_path: Path)
     assert sharder.discover_test_files(tmp_path) == expected
 
 
+def test_pytest_config_drift_fails_closed(tmp_path: Path) -> None:
+    _write_pytest_ini(tmp_path, python_files="*_test.py")
+    _write_test(tmp_path, "tests/test_alpha.py", 100)
+    with pytest.raises(sharder.PytestShardError, match="python_files changed"):
+        sharder.discover_test_files(tmp_path)
+
+
 def test_invalid_shard_requests_fail_closed(tmp_path: Path) -> None:
+    _write_pytest_ini(tmp_path)
     _write_test(tmp_path, "tests/test_only.py", 100)
     with pytest.raises(sharder.PytestShardError, match="positive"):
         sharder.assign_test_files(tmp_path, total_shards=0)
