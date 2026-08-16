@@ -72,8 +72,12 @@ table, and row-coverage accounting. PR #123 now records all three rather than
 only the blocker result.
 
 The evidence inventory freezes all `66` season/league source-file keys in
-season-major / league-major deterministic order and binds them to the existing
-PR #69 / PR #114 source-byte ancestry:
+season-major / league-major deterministic order **and the exact SHA-256 of each
+source CSV**, copied only from the already-qualified PR #114 rebuild receipt.
+The 66-entry per-file hash manifest is itself canonically bound as
+`4d04a22f6bd29c0f56c37c8f2e8301f2c90a02516e04ac677d3b6c3d7656501a`.
+This binds every listed file individually to the existing PR #69 / PR #114
+source-byte ancestry:
 
 - source-corpus SHA-256
   `c273b4bff2b611e95248133340ff84803ce238814d5dfa7ded5f39fd3d6e25a0`;
@@ -183,11 +187,11 @@ is refined to the actionable evidence blocker:
 
 Canonical receipt SHA-256:
 
-`ff95a545963b52b6bd63236b6b98f5589ea3d104f424ed37a5e9fe1ce4376d27`
+`a3736753862781efc9d8ce6c15aa814185b73ed14fea82c4e8ebaa10a3ab656c`
 
 Canonical receipt size:
 
-`6,596` bytes.
+`12,025` bytes.
 
 The receipt is stored at:
 
