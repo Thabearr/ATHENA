@@ -666,6 +666,7 @@ def validate_campaign_entries(
     terminal_reason: str | None = None
     previous_hash = ZERO_SHA256
     previous_recorded: datetime.datetime | None = None
+    previous_request_started: datetime.datetime | None = None
     successes: dict[tuple[str, str], Mapping[str, Any]] = {}
 
     for offset, entry in enumerate(normalized, start=1):
@@ -686,6 +687,43 @@ def validate_campaign_entries(
         previous_recorded = recorded
 
         event_type = entry["event_type"]
+        if event_type != "SLOT_BLOCKED":
+            request_started = parse_utc(
+                entry["attempt_started_at_utc"], "attempt_started_at_utc"
+            )
+            if previous_request_started is not None:
+                separation = (request_started - previous_request_started).total_seconds()
+                if separation < MINIMUM_INTER_REQUEST_SECONDS:
+                    raise _error(
+                        "campaign request starts violate frozen inter-request separation"
+                    )
+            if failed_attempts_for_current:
+                previous_entry = normalized[offset - 2]
+                if previous_entry["event_type"] != "ATTEMPT_FAILED":
+                    raise _error("campaign retry does not follow a failed attempt")
+                failed_attempt = previous_entry["attempt"]
+                retry_anchor = parse_utc(
+                    previous_entry["recorded_at_utc"], "retry recorded_at_utc"
+                )
+                retry_delay = RETRY_DELAYS_SECONDS[failed_attempt - 1]
+                if request_started < retry_anchor + datetime.timedelta(seconds=retry_delay):
+                    raise _error("campaign retry violates frozen durable retry delay")
+            if slot.slot == "B":
+                first_entry = successes.get((slot.target_id, "A"))
+                if first_entry is None:
+                    raise _error("slot B request has no slot A success evidence")
+                first = parse_utc(
+                    first_entry["detail"]["observed_at_utc"], "slot A observed_at"
+                )
+                pair_elapsed = (request_started - first).total_seconds()
+                if not (
+                    MINIMUM_PAIR_SEPARATION_SECONDS
+                    <= pair_elapsed
+                    <= MAXIMUM_PAIR_SEPARATION_SECONDS
+                ):
+                    raise _error("slot B request start violates frozen pair window")
+            previous_request_started = request_started
+
         if event_type == "ATTEMPT_FAILED":
             expected_attempt = failed_attempts_for_current + 1
             if entry["attempt"] != expected_attempt:
