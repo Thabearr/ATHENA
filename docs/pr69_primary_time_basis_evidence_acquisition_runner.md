@@ -20,7 +20,7 @@ This implementation exists only to execute the already-reviewed acquisition cont
 
 Importing the runner is network-inert. The CLI requires an explicit mode: `--status` performs no network access, while `--execute-reviewed-protocol` authorizes only the frozen campaign. Programmatic live execution requires the exact boolean `execute_live_network=True`.
 
-The supported live-execution entry points bind the reviewed `fetch_primary_evidence` transport, the runner's real UTC wall clock, and `time.sleep` directly. They do not accept a caller-supplied fetcher, and they reject caller-supplied clock or sleeper substitutions. Synthetic transport and timing are confined to the private orchestration seam used by tests against temporary repositories, so synthetic bytes cannot enter the supported trusted acquisition path while masquerading as primary evidence.
+The supported live-execution entry points bind the reviewed `fetch_primary_evidence` transport, the runner's real UTC wall clock, `time.sleep`, and the actual repository containing the runner. They do not accept a caller-supplied fetcher, they reject caller-supplied clock or sleeper substitutions, and they reject any live repository-root override that resolves outside the actual ATHENA checkout. Synthetic transport, timing, and alternate roots are confined to the private orchestration seam used by tests against temporary repositories, so synthetic bytes or a second caller-selected campaign root cannot enter the supported trusted acquisition path while masquerading as primary evidence.
 
 ## Frozen campaign
 
@@ -35,7 +35,7 @@ The plan is exactly eight successful capture slots in this order:
 7. `/downloadm.php` slot B
 8. `/matches.php` slot B
 
-The runner does not expose a source-set override. The capture root remains exactly:
+The runner does not expose a source-set override. Supported live execution also does not expose an alternate campaign-root namespace: the capture root remains exactly the following path beneath the actual ATHENA repository containing the runner:
 
 `.cache/athena-research/pr69-primary-time-basis-evidence`
 
@@ -95,7 +95,7 @@ After the inflight marker is durably persisted, the runner samples request-start
 
 ## Durability and no-overwrite behavior
 
-The repository/campaign path is constrained beneath the exact capture root. Symlink path components are rejected. Journal, lock, inflight, raw-response and manifest files must be ordinary single-link files where they already exist; append/create operations use no-follow behavior where the platform provides it. New directory entries and evidence files are durably synchronized. Evidence files use exclusive creation. A runner lock prevents concurrent execution.
+The repository/campaign path is constrained beneath the exact capture root. Supported live execution first binds that root to the actual ATHENA checkout containing this runner, so supplying another existing directory cannot create a parallel trusted campaign namespace. Symlink path components are rejected. Journal, lock, inflight, raw-response and manifest files must be ordinary single-link files where they already exist; append/create operations use no-follow behavior where the platform provides it. New directory entries and evidence files are durably synchronized. Evidence files use exclusive creation. A runner lock prevents concurrent execution.
 
 If persistence becomes indeterminate after a request may have started, the inflight marker deliberately remains. The runner does not manufacture a failure event, remove partial evidence, or issue a replacement request. Preventing an unaccounted duplicate request is more important than automatic recovery.
 
