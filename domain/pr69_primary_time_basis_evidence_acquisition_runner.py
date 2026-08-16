@@ -1,6 +1,6 @@
 """Deterministic runner contract for PR69 primary time-basis evidence acquisition.
 
-This boundary implements orchestration and evidence validation for the exact PR124
+PR #125 implements orchestration and evidence validation for the exact PR #124
 protocol. Importing this module performs no network access. Live transport exists only
 in the thin script layer and requires an explicit execution acknowledgement.
 """
@@ -47,20 +47,47 @@ MAX_ENTRY_BYTES = 16 * 1024
 MAX_ERROR_MESSAGE_CHARS = 768
 NEXT_REQUIRED_BOUNDARY = "EXECUTE_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_CAMPAIGN"
 
+REQUEST_HEADERS = (
+    ("Accept", "text/plain,text/html;q=0.9,*/*;q=0.1"),
+    ("Accept-Encoding", "identity"),
+    ("User-Agent", "ATHENA/1.0"),
+)
+SELECTED_RESPONSE_HEADERS = (
+    "cache-control", "content-encoding", "content-length", "content-type", "date",
+    "etag", "last-modified", "location", "server",
+)
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 _ERROR_KIND_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$", re.ASCII)
+_TARGET_ID_RE = re.compile(r"^[A-Z][A-Z0-9_]{0,63}$", re.ASCII)
 _SUCCESS_KEYS = frozenset({
     "schema_version", "runner_id", "sequence", "previous_entry_sha256",
     "event_type", "target_id", "slot", "attempt", "attempt_started_at_utc",
     "recorded_at_utc", "manifest_sha256", "raw_sha256", "raw_size",
     "observed_at_utc", "entry_sha256",
 })
+_MANIFEST_KEYS = frozenset({
+    "schema_version", "runner_id", "protocol_sha256", "target_id", "slot", "attempt",
+    "requested_url", "final_url", "request_method", "request_headers", "redirect_chain",
+    "request_started_at_utc", "response_completed_at_utc", "observed_at_utc", "http_status",
+    "tls_verified", "response_headers", "raw_filename", "raw_sha256", "raw_size",
+})
+
 
 class PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError(ValueError):
-    """Raised when runner state or evidence fails closed."""
+    """Raised when runner state or campaign evidence fails closed."""
 
-class PR69PrimaryTimeBasisEvidencePairWindowError(PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError):
+
+class PR69PrimaryTimeBasisEvidencePairWindowError(
+    PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError
+):
     """Raised when slot B can no longer satisfy the frozen pair window."""
+
+    def __init__(self, reason: str, message: str) -> None:
+        if type(reason) is not str or not reason:
+            raise TypeError("pair-window reason must be non-empty text")
+        super().__init__(message)
+        self.reason = reason
 
 
 def _error(message: str) -> PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError:
@@ -96,6 +123,8 @@ def parse_utc(value: Any, label: str) -> datetime.datetime:
         raise _error(f"{label} is invalid") from exc
     if parsed.tzinfo is None or parsed.utcoffset() != datetime.timedelta(0):
         raise _error(f"{label} must be UTC")
+    if serialize_utc(parsed) != value:
+        raise _error(f"{label} must use canonical microsecond UTC format")
     return parsed
 
 
@@ -105,7 +134,7 @@ def _sha(value: Any, label: str) -> str:
     return value
 
 
-def _error_kind(value: Any) -> str:
+def validate_error_kind(value: Any) -> str:
     if type(value) is not str or _ERROR_KIND_RE.fullmatch(value) is None:
         raise _error("error kind must be an uppercase identifier")
     return value
@@ -114,16 +143,16 @@ def _error_kind(value: Any) -> str:
 def normalize_error_message(value: Any) -> str:
     if type(value) is not str:
         raise _error("error message must be text")
-    collapsed = " ".join(value.split())
-    if not collapsed:
-        collapsed = "unspecified acquisition failure"
+    collapsed = " ".join(value.split()) or "unspecified acquisition failure"
     return collapsed[:MAX_ERROR_MESSAGE_CHARS]
 
 
-def _verify_upstream() -> Mapping[str, Any]:
+def _verify_upstream() -> pr124.PR69PrimaryTimeBasisEvidenceAcquisitionProtocol:
     if _git_blob_sha(Path(pr124.__file__)) != PR124_PROTOCOL_BLOB_SHA:
         raise _error("PR124 protocol implementation blob changed")
-    if (pr124.PROTOCOL_SHA256, pr124.PROTOCOL_SIZE) != (PR124_PROTOCOL_SHA256, PR124_PROTOCOL_SIZE):
+    if (pr124.PROTOCOL_SHA256, pr124.PROTOCOL_SIZE) != (
+        PR124_PROTOCOL_SHA256, PR124_PROTOCOL_SIZE
+    ):
         raise _error("PR124 protocol identity changed")
     try:
         protocol = pr124.build_pr69_primary_time_basis_evidence_acquisition_protocol()
@@ -132,20 +161,21 @@ def _verify_upstream() -> Mapping[str, Any]:
         raise _error("PR124 protocol no longer revalidates") from exc
     if hashlib.sha256(exact).hexdigest() != PR124_PROTOCOL_SHA256 or len(exact) != PR124_PROTOCOL_SIZE:
         raise _error("PR124 canonical protocol bytes changed")
-    if protocol["next_required_boundary"] != "IMPLEMENT_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_RUNNER":
+    if protocol.next_required_boundary != (
+        "IMPLEMENT_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_RUNNER"
+    ):
         raise _error("PR124 runner boundary changed")
-    request = dict(protocol["request_identity"])
-    expected_headers = (("Accept", "text/plain,text/html;q=0.9,*/*;q=0.1"),
-                        ("Accept-Encoding", "identity"), ("User-Agent", "ATHENA/1.0"))
-    if request != {
+    request = dict(protocol.request_identity)
+    expected_request = {
         "method": "GET", "scheme": "https", "host": "www.football-data.co.uk", "port": 443,
-        "request_headers": expected_headers, "redirects_authorized": False,
+        "request_headers": REQUEST_HEADERS, "redirects_authorized": False,
         "cookies_authorized": False, "browser_impersonation_authorized": False,
         "proxy_evasion_authorized": False, "tls_verification_required": True,
-    }:
+    }
+    if request != expected_request:
         raise _error("PR124 request identity changed")
-    schedule = dict(protocol["capture_schedule"])
-    if schedule != {
+    schedule = dict(protocol.capture_schedule)
+    expected_schedule = {
         "target_count": TARGET_COUNT, "capture_slots_per_target": 2, "slot_labels": SLOT_LABELS,
         "pass_order": "ALL_TARGETS_SLOT_A_IN_FROZEN_ORDER_THEN_ALL_TARGETS_SLOT_B_IN_FROZEN_ORDER",
         "minimum_same_target_pair_separation_seconds": MINIMUM_PAIR_SEPARATION_SECONDS,
@@ -155,18 +185,33 @@ def _verify_upstream() -> Mapping[str, Any]:
         "retry_delays_seconds": RETRY_DELAYS_SECONDS,
         "required_successful_capture_count": REQUIRED_SUCCESSFUL_CAPTURE_COUNT,
         "failed_attempts_count_as_success": False,
-    }:
+    }
+    if schedule != expected_schedule:
         raise _error("PR124 capture schedule changed")
-    capture = dict(protocol["capture_contract"])
-    if capture.get("capture_root") != CAPTURE_ROOT_RELATIVE or capture.get("raw_body_filename") != RAW_BODY_FILENAME or capture.get("manifest_filename") != MANIFEST_FILENAME:
-        raise _error("PR124 capture contract changed")
-    if capture.get("campaign_index_filename") != CAMPAIGN_INDEX_FILENAME or capture.get("failure_journal_filename") != FAILURE_JOURNAL_FILENAME:
+    capture = dict(protocol.capture_contract)
+    if capture.get("capture_root") != CAPTURE_ROOT_RELATIVE:
+        raise _error("PR124 capture root changed")
+    if (capture.get("raw_body_filename"), capture.get("manifest_filename")) != (
+        RAW_BODY_FILENAME, MANIFEST_FILENAME
+    ):
+        raise _error("PR124 capture filenames changed")
+    if (capture.get("campaign_index_filename"), capture.get("failure_journal_filename")) != (
+        CAMPAIGN_INDEX_FILENAME, FAILURE_JOURNAL_FILENAME
+    ):
         raise _error("PR124 journal filenames changed")
-    if capture.get("max_response_bytes") != MAX_RESPONSE_BYTES or tuple(capture.get("accepted_http_statuses", ())) != (200,):
-        raise _error("PR124 response limits changed")
-    if protocol["network_acquisition_performed"] is not False or protocol["campaign_runner_implemented"] is not False:
+    if capture.get("max_response_bytes") != MAX_RESPONSE_BYTES:
+        raise _error("PR124 response size bound changed")
+    if tuple(capture.get("accepted_http_statuses", ())) != (200,):
+        raise _error("PR124 accepted status set changed")
+    if tuple(capture.get("selected_response_headers", ())) != SELECTED_RESPONSE_HEADERS:
+        raise _error("PR124 selected response headers changed")
+    if capture.get("no_overwrite") is not True:
+        raise _error("PR124 no-overwrite contract changed")
+    if protocol.network_acquisition_performed is not False or protocol.campaign_runner_implemented is not False:
         raise _error("PR124 pre-execution state changed")
-    if any(value is not False for value in protocol["safety"].values()):
+    if protocol.evidence_records_captured != 0:
+        raise _error("PR124 evidence count changed")
+    if any(value is not False for value in protocol.safety.values()):
         raise _error("PR124 safety state changed")
     return protocol
 
@@ -182,10 +227,10 @@ class CampaignSlot:
     def __post_init__(self) -> None:
         if type(self.ordinal) is not int or self.ordinal < 1:
             raise _error("slot ordinal must be a positive integer")
-        if type(self.target_id) is not str or not self.target_id:
-            raise _error("target_id must be non-empty text")
-        if type(self.path) is not str or not self.path.startswith("/"):
-            raise _error("target path must be absolute")
+        if type(self.target_id) is not str or _TARGET_ID_RE.fullmatch(self.target_id) is None:
+            raise _error("target_id must be an uppercase identifier")
+        if type(self.path) is not str or not self.path.startswith("/") or "?" in self.path or "#" in self.path:
+            raise _error("target path must be a simple absolute path")
         if type(self.content_type_prefix) is not str or not self.content_type_prefix:
             raise _error("content type prefix must be non-empty text")
         if self.slot not in SLOT_LABELS:
@@ -211,16 +256,17 @@ class CampaignProgress:
 
 def campaign_slots() -> tuple[CampaignSlot, ...]:
     protocol = _verify_upstream()
-    targets = tuple(protocol["targets"])
-    if len(targets) != TARGET_COUNT:
+    if len(protocol.targets) != TARGET_COUNT:
         raise _error("PR124 target count changed")
     slots: list[CampaignSlot] = []
     ordinal = 0
     for slot_label in SLOT_LABELS:
-        for target in targets:
+        for target in protocol.targets:
             ordinal += 1
-            slots.append(CampaignSlot(ordinal, target["target_id"], target["path"],
-                                      target["content_type_prefix"], slot_label))
+            slots.append(CampaignSlot(
+                ordinal=ordinal, target_id=target.target_id, path=target.path,
+                content_type_prefix=target.content_type_prefix, slot=slot_label,
+            ))
     if len(slots) != REQUIRED_SUCCESSFUL_CAPTURE_COUNT:
         raise _error("campaign plan no longer has eight slots")
     return tuple(slots)
@@ -230,28 +276,44 @@ def manifest_sha256(manifest: Mapping[str, Any]) -> str:
     return hashlib.sha256(canonical_bytes(dict(manifest))).hexdigest()
 
 
+def _pairs(value: Any, label: str) -> list[list[str]]:
+    if not isinstance(value, list):
+        raise _error(f"{label} must be a JSON list")
+    checked: list[list[str]] = []
+    for pair in value:
+        if not isinstance(pair, list) or len(pair) != 2 or not all(type(item) is str for item in pair):
+            raise _error(f"{label} must contain exact two-text-item lists")
+        checked.append([pair[0], pair[1]])
+    return checked
+
+
 def validate_manifest(value: Any, expected_slot: CampaignSlot | None = None) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise _error("manifest must be an object")
     manifest = dict(value)
-    required = {
-        "schema_version", "runner_id", "protocol_sha256", "target_id", "slot", "attempt",
-        "requested_url", "final_url", "request_method", "request_headers", "redirect_chain",
-        "request_started_at_utc", "response_completed_at_utc", "observed_at_utc", "http_status",
-        "tls_verified", "response_headers", "raw_filename", "raw_sha256", "raw_size",
-    }
-    if set(manifest) != required:
+    if set(manifest) != _MANIFEST_KEYS:
         raise _error("manifest keys changed")
     if manifest["schema_version"] != SCHEMA_VERSION or manifest["runner_id"] != RUNNER_ID:
         raise _error("manifest runner identity changed")
     if manifest["protocol_sha256"] != PR124_PROTOCOL_SHA256:
         raise _error("manifest protocol identity changed")
-    if manifest["slot"] not in SLOT_LABELS or type(manifest["attempt"]) is not int or not 1 <= manifest["attempt"] <= MAXIMUM_ATTEMPTS_PER_SLOT:
-        raise _error("manifest slot or attempt is invalid")
+    if type(manifest["target_id"]) is not str or _TARGET_ID_RE.fullmatch(manifest["target_id"]) is None:
+        raise _error("manifest target identity is invalid")
+    if manifest["slot"] not in SLOT_LABELS:
+        raise _error("manifest slot is invalid")
+    if type(manifest["attempt"]) is not int or not 1 <= manifest["attempt"] <= MAXIMUM_ATTEMPTS_PER_SLOT:
+        raise _error("manifest attempt is invalid")
     if manifest["request_method"] != "GET" or manifest["requested_url"] != manifest["final_url"]:
         raise _error("manifest request/final URL is invalid")
+    if not manifest["requested_url"].startswith(PRIMARY_ORIGIN + "/"):
+        raise _error("manifest URL is outside the primary origin")
+    if _pairs(manifest["request_headers"], "request_headers") != [list(item) for item in REQUEST_HEADERS]:
+        raise _error("manifest request headers changed")
     if manifest["redirect_chain"] != [] or manifest["tls_verified"] is not True or manifest["http_status"] != 200:
         raise _error("manifest transport state is not admissible")
+    response_headers = _pairs(manifest["response_headers"], "response_headers")
+    if any(name not in SELECTED_RESPONSE_HEADERS for name, _ in response_headers):
+        raise _error("manifest contains an unreviewed response header")
     if manifest["raw_filename"] != RAW_BODY_FILENAME:
         raise _error("manifest raw filename changed")
     _sha(manifest["raw_sha256"], "manifest raw sha256")
@@ -267,12 +329,18 @@ def validate_manifest(value: Any, expected_slot: CampaignSlot | None = None) -> 
             expected_slot.target_id, expected_slot.slot, expected_slot.requested_url
         ):
             raise _error("manifest does not match planned slot")
+        content_types = [v for n, v in response_headers if n == "content-type"]
+        if len(content_types) != 1:
+            raise _error("manifest must preserve exactly one Content-Type")
+        media_type = content_types[0].split(";", 1)[0].strip().lower()
+        if not media_type.startswith(expected_slot.content_type_prefix.lower()):
+            raise _error("manifest Content-Type does not match target")
     return types.MappingProxyType(manifest)
 
 
-def build_success_entry(*, sequence: int, previous_entry_sha256: str, slot: CampaignSlot,
-                        manifest: Mapping[str, Any], manifest_hash: str,
-                        recorded_at: datetime.datetime) -> Mapping[str, Any]:
+def build_success_entry(*, sequence: int, previous_entry_sha256: str,
+                        slot: CampaignSlot, manifest: Mapping[str, Any],
+                        manifest_hash: str, recorded_at: datetime.datetime) -> Mapping[str, Any]:
     checked = validate_manifest(manifest, slot)
     if type(sequence) is not int or sequence < 1:
         raise _error("sequence must be a positive integer")
@@ -282,7 +350,8 @@ def build_success_entry(*, sequence: int, previous_entry_sha256: str, slot: Camp
         "previous_entry_sha256": previous, "event_type": "SLOT_SUCCEEDED",
         "target_id": slot.target_id, "slot": slot.slot, "attempt": checked["attempt"],
         "attempt_started_at_utc": checked["request_started_at_utc"],
-        "recorded_at_utc": serialize_utc(recorded_at), "manifest_sha256": _sha(manifest_hash, "manifest sha256"),
+        "recorded_at_utc": serialize_utc(recorded_at),
+        "manifest_sha256": _sha(manifest_hash, "manifest sha256"),
         "raw_sha256": checked["raw_sha256"], "raw_size": checked["raw_size"],
         "observed_at_utc": checked["observed_at_utc"],
     }
@@ -300,10 +369,14 @@ def validate_success_entries(entries: Sequence[Mapping[str, Any]]) -> tuple[Mapp
         if not isinstance(raw, Mapping) or set(raw) != _SUCCESS_KEYS:
             raise _error("campaign success entry keys changed")
         entry = dict(raw)
-        if entry["schema_version"] != SCHEMA_VERSION or entry["runner_id"] != RUNNER_ID or entry["event_type"] != "SLOT_SUCCEEDED":
+        if (entry["schema_version"], entry["runner_id"], entry["event_type"]) != (
+            SCHEMA_VERSION, RUNNER_ID, "SLOT_SUCCEEDED"
+        ):
             raise _error("campaign success entry identity changed")
         slot = plan[index]
-        if (entry["sequence"], entry["target_id"], entry["slot"]) != (index + 1, slot.target_id, slot.slot):
+        if (entry["sequence"], entry["target_id"], entry["slot"]) != (
+            index + 1, slot.target_id, slot.slot
+        ):
             raise _error("campaign success order changed")
         if entry["previous_entry_sha256"] != previous:
             raise _error("campaign success hash chain is broken")
@@ -312,12 +385,14 @@ def validate_success_entries(entries: Sequence[Mapping[str, Any]]) -> tuple[Mapp
         without.pop("entry_sha256")
         if hashlib.sha256(canonical_bytes(without)).hexdigest() != supplied:
             raise _error("campaign success entry hash mismatch")
+        if type(entry["attempt"]) is not int or not 1 <= entry["attempt"] <= MAXIMUM_ATTEMPTS_PER_SLOT:
+            raise _error("campaign attempt is invalid")
         parse_utc(entry["attempt_started_at_utc"], "attempt_started_at_utc")
         parse_utc(entry["recorded_at_utc"], "recorded_at_utc")
         parse_utc(entry["observed_at_utc"], "observed_at_utc")
         _sha(entry["manifest_sha256"], "manifest sha256")
         _sha(entry["raw_sha256"], "raw sha256")
-        if type(entry["raw_size"]) is not int or entry["raw_size"] <= 0:
+        if type(entry["raw_size"]) is not int or not 0 < entry["raw_size"] <= MAX_RESPONSE_BYTES:
             raise _error("campaign raw size is invalid")
         previous = supplied
         checked_entries.append(types.MappingProxyType(entry))
@@ -330,7 +405,11 @@ def campaign_progress(entries: Sequence[Mapping[str, Any]], *, blocked: bool = F
     plan = campaign_slots()
     if blocked and (type(block_reason) is not str or not block_reason):
         raise _error("blocked progress requires a reason")
-    return CampaignProgress(len(checked), len(plan), None if len(checked) == len(plan) else plan[len(checked)], blocked, block_reason)
+    return CampaignProgress(
+        completed_slots=len(checked), total_slots=len(plan),
+        next_slot=None if len(checked) == len(plan) else plan[len(checked)],
+        blocked=blocked, block_reason=block_reason,
+    )
 
 
 def slot_a_observed_at(entries: Sequence[Mapping[str, Any]], target_id: str) -> datetime.datetime | None:
@@ -346,26 +425,41 @@ def pair_wait_seconds(entries: Sequence[Mapping[str, Any]], slot: CampaignSlot,
         return 0.0
     a_time = slot_a_observed_at(entries, slot.target_id)
     if a_time is None:
-        raise PR69PrimaryTimeBasisEvidencePairWindowError("PAIR_A_MISSING", "slot B cannot run before slot A")
+        raise PR69PrimaryTimeBasisEvidencePairWindowError(
+            "PAIR_A_MISSING", "slot B cannot run before slot A"
+        )
+    if not isinstance(now, datetime.datetime) or now.tzinfo is None or now.utcoffset() is None:
+        raise _error("pair-window clock must be timezone-aware")
     current = now.astimezone(datetime.timezone.utc)
     elapsed = (current - a_time).total_seconds()
     if elapsed > MAXIMUM_PAIR_SEPARATION_SECONDS:
-        raise PR69PrimaryTimeBasisEvidencePairWindowError("PAIR_WINDOW_EXPIRED", "slot B pair window expired")
+        raise PR69PrimaryTimeBasisEvidencePairWindowError(
+            "PAIR_WINDOW_EXPIRED", "slot B pair window expired"
+        )
     return max(0.0, MINIMUM_PAIR_SEPARATION_SECONDS - elapsed)
 
 
 def runner_descriptor() -> Mapping[str, Any]:
     _verify_upstream()
     return types.MappingProxyType({
-        "schema_version": SCHEMA_VERSION, "runner_id": RUNNER_ID, "runner_scope": RUNNER_SCOPE,
-        "runner_state": RUNNER_STATE, "repository_main_sha": REPOSITORY_MAIN_SHA,
-        "pr124_protocol_blob_sha": PR124_PROTOCOL_BLOB_SHA, "pr124_protocol_sha256": PR124_PROTOCOL_SHA256,
-        "pr124_protocol_size": PR124_PROTOCOL_SIZE, "campaign_root": CAPTURE_ROOT_RELATIVE,
+        "schema_version": SCHEMA_VERSION, "runner_id": RUNNER_ID,
+        "runner_scope": RUNNER_SCOPE, "runner_state": RUNNER_STATE,
+        "repository_main_sha": REPOSITORY_MAIN_SHA,
+        "pr124_protocol_blob_sha": PR124_PROTOCOL_BLOB_SHA,
+        "pr124_protocol_sha256": PR124_PROTOCOL_SHA256,
+        "pr124_protocol_size": PR124_PROTOCOL_SIZE,
+        "campaign_root": CAPTURE_ROOT_RELATIVE,
         "required_successful_capture_count": REQUIRED_SUCCESSFUL_CAPTURE_COUNT,
-        "network_acquisition_performed": False, "semantic_extraction_performed": False,
-        "historical_effective_scope_qualified": False, "pr69_source_local_time_basis_resolved": False,
-        "pr80_constructor_input_authorized": False, "model_training_authorized": False,
-        "probability_inference_authorized": False, "pricing_authorized": False,
-        "selection_authorized": False, "production_approval_authorized": False, "bet_authorized": False,
+        "network_acquisition_performed": False,
+        "semantic_extraction_performed": False,
+        "historical_effective_scope_qualified": False,
+        "pr69_source_local_time_basis_resolved": False,
+        "pr80_constructor_input_authorized": False,
+        "model_training_authorized": False,
+        "probability_inference_authorized": False,
+        "pricing_authorized": False,
+        "selection_authorized": False,
+        "production_approval_authorized": False,
+        "bet_authorized": False,
         "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
     })
