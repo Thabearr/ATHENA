@@ -17,10 +17,10 @@ def test_protocol_revalidates_frozen_pr119_lineage_and_canonical_identity():
     assert protocol["protocol_state"] == (
         "PRE_REGISTERED_NOT_EXECUTED_FOTMOB_UTC_NATIVE_FEATURE_CONSTRUCTION_UNQUALIFIED"
     )
-    assert len(raw) == p.PROTOCOL_SIZE == 5803
+    assert len(raw) == p.PROTOCOL_SIZE == 5809
     assert hashlib.sha256(raw).hexdigest() == p.PROTOCOL_SHA256
     assert p.PROTOCOL_SHA256 == (
-        "948b34e5f5ca6d69895beed0b0cdb79368bc507015f45975f2b3192b619975db"
+        "b3cc9a8e5ca05f199b7e404fa8288074e77d76fa5f21224c5bddb48ca1aac411"
     )
 
 
@@ -97,6 +97,15 @@ def test_form_elo_and_fatigue_math_is_explicit_without_source_local_clock():
         )
         assert features[key]["season_reset"] is False
         assert features[key]["same_kickoff_updates_after_group"] is True
+
+    assert features["home_elo"]["home_expected_adjustment"] == 50
+    assert features["home_elo"]["expected_formula"] == (
+        "1/(1+10**((away_rating-(home_rating+50))/400))"
+    )
+    assert features["away_elo"]["home_expected_adjustment"] == 0
+    assert features["away_elo"]["expected_formula"] == (
+        "1/(1+10**((home_rating-away_rating)/400))"
+    )
 
     fatigue = features["fatigue"]
     assert fatigue["differential"] == "home_rest_days - away_rest_days"
