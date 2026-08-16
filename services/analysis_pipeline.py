@@ -38,20 +38,24 @@ def _quarantine_legacy_staking_record(record):
 
 
 def apply_runtime_authorization(analysis: dict) -> dict:
-    """Fail closed when the legacy analyzer attempts to emit an executable BET.
+    """Quarantine every legacy analyzer export as analysis-only.
 
     The legacy analyzer remains useful for diagnostics while the reviewed
     successor pipeline is being completed, but it must not outrun the reviewed
-    model/source/pricing authorization chain. Analytical evidence is preserved;
-    only execution and staking authority are removed.
+    model/source/pricing authorization chain. Every legacy decision therefore
+    loses executable selection and staking authority. A legacy BET is further
+    downgraded to ANALYTICAL_CANDIDATE; existing NO_BET/analytical labels remain
+    unchanged.
     """
     safe = dict(analysis or {})
-    if safe.get("decision_status") != DecisionStatus.BET.value:
-        return safe
+    legacy_decision = safe.get("decision_status")
 
     safe.pop("legacy_kelly_stake_pct_before_runtime_gate", None)
-    safe["legacy_decision_status_before_runtime_gate"] = DecisionStatus.BET.value
-    safe["decision_status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+    if legacy_decision is not None:
+        safe["legacy_decision_status_before_runtime_gate"] = legacy_decision
+    if legacy_decision == DecisionStatus.BET.value:
+        safe["decision_status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+
     safe["accumulator_eligible_selection"] = None
     safe["kelly_stake_pct"] = None
     safe["runtime_authorization_state"] = LEGACY_RUNTIME_AUTHORIZATION_STATE
@@ -83,10 +87,13 @@ def apply_runtime_authorization(analysis: dict) -> dict:
     report = safe.get("evidence_report")
     if isinstance(report, dict):
         report = dict(report)
-        report["legacy_decision_status_before_runtime_gate"] = report.get(
-            "final_decision"
-        )
-        report["final_decision"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+        legacy_report_decision = report.get("final_decision")
+        if legacy_report_decision is not None:
+            report["legacy_decision_status_before_runtime_gate"] = (
+                legacy_report_decision
+            )
+        if legacy_report_decision == DecisionStatus.BET.value:
+            report["final_decision"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
         report_reasons = list(report.get("decision_reasons") or [])
         if LEGACY_RUNTIME_BET_BLOCK_REASON not in report_reasons:
             report_reasons.append(LEGACY_RUNTIME_BET_BLOCK_REASON)
