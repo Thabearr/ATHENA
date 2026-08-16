@@ -53,12 +53,6 @@ def test_legacy_bet_is_downgraded_without_erasing_analysis() -> None:
     assert original["decision_status"] == DecisionStatus.BET.value
     assert original["accumulator_eligible_selection"] is not None
     assert original["kelly_stake_pct"] == 0.75
-    assert original["viable_markets"][0]["kelly_stake_pct"] == 0.75
-    assert original["reasoning_verdicts"][0]["kelly_stake_pct"] == 0.75
-    assert (
-        original["evidence_report"]["market_evaluations"][0]["kelly_stake_pct"]
-        == 0.75
-    )
 
     assert (
         safe["legacy_decision_status_before_runtime_gate"]
@@ -100,13 +94,78 @@ def test_legacy_bet_is_downgraded_without_erasing_analysis() -> None:
     )
 
 
-def test_non_bet_analysis_is_not_rewritten() -> None:
+def test_non_bet_remains_no_bet_but_execution_and_staking_are_quarantined() -> None:
     analysis = {
         "decision_status": DecisionStatus.NO_BET.value,
-        "accumulator_eligible_selection": None,
+        "accumulator_eligible_selection": {"verdict": "HOME_WIN"},
         "kelly_stake_pct": 0.25,
+        "legacy_kelly_stake_pct_before_runtime_gate": 9.99,
+        "viable_markets": [
+            {
+                "market_id": "MATCH_RESULT",
+                "kelly_stake_pct": 0.25,
+                "legacy_kelly_stake_pct_before_runtime_gate": 8.88,
+            }
+        ],
+        "reasoning_verdicts": [
+            {
+                "status": DecisionStatus.NO_BET.value,
+                "kelly_stake_pct": 0.25,
+                "legacy_kelly_stake_pct_before_runtime_gate": 7.77,
+            }
+        ],
+        "no_bet_reasons": ["Risk gate failed."],
+        "evidence_report": {
+            "final_decision": DecisionStatus.NO_BET.value,
+            "decision_reasons": ["Risk gate failed."],
+            "market_evaluations": [
+                {
+                    "market_id": "MATCH_RESULT",
+                    "kelly_stake_pct": 0.25,
+                    "legacy_kelly_stake_pct_before_runtime_gate": 6.66,
+                }
+            ],
+        },
     }
-    assert apply_runtime_authorization(analysis) == analysis
+
+    safe = apply_runtime_authorization(analysis)
+
+    assert safe["decision_status"] == DecisionStatus.NO_BET.value
+    assert (
+        safe["legacy_decision_status_before_runtime_gate"]
+        == DecisionStatus.NO_BET.value
+    )
+    assert safe["accumulator_eligible_selection"] is None
+    assert safe["kelly_stake_pct"] is None
+    assert "legacy_kelly_stake_pct_before_runtime_gate" not in safe
+    assert safe["runtime_authorization_state"] == LEGACY_RUNTIME_AUTHORIZATION_STATE
+    assert LEGACY_RUNTIME_BET_BLOCK_REASON in safe["runtime_authorization_reasons"]
+    assert LEGACY_RUNTIME_BET_BLOCK_REASON in safe["no_bet_reasons"]
+
+    assert safe["viable_markets"][0]["kelly_stake_pct"] is None
+    assert (
+        "legacy_kelly_stake_pct_before_runtime_gate"
+        not in safe["viable_markets"][0]
+    )
+    assert safe["reasoning_verdicts"][0]["status"] == DecisionStatus.NO_BET.value
+    assert safe["reasoning_verdicts"][0]["kelly_stake_pct"] is None
+    assert (
+        "legacy_kelly_stake_pct_before_runtime_gate"
+        not in safe["reasoning_verdicts"][0]
+    )
+    assert safe["evidence_report"]["final_decision"] == DecisionStatus.NO_BET.value
+    assert (
+        safe["evidence_report"]["legacy_decision_status_before_runtime_gate"]
+        == DecisionStatus.NO_BET.value
+    )
+    assert (
+        safe["evidence_report"]["market_evaluations"][0]["kelly_stake_pct"]
+        is None
+    )
+    assert (
+        "legacy_kelly_stake_pct_before_runtime_gate"
+        not in safe["evidence_report"]["market_evaluations"][0]
+    )
 
 
 def test_pipeline_applies_runtime_gate_before_export() -> None:
@@ -143,10 +202,6 @@ def test_pipeline_applies_runtime_gate_before_export() -> None:
     assert "legacy_kelly_stake_pct_before_runtime_gate" not in row
     assert row["kelly_stake_pct"] is None
     assert row["viable_markets"][0]["kelly_stake_pct"] is None
-    assert (
-        "legacy_kelly_stake_pct_before_runtime_gate"
-        not in row["viable_markets"][0]
-    )
     assert row["accumulator_eligible_selection"] is None
     assert row["runtime_authorization_state"] == LEGACY_RUNTIME_AUTHORIZATION_STATE
 
