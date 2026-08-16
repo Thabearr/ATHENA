@@ -1,0 +1,216 @@
+# PR69 source-local time basis resolution qualification
+
+## Purpose
+
+PR #123 executes the result-free PR #122 protocol for the exact PR #69
+football-data.co.uk source-local time basis.
+
+The execution is intentionally fail-closed. It does **not** infer a timezone or
+offset from league geography, normal football scheduling, FotMob timestamps,
+matching feature outputs, or whichever rule would make the historical results
+look convenient.
+
+## Result
+
+Qualification state:
+
+`EXECUTED_FAIL_CLOSED_NO_ADMISSIBLE_PRIMARY_TIME_BASIS_EVIDENCE`
+
+Qualification status:
+
+`BLOCKED_NO_ADMISSIBLE_PRIMARY_TIME_BASIS_EVIDENCE`
+
+PR #122 admitted a positive result by either:
+
+1. a provenanced primary football-data.co.uk time-basis evidence bundle that
+   yields a deterministic reference rule covering every relevant PR #69 row; or
+2. a formal operational-invariance proof whose assumptions are proven for the
+   frozen scope.
+
+Neither qualifying bundle is available to this execution. The qualification
+therefore stops at the first admissible-evidence gate.
+
+## Frozen ancestry
+
+The execution anchors to repository `main`:
+
+`1b57d9ae64d7179734571dbf4691da65a163739a`
+
+It revalidates the exact PR #122 protocol:
+
+- protocol ID
+  `REVIEWED_PR69_SOURCE_LOCAL_TIME_BASIS_RESOLUTION_PROTOCOL_V1`;
+- implementation blob
+  `712ce12157ade725a60b24c4557600fc7b06e504`;
+- canonical SHA-256
+  `d3bf061ade81bb1b60f38e98f5fa3c8c21ba5bf6652879f2cc19e151b53aee4a`;
+- canonical size `6,983` bytes.
+
+Building PR #122 also revalidates the exact PR #121 blocker ancestry, PR #69
+replay implementation, PR #114 hashed rebuild evidence, and the frozen PR #69
+source-corpus identity.
+
+## Frozen PR69 scope
+
+The preserved scope remains exactly:
+
+- source namespace `football_data_uk_csv`;
+- timezone state `SOURCE_LOCAL_TIMEZONE_UNRESOLVED`;
+- `66` source CSVs;
+- `10,006,877` raw source bytes;
+- `21,226` source fixtures;
+- seasons `2020-21` through `2025-26`;
+- current validated model/research codes `B1`, `D1`, `E0`, `F1`, `G1`, `I1`,
+  `N1`, `P1`, `SC0`, `SP1`, `T1`.
+
+Those eleven codes are not claimed to be ATHENA's full competition universe.
+
+## Execution-output accounting
+
+PR #122 explicitly requires an evidence inventory, a primary-evidence conflict
+table, and row-coverage accounting. PR #123 now records all three rather than
+only the blocker result.
+
+The evidence inventory freezes all `66` season/league source-file keys in
+season-major / league-major deterministic order **and the exact SHA-256 of each
+source CSV**, copied only from the already-qualified PR #114 rebuild receipt.
+The 66-entry per-file hash manifest is itself canonically bound as
+`4d04a22f6bd29c0f56c37c8f2e8301f2c90a02516e04ac677d3b6c3d7656501a`.
+This binds every listed file individually to the existing PR #69 / PR #114
+source-byte ancestry:
+
+- source-corpus SHA-256
+  `c273b4bff2b611e95248133340ff84803ce238814d5dfa7ded5f39fd3d6e25a0`;
+- canonical replay SHA-256
+  `b44166b9543a8f436e62a644efc5316ad12fcc260a4c2c5908ad112928bedfe3`;
+- canonical replay size `39,952,730` bytes.
+
+The frozen raw source bytes continue to preserve the original Date/Time text.
+Because the admissible reference-evidence gate blocks first, this execution does
+not claim that it re-inspected or normalized those row-level Date/Time values.
+
+The primary-evidence conflict table is empty because there are zero admissible
+primary time-basis records to compare.
+
+Row accounting is therefore:
+
+- total frozen PR #69 fixture rows: `21,226`;
+- mapped by a direct reference rule: `0`;
+- covered by a formal invariance proof: `0`;
+- unresolved: `21,226`.
+
+This is accounting, not a claim that the rows themselves were rematerialized or
+replayed in this PR.
+
+## Primary-source discovery versus admissible evidence
+
+During review, the current official football-data.co.uk `notes.txt` surface was
+located at:
+
+`https://www.football-data.co.uk/notes.txt`
+
+The primary page describes the `Time` column as:
+
+`Time = Time of match kick off`
+
+That is useful discovery, but it is **not** promoted to admissible PR #122
+reference evidence here. This execution does not possess a reviewed exact
+raw-byte capture/hash for that documentation and the page does not establish a
+proven historical effective scope covering the frozen 2020-21 through 2025-26
+corpus. The receipt therefore records it only as a non-admissible primary
+discovery candidate.
+
+This distinction matters: finding an official page is not the same as proving a
+timezone, fixed offset, or source-defined civil-time rule for every historical
+row.
+
+## Evidence gate
+
+The exact execution inputs record:
+
+- exact PR #122 protocol supplied: `true`;
+- exact PR #69 source-corpus ancestry revalidated: `true`;
+- provenanced reviewed primary time-basis evidence bundle supplied: `false`;
+- formal operational-invariance proof bundle supplied: `false`;
+- secondary-source authority used: `false`;
+- FotMob candidate clock used as reference evidence: `false`;
+- source bytes mutated: `false`.
+
+The admissible primary time-basis evidence record count remains `0`.
+
+No direct reference-rule shape is selected. No effective period is asserted. No
+row is claimed to be mapped under a timezone rule.
+
+## Why later checks are not run
+
+PR #122 deliberately ordered the gates so that row-level semantics are assessed
+only after a legitimate reference basis or formal invariance route exists.
+
+Therefore all of the following remain `NOT_REACHED`:
+
+- direct reference-rule derivation;
+- effective-period/version proof;
+- all-row mapping;
+- formal operational invariance;
+- strict-prior membership invariance;
+- form ordering/tie-break invariance;
+- Elo ordering/tie-break invariance;
+- most-recent-prior-fixture invariance;
+- integer `datetime.timedelta.days` invariance;
+- home-minus-away rest difference invariance;
+- fatigue-bucket invariance;
+- FotMob `Europe/Oslo` comparison.
+
+This avoids turning equal outputs or convenient chronology into evidence for a
+timezone.
+
+## Interpretation
+
+This result means that the reviewed evidence package required by PR #122 is not
+yet available.
+
+It does **not** prove that the PR #69 clock is UTC, UK civil time, a named IANA
+timezone, a fixed offset, or any other rule.
+
+It also proves neither equivalence nor mismatch between PR #69 and FotMob
+`Europe/Oslo`.
+
+The earlier broad blocker:
+
+`BLOCKED_PR69_REFERENCE_TIME_BASIS_UNRESOLVED`
+
+is refined to the actionable evidence blocker:
+
+`BLOCKED_NO_ADMISSIBLE_PRIMARY_TIME_BASIS_EVIDENCE`
+
+## Durable receipt
+
+Canonical receipt SHA-256:
+
+`a3736753862781efc9d8ce6c15aa814185b73ed14fea82c4e8ebaa10a3ab656c`
+
+Canonical receipt size:
+
+`12,025` bytes.
+
+The receipt is stored at:
+
+`artifacts/research-manifests/pr69-source-local-time-basis-resolution-qualification-v1.json`
+
+## Safety
+
+No PR #80 constructor input is authorized. No source-local semantic-equivalence
+qualification is granted. Model training, expected-goals production,
+probabilities, score matrices, pricing, market activation, selection, production
+approval, and BET all remain closed.
+
+All safety flags remain exact `false`.
+
+## Next boundary
+
+`PRE_REGISTER_REVIEWED_PR69_PRIMARY_TIME_BASIS_EVIDENCE_ACQUISITION_PROTOCOL`
+
+That next PR should freeze a deterministic, auditable acquisition/capture
+procedure for primary football-data.co.uk time-semantics evidence. It must
+preserve raw bytes, capture time, URL/origin provenance, hashes, effective scope,
+and conflict handling before any future attempt to resolve the reference basis.
