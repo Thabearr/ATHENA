@@ -1129,8 +1129,10 @@ def _execute_next_slot_locked(
             intent_started_at=intent_time,
             root=root,
         )
-        attempt_started_at = clock().astimezone(UTC)
         try:
+            if fetcher is fetch_primary_evidence:
+                contract.refresh_upstream_verification_session()
+            attempt_started_at = clock().astimezone(UTC)
             _validate_request_still_eligible(
                 entries,
                 intent_started_at=intent_time,
@@ -1161,6 +1163,8 @@ def _execute_next_slot_locked(
                 clock=clock,
             )
         except PrimaryEvidenceRequestError as exc:
+            if fetcher is fetch_primary_evidence:
+                contract.refresh_upstream_verification_session()
             entries = _record_failure(
                 entries,
                 slot=slot,
@@ -1177,6 +1181,8 @@ def _execute_next_slot_locked(
                 raise _error(f"campaign is blocked: {progress.block_reason}") from exc
             continue
 
+        if fetcher is fetch_primary_evidence:
+            contract.refresh_upstream_verification_session()
         observed = contract.parse_utc(
             result.manifest["observed_at_utc"], "observed_at_utc"
         )
@@ -1258,18 +1264,19 @@ def execute_next_campaign_slot(
         raise _error("live network execution requires exact True authorization")
     if clock is not _clock or (sleeper is not None and sleeper is not time.sleep):
         raise _error("trusted live execution forbids clock or sleeper injection")
-    contract.runner_descriptor()
-    repository = _trusted_repository_root(repository_root)
-    if sleeper is None:
-        sleeper = time.sleep
-    with campaign_lock(repository_root=repository) as root:
-        return _execute_next_slot_locked(
-            repository_root=repository,
-            root=root,
-            fetcher=fetch_primary_evidence,
-            clock=_clock,
-            sleeper=time.sleep,
-        )
+    with contract.upstream_verification_session():
+        contract.runner_descriptor()
+        repository = _trusted_repository_root(repository_root)
+        if sleeper is None:
+            sleeper = time.sleep
+        with campaign_lock(repository_root=repository) as root:
+            return _execute_next_slot_locked(
+                repository_root=repository,
+                root=root,
+                fetcher=fetch_primary_evidence,
+                clock=_clock,
+                sleeper=time.sleep,
+            )
 
 
 def execute_campaign(
@@ -1289,136 +1296,138 @@ def execute_campaign(
         type(max_successful_slots) is not int or max_successful_slots <= 0
     ):
         raise _error("max_successful_slots must be an exact positive integer")
-    contract.runner_descriptor()
-    repository = _trusted_repository_root(repository_root)
-    if sleeper is None:
-        sleeper = time.sleep
-    with campaign_lock(repository_root=repository) as root:
-        entries = load_campaign_entries(repository_root=repository, create_root=True)
-        _verify_indexed_captures(root, entries)
-        entries = _reconcile_completed_inflight(entries, root=root)
-        _validate_no_unindexed_capture(entries, root=root)
-        initial = contract.campaign_progress(entries)
-        if initial.blocked:
-            raise _error(f"campaign is blocked: {initial.block_reason}")
-        starting_completed = initial.completed_slots
-        progress = initial
-        while not progress.complete:
-            if (
-                max_successful_slots is not None
-                and progress.completed_slots - starting_completed >= max_successful_slots
-            ):
-                break
-            progress = _execute_next_slot_locked(
-                repository_root=repository,
-                root=root,
-                fetcher=fetch_primary_evidence,
-                clock=_clock,
-                sleeper=time.sleep,
-            )
-        return progress
+    with contract.upstream_verification_session():
+        contract.runner_descriptor()
+        repository = _trusted_repository_root(repository_root)
+        if sleeper is None:
+            sleeper = time.sleep
+        with campaign_lock(repository_root=repository) as root:
+            entries = load_campaign_entries(repository_root=repository, create_root=True)
+            _verify_indexed_captures(root, entries)
+            entries = _reconcile_completed_inflight(entries, root=root)
+            _validate_no_unindexed_capture(entries, root=root)
+            initial = contract.campaign_progress(entries)
+            if initial.blocked:
+                raise _error(f"campaign is blocked: {initial.block_reason}")
+            starting_completed = initial.completed_slots
+            progress = initial
+            while not progress.complete:
+                if (
+                    max_successful_slots is not None
+                    and progress.completed_slots - starting_completed >= max_successful_slots
+                ):
+                    break
+                progress = _execute_next_slot_locked(
+                    repository_root=repository,
+                    root=root,
+                    fetcher=fetch_primary_evidence,
+                    clock=_clock,
+                    sleeper=time.sleep,
+                )
+            return progress
 
 
 def campaign_status(*, repository_root: Path | None = None) -> Mapping[str, Any]:
-    contract.runner_descriptor()
-    root = validate_campaign_root(repository_root=repository_root)
-    entries = load_campaign_entries(repository_root=repository_root, create_root=False)
-    progress = contract.campaign_progress(entries)
-    inflight = None if not root.exists() else _inflight_status(entries, root=root)
-    if root.exists():
-        _verify_indexed_captures(root, entries)
-        if inflight is None:
-            try:
-                _validate_no_unindexed_capture(entries, root=root)
-            except PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError as exc:
-                inflight = {
-                    "reason": "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION",
-                    "detail": str(exc),
+    with contract.upstream_verification_session():
+        contract.runner_descriptor()
+        root = validate_campaign_root(repository_root=repository_root)
+        entries = load_campaign_entries(repository_root=repository_root, create_root=False)
+        progress = contract.campaign_progress(entries)
+        inflight = None if not root.exists() else _inflight_status(entries, root=root)
+        if root.exists():
+            _verify_indexed_captures(root, entries)
+            if inflight is None:
+                try:
+                    _validate_no_unindexed_capture(entries, root=root)
+                except PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError as exc:
+                    inflight = {
+                        "reason": "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION",
+                        "detail": str(exc),
+                    }
+        blocked = progress.blocked or inflight is not None
+        reason = progress.block_reason if progress.blocked else (
+            None if inflight is None else inflight["reason"]
+        )
+        pairs: list[dict[str, Any]] = []
+        for slot in contract.campaign_slots():
+            if slot.slot != "A":
+                continue
+            first = next((
+                contract.parse_utc(entry["detail"]["observed_at_utc"], "observed_at_utc")
+                for entry in entries
+                if entry["event_type"] == "SLOT_SUCCEEDED"
+                and entry["target_id"] == slot.target_id
+                and entry["slot"] == "A"
+            ), None)
+            second = next((
+                contract.parse_utc(entry["detail"]["observed_at_utc"], "observed_at_utc")
+                for entry in entries
+                if entry["event_type"] == "SLOT_SUCCEEDED"
+                and entry["target_id"] == slot.target_id
+                and entry["slot"] == "B"
+            ), None)
+            first_entry = next((
+                entry for entry in entries
+                if entry["event_type"] == "SLOT_SUCCEEDED"
+                and entry["target_id"] == slot.target_id
+                and entry["slot"] == "A"
+            ), None)
+            second_entry = next((
+                entry for entry in entries
+                if entry["event_type"] == "SLOT_SUCCEEDED"
+                and entry["target_id"] == slot.target_id
+                and entry["slot"] == "B"
+            ), None)
+            pairs.append({
+                "target_id": slot.target_id,
+                "slot_a_raw_sha256": (
+                    None if first_entry is None else first_entry["detail"]["raw_sha256"]
+                ),
+                "slot_b_raw_sha256": (
+                    None if second_entry is None else second_entry["detail"]["raw_sha256"]
+                ),
+                "raw_pair_identical": (
+                    None if first_entry is None or second_entry is None
+                    else first_entry["detail"]["raw_sha256"]
+                    == second_entry["detail"]["raw_sha256"]
+                ),
+                "separation_seconds": (
+                    None if first is None or second is None
+                    else (second - first).total_seconds()
+                ),
+            })
+        return {
+            "runner_id": contract.RUNNER_ID,
+            "runner_state": contract.RUNNER_STATE,
+            "campaign_runner_implemented": True,
+            "completed_slots": progress.completed_slots,
+            "total_slots": progress.total_slots,
+            "complete": progress.complete and inflight is None,
+            "blocked": blocked,
+            "block_reason": reason,
+            "next_slot": (
+                None if progress.next_slot is None else {
+                    "ordinal": progress.next_slot.ordinal,
+                    "target_id": progress.next_slot.target_id,
+                    "slot": progress.next_slot.slot,
+                    "attempt": progress.next_attempt,
                 }
-    blocked = progress.blocked or inflight is not None
-    reason = progress.block_reason if progress.blocked else (
-        None if inflight is None else inflight["reason"]
-    )
-    pairs: list[dict[str, Any]] = []
-    for slot in contract.campaign_slots():
-        if slot.slot != "A":
-            continue
-        first = next((
-            contract.parse_utc(entry["detail"]["observed_at_utc"], "observed_at_utc")
-            for entry in entries
-            if entry["event_type"] == "SLOT_SUCCEEDED"
-            and entry["target_id"] == slot.target_id
-            and entry["slot"] == "A"
-        ), None)
-        second = next((
-            contract.parse_utc(entry["detail"]["observed_at_utc"], "observed_at_utc")
-            for entry in entries
-            if entry["event_type"] == "SLOT_SUCCEEDED"
-            and entry["target_id"] == slot.target_id
-            and entry["slot"] == "B"
-        ), None)
-        first_entry = next((
-            entry for entry in entries
-            if entry["event_type"] == "SLOT_SUCCEEDED"
-            and entry["target_id"] == slot.target_id
-            and entry["slot"] == "A"
-        ), None)
-        second_entry = next((
-            entry for entry in entries
-            if entry["event_type"] == "SLOT_SUCCEEDED"
-            and entry["target_id"] == slot.target_id
-            and entry["slot"] == "B"
-        ), None)
-        pairs.append({
-            "target_id": slot.target_id,
-            "slot_a_raw_sha256": (
-                None if first_entry is None else first_entry["detail"]["raw_sha256"]
             ),
-            "slot_b_raw_sha256": (
-                None if second_entry is None else second_entry["detail"]["raw_sha256"]
-            ),
-            "raw_pair_identical": (
-                None if first_entry is None or second_entry is None
-                else first_entry["detail"]["raw_sha256"]
-                == second_entry["detail"]["raw_sha256"]
-            ),
-            "separation_seconds": (
-                None if first is None or second is None
-                else (second - first).total_seconds()
-            ),
-        })
-    return {
-        "runner_id": contract.RUNNER_ID,
-        "runner_state": contract.RUNNER_STATE,
-        "campaign_runner_implemented": True,
-        "completed_slots": progress.completed_slots,
-        "total_slots": progress.total_slots,
-        "complete": progress.complete and inflight is None,
-        "blocked": blocked,
-        "block_reason": reason,
-        "next_slot": (
-            None if progress.next_slot is None else {
-                "ordinal": progress.next_slot.ordinal,
-                "target_id": progress.next_slot.target_id,
-                "slot": progress.next_slot.slot,
-                "attempt": progress.next_attempt,
-            }
-        ),
-        "inflight_attempt": inflight,
-        "pair_drift_table": pairs,
-        "network_acquisition_performed_by_this_status_command": False,
-        "semantic_extraction_performed": False,
-        "historical_effective_scope_qualified": False,
-        "pr69_source_local_time_basis_resolved": False,
-        "pr80_constructor_input_authorized": False,
-        "model_training_authorized": False,
-        "probability_inference_authorized": False,
-        "pricing_authorized": False,
-        "selection_authorized": False,
-        "production_approval_authorized": False,
-        "bet_authorized": False,
-        "next_required_boundary": contract.NEXT_REQUIRED_BOUNDARY,
-    }
+            "inflight_attempt": inflight,
+            "pair_drift_table": pairs,
+            "network_acquisition_performed_by_this_status_command": False,
+            "semantic_extraction_performed": False,
+            "historical_effective_scope_qualified": False,
+            "pr69_source_local_time_basis_resolved": False,
+            "pr80_constructor_input_authorized": False,
+            "model_training_authorized": False,
+            "probability_inference_authorized": False,
+            "pricing_authorized": False,
+            "selection_authorized": False,
+            "production_approval_authorized": False,
+            "bet_authorized": False,
+            "next_required_boundary": contract.NEXT_REQUIRED_BOUNDARY,
+        }
 
 
 def build_parser() -> argparse.ArgumentParser:
