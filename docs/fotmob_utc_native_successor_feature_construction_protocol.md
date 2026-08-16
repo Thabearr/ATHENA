@@ -93,7 +93,9 @@ For each side:
 
 The source-native research replay begins unseen teams at 1500. This is explicitly an **assumption**, not observed evidence.
 
-- home expected-score adjustment: +50;
+- home expected score: `1/(1+10**((away_rating-(home_rating+50))/400))`;
+- away expected score: `1/(1+10**((home_rating-away_rating)/400))`;
+- only the home expected-score calculation receives the +50 adjustment; away receives no boost;
 - standard divisor: 400;
 - win/draw/loss scores: 1 / 0.5 / 0;
 - K = 32 for fewer than 20 matches, 24 for fewer than 50, otherwise 16;
@@ -154,8 +156,8 @@ All downstream authority remains false:
 
 SHA-256:
 
-`948b34e5f5ca6d69895beed0b0cdb79368bc507015f45975f2b3192b619975db`
+`b3cc9a8e5ca05f199b7e404fa8288074e77d76fa5f21224c5bddb48ca1aac411`
 
 Canonical size:
 
-`5,803` bytes.
+`5,809` bytes.
