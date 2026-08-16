@@ -15,11 +15,24 @@ def test_protocol_revalidates_exact_upstream_and_canonical_identity():
     assert protocol["protocol_state"] == (
         "PRE_REGISTERED_NOT_EXECUTED_PR69_FORMAL_OPERATIONAL_INVARIANCE_UNQUALIFIED"
     )
-    assert len(raw) == p.PROTOCOL_SIZE == 5560
+    assert protocol["protocol_scope"] == (
+        "PRE_REGISTERED_PR69_REFERENCE_ONLY_FORMAL_OPERATIONAL_INVARIANCE_PROOF"
+    )
+    assert len(raw) == p.PROTOCOL_SIZE == 5841
     assert hashlib.sha256(raw).hexdigest() == p.PROTOCOL_SHA256
     assert p.PROTOCOL_SHA256 == (
-        "6da4f4e9e2557724011eda56a156977cf20c5506a1ac1a0a794822fbc81eb2f0"
+        "d4cacdc85f8d2be5746853a89c00fe8d6521075234a9009469a6385f346be513"
     )
+
+
+def test_scope_is_pr69_reference_only_and_excludes_fotmob_candidate_rows():
+    scope = _protocol()["frozen_scope"]
+
+    assert scope["pr69_source_file_count"] == 66
+    assert scope["pr69_source_total_bytes"] == 10006877
+    assert scope["pr69_source_fixture_count"] == 21226
+    assert scope["fotmob_candidate_rows_in_scope"] is False
+    assert scope["fotmob_candidate_time_basis_assessed"] is False
 
 
 def test_assumption_proof_must_exist_before_operation_checks():
@@ -27,7 +40,12 @@ def test_assumption_proof_must_exist_before_operation_checks():
 
     assert assumptions["must_precede_operation_proof"] is True
     assert assumptions["must_be_admissible_evidence_backed"] is True
-    assert assumptions["must_cover_every_reference_timestamp_and_target_boundary"] is True
+    assert (
+        assumptions[
+            "must_cover_every_pr69_reference_timestamp_and_pr69_target_boundary"
+        ]
+        is True
+    )
     assert assumptions["must_define_effective_period_and_version_scope"] is True
     assert assumptions["unbounded_or_plausibility_only_offset_envelope_forbidden"] is True
     assert assumptions["country_league_venue_or_cross_source_guessing_forbidden"] is True
@@ -47,11 +65,12 @@ def test_protocol_does_not_pre_assume_global_or_dst_offset_model():
     assert assumptions["result_fit_or_equal_observed_output_as_assumption_evidence_forbidden"] is True
 
 
-def test_every_pr122_time_sensitive_operation_is_required():
+def test_every_pr122_time_sensitive_reference_operation_is_required():
     operations = _protocol()["operation_proof_contract"]
 
     assert operations["quantifier"] == (
-        "FOR_EVERY_TRANSFORMATION_IN_THE_PROVEN_ADMISSIBLE_FAMILY"
+        "FOR_EVERY_PR69_ROW_AND_EVERY_TRANSFORMATION_IN_THE_PROVEN_"
+        "ADMISSIBLE_REFERENCE_FAMILY"
     )
     required = {
         "strict_prior_membership_invariance",
@@ -82,6 +101,21 @@ def test_day_boundary_and_fatigue_proof_is_universal_not_aggregate():
     assert operations[
         "global_additive_offset_cancellation_may_be_used_only_after_global_additive_assumption_is_proven"
     ] is True
+
+
+def test_execution_cannot_use_fotmob_candidate_results_to_resolve_reference_gate():
+    protocol = _protocol()
+    accounting = protocol["execution_accounting_contract"]
+
+    assert accounting["must_report_pr69_reference_rows_considered"] is True
+    assert accounting["must_report_pr69_target_boundaries_considered"] is True
+    assert accounting[
+        "must_not_inspect_fotmob_candidate_rows_for_reference_invariance_result"
+    ] is True
+    assert (
+        "DO_NOT_INSPECT_OR_COMPARE_FOTMOB_CANDIDATE_ROWS_IN_THIS_REFERENCE_INVARIANCE_EXECUTION"
+        in protocol["forbidden_shortcuts"]
+    )
 
 
 def test_status_vocabulary_is_only_frozen_pr122_vocabulary():
