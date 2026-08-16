@@ -1,11 +1,18 @@
-"""Live runner for the reviewed PR69 primary time-basis evidence campaign.
+"""Live executor for the reviewed PR69 primary time-basis evidence campaign.
 
-Import is inert. Network access requires ``execute_live_network=True`` or the CLI
-``--execute-reviewed-protocol`` acknowledgement. The runner is intentionally narrow:
-exactly four football-data.co.uk targets, two slots each, no redirects/cookies/browser
-impersonation/proxies, and no semantic interpretation.
+The module is inert on import. Live transport requires explicit authorization and uses
+only the exact four PR124 football-data.co.uk targets. Campaign evidence is append-only,
+resumable, and fail-closed around any request whose durable outcome is uncertain.
 """
 from __future__ import annotations
+
+if __package__ in {None, ""}:
+    import sys as _bootstrap_sys
+    from pathlib import Path as _BootstrapPath
+
+    _REPOSITORY_ROOT = _BootstrapPath(__file__).resolve().parents[1]
+    if str(_REPOSITORY_ROOT) not in _bootstrap_sys.path:
+        _bootstrap_sys.path.insert(0, str(_REPOSITORY_ROOT))
 
 import argparse
 import contextlib
@@ -16,36 +23,35 @@ import http.client
 import json
 import os
 import ssl
+import stat
 import sys
 import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 from domain import pr69_primary_time_basis_evidence_acquisition_runner as contract
 
 UTC = datetime.timezone.utc
 NETWORK_TIMEOUT_SECONDS = 30.0
 INFLIGHT_ATTEMPT_FILENAME = "inflight-attempt.json"
-SELECTED_RESPONSE_HEADERS = frozenset(contract.SELECTED_RESPONSE_HEADERS)
+INFLIGHT_SCHEMA_VERSION = 1
+MAX_INFLIGHT_BYTES = 4096
+MAX_WAIT_RECHECKS = 8
 REQUEST_HEADERS = contract.REQUEST_HEADERS
-_FAILURE_KEYS = frozenset({
-    "schema_version", "runner_id", "sequence", "previous_entry_sha256", "event_type",
-    "target_id", "slot", "attempt", "attempt_started_at_utc", "recorded_at_utc",
-    "error_kind", "error_message", "entry_sha256",
-})
+SELECTED_RESPONSE_HEADERS = frozenset(contract.SELECTED_RESPONSE_HEADERS)
 _INFLIGHT_KEYS = frozenset({
-    "schema_version", "runner_id", "target_id", "slot", "attempt",
-    "attempt_started_at_utc",
+    "schema_version", "runner_id", "evidence_sequence", "previous_entry_sha256",
+    "target_id", "slot", "attempt", "intent_started_at_utc", "intent_sha256",
 })
 
 
 class PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(RuntimeError):
-    """Raised when live acquisition cannot proceed safely."""
+    """Raised when the controlled live executor cannot continue safely."""
 
 
 class PrimaryEvidenceRequestError(PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError):
-    """Retryable request/response failure before durable success publication."""
+    """A known request/response failure that may be durably journaled and retried."""
 
     def __init__(self, kind: str, message: str) -> None:
         super().__init__(message)
@@ -60,90 +66,80 @@ class FetchResult:
     manifest: Mapping[str, Any]
 
 
-def _now() -> datetime.datetime:
+def _error(message: str) -> PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError:
+    return PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(message)
+
+
+def _clock() -> datetime.datetime:
     return datetime.datetime.now(tz=UTC)
 
 
-def _bounded_error(exc: BaseException) -> str:
+def _bounded_failure(exc: BaseException) -> str:
     return contract.normalize_error_message(f"{type(exc).__name__}: {exc}")
 
 
-def _strict_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-    result: dict[str, Any] = {}
-    for key, value in pairs:
-        if key in result:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                f"duplicate JSON key in evidence: {key}"
-            )
-        result[key] = value
-    return result
+def _repository_root() -> Path:
+    return Path(__file__).resolve().parents[1]
 
 
-def _decode_json_line(raw: bytes, label: str) -> Mapping[str, Any]:
-    if not raw or len(raw) > contract.MAX_ENTRY_BYTES or not raw.endswith(b"\n"):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"{label} is not one bounded canonical JSON line"
-        )
+def _absolute_without_resolving_symlinks(path: Path) -> Path:
+    return path if path.is_absolute() else Path.cwd() / path
+
+
+def _reject_symlink_components(path: Path, label: str) -> None:
+    absolute = _absolute_without_resolving_symlinks(path)
+    current = Path(absolute.anchor)
+    for part in absolute.parts[1:]:
+        current = current / part
+        if current.is_symlink():
+            raise _error(f"{label} contains a forbidden symlink")
+
+
+def _load_kernel32() -> Any:
     try:
-        text = raw.decode("utf-8")
-        value = json.loads(
-            text,
-            object_pairs_hook=_strict_object,
-            parse_constant=lambda token: (_ for _ in ()).throw(
-                ValueError(f"forbidden JSON constant {token}")
-            ),
-        )
-    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"{label} is malformed"
-        ) from exc
-    if not isinstance(value, Mapping):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"{label} must contain a JSON object"
-        )
-    if contract.canonical_bytes(dict(value)) != raw:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"{label} is not canonical JSON"
-        )
-    return value
+        import ctypes
+        import ctypes.wintypes
+
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [
+            ctypes.wintypes.LPCWSTR,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
+        kernel32.FlushFileBuffers.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.FlushFileBuffers.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+        return kernel32
+    except (AttributeError, ImportError, OSError):
+        return None
 
 
 def _sync_directory(path: Path) -> None:
     if os.name == "nt":
+        kernel32 = _load_kernel32()
+        if kernel32 is None:
+            raise _error(f"cannot prove directory durability on Windows: {path}")
         try:
             import ctypes
             import ctypes.wintypes
-        except (ImportError, AttributeError) as exc:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                f"cannot prove directory durability on Windows: {path}"
-            ) from exc
-        try:
-            kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
-            kernel32.CreateFileW.argtypes = [
-                ctypes.wintypes.LPCWSTR, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD,
-                ctypes.c_void_p, ctypes.wintypes.DWORD, ctypes.wintypes.DWORD,
-                ctypes.wintypes.HANDLE,
-            ]
-            kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
-            kernel32.FlushFileBuffers.argtypes = [ctypes.wintypes.HANDLE]
-            kernel32.FlushFileBuffers.restype = ctypes.wintypes.BOOL
-            kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
-            kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
-        except (AttributeError, OSError) as exc:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                f"cannot configure Windows durability API for {path}"
-            ) from exc
-        handle = kernel32.CreateFileW(
-            str(path), 0xC0000000, 0x00000007, None, 3, 0x02000000, None
-        )
-        invalid = {
-            None, 0, -1, ctypes.c_void_p(-1).value,
-            ctypes.wintypes.HANDLE(-1).value,
-        }
-        if handle in invalid:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                f"could not open directory for durable synchronization: {path}"
+
+            handle = kernel32.CreateFileW(
+                str(path), 0xC0000000, 0x00000007, None, 3, 0x02000000, None
             )
+            invalid = {
+                None, 0, -1, ctypes.c_void_p(-1).value,
+                ctypes.wintypes.HANDLE(-1).value,
+            }
+        except (AttributeError, ImportError, OSError, TypeError, ValueError) as exc:
+            raise _error(f"could not open directory for synchronization: {path}") from exc
+        if handle in invalid:
+            raise _error(f"could not open directory for synchronization: {path}")
         failures: list[str] = []
         try:
             if not kernel32.FlushFileBuffers(handle):
@@ -152,14 +148,12 @@ def _sync_directory(path: Path) -> None:
             if not kernel32.CloseHandle(handle):
                 failures.append("CloseHandle failed")
         if failures:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
+            raise _error(
                 f"could not durably synchronize directory {path}: {'; '.join(failures)}"
             )
         return
     if os.name != "posix":
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"unsupported durability platform: {os.name}"
-        )
+        raise _error(f"directory durability is unsupported on platform {os.name!r}")
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
     try:
         descriptor = os.open(str(path), flags)
@@ -168,28 +162,21 @@ def _sync_directory(path: Path) -> None:
         finally:
             os.close(descriptor)
     except OSError as exc:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"could not durably synchronize directory: {path}"
-        ) from exc
+        raise _error(f"could not durably synchronize directory {path}") from exc
 
 
-def _ensure_directory_tree(target: Path, boundary: Path) -> None:
-    boundary = boundary.resolve(strict=True)
+def _ensure_directory_tree(target: Path, *, boundary: Path) -> None:
     try:
         relative = target.relative_to(boundary)
     except ValueError as exc:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "campaign root is outside repository"
-        ) from exc
+        raise _error("output directory escaped repository boundary") from exc
     current = boundary
     _sync_directory(current)
-    for component in relative.parts:
-        child = current / component
+    for part in relative.parts:
+        child = current / part
         if child.exists() or child.is_symlink():
             if child.is_symlink() or not child.is_dir():
-                raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                    f"campaign path component is not a regular directory: {child}"
-                )
+                raise _error(f"output component is not a regular directory: {child}")
         else:
             child.mkdir()
             _sync_directory(current)
@@ -197,437 +184,647 @@ def _ensure_directory_tree(target: Path, boundary: Path) -> None:
         current = child
 
 
-def _root(repository_root: Path) -> Path:
-    root = Path(repository_root).resolve(strict=True)
-    if not root.is_dir():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "repository root must be a directory"
-        )
-    campaign = root / contract.CAPTURE_ROOT_RELATIVE
-    _ensure_directory_tree(campaign, root)
-    return campaign
+def validate_campaign_root(*, repository_root: Path | None = None) -> Path:
+    try:
+        supplied = Path(repository_root or _repository_root())
+    except (TypeError, ValueError) as exc:
+        raise _error("repository root is invalid") from exc
+    if supplied.is_symlink():
+        raise _error("repository root must not be a symlink")
+    try:
+        repository = supplied.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise _error("repository root must already exist") from exc
+    if not repository.is_dir():
+        raise _error("repository root must be a directory")
+    _reject_symlink_components(repository, "repository root")
+    root = repository / contract.CAPTURE_ROOT_RELATIVE
+    _reject_symlink_components(root, "campaign root")
+    if root.exists() and (root.is_symlink() or not root.is_dir()):
+        raise _error("campaign root must be a non-symlink directory")
+    try:
+        root.resolve(strict=False).relative_to(repository)
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise _error("campaign root must remain inside repository") from exc
+    return root
+
+
+def _ensure_campaign_root(*, repository_root: Path | None = None) -> Path:
+    repository = Path(repository_root or _repository_root()).resolve(strict=True)
+    root = validate_campaign_root(repository_root=repository)
+    _ensure_directory_tree(root, boundary=repository)
+    return root
+
+
+def _regular_single_link(path: Path, label: str) -> None:
+    if path.is_symlink():
+        raise _error(f"{label} must not be a symlink")
+    if not path.exists():
+        return
+    try:
+        details = path.stat()
+    except OSError as exc:
+        raise _error(f"{label} metadata could not be read") from exc
+    if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+        raise _error(f"{label} must be a single-link regular file")
+
+
+def _evidence_path(root: Path, filename: str) -> Path:
+    if filename not in {
+        contract.CAMPAIGN_INDEX_FILENAME,
+        contract.FAILURE_JOURNAL_FILENAME,
+    }:
+        raise _error("campaign evidence filename is not authorized")
+    path = root / filename
+    if path.parent != root:
+        raise _error("campaign evidence path escaped campaign root")
+    _regular_single_link(path, "campaign evidence")
+    return path
+
+
+def _inflight_path(root: Path) -> Path:
+    path = root / INFLIGHT_ATTEMPT_FILENAME
+    if path.parent != root:
+        raise _error("inflight marker escaped campaign root")
+    _regular_single_link(path, "inflight marker")
+    return path
+
+
+def _lock_path(root: Path) -> Path:
+    path = root / contract.RUNNER_LOCK_FILENAME
+    if path.parent != root:
+        raise _error("runner lock escaped campaign root")
+    _regular_single_link(path, "runner lock")
+    return path
+
+
+def _write_all(descriptor: int, content: bytes) -> None:
+    offset = 0
+    try:
+        while offset < len(content):
+            written = os.write(descriptor, content[offset:])
+            if written <= 0:
+                raise OSError("write made no progress")
+            offset += written
+        os.fsync(descriptor)
+    except OSError as exc:
+        raise _error("could not durably write campaign evidence") from exc
 
 
 def _write_exclusive(path: Path, content: bytes) -> None:
     if type(content) is not bytes:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "evidence content must be exact bytes"
-        )
+        raise _error("evidence content must be exact bytes")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
     try:
-        handle = path.open("xb")
+        descriptor = os.open(path, flags, 0o600)
     except FileExistsError as exc:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"refusing to overwrite evidence file: {path}"
-        ) from exc
-    with handle:
-        handle.write(content)
-        handle.flush()
-        os.fsync(handle.fileno())
+        raise _error(f"refusing to overwrite evidence: {path}") from exc
+    except OSError as exc:
+        raise _error(f"could not create evidence: {path}") from exc
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+            raise _error("new evidence descriptor is not a single-link regular file")
+        _write_all(descriptor, content)
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            raise _error("could not close evidence descriptor") from exc
     _sync_directory(path.parent)
 
 
-def _append_durable(path: Path, content: bytes) -> None:
-    if not content.endswith(b"\n") or len(content) > contract.MAX_ENTRY_BYTES:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "journal entry is not a bounded JSON line"
+def _strict_json(content: bytes, label: str, max_bytes: int) -> Mapping[str, Any]:
+    if type(content) is not bytes or not content or len(content) > max_bytes:
+        raise _error(f"{label} size/framing is invalid")
+    if not content.endswith(b"\n"):
+        raise _error(f"{label} has a torn trailing record")
+    try:
+        text = content.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise _error(f"{label} must be UTF-8") from exc
+
+    def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if key in result:
+                raise _error(f"{label} contains duplicate JSON keys")
+            result[key] = value
+        return result
+
+    def constant(token: str) -> None:
+        raise _error(f"{label} constant {token!r} is forbidden")
+
+    try:
+        value = json.loads(text, object_pairs_hook=pairs, parse_constant=constant)
+    except PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError:
+        raise
+    except (json.JSONDecodeError, TypeError, ValueError) as exc:
+        raise _error(f"{label} JSON is invalid") from exc
+    if type(value) is not dict:
+        raise _error(f"{label} must contain a JSON object")
+    if contract.canonical_bytes(value) != content:
+        raise _error(f"{label} is not canonical JSON")
+    return value
+
+
+def _read_evidence_file(root: Path, filename: str) -> bytes:
+    path = _evidence_path(root, filename)
+    if not path.exists():
+        return b""
+    try:
+        content = path.read_bytes()
+    except OSError as exc:
+        raise _error(f"could not read {filename}") from exc
+    if len(content) > contract.MAX_EVIDENCE_FILE_BYTES:
+        raise _error(f"{filename} exceeds evidence file bound")
+    return content
+
+
+def load_campaign_entries(
+    *, repository_root: Path | None = None, create_root: bool = False
+) -> tuple[Mapping[str, Any], ...]:
+    root = (
+        _ensure_campaign_root(repository_root=repository_root)
+        if create_root
+        else validate_campaign_root(repository_root=repository_root)
+    )
+    if not root.exists():
+        return ()
+    try:
+        return contract.parse_campaign_evidence_bytes(
+            _read_evidence_file(root, contract.CAMPAIGN_INDEX_FILENAME),
+            _read_evidence_file(root, contract.FAILURE_JOURNAL_FILENAME),
         )
-    with path.open("ab") as handle:
-        handle.write(content)
-        handle.flush()
-        os.fsync(handle.fileno())
-    _sync_directory(path.parent)
+    except contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError as exc:
+        raise _error(f"campaign evidence revalidation failed: {exc}") from exc
+
+
+def _append_entry(
+    entries: tuple[Mapping[str, Any], ...],
+    entry: Mapping[str, Any],
+    *,
+    repository_root: Path,
+) -> tuple[Mapping[str, Any], ...]:
+    root = _ensure_campaign_root(repository_root=repository_root)
+    current = load_campaign_entries(repository_root=repository_root, create_root=True)
+    if tuple(current) != tuple(entries):
+        raise _error("campaign evidence changed concurrently before append")
+    encoded = contract.canonical_campaign_entry_bytes(entry)
+    filename = (
+        contract.CAMPAIGN_INDEX_FILENAME
+        if entry["event_type"] == "SLOT_SUCCEEDED"
+        else contract.FAILURE_JOURNAL_FILENAME
+    )
+    path = _evidence_path(root, filename)
+    flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags, 0o600)
+    except OSError as exc:
+        raise _error(f"could not open {filename} for append") from exc
+    try:
+        details = os.fstat(descriptor)
+        if not stat.S_ISREG(details.st_mode) or details.st_nlink != 1:
+            raise _error("campaign evidence descriptor is not single-link regular file")
+        _write_all(descriptor, encoded)
+    finally:
+        try:
+            os.close(descriptor)
+        except OSError as exc:
+            raise _error("could not close campaign evidence descriptor") from exc
+    _sync_directory(root)
+    expected = (*entries, entry)
+    reloaded = load_campaign_entries(repository_root=repository_root, create_root=True)
+    if tuple(reloaded) != tuple(expected):
+        raise _error("campaign evidence did not revalidate after append")
+    return reloaded
 
 
 @contextlib.contextmanager
-def _campaign_lock(root: Path, clock: Callable[[], datetime.datetime]):
-    path = root / contract.RUNNER_LOCK_FILENAME
-    payload = contract.canonical_bytes({
-        "runner_id": contract.RUNNER_ID,
-        "created_at_utc": contract.serialize_utc(clock()),
-        "pid": os.getpid(),
-    })
+def campaign_lock(*, repository_root: Path | None = None) -> Iterator[Path]:
+    root = _ensure_campaign_root(repository_root=repository_root)
+    path = _lock_path(root)
+    payload = contract.canonical_bytes(
+        {"pid": os.getpid(), "runner_id": contract.RUNNER_ID}
+    )
     _write_exclusive(path, payload)
     try:
-        yield
+        yield root
     finally:
+        cleanup_error: BaseException | None = None
         try:
-            path.unlink()
-            _sync_directory(root)
-        except FileNotFoundError as exc:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "runner lock disappeared during execution"
-            ) from exc
+            if path.is_symlink():
+                raise _error("refusing to remove symlink runner lock")
+            if path.exists():
+                path.unlink()
+                _sync_directory(root)
+        except BaseException as exc:
+            cleanup_error = exc
+        if cleanup_error is not None:
+            raise _error(
+                f"runner lock cleanup failed: {_bounded_failure(cleanup_error)}"
+            ) from cleanup_error
 
 
-def _read_jsonl(path: Path) -> tuple[Mapping[str, Any], ...]:
-    if not path.exists():
-        return ()
-    if path.is_symlink() or not path.is_file():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"evidence journal is not a regular file: {path}"
-        )
-    raw = path.read_bytes()
-    if len(raw) > 4 * 1024 * 1024:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"evidence journal is unexpectedly large: {path.name}"
-        )
-    if raw and not raw.endswith(b"\n"):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"evidence journal has an unterminated record: {path.name}"
-        )
-    return tuple(
-        _decode_json_line(line + b"\n", f"{path.name} record")
-        for line in raw.splitlines() if line
-    )
+def _previous_hash(entries: Sequence[Mapping[str, Any]]) -> str:
+    if not entries:
+        return contract.ZERO_SHA256
+    return contract.validate_sha256(entries[-1]["entry_sha256"], "entry_sha256")
 
 
-def load_success_entries(*, repository_root: Path) -> tuple[Mapping[str, Any], ...]:
-    root = _root(repository_root)
-    entries = _read_jsonl(root / contract.CAMPAIGN_INDEX_FILENAME)
-    return contract.validate_success_entries(entries)
-
-
-def _validate_failure_entries(entries: Sequence[Mapping[str, Any]]) -> tuple[Mapping[str, Any], ...]:
-    plan_keys = {(slot.target_id, slot.slot) for slot in contract.campaign_slots()}
-    previous = "0" * 64
-    checked: list[Mapping[str, Any]] = []
-    per_slot_last_attempt: dict[tuple[str, str], int] = {}
-    for offset, raw in enumerate(entries, start=1):
-        if not isinstance(raw, Mapping) or set(raw) != _FAILURE_KEYS:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure journal entry keys changed"
-            )
-        entry = dict(raw)
-        if (entry["schema_version"], entry["runner_id"], entry["event_type"], entry["sequence"]) != (
-            contract.SCHEMA_VERSION, contract.RUNNER_ID, "ATTEMPT_FAILED", offset
-        ):
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure journal identity or sequence changed"
-            )
-        if entry["previous_entry_sha256"] != previous:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure journal hash chain is broken"
-            )
-        key = (entry["target_id"], entry["slot"])
-        if key not in plan_keys:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure journal targets an unreviewed slot"
-            )
-        attempt = entry["attempt"]
-        if type(attempt) is not int or not 1 <= attempt <= contract.MAXIMUM_ATTEMPTS_PER_SLOT:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure journal attempt is invalid"
-            )
-        previous_attempt = per_slot_last_attempt.get(key, 0)
-        if attempt != previous_attempt + 1:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure attempts are not contiguous for a slot"
-            )
-        per_slot_last_attempt[key] = attempt
-        started = contract.parse_utc(entry["attempt_started_at_utc"], "attempt_started_at_utc")
-        recorded = contract.parse_utc(entry["recorded_at_utc"], "recorded_at_utc")
-        if recorded < started:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure record precedes attempt start"
-            )
-        contract.validate_error_kind(entry["error_kind"])
-        if contract.normalize_error_message(entry["error_message"]) != entry["error_message"]:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure error message is not canonical"
-            )
-        claimed = entry["entry_sha256"]
-        if type(claimed) is not str or len(claimed) != 64:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure entry hash is invalid"
-            )
-        unsigned = dict(entry)
-        unsigned.pop("entry_sha256")
-        expected = hashlib.sha256(contract.canonical_bytes(unsigned)).hexdigest()
-        if claimed != expected:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "failure entry hash mismatch"
-            )
-        previous = claimed
-        checked.append(entry)
-    return tuple(checked)
-
-
-def load_failure_entries(*, repository_root: Path) -> tuple[Mapping[str, Any], ...]:
-    root = _root(repository_root)
-    return _validate_failure_entries(_read_jsonl(root / contract.FAILURE_JOURNAL_FILENAME))
-
-
-def _slot_directory(root: Path, slot: contract.CampaignSlot) -> Path:
-    return root / slot.target_id / slot.slot
-
-
-def _load_manifest(path: Path, slot: contract.CampaignSlot) -> tuple[Mapping[str, Any], bytes]:
-    if path.is_symlink() or not path.is_file():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "manifest is not a regular file"
-        )
-    raw = path.read_bytes()
-    value = _decode_json_line(raw, "manifest")
-    checked = contract.validate_manifest(value, slot)
-    return checked, raw
-
-
-def _verify_capture(root: Path, slot: contract.CampaignSlot) -> tuple[Mapping[str, Any], str]:
-    directory = _slot_directory(root, slot)
-    if directory.is_symlink() or not directory.is_dir():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            f"capture directory is missing or invalid for {slot.target_id}/{slot.slot}"
-        )
-    raw_path = directory / contract.RAW_BODY_FILENAME
-    manifest_path = directory / contract.MANIFEST_FILENAME
-    if raw_path.is_symlink() or not raw_path.is_file():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "raw response is missing or invalid"
-        )
-    manifest, manifest_raw = _load_manifest(manifest_path, slot)
-    raw = raw_path.read_bytes()
-    if len(raw) != manifest["raw_size"] or hashlib.sha256(raw).hexdigest() != manifest["raw_sha256"]:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "raw response no longer matches its manifest"
-        )
-    return manifest, hashlib.sha256(manifest_raw).hexdigest()
-
-
-def _validate_index_against_captures(root: Path, entries: Sequence[Mapping[str, Any]]) -> None:
-    plan = contract.campaign_slots()
-    for index, entry in enumerate(contract.validate_success_entries(entries)):
-        manifest, manifest_hash = _verify_capture(root, plan[index])
-        if (
-            entry["manifest_sha256"] != manifest_hash
-            or entry["raw_sha256"] != manifest["raw_sha256"]
-            or entry["raw_size"] != manifest["raw_size"]
-            or entry["attempt"] != manifest["attempt"]
-        ):
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "campaign index does not match durable capture evidence"
-            )
-
-
-def _append_success_from_capture(root: Path, slot: contract.CampaignSlot,
-                                 entries: Sequence[Mapping[str, Any]],
-                                 clock: Callable[[], datetime.datetime]) -> tuple[Mapping[str, Any], ...]:
-    manifest, manifest_hash = _verify_capture(root, slot)
-    previous = entries[-1]["entry_sha256"] if entries else "0" * 64
-    entry = contract.build_success_entry(
-        sequence=len(entries) + 1,
-        previous_entry_sha256=previous,
-        slot=slot,
-        manifest=manifest,
-        manifest_hash=manifest_hash,
-        recorded_at=clock(),
-    )
-    _append_durable(
-        root / contract.CAMPAIGN_INDEX_FILENAME,
-        contract.canonical_bytes(dict(entry)),
-    )
-    return contract.validate_success_entries(tuple(entries) + (entry,))
-
-
-def _failure_entry(*, sequence: int, previous_entry_sha256: str,
-                   slot: contract.CampaignSlot, attempt: int,
-                   attempt_started_at: datetime.datetime,
-                   recorded_at: datetime.datetime, kind: str,
-                   message: str) -> Mapping[str, Any]:
-    contract.validate_error_kind(kind)
-    body = {
-        "schema_version": contract.SCHEMA_VERSION,
+def _build_inflight_intent(
+    entries: tuple[Mapping[str, Any], ...],
+    *,
+    slot: contract.CampaignSlot,
+    attempt: int,
+    intent_started_at: datetime.datetime,
+) -> Mapping[str, Any]:
+    progress = contract.campaign_progress(entries)
+    if (
+        progress.complete
+        or progress.blocked
+        or progress.next_slot != slot
+        or progress.next_attempt != attempt
+    ):
+        raise _error("inflight attempt does not match exact pending campaign state")
+    unsigned = {
+        "schema_version": INFLIGHT_SCHEMA_VERSION,
         "runner_id": contract.RUNNER_ID,
-        "sequence": sequence,
-        "previous_entry_sha256": previous_entry_sha256,
-        "event_type": "ATTEMPT_FAILED",
+        "evidence_sequence": len(entries),
+        "previous_entry_sha256": _previous_hash(entries),
         "target_id": slot.target_id,
         "slot": slot.slot,
         "attempt": attempt,
-        "attempt_started_at_utc": contract.serialize_utc(attempt_started_at),
-        "recorded_at_utc": contract.serialize_utc(recorded_at),
-        "error_kind": kind,
-        "error_message": contract.normalize_error_message(message),
+        "intent_started_at_utc": contract.serialize_utc(intent_started_at),
     }
-    body["entry_sha256"] = hashlib.sha256(contract.canonical_bytes(body)).hexdigest()
-    return body
-
-
-def _journal_failure(root: Path, *, slot: contract.CampaignSlot, attempt: int,
-                     attempt_started_at: datetime.datetime,
-                     recorded_at: datetime.datetime, kind: str,
-                     message: str) -> None:
-    failures = _validate_failure_entries(
-        _read_jsonl(root / contract.FAILURE_JOURNAL_FILENAME)
-    )
-    previous = failures[-1]["entry_sha256"] if failures else "0" * 64
-    entry = _failure_entry(
-        sequence=len(failures) + 1,
-        previous_entry_sha256=previous,
-        slot=slot,
-        attempt=attempt,
-        attempt_started_at=attempt_started_at,
-        recorded_at=recorded_at,
-        kind=kind,
-        message=message,
-    )
-    _append_durable(
-        root / contract.FAILURE_JOURNAL_FILENAME,
-        contract.canonical_bytes(dict(entry)),
-    )
-
-
-def _all_attempt_starts(successes: Sequence[Mapping[str, Any]],
-                        failures: Sequence[Mapping[str, Any]]) -> list[datetime.datetime]:
-    values: list[datetime.datetime] = []
-    for entry in tuple(successes) + tuple(failures):
-        raw = entry.get("attempt_started_at_utc")
-        if type(raw) is str:
-            values.append(contract.parse_utc(raw, "attempt_started_at_utc"))
-    return values
-
-
-def _wait_before_request(*, slot: contract.CampaignSlot,
-                         successes: Sequence[Mapping[str, Any]],
-                         failures: Sequence[Mapping[str, Any]],
-                         clock: Callable[[], datetime.datetime],
-                         sleeper: Callable[[float], None]) -> None:
-    now = clock().astimezone(UTC)
-    pair_wait = contract.pair_wait_seconds(successes, slot, now)
-    starts = _all_attempt_starts(successes, failures)
-    inter_wait = 0.0
-    if starts:
-        inter_wait = max(
-            0.0,
-            contract.MINIMUM_INTER_REQUEST_SECONDS
-            - (now - max(starts)).total_seconds(),
-        )
-    wait = max(pair_wait, inter_wait)
-    if wait > 0:
-        sleeper(wait)
-    if slot.slot == "B":
-        contract.pair_wait_seconds(successes, slot, clock().astimezone(UTC))
-
-
-def _inflight_path(root: Path) -> Path:
-    return root / INFLIGHT_ATTEMPT_FILENAME
-
-
-def _write_inflight(root: Path, slot: contract.CampaignSlot, attempt: int,
-                    started: datetime.datetime) -> Mapping[str, Any]:
-    marker = {
-        "schema_version": contract.SCHEMA_VERSION,
-        "runner_id": contract.RUNNER_ID,
-        "target_id": slot.target_id,
-        "slot": slot.slot,
-        "attempt": attempt,
-        "attempt_started_at_utc": contract.serialize_utc(started),
+    return {
+        **unsigned,
+        "intent_sha256": hashlib.sha256(contract.canonical_bytes(unsigned)).hexdigest(),
     }
-    _write_exclusive(_inflight_path(root), contract.canonical_bytes(marker))
-    return marker
+
+
+def _validate_inflight(value: Any) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise _error("inflight marker must be a mapping")
+    plain = dict(value)
+    if set(plain) != _INFLIGHT_KEYS:
+        raise _error("inflight marker keys mismatch")
+    if (
+        type(plain["schema_version"]) is not int
+        or plain["schema_version"] != INFLIGHT_SCHEMA_VERSION
+        or plain["runner_id"] != contract.RUNNER_ID
+    ):
+        raise _error("inflight marker identity mismatch")
+    if type(plain["evidence_sequence"]) is not int or plain["evidence_sequence"] < 0:
+        raise _error("inflight evidence sequence is invalid")
+    contract.validate_sha256(
+        plain["previous_entry_sha256"], "previous_entry_sha256"
+    )
+    if type(plain["target_id"]) is not str or not plain["target_id"]:
+        raise _error("inflight target identity is invalid")
+    if plain["slot"] not in contract.SLOT_LABELS:
+        raise _error("inflight slot is invalid")
+    if (
+        type(plain["attempt"]) is not int
+        or not 1 <= plain["attempt"] <= contract.MAXIMUM_ATTEMPTS_PER_SLOT
+    ):
+        raise _error("inflight attempt is invalid")
+    contract.parse_utc(plain["intent_started_at_utc"], "intent_started_at_utc")
+    claimed = contract.validate_sha256(plain["intent_sha256"], "intent_sha256")
+    unsigned = dict(plain)
+    unsigned.pop("intent_sha256")
+    if hashlib.sha256(contract.canonical_bytes(unsigned)).hexdigest() != claimed:
+        raise _error("inflight marker hash mismatch")
+    return plain
 
 
 def _load_inflight(root: Path) -> Mapping[str, Any] | None:
     path = _inflight_path(root)
     if not path.exists():
         return None
-    if path.is_symlink() or not path.is_file():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker is not a regular file"
-        )
-    marker = _decode_json_line(path.read_bytes(), "inflight marker")
-    if set(marker) != _INFLIGHT_KEYS:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker keys changed"
-        )
-    if marker["schema_version"] != contract.SCHEMA_VERSION or marker["runner_id"] != contract.RUNNER_ID:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker identity changed"
-        )
-    if type(marker["attempt"]) is not int or not 1 <= marker["attempt"] <= contract.MAXIMUM_ATTEMPTS_PER_SLOT:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker attempt is invalid"
-        )
-    contract.parse_utc(marker["attempt_started_at_utc"], "inflight attempt start")
-    return marker
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise _error("could not read inflight marker") from exc
+    value = _strict_json(raw, "inflight marker", MAX_INFLIGHT_BYTES)
+    return _validate_inflight(value)
 
 
-def _clear_inflight(root: Path, expected: Mapping[str, Any]) -> None:
-    marker = _load_inflight(root)
-    if marker is None or dict(marker) != dict(expected):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker changed before durable completion"
+def _create_inflight(
+    entries: tuple[Mapping[str, Any], ...],
+    *,
+    slot: contract.CampaignSlot,
+    attempt: int,
+    intent_started_at: datetime.datetime,
+    root: Path,
+) -> Mapping[str, Any]:
+    intent = _validate_inflight(
+        _build_inflight_intent(
+            entries,
+            slot=slot,
+            attempt=attempt,
+            intent_started_at=intent_started_at,
         )
-    _inflight_path(root).unlink()
-    _sync_directory(root)
+    )
+    encoded = contract.canonical_bytes(dict(intent))
+    _write_exclusive(_inflight_path(root), encoded)
+    persisted = _load_inflight(root)
+    if persisted is None or dict(persisted) != dict(intent):
+        raise _error("inflight marker did not revalidate after durable write")
+    return intent
 
 
-def _reconcile_inflight(root: Path, successes: Sequence[Mapping[str, Any]],
-                        failures: Sequence[Mapping[str, Any]],
-                        clock: Callable[[], datetime.datetime]) -> tuple[tuple[Mapping[str, Any], ...], bool]:
-    marker = _load_inflight(root)
-    if marker is None:
-        return tuple(successes), False
-    plan = contract.campaign_slots()
-    matching = [
-        (index, slot) for index, slot in enumerate(plan)
-        if (slot.target_id, slot.slot) == (marker["target_id"], marker["slot"])
-    ]
-    if len(matching) != 1:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker targets an unreviewed campaign slot"
-        )
-    index, slot = matching[0]
-    if index < len(successes):
-        entry = successes[index]
-        if entry["attempt"] != marker["attempt"]:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "inflight marker attempt conflicts with indexed success"
-            )
-        _verify_capture(root, slot)
-        _clear_inflight(root, marker)
-        return tuple(successes), False
-    if index > len(successes):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "inflight marker skips the exact next campaign slot"
-        )
-    directory = _slot_directory(root, slot)
-    if directory.exists() or directory.is_symlink():
-        recovered = _append_success_from_capture(root, slot, successes, clock)
-        if recovered[-1]["attempt"] != marker["attempt"]:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "recovered capture attempt conflicts with inflight marker"
-            )
-        _clear_inflight(root, marker)
-        return recovered, True
-    if any(
-        entry["target_id"] == slot.target_id
-        and entry["slot"] == slot.slot
-        and entry["attempt"] == marker["attempt"]
-        for entry in failures
-    ):
-        _clear_inflight(root, marker)
-        return tuple(successes), False
-    raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-        "INFLIGHT_ATTEMPT_REQUIRES_REVIEW"
+def _remove_inflight(root: Path, expected: Mapping[str, Any]) -> None:
+    path = _inflight_path(root)
+    persisted = _load_inflight(root)
+    if persisted is None:
+        raise _error("inflight marker disappeared before outcome commit")
+    if dict(persisted) != dict(expected):
+        raise _error("inflight marker changed before outcome commit")
+    try:
+        path.unlink()
+        _sync_directory(root)
+    except OSError as exc:
+        raise _error("could not durably clear inflight marker") from exc
+
+
+def _intent_matches_pending(
+    entries: tuple[Mapping[str, Any], ...], intent: Mapping[str, Any]
+) -> bool:
+    if len(entries) != intent["evidence_sequence"]:
+        return False
+    if _previous_hash(entries) != intent["previous_entry_sha256"]:
+        return False
+    progress = contract.campaign_progress(entries)
+    if progress.complete or progress.blocked or progress.next_slot is None:
+        return False
+    return (
+        progress.next_slot.target_id == intent["target_id"]
+        and progress.next_slot.slot == intent["slot"]
+        and progress.next_attempt == intent["attempt"]
     )
 
 
-def fetch_primary_evidence(*, slot: contract.CampaignSlot, attempt: int,
-                           request_started_at: datetime.datetime,
-                           clock: Callable[[], datetime.datetime] = _now,
-                           connection_factory: Callable[..., Any] | None = None) -> FetchResult:
-    if type(attempt) is not int or not 1 <= attempt <= contract.MAXIMUM_ATTEMPTS_PER_SLOT:
-        raise PrimaryEvidenceRequestError(
-            "INVALID_ATTEMPT", "attempt is outside frozen bounds"
+def _intent_matches_recorded_outcome(
+    entries: tuple[Mapping[str, Any], ...], intent: Mapping[str, Any]
+) -> bool:
+    sequence = intent["evidence_sequence"]
+    if len(entries) != sequence + 1:
+        return False
+    outcome = entries[-1]
+    if outcome["event_type"] not in {"SLOT_SUCCEEDED", "ATTEMPT_FAILED"}:
+        return False
+    try:
+        intent_started = contract.parse_utc(
+            intent["intent_started_at_utc"], "intent_started_at_utc"
         )
+        actual_started = contract.parse_utc(
+            outcome["attempt_started_at_utc"], "attempt_started_at_utc"
+        )
+    except contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError:
+        return False
+    return (
+        outcome["sequence"] == sequence + 1
+        and outcome["previous_entry_sha256"] == intent["previous_entry_sha256"]
+        and outcome["target_id"] == intent["target_id"]
+        and outcome["slot"] == intent["slot"]
+        and outcome["attempt"] == intent["attempt"]
+        and actual_started >= intent_started
+    )
+
+
+def _reconcile_completed_inflight(
+    entries: tuple[Mapping[str, Any], ...], *, root: Path
+) -> tuple[Mapping[str, Any], ...]:
+    intent = _load_inflight(root)
+    if intent is None:
+        return entries
+    if _intent_matches_recorded_outcome(entries, intent):
+        _remove_inflight(root, intent)
+        return entries
+    if _intent_matches_pending(entries, intent):
+        raise _error(
+            "UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION: request may "
+            "have started without a durable campaign outcome; automatic retry forbidden"
+        )
+    raise _error(
+        "INFLIGHT_ATTEMPT_STATE_CONFLICT: marker and append-only evidence disagree"
+    )
+
+
+def _inflight_status(
+    entries: tuple[Mapping[str, Any], ...], *, root: Path
+) -> Mapping[str, Any] | None:
+    intent = _load_inflight(root)
+    if intent is None:
+        return None
+    if _intent_matches_recorded_outcome(entries, intent):
+        reason = "RECORDED_OUTCOME_PENDING_SAFE_MARKER_CLEANUP"
+    elif _intent_matches_pending(entries, intent):
+        reason = "UNRESOLVED_INFLIGHT_ATTEMPT_REQUIRES_RECONCILIATION"
+    else:
+        reason = "INFLIGHT_ATTEMPT_STATE_CONFLICT"
+    return {
+        "reason": reason,
+        "target_id": intent["target_id"],
+        "slot": intent["slot"],
+        "attempt": intent["attempt"],
+        "intent_started_at_utc": intent["intent_started_at_utc"],
+        "intent_sha256": intent["intent_sha256"],
+    }
+
+
+def _capture_directory(root: Path, slot: contract.CampaignSlot) -> Path:
+    target = root / slot.target_id
+    directory = target / slot.slot
+    if target.parent != root or directory.parent != target:
+        raise _error("capture directory escaped frozen root")
+    return directory
+
+
+def _validate_no_unindexed_capture(
+    entries: tuple[Mapping[str, Any], ...], *, root: Path
+) -> None:
+    progress = contract.campaign_progress(entries)
+    if progress.complete or progress.next_slot is None:
+        return
+    directory = _capture_directory(root, progress.next_slot)
+    if directory.exists() or directory.is_symlink():
+        raise _error(
+            "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION: automatic promotion or "
+            "overwrite of existing capture evidence is forbidden"
+        )
+
+
+def _load_manifest(path: Path, slot: contract.CampaignSlot) -> tuple[Mapping[str, Any], bytes]:
+    _regular_single_link(path, "capture manifest")
+    if not path.exists():
+        raise _error("capture manifest is missing")
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise _error("could not read capture manifest") from exc
+    value = _strict_json(raw, "capture manifest", contract.MAX_ENTRY_BYTES)
+    checked = contract.validate_manifest(value, slot)
+    return checked, raw
+
+
+def _verify_capture(
+    root: Path, slot: contract.CampaignSlot
+) -> tuple[Mapping[str, Any], str]:
+    directory = _capture_directory(root, slot)
+    if directory.is_symlink() or not directory.is_dir():
+        raise _error("capture directory is missing or invalid")
+    raw_path = directory / contract.RAW_BODY_FILENAME
+    manifest_path = directory / contract.MANIFEST_FILENAME
+    _regular_single_link(raw_path, "raw response")
+    if not raw_path.exists():
+        raise _error("raw response is missing")
+    manifest, manifest_raw = _load_manifest(manifest_path, slot)
+    try:
+        raw = raw_path.read_bytes()
+    except OSError as exc:
+        raise _error("could not read raw response") from exc
+    if (
+        len(raw) != manifest["raw_size"]
+        or hashlib.sha256(raw).hexdigest() != manifest["raw_sha256"]
+    ):
+        raise _error("raw response no longer matches capture manifest")
+    return manifest, hashlib.sha256(manifest_raw).hexdigest()
+
+
+def _verify_indexed_captures(
+    root: Path, entries: tuple[Mapping[str, Any], ...]
+) -> None:
+    plan = contract.campaign_slots()
+    successes = [entry for entry in entries if entry["event_type"] == "SLOT_SUCCEEDED"]
+    for index, entry in enumerate(successes):
+        manifest, manifest_hash = _verify_capture(root, plan[index])
+        detail = entry["detail"]
+        if (
+            entry["attempt"] != manifest["attempt"]
+            or detail["manifest_sha256"] != manifest_hash
+            or detail["raw_sha256"] != manifest["raw_sha256"]
+            or detail["raw_size"] != manifest["raw_size"]
+            or detail["observed_at_utc"] != manifest["observed_at_utc"]
+        ):
+            raise _error("campaign index does not match durable capture evidence")
+
+
+def write_capture(
+    result: FetchResult, *, repository_root: Path
+) -> tuple[Mapping[str, Any], str]:
+    if not isinstance(result, FetchResult):
+        raise _error("capture result has wrong type")
+    if type(result.raw_body) is not bytes or not result.raw_body:
+        raise _error("capture raw body must be non-empty exact bytes")
+    checked = contract.validate_manifest(result.manifest, result.slot)
+    if (
+        checked["attempt"] != result.attempt
+        or checked["raw_size"] != len(result.raw_body)
+        or checked["raw_sha256"] != hashlib.sha256(result.raw_body).hexdigest()
+    ):
+        raise _error("capture result raw body differs from its manifest")
+    root = _ensure_campaign_root(repository_root=repository_root)
+    target = root / result.slot.target_id
+    _ensure_directory_tree(target, boundary=root)
+    directory = _capture_directory(root, result.slot)
+    if directory.exists() or directory.is_symlink():
+        raise _error("capture slot already exists and will not be overwritten")
+    directory.mkdir()
+    _sync_directory(target)
+    _sync_directory(directory)
+    raw_path = directory / contract.RAW_BODY_FILENAME
+    manifest_path = directory / contract.MANIFEST_FILENAME
+    _write_exclusive(raw_path, result.raw_body)
+    manifest_raw = contract.canonical_bytes(dict(checked))
+    _write_exclusive(manifest_path, manifest_raw)
+    _sync_directory(directory)
+    return checked, hashlib.sha256(manifest_raw).hexdigest()
+
+
+def _record_failure(
+    entries: tuple[Mapping[str, Any], ...],
+    *,
+    slot: contract.CampaignSlot,
+    attempt: int,
+    attempt_started_at: datetime.datetime,
+    recorded_at: datetime.datetime,
+    error_kind: str,
+    error_message: str,
+    repository_root: Path,
+) -> tuple[Mapping[str, Any], ...]:
+    entry = contract.build_attempt_failed_entry(
+        entries,
+        slot=slot,
+        attempt=attempt,
+        attempt_started_at=attempt_started_at,
+        recorded_at=recorded_at,
+        error_kind=error_kind,
+        error_message=error_message,
+    )
+    return _append_entry(entries, entry, repository_root=repository_root)
+
+
+def _record_block(
+    entries: tuple[Mapping[str, Any], ...],
+    *,
+    slot: contract.CampaignSlot,
+    recorded_at: datetime.datetime,
+    error_kind: str,
+    error_message: str,
+    repository_root: Path,
+) -> tuple[Mapping[str, Any], ...]:
+    entry = contract.build_slot_blocked_entry(
+        entries,
+        slot=slot,
+        recorded_at=recorded_at,
+        error_kind=error_kind,
+        error_message=error_message,
+    )
+    return _append_entry(entries, entry, repository_root=repository_root)
+
+
+def _wait_until_eligible(
+    entries: tuple[Mapping[str, Any], ...],
+    *,
+    clock: Callable[[], datetime.datetime],
+    sleeper: Callable[[float], None],
+) -> datetime.datetime:
+    for _ in range(MAX_WAIT_RECHECKS):
+        now = clock()
+        wait = contract.seconds_until_next_request_eligible(entries, now)
+        if wait <= 0:
+            return now
+        sleeper(wait)
+    raise _error("runner clock did not advance through required wait interval")
+
+
+def fetch_primary_evidence(
+    *,
+    slot: contract.CampaignSlot,
+    attempt: int,
+    request_started_at: datetime.datetime,
+    clock: Callable[[], datetime.datetime] = _clock,
+    connection_factory: Callable[..., Any] | None = None,
+) -> FetchResult:
+    if type(attempt) is not int or not 1 <= attempt <= contract.MAXIMUM_ATTEMPTS_PER_SLOT:
+        raise PrimaryEvidenceRequestError("INVALID_ATTEMPT", "attempt is outside frozen bounds")
+    started = request_started_at.astimezone(UTC)
     factory = connection_factory or http.client.HTTPSConnection
-    connection = None
+    connection: Any = None
     try:
         context = ssl.create_default_context()
         try:
             connection = factory(
-                "www.football-data.co.uk", 443,
-                timeout=NETWORK_TIMEOUT_SECONDS, context=context,
+                "www.football-data.co.uk",
+                443,
+                timeout=NETWORK_TIMEOUT_SECONDS,
+                context=context,
             )
         except TypeError:
             connection = factory(
@@ -660,21 +857,22 @@ def fetch_primary_evidence(*, slot: contract.CampaignSlot, attempt: int,
             )
         encodings = [
             value.strip().lower()
-            for name, value in headers if name == "content-encoding"
+            for name, value in headers
+            if name == "content-encoding"
         ]
         if any(value not in ("", "identity") for value in encodings):
             raise PrimaryEvidenceRequestError(
                 "CONTENT_ENCODING", "compressed response is not admissible"
             )
         lengths = [value.strip() for name, value in headers if name == "content-length"]
-        declared_length: int | None = None
+        declared: int | None = None
         if lengths:
             if len(lengths) != 1 or not lengths[0].isdigit():
                 raise PrimaryEvidenceRequestError(
                     "CONTENT_LENGTH", "invalid Content-Length"
                 )
-            declared_length = int(lengths[0])
-            if declared_length > contract.MAX_RESPONSE_BYTES:
+            declared = int(lengths[0])
+            if declared > contract.MAX_RESPONSE_BYTES:
                 raise PrimaryEvidenceRequestError(
                     "BODY_TOO_LARGE", "declared response exceeds frozen limit"
                 )
@@ -687,13 +885,12 @@ def fetch_primary_evidence(*, slot: contract.CampaignSlot, attempt: int,
             raise PrimaryEvidenceRequestError(
                 "BODY_TOO_LARGE", "response exceeds frozen limit"
             )
-        if declared_length is not None and declared_length != len(raw):
+        if declared is not None and declared != len(raw):
             raise PrimaryEvidenceRequestError(
                 "CONTENT_LENGTH", "Content-Length does not match exact body"
             )
-        completed_at = clock().astimezone(UTC)
-        observed_at = clock().astimezone(UTC)
-        raw_sha = hashlib.sha256(raw).hexdigest()
+        completed = clock().astimezone(UTC)
+        observed = clock().astimezone(UTC)
         manifest = {
             "schema_version": contract.SCHEMA_VERSION,
             "runner_id": contract.RUNNER_ID,
@@ -704,25 +901,29 @@ def fetch_primary_evidence(*, slot: contract.CampaignSlot, attempt: int,
             "requested_url": slot.requested_url,
             "final_url": slot.requested_url,
             "request_method": "GET",
-            "request_headers": [list(pair) for pair in REQUEST_HEADERS],
+            "request_headers": [list(item) for item in REQUEST_HEADERS],
             "redirect_chain": [],
-            "request_started_at_utc": contract.serialize_utc(request_started_at),
-            "response_completed_at_utc": contract.serialize_utc(completed_at),
-            "observed_at_utc": contract.serialize_utc(observed_at),
+            "request_started_at_utc": contract.serialize_utc(started),
+            "response_completed_at_utc": contract.serialize_utc(completed),
+            "observed_at_utc": contract.serialize_utc(observed),
             "http_status": 200,
             "tls_verified": True,
-            "response_headers": [list(pair) for pair in headers],
+            "response_headers": [list(item) for item in headers],
             "raw_filename": contract.RAW_BODY_FILENAME,
-            "raw_sha256": raw_sha,
+            "raw_sha256": hashlib.sha256(raw).hexdigest(),
             "raw_size": len(raw),
         }
-        checked = contract.validate_manifest(manifest, slot)
-        return FetchResult(slot, attempt, raw, checked)
+        return FetchResult(
+            slot=slot,
+            attempt=attempt,
+            raw_body=raw,
+            manifest=contract.validate_manifest(manifest, slot),
+        )
     except PrimaryEvidenceRequestError:
         raise
     except (OSError, ssl.SSLError, http.client.HTTPException, TimeoutError) as exc:
         raise PrimaryEvidenceRequestError(
-            "NETWORK_FAILURE", _bounded_error(exc)
+            "NETWORK_FAILURE", _bounded_failure(exc)
         ) from exc
     finally:
         if connection is not None:
@@ -732,228 +933,303 @@ def fetch_primary_evidence(*, slot: contract.CampaignSlot, attempt: int,
                 pass
 
 
-def write_capture(result: FetchResult, *, repository_root: Path) -> tuple[Mapping[str, Any], str]:
-    if not isinstance(result, FetchResult):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "capture result has wrong type"
-        )
-    root = _root(repository_root)
-    target_dir = root / result.slot.target_id
-    _ensure_directory_tree(target_dir, root)
-    slot_dir = target_dir / result.slot.slot
-    if slot_dir.exists() or slot_dir.is_symlink():
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "capture slot already exists and will not be overwritten: "
-            f"{result.slot.target_id}/{result.slot.slot}"
-        )
-    slot_dir.mkdir()
-    _sync_directory(target_dir)
-    _sync_directory(slot_dir)
-    raw_path = slot_dir / contract.RAW_BODY_FILENAME
-    manifest_path = slot_dir / contract.MANIFEST_FILENAME
-    _write_exclusive(raw_path, result.raw_body)
-    manifest_raw = contract.canonical_bytes(dict(result.manifest))
-    _write_exclusive(manifest_path, manifest_raw)
-    _sync_directory(slot_dir)
-    return result.manifest, hashlib.sha256(manifest_raw).hexdigest()
+def _execute_next_slot_locked(
+    *,
+    repository_root: Path,
+    root: Path,
+    fetcher: Callable[..., FetchResult],
+    clock: Callable[[], datetime.datetime],
+    sleeper: Callable[[float], None],
+) -> contract.CampaignProgress:
+    entries = load_campaign_entries(repository_root=repository_root, create_root=True)
+    _verify_indexed_captures(root, entries)
+    entries = _reconcile_completed_inflight(entries, root=root)
+    _validate_no_unindexed_capture(entries, root=root)
+    progress = contract.campaign_progress(entries)
+    if progress.complete:
+        return progress
+    if progress.blocked or progress.next_slot is None or progress.next_attempt is None:
+        raise _error(f"campaign is blocked: {progress.block_reason}")
 
-
-def execute_next_campaign_slot(*, execute_live_network: bool,
-                               repository_root: Path,
-                               fetcher: Callable[..., FetchResult] = fetch_primary_evidence,
-                               clock: Callable[[], datetime.datetime] = _now,
-                               sleeper: Callable[[float], None] = time.sleep) -> contract.CampaignProgress:
-    if execute_live_network is not True:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "live acquisition requires exact True acknowledgement"
-        )
-    contract.runner_descriptor()
-    root = _root(repository_root)
-    with _campaign_lock(root, clock):
-        successes = load_success_entries(repository_root=repository_root)
-        failures = load_failure_entries(repository_root=repository_root)
-        _validate_index_against_captures(root, successes)
-        successes, recovered = _reconcile_inflight(
-            root, successes, failures, clock
-        )
-        if recovered:
-            return contract.campaign_progress(successes)
-        # A complete capture can exist after a process ended between manifest and index
-        # publication without an inflight marker (for example a manually recovered lock).
-        before_recovery = len(successes)
-        plan = contract.campaign_slots()
-        if len(successes) < len(plan):
-            directory = _slot_directory(root, plan[len(successes)])
-            if directory.exists() or directory.is_symlink():
-                successes = _append_success_from_capture(
-                    root, plan[len(successes)], successes, clock
-                )
-        if len(successes) != before_recovery:
-            return contract.campaign_progress(successes)
-        progress = contract.campaign_progress(successes)
-        if progress.complete:
-            return progress
-        slot = progress.next_slot
-        assert slot is not None
-        failures = load_failure_entries(repository_root=repository_root)
-        prior_same_slot = [
-            entry for entry in failures
-            if entry["target_id"] == slot.target_id and entry["slot"] == slot.slot
-        ]
-        attempt = max([entry["attempt"] for entry in prior_same_slot] or [0]) + 1
-        if attempt > contract.MAXIMUM_ATTEMPTS_PER_SLOT:
-            raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                "ATTEMPTS_EXHAUSTED"
-            )
-        while attempt <= contract.MAXIMUM_ATTEMPTS_PER_SLOT:
-            failures = load_failure_entries(repository_root=repository_root)
-            _wait_before_request(
-                slot=slot, successes=successes, failures=failures,
-                clock=clock, sleeper=sleeper,
-            )
-            started = clock().astimezone(UTC)
-            marker = _write_inflight(root, slot, attempt, started)
-            try:
-                result = fetcher(
-                    slot=slot, attempt=attempt,
-                    request_started_at=started, clock=clock,
-                )
-            except PrimaryEvidenceRequestError as exc:
-                _journal_failure(
-                    root, slot=slot, attempt=attempt,
-                    attempt_started_at=started, recorded_at=clock(),
-                    kind=exc.kind, message=str(exc),
-                )
-                _clear_inflight(root, marker)
-                if attempt >= contract.MAXIMUM_ATTEMPTS_PER_SLOT:
-                    raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                        "ATTEMPTS_EXHAUSTED"
-                    ) from exc
-                sleeper(float(contract.RETRY_DELAYS_SECONDS[attempt - 1]))
-                attempt += 1
-                continue
-            if slot.slot == "B":
-                a_time = contract.slot_a_observed_at(successes, slot.target_id)
-                assert a_time is not None
-                observed = contract.parse_utc(
-                    result.manifest["observed_at_utc"], "observed_at_utc"
-                )
-                separation = (observed - a_time).total_seconds()
-                if not (
-                    contract.MINIMUM_PAIR_SEPARATION_SECONDS
-                    <= separation
-                    <= contract.MAXIMUM_PAIR_SEPARATION_SECONDS
-                ):
-                    _journal_failure(
-                        root, slot=slot, attempt=attempt,
-                        attempt_started_at=started, recorded_at=clock(),
-                        kind="PAIR_WINDOW_VIOLATION",
-                        message=(
-                            "successful response observed outside frozen pair window: "
-                            f"{separation:.6f}s"
-                        ),
-                    )
-                    _clear_inflight(root, marker)
-                    raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-                        "pair window violated during request"
-                    )
-            try:
-                write_capture(result, repository_root=repository_root)
-                successes = _append_success_from_capture(
-                    root, slot, successes, clock
-                )
-            except Exception as exc:
-                _journal_failure(
-                    root, slot=slot, attempt=attempt,
-                    attempt_started_at=started, recorded_at=clock(),
-                    kind="DURABILITY_FAILURE", message=_bounded_error(exc),
-                )
-                _clear_inflight(root, marker)
-                raise
-            _clear_inflight(root, marker)
-            return contract.campaign_progress(successes)
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "ATTEMPTS_EXHAUSTED"
-        )
-
-
-def execute_campaign(*, execute_live_network: bool,
-                     repository_root: Path,
-                     max_successful_slots: int | None = None,
-                     fetcher: Callable[..., FetchResult] = fetch_primary_evidence,
-                     clock: Callable[[], datetime.datetime] = _now,
-                     sleeper: Callable[[float], None] = time.sleep) -> contract.CampaignProgress:
-    if execute_live_network is not True:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "live acquisition requires exact True acknowledgement"
-        )
-    if max_successful_slots is not None and (
-        type(max_successful_slots) is not int or max_successful_slots < 1
-    ):
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "max_successful_slots must be a positive integer or None"
-        )
-    completed_before = len(
-        load_success_entries(repository_root=repository_root)
-    )
     while True:
-        progress = execute_next_campaign_slot(
-            execute_live_network=True,
-            repository_root=repository_root,
+        progress = contract.campaign_progress(entries)
+        if progress.blocked or progress.next_slot is None or progress.next_attempt is None:
+            raise _error(f"campaign is blocked: {progress.block_reason}")
+        slot = progress.next_slot
+        attempt = progress.next_attempt
+        try:
+            intent_time = _wait_until_eligible(
+                entries, clock=clock, sleeper=sleeper
+            )
+        except contract.PR69PrimaryTimeBasisEvidencePairWindowError as exc:
+            entries = _record_block(
+                entries,
+                slot=slot,
+                recorded_at=clock(),
+                error_kind=exc.reason,
+                error_message=str(exc),
+                repository_root=repository_root,
+            )
+            raise _error(f"campaign pair window blocked: {exc}") from exc
+
+        intent = _create_inflight(
+            entries,
+            slot=slot,
+            attempt=attempt,
+            intent_started_at=intent_time,
+            root=root,
+        )
+        attempt_started_at = clock().astimezone(UTC)
+        try:
+            result = fetcher(
+                slot=slot,
+                attempt=attempt,
+                request_started_at=attempt_started_at,
+                clock=clock,
+            )
+        except PrimaryEvidenceRequestError as exc:
+            entries = _record_failure(
+                entries,
+                slot=slot,
+                attempt=attempt,
+                attempt_started_at=attempt_started_at,
+                recorded_at=clock(),
+                error_kind=exc.kind,
+                error_message=str(exc),
+                repository_root=repository_root,
+            )
+            _remove_inflight(root, intent)
+            progress = contract.campaign_progress(entries)
+            if progress.blocked:
+                raise _error(f"campaign is blocked: {progress.block_reason}") from exc
+            continue
+
+        observed = contract.parse_utc(
+            result.manifest["observed_at_utc"], "observed_at_utc"
+        )
+        try:
+            if slot.slot == "B":
+                # Validate pair timing before publishing raw bytes for this slot. A response
+                # outside the window remains a failed request attempt, not a valid capture.
+                contract.build_slot_succeeded_entry(
+                    entries,
+                    slot=slot,
+                    attempt=attempt,
+                    attempt_started_at=attempt_started_at,
+                    recorded_at=max(clock(), observed),
+                    manifest_sha256=contract.manifest_sha256(result.manifest),
+                    raw_sha256=result.manifest["raw_sha256"],
+                    raw_size=result.manifest["raw_size"],
+                    observed_at=observed,
+                )
+        except contract.PR69PrimaryTimeBasisEvidencePairWindowError as exc:
+            entries = _record_failure(
+                entries,
+                slot=slot,
+                attempt=attempt,
+                attempt_started_at=attempt_started_at,
+                recorded_at=clock(),
+                error_kind=exc.reason,
+                error_message=str(exc),
+                repository_root=repository_root,
+            )
+            _remove_inflight(root, intent)
+            progress = contract.campaign_progress(entries)
+            if exc.reason == "PAIR_OBSERVATION_TOO_LATE" and not progress.blocked:
+                entries = _record_block(
+                    entries,
+                    slot=slot,
+                    recorded_at=clock(),
+                    error_kind="PAIR_WINDOW_EXPIRED_AFTER_RESPONSE",
+                    error_message=(
+                        "slot B response arrived after frozen 3600-second pair window"
+                    ),
+                    repository_root=repository_root,
+                )
+                raise _error("campaign pair window expired after response") from exc
+            if progress.blocked:
+                raise _error(f"campaign is blocked: {progress.block_reason}") from exc
+            continue
+
+        # From this point onward, any exception is an indeterminate durability outcome.
+        # The inflight marker intentionally remains so restart cannot issue a duplicate
+        # request. No failure entry is fabricated when publication state is uncertain.
+        manifest, manifest_hash = write_capture(
+            result, repository_root=repository_root
+        )
+        entry = contract.build_slot_succeeded_entry(
+            entries,
+            slot=slot,
+            attempt=attempt,
+            attempt_started_at=attempt_started_at,
+            recorded_at=clock(),
+            manifest_sha256=manifest_hash,
+            raw_sha256=manifest["raw_sha256"],
+            raw_size=manifest["raw_size"],
+            observed_at=observed,
+        )
+        entries = _append_entry(entries, entry, repository_root=repository_root)
+        _remove_inflight(root, intent)
+        return contract.campaign_progress(entries)
+
+
+def execute_next_campaign_slot(
+    *,
+    execute_live_network: bool,
+    repository_root: Path | None = None,
+    fetcher: Callable[..., FetchResult] = fetch_primary_evidence,
+    clock: Callable[[], datetime.datetime] = _clock,
+    sleeper: Callable[[float], None] | None = None,
+) -> contract.CampaignProgress:
+    if execute_live_network is not True:
+        raise _error("live network execution requires exact True authorization")
+    contract.runner_descriptor()
+    repository = Path(repository_root or _repository_root()).resolve(strict=True)
+    if sleeper is None:
+        sleeper = time.sleep
+    with campaign_lock(repository_root=repository) as root:
+        return _execute_next_slot_locked(
+            repository_root=repository,
+            root=root,
             fetcher=fetcher,
             clock=clock,
             sleeper=sleeper,
         )
-        if progress.complete:
-            return progress
-        if (
-            max_successful_slots is not None
-            and progress.completed_slots - completed_before >= max_successful_slots
-        ):
-            return progress
 
 
-def campaign_status(*, repository_root: Path) -> Mapping[str, Any]:
-    contract.runner_descriptor()
-    root = _root(repository_root)
-    successes = load_success_entries(repository_root=repository_root)
-    _validate_index_against_captures(root, successes)
-    failures = load_failure_entries(repository_root=repository_root)
-    if _load_inflight(root) is not None:
-        raise PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError(
-            "campaign status is blocked by an inflight attempt marker"
-        )
-    progress = contract.campaign_progress(successes)
-    pairs: list[dict[str, Any]] = []
-    for target in (
-        slot for slot in contract.campaign_slots() if slot.slot == "A"
+def execute_campaign(
+    *,
+    execute_live_network: bool,
+    repository_root: Path | None = None,
+    max_successful_slots: int | None = None,
+    fetcher: Callable[..., FetchResult] = fetch_primary_evidence,
+    clock: Callable[[], datetime.datetime] = _clock,
+    sleeper: Callable[[float], None] | None = None,
+) -> contract.CampaignProgress:
+    if execute_live_network is not True:
+        raise _error("live network execution requires exact True authorization")
+    if max_successful_slots is not None and (
+        type(max_successful_slots) is not int or max_successful_slots <= 0
     ):
-        a = contract.slot_a_observed_at(successes, target.target_id)
-        b = next((
-            contract.parse_utc(entry["observed_at_utc"], "observed_at_utc")
-            for entry in successes
-            if entry["target_id"] == target.target_id and entry["slot"] == "B"
+        raise _error("max_successful_slots must be an exact positive integer")
+    contract.runner_descriptor()
+    repository = Path(repository_root or _repository_root()).resolve(strict=True)
+    if sleeper is None:
+        sleeper = time.sleep
+    with campaign_lock(repository_root=repository) as root:
+        entries = load_campaign_entries(repository_root=repository, create_root=True)
+        _verify_indexed_captures(root, entries)
+        entries = _reconcile_completed_inflight(entries, root=root)
+        _validate_no_unindexed_capture(entries, root=root)
+        initial = contract.campaign_progress(entries)
+        if initial.blocked:
+            raise _error(f"campaign is blocked: {initial.block_reason}")
+        starting_completed = initial.completed_slots
+        progress = initial
+        while not progress.complete:
+            if (
+                max_successful_slots is not None
+                and progress.completed_slots - starting_completed >= max_successful_slots
+            ):
+                break
+            progress = _execute_next_slot_locked(
+                repository_root=repository,
+                root=root,
+                fetcher=fetcher,
+                clock=clock,
+                sleeper=sleeper,
+            )
+        return progress
+
+
+def campaign_status(*, repository_root: Path | None = None) -> Mapping[str, Any]:
+    contract.runner_descriptor()
+    root = validate_campaign_root(repository_root=repository_root)
+    entries = load_campaign_entries(repository_root=repository_root, create_root=False)
+    progress = contract.campaign_progress(entries)
+    inflight = None if not root.exists() else _inflight_status(entries, root=root)
+    if root.exists():
+        _verify_indexed_captures(root, entries)
+        if inflight is None:
+            try:
+                _validate_no_unindexed_capture(entries, root=root)
+            except PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError as exc:
+                inflight = {
+                    "reason": "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION",
+                    "detail": str(exc),
+                }
+    blocked = progress.blocked or inflight is not None
+    reason = progress.block_reason if progress.blocked else (
+        None if inflight is None else inflight["reason"]
+    )
+    pairs: list[dict[str, Any]] = []
+    for slot in contract.campaign_slots():
+        if slot.slot != "A":
+            continue
+        first = next((
+            contract.parse_utc(entry["detail"]["observed_at_utc"], "observed_at_utc")
+            for entry in entries
+            if entry["event_type"] == "SLOT_SUCCEEDED"
+            and entry["target_id"] == slot.target_id
+            and entry["slot"] == "A"
+        ), None)
+        second = next((
+            contract.parse_utc(entry["detail"]["observed_at_utc"], "observed_at_utc")
+            for entry in entries
+            if entry["event_type"] == "SLOT_SUCCEEDED"
+            and entry["target_id"] == slot.target_id
+            and entry["slot"] == "B"
+        ), None)
+        first_entry = next((
+            entry for entry in entries
+            if entry["event_type"] == "SLOT_SUCCEEDED"
+            and entry["target_id"] == slot.target_id
+            and entry["slot"] == "A"
+        ), None)
+        second_entry = next((
+            entry for entry in entries
+            if entry["event_type"] == "SLOT_SUCCEEDED"
+            and entry["target_id"] == slot.target_id
+            and entry["slot"] == "B"
         ), None)
         pairs.append({
-            "target_id": target.target_id,
-            "slot_a_observed_at_utc": (
-                None if a is None else contract.serialize_utc(a)
+            "target_id": slot.target_id,
+            "slot_a_raw_sha256": (
+                None if first_entry is None else first_entry["detail"]["raw_sha256"]
             ),
-            "slot_b_observed_at_utc": (
-                None if b is None else contract.serialize_utc(b)
+            "slot_b_raw_sha256": (
+                None if second_entry is None else second_entry["detail"]["raw_sha256"]
+            ),
+            "raw_pair_identical": (
+                None if first_entry is None or second_entry is None
+                else first_entry["detail"]["raw_sha256"]
+                == second_entry["detail"]["raw_sha256"]
             ),
             "separation_seconds": (
-                None if a is None or b is None else (b - a).total_seconds()
+                None if first is None or second is None
+                else (second - first).total_seconds()
             ),
         })
     return {
         "runner_id": contract.RUNNER_ID,
         "runner_state": contract.RUNNER_STATE,
+        "campaign_runner_implemented": True,
         "completed_slots": progress.completed_slots,
-        "required_slots": progress.total_slots,
-        "complete": progress.complete,
-        "failure_attempts": len(failures),
+        "total_slots": progress.total_slots,
+        "complete": progress.complete and inflight is None,
+        "blocked": blocked,
+        "block_reason": reason,
+        "next_slot": (
+            None if progress.next_slot is None else {
+                "ordinal": progress.next_slot.ordinal,
+                "target_id": progress.next_slot.target_id,
+                "slot": progress.next_slot.slot,
+                "attempt": progress.next_attempt,
+            }
+        ),
+        "inflight_attempt": inflight,
         "pair_drift_table": pairs,
+        "network_acquisition_performed_by_this_status_command": False,
         "semantic_extraction_performed": False,
         "historical_effective_scope_qualified": False,
         "pr69_source_local_time_basis_resolved": False,
@@ -968,40 +1244,64 @@ def campaign_status(*, repository_root: Path) -> Mapping[str, Any]:
     }
 
 
-def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--repository-root", type=Path, default=Path.cwd())
-    parser.add_argument(
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Execute or inspect the exact reviewed PR69 primary time-basis evidence "
+            "acquisition campaign."
+        )
+    )
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--status",
+        action="store_true",
+        help="revalidate campaign state without network access",
+    )
+    mode.add_argument(
         "--execute-reviewed-protocol",
         action="store_true",
-        help="explicitly execute the reviewed eight-slot network campaign",
+        help="explicitly authorize the frozen eight-slot live network campaign",
     )
-    parser.add_argument("--max-successful-slots", type=int, default=None)
+    parser.add_argument(
+        "--max-successful-slots",
+        type=int,
+        default=None,
+        help="optional positive chunk size for resumable live execution",
+    )
+    parser.add_argument(
+        "--repository-root",
+        type=Path,
+        default=None,
+        help=argparse.SUPPRESS,
+    )
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    if args.status and args.max_successful_slots is not None:
+        parser.error("--max-successful-slots is valid only during live execution")
     try:
-        if args.execute_reviewed_protocol:
-            execute_campaign(
+        if args.status:
+            result: Any = campaign_status(repository_root=args.repository_root)
+        else:
+            progress = execute_campaign(
                 execute_live_network=True,
                 repository_root=args.repository_root,
                 max_successful_slots=args.max_successful_slots,
             )
-            payload = dict(campaign_status(repository_root=args.repository_root))
-        else:
-            payload = dict(contract.runner_descriptor())
-            payload["execution_requested"] = False
-            payload["message"] = (
-                "No network acquisition performed; pass --execute-reviewed-protocol "
-                "to execute the frozen campaign."
-            )
-        sys.stdout.write(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+            result = {
+                **dict(campaign_status(repository_root=args.repository_root)),
+                "completed_slots_after_execution": progress.completed_slots,
+            }
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True))
         return 0
-    except Exception as exc:
-        sys.stderr.write(_bounded_error(exc) + "\n")
-        return 2
+    except (
+        PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+    ) as exc:
+        parser.exit(1, f"campaign runner failed: {exc}\n")
 
 
 if __name__ == "__main__":
