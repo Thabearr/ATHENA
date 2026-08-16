@@ -16,11 +16,13 @@ def _value():
 
 def test_protocol_is_exact_canonical_frozen_identity() -> None:
     value = _value()
-    raw = protocol.canonical_fotmob_historical_source_history_completeness_materialization_protocol_bytes(value)
-    assert len(raw) == protocol.PROTOCOL_SIZE == 9_708
+    raw = protocol.canonical_fotmob_historical_source_history_completeness_materialization_protocol_bytes(
+        value
+    )
+    assert len(raw) == protocol.PROTOCOL_SIZE == 9_962
     assert hashlib.sha256(raw).hexdigest() == protocol.PROTOCOL_SHA256
     assert protocol.PROTOCOL_SHA256 == (
-        "c4d9d019fa433677d82354570df1fe1c0e634c14b91c1f9ba0c3b47f91258209"
+        "1917db656004305df9ce56dfdf049347733a591bde08d465c105bb7d98d1e6de"
     )
     assert value["repository_main_sha"] == "7e0e43852ff6527021de6ece52394b44bf222234"
 
@@ -69,11 +71,13 @@ def test_materialization_preserves_preboundary_and_special_exclusions() -> None:
 def test_materialized_row_semantics_are_source_scoped_and_temporally_conservative() -> None:
     value = _value()
     assert value["source_scope"]["source_namespace"] == protocol.SOURCE_NAMESPACE
-    assert value["source_scope"]["source_local_time_basis"] == "Europe/Oslo"
+    assert value["source_scope"]["source_display_time_basis"] == "Europe/Oslo"
+    assert value["source_scope"]["pr80_source_local_semantic_equivalence"] == "UNPROVEN"
     rules = value["materialization_rules"]
     assert any("EXACT_DECIMAL_STRINGS_OF_POSITIVE_FOTMOB_SOURCE_IDS" in rule for rule in rules)
     assert any("EARLIEST_OF_THE_TWO_PR117_QUALIFIED_MANIFEST_OBSERVATION_TIMES" in rule for rule in rules)
     assert any("STRICTLY_AFTER_KICKOFF_UTC" in rule for rule in rules)
+    assert any("SEMANTIC_EQUIVALENCE_STILL_UNPROVEN" in rule for rule in rules)
 
 
 def test_daily_completeness_and_future_ceiling_remain_fail_closed() -> None:
@@ -95,7 +99,9 @@ def test_global_capability_registry_is_not_promoted_by_pr118() -> None:
     assert capability.reliable_fixture_identity is CapabilityAvailability.CONFIRMED
     assert capability.historical_coverage is CapabilityAvailability.UNKNOWN
     assert value["source_scope"]["global_source_capability_historical_coverage_must_remain"] == "UNKNOWN"
-    assert "GLOBAL_SOURCE_CAPABILITY_HISTORICAL_COVERAGE_CONFIRMED" in value["positive_execution_must_remain_false"]
+    assert "GLOBAL_SOURCE_CAPABILITY_HISTORICAL_COVERAGE_CONFIRMED" in (
+        value["positive_execution_must_remain_false"]
+    )
 
 
 def test_pr118_grants_no_authority_and_freezes_execution_boundary() -> None:
