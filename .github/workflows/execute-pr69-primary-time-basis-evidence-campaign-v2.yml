@@ -117,7 +117,13 @@ jobs:
               repo: context.repo.repo,
               artifact_id: priorArtifactId,
             });
-            if (priorArtifact.expired || priorArtifact.name !== priorArtifactName) {
+            const expectedArtifactDigest = `sha256:${priorArtifactDigest}`;
+            if (
+              priorArtifact.expired ||
+              priorArtifact.name !== priorArtifactName ||
+              priorArtifact.digest !== expectedArtifactDigest ||
+              String(priorArtifact.workflow_run?.id || '') !== priorRunId
+            ) {
               core.setFailed('Exact preserved V1 evidence artifact is unavailable or has changed identity.');
               return;
             }
