@@ -30,6 +30,7 @@ def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
         "Patch Bridge only accepts same-repository pull requests.",
         "Patch Bridge only writes to draft pull requests.",
         "GitHub synthetic merge SHA is unavailable.",
+        "GitHub synthetic merge parents differ from exact base plus head.",
         "Stale patch: base-sha=",
         "Patch SHA-256 mismatch",
         "git apply --check --whitespace=error-all athena.patch",
@@ -46,11 +47,11 @@ def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
 
 def test_patch_bridge_pins_exact_synthetic_merge_parent_pair() -> None:
     text = _text()
-    assert "EXPECTED_HEAD_SHA" in text
-    assert "EXPECTED_BASE_SHA" in text
     assert "EXPECTED_MERGE_SHA" in text
+    assert "const parents = merge.parents.map((parent) => parent.sha);" in text
+    assert "parents[0] !== pr.base.sha" in text
+    assert "parents[1] !== pr.head.sha" in text
     assert "refs/pull/${{ github.event.issue.number }}/merge" in text
-    assert 'test "${parents}" = "${EXPECTED_BASE_SHA} ${EXPECTED_HEAD_SHA}"' in text
     assert 'test "$(git rev-parse HEAD)" = "${EXPECTED_MERGE_SHA}"' in text
 
 
