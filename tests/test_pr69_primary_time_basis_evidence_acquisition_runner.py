@@ -14,6 +14,8 @@ import scripts.run_pr69_primary_time_basis_evidence_acquisition as runner
 
 UTC = datetime.timezone.utc
 T0 = datetime.datetime(2026, 8, 16, 9, 0, tzinfo=UTC)
+_PRODUCTION_EXECUTE_NEXT_CAMPAIGN_SLOT = runner.execute_next_campaign_slot
+_PRODUCTION_EXECUTE_CAMPAIGN = runner.execute_campaign
 
 
 class MutableClock:
@@ -40,6 +42,22 @@ def _tiny_plan(monkeypatch):
         ),
         contract.CampaignSlot(
             2, actual.target_id, actual.path, actual.content_type_prefix, "B"
+        ),
+    )
+    monkeypatch.setattr(contract, "campaign_slots", lambda: plan)
+    return plan
+
+
+def _two_target_a_plan(monkeypatch):
+    actual = contract.campaign_slots()
+    first = actual[0]
+    second = actual[1]
+    plan = (
+        contract.CampaignSlot(
+            1, first.target_id, first.path, first.content_type_prefix, "A"
+        ),
+        contract.CampaignSlot(
+            2, second.target_id, second.path, second.content_type_prefix, "A"
         ),
     )
     monkeypatch.setattr(contract, "campaign_slots", lambda: plan)
@@ -81,17 +99,21 @@ def _manifest(
 
 class FakeFetcher:
     def __init__(
-        self, clock: MutableClock, fail_calls: set[int] | None = None
+        self,
+        clock: MutableClock,
+        fail_calls: set[int] | None = None,
+        response_seconds: float = 0.25,
     ) -> None:
         self.clock = clock
         self.fail_calls = set(fail_calls or ())
+        self.response_seconds = response_seconds
         self.calls = 0
         self.starts: list[datetime.datetime] = []
 
     def __call__(self, *, slot, attempt, request_started_at, clock):
         self.calls += 1
         self.starts.append(request_started_at)
-        self.clock.advance(0.25)
+        self.clock.advance(self.response_seconds)
         if self.calls in self.fail_calls:
             raise runner.PrimaryEvidenceRequestError(
                 "NETWORK_FAILURE", "synthetic timeout"
@@ -106,6 +128,51 @@ class FakeFetcher:
             raw,
             contract.validate_manifest(manifest, slot),
         )
+
+
+@pytest.fixture(autouse=True)
+def _install_private_synthetic_execution_seam(monkeypatch):
+    """Keep synthetic fetchers out of the trusted public live-execution API.
+
+    Existing state-machine tests use the private locked seam against tmp_path roots. Calls
+    without a synthetic fetcher still exercise the production public wrapper.
+    """
+
+    def execute_next_for_test(
+        *,
+        execute_live_network: bool,
+        repository_root: Path | None = None,
+        fetcher=runner.fetch_primary_evidence,
+        clock=runner._clock,
+        sleeper=None,
+    ):
+        if fetcher is runner.fetch_primary_evidence:
+            return _PRODUCTION_EXECUTE_NEXT_CAMPAIGN_SLOT(
+                execute_live_network=execute_live_network,
+                repository_root=repository_root,
+                clock=clock,
+                sleeper=sleeper,
+            )
+        if execute_live_network is not True:
+            return _PRODUCTION_EXECUTE_NEXT_CAMPAIGN_SLOT(
+                execute_live_network=execute_live_network,
+                repository_root=repository_root,
+                clock=clock,
+                sleeper=sleeper,
+            )
+        contract.runner_descriptor()
+        repository = Path(repository_root or runner._repository_root()).resolve(strict=True)
+        actual_sleeper = runner.time.sleep if sleeper is None else sleeper
+        with runner.campaign_lock(repository_root=repository) as root:
+            return runner._execute_next_slot_locked(
+                repository_root=repository,
+                root=root,
+                fetcher=fetcher,
+                clock=clock,
+                sleeper=actual_sleeper,
+            )
+
+    monkeypatch.setattr(runner, "execute_next_campaign_slot", execute_next_for_test)
 
 
 def _capture_one_a(
@@ -246,6 +313,29 @@ def test_live_execution_requires_exact_true(tmp_path: Path) -> None:
         runner.execute_next_campaign_slot(
             execute_live_network=False, repository_root=tmp_path
         )
+
+
+def test_public_live_execution_api_has_no_fetcher_injection(tmp_path: Path) -> None:
+    calls = 0
+
+    def synthetic_fetcher(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("synthetic transport must never run")
+
+    with pytest.raises(TypeError):
+        _PRODUCTION_EXECUTE_NEXT_CAMPAIGN_SLOT(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=synthetic_fetcher,
+        )
+    with pytest.raises(TypeError):
+        _PRODUCTION_EXECUTE_CAMPAIGN(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=synthetic_fetcher,
+        )
+    assert calls == 0
 
 
 def test_one_slot_persists_raw_manifest_and_global_index(
@@ -457,6 +547,42 @@ def test_runner_clock_before_slot_a_fails_closed(tmp_path: Path, monkeypatch) ->
     assert fetcher.calls == calls
 
 
+def test_clock_rollback_after_slow_success_blocks_next_target_before_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _two_target_a_plan(monkeypatch)
+    clock = MutableClock()
+    fetcher = FakeFetcher(clock, response_seconds=10.0)
+    progress = runner.execute_next_campaign_slot(
+        execute_live_network=True,
+        repository_root=tmp_path,
+        fetcher=fetcher,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert progress.completed_slots == 1
+    entries = runner.load_campaign_entries(repository_root=tmp_path)
+    started = contract.parse_utc(
+        entries[-1]["attempt_started_at_utc"], "attempt_started_at_utc"
+    )
+    recorded = contract.parse_utc(entries[-1]["recorded_at_utc"], "recorded_at_utc")
+    assert (recorded - started).total_seconds() >= 10
+    clock.value = started + datetime.timedelta(seconds=5)
+    calls = fetcher.calls
+    with pytest.raises(
+        contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError,
+        match="latest durable campaign evidence",
+    ):
+        runner.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=fetcher,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+    assert fetcher.calls == calls
+
+
 def test_pending_inflight_attempt_blocks_automatic_retry(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -548,6 +674,57 @@ def test_unindexed_capture_without_inflight_blocks_and_is_not_promoted(
             fetcher=lambda **kwargs: pytest.fail("network must not run"),
         )
     assert runner.load_campaign_entries(repository_root=tmp_path) == ()
+
+
+def test_future_unindexed_capture_blocks_before_current_slot_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan = _tiny_plan(monkeypatch)
+    root = runner._ensure_campaign_root(repository_root=tmp_path)
+    future = root / plan[1].target_id / plan[1].slot
+    future.mkdir(parents=True)
+    calls = 0
+
+    def forbidden_fetch(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("network must not run")
+
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="UNINDEXED_CAPTURE",
+    ):
+        runner.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=forbidden_fetch,
+        )
+    assert calls == 0
+
+
+def test_unexpected_campaign_root_entry_blocks_before_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    _tiny_plan(monkeypatch)
+    root = runner._ensure_campaign_root(repository_root=tmp_path)
+    (root / "rogue-evidence.bin").write_bytes(b"rogue")
+    calls = 0
+
+    def forbidden_fetch(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("network must not run")
+
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="unexpected campaign root entry",
+    ):
+        runner.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=forbidden_fetch,
+        )
+    assert calls == 0
 
 
 def test_recorded_outcome_allows_safe_stale_inflight_cleanup(
@@ -681,6 +858,58 @@ def test_partial_existing_slot_blocks_without_overwrite(
             fetcher=lambda **kwargs: pytest.fail("network must not run"),
         )
     assert raw_path.read_bytes() == b"partial"
+
+
+def test_indexed_capture_with_extra_file_blocks_before_network(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan, clock, fetcher, _ = _capture_one_a(tmp_path, monkeypatch)
+    root = tmp_path / contract.CAPTURE_ROOT_RELATIVE
+    capture = root / plan[0].target_id / plan[0].slot
+    (capture / "unexpected.bin").write_bytes(b"unexpected")
+    calls = fetcher.calls
+    with pytest.raises(
+        runner.PR69PrimaryTimeBasisEvidenceAcquisitionLiveRunnerError,
+        match="unexpected evidence files",
+    ):
+        runner.execute_next_campaign_slot(
+            execute_live_network=True,
+            repository_root=tmp_path,
+            fetcher=fetcher,
+            clock=clock,
+            sleeper=clock.sleep,
+        )
+    assert fetcher.calls == calls
+
+
+def test_complete_campaign_status_blocks_post_completion_rogue_evidence(
+    tmp_path: Path, monkeypatch
+) -> None:
+    plan = _tiny_plan(monkeypatch)
+    clock = MutableClock()
+    fetcher = FakeFetcher(clock)
+    runner.execute_next_campaign_slot(
+        execute_live_network=True,
+        repository_root=tmp_path,
+        fetcher=fetcher,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    progress = runner.execute_next_campaign_slot(
+        execute_live_network=True,
+        repository_root=tmp_path,
+        fetcher=fetcher,
+        clock=clock,
+        sleeper=clock.sleep,
+    )
+    assert progress.complete is True
+    root = tmp_path / contract.CAPTURE_ROOT_RELATIVE
+    (root / "post-completion-orphan").write_bytes(b"orphan")
+    status = runner.campaign_status(repository_root=tmp_path)
+    assert status["complete"] is False
+    assert status["blocked"] is True
+    assert status["block_reason"] == "UNINDEXED_CAPTURE_REQUIRES_RECONCILIATION"
+    assert len(plan) == 2
 
 
 def test_symlink_component_is_rejected(tmp_path: Path) -> None:
