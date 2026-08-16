@@ -16,14 +16,17 @@ def _bet_analysis() -> dict:
         "market_id": "DOUBLE_CHANCE",
         "outcome_id": "HOME_OR_DRAW",
         "kelly_stake_pct": 0.75,
+        "legacy_kelly_stake_pct_before_runtime_gate": 8.88,
     }
     return {
         "decision_status": DecisionStatus.BET.value,
         "recommended_analytical_verdict": "DC_1X",
         "kelly_stake_pct": 0.75,
+        "legacy_kelly_stake_pct_before_runtime_gate": 9.99,
         "accumulator_eligible_selection": {
             "verdict": "DC_1X",
             "bookmaker_odds": 1.5,
+            "kelly_stake_pct": 0.65,
         },
         "viable_markets": [dict(market)],
         "reasoning_verdicts": [
@@ -31,6 +34,7 @@ def _bet_analysis() -> dict:
                 "label": "Home or Draw",
                 "status": DecisionStatus.BET.value,
                 "kelly_stake_pct": 0.75,
+                "legacy_kelly_stake_pct_before_runtime_gate": 7.77,
             }
         ],
         "no_bet_reasons": [],
@@ -60,7 +64,7 @@ def test_legacy_bet_is_downgraded_without_erasing_analysis() -> None:
         safe["legacy_decision_status_before_runtime_gate"]
         == DecisionStatus.BET.value
     )
-    assert safe["legacy_kelly_stake_pct_before_runtime_gate"] == 0.75
+    assert "legacy_kelly_stake_pct_before_runtime_gate" not in safe
     assert safe["decision_status"] == DecisionStatus.ANALYTICAL_CANDIDATE.value
     assert safe["accumulator_eligible_selection"] is None
     assert safe["kelly_stake_pct"] is None
@@ -70,26 +74,18 @@ def test_legacy_bet_is_downgraded_without_erasing_analysis() -> None:
     ]
     assert LEGACY_RUNTIME_BET_BLOCK_REASON in safe["no_bet_reasons"]
 
-    assert safe["viable_markets"][0]["kelly_stake_pct"] is None
-    assert (
-        safe["viable_markets"][0]["legacy_kelly_stake_pct_before_runtime_gate"]
-        == 0.75
-    )
-    assert (
-        safe["reasoning_verdicts"][0]["status"]
-        == DecisionStatus.ANALYTICAL_CANDIDATE.value
-    )
-    assert safe["reasoning_verdicts"][0]["kelly_stake_pct"] is None
-    assert (
-        safe["reasoning_verdicts"][0][
-            "legacy_kelly_stake_pct_before_runtime_gate"
-        ]
-        == 0.75
-    )
+    viable = safe["viable_markets"][0]
+    assert viable["kelly_stake_pct"] is None
+    assert "legacy_kelly_stake_pct_before_runtime_gate" not in viable
+
+    verdict = safe["reasoning_verdicts"][0]
+    assert verdict["status"] == DecisionStatus.ANALYTICAL_CANDIDATE.value
+    assert verdict["kelly_stake_pct"] is None
+    assert "legacy_kelly_stake_pct_before_runtime_gate" not in verdict
+
     market_evaluation = safe["evidence_report"]["market_evaluations"][0]
     assert market_evaluation["kelly_stake_pct"] is None
-    assert market_evaluation["legacy_kelly_stake_pct_before_runtime_gate"] == 0.75
-
+    assert "legacy_kelly_stake_pct_before_runtime_gate" not in market_evaluation
     assert (
         safe["evidence_report"]["legacy_decision_status_before_runtime_gate"]
         == DecisionStatus.BET.value
@@ -108,6 +104,7 @@ def test_non_bet_analysis_is_not_rewritten() -> None:
     analysis = {
         "decision_status": DecisionStatus.NO_BET.value,
         "accumulator_eligible_selection": None,
+        "kelly_stake_pct": 0.25,
     }
     assert apply_runtime_authorization(analysis) == analysis
 
@@ -143,9 +140,13 @@ def test_pipeline_applies_runtime_gate_before_export() -> None:
         row["legacy_decision_status_before_runtime_gate"]
         == DecisionStatus.BET.value
     )
-    assert row["legacy_kelly_stake_pct_before_runtime_gate"] == 0.75
+    assert "legacy_kelly_stake_pct_before_runtime_gate" not in row
     assert row["kelly_stake_pct"] is None
     assert row["viable_markets"][0]["kelly_stake_pct"] is None
+    assert (
+        "legacy_kelly_stake_pct_before_runtime_gate"
+        not in row["viable_markets"][0]
+    )
     assert row["accumulator_eligible_selection"] is None
     assert row["runtime_authorization_state"] == LEGACY_RUNTIME_AUTHORIZATION_STATE
 
