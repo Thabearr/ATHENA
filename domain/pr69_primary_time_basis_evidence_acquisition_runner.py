@@ -6,13 +6,15 @@ retry/pair timing, manifests, and fail-closed progress semantics before any exec
 """
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import dataclasses
 import datetime
 import hashlib
 import json
 import re
 import types
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -136,6 +138,13 @@ def _git_blob_sha(path: Path) -> str:
     ).hexdigest()
 
 
+_UPSTREAM_VERIFICATION_SESSION: contextvars.ContextVar[
+    pr124.PR69PrimaryTimeBasisEvidenceAcquisitionProtocol | None
+] = contextvars.ContextVar(
+    "pr69_primary_time_basis_upstream_verification_session", default=None
+)
+
+
 def serialize_utc(value: datetime.datetime) -> str:
     if (
         not isinstance(value, datetime.datetime)
@@ -190,13 +199,17 @@ def normalize_error_message(value: Any) -> str:
     return collapsed[:MAX_ERROR_MESSAGE_CHARS]
 
 
-def _verify_upstream() -> pr124.PR69PrimaryTimeBasisEvidenceAcquisitionProtocol:
+def _verify_upstream_identity() -> None:
     if _git_blob_sha(Path(pr124.__file__)) != PR124_PROTOCOL_BLOB_SHA:
         raise _error("PR124 protocol implementation blob changed")
     if (pr124.PROTOCOL_SHA256, pr124.PROTOCOL_SIZE) != (
         PR124_PROTOCOL_SHA256, PR124_PROTOCOL_SIZE
     ):
         raise _error("PR124 protocol identity changed")
+
+
+def _revalidate_upstream_after_identity(
+) -> pr124.PR69PrimaryTimeBasisEvidenceAcquisitionProtocol:
     try:
         protocol = pr124.build_pr69_primary_time_basis_evidence_acquisition_protocol()
         exact = pr124.canonical_pr69_primary_time_basis_evidence_acquisition_protocol_bytes(
@@ -272,6 +285,41 @@ def _verify_upstream() -> pr124.PR69PrimaryTimeBasisEvidenceAcquisitionProtocol:
     if any(value is not False for value in protocol.safety.values()):
         raise _error("PR124 safety state changed")
     return protocol
+
+
+def _verify_upstream() -> pr124.PR69PrimaryTimeBasisEvidenceAcquisitionProtocol:
+    _verify_upstream_identity()
+    cached = _UPSTREAM_VERIFICATION_SESSION.get()
+    if cached is not None:
+        return cached
+    return _revalidate_upstream_after_identity()
+
+
+@contextlib.contextmanager
+def upstream_verification_session() -> Iterator[None]:
+    """Reuse deep ancestry validation inside one explicitly bounded operation.
+
+    Direct PR124 blob/export identity is still checked by every normal verifier call.
+    The deep transitive protocol reconstruction is cached only for the dynamic extent of
+    this context and is never retained across independent runner operations.
+    """
+    if _UPSTREAM_VERIFICATION_SESSION.get() is not None:
+        yield
+        return
+    protocol = _verify_upstream()
+    token = _UPSTREAM_VERIFICATION_SESSION.set(protocol)
+    try:
+        yield
+    finally:
+        _UPSTREAM_VERIFICATION_SESSION.reset(token)
+
+
+def refresh_upstream_verification_session() -> None:
+    """Force deep ancestry revalidation and refresh an active bounded session."""
+    _verify_upstream_identity()
+    protocol = _revalidate_upstream_after_identity()
+    if _UPSTREAM_VERIFICATION_SESSION.get() is not None:
+        _UPSTREAM_VERIFICATION_SESSION.set(protocol)
 
 
 @dataclasses.dataclass(frozen=True)
