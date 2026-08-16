@@ -2,20 +2,22 @@
 """Deterministically partition the existing pytest file suite across CI shards.
 
 The sharder preserves ATHENA's configured ``pytest tests`` file-discovery boundary
-(``python_files = test_*.py``) while running each test file exactly once across
-isolated GitHub Actions runners. Files are assigned with deterministic largest-first
-greedy balancing using file size as a cheap, result-independent proxy for work.
-Runtime durations are reported by CI and may support a later reviewed weighting
-refinement without dropping coverage.
+(``testpaths = tests`` and ``python_files = test_*.py``) while running each test
+file exactly once across isolated GitHub Actions runners. Files are assigned with
+deterministic largest-first greedy balancing using file size as a cheap,
+result-independent proxy for work. Runtime durations are reported by CI and may
+support a later reviewed weighting refinement without dropping coverage.
 """
 from __future__ import annotations
 
 import argparse
+import configparser
 import fnmatch
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 
+PYTEST_TESTPATHS = "tests"
 PYTEST_FILE_PATTERN = "test_*.py"
 
 
@@ -30,9 +32,26 @@ class ShardAssignment:
     total_bytes: int
 
 
+def verify_pytest_config(repository_root: Path) -> None:
+    root = Path(repository_root).resolve(strict=True)
+    config_path = root / "pytest.ini"
+    parser = configparser.ConfigParser(interpolation=None)
+    try:
+        loaded = parser.read(config_path, encoding="utf-8")
+    except (OSError, configparser.Error) as exc:
+        raise PytestShardError("pytest.ini could not be read") from exc
+    if loaded != [str(config_path)] or not parser.has_section("pytest"):
+        raise PytestShardError("pytest.ini is missing the [pytest] section")
+    if parser.get("pytest", "testpaths", fallback="").strip() != PYTEST_TESTPATHS:
+        raise PytestShardError("pytest testpaths changed; shard coverage must be reviewed")
+    if parser.get("pytest", "python_files", fallback="").strip() != PYTEST_FILE_PATTERN:
+        raise PytestShardError("pytest python_files changed; shard coverage must be reviewed")
+
+
 def discover_test_files(repository_root: Path) -> tuple[Path, ...]:
     root = Path(repository_root).resolve(strict=True)
-    tests_root = root / "tests"
+    verify_pytest_config(root)
+    tests_root = root / PYTEST_TESTPATHS
     if not tests_root.is_dir():
         raise PytestShardError("repository tests directory is missing")
 
