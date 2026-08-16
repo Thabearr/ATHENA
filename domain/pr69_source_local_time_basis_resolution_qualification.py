@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import domain.fotmob_source_history_elo_initialization_boundary_qualification as pr114
 import domain.pr69_source_local_time_basis_resolution_protocol as pr122
 
 
@@ -27,8 +28,8 @@ RECEIPT_PATH = (
     / "research-manifests"
     / "pr69-source-local-time-basis-resolution-qualification-v1.json"
 )
-RECEIPT_SHA256 = "ff95a545963b52b6bd63236b6b98f5589ea3d104f424ed37a5e9fe1ce4376d27"
-RECEIPT_SIZE = 6_596
+RECEIPT_SHA256 = "a3736753862781efc9d8ce6c15aa814185b73ed14fea82c4e8ebaa10a3ab656c"
+RECEIPT_SIZE = 12_025
 REPOSITORY_MAIN_ANCHOR = "1b57d9ae64d7179734571dbf4691da65a163739a"
 PR122_PROTOCOL_BLOB_SHA = "712ce12157ade725a60b24c4557600fc7b06e504"
 QUALIFICATION_STATE = "EXECUTED_FAIL_CLOSED_NO_ADMISSIBLE_PRIMARY_TIME_BASIS_EVIDENCE"
@@ -43,6 +44,9 @@ DISCOVERY_TIME_FIELD_DESCRIPTION = "Time = Time of match kick off"
 PR69_SOURCE_CORPUS_SHA256 = "c273b4bff2b611e95248133340ff84803ce238814d5dfa7ded5f39fd3d6e25a0"
 PR69_CANONICAL_REPLAY_SHA256 = "b44166b9543a8f436e62a644efc5316ad12fcc260a4c2c5908ad112928bedfe3"
 PR69_CANONICAL_REPLAY_SIZE = 39_952_730
+PR69_SOURCE_FILE_SHA256_MANIFEST_SHA256 = (
+    "4d04a22f6bd29c0f56c37c8f2e8301f2c90a02516e04ac677d3b6c3d7656501a"
+)
 
 SAFETY_KEYS = frozenset(
     {
@@ -102,6 +106,35 @@ def _expected_source_file_keys() -> list[str]:
         for season in pr122.SEASONS
         for league in pr122.MODEL_LEAGUE_CODES
     ]
+
+
+def _expected_source_file_sha256() -> dict[str, str]:
+    receipt = pr114.load_fotmob_source_history_elo_initialization_boundary_qualification_receipt()
+    if (
+        pr114.RECEIPT_SHA256 != pr122.PR114_RECEIPT_SHA256
+        or pr114.RECEIPT_SIZE != pr122.PR114_RECEIPT_SIZE
+    ):
+        raise _error("PR114 receipt identity changed")
+    hashes = receipt.get("pr69_rebuild", {}).get("source_file_sha256")
+    if not isinstance(hashes, dict):
+        raise _error("PR114 per-file PR69 source hashes are missing")
+    expected_keys = [key.replace(":", "/") for key in _expected_source_file_keys()]
+    if sorted(hashes) != sorted(expected_keys) or len(hashes) != 66:
+        raise _error("PR114 per-file PR69 source inventory changed")
+    normalized: dict[str, str] = {}
+    for key in expected_keys:
+        value = hashes.get(key)
+        if (
+            not isinstance(value, str)
+            or len(value) != 64
+            or any(ch not in "0123456789abcdef" for ch in value)
+        ):
+            raise _error("PR114 per-file PR69 source hash changed")
+        normalized[key] = value
+    manifest_raw = _canonical(normalized)
+    if hashlib.sha256(manifest_raw).hexdigest() != PR69_SOURCE_FILE_SHA256_MANIFEST_SHA256:
+        raise _error("PR114 per-file PR69 source hash manifest identity changed")
+    return normalized
 
 
 def _verify_protocol() -> pr122.PR69SourceLocalTimeBasisResolutionProtocol:
@@ -196,6 +229,13 @@ def _validate(receipt: dict[str, Any]) -> None:
         raise _error("PR123 66-file source inventory changed")
     if inventory.get("pr69_source_file_key_count") != 66 or len(expected_keys) != 66:
         raise _error("PR123 source-file inventory count changed")
+    expected_hashes = _expected_source_file_sha256()
+    if inventory.get("pr69_source_file_sha256") != expected_hashes:
+        raise _error("PR123 exact per-file PR69 source hashes changed")
+    if inventory.get("pr69_source_file_sha256_manifest_sha256") != (
+        PR69_SOURCE_FILE_SHA256_MANIFEST_SHA256
+    ):
+        raise _error("PR123 per-file source-hash manifest identity changed")
     if inventory.get("pr69_source_bytes_identity") != {
         "source_file_count": 66,
         "source_total_bytes": 10_006_877,
@@ -348,6 +388,7 @@ __all__ = [
     "DISCOVERY_URL",
     "NEXT_REQUIRED_BOUNDARY",
     "PR122_PROTOCOL_BLOB_SHA",
+    "PR69_SOURCE_FILE_SHA256_MANIFEST_SHA256",
     "QUALIFICATION_STATE",
     "QUALIFICATION_STATUS",
     "RECEIPT_PATH",
