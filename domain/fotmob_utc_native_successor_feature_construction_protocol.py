@@ -66,8 +66,8 @@ SAFETY_KEYS = frozenset(
     }
 )
 
-PROTOCOL_SHA256 = "948b34e5f5ca6d69895beed0b0cdb79368bc507015f45975f2b3192b619975db"
-PROTOCOL_SIZE = 5_803
+PROTOCOL_SHA256 = "b3cc9a8e5ca05f199b7e404fa8288074e77d76fa5f21224c5bddb48ca1aac411"
+PROTOCOL_SIZE = 5_809
 
 
 class FotMobUTCNativeSuccessorFeatureProtocolError(ValueError):
@@ -161,7 +161,7 @@ def _payload() -> dict[str, Any]:
                     "SOURCE_NATIVE_REPLAY_ASSUMPTION_NOT_OBSERVED_EVIDENCE"
                 ),
                 "home_expected_adjustment": 50,
-                "expected_formula": "1/(1+10**((opponent-adjusted-self)/400))",
+                "expected_formula": "1/(1+10**((away_rating-(home_rating+50))/400))",
                 "score": "win=1,draw=0.5,loss=0",
                 "k_schedule": "32_if_matches_lt_20;24_if_lt_50;else_16",
                 "update": "int(old + K * (score - expected))",
@@ -173,8 +173,8 @@ def _payload() -> dict[str, Any]:
                 "initialization_classification": (
                     "SOURCE_NATIVE_REPLAY_ASSUMPTION_NOT_OBSERVED_EVIDENCE"
                 ),
-                "home_expected_adjustment": 50,
-                "expected_formula": "1/(1+10**((opponent-adjusted-self)/400))",
+                "home_expected_adjustment": 0,
+                "expected_formula": "1/(1+10**((home_rating-away_rating)/400))",
                 "score": "win=1,draw=0.5,loss=0",
                 "k_schedule": "32_if_matches_lt_20;24_if_lt_50;else_16",
                 "update": "int(old + K * (score - expected))",
