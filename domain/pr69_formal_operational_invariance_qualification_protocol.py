@@ -83,8 +83,8 @@ QUALIFICATION_STATUS_VOCABULARY = (
     "BLOCKED_TIME_BASIS_SCOPE_OR_EFFECTIVE_PERIOD_AMBIGUOUS",
 )
 
-PROTOCOL_SHA256 = "d4cacdc85f8d2be5746853a89c00fe8d6521075234a9009469a6385f346be513"
-PROTOCOL_SIZE = 5_841
+PROTOCOL_SHA256 = "25bd2c255be53f938d4820f2896ec70d9330f7c2aaef42c976a582825cbfc5d2"
+PROTOCOL_SIZE = 6_305
 
 
 class PR69FormalOperationalInvarianceProtocolError(ValueError):
@@ -157,6 +157,8 @@ def _payload() -> dict[str, Any]:
             "may_use_piecewise_or_time_varying_offsets_only_when_each_transition_and_bound_is_proven": True,
             "unbounded_or_plausibility_only_offset_envelope_forbidden": True,
             "country_league_venue_or_cross_source_guessing_forbidden": True,
+            "fotmob_history_or_display_clock_as_pr69_reference_evidence_forbidden": True,
+            "operation_definition_inputs_cannot_define_transformation_family": True,
             "result_fit_or_equal_observed_output_as_assumption_evidence_forbidden": True,
             "no_proven_transformation_family_means_fail_before_operation_checks": True,
         },
@@ -185,21 +187,27 @@ def _payload() -> dict[str, Any]:
             "must_report_pr69_target_boundaries_considered": True,
             "must_report_each_operation_gate_pass_fail_not_reached": True,
             "must_report_counterexample_identity_for_any_failed_gate": True,
+            "must_report_assumption_evidence_and_operation_definitions_separately": True,
             "must_preserve_raw_source_times_without_rewrite": True,
             "must_not_train_or_tune_model_from_invariance_execution": True,
             "must_not_inspect_fotmob_candidate_rows_for_reference_invariance_result": True,
         },
-        "admissible_evidence": [
+        "assumption_evidence": [
             "EXACT_PR132_V2_SEMANTIC_QUALIFICATION_RECEIPT_AND_PRIMARY_CAPTURE_LINEAGE",
             "EXACT_FROZEN_PR69_RAW_SOURCE_BYTES_AND_PR114_HASHED_REBUILD_EVIDENCE",
-            "EXACT_PR120_AND_PR80_TIME_OPERATION_SEMANTICS_AS_DEFINITION_ONLY_NOT_CANDIDATE_RESULTS",
             "PRIMARY_SOURCE_TIME_SEMANTICS_WITH_PROVEN_EFFECTIVE_SCOPE",
-            "MACHINE_CHECKABLE_REFERENCE_TRANSFORMATION_ASSUMPTION_PROOF_WITH_ADMISSIBLE_PROVENANCE",
+            "MACHINE_CHECKABLE_REFERENCE_TRANSFORMATION_ASSUMPTION_PROOF_WITH_ADMISSIBLE_PR69_OR_PRIMARY_SOURCE_PROVENANCE",
+        ],
+        "operation_definition_inputs": [
+            "EXACT_PR122_INVARIANCE_ROUTE_CONTRACT",
+            "EXACT_PR120_TIME_OPERATION_SEMANTICS_AS_DEFINITION_ONLY_NOT_CANDIDATE_RESULTS",
+            "EXACT_PR80_CONSTRUCTOR_TIME_SENSITIVE_OPERATION_SEMANTICS",
         ],
         "forbidden_shortcuts": [
             "DO_NOT_ASSUME_A_FIXED_OFFSET_DST_RULE_OR_NAMED_ZONE_WITHOUT_ADMISSIBLE_EVIDENCE",
             "DO_NOT_TREAT_FOTMOB_EUROPE_OSLO_AS_PR69_REFERENCE_EVIDENCE",
             "DO_NOT_INSPECT_OR_COMPARE_FOTMOB_CANDIDATE_ROWS_IN_THIS_REFERENCE_INVARIANCE_EXECUTION",
+            "DO_NOT_USE_PR120_OR_PR80_OPERATION_DEFINITIONS_TO_DEFINE_THE_REFERENCE_TRANSFORMATION_FAMILY",
             "DO_NOT_INFER_TIME_BASIS_FROM_COUNTRY_LEAGUE_TEAM_VENUE_OR_COMMON_PRACTICE",
             "DO_NOT_USE_EQUAL_ORDERING_OR_EQUAL_FEATURE_VALUES_TO_PROVE_TRANSFORMATION_ASSUMPTIONS",
             "DO_NOT_HIDE_DAY_BOUNDARY_OR_DST_COUNTEREXAMPLES_BEHIND_AGGREGATE_COUNTS",
