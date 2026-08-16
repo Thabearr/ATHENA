@@ -56,6 +56,21 @@ jobs:
               return;
             }
 
+            const { data: merge } = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.merge_commit_sha,
+            });
+            const parents = merge.parents.map((parent) => parent.sha);
+            if (
+              parents.length !== 2 ||
+              parents[0] !== pr.base.sha ||
+              parents[1] !== pr.head.sha
+            ) {
+              core.setFailed('GitHub synthetic merge parents differ from exact base plus head.');
+              return;
+            }
+
             core.setOutput('head_ref', pr.head.ref);
             core.setOutput('head_sha', pr.head.sha);
             core.setOutput('base_sha', pr.base.sha);
@@ -67,19 +82,6 @@ jobs:
           ref: ${{ steps.pr.outputs.head_sha }}
           fetch-depth: 0
           persist-credentials: false
-
-      - name: Verify exact synthetic merge ancestry
-        env:
-          PR_NUMBER: ${{ github.event.issue.number }}
-          EXPECTED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-          EXPECTED_BASE_SHA: ${{ steps.pr.outputs.base_sha }}
-          EXPECTED_MERGE_SHA: ${{ steps.pr.outputs.merge_sha }}
-        run: |
-          git fetch --no-tags origin "+refs/pull/${PR_NUMBER}/merge:refs/remotes/origin/athena-patch-merge"
-          actual_merge="$(git rev-parse refs/remotes/origin/athena-patch-merge)"
-          test "${actual_merge}" = "${EXPECTED_MERGE_SHA}"
-          parents="$(git show -s --format=%P "${actual_merge}")"
-          test "${parents}" = "${EXPECTED_BASE_SHA} ${EXPECTED_HEAD_SHA}"
 
       - name: Extract and verify patch payload
         id: payload
