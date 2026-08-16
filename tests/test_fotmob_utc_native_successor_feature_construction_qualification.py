@@ -102,6 +102,22 @@ def test_strictly_prior_form_and_asymmetric_overall_elo_are_used() -> None:
     assert second["fatigue"]["status"] == "MISSING_PRIOR_HISTORY"
 
 
+def test_away_elo_update_uses_no_home_advantage_boost() -> None:
+    rows = [
+        _row("1", "2026-01-01T12:00:00Z", "A", "B", 1, 0, SHA_A),
+        _row("2", "2026-01-02T12:00:00Z", "B", "C", 0, 0, SHA_B),
+    ]
+    second = _records(q.construct_utc_native_feature_projection(rows)[0])[1]
+
+    assert second["home_team_identifier"] == "B"
+    assert second["home_elo"] == {
+        "status": "CONSTRUCTED_FROM_STRICTLY_PRIOR_UTC_HISTORY",
+        "value": 1484,
+        "matches_before": 1,
+        "rating_component": "OVERALL",
+    }
+
+
 def test_fatigue_uses_integer_utc_days_and_home_minus_away_difference() -> None:
     rows = [
         _row("1", "2026-01-01T12:00:00Z", "A", "B", 1, 0, SHA_A),
