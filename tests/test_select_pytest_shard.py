@@ -37,12 +37,13 @@ def test_assignment_is_deterministic_complete_disjoint_and_balanced(tmp_path: Pa
     assert max(loads) - min(loads) <= max(sizes)
 
 
-def test_discovery_matches_pytest_default_python_file_patterns(tmp_path: Path) -> None:
+def test_discovery_matches_repository_pytest_python_file_pattern(tmp_path: Path) -> None:
     _write_test(tmp_path, "tests/test_alpha.py", 100)
-    _write_test(tmp_path, "tests/nested/beta_test.py", 100)
+    _write_test(tmp_path, "tests/nested/test_beta.py", 100)
+    _write_test(tmp_path, "tests/nested/gamma_test.py", 100)
     _write_test(tmp_path, "tests/nested/helper.py", 100)
     _write_test(tmp_path, "tests/nested/not_a_test.pyx", 100)
-    expected = (Path("tests/nested/beta_test.py"), Path("tests/test_alpha.py"))
+    expected = (Path("tests/nested/test_beta.py"), Path("tests/test_alpha.py"))
     assert sharder.discover_test_files(tmp_path) == expected
 
 
