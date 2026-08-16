@@ -4,11 +4,13 @@
 
 **State:** `EXECUTED_PRIMARY_EVIDENCE_ADMISSIBLE_DIRECT_TIME_BASIS_UNRESOLVED`
 
-**Primary status:** `BLOCKED_NO_EXPLICIT_CSV_TIME_BASIS_OR_HISTORICAL_EFFECTIVE_SCOPE`
+**Primary status:** `BLOCKED_TIME_BASIS_SCOPE_OR_EFFECTIVE_PERIOD_AMBIGUOUS`
 
 The reconciled V2 acquisition campaign succeeded and produced a complete, stable, provenance-bound primary evidence bundle. The evidence is now admissible for semantic review under the frozen PR122/PR124 rules. It still does **not** establish a deterministic source-local clock rule for the historical football-data.co.uk CSV `Time` field.
 
-This qualification therefore narrows the blocker. The problem is no longer missing primary capture. The remaining problem is semantic: the captured primary bytes do not explicitly connect the CSV `Time` field to UTC, a fixed offset, a named timezone, or another deterministic civil-time rule, and they do not prove the effective historical period of such a rule across the exact 2020-21 through 2025-26 PR69 corpus.
+The blocker has therefore narrowed. Primary capture is no longer missing. The remaining direct-route problem is that the captured primary bytes do not explicitly connect the CSV `Time` field to UTC, a fixed offset, a named timezone, or another deterministic civil-time rule, and they do not prove the effective historical period of such a rule across the exact 2020-21 through 2025-26 PR69 corpus.
+
+The primary status above is taken from PR122's pre-registered qualification vocabulary. No result-specific blocker vocabulary is invented after observing V2.
 
 ## Exact execution lineage
 
@@ -24,7 +26,7 @@ This qualification therefore narrows the blocker. The problem is no longer missi
 - PR124 acquisition protocol SHA-256: `28ec0a0208858ce3258a584bad1361577a0e202e5cbdb8eb9b13cdd47d7455a3`
 - PR123 prior blocked receipt SHA-256: `a3736753862781efc9d8ce6c15aa814185b73ed14fea82c4e8ebaa10a3ab656c`
 
-The outer artifact digest was independently reproduced from the downloaded ZIP before semantic extraction. The package digest was independently reproduced from the preserved tar.
+The GitHub artifact metadata independently reports the exact artifact digest, size, run ID, branch and authorized main SHA above. The preserved evidence tar digest is frozen separately inside the V2 package.
 
 ## Capture completeness
 
@@ -37,28 +39,31 @@ All eight frozen slots succeeded. Every A/B pair was byte-identical and every pa
 | `HISTORICAL_DOWNLOAD_OVERVIEW` | `94922a8099dd04983f72123da2f1afdacffa293032ce27e65eff6f852d7e50af` | 104,882 | yes | 318.213764s |
 | `FIXTURES_OVERVIEW` | `62793b3461420db06c176e1fa6b1b55b0cde46f5846ff73bcd1e5ad89bf0365f` | 33,148 | yes | 318.093185s |
 
-There was no capture drift to resolve.
+There was no A/B capture drift to resolve.
 
 ## Admissible semantic findings
 
 ### `notes.txt`
 
-The primary dictionary establishes:
+The captured primary dictionary establishes:
 
 - line 8 / bytes 448-476: `Date = Match Date (dd/mm/yy)`
 - line 9 / bytes 478-507: `Time = Time of match kick off`
 
-These statements are admissible primary field semantics. They prove what the fields represent. They do **not** define the timezone, offset, daylight-saving rule, or historical effective period of the `Time` value.
+These statements prove what the two fields represent. They do **not** define the timezone, offset, daylight-saving rule, or historical effective period of the `Time` value. PR124 explicitly pre-registered that `Time = Time of match kick off` is insufficient by itself to establish those clock semantics.
 
 ### `matches.php`
 
-The primary fixture page establishes that the downloadable fixture list contains match dates and times. It also uses `British Standard Time` for the timing of odds collection and `UK time` for a fixture-upload timestamp.
+The captured fixture page establishes that its downloadable fixture list contains match dates and times. It also contains:
 
-Those statements are admissible primary **site-clock context**. Under the frozen PR124 contract, they cannot be promoted into the CSV `Time` field rule because the captured bytes never explicitly make that connection.
+- line 183 / bytes 13753-13774: `British Standard Time`
+- line 194 / bytes 14268-14317: `Latest fixtures uploaded: 14/08/26 11:26 UK time.`
+
+Those statements are admissible primary **site-clock context** only. PR124 explicitly pre-registered that UK/BST site wording cannot be promoted into the CSV `Time` rule unless the primary bytes explicitly make that connection. They do not.
 
 ### Historical/data overview pages
 
-The preserved pages establish dataset lineage and historical-download context, including links between historical downloads and the current notes dictionary. They do not state that the current field dictionary's unstated clock basis was unchanged across all six frozen PR69 seasons, and they do not provide an explicit timezone/offset/DST rule for historical `Time` values.
+The preserved data and historical-download pages establish current dataset lineage/context. They do not prove that an unstated clock basis was unchanged across all six frozen PR69 seasons, and they do not provide a deterministic historical timezone/offset/DST rule for the CSV `Time` values.
 
 ## Direct-route decision
 
@@ -72,19 +77,19 @@ The direct PR122 resolution route fails closed:
 
 No country, league, venue, FotMob clock, result fit, search snippet, generic UK-time wording, or current-site convention is used to fill the gap.
 
-A primary-source web discovery pass was also performed after reviewing the artifact. It did not find an explicit official statement tying historical CSV `Time` values to a clock rule. Those search results are **not** included as qualification evidence because they were not part of the frozen preserved V2 bundle.
-
 ## Formal invariance route
 
-The formal invariance route is **not executed by this PR**. PR122 requires its assumptions to be proven from admissible evidence and requires every PR80 time-sensitive operation to be covered. The present evidence does not yet bound the unknown PR69 clock transformation tightly enough to claim that proof without adding a separately pre-registered protocol.
+PR122 pre-registered a second route if direct primary semantics cannot be recovered: formal operational invariance across every admissible reference transformation, with the assumptions themselves proven and every PR80 time-sensitive operation covered.
 
-## Strategic consequence
+That route is **required next under the PR122 lineage but is not executed by this qualification**. No invariance result is inferred from equal observed feature outputs or from the V2 primary capture.
 
-PR69 remains a valid, frozen historical research lineage, but its unresolved source-local clock should no longer be allowed to hold the entire successor programme hostage.
+**Next PR122 boundary:** `PRE_REGISTER_REVIEWED_PR69_FORMAL_OPERATIONAL_INVARIANCE_QUALIFICATION_PROTOCOL`
 
-The next reviewed product path should therefore pre-register a **FotMob-native successor feature time basis** that uses FotMob's already-qualified canonical UTC history directly, preserves the six conceptual pre-match features, and validates a new successor model without claiming PR69/PR80 source-local equivalence. A separate PR69 invariance route can still be pursued later if worthwhile.
+## Parallel product work is separate
 
-This is not a silent rewrite of PR80 and does not retroactively authorize PR80 inputs. It is a new reviewed successor path intended to remove an external legacy-source ambiguity from the critical path.
+This qualification does not prevent ATHENA from opening a separate, explicitly pre-registered FotMob-native successor lineage that uses already-qualified FotMob UTC history. Such a path would be a new reviewed product/model lineage; it would **not** resolve PR69, retroactively authorize PR80, or count as execution of the PR122 invariance route.
+
+Keeping those lines separate allows product progress without rewriting the frozen historical evidence result.
 
 ## Safety
 
@@ -106,6 +111,6 @@ All downstream authority remains false:
 
 `artifacts/research-manifests/pr69-primary-time-basis-semantic-qualification-v2.json`
 
-Canonical receipt SHA-256: `9676fce4ecf755a85022d74a6514c8dd395cb8e1f204f588a2917bf28d8f6e48`
+Canonical receipt SHA-256: `cbdf0bbf9e31d44e0d00125bd10d714272ac6046386cf52f1d9d27b3ab84bb8d`
 
-Canonical receipt size: `5,443` bytes.
+Canonical receipt size: `5,422` bytes.
