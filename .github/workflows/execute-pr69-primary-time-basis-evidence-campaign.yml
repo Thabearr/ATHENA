@@ -25,7 +25,7 @@ jobs:
     steps:
       - name: Validate one-shot owner command and current main
         id: guard
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const controlPr = 128;
@@ -106,7 +106,7 @@ jobs:
             core.setOutput('marker_comment_id', String(marker.data.id));
 
       - name: Check out exact authorized main
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ steps.guard.outputs.main_sha }}
           fetch-depth: 0
@@ -123,7 +123,7 @@ jobs:
           test "$(git rev-parse HEAD:requirements.txt)" = "54d24a55dfa4c73ba3910d333257cfd2e68daf4b"
 
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
         with:
           python-version: '3.12'
           cache: pip
@@ -402,7 +402,7 @@ jobs:
       - name: Upload preserved campaign evidence artifact
         id: upload
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: pr69-primary-time-basis-evidence-campaign-${{ github.run_id }}
           path: artifact-staging/
@@ -411,7 +411,7 @@ jobs:
 
       - name: Publish durable execution result and enforce qualification gate
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         env:
           AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
           CAMPAIGN_EXIT_CODE: ${{ steps.campaign.outputs.exit_code }}
