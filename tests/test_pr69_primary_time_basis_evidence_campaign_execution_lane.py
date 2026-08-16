@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign.yml"
@@ -14,6 +16,10 @@ def _workflow() -> str:
 
 def _doc() -> str:
     return DOC.read_text(encoding="utf-8")
+
+
+def test_execution_workflow_is_valid_yaml() -> None:
+    assert yaml.compose(_workflow()) is not None
 
 
 def test_execution_lane_is_issue_comment_only_and_bound_to_pr128_owner() -> None:
