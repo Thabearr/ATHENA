@@ -795,6 +795,7 @@ def _verify_indexed_captures(
         detail = entry["detail"]
         if (
             entry["attempt"] != manifest["attempt"]
+            or entry["attempt_started_at_utc"] != manifest["request_started_at_utc"]
             or detail["manifest_sha256"] != manifest_hash
             or detail["raw_sha256"] != manifest["raw_sha256"]
             or detail["raw_size"] != manifest["raw_size"]
