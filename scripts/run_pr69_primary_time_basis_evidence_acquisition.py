@@ -900,6 +900,31 @@ def _wait_until_eligible(
     raise _error("runner clock did not advance through required wait interval")
 
 
+def _validate_request_still_eligible(
+    entries: tuple[Mapping[str, Any], ...],
+    *,
+    intent_started_at: datetime.datetime,
+    request_started_at: datetime.datetime,
+) -> None:
+    """Revalidate timing after durable inflight persistence and before network I/O."""
+    intent = contract.parse_utc(
+        contract.serialize_utc(intent_started_at), "intent_started_at"
+    )
+    current = contract.parse_utc(
+        contract.serialize_utc(request_started_at), "request_started_at"
+    )
+    if current < intent:
+        raise contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError(
+            "runner clock precedes durable inflight intent timestamp"
+        )
+    _validate_clock_not_before_durable_evidence(entries, current)
+    wait = contract.seconds_until_next_request_eligible(entries, current)
+    if wait > 0:
+        raise contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError(
+            "request lost timing eligibility after durable inflight persistence"
+        )
+
+
 def fetch_primary_evidence(
     *,
     slot: contract.CampaignSlot,
@@ -1081,6 +1106,29 @@ def _execute_next_slot_locked(
             root=root,
         )
         attempt_started_at = clock().astimezone(UTC)
+        try:
+            _validate_request_still_eligible(
+                entries,
+                intent_started_at=intent_time,
+                request_started_at=attempt_started_at,
+            )
+        except contract.PR69PrimaryTimeBasisEvidencePairWindowError as exc:
+            _remove_inflight(root, intent)
+            entries = _record_block(
+                entries,
+                slot=slot,
+                recorded_at=attempt_started_at,
+                error_kind=exc.reason,
+                error_message=str(exc),
+                repository_root=repository_root,
+            )
+            raise _error(
+                f"campaign pair window blocked before request: {exc}"
+            ) from exc
+        except contract.PR69PrimaryTimeBasisEvidenceAcquisitionRunnerError:
+            _remove_inflight(root, intent)
+            raise
+
         try:
             result = fetcher(
                 slot=slot,
