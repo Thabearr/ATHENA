@@ -16,7 +16,7 @@ The following V1 steps were therefore skipped:
 
 The failure evidence was preserved as GitHub Actions artifact `9274313978`, named `fotmob-utc-native-feature-qualification-31987862156`, with SHA-256 `1a46808c8ee4d21ab67ec03b1fd6c0a80e79fadf04933092e7a106522e31c337` and size `2,388` bytes.
 
-A durable reconciliation receipt was then recorded on PR #138 as comment `5311071999` with state:
+A durable reconciliation receipt was then recorded on PR #138 as exact comment `5311071999`, authored by `Thabearr`, with state:
 
 `V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY`
 
@@ -39,13 +39,21 @@ Static contract tests fail if the V2 workflow regresses to `pull-requests: read`
 
 ## Reconciliation prerequisite
 
-Before a V2 attempt marker may be created, the workflow must find the exact V1 reconciliation receipt on PR #138 and prove that it still contains:
+Before a V2 attempt marker may be created, the workflow must find the exact reviewed V1 reconciliation receipt on PR #138 and prove all of the following identities still match:
 
+- exact comment ID `5311071999`;
+- author `Thabearr`;
 - V1 run ID `31987862156`;
+- V1 authorized main SHA `2bd05e98cd74f9db6fa59472c05d5253f69d0f68`;
+- V1 command comment ID `5311067273`;
+- `runner-executed: false`;
+- `artifact-download-executed: false`;
 - V1 failure-evidence artifact ID `9274313978`;
+- V1 failure-evidence artifact SHA-256 `1a46808c8ee4d21ab67ec03b1fd6c0a80e79fadf04933092e7a106522e31c337`;
+- V1 failure-evidence artifact size `2,388` bytes;
 - state `V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY`.
 
-If that receipt is absent or changed, V2 fails closed before execution.
+If that exact receipt identity is absent or changed, V2 fails closed before execution.
 
 ## Frozen input
 
@@ -79,7 +87,7 @@ main-sha: <exact-current-main-40-hex>
 confirm: EXECUTE_RECONCILED_21326_UTC_NATIVE_FEATURE_QUALIFICATION_V2
 ```
 
-The workflow rejects malformed framing, a moved `main`, an unmerged control PR, a missing/changed V1 reconciliation receipt, altered frozen implementation identities, altered/expired source evidence, or a prior V2 attempt marker.
+The workflow rejects malformed framing, a moved `main`, an unmerged control PR, a missing/changed V1 reconciliation receipt identity, altered frozen implementation identities, altered/expired source evidence, or a prior V2 attempt marker.
 
 Once the V2 attempt marker exists, automatic replay is forbidden even if V2 later fails. Preserved evidence must be reviewed before any further execution boundary.
 
