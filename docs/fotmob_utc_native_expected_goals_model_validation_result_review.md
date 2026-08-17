@@ -41,7 +41,7 @@ Therefore:
 
 Evaluation A and Evaluation B labels have now been inspected and are consumed by this result review. A later calibration or coefficient change may use them as development evidence only if explicitly pre-registered as such, but the same rows may not then be presented as a fresh confirmation set.
 
-Any follow-up that tunes home calibration after this review must pre-register the transformation before inspecting its confirmation result and must obtain a fresh chronological holdout beyond `2026-08-15`. The follow-up dataset should also carry exact competition identity so league/competition robustness can finally be evaluated rather than inferred or fuzzily reconstructed.
+Any follow-up that tunes home calibration after this review must pre-register the transformation before inspecting its confirmation result and must obtain a fresh chronological holdout starting no earlier than `2026-08-15T00:00:00Z`, the exact exclusive end of the consumed terminal evaluation window. The follow-up dataset should also carry exact competition identity so league/competition robustness can finally be evaluated rather than inferred or fuzzily reconstructed.
 
 ## Next boundary
 
