@@ -245,6 +245,19 @@ def _verify_upstream() -> None:
     ):
         raise _error("PR132 next boundary changed")
 
+    try:
+        pr122_protocol = pr122.build_pr69_source_local_time_basis_resolution_protocol()
+        pr122_raw = pr122.canonical_pr69_source_local_time_basis_resolution_protocol_bytes(
+            pr122_protocol
+        )
+    except pr122.PR69SourceLocalTimeBasisResolutionProtocolError as exc:
+        raise _error("PR122 transitive ancestry reconstruction failed") from exc
+    if (hashlib.sha256(pr122_raw).hexdigest(), len(pr122_raw)) != (
+        PR122_PROTOCOL_SHA256,
+        PR122_PROTOCOL_SIZE,
+    ):
+        raise _error("PR122 reconstructed protocol identity changed")
+
     if (
         pr122.PROTOCOL_SHA256,
         pr122.PROTOCOL_SIZE,
