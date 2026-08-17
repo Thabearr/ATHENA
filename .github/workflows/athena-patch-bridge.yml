@@ -157,11 +157,19 @@ jobs:
           import subprocess
           from pathlib import PurePosixPath
 
-          changed = subprocess.check_output(
+          tracked = subprocess.check_output(
               ["git", "diff", "--name-only", "-z"],
               text=False,
           ).split(b"\0")
-          paths = [item.decode("utf-8") for item in changed if item]
+          untracked = subprocess.check_output(
+              ["git", "ls-files", "--others", "-z"],
+              text=False,
+          ).split(b"\0")
+          raw_paths = [item for item in tracked if item]
+          raw_paths.extend(
+              item for item in untracked if item and item != b"athena.patch"
+          )
+          paths = sorted({item.decode("utf-8") for item in raw_paths})
           if not paths:
               raise SystemExit("Patch produced no file changes")
 
@@ -200,13 +208,18 @@ jobs:
               if raw not in allowed_exact and not raw.startswith(allowed_prefixes):
                   raise SystemExit(f"Changed path is outside the allowlist: {raw}")
 
-          numstat = subprocess.check_output(
-              ["git", "diff", "--numstat"],
-              text=True,
-              encoding="utf-8",
+          patch_numstat = subprocess.check_output(
+              ["git", "apply", "--numstat", "-z", "athena.patch"],
+              text=False,
           )
-          if any(line.split("\t", 1)[0] == "-" for line in numstat.splitlines()):
-              raise SystemExit("Binary patches are forbidden")
+          for record in patch_numstat.split(b"\0"):
+              if not record:
+                  continue
+              fields = record.split(b"\t", 2)
+              if len(fields) != 3:
+                  raise SystemExit("Malformed patch numstat record")
+              if fields[0] == b"-" or fields[1] == b"-":
+                  raise SystemExit("Binary patches are forbidden")
           PY
 
       - name: Create clean validation commit
