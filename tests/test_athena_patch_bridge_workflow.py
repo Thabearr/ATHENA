@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import yaml
 
@@ -37,6 +38,8 @@ def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
         "Patch Bridge cannot modify GitHub workflows",
         "Changed path is outside the allowlist",
         "Binary patches are forbidden",
+        "Patch-created ignored paths are forbidden",
+        "Could not determine ignore state for patch-created path",
         "Pull-request head changed after validation.",
         "Pull-request base changed after validation.",
         "Validated patch artifact SHA-256 mismatch",
@@ -45,7 +48,7 @@ def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
         assert marker in text
 
 
-def test_patch_bridge_path_safety_includes_new_untracked_and_ignored_paths() -> None:
+def test_patch_bridge_path_safety_includes_new_untracked_and_rejects_ignored_paths() -> None:
     parsed = yaml.safe_load(_text())
     steps = parsed["jobs"]["validate"]["steps"]
     safety = next(step for step in steps if step["name"] == "Enforce path and patch safety")
@@ -55,9 +58,48 @@ def test_patch_bridge_path_safety_includes_new_untracked_and_ignored_paths() -> 
     assert '["git", "ls-files", "--others", "-z"]' in run
     assert 'item != b"athena.patch"' in run
     assert "--exclude-standard" not in run
+    assert '["git", "check-ignore", "--no-index", "--quiet", "--", raw]' in run
+    assert "Patch-created ignored paths are forbidden" in run
+    assert "Could not determine ignore state for patch-created path" in run
     assert '["git", "apply", "--numstat", "-z", "athena.patch"]' in run
     assert "Malformed patch numstat record" in run
     assert "Binary patches are forbidden" in run
+
+
+def test_git_probe_keeps_ignored_patch_created_paths_visible_and_detectable(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "ATHENA Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "athena-test@example.invalid"], cwd=tmp_path, check=True)
+
+    (tmp_path / ".gitignore").write_text("docs/generated.txt\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "baseline"], cwd=tmp_path, check=True)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "generated.txt").write_text("ignored payload\n", encoding="utf-8")
+    (docs / "allowed.txt").write_text("ordinary payload\n", encoding="utf-8")
+
+    others = subprocess.check_output(
+        ["git", "ls-files", "--others", "-z"],
+        cwd=tmp_path,
+        text=False,
+    ).split(b"\0")
+    assert b"docs/generated.txt" in others
+    assert b"docs/allowed.txt" in others
+
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--quiet", "--", "docs/generated.txt"],
+        cwd=tmp_path,
+        check=False,
+    )
+    allowed = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--quiet", "--", "docs/allowed.txt"],
+        cwd=tmp_path,
+        check=False,
+    )
+    assert ignored.returncode == 0
+    assert allowed.returncode == 1
 
 
 def test_patch_bridge_pins_exact_synthetic_merge_parent_pair() -> None:
