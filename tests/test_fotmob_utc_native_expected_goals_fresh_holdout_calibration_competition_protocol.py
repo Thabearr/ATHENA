@@ -21,6 +21,7 @@ def test_protocol_pins_reviewed_parent_and_consumed_development_evidence() -> No
     assert BASE_MAIN_SHA == "5c46aa8fcaf4338e8968c50e1c852301f8e2e0cd"
     parent = protocol["reviewed_parent"]
     assert parent["result_review_blob_sha"] == "025a35d1d3b17e49a200dfe654304368fba39add"
+    assert parent["xg_validator_blob_sha"] == "0421506b9e6e398c3469bb69196ef8fcad04f2a5"
     assert parent["execution_run_id"] == 32049714066
     assert parent["result_artifact_id"] == 9294215497
     assert parent["development_rows"] == 6948
@@ -62,7 +63,11 @@ def test_competition_identity_uses_exact_provider_ids_not_legacy_codes_or_names(
     assert identity["wrapper_primary_id_field"] == "leagues[].primaryId"
     assert identity["wrapper_id_field"] == "leagues[].id"
     assert identity["fixture_wrapper_id_field"] == "leagues[].matches[].leagueId"
+    assert identity["fixture_id_field"] == "leagues[].matches[].id"
     assert identity["fixture_wrapper_id_must_equal_wrapper_id"] is True
+    assert identity["primary_id_must_be_positive_integer"] is True
+    assert identity["wrapper_id_must_be_positive_integer"] is True
+    assert identity["fixture_id_must_be_positive_integer"] is True
     assert identity["fuzzy_name_mapping_forbidden"] is True
     assert identity["model_league_code_is_not_competition_identity"] is True
     assert tuple(identity["legacy_primary_ids"]) == LEGACY_PRIMARY_IDS
@@ -86,6 +91,9 @@ def test_fresh_holdout_is_prospective_pre_kickoff_and_outcome_independent() -> N
     fresh = protocol["prospective_confirmation"]
     assert fresh["not_before_utc"] == "2026-08-15T00:00:00Z"
     assert "REVIEWED_IMPLEMENTATION_MERGE_TIMESTAMP" in fresh["start_rule"]
+    window = fresh["prediction_observation_window"]
+    assert window["selection"] == "EARLIEST_QUALIFYING_CAPTURE_IN_WINDOW"
+    assert window["capture_observed_at_must_be_on_or_after_holdout_start"] is True
     assert fresh["prediction_record_must_be_sealed_before_kickoff"] is True
     assert fresh["sealed_kickoff_utc_must_equal_settlement_kickoff_utc"] is True
     assert fresh["kickoff_drift_disposition"] == "EXCLUDE_PREDICTION_NO_REUSE_OR_RETIMING"
@@ -94,6 +102,17 @@ def test_fresh_holdout_is_prospective_pre_kickoff_and_outcome_independent() -> N
     assert fresh["closing_rule_may_not_use_goals_errors_nll_or_calibration_results"] is True
     assert fresh["minimum_calendar_span_days"] == 28
     assert fresh["maximum_calendar_span_days"] == 90
+    assert fresh["minimum_gate_evaluation_boundary_rule"] == (
+        "HOLDOUT_START_UTC_PLUS_EXACTLY_28_CALENDAR_DAYS"
+    )
+    assert fresh["hard_close_boundary_rule"] == (
+        "HOLDOUT_START_UTC_PLUS_EXACTLY_90_CALENDAR_DAYS"
+    )
+    assert fresh["scored_population_membership_rule"] == (
+        "HOLDOUT_START_UTC<=QUALIFYING_CAPTURE_OBSERVED_AT_UTC_AND_"
+        "HOLDOUT_START_UTC<=SEALED_KICKOFF_UTC<SELECTED_CLOSE_BOUNDARY_UTC"
+    )
+    assert fresh["settlement_after_selected_close_preserves_preclose_kickoff_membership"] is True
     assert fresh["minimum_complete_case_fixtures"] == 1000
 
 
@@ -107,6 +126,21 @@ def test_fresh_confirmation_rechecks_calibration_predictive_signal_and_competiti
     assert robustness["cluster"] == "PROVIDER_PRIMARY_ID"
     assert robustness["minimum_qualifying_primary_id_clusters"] == 8
     assert robustness["minimum_non_legacy_qualifying_primary_id_clusters"] == 2
+    assert robustness["jackknife_reference_validator_blob_sha"] == (
+        "0421506b9e6e398c3469bb69196ef8fcad04f2a5"
+    )
+    assert robustness["full_estimate"] == (
+        "FIXTURE_WEIGHTED_MEAN_PAIRED_DELTA_ON_UNION_OF_QUALIFYING_PRIMARY_ID_CLUSTERS"
+    )
+    assert robustness["delete_one_cluster_estimator"] == (
+        "FIXTURE_WEIGHTED_MEAN_OF_REMAINING_PAIRED_FIXTURE_DIFFERENCES"
+    )
+    assert robustness["delete_estimate_center"] == "ARITHMETIC_MEAN_OF_K_DELETE_ESTIMATES"
+    assert robustness["jackknife_standard_error_formula"] == (
+        "SQRT(((K-1)/K)*SUM((THETA_DELETE_I-THETA_BAR)^2))"
+    )
+    assert robustness["jackknife_interval_critical_value"] == 1.96
+    assert robustness["jackknife_interval_center"] == "FULL_ESTIMATE"
     assert robustness["jackknife_upper_95_must_be_strictly_below_zero"] is True
     assert robustness["minimum_fraction_of_qualifying_clusters_with_negative_mean_delta"] == 0.75
 
@@ -121,6 +155,7 @@ def test_every_downstream_authority_remains_false_and_next_boundary_is_implement
 
 def test_protocol_canonical_bytes_are_deterministic() -> None:
     import hashlib
+
     first = canonical_fresh_holdout_home_calibration_competition_identity_protocol_bytes()
     second = canonical_fresh_holdout_home_calibration_competition_identity_protocol_bytes()
     assert first == second
