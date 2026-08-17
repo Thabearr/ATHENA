@@ -41,14 +41,23 @@ def test_v2_fixes_pr_comment_write_permission_regression() -> None:
     assert "github.rest.issues.createComment" in text
 
 
-def test_v2_requires_exact_v1_reconciliation_receipt() -> None:
+def test_v2_requires_exact_v1_reconciliation_receipt_identity() -> None:
     text = _text()
     required = (
+        "const v1ReconciliationCommentId = 5311071999;",
+        "comment.id === v1ReconciliationCommentId",
+        "comment.user.login === 'Thabearr'",
         "ATHENA_FOTMOB_UTC_NATIVE_FEATURE_QUALIFICATION_V1_RECONCILIATION",
         "run-id: 31987862156",
+        "main-sha: 2bd05e98cd74f9db6fa59472c05d5253f69d0f68",
+        "command-comment-id: 5311067273",
+        "runner-executed: false",
+        "artifact-download-executed: false",
         "failure-evidence-artifact-id: 9274313978",
+        "failure-evidence-artifact-sha256: 1a46808c8ee4d21ab67ec03b1fd6c0a80e79fadf04933092e7a106522e31c337",
+        "failure-evidence-artifact-size: 2388",
         "V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY",
-        "Required reviewed V1 reconciliation receipt is missing or changed.",
+        "Required reviewed V1 reconciliation receipt identity is missing or changed.",
     )
     for token in required:
         assert token in text
