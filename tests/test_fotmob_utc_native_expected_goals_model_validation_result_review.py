@@ -57,7 +57,7 @@ def test_review_refuses_successor_promotion_and_consumes_seen_holdouts() -> None
     assert decision["competition_identity_followup_required"] is True
     assert decision["evaluation_a_and_b_labels_now_consumed_by_review"] is True
     assert decision["retune_on_a_or_b_and_reuse_same_rows_as_fresh_validation_forbidden"] is True
-    assert decision["followup_validation_requires_fresh_holdout_beyond_2026_08_15"] is True
+    assert decision["followup_validation_start_not_before_utc"] == "2026-08-15T00:00:00Z"
     assert review["next_required_boundary"] == NEXT_REQUIRED_BOUNDARY
 
 
