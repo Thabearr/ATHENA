@@ -45,6 +45,21 @@ def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
         assert marker in text
 
 
+def test_patch_bridge_path_safety_includes_new_untracked_and_ignored_paths() -> None:
+    parsed = yaml.safe_load(_text())
+    steps = parsed["jobs"]["validate"]["steps"]
+    safety = next(step for step in steps if step["name"] == "Enforce path and patch safety")
+    run = safety["run"]
+
+    assert '["git", "diff", "--name-only", "-z"]' in run
+    assert '["git", "ls-files", "--others", "-z"]' in run
+    assert 'item != b"athena.patch"' in run
+    assert "--exclude-standard" not in run
+    assert '["git", "apply", "--numstat", "-z", "athena.patch"]' in run
+    assert "Malformed patch numstat record" in run
+    assert "Binary patches are forbidden" in run
+
+
 def test_patch_bridge_pins_exact_synthetic_merge_parent_pair() -> None:
     text = _text()
     assert "EXPECTED_MERGE_SHA" in text
