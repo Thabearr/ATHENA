@@ -68,6 +68,26 @@ def test_patch_bridge_runs_full_suite_in_eight_parallel_synthetic_shards() -> No
     assert "Validate synthetic Python syntax" in text
 
 
+def test_patch_bridge_synthetic_shards_commit_exact_tree_before_pytest() -> None:
+    parsed = yaml.safe_load(_text())
+    steps = parsed["jobs"]["synthetic_test_shard"]["steps"]
+    names = [step["name"] for step in steps]
+
+    apply_index = names.index("Verify artifact and apply to synthetic merge")
+    clean_index = names.index("Create clean synthetic validation commit")
+    test_index = names.index("Run synthetic test shard")
+    assert apply_index < clean_index < test_index
+
+    clean_run = steps[clean_index]["run"]
+    assert "rm -f athena.patch" in clean_run
+    assert "git add -A" in clean_run
+    assert 'expected_tree="$(git write-tree)"' in clean_run
+    assert 'git commit -m "Validate reviewed ATHENA synthetic patch"' in clean_run
+    assert "git rev-parse 'HEAD^{tree}'" in clean_run
+    assert 'test -z "$(git status --porcelain --untracked-files=no)"' in clean_run
+    assert "git push" not in clean_run
+
+
 def test_patch_bridge_refuses_push_unless_tested_and_pushed_merge_trees_match() -> None:
     text = _text()
     assert "git write-tree" in text
