@@ -76,7 +76,7 @@ For each side:
 - use the last five strictly prior fixtures;
 - win = 3, draw = 1, loss = 0;
 - `round(0.10 + ((points / (n * 3)) * 0.85), 3)`;
-- no prior history → `MISSING_PRIOR_HISTORY` with value `null`;
+- no prior history → `MISSING` with value `null`;
 - no default value.
 
 ## Elo
@@ -115,7 +115,7 @@ When both sides have prior history:
 - differential = home rest − away rest;
 - fatigue = `0.30` when differential < −2, `0.10` when differential < 0, otherwise `0.0`.
 
-If either required prior fixture is absent, fatigue is `MISSING_PRIOR_HISTORY` with no numeric value.
+If either required prior fixture is absent, fatigue is `MISSING` with no numeric value.
 
 No local-time conversion occurs before subtraction.
 
