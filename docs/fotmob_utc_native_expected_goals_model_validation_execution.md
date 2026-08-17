@@ -59,13 +59,18 @@ The workflow requires:
 - exact lowercase 40-hex current `main` SHA;
 - current default branch equal to that requested SHA;
 - exact successful upstream V2 result receipt still present;
-- no earlier model-validation attempt marker.
+- no earlier model-validation attempt marker;
+- exact reconciliation comment `5317758294` for failed pre-attempt run `32046244761`, including preserved failure artifact `9292984849`, remains present and unchanged.
 
 Before checkout or fitting, it creates:
 
 `<!-- ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_ATTEMPT -->`
 
 Once the attempt marker exists, the attempt is spent. A failed, interrupted, or partially completed run must be reconciled from its preserved evidence before any new execution boundary is defined. It must not be replayed automatically.
+
+The first authorized command after PR #145 merge reached run `32046244761` but failed before this marker could be created. GitHub rejected the closed-PR durable comment with HTTP 403 while the workflow had `pull-requests: read`. No checkout, source-artifact download, validator execution, or research training occurred. Failure artifact `9292984849` preserves that state with SHA-256 `91965dee1fdb496e776a914de9a9e789a830141ea6b17276a7b1bade541835c1`.
+
+The corrected lane restores `pull-requests: write`, requires reconciliation comment `5317758294` before accepting a new command, and keeps run `32046244761` non-replayable.
 
 ## Exact offline execution
 
