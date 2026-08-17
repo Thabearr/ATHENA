@@ -34,7 +34,7 @@ The preserved FotMob source parser demonstrates these provider-native identity f
 - fixture wrapper identity: `leagues[].matches[].leagueId`;
 - fixture identity: `leagues[].matches[].id`.
 
-For every admitted fixture, `match.leagueId` must exactly equal the containing wrapper `league.id`. `primaryId`, wrapper `id`, and fixture `id` must be positive integers. Names, aliases and fuzzy mapping cannot create identity. A non-legacy wrapper that has not passed this exact fresh structural qualification is excluded rather than inferred.
+For every admitted fixture, `match.leagueId` must exactly equal the containing wrapper `league.id`. `primaryId`, wrapper `id`, and fixture `id` must each be exact positive integers. Names, aliases and fuzzy mapping cannot create identity. A non-legacy wrapper that has not passed this exact fresh structural qualification is excluded rather than inferred.
 
 The 11 historical training-scope primary IDs remain `{40,47,53,54,55,57,61,64,71,87,135}`. Fresh **capture/evaluation discovery is not capped at those IDs**. `model_league_code` is legacy classification only and cannot substitute for provider-native competition identity.
 
@@ -50,7 +50,7 @@ This makes the follow-up a test of transfer to additional exact competitions, no
 
 The confirmation cannot start before `2026-08-15T00:00:00Z`, and in practice starts at the first UTC midnight strictly after the reviewed implementation PR is merged. That protects the confirmation from the fact that this protocol itself is being written after August 15.
 
-For each fixture, the prediction and exact competition identity must be sealed before kickoff using the earliest qualifying source capture between 24 hours and 60 minutes before kickoff. A fixture with no qualifying pre-kickoff capture is missing and may not be reconstructed after the result is known.
+For each fixture, the prediction and exact competition identity must be sealed before kickoff using the earliest qualifying source capture between 24 hours and 60 minutes before kickoff. The qualifying capture's own `observed_at` UTC must be **on or after the resolved holdout start**; a preserved capture from before the fresh experiment starts cannot become fresh confirmation evidence merely because its fixture kicks off later. A fixture with no qualifying pre-kickoff capture is missing and may not be reconstructed after the result is known.
 
 Settlement must preserve exact fixture, competition identity **and the sealed kickoff UTC**. If the provider later changes the kickoff, the old prediction is excluded and may not be reused, retimed or mapped onto the rescheduled fixture. Settlement may admit only the already-reviewed ordinary-FT result semantics. Cancelled, postponed, special-result or otherwise unreviewed states are not scored.
 
@@ -58,15 +58,30 @@ Settlement must preserve exact fixture, competition identity **and the sealed ki
 
 The fresh population closes only by time and coverage, never by model performance.
 
-The earliest close is after 28 calendar days. At the first later UTC day boundary, close when all of these count-only conditions are true:
+Because the resolved holdout start is itself a UTC `00:00` boundary:
+
+- `minimum_gate_evaluation_boundary = holdout_start + exactly 28 calendar days`;
+- `hard_close_boundary = holdout_start + exactly 90 calendar days`.
+
+At the minimum gate-evaluation boundary, and at each subsequent UTC midnight, close at the **first** boundary where all of these count-only conditions are true:
 
 - at least `1,000` complete-case fresh fixtures;
 - at least `8` provider `primaryId` clusters with at least `30` complete-case fixtures each;
 - at least `2` of those qualifying clusters are outside the legacy 11 primary IDs.
 
-If those gates have not been met by 90 calendar days, the window closes anyway and the result is `FRESH_HOLDOUT_INSUFFICIENT_COVERAGE_NO_SUCCESSOR_DECISION`.
+If those gates are still unmet at the hard-close boundary, close there as `FRESH_HOLDOUT_INSUFFICIENT_COVERAGE_NO_SUCCESSOR_DECISION`. The 28-day rule does not accidentally require a 29th day.
 
-Goals, errors, WACE, NLL and calibration performance may not influence when the population closes.
+Scored-population membership is frozen by the prospective evidence and kickoff interval:
+
+`holdout_start <= qualifying_capture_observed_at`
+
+and
+
+`holdout_start <= sealed_kickoff_utc < selected_close_boundary`.
+
+A prediction sealed before the close for a fixture whose kickoff is at or after the selected close boundary does not enter this holdout. Conversely, if an admitted fixture kicked off before the selected close boundary but its ordinary-FT settlement arrives later, the already-frozen membership is preserved; result arrival time may not select the population.
+
+Goals, errors, WACE, WSCE, NLL and calibration performance may not influence when the population closes.
 
 ## Fresh pooled gates
 
@@ -85,14 +100,21 @@ Calibration uses the same frozen bins as the prior validation and each model is 
 
 ## Competition robustness gate
 
-Competition robustness clusters by exact provider `primaryId`, not names and not model codes. A qualifying cluster needs at least `30` fresh complete-case fixtures.
+Competition robustness clusters by exact provider `primaryId`, not names and not model codes. A qualifying cluster needs at least `30` fresh complete-case fixtures, and the robustness gate requires at least `8` qualifying clusters.
 
-On the union of qualifying clusters:
+On the union of qualifying clusters, define the fixture-paired difference as:
 
-- compute fixture-paired `calibrated native joint NLL - Elo-only joint NLL`;
-- compute a leave-one-`primaryId`-out jackknife with fixture-weighted remaining means;
-- require the jackknife upper 95% bound to be strictly below zero;
-- require at least 75% of qualifying competition clusters to have a negative within-cluster mean paired delta.
+`calibrated native joint NLL - Elo-only joint NLL`.
+
+The full estimate is the fixture-weighted mean paired difference over that union. For `K` qualifying provider-`primaryId` clusters, preserve the exact reviewed #147 jackknife convention from validator blob `0421506b9e6e398c3469bb69196ef8fcad04f2a5`:
+
+1. `theta_delete_i` is the fixture-weighted mean paired difference after deleting every fixture in qualifying cluster `i`.
+2. `theta_bar` is the arithmetic mean of the `K` delete estimates.
+3. `jackknife_se = sqrt(((K - 1) / K) * sum((theta_delete_i - theta_bar)^2))`.
+4. `interval_lower = full_estimate - 1.96 * jackknife_se`.
+5. `interval_upper = full_estimate + 1.96 * jackknife_se`.
+
+The upper 95% bound must be strictly below zero. Separately, at least 75% of qualifying competition clusters must have a negative within-cluster mean paired delta.
 
 Per-competition NLL, home/away WACE, WSCE, row count and missingness must all be reported. Smaller competitions remain visible but report-only.
 
