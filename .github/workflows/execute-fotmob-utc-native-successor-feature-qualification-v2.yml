@@ -31,6 +31,7 @@ jobs:
           script: |
             const controlPr = 139;
             const v1ControlPr = 138;
+            const v1ReconciliationCommentId = 5311071999;
             if (context.issue.number !== controlPr) {
               core.setFailed(`V2 qualification execution is bound only to PR #${controlPr}.`);
               return;
@@ -96,16 +97,27 @@ jobs:
             const reconciliation = v1Comments.find((comment) => {
               const text = String(comment.body || '');
               return (
+                comment.id === v1ReconciliationCommentId &&
+                comment.user &&
+                comment.user.login === 'Thabearr' &&
                 text.startsWith(v1ReconciliationPrefix) &&
                 text.includes('run-id: 31987862156') &&
+                text.includes('main-sha: 2bd05e98cd74f9db6fa59472c05d5253f69d0f68') &&
+                text.includes('command-comment-id: 5311067273') &&
+                text.includes('runner-executed: false') &&
+                text.includes('artifact-download-executed: false') &&
                 text.includes('failure-evidence-artifact-id: 9274313978') &&
+                text.includes(
+                  'failure-evidence-artifact-sha256: 1a46808c8ee4d21ab67ec03b1fd6c0a80e79fadf04933092e7a106522e31c337'
+                ) &&
+                text.includes('failure-evidence-artifact-size: 2388') &&
                 text.includes(
                   'state: V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY'
                 )
               );
             });
             if (!reconciliation) {
-              core.setFailed('Required reviewed V1 reconciliation receipt is missing or changed.');
+              core.setFailed('Required reviewed V1 reconciliation receipt identity is missing or changed.');
               return;
             }
 
