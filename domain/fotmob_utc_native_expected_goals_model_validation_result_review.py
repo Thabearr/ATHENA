@@ -153,7 +153,7 @@ def build_fotmob_utc_native_expected_goals_model_validation_result_review() -> d
             "evaluation_a_and_b_labels_now_consumed_by_review": True,
             "retune_on_a_or_b_and_reuse_same_rows_as_fresh_validation_forbidden": True,
             "followup_must_pre_register_before_result_inspection": True,
-            "followup_validation_requires_fresh_holdout_beyond_2026_08_15": True,
+            "followup_validation_start_not_before_utc": "2026-08-15T00:00:00Z",
             "automatic_model_approval": False,
         },
         "runtime_caveats": {
