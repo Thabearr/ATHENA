@@ -49,6 +49,8 @@ _LINEAGE_FILES = {'domain/fotmob_utc_native_successor_feature_construction_proto
  'scripts/qualify_fotmob_utc_native_successor_feature_construction.py': '68503c85569f31532a1a810249073c36242055e0',
  'domain/historical_expected_goals_successor_protocol.py': 'f0b3a070bcf235a097dd737d715f9d6162505509',
  'domain/historical_expected_goals_successor_candidate.py': 'd1d22f44436775a8fd7fa6d4970d8d230d59ebef',
+ 'artifacts/research-manifests/historical-expected-goals-successor-real-corpus-receipt-v1.json': '5324722a397aac72991b8db24151847554bd8f53',
+ 'artifacts/research-manifests/historical-expected-goals-successor-robustness-real-corpus-receipt-v1.json': '151f66b70521d143856912f00fa2be54a3eded5c',
  'domain/historical_expected_goals_successor_robustness_protocol.py': 'b9efdb831363293826fc97b5145839232d7ac53d',
  'domain/historical_expected_goals_successor_robustness_evaluator.py': '28e33a625c02c7f005232d6c5d05d6a0a52397b7',
  'tools/train_model.py': '0f4722f352b03f72540ca5621dc1f75dd9691b7e',
