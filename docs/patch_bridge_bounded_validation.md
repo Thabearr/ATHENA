@@ -18,14 +18,14 @@ Before any test or write authority is reached, the bridge still requires:
 - exact SHA-256 of the UTF-8 patch bytes;
 - bounded patch size;
 - successful `git apply --check` with whitespace errors rejected;
-- every changed path inside the existing allowlist, including newly created untracked or ignored paths rather than only already-tracked diffs;
+- every changed path inside the existing allowlist, including newly created untracked paths rather than only already-tracked diffs; newly created ignored paths are detected and rejected;
 - `.github/` workflow mutation through Patch Bridge forbidden;
 - binary patches forbidden by inspecting the exact patch numstat, including newly created binary files;
 - a clean validation commit and `git diff --check`;
 - exact GitHub synthetic merge SHA available;
 - exact synthetic merge parents equal to the captured base SHA followed by the captured head SHA.
 
-The root `athena.patch` transport file is the only untracked path excluded from changed-path admission. The path scan deliberately does not use standard ignore rules, so a patch cannot hide a new forbidden file by first adding it to `.gitignore`.
+The root `athena.patch` transport file is the only untracked path excluded from changed-path admission. The path scan deliberately does not use standard ignore filtering, so ignored patch-created paths remain visible; any such ignored path is rejected before staging. This prevents test-only ignored payload bytes from existing outside the tree that is later committed and pushed.
 
 All external actions remain pinned to immutable commit SHAs.
 
@@ -67,7 +67,7 @@ A stacked draft may be patched while its feature base is under review. The bridg
 A successful Patch Bridge run means:
 
 - exact requested patch bytes were applied;
-- path/mutation safety passed for tracked, newly created, and ignored paths;
+- path/mutation safety passed for tracked and newly created paths, with patch-created ignored paths rejected;
 - the exact base/head synthetic merge plus that patch passed all eight hosted test shards from clean tracked worktrees whose local commit trees equal the patched synthetic tree;
 - synthetic syntax passed;
 - the pushed merge tree exactly matched the tested synthetic tree.
