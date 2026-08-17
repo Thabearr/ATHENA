@@ -23,7 +23,7 @@ def _workflow() -> dict:
     return value
 
 
-def test_execution_workflow_parses_and_is_only_the_reviewed_comment_lane() -> None:
+def test_execution_workflow_is_only_the_reviewed_owner_comment_lane() -> None:
     parsed = _workflow()
     assert parsed["name"] == (
         "Execute Reviewed FotMob UTC-Native Expected-Goals Model Validation"
@@ -38,11 +38,12 @@ def test_execution_workflow_parses_and_is_only_the_reviewed_comment_lane() -> No
         "confirm: EXECUTE_REVIEWED_21129_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION"
         in text
     )
+    assert "cancel-in-progress: false" in text
 
 
-def test_execution_workflow_has_spent_attempt_and_current_main_guards() -> None:
+def test_execution_workflow_has_spent_attempt_current_main_and_upstream_guards() -> None:
     text = _text()
-    required = (
+    for marker in (
         "Expected-goals execution-control PR must already be merged and closed.",
         "Current ${repository.default_branch}=",
         "ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_ATTEMPT",
@@ -53,14 +54,12 @@ def test_execution_workflow_has_spent_attempt_and_current_main_guards() -> None:
         "run-id: 31990121181",
         "main-sha: cd67be14f6a4f09484d18a57de360b8a5d4c51d7",
         "EXECUTION_COMPLETED_EXACT_PR119_UTC_NATIVE_FEATURE_PROJECTION_EVIDENCE_PRESERVED_V2",
-    )
-    for marker in required:
+    ):
         assert marker in text
 
 
-def test_execution_workflow_permissions_allow_durable_attempt_and_result_receipts() -> None:
-    permissions = _workflow()["jobs"]["execute"]["permissions"]
-    assert permissions == {
+def test_execution_workflow_permissions_support_durable_receipts() -> None:
+    assert _workflow()["jobs"]["execute"]["permissions"] == {
         "actions": "read",
         "contents": "read",
         "issues": "write",
@@ -68,24 +67,14 @@ def test_execution_workflow_permissions_allow_durable_attempt_and_result_receipt
     }
 
 
-def test_execution_workflow_pins_exact_reviewed_validator_lineage() -> None:
+def test_execution_workflow_pins_reviewed_validator_and_dependencies() -> None:
     text = _text()
     pins = {
-        "domain/fotmob_utc_native_expected_goals_model_validation.py": (
-            "0421506b9e6e398c3469bb69196ef8fcad04f2a5"
-        ),
-        "domain/fotmob_utc_native_expected_goals_model_validation_source_bound.py": (
-            "89cbe2e948c4f69339c89df00db0282e14b955e8"
-        ),
-        "scripts/validate_fotmob_utc_native_expected_goals_model.py": (
-            "d3dddecbd66b79887aef547abcd048f40a57e2a8"
-        ),
-        "domain/fotmob_utc_native_expected_goals_model_validation_protocol.py": (
-            "1780330c4d0ab9140f0b2f6c776dfe79073ca7f8"
-        ),
-        "domain/historical_expected_goals_successor_robustness_evaluator.py": (
-            "28e33a625c02c7f005232d6c5d05d6a0a52397b7"
-        ),
+        "domain/fotmob_utc_native_expected_goals_model_validation.py": "0421506b9e6e398c3469bb69196ef8fcad04f2a5",
+        "domain/fotmob_utc_native_expected_goals_model_validation_source_bound.py": "89cbe2e948c4f69339c89df00db0282e14b955e8",
+        "scripts/validate_fotmob_utc_native_expected_goals_model.py": "d3dddecbd66b79887aef547abcd048f40a57e2a8",
+        "domain/fotmob_utc_native_expected_goals_model_validation_protocol.py": "1780330c4d0ab9140f0b2f6c776dfe79073ca7f8",
+        "domain/historical_expected_goals_successor_robustness_evaluator.py": "28e33a625c02c7f005232d6c5d05d6a0a52397b7",
         "requirements.txt": "54d24a55dfa4c73ba3910d333257cfd2e68daf4b",
     }
     for path, sha in pins.items():
@@ -95,7 +84,7 @@ def test_execution_workflow_pins_exact_reviewed_validator_lineage() -> None:
 
 def test_execution_workflow_pins_exact_v2_artifact_and_offline_cli() -> None:
     text = _text()
-    required = (
+    for marker in (
         "artifactId = 9275052993",
         "fotmob-utc-native-feature-qualification-v2-31990121181",
         "23349191",
@@ -106,35 +95,33 @@ def test_execution_workflow_pins_exact_v2_artifact_and_offline_cli() -> None:
         "--predictions-output fotmob-utc-native-xg-validation-predictions.ndjson",
         "--receipt-output fotmob-utc-native-xg-validation-receipt.json",
         "network_performed_by_model_validator': False",
-    )
-    for marker in required:
+    ):
         assert marker in text
 
 
-def test_execution_workflow_verifies_frozen_population_and_research_only_result() -> None:
+def test_execution_workflow_verifies_exact_population_and_result_contract() -> None:
     text = _text()
-    required = (
+    for marker in (
         "complete_case_count') != 21129",
         "dropped_incomplete_count') != 197",
-        "(14181, '4c017b9e43ab9e2f231e88187339a3960c5fdfbd087f21ba92ca8855576219a9')",
-        "(3471, '4361cd60976170bd14442502025160d9b3aa97717fb94afc1b68eee9b88c429f')",
-        "(3477, '4910b5db577bd87fd4bed4e24f3b1e00dff85d58f23e7ea8558cfba0aa5efd59')",
-        "(6948, 'f4d713a739feeac90c166f5125dd80ab7e3063598f9ad0187f07d10b88e5bcdc')",
+        "4c017b9e43ab9e2f231e88187339a3960c5fdfbd087f21ba92ca8855576219a9",
+        "4361cd60976170bd14442502025160d9b3aa97717fb94afc1b68eee9b88c429f",
+        "4910b5db577bd87fd4bed4e24f3b1e00dff85d58f23e7ea8558cfba0aa5efd59",
+        "f4d713a739feeac90c166f5125dd80ab7e3063598f9ad0187f07d10b88e5bcdc",
         "HISTORICAL_FIXED_COEFFICIENT_TRANSFER",
-        "STRONG_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED",
-        "MIXED_OR_WEAK_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED",
-        "REVIEW_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_RESULT",
+        "allowed_states = {evaluator.STRONG_STATE, evaluator.WEAK_STATE}",
+        "receipt.get('next_required_boundary') != evaluator.NEXT_REQUIRED_BOUNDARY",
         "automatic_model_approval') is not False",
         "research_training_executed') is not True",
         "BLOCKED_PROJECTION_DOES_NOT_CARRY_COMPETITION_IDENTITY",
         "known_pr77_machine_precision_canonicalization_gap_cleared",
         "cross_runtime_bit_identity_claimed",
-    )
-    for marker in required:
+        "one or more downstream authority flags changed",
+    ):
         assert marker in text
 
 
-def test_execution_workflow_verifies_nine_quarters_predictions_and_all_false_authority() -> None:
+def test_execution_workflow_verifies_predictions_and_nine_quarter_jackknife() -> None:
     text = _text()
     for quarter, count in (
         ("2024-Q3", 626),
@@ -151,13 +138,11 @@ def test_execution_workflow_verifies_nine_quarters_predictions_and_all_false_aut
     assert "prediction NDJSON does not contain exactly 6,948 rows" in text
     assert "'EVALUATION_A': 3471" in text
     assert "'EVALUATION_B_TERMINAL': 3477" in text
-    assert "one or more downstream authority flags changed" in text
-    assert "No ScoreMatrix, probability, pricing, selection, production, or BET authority" in text
+    assert "set(row.get('predictions', {})) != set(evaluator.MODEL_IDS)" in text
 
 
-def test_execution_workflow_preserves_evidence_even_when_runner_fails() -> None:
-    parsed = _workflow()
-    steps = parsed["jobs"]["execute"]["steps"]
+def test_execution_workflow_preserves_evidence_even_on_failure() -> None:
+    steps = _workflow()["jobs"]["execute"]["steps"]
     names = [step["name"] for step in steps]
     execute_index = names.index("Execute exact offline source-bound expected-goals validation")
     package_index = names.index("Package immutable expected-goals validation evidence")
@@ -171,6 +156,7 @@ def test_execution_workflow_preserves_evidence_even_when_runner_fails() -> None:
     assert "EXECUTION_NOT_QUALIFIED_REVIEW_MODEL_VALIDATION_ARTIFACT_BEFORE_ANY_RETRY" in text
     assert "fotmob-utc-native-expected-goals-validation-${{ github.run_id }}" in text
     assert "retention-days: 30" in text
+    assert "No ScoreMatrix, probability, pricing, selection, production, or BET authority" in text
 
 
 def test_execution_workflow_external_actions_are_immutable_commit_pins() -> None:
