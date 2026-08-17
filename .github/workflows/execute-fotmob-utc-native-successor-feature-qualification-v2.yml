@@ -1,0 +1,533 @@
+name: Execute Reconciled FotMob UTC-Native Successor Feature Qualification V2
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: athena-fotmob-utc-native-successor-feature-qualification-v2
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.number == 139 &&
+      github.event.comment.user.login == 'Thabearr' &&
+      startsWith(github.event.comment.body, '/athena-run-fotmob-utc-native-feature-qualification-v2')
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: read
+      contents: read
+      issues: write
+      pull-requests: write
+
+    steps:
+      - name: Validate reconciled one-shot owner command and current main
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const controlPr = 139;
+            const v1ControlPr = 138;
+            if (context.issue.number !== controlPr) {
+              core.setFailed(`V2 qualification execution is bound only to PR #${controlPr}.`);
+              return;
+            }
+
+            const body = String(context.payload.comment.body || '').replace(/\r\n/g, '\n');
+            const lines = body.split('\n').map((line) => line.trim()).filter(Boolean);
+            if (
+              lines.length !== 3 ||
+              lines[0] !== '/athena-run-fotmob-utc-native-feature-qualification-v2'
+            ) {
+              core.setFailed('V2 qualification command framing is invalid.');
+              return;
+            }
+            const shaMatch = /^main-sha: ([0-9a-f]{40})$/.exec(lines[1]);
+            if (!shaMatch) {
+              core.setFailed('V2 qualification command must contain one exact lowercase 40-hex main-sha.');
+              return;
+            }
+            if (
+              lines[2] !==
+              'confirm: EXECUTE_RECONCILED_21326_UTC_NATIVE_FEATURE_QUALIFICATION_V2'
+            ) {
+              core.setFailed('V2 qualification command is missing the exact reconciliation confirmation token.');
+              return;
+            }
+            const expectedMain = shaMatch[1];
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: controlPr,
+            });
+            if (!pr.merged_at || pr.state !== 'closed') {
+              core.setFailed('V2 qualification control PR must already be merged and closed.');
+              return;
+            }
+
+            const { data: repository } = await github.rest.repos.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+            });
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: `heads/${repository.default_branch}`,
+            });
+            if (ref.object.sha !== expectedMain) {
+              core.setFailed(
+                `Current ${repository.default_branch}=${ref.object.sha} differs from requested ${expectedMain}.`
+              );
+              return;
+            }
+
+            const v1ReconciliationPrefix =
+              '<!-- ATHENA_FOTMOB_UTC_NATIVE_FEATURE_QUALIFICATION_V1_RECONCILIATION -->';
+            const v1Comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: v1ControlPr,
+              per_page: 100,
+            });
+            const reconciliation = v1Comments.find((comment) => {
+              const text = String(comment.body || '');
+              return (
+                text.startsWith(v1ReconciliationPrefix) &&
+                text.includes('run-id: 31987862156') &&
+                text.includes('failure-evidence-artifact-id: 9274313978') &&
+                text.includes(
+                  'state: V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY'
+                )
+              );
+            });
+            if (!reconciliation) {
+              core.setFailed('Required reviewed V1 reconciliation receipt is missing or changed.');
+              return;
+            }
+
+            const markerPrefix =
+              '<!-- ATHENA_FOTMOB_UTC_NATIVE_FEATURE_QUALIFICATION_ATTEMPT_V2 -->';
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: controlPr,
+              per_page: 100,
+            });
+            const priorMarker = comments.find(
+              (comment) => String(comment.body || '').startsWith(markerPrefix)
+            );
+            if (priorMarker) {
+              core.setFailed(
+                `A prior V2 qualification execution attempt marker already exists at comment ${priorMarker.id}; ` +
+                'automatic replay is forbidden and requires reviewed reconciliation.'
+              );
+              return;
+            }
+
+            const marker = await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: controlPr,
+              body: [
+                markerPrefix,
+                'ATHENA reconciled FotMob UTC-native feature qualification V2 attempt started.',
+                `run-id: ${context.runId}`,
+                `main-sha: ${expectedMain}`,
+                `command-comment-id: ${context.payload.comment.id}`,
+                `v1-reconciliation-comment-id: ${reconciliation.id}`,
+                'state: ATTEMPT_STARTED_NO_RESULT_YET',
+                'Automatic replay is forbidden if this V2 run does not complete cleanly.',
+              ].join('\n'),
+            });
+
+            core.setOutput('main_sha', expectedMain);
+            core.setOutput('marker_comment_id', String(marker.data.id));
+            core.setOutput('v1_reconciliation_comment_id', String(reconciliation.id));
+
+      - name: Check out exact authorized main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.guard.outputs.main_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify reviewed runner and frozen dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.main_sha }}"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_successor_feature_construction_qualification.py)" = "9c9e424791b65292f7bbe8849b3214c140834889"
+          test "$(git rev-parse HEAD:scripts/qualify_fotmob_utc_native_successor_feature_construction.py)" = "68503c85569f31532a1a810249073c36242055e0"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_successor_feature_construction_protocol.py)" = "57cc133a7fb9daa76c5d5d8e9156903e583c6575"
+          test "$(git rev-parse HEAD:scripts/qualify_fotmob_historical_source_history_completeness_materialization.py)" = "2409676b4993a25024e2e8554e84e3525e7c5e6e"
+          test "$(git rev-parse HEAD:requirements.txt)" = "54d24a55dfa4c73ba3910d333257cfd2e68daf4b"
+
+      - name: Verify preserved PR119 artifact metadata
+        id: artifact_meta
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const artifactId = 9249856559;
+            const expected = {
+              name: 'fotmob-ordinary-ft-source-history-campaign-31887523012',
+              size: 61886753,
+              digest: 'sha256:7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f',
+              runId: 31887523012,
+              headSha: '12a32de1cca8ffb657f67fa4a8d3106aec6ce31b',
+            };
+            const { data: artifact } = await github.rest.actions.getArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: artifactId,
+            });
+            if (artifact.id !== artifactId) core.setFailed('Preserved artifact ID changed.');
+            if (artifact.name !== expected.name) core.setFailed('Preserved artifact name changed.');
+            if (artifact.size_in_bytes !== expected.size) core.setFailed('Preserved artifact size changed.');
+            if (artifact.expired) core.setFailed('Preserved artifact is expired.');
+            if (artifact.digest !== expected.digest) core.setFailed('Preserved artifact digest changed.');
+            if (!artifact.workflow_run || artifact.workflow_run.id !== expected.runId) {
+              core.setFailed('Preserved artifact workflow-run identity changed.');
+            }
+            if (!artifact.workflow_run || artifact.workflow_run.head_sha !== expected.headSha) {
+              core.setFailed('Preserved artifact source head SHA changed.');
+            }
+            core.setOutput('artifact_id', String(artifactId));
+            core.setOutput('artifact_name', artifact.name);
+            core.setOutput('artifact_size', String(artifact.size_in_bytes));
+            core.setOutput('artifact_digest', artifact.digest);
+            core.setOutput('artifact_run_id', String(artifact.workflow_run.id));
+            core.setOutput('artifact_head_sha', artifact.workflow_run.head_sha);
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download and verify exact preserved artifact archive
+        id: artifact_download
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_ID: ${{ steps.artifact_meta.outputs.artifact_id }}
+          EXPECTED_SHA256: 7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f
+          EXPECTED_SIZE: '61886753'
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/artifacts/${ARTIFACT_ID}/zip" > pr119-preserved-artifact.zip
+          actual_size="$(stat -c '%s' pr119-preserved-artifact.zip)"
+          actual_sha256="$(sha256sum pr119-preserved-artifact.zip | awk '{print $1}')"
+          test "${actual_size}" = "${EXPECTED_SIZE}"
+          test "${actual_sha256}" = "${EXPECTED_SHA256}"
+          echo "size=${actual_size}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${actual_sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Record V2 execution metadata
+        env:
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+          V1_RECONCILIATION_COMMENT_ID: ${{ steps.guard.outputs.v1_reconciliation_comment_id }}
+          ARTIFACT_ID: ${{ steps.artifact_meta.outputs.artifact_id }}
+          ARTIFACT_NAME: ${{ steps.artifact_meta.outputs.artifact_name }}
+          ARTIFACT_SIZE: ${{ steps.artifact_download.outputs.size }}
+          ARTIFACT_SHA256: ${{ steps.artifact_download.outputs.sha256 }}
+          ARTIFACT_RUN_ID: ${{ steps.artifact_meta.outputs.artifact_run_id }}
+          ARTIFACT_HEAD_SHA: ${{ steps.artifact_meta.outputs.artifact_head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'schema_version': 2,
+              'execution_boundary': 'EXECUTE_RECONCILED_FOTMOB_UTC_NATIVE_SUCCESSOR_FEATURE_CONSTRUCTION_QUALIFICATION_V2',
+              'authorized_main_sha': os.environ['AUTHORIZED_MAIN_SHA'],
+              'github_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'github_run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'v1_failed_run_id': 31987862156,
+              'v1_failure_evidence_artifact_id': 9274313978,
+              'v1_reconciliation_comment_id': int(os.environ['V1_RECONCILIATION_COMMENT_ID']),
+              'qualification_runner_blob_sha': '9c9e424791b65292f7bbe8849b3214c140834889',
+              'qualification_cli_blob_sha': '68503c85569f31532a1a810249073c36242055e0',
+              'pr134_protocol_blob_sha': '57cc133a7fb9daa76c5d5d8e9156903e583c6575',
+              'pr119_executor_blob_sha': '2409676b4993a25024e2e8554e84e3525e7c5e6e',
+              'requirements_blob_sha': '54d24a55dfa4c73ba3910d333257cfd2e68daf4b',
+              'preserved_artifact_id': int(os.environ['ARTIFACT_ID']),
+              'preserved_artifact_name': os.environ['ARTIFACT_NAME'],
+              'preserved_artifact_size_bytes': int(os.environ['ARTIFACT_SIZE']),
+              'preserved_artifact_sha256': os.environ['ARTIFACT_SHA256'],
+              'preserved_artifact_run_id': int(os.environ['ARTIFACT_RUN_ID']),
+              'preserved_artifact_head_sha': os.environ['ARTIFACT_HEAD_SHA'],
+              'expected_row_count': 21326,
+              'network_performed_by_qualification_runner': False,
+              'started_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+          }
+          Path('qualification-v2-execution-metadata.json').write_text(
+              json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          PY
+
+      - name: Execute exact offline UTC-native qualification
+        id: execute_qualification
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          set -o pipefail
+          python scripts/qualify_fotmob_utc_native_successor_feature_construction.py \
+            pr119-preserved-artifact.zip \
+            --output qualification-v2-receipt.json \
+            --projection-output utc-native-feature-projection-v2.ndjson \
+            2>&1 | tee qualification-v2-run.log
+          runner_exit=${PIPESTATUS[0]}
+          echo "exit_code=${runner_exit}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Package immutable V2 qualification evidence
+        id: package
+        if: always()
+        env:
+          RUNNER_EXIT_CODE: ${{ steps.execute_qualification.outputs.exit_code }}
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p qualification-v2-artifact
+          for path in \
+            qualification-v2-execution-metadata.json \
+            qualification-v2-run.log \
+            qualification-v2-receipt.json \
+            utc-native-feature-projection-v2.ndjson
+          do
+            if [ -f "$path" ]; then
+              cp "$path" qualification-v2-artifact/
+            else
+              printf 'ABSENT\n' > "qualification-v2-artifact/${path}.absent"
+            fi
+          done
+
+          if [ -f pr119-preserved-artifact.zip ]; then
+            sha256sum pr119-preserved-artifact.zip > qualification-v2-artifact/pr119-preserved-artifact.zip.sha256
+            stat -c '%s' pr119-preserved-artifact.zip > qualification-v2-artifact/pr119-preserved-artifact.zip.size
+          else
+            printf 'ABSENT\n' > qualification-v2-artifact/pr119-preserved-artifact.zip.absent
+          fi
+
+          python - <<'PY'
+          import datetime
+          import json
+          import os
+          from pathlib import Path
+
+          payload = {
+              'schema_version': 2,
+              'execution_boundary': 'EXECUTE_RECONCILED_FOTMOB_UTC_NATIVE_SUCCESSOR_FEATURE_CONSTRUCTION_QUALIFICATION_V2',
+              'authorized_main_sha': os.environ.get('AUTHORIZED_MAIN_SHA', ''),
+              'github_run_id': int(os.environ['GITHUB_RUN_ID']),
+              'github_run_attempt': int(os.environ['GITHUB_RUN_ATTEMPT']),
+              'runner_exit_code': os.environ.get('RUNNER_EXIT_CODE', ''),
+              'packaged_at_utc': datetime.datetime.now(datetime.timezone.utc).isoformat().replace('+00:00', 'Z'),
+              'artifact_is_research_evidence_only': True,
+              'model_training_authorized': False,
+              'probability_inference_authorized': False,
+              'pricing_authorized': False,
+              'selection_authorized': False,
+              'production_approval_authorized': False,
+              'bet_authorized': False,
+          }
+          Path('qualification-v2-artifact/execution-envelope.json').write_text(
+              json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(',', ':')) + '\n',
+              encoding='utf-8',
+          )
+          PY
+          sha256sum qualification-v2-artifact/* > qualification-v2-artifact/files.sha256
+
+      - name: Upload V2 qualification evidence even on failure
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fotmob-utc-native-feature-qualification-v2-${{ github.run_id }}
+          path: qualification-v2-artifact/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Verify exact V2 qualification result
+        id: verify
+        if: always()
+        env:
+          RUNNER_EXIT_CODE: ${{ steps.execute_qualification.outputs.exit_code }}
+          ARTIFACT_DOWNLOAD_OUTCOME: ${{ steps.artifact_download.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${RUNNER_EXIT_CODE}" = "0"
+          test "${ARTIFACT_DOWNLOAD_OUTCOME}" = "success"
+          test "${PACKAGE_OUTCOME}" = "success"
+          test "${UPLOAD_OUTCOME}" = "success"
+          test -f qualification-v2-receipt.json
+          test -f utc-native-feature-projection-v2.ndjson
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          receipt_path = Path('qualification-v2-receipt.json')
+          projection_path = Path('utc-native-feature-projection-v2.ndjson')
+          receipt_raw = receipt_path.read_bytes()
+          receipt = json.loads(receipt_raw)
+          canonical_receipt = (
+              json.dumps(
+                  receipt,
+                  ensure_ascii=False,
+                  allow_nan=False,
+                  sort_keys=True,
+                  separators=(',', ':'),
+              ) + '\n'
+          ).encode('utf-8')
+          if receipt_raw != canonical_receipt:
+              raise SystemExit('qualification receipt is not canonical JSON')
+
+          if receipt.get('qualification_status') != 'QUALIFIED_EXACT_PR119_UTC_NATIVE_FEATURE_PROJECTION':
+              raise SystemExit('qualification status differs from reviewed result vocabulary')
+          if receipt.get('qualification_state') != 'EXECUTED_EXACT_PR119_UTC_NATIVE_FEATURE_PROJECTION_MODEL_USE_UNREVIEWED':
+              raise SystemExit('qualification state differs from reviewed result vocabulary')
+          if receipt.get('next_required_boundary') != 'PRE_REGISTER_REVIEWED_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_PROTOCOL':
+              raise SystemExit('next reviewed boundary changed')
+
+          upstream = receipt.get('upstream', {})
+          if upstream.get('preserved_campaign_artifact_id') != 9249856559:
+              raise SystemExit('receipt artifact ID changed')
+          if upstream.get('preserved_campaign_artifact_sha256') != '7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f':
+              raise SystemExit('receipt artifact SHA-256 changed')
+
+          projection = receipt.get('projection', {})
+          if projection.get('record_count') != 21326:
+              raise SystemExit('projection record count changed')
+          if projection.get('total_rows_seen') != 21326:
+              raise SystemExit('projection total rows seen changed')
+          if projection.get('unique_fixture_count') != 21326:
+              raise SystemExit('projection unique fixture count changed')
+          if projection.get('identity_or_lineage_conflict_count') != 0:
+              raise SystemExit('projection identity/lineage conflict count is non-zero')
+          if projection.get('identity_or_lineage_conflicts') != []:
+              raise SystemExit('projection identity/lineage conflicts are present')
+
+          availability = projection.get('feature_availability_counts', {})
+          freshness = availability.get('historical_live_data_freshness', {})
+          if freshness != {'AVAILABLE': 0, 'MISSING': 0, 'BLOCKED': 21326}:
+              raise SystemExit('historical freshness accounting changed')
+          for name in ('home_form', 'away_form', 'home_elo', 'away_elo', 'fatigue'):
+              counts = availability.get(name, {})
+              if sum(counts.get(key, -1) for key in ('AVAILABLE', 'MISSING', 'BLOCKED')) != 21326:
+                  raise SystemExit(f'{name} availability accounting does not sum to 21326')
+
+          freshness_receipt = receipt.get('historical_live_data_freshness', {})
+          if freshness_receipt.get('status') != 'NOT_RECONSTRUCTIBLE_WITH_CURRENT_EVIDENCE':
+              raise SystemExit('historical freshness status changed')
+          if freshness_receipt.get('numeric_value_produced') is not False:
+              raise SystemExit('historical freshness unexpectedly produced a numeric value')
+          if freshness_receipt.get('training_feature_authorized') is not False:
+              raise SystemExit('historical freshness unexpectedly gained training authority')
+
+          safety = receipt.get('safety')
+          if not isinstance(safety, dict) or not safety or any(value is not False for value in safety.values()):
+              raise SystemExit('one or more downstream safety flags are not false')
+
+          projection_raw = projection_path.read_bytes()
+          if hashlib.sha256(projection_raw).hexdigest() != projection.get('sha256'):
+              raise SystemExit('projection SHA-256 differs from receipt')
+          if len(projection_raw) != projection.get('size_bytes'):
+              raise SystemExit('projection size differs from receipt')
+
+          lines = projection_raw.splitlines(keepends=True)
+          if len(lines) != 21326:
+              raise SystemExit('projection does not contain exactly 21,326 canonical rows')
+          fixture_ids = set()
+          for line in lines:
+              row = json.loads(line)
+              canonical = (
+                  json.dumps(
+                      row,
+                      ensure_ascii=False,
+                      allow_nan=False,
+                      sort_keys=True,
+                      separators=(',', ':'),
+                  ) + '\n'
+              ).encode('utf-8')
+              if line != canonical:
+                  raise SystemExit('projection contains a non-canonical row')
+              if 'source_local_kickoff' in row:
+                  raise SystemExit('source-local kickoff leaked into UTC-native projection')
+              if not str(row.get('kickoff_utc', '')).endswith('Z'):
+                  raise SystemExit('projection contains a non-UTC kickoff')
+              fixture_ids.add(row.get('fixture_identifier'))
+              historical_freshness = row.get('historical_live_data_freshness', {})
+              if historical_freshness != {
+                  'status': 'NOT_RECONSTRUCTIBLE_WITH_CURRENT_EVIDENCE',
+                  'value': None,
+              }:
+                  raise SystemExit('historical row freshness semantics changed')
+          if len(fixture_ids) != 21326 or None in fixture_ids:
+              raise SystemExit('projection fixture identity uniqueness changed')
+          PY
+
+      - name: Record V2 execution result on control PR
+        if: ${{ always() && steps.guard.outputs.marker_comment_id != '' }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          AUTHORIZED_MAIN_SHA: ${{ steps.guard.outputs.main_sha }}
+          RUNNER_EXIT_CODE: ${{ steps.execute_qualification.outputs.exit_code }}
+          ARTIFACT_DOWNLOAD_OUTCOME: ${{ steps.artifact_download.outcome }}
+          PACKAGE_OUTCOME: ${{ steps.package.outcome }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+          VERIFY_OUTCOME: ${{ steps.verify.outcome }}
+        with:
+          script: |
+            const marker = '<!-- ATHENA_FOTMOB_UTC_NATIVE_FEATURE_QUALIFICATION_RESULT_V2 -->';
+            const evidencePreserved =
+              process.env.PACKAGE_OUTCOME === 'success' &&
+              process.env.UPLOAD_OUTCOME === 'success';
+            const qualificationVerified = process.env.VERIFY_OUTCOME === 'success';
+            const outcome = evidencePreserved && qualificationVerified
+              ? 'EXECUTION_COMPLETED_EXACT_PR119_UTC_NATIVE_FEATURE_PROJECTION_EVIDENCE_PRESERVED_V2'
+              : 'EXECUTION_NOT_QUALIFIED_V2_REVIEW_ARTIFACT_BEFORE_ANY_RETRY';
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 139,
+              body: [
+                marker,
+                'ATHENA reconciled FotMob UTC-native feature qualification V2 execution result.',
+                `run-id: ${context.runId}`,
+                `main-sha: ${process.env.AUTHORIZED_MAIN_SHA || ''}`,
+                `runner-exit-code: ${process.env.RUNNER_EXIT_CODE || 'unavailable'}`,
+                `artifact-download-outcome: ${process.env.ARTIFACT_DOWNLOAD_OUTCOME || 'unavailable'}`,
+                `package-outcome: ${process.env.PACKAGE_OUTCOME || 'unavailable'}`,
+                `artifact-upload-outcome: ${process.env.UPLOAD_OUTCOME || 'unavailable'}`,
+                `verification-outcome: ${process.env.VERIFY_OUTCOME || 'unavailable'}`,
+                `state: ${outcome}`,
+                `artifact-name: fotmob-utc-native-feature-qualification-v2-${context.runId}`,
+                'Feature qualification evidence only. No model, pricing, selection, production, or BET authority is granted.',
+              ].join('\n'),
+            });
