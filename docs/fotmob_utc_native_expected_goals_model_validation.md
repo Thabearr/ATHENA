@@ -35,32 +35,48 @@ The successful V2 feature evidence is frozen as:
 - projection size `23,342,076` bytes
 - 21,326 rows / 21,326 unique fixtures / zero identity-lineage conflicts
 
-## Source-bound entrypoint and artifact gate
+## Two-layer implementation
 
-The **controlled CLI is the source-bound execution entrypoint**. It accepts the
-exact preserved V2 artifact ZIP, not a loose projection file.
+The implementation deliberately separates calculation from evidence authority.
 
-Before any fitting is allowed it verifies:
+`domain/fotmob_utc_native_expected_goals_model_validation.py` is the lower-level
+projection evaluator. It parses canonical rows, freezes the reviewed population,
+fits/evaluates the five model arms, and calculates the pre-registered metrics.
+It can therefore be exercised with synthetic fixtures in tests. A direct call
+to that projection evaluator does **not** by itself establish a source-bound
+result.
+
+`domain/fotmob_utc_native_expected_goals_model_validation_source_bound.py` is
+the reviewed source-bound entrypoint. It accepts only the exact preserved V2
+artifact ZIP, proves the archive and qualification ancestry, then supplies the
+verified projection to the lower-level evaluator and seals the result with
+source evidence plus per-arm membership proof.
+
+The CLI is only a thin launcher for that domain source-bound entrypoint.
+
+## Source-bound artifact gate
+
+Before any fitting is allowed, the domain source-bound gate verifies:
 
 1. exact archive SHA-256 and byte size;
-2. unique ZIP member names;
+2. unique ZIP member names and valid member CRCs;
 3. presence of `qualification-v2-receipt.json` and the reviewed projection;
-4. exact projection SHA-256, byte size, and row count;
-5. canonical qualification receipt bytes;
-6. exact qualification status/state;
-7. exact record/fixture/same-kickoff/conflict counts;
-8. zero identity/lineage conflicts;
-9. historical live freshness still blocked/non-numeric; and
-10. every recorded upstream safety flag still exact `false`.
+4. exact projection SHA-256, byte size, and 21,326-row count;
+5. canonical qualification-receipt bytes;
+6. exact qualification schema, status, state, and next boundary;
+7. exact qualification protocol SHA-256 and size;
+8. exact canonical UTC time-basis semantics with no source-local parity claim;
+9. exact record, unique-fixture, same-kickoff, and zero-conflict counts;
+10. an empty identity/lineage conflict list;
+11. historical live freshness still blocked/non-numeric; and
+12. the exact reviewed safety-key set with every flag `false`.
 
-Only after those checks does the CLI materialize the verified projection into a
-temporary local file and invoke the projection evaluator. The final receipt
-also carries the exact artifact/run/result-comment ancestry and qualification
-receipt digest/size.
+Only after those checks does the gate materialize the already-verified
+projection into a temporary local file for the projection evaluator.
 
-The lower-level projection evaluator is not, by itself, the reviewed
-source-bound execution boundary. A controlled execution must go through the
-artifact-gated CLI.
+The final source-bound receipt records the artifact ID/name/digest/size,
+qualification run/result-comment identity, projection identity, and canonical
+qualification-receipt digest/size.
 
 ## Exact input semantics
 
@@ -103,9 +119,11 @@ Membership bytes are exactly
 `kickoff_utc<TAB>fixture_identifier<NEWLINE>` in chronological fixture order.
 Any count/hash drift fails closed.
 
-The final source-bound receipt repeats the exact train/A/B/pooled membership
-count and hash under **every one of the five model arms** and reconciles each
-reported model fixture count to the common population. A mismatch fails closed.
+The source-bound receipt repeats exact train/A/B/pooled membership count/hash
+under **every model arm** and reconciles each arm's reported evaluation fixture
+count to the common population. The fixed historical-transfer arm correctly has
+no fit population, while every fitted/baseline arm records the frozen common
+training membership. Any mismatch fails closed.
 
 Chronology remains:
 
@@ -113,9 +131,7 @@ Chronology remains:
 - Evaluation A: 2024-07-01 inclusive to 2025-07-01 exclusive
 - Evaluation B: 2025-07-01 inclusive to 2026-08-15 exclusive
 
-Evaluation B is retrospective, not a prospective holdout. Exact same-kickoff
-fixtures share the same partition because partitioning uses the canonical UTC
-kickoff coordinate.
+Evaluation B is retrospective, not a prospective holdout.
 
 ## Five reviewed arms
 
@@ -161,7 +177,8 @@ A future result can only be:
 - `STRONG_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED`, or
 - `MIXED_OR_WEAK_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED`.
 
-Neither state automatically approves a model.
+Neither state automatically approves a model. The source-bound receipt also
+carries `automatic_model_approval = false`.
 
 Competition/league robustness remains
 `BLOCKED_PROJECTION_DOES_NOT_CARRY_COMPETITION_IDENTITY`; identity may not be
@@ -171,7 +188,7 @@ invented or fuzzily reconstructed here.
 
 The receipt records Python version/implementation, platform, and machine.
 Because PR #77 identified machine-precision canonicalization differences across
-runtimes, every result explicitly retains:
+runtimes, every result retains:
 
 - `cross_runtime_bit_identity_claimed = false`
 - `known_pr77_machine_precision_canonicalization_gap_cleared = false`
@@ -179,12 +196,9 @@ runtimes, every result explicitly retains:
 ## Outputs and CLI
 
 A later controlled execution writes canonical pooled A+B prediction NDJSON and
-one canonical validation receipt. The receipt records artifact ancestry, common
-and per-arm membership, all fit diagnostics/metrics/calibration/deltas,
-quarter-jackknife results, prediction digest/size/count, runtime provenance,
-`automatic_model_approval = false`, and the all-false safety map.
+one canonical source-bound validation receipt.
 
-The reviewed source-bound invocation shape is:
+The invocation shape is:
 
 ```text
 python -m scripts.validate_fotmob_utc_native_expected_goals_model \
