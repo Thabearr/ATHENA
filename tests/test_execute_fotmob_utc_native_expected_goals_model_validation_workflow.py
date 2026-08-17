@@ -58,16 +58,16 @@ def test_execution_workflow_has_spent_attempt_current_main_and_upstream_guards()
         assert marker in text
 
 
-def test_execution_workflow_permissions_support_durable_receipts() -> None:
+def test_execution_workflow_permissions_are_minimal_for_durable_receipts() -> None:
     assert _workflow()["jobs"]["execute"]["permissions"] == {
         "actions": "read",
         "contents": "read",
         "issues": "write",
-        "pull-requests": "write",
+        "pull-requests": "read",
     }
 
 
-def test_execution_workflow_pins_reviewed_validator_and_dependencies() -> None:
+def test_execution_workflow_pins_reviewed_validator_and_transitive_dependencies() -> None:
     text = _text()
     pins = {
         "domain/fotmob_utc_native_expected_goals_model_validation.py": "0421506b9e6e398c3469bb69196ef8fcad04f2a5",
@@ -75,11 +75,21 @@ def test_execution_workflow_pins_reviewed_validator_and_dependencies() -> None:
         "scripts/validate_fotmob_utc_native_expected_goals_model.py": "d3dddecbd66b79887aef547abcd048f40a57e2a8",
         "domain/fotmob_utc_native_expected_goals_model_validation_protocol.py": "1780330c4d0ab9140f0b2f6c776dfe79073ca7f8",
         "domain/historical_expected_goals_successor_robustness_evaluator.py": "28e33a625c02c7f005232d6c5d05d6a0a52397b7",
-        "requirements.txt": "54d24a55dfa4c73ba3910d333257cfd2e68daf4b",
+        "domain/historical_expected_goals_component_validation.py": "cc75af78cb6af4e3b7ebed5c3569384f2f809bf5",
     }
     for path, sha in pins.items():
         assert f"HEAD:{path}" in text
         assert sha in text
+
+
+def test_execution_workflow_uses_no_mutable_external_python_package_install() -> None:
+    text = _text()
+    assert "pip install" not in text
+    assert "pip install --upgrade" not in text
+    assert "cache: pip" not in text
+    assert "cache-dependency-path" not in text
+    assert "requirements.txt" not in text
+    assert "external_python_package_install_performed': False" in text
 
 
 def test_execution_workflow_pins_exact_v2_artifact_and_offline_cli() -> None:
@@ -176,5 +186,6 @@ def test_execution_documentation_keeps_merge_execution_and_authority_separate() 
     docs = DOC_PATH.read_text(encoding="utf-8")
     assert "PR #145 review and merge do not execute the study" in docs
     assert "Once the attempt marker exists, the attempt is spent" in docs
+    assert "No PyPI or other external Python package installation is performed" in docs
     assert "REVIEW_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_RESULT" in docs
     assert "No ScoreMatrix, probability, pricing, selection, production, or BET authority" in docs
