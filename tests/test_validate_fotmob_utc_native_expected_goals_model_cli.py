@@ -6,20 +6,26 @@ import zipfile
 
 import pytest
 
-import scripts.validate_fotmob_utc_native_expected_goals_model as cli
-
-
-def _canonical(value):
-    return cli._canonical(value)
+import domain.fotmob_utc_native_expected_goals_model_validation as evaluator
+import domain.fotmob_utc_native_expected_goals_model_validation_source_bound as source_bound
 
 
 def _fixture_artifact():
     projection = b"{}\n"
     projection_sha = hashlib.sha256(projection).hexdigest()
+    safety = {key: False for key in sorted(source_bound.pr140.SAFETY_KEYS)}
     receipt = {
         "schema_version": 1,
-        "qualification_status": cli.QUALIFICATION_STATUS,
-        "qualification_state": cli.QUALIFICATION_STATE,
+        "qualification_status": source_bound.QUALIFICATION_STATUS,
+        "qualification_state": source_bound.QUALIFICATION_STATE,
+        "next_required_boundary": source_bound.QUALIFICATION_NEXT_BOUNDARY,
+        "protocol_sha256": source_bound.QUALIFICATION_PROTOCOL_SHA256,
+        "protocol_size_bytes": source_bound.QUALIFICATION_PROTOCOL_SIZE,
+        "time_basis": {
+            "coordinate": "STATUS_UTCTIME_AWARE_UTC",
+            "source_local_parity_claimed": False,
+            "timezone_conversion_used": False,
+        },
         "projection": {
             "record_count": 1,
             "unique_fixture_count": 1,
@@ -30,16 +36,19 @@ def _fixture_artifact():
             "size_bytes": len(projection),
         },
         "historical_live_data_freshness": {
-            "status": cli.FRESHNESS_STATUS,
+            "status": source_bound.FRESHNESS_STATUS,
             "numeric_value_produced": False,
             "training_feature_authorized": False,
         },
-        "safety": {"bet_authorized": False},
+        "safety": safety,
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_STORED) as bundle:
-        bundle.writestr(cli.PROJECTION_MEMBER, projection)
-        bundle.writestr(cli.QUALIFICATION_RECEIPT_MEMBER, _canonical(receipt))
+        bundle.writestr(source_bound.PROJECTION_MEMBER, projection)
+        bundle.writestr(
+            source_bound.QUALIFICATION_RECEIPT_MEMBER,
+            source_bound._canonical(receipt),
+        )
     archive = buffer.getvalue()
     evidence = {
         "artifact_id": 1,
@@ -58,36 +67,74 @@ def _fixture_artifact():
     return archive, projection, evidence
 
 
-def test_artifact_gate_revalidates_archive_receipt_and_projection(tmp_path, monkeypatch):
+def test_domain_source_bound_gate_revalidates_archive_receipt_and_projection(
+    tmp_path, monkeypatch
+):
     archive, projection, evidence = _fixture_artifact()
     monkeypatch.setattr(
-        cli.pr140,
+        source_bound.pr140,
         "build_fotmob_utc_native_expected_goals_model_validation_protocol",
         lambda: {"v2_success_evidence": evidence},
     )
     path = tmp_path / "artifact.zip"
     path.write_bytes(archive)
-    actual, receipt_identity = cli._validated_artifact(path)
+    actual, receipt_identity = source_bound.verified_projection_from_artifact(path)
     assert actual == projection
-    assert receipt_identity["qualification_status"] == cli.QUALIFICATION_STATUS
-    assert receipt_identity["qualification_state"] == cli.QUALIFICATION_STATE
+    assert receipt_identity["qualification_status"] == source_bound.QUALIFICATION_STATUS
+    assert receipt_identity["qualification_state"] == source_bound.QUALIFICATION_STATE
     assert receipt_identity["size_bytes"] > 0
 
 
-def test_artifact_gate_rejects_archive_drift_before_projection_use(tmp_path, monkeypatch):
+def test_domain_source_bound_gate_rejects_archive_drift_before_projection_use(
+    tmp_path, monkeypatch
+):
     archive, _, evidence = _fixture_artifact()
     monkeypatch.setattr(
-        cli.pr140,
+        source_bound.pr140,
         "build_fotmob_utc_native_expected_goals_model_validation_protocol",
         lambda: {"v2_success_evidence": evidence},
     )
     path = tmp_path / "artifact.zip"
     path.write_bytes(archive + b"drift")
     with pytest.raises(
-        cli.FotMobUTCNativeExpectedGoalsModelValidationError,
+        evaluator.FotMobUTCNativeExpectedGoalsModelValidationError,
         match="archive identity changed",
     ):
-        cli._validated_artifact(path)
+        source_bound.verified_projection_from_artifact(path)
+
+
+def test_domain_source_bound_gate_rejects_receipt_authority_drift(tmp_path, monkeypatch):
+    archive, _, evidence = _fixture_artifact()
+    buffer = io.BytesIO(archive)
+    with zipfile.ZipFile(buffer, "r") as original:
+        projection = original.read(source_bound.PROJECTION_MEMBER)
+        receipt = __import__("json").loads(
+            original.read(source_bound.QUALIFICATION_RECEIPT_MEMBER)
+        )
+    receipt["safety"]["bet_authorized"] = True
+    rebuilt = io.BytesIO()
+    with zipfile.ZipFile(rebuilt, "w", compression=zipfile.ZIP_STORED) as bundle:
+        bundle.writestr(source_bound.PROJECTION_MEMBER, projection)
+        bundle.writestr(
+            source_bound.QUALIFICATION_RECEIPT_MEMBER,
+            source_bound._canonical(receipt),
+        )
+    drifted = rebuilt.getvalue()
+    evidence = dict(evidence)
+    evidence["artifact_sha256"] = hashlib.sha256(drifted).hexdigest()
+    evidence["artifact_size_bytes"] = len(drifted)
+    monkeypatch.setattr(
+        source_bound.pr140,
+        "build_fotmob_utc_native_expected_goals_model_validation_protocol",
+        lambda: {"v2_success_evidence": evidence},
+    )
+    path = tmp_path / "authority-drift.zip"
+    path.write_bytes(drifted)
+    with pytest.raises(
+        evaluator.FotMobUTCNativeExpectedGoalsModelValidationError,
+        match="safety boundary changed",
+    ):
+        source_bound.verified_projection_from_artifact(path)
 
 
 def _base_receipt(count=4):
@@ -107,7 +154,7 @@ def _base_receipt(count=4):
         populations[name] = {
             "models": {
                 model_id: {"fixture_count": expected}
-                for model_id in cli.MODEL_IDS
+                for model_id in evaluator.MODEL_IDS
             }
         }
     return {
@@ -116,60 +163,47 @@ def _base_receipt(count=4):
     }
 
 
-def test_final_receipt_explicitly_repeats_exact_common_membership_for_every_arm(monkeypatch):
-    evidence = {
-        "artifact_id": 1,
-        "artifact_name": "synthetic-reviewed-v2",
-        "artifact_sha256": "1" * 64,
-        "artifact_size_bytes": 10,
-        "run_id": 2,
-        "result_comment_id": 3,
-        "projection_sha256": "2" * 64,
-        "projection_size_bytes": 8,
-        "record_count": 1,
-    }
-    monkeypatch.setattr(
-        cli.pr140,
-        "build_fotmob_utc_native_expected_goals_model_validation_protocol",
-        lambda: {"v2_success_evidence": evidence},
-    )
-    receipt = cli._append_execution_evidence(
-        _base_receipt(),
-        artifact_receipt={"sha256": "3" * 64, "size_bytes": 5},
-    )
-    assert set(receipt["arm_membership"]) == set(cli.MODEL_IDS)
-    first = receipt["arm_membership"][cli.MODEL_IDS[0]]
-    assert all(receipt["arm_membership"][model] == first for model in cli.MODEL_IDS)
-    assert receipt["automatic_model_approval"] is False
-    assert receipt["source_evidence"]["artifact_id"] == 1
+def test_final_receipt_explicitly_repeats_exact_common_membership_for_every_arm():
+    arms = source_bound._arm_membership_receipt(_base_receipt())
+    assert set(arms) == set(evaluator.MODEL_IDS)
+    for model_id, membership in arms.items():
+        if model_id == "HISTORICAL_FIXED_COEFFICIENT_TRANSFER":
+            assert membership["fit_membership"] is None
+        else:
+            assert membership["fit_membership"] == {
+                "count": 6,
+                "membership_sha256": "b" * 64,
+            }
+        assert membership["evaluation_a"]["count"] == 4
+        assert membership["evaluation_b"]["count"] == 4
+        assert membership["pooled_evaluation"]["count"] == 8
 
 
-def test_final_receipt_fails_if_any_arm_count_differs_from_common_population(monkeypatch):
-    evidence = {
-        "artifact_id": 1,
-        "artifact_name": "synthetic-reviewed-v2",
-        "artifact_sha256": "1" * 64,
-        "artifact_size_bytes": 10,
-        "run_id": 2,
-        "result_comment_id": 3,
-        "projection_sha256": "2" * 64,
-        "projection_size_bytes": 8,
-        "record_count": 1,
-    }
-    monkeypatch.setattr(
-        cli.pr140,
-        "build_fotmob_utc_native_expected_goals_model_validation_protocol",
-        lambda: {"v2_success_evidence": evidence},
-    )
+def test_final_receipt_fails_if_any_arm_count_differs_from_common_population():
     receipt = _base_receipt()
     receipt["evaluation"]["populations"]["EVALUATION_A"]["models"][
-        cli.MODEL_IDS[2]
+        evaluator.MODEL_IDS[2]
     ]["fixture_count"] = 999
     with pytest.raises(
-        cli.FotMobUTCNativeExpectedGoalsModelValidationError,
+        evaluator.FotMobUTCNativeExpectedGoalsModelValidationError,
         match="membership count differs",
     ):
-        cli._append_execution_evidence(
-            receipt,
-            artifact_receipt={"sha256": "3" * 64, "size_bytes": 5},
-        )
+        source_bound._arm_membership_receipt(receipt)
+
+
+def test_source_bound_receipt_requires_artifact_ancestry_and_no_auto_approval():
+    receipt = {
+        "source_bound_id": source_bound.SOURCE_BOUND_ID,
+        "automatic_model_approval": False,
+        "source_evidence": {"artifact_id": 1},
+        "arm_membership": {"a": {}},
+        "safety": {key: False for key in sorted(source_bound.pr140.SAFETY_KEYS)},
+    }
+    raw = source_bound.canonical_source_bound_receipt_bytes(receipt)
+    assert raw.endswith(b"\n")
+    receipt["automatic_model_approval"] = True
+    with pytest.raises(
+        evaluator.FotMobUTCNativeExpectedGoalsModelValidationError,
+        match="auto-approve",
+    ):
+        source_bound.canonical_source_bound_receipt_bytes(receipt)
