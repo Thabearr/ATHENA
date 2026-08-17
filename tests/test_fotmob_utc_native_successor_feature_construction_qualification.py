@@ -79,6 +79,54 @@ def test_first_fixture_uses_explicit_missing_and_initial_state_semantics() -> No
     assert b"source_local_kickoff" not in raw
 
 
+def test_summary_reports_protocol_availability_and_zero_conflicts() -> None:
+    rows = [
+        _row("1", "2026-01-01T12:00:00Z", "A", "B", 1, 0, SHA_A),
+        _row("2", "2026-01-02T12:00:00Z", "A", "C", 0, 0, SHA_B),
+    ]
+    _, summary = q.construct_utc_native_feature_projection(rows)
+
+    assert summary["record_count"] == 2
+    assert summary["total_rows_seen"] == 2
+    assert summary["feature_availability_counts"] == {
+        "home_form": {
+            "AVAILABLE": 1,
+            "MISSING": 1,
+            "BLOCKED": 0,
+        },
+        "away_form": {
+            "AVAILABLE": 0,
+            "MISSING": 2,
+            "BLOCKED": 0,
+        },
+        "home_elo": {
+            "AVAILABLE": 2,
+            "MISSING": 0,
+            "BLOCKED": 0,
+        },
+        "away_elo": {
+            "AVAILABLE": 2,
+            "MISSING": 0,
+            "BLOCKED": 0,
+        },
+        "fatigue": {
+            "AVAILABLE": 0,
+            "MISSING": 2,
+            "BLOCKED": 0,
+        },
+        "historical_live_data_freshness": {
+            "AVAILABLE": 0,
+            "MISSING": 0,
+            "BLOCKED": 2,
+        },
+    }
+    assert summary["feature_status_counts"][
+        "historical_live_data_freshness:NOT_RECONSTRUCTIBLE_WITH_CURRENT_EVIDENCE"
+    ] == 2
+    assert summary["identity_or_lineage_conflict_count"] == 0
+    assert summary["identity_or_lineage_conflicts"] == []
+
+
 def test_strictly_prior_form_and_asymmetric_overall_elo_are_used() -> None:
     rows = [
         _row("1", "2026-01-01T12:00:00Z", "A", "B", 1, 0, SHA_A),
