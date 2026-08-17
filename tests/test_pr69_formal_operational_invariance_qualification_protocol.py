@@ -1,9 +1,13 @@
+from functools import lru_cache
 import hashlib
+
+import pytest
 
 import domain.pr69_formal_operational_invariance_qualification_protocol as p
 import domain.pr69_source_local_time_basis_resolution_protocol as pr122
 
 
+@lru_cache(maxsize=1)
 def _protocol():
     return p.build_pr69_formal_operational_invariance_qualification_protocol()
 
@@ -23,6 +27,24 @@ def test_protocol_revalidates_exact_upstream_and_canonical_identity():
     assert p.PROTOCOL_SHA256 == (
         "25bd2c255be53f938d4820f2896ec70d9330f7c2aaef42c976a582825cbfc5d2"
     )
+
+
+def test_protocol_fails_closed_when_pr122_direct_reconstruction_fails(monkeypatch):
+    monkeypatch.setattr(p.pr132, "validate_qualification", lambda: None)
+
+    def _fail():
+        raise pr122.PR69SourceLocalTimeBasisResolutionProtocolError("forced failure")
+
+    monkeypatch.setattr(
+        pr122,
+        "build_pr69_source_local_time_basis_resolution_protocol",
+        _fail,
+    )
+    with pytest.raises(
+        p.PR69FormalOperationalInvarianceProtocolError,
+        match="PR122 transitive ancestry reconstruction failed",
+    ):
+        p.build_pr69_formal_operational_invariance_qualification_protocol()
 
 
 def test_scope_is_pr69_reference_only_and_excludes_fotmob_candidate_rows():
