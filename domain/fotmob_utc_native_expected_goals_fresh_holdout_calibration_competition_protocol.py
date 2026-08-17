@@ -22,8 +22,8 @@ PROTOCOL_STATE = (
     "NOT_IMPLEMENTED_NOT_EXECUTED"
 )
 BASE_MAIN_SHA = "5c46aa8fcaf4338e8968c50e1c852301f8e2e0cd"
-PROTOCOL_SHA256 = "cfceeac4124f72595b97736d3dae76b518ff3a94428cb2a7a0bf9c52550c2313"
-PROTOCOL_SIZE = 8933
+PROTOCOL_SHA256 = "d67407a315b583ddeb60514a136860fb72f1476ea3035deae8ff993e30daf171"
+PROTOCOL_SIZE = 9941
 NEXT_REQUIRED_BOUNDARY = (
     "IMPLEMENT_REVIEWED_FRESH_HOLDOUT_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_"
     "CALIBRATION_AND_COMPETITION_IDENTITY_FOLLOWUP"
@@ -110,6 +110,7 @@ SAFETY_KEYS = (
     "successor_live_inputs_qualified",
 )
 
+
 def apply_frozen_home_calibration(native_home_lambda: float) -> float:
     """Apply the frozen monotone positive home-rate calibration."""
     if (
@@ -119,10 +120,12 @@ def apply_frozen_home_calibration(native_home_lambda: float) -> float:
     ):
         raise ValueError("native_home_lambda must be a finite positive float")
     import math
+
     return math.exp(
         HOME_CALIBRATION_INTERCEPT
         + HOME_CALIBRATION_SLOPE * math.log(native_home_lambda)
     )
+
 
 def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict[str, Any]:
     """Return the frozen result-free follow-up protocol."""
@@ -217,6 +220,7 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
             "fixture_wrapper_id_must_equal_wrapper_id": True,
             "primary_id_must_be_positive_integer": True,
             "wrapper_id_must_be_positive_integer": True,
+            "fixture_id_must_be_positive_integer": True,
             "fuzzy_name_mapping_forbidden": True,
             "model_league_code_is_not_competition_identity": True,
             "legacy_primary_ids": list(LEGACY_PRIMARY_IDS),
@@ -248,6 +252,7 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
                 "earliest_hours_before_kickoff": 24,
                 "latest_minutes_before_kickoff": 60,
                 "selection": "EARLIEST_QUALIFYING_CAPTURE_IN_WINDOW",
+                "capture_observed_at_must_be_on_or_after_holdout_start": True,
                 "no_qualifying_capture_disposition": "MISSING_NOT_RETROFILLED",
             },
             "prediction_record_must_be_sealed_before_kickoff": True,
@@ -261,10 +266,23 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
             "no_confirmation_label_may_select_or_modify_calibration": True,
             "minimum_calendar_span_days": MINIMUM_CALENDAR_SPAN_DAYS,
             "maximum_calendar_span_days": MAXIMUM_CALENDAR_SPAN_DAYS,
-            "close_rule": (
-                "AT_FIRST_UTC_DAY_BOUNDARY_AFTER_MINIMUM_SPAN_WHEN_ALL_COUNT_ONLY_"
-                "COVERAGE_GATES_PASS;OTHERWISE_CLOSE_AT_MAXIMUM_SPAN_AND_BLOCK"
+            "minimum_gate_evaluation_boundary_rule": (
+                "HOLDOUT_START_UTC_PLUS_EXACTLY_28_CALENDAR_DAYS"
             ),
+            "hard_close_boundary_rule": (
+                "HOLDOUT_START_UTC_PLUS_EXACTLY_90_CALENDAR_DAYS"
+            ),
+            "close_rule": (
+                "AT_MINIMUM_GATE_EVALUATION_BOUNDARY_AND_EACH_SUBSEQUENT_UTC_"
+                "00_00_BOUNDARY_CLOSE_AT_FIRST_BOUNDARY_WHEN_ALL_COUNT_ONLY_"
+                "COVERAGE_GATES_PASS;IF_STILL_UNMET_CLOSE_AT_HARD_CLOSE_BOUNDARY_"
+                "AS_INSUFFICIENT_COVERAGE"
+            ),
+            "scored_population_membership_rule": (
+                "HOLDOUT_START_UTC<=QUALIFYING_CAPTURE_OBSERVED_AT_UTC_AND_"
+                "HOLDOUT_START_UTC<=SEALED_KICKOFF_UTC<SELECTED_CLOSE_BOUNDARY_UTC"
+            ),
+            "settlement_after_selected_close_preserves_preclose_kickoff_membership": True,
             "closing_rule_may_not_use_goals_errors_nll_or_calibration_results": True,
             "minimum_complete_case_fixtures": MINIMUM_COMPLETE_CASE_FIXTURES,
             "qualifying_competition_min_fixtures": QUALIFYING_COMPETITION_MIN_FIXTURES,
@@ -311,9 +329,19 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
             ),
             "paired_difference": "CALIBRATED_NATIVE_JOINT_NLL_MINUS_ELO_ONLY_JOINT_NLL",
             "cluster": "PROVIDER_PRIMARY_ID",
+            "jackknife_reference_validator_blob_sha": XG_VALIDATOR_BLOB_SHA,
+            "full_estimate": (
+                "FIXTURE_WEIGHTED_MEAN_PAIRED_DELTA_ON_UNION_OF_QUALIFYING_PRIMARY_ID_CLUSTERS"
+            ),
             "delete_one_cluster_estimator": (
                 "FIXTURE_WEIGHTED_MEAN_OF_REMAINING_PAIRED_FIXTURE_DIFFERENCES"
             ),
+            "delete_estimate_center": "ARITHMETIC_MEAN_OF_K_DELETE_ESTIMATES",
+            "jackknife_standard_error_formula": (
+                "SQRT(((K-1)/K)*SUM((THETA_DELETE_I-THETA_BAR)^2))"
+            ),
+            "jackknife_interval_critical_value": 1.96,
+            "jackknife_interval_center": "FULL_ESTIMATE",
             "jackknife_interval": "FULL_ESTIMATE_PLUS_MINUS_1_96_TIMES_JACKKNIFE_SE",
             "jackknife_upper_95_must_be_strictly_below_zero": True,
             "minimum_fraction_of_qualifying_clusters_with_negative_mean_delta": (
@@ -342,6 +370,7 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
         "safety": {key: False for key in SAFETY_KEYS},
     }
 
+
 def canonical_fresh_holdout_home_calibration_competition_identity_protocol_bytes(
     value: Mapping[str, Any] | None = None,
 ) -> bytes:
@@ -360,6 +389,7 @@ def canonical_fresh_holdout_home_calibration_competition_identity_protocol_bytes
         )
         + "\n"
     ).encode("utf-8")
+
 
 __all__ = [
     "BASE_MAIN_SHA",
