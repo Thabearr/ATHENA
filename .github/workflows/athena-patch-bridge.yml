@@ -173,6 +173,25 @@ jobs:
           if not paths:
               raise SystemExit("Patch produced no file changes")
 
+          patch_created = [
+              item.decode("utf-8")
+              for item in untracked
+              if item and item != b"athena.patch"
+          ]
+          for raw in patch_created:
+              ignored = subprocess.run(
+                  ["git", "check-ignore", "--no-index", "--quiet", "--", raw],
+                  check=False,
+              )
+              if ignored.returncode == 0:
+                  raise SystemExit(
+                      f"Patch-created ignored paths are forbidden: {raw}"
+                  )
+              if ignored.returncode != 1:
+                  raise SystemExit(
+                      f"Could not determine ignore state for patch-created path: {raw}"
+                  )
+
           allowed_prefixes = (
               "api/",
               "config/",
