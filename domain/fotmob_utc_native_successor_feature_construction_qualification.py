@@ -327,6 +327,9 @@ def construct_utc_native_feature_projection(
             counters[f"home_elo:{home_elo_status}"] += 1
             counters[f"away_elo:{away_elo_status}"] += 1
             counters[f"fatigue:{fatigue_status}"] += 1
+            counters[
+                f"historical_live_data_freshness:{HISTORICAL_FRESHNESS_STATUS}"
+            ] += 1
 
             home_score = (
                 1.0
@@ -386,10 +389,50 @@ def construct_utc_native_feature_projection(
             )
 
     projection = b"".join(_canonical(record) for record in output)
+    total_rows_seen = len(validated)
+    home_form_missing = counters["home_form:MISSING"]
+    away_form_missing = counters["away_form:MISSING"]
+    fatigue_missing = counters["fatigue:MISSING"]
+    feature_availability_counts = {
+        "home_form": {
+            "AVAILABLE": total_rows_seen - home_form_missing,
+            "MISSING": home_form_missing,
+            "BLOCKED": 0,
+        },
+        "away_form": {
+            "AVAILABLE": total_rows_seen - away_form_missing,
+            "MISSING": away_form_missing,
+            "BLOCKED": 0,
+        },
+        "home_elo": {
+            "AVAILABLE": total_rows_seen,
+            "MISSING": 0,
+            "BLOCKED": 0,
+        },
+        "away_elo": {
+            "AVAILABLE": total_rows_seen,
+            "MISSING": 0,
+            "BLOCKED": 0,
+        },
+        "fatigue": {
+            "AVAILABLE": total_rows_seen - fatigue_missing,
+            "MISSING": fatigue_missing,
+            "BLOCKED": 0,
+        },
+        "historical_live_data_freshness": {
+            "AVAILABLE": 0,
+            "MISSING": 0,
+            "BLOCKED": total_rows_seen,
+        },
+    }
     summary = {
         "record_count": len(output),
+        "total_rows_seen": total_rows_seen,
         "same_kickoff_group_count": same_kickoff_groups,
         "feature_status_counts": dict(sorted(counters.items())),
+        "feature_availability_counts": feature_availability_counts,
+        "identity_or_lineage_conflict_count": 0,
+        "identity_or_lineage_conflicts": [],
         "unique_fixture_count": len(fixture_ids),
         "unique_team_count": len(histories),
     }
