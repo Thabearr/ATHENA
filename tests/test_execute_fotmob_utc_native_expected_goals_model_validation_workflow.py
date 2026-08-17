@@ -63,8 +63,27 @@ def test_execution_workflow_permissions_are_minimal_for_durable_receipts() -> No
         "actions": "read",
         "contents": "read",
         "issues": "write",
-        "pull-requests": "read",
+        "pull-requests": "write",
     }
+
+
+def test_execution_workflow_requires_exact_pre_attempt_failure_reconciliation() -> None:
+    text = _text()
+    for marker in (
+        "failedPreAttemptReconciliationCommentId = 5317758294",
+        "ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_FAILED_PRE_ATTEMPT_RECONCILIATION",
+        "run-id: 32046244761",
+        "main-sha: 21bff3fe96e8c9b250c9776240ba7bede9f74c89",
+        "command-comment-id: 5317747534",
+        "attempt-marker-created: false",
+        "validator-executed: false",
+        "research-training-executed: false",
+        "failure-artifact-id: 9292984849",
+        "failure-artifact-sha256: 91965dee1fdb496e776a914de9a9e789a830141ea6b17276a7b1bade541835c1",
+        "FAILED_BEFORE_DURABLE_ATTEMPT_MARKER_NO_MODEL_VALIDATION_EXECUTED",
+        "Exact failed pre-attempt reconciliation receipt is missing or changed.",
+    ):
+        assert marker in text
 
 
 def test_execution_workflow_pins_reviewed_validator_and_transitive_dependencies() -> None:

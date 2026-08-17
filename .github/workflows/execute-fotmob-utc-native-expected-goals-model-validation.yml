@@ -21,7 +21,7 @@ jobs:
       actions: read
       contents: read
       issues: write
-      pull-requests: read
+      pull-requests: write
 
     steps:
       - name: Validate one-shot owner command and current main
@@ -32,6 +32,7 @@ jobs:
             const controlPr = 145;
             const upstreamPr = 139;
             const upstreamResultCommentId = 5311318782;
+            const failedPreAttemptReconciliationCommentId = 5317758294;
             const commandName = '/athena-run-fotmob-utc-native-expected-goals-validation';
             const confirmation =
               'confirm: EXECUTE_REVIEWED_21129_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION';
@@ -130,6 +131,34 @@ jobs:
               issue_number: controlPr,
               per_page: 100,
             });
+            const reconciliationMarker =
+              '<!-- ATHENA_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_MODEL_VALIDATION_FAILED_PRE_ATTEMPT_RECONCILIATION -->';
+            const reconciliation = comments.find((comment) => {
+              const text = String(comment.body || '');
+              return (
+                comment.id === failedPreAttemptReconciliationCommentId &&
+                comment.user &&
+                comment.user.login === 'Thabearr' &&
+                text.startsWith(reconciliationMarker) &&
+                text.includes('run-id: 32046244761') &&
+                text.includes('main-sha: 21bff3fe96e8c9b250c9776240ba7bede9f74c89') &&
+                text.includes('command-comment-id: 5317747534') &&
+                text.includes('attempt-marker-created: false') &&
+                text.includes('validator-executed: false') &&
+                text.includes('research-training-executed: false') &&
+                text.includes('failure-artifact-id: 9292984849') &&
+                text.includes(
+                  'failure-artifact-sha256: 91965dee1fdb496e776a914de9a9e789a830141ea6b17276a7b1bade541835c1'
+                ) &&
+                text.includes(
+                  'state: FAILED_BEFORE_DURABLE_ATTEMPT_MARKER_NO_MODEL_VALIDATION_EXECUTED'
+                )
+              );
+            });
+            if (!reconciliation) {
+              core.setFailed('Exact failed pre-attempt reconciliation receipt is missing or changed.');
+              return;
+            }
             const priorMarker = comments.find(
               (comment) => String(comment.body || '').startsWith(markerPrefix)
             );
