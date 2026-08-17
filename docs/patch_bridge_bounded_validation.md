@@ -1,36 +1,70 @@
-# ATHENA Patch Bridge bounded validation
+# ATHENA Patch Bridge synthetic sharded validation
 
 ## Purpose
 
-The Patch Bridge exists to apply an explicitly reviewed, SHA-bound patch to an open draft pull request. It is a mutation transport and pre-push safety gate, not a replacement for ATHENA's normal hosted pull-request test workflow.
+The Patch Bridge applies an explicitly reviewed, SHA-bound patch to an open same-repository draft pull request. Because the bridge itself pushes with GitHub's `GITHUB_TOKEN`, that push must not be assumed to trigger a normal pull-request workflow run.
 
-## Pre-push guarantees
+The earlier bounded-only bridge exposed this exact platform behavior: the bot push produced a `Tests` run with conclusion `action_required` and zero jobs, and its post-push issue-comment receipt was rejected as `Resource not accessible by integration`.
 
-Before the bridge may push a patch, it still requires:
+The bridge therefore has to prove the full synthetic-merge test gate **before the bridge is allowed to push**. It must not depend on a second workflow being triggered by its own token.
 
-- owner-only `/athena-apply` on an open same-repository draft pull request;
-- the supplied `base-sha` to equal the exact current pull-request head;
-- an exact SHA-256 match for the UTF-8 patch payload;
+## Frozen mutation guards
+
+Before any test or write authority is reached, the bridge still requires:
+
+- owner-only `/athena-apply` on an open draft pull request;
+- same-repository head branch;
+- exact current head SHA matching the supplied `base-sha`;
+- exact SHA-256 of the UTF-8 patch bytes;
+- bounded patch size;
 - successful `git apply --check` with whitespace errors rejected;
-- changed paths to remain inside the existing allowlist;
-- GitHub workflow mutation through Patch Bridge to remain forbidden;
-- binary patches to remain forbidden;
+- changed paths inside the existing allowlist;
+- `.github/` workflow mutation through Patch Bridge forbidden;
+- binary patches forbidden;
 - a clean validation commit and `git diff --check`;
-- repository-wide Python `compileall` success;
-- every pytest file changed by the patch to pass before push;
-- exact revalidation that the pull-request head has not moved before the validated patch is committed;
-- exact SHA-256 verification of the uploaded patch artifact before the write job applies it.
+- exact GitHub synthetic merge SHA available;
+- exact synthetic merge parents equal to the captured base SHA followed by the captured head SHA.
 
-The validate job is bounded to 10 minutes and the commit job to 5 minutes.
+All external actions remain pinned to immutable commit SHAs.
 
-## Full-suite authority
+## Parallel full-suite gate
 
-The bridge no longer executes `python -m pytest tests -q` serially. Pull requests targeting `main` already receive the repository's normal eight-shard Tests workflow plus syntax gate after the bridge pushes the new head. That hosted synthetic-merge CI is the authoritative full-suite merge gate.
+After structural validation, the exact patch is uploaded once as a one-day artifact. The bridge then validates the **exact pre-push synthetic pull-request merge** in parallel:
 
-For a deliberately stacked draft whose base is not `main`, the bridge provides only the bounded pre-push checks above. The stacked pull request must be retargeted to `main` and pass the normal full hosted suite before it can become merge-ready.
+1. Eight isolated `synthetic_test_shard` jobs check out the exact `refs/pull/<PR>/merge` commit.
+2. Every shard verifies that checkout equals the merge SHA captured before validation.
+3. Every shard verifies the patch artifact SHA-256 and applies that exact patch to the synthetic merge.
+4. Test files are deterministically sorted and distributed across the same eight slices used by ATHENA's normal hosted Tests workflow.
+5. All eight shards run their complete assigned pytest file sets with `PYTHONPATH` rooted in the checkout.
+6. An independent `synthetic_syntax` job applies the same patch to the same pinned merge, runs repository-wide `compileall`, and records the exact resulting Git tree SHA.
 
-A successful Patch Bridge comment therefore means only that the requested patch passed the bounded pre-push contract and was committed/pushed. It does not claim that the pull request has passed its final full-suite merge gate.
+The old serial `python -m pytest tests -q` bottleneck is not restored.
 
-## Reproducibility
+## Write gate
 
-All external actions used by the write-capable bridge are pinned to immutable commit SHAs rather than movable major-version tags.
+The commit job cannot start unless structural validation, all eight synthetic test shards, and synthetic syntax all succeed.
+
+Immediately before writing, it re-reads the pull request and requires both:
+
+- head SHA unchanged from the captured head;
+- base SHA unchanged from the captured base.
+
+It then re-verifies the patch artifact digest, reapplies the exact patch to the exact validated head, commits, and pushes without force.
+
+Finally, it computes the merge tree of the exact captured base with the newly pushed head using `git merge-tree --write-tree`. That tree must equal the exact patched synthetic tree recorded by `synthetic_syntax`. A mismatch fails the bridge instead of claiming that an untested merge was pushed.
+
+## Stacked pull requests
+
+A stacked draft may be patched while its feature base is under review. The bridge validates the synthetic merge against that exact current feature-base SHA. If the stacked PR is later retargeted or its base advances, that new base is a new merge boundary and must be revalidated before merge readiness.
+
+## What a successful bridge run means
+
+A successful Patch Bridge run means:
+
+- exact requested patch bytes were applied;
+- path/mutation safety passed;
+- the exact base/head synthetic merge plus that patch passed all eight hosted test shards;
+- synthetic syntax passed;
+- the pushed merge tree exactly matched the tested synthetic tree.
+
+It still does not merge the pull request or grant any product/model/evidence/pricing/selection/BET authority by itself.

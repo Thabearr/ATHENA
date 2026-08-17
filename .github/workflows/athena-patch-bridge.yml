@@ -15,13 +15,15 @@ jobs:
       github.event.comment.user.login == 'Thabearr' &&
       startsWith(github.event.comment.body, '/athena-apply')
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 5
     permissions:
       contents: read
       pull-requests: read
     outputs:
       head_ref: ${{ steps.pr.outputs.head_ref }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      merge_sha: ${{ steps.pr.outputs.merge_sha }}
       patch_sha256: ${{ steps.payload.outputs.patch_sha256 }}
 
     steps:
@@ -49,9 +51,30 @@ jobs:
               core.setFailed('Pull request must be open.');
               return;
             }
+            if (!pr.merge_commit_sha) {
+              core.setFailed('GitHub synthetic merge SHA is unavailable.');
+              return;
+            }
+
+            const { data: merge } = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: pr.merge_commit_sha,
+            });
+            const parents = merge.parents.map((parent) => parent.sha);
+            if (
+              parents.length !== 2 ||
+              parents[0] !== pr.base.sha ||
+              parents[1] !== pr.head.sha
+            ) {
+              core.setFailed('GitHub synthetic merge parents differ from exact base plus head.');
+              return;
+            }
 
             core.setOutput('head_ref', pr.head.ref);
             core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('base_sha', pr.base.sha);
+            core.setOutput('merge_sha', pr.merge_commit_sha);
 
       - name: Check out exact pull-request head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -138,11 +161,7 @@ jobs:
               ["git", "diff", "--name-only", "-z"],
               text=False,
           ).split(b"\0")
-          paths = [
-              item.decode("utf-8")
-              for item in changed
-              if item
-          ]
+          paths = [item.decode("utf-8") for item in changed if item]
           if not paths:
               raise SystemExit("Patch produced no file changes")
 
@@ -204,34 +223,11 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
-
-      - name: Run bounded pre-push validation
-        env:
-          # Match normal hosted CI so subprocess `python -m ...` checks remain
-          # rooted in the checkout even under Python safe-path mode.
-          PYTHONPATH: ${{ github.workspace }}
+      - name: Run bounded structural pre-push validation
         run: |
           python -m compileall -q api config core database domain engine intelligence models providers reports repositories scripts services tools workers build_acca.py
           git diff --check HEAD^ HEAD
-
-          mapfile -t changed_tests < <(
-            git diff --name-only HEAD^ HEAD -- tests \
-              | grep -E '^tests/(.*/)?test_.*\.py$' \
-              || true
-          )
-          if (( ${#changed_tests[@]} > 0 )); then
-            printf 'Running changed test files:\n%s\n' "${changed_tests[@]}"
-            python -m pytest -q --durations=20 "${changed_tests[@]}"
-          else
-            echo 'No changed pytest files; functional full-suite validation is delegated to normal sharded PR CI.'
-          fi
 
       - name: Upload validated patch
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -241,21 +237,182 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  commit:
+  synthetic_test_shard:
+    name: synthetic test shard ${{ matrix.shard }} of 8
     needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
+
+    steps:
+      - name: Check out exact synthetic pull-request merge
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
+
+      - name: Verify pinned synthetic merge
+        env:
+          EXPECTED_MERGE_SHA: ${{ needs.validate.outputs.merge_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_MERGE_SHA}"
+
+      - name: Download validated patch
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: athena-validated-patch-${{ github.event.issue.number }}
+
+      - name: Verify artifact and apply to synthetic merge
+        env:
+          EXPECTED_PATCH_SHA256: ${{ needs.validate.outputs.patch_sha256 }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          digest = hashlib.sha256(Path("athena.patch").read_bytes()).hexdigest()
+          if digest != os.environ["EXPECTED_PATCH_SHA256"]:
+              raise SystemExit("Validated patch artifact SHA-256 mismatch")
+          PY
+          git apply --check --whitespace=error-all athena.patch
+          git apply --whitespace=fix athena.patch
+          git diff --check
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Select deterministic test-file shard
+        env:
+          SHARD_NUMBER: ${{ matrix.shard }}
+          SHARD_COUNT: "8"
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          shard_number = int(os.environ["SHARD_NUMBER"])
+          shard_count = int(os.environ["SHARD_COUNT"])
+          files = sorted(Path("tests").rglob("test_*.py"))
+          if not files:
+              raise SystemExit("no pytest files discovered under tests/")
+          selected = files[shard_number - 1 :: shard_count]
+          if not selected:
+              raise SystemExit(
+                  f"test shard {shard_number}/{shard_count} selected no files"
+              )
+          Path(".pytest-shard-files").write_text(
+              "".join(f"{path.as_posix()}\n" for path in selected),
+              encoding="utf-8",
+          )
+          print(
+              f"shard {shard_number}/{shard_count}: "
+              f"{len(selected)} of {len(files)} test files"
+          )
+          for path in selected:
+              print(path.as_posix())
+          PY
+
+      - name: Run synthetic test shard
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          mapfile -t test_files < .pytest-shard-files
+          python -m pytest -q --durations=20 "${test_files[@]}"
+
+  synthetic_syntax:
+    name: synthetic syntax and tree
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    outputs:
+      tree_sha: ${{ steps.tree.outputs.tree_sha }}
+
+    steps:
+      - name: Check out exact synthetic pull-request merge
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: refs/pull/${{ github.event.issue.number }}/merge
+          persist-credentials: false
+
+      - name: Verify pinned synthetic merge
+        env:
+          EXPECTED_MERGE_SHA: ${{ needs.validate.outputs.merge_sha }}
+        run: test "$(git rev-parse HEAD)" = "${EXPECTED_MERGE_SHA}"
+
+      - name: Download validated patch
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: athena-validated-patch-${{ github.event.issue.number }}
+
+      - name: Verify artifact and apply to synthetic merge
+        env:
+          EXPECTED_PATCH_SHA256: ${{ needs.validate.outputs.patch_sha256 }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import os
+          from pathlib import Path
+
+          digest = hashlib.sha256(Path("athena.patch").read_bytes()).hexdigest()
+          if digest != os.environ["EXPECTED_PATCH_SHA256"]:
+              raise SystemExit("Validated patch artifact SHA-256 mismatch")
+          PY
+          git apply --check --whitespace=error-all athena.patch
+          git apply --whitespace=fix athena.patch
+          git diff --check
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Validate synthetic Python syntax
+        run: >-
+          python -m compileall -q
+          api config core database domain engine intelligence models
+          providers reports repositories scripts services tools workers
+          build_acca.py
+
+      - name: Record exact tested synthetic tree
+        id: tree
+        run: |
+          rm -f athena.patch
+          git add -A
+          echo "tree_sha=$(git write-tree)" >> "${GITHUB_OUTPUT}"
+
+  commit:
+    needs:
+      - validate
+      - synthetic_test_shard
+      - synthetic_syntax
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
       contents: write
       pull-requests: read
-      issues: write
 
     steps:
-      - name: Reconfirm unchanged pull-request head
-        id: pr
+      - name: Reconfirm unchanged pull-request head and base
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         env:
           EXPECTED_HEAD_SHA: ${{ needs.validate.outputs.head_sha }}
+          EXPECTED_BASE_SHA: ${{ needs.validate.outputs.base_sha }}
         with:
           script: |
             const { data: pr } = await github.rest.pulls.get({
@@ -266,6 +423,10 @@ jobs:
 
             if (pr.head.sha !== process.env.EXPECTED_HEAD_SHA) {
               core.setFailed('Pull-request head changed after validation.');
+              return;
+            }
+            if (pr.base.sha !== process.env.EXPECTED_BASE_SHA) {
+              core.setFailed('Pull-request base changed after validation.');
               return;
             }
             if (!pr.draft || pr.state !== 'open') {
@@ -301,7 +462,7 @@ jobs:
           git apply --whitespace=fix athena.patch
           git diff --check
 
-      - name: Commit and push
+      - name: Commit and push exact reviewed patch
         env:
           HEAD_REF: ${{ needs.validate.outputs.head_ref }}
           PR_NUMBER: ${{ github.event.issue.number }}
@@ -313,13 +474,13 @@ jobs:
           git commit -m "Apply reviewed ATHENA patch for PR #${PR_NUMBER}"
           git push origin "HEAD:${HEAD_REF}"
 
-      - name: Report success
-        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
-        with:
-          script: |
-            await github.rest.issues.createComment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
-              body: `ATHENA Patch Bridge applied, bounded-pre-push validated, committed, and pushed the requested patch. Normal sharded pull-request CI remains the authoritative full-suite gate. Source comment: #issuecomment-${context.payload.comment.id}`,
-            });
+      - name: Verify pushed merge tree equals tested synthetic tree
+        env:
+          EXPECTED_BASE_SHA: ${{ needs.validate.outputs.base_sha }}
+          EXPECTED_TREE_SHA: ${{ needs.synthetic_syntax.outputs.tree_sha }}
+        run: |
+          new_head="$(git rev-parse HEAD)"
+          actual_tree="$(git merge-tree --write-tree "${EXPECTED_BASE_SHA}" "${new_head}" | head -n 1)"
+          echo "tested synthetic tree: ${EXPECTED_TREE_SHA}"
+          echo "pushed synthetic tree: ${actual_tree}"
+          test "${actual_tree}" = "${EXPECTED_TREE_SHA}"
