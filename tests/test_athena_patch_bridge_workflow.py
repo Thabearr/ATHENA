@@ -1,4 +1,5 @@
 from pathlib import Path
+import subprocess
 
 import yaml
 
@@ -37,12 +38,68 @@ def test_patch_bridge_keeps_fail_closed_patch_path_and_ref_guards() -> None:
         "Patch Bridge cannot modify GitHub workflows",
         "Changed path is outside the allowlist",
         "Binary patches are forbidden",
+        "Patch-created ignored paths are forbidden",
+        "Could not determine ignore state for patch-created path",
         "Pull-request head changed after validation.",
         "Pull-request base changed after validation.",
         "Validated patch artifact SHA-256 mismatch",
     )
     for marker in required:
         assert marker in text
+
+
+def test_patch_bridge_path_safety_includes_new_untracked_and_rejects_ignored_paths() -> None:
+    parsed = yaml.safe_load(_text())
+    steps = parsed["jobs"]["validate"]["steps"]
+    safety = next(step for step in steps if step["name"] == "Enforce path and patch safety")
+    run = safety["run"]
+
+    assert '["git", "diff", "--name-only", "-z"]' in run
+    assert '["git", "ls-files", "--others", "-z"]' in run
+    assert 'item != b"athena.patch"' in run
+    assert "--exclude-standard" not in run
+    assert '["git", "check-ignore", "--no-index", "--quiet", "--", raw]' in run
+    assert "Patch-created ignored paths are forbidden" in run
+    assert "Could not determine ignore state for patch-created path" in run
+    assert '["git", "apply", "--numstat", "-z", "athena.patch"]' in run
+    assert "Malformed patch numstat record" in run
+    assert "Binary patches are forbidden" in run
+
+
+def test_git_probe_keeps_ignored_patch_created_paths_visible_and_detectable(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "ATHENA Test"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "athena-test@example.invalid"], cwd=tmp_path, check=True)
+
+    (tmp_path / ".gitignore").write_text("docs/generated.txt\n", encoding="utf-8")
+    subprocess.run(["git", "add", ".gitignore"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-q", "-m", "baseline"], cwd=tmp_path, check=True)
+
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "generated.txt").write_text("ignored payload\n", encoding="utf-8")
+    (docs / "allowed.txt").write_text("ordinary payload\n", encoding="utf-8")
+
+    others = subprocess.check_output(
+        ["git", "ls-files", "--others", "-z"],
+        cwd=tmp_path,
+        text=False,
+    ).split(b"\0")
+    assert b"docs/generated.txt" in others
+    assert b"docs/allowed.txt" in others
+
+    ignored = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--quiet", "--", "docs/generated.txt"],
+        cwd=tmp_path,
+        check=False,
+    )
+    allowed = subprocess.run(
+        ["git", "check-ignore", "--no-index", "--quiet", "--", "docs/allowed.txt"],
+        cwd=tmp_path,
+        check=False,
+    )
+    assert ignored.returncode == 0
+    assert allowed.returncode == 1
 
 
 def test_patch_bridge_pins_exact_synthetic_merge_parent_pair() -> None:
@@ -66,6 +123,26 @@ def test_patch_bridge_runs_full_suite_in_eight_parallel_synthetic_shards() -> No
     assert "selected = files[shard_number - 1 :: shard_count]" in text
     assert 'python -m pytest -q --durations=20 "${test_files[@]}"' in text
     assert "Validate synthetic Python syntax" in text
+
+
+def test_patch_bridge_synthetic_shards_commit_exact_tree_before_pytest() -> None:
+    parsed = yaml.safe_load(_text())
+    steps = parsed["jobs"]["synthetic_test_shard"]["steps"]
+    names = [step["name"] for step in steps]
+
+    apply_index = names.index("Verify artifact and apply to synthetic merge")
+    clean_index = names.index("Create clean synthetic validation commit")
+    test_index = names.index("Run synthetic test shard")
+    assert apply_index < clean_index < test_index
+
+    clean_run = steps[clean_index]["run"]
+    assert "rm -f athena.patch" in clean_run
+    assert "git add -A" in clean_run
+    assert 'expected_tree="$(git write-tree)"' in clean_run
+    assert 'git commit -m "Validate reviewed ATHENA synthetic patch"' in clean_run
+    assert "git rev-parse 'HEAD^{tree}'" in clean_run
+    assert 'test -z "$(git status --porcelain --untracked-files=no)"' in clean_run
+    assert "git push" not in clean_run
 
 
 def test_patch_bridge_refuses_push_unless_tested_and_pushed_merge_trees_match() -> None:

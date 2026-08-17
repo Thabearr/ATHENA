@@ -157,13 +157,40 @@ jobs:
           import subprocess
           from pathlib import PurePosixPath
 
-          changed = subprocess.check_output(
+          tracked = subprocess.check_output(
               ["git", "diff", "--name-only", "-z"],
               text=False,
           ).split(b"\0")
-          paths = [item.decode("utf-8") for item in changed if item]
+          untracked = subprocess.check_output(
+              ["git", "ls-files", "--others", "-z"],
+              text=False,
+          ).split(b"\0")
+          raw_paths = [item for item in tracked if item]
+          raw_paths.extend(
+              item for item in untracked if item and item != b"athena.patch"
+          )
+          paths = sorted({item.decode("utf-8") for item in raw_paths})
           if not paths:
               raise SystemExit("Patch produced no file changes")
+
+          patch_created = [
+              item.decode("utf-8")
+              for item in untracked
+              if item and item != b"athena.patch"
+          ]
+          for raw in patch_created:
+              ignored = subprocess.run(
+                  ["git", "check-ignore", "--no-index", "--quiet", "--", raw],
+                  check=False,
+              )
+              if ignored.returncode == 0:
+                  raise SystemExit(
+                      f"Patch-created ignored paths are forbidden: {raw}"
+                  )
+              if ignored.returncode != 1:
+                  raise SystemExit(
+                      f"Could not determine ignore state for patch-created path: {raw}"
+                  )
 
           allowed_prefixes = (
               "api/",
@@ -200,13 +227,18 @@ jobs:
               if raw not in allowed_exact and not raw.startswith(allowed_prefixes):
                   raise SystemExit(f"Changed path is outside the allowlist: {raw}")
 
-          numstat = subprocess.check_output(
-              ["git", "diff", "--numstat"],
-              text=True,
-              encoding="utf-8",
+          patch_numstat = subprocess.check_output(
+              ["git", "apply", "--numstat", "-z", "athena.patch"],
+              text=False,
           )
-          if any(line.split("\t", 1)[0] == "-" for line in numstat.splitlines()):
-              raise SystemExit("Binary patches are forbidden")
+          for record in patch_numstat.split(b"\0"):
+              if not record:
+                  continue
+              fields = record.split(b"\t", 2)
+              if len(fields) != 3:
+                  raise SystemExit("Malformed patch numstat record")
+              if fields[0] == b"-" or fields[1] == b"-":
+                  raise SystemExit("Binary patches are forbidden")
           PY
 
       - name: Create clean validation commit
@@ -282,6 +314,18 @@ jobs:
           git apply --check --whitespace=error-all athena.patch
           git apply --whitespace=fix athena.patch
           git diff --check
+
+      - name: Create clean synthetic validation commit
+        run: |
+          git config user.name "athena-patch-bridge[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          rm -f athena.patch
+          git add -A
+          git diff --cached --check
+          expected_tree="$(git write-tree)"
+          git commit -m "Validate reviewed ATHENA synthetic patch"
+          test "$(git rev-parse 'HEAD^{tree}')" = "${expected_tree}"
+          test -z "$(git status --porcelain --untracked-files=no)"
 
       - name: Set up Python 3.12
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065

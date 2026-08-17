@@ -18,12 +18,14 @@ Before any test or write authority is reached, the bridge still requires:
 - exact SHA-256 of the UTF-8 patch bytes;
 - bounded patch size;
 - successful `git apply --check` with whitespace errors rejected;
-- changed paths inside the existing allowlist;
+- every changed path inside the existing allowlist, including newly created untracked paths rather than only already-tracked diffs; newly created ignored paths are detected and rejected;
 - `.github/` workflow mutation through Patch Bridge forbidden;
-- binary patches forbidden;
+- binary patches forbidden by inspecting the exact patch numstat, including newly created binary files;
 - a clean validation commit and `git diff --check`;
 - exact GitHub synthetic merge SHA available;
 - exact synthetic merge parents equal to the captured base SHA followed by the captured head SHA.
+
+The root `athena.patch` transport file is the only untracked path excluded from changed-path admission. The path scan deliberately does not use standard ignore filtering, so ignored patch-created paths remain visible; any such ignored path is rejected before staging. This prevents test-only ignored payload bytes from existing outside the tree that is later committed and pushed.
 
 All external actions remain pinned to immutable commit SHAs.
 
@@ -34,9 +36,12 @@ After structural validation, the exact patch is uploaded once as a one-day artif
 1. Eight isolated `synthetic_test_shard` jobs check out the exact `refs/pull/<PR>/merge` commit.
 2. Every shard verifies that checkout equals the merge SHA captured before validation.
 3. Every shard verifies the patch artifact SHA-256 and applies that exact patch to the synthetic merge.
-4. Test files are deterministically sorted and distributed across the same eight slices used by ATHENA's normal hosted Tests workflow.
-5. All eight shards run their complete assigned pytest file sets with `PYTHONPATH` rooted in the checkout.
-6. An independent `synthetic_syntax` job applies the same patch to the same pinned merge, runs repository-wide `compileall`, and records the exact resulting Git tree SHA.
+4. Each test shard removes only the patch transport file, stages the exact patched synthetic tree, records that tree with `git write-tree`, creates a local unpushed validation commit, proves the commit tree is exactly the recorded tree, and requires a clean tracked worktree before pytest. The local commit changes no tested bytes; it only prevents repository tests that correctly require a clean tracked checkout from mistaking the Bridge's own uncommitted validation patch for product dirtiness.
+5. Test files are deterministically sorted and distributed across the same eight slices used by ATHENA's normal hosted Tests workflow.
+6. All eight shards run their complete assigned pytest file sets with `PYTHONPATH` rooted in the checkout.
+7. An independent `synthetic_syntax` job applies the same patch to the same pinned merge, runs repository-wide `compileall`, and records the exact resulting Git tree SHA.
+
+The local synthetic validation commits are never pushed and grant no write authority. The authoritative object compared at the write gate remains the exact patched synthetic **tree**, not a temporary validation commit identity or timestamp.
 
 The old serial `python -m pytest tests -q` bottleneck is not restored.
 
@@ -62,8 +67,8 @@ A stacked draft may be patched while its feature base is under review. The bridg
 A successful Patch Bridge run means:
 
 - exact requested patch bytes were applied;
-- path/mutation safety passed;
-- the exact base/head synthetic merge plus that patch passed all eight hosted test shards;
+- path/mutation safety passed for tracked and newly created paths, with patch-created ignored paths rejected;
+- the exact base/head synthetic merge plus that patch passed all eight hosted test shards from clean tracked worktrees whose local commit trees equal the patched synthetic tree;
 - synthetic syntax passed;
 - the pushed merge tree exactly matched the tested synthetic tree.
 
