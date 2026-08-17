@@ -12,7 +12,7 @@ The implementation stops at feature materialization. It cannot train or tune exp
 
 The runner is stacked on the exact reviewed PR #134 head:
 
-`fdd85d391ae0995e883e9510564a27d876d63a28`
+`467c5ec38ec29c066dbd6eea58cb0cfd0f11bcfb`
 
 It pins and revalidates:
 
@@ -129,7 +129,9 @@ for historical `live_data_freshness`, with numeric value `null`.
 
 This field is not silently reconstructed and is not authorized as a historical training feature. Prospective freshness remains a separate live-input qualification/gating problem.
 
-## Deterministic output
+For the PR #134-required normalized execution accounting, historical freshness is therefore counted as `BLOCKED`, not `MISSING`: the evidence state is known and explicitly irreconstructible, and the feature is deliberately excluded from historical training. The raw `NOT_RECONSTRUCTIBLE_WITH_CURRENT_EVIDENCE` status is preserved separately so this normalization does not erase meaning.
+
+## Deterministic output and execution accounting
 
 The feature projection is canonical newline-delimited JSON. Execution returns a receipt containing:
 
@@ -137,11 +139,22 @@ The feature projection is canonical newline-delimited JSON. Execution returns a 
 - exact PR #119/artifact lineage;
 - UTC-only time-basis declaration;
 - projection SHA-256 and byte size;
-- row, fixture and team counts;
+- `total_rows_seen` plus record, fixture and team counts;
 - same-kickoff group count;
-- deterministic per-feature status counts;
+- deterministic raw per-feature status counts;
+- normalized `AVAILABLE` / `MISSING` / `BLOCKED` counts for every frozen feature;
+- successful-execution identity/lineage conflict count and conflict list;
 - unresolved historical-freshness state;
 - all downstream safety flags false.
+
+The normalized availability mapping is frozen as follows:
+
+- `home_form` / `away_form`: `MISSING` only when no prior history exists; otherwise `AVAILABLE`;
+- `home_elo` / `away_elo`: `AVAILABLE` whenever constructed, including the explicitly disclosed 1500 initial-state assumption permitted by PR #134;
+- `fatigue`: `MISSING` when either required prior history is absent; otherwise `AVAILABLE`;
+- historical `live_data_freshness`: always `BLOCKED` in this historical projection because it is not reconstructible and is not an authorized historical training feature.
+
+Identity, duplicate-fixture, same-team/same-kickoff, malformed-row, lineage, or exact-artifact mismatches continue to fail closed before a successful qualification receipt can be emitted. Therefore a successful receipt records zero identity/lineage conflicts; failures retain their concrete exception reason rather than being converted into a qualified receipt.
 
 Optional `--projection-output` writes the canonical NDJSON projection. `--output` writes the canonical qualification receipt.
 
