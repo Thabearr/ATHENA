@@ -41,6 +41,8 @@ It revalidates:
 - PR120 implementation blob: `e07616e99c0beaf2a95bcaec96d02616b21c378f`
 - PR80 constructor implementation blob: `9135f056d036fd0207a3daead2599ac2520274be`
 
+The PR122 boundary is not accepted from constants and blob identity alone. Before this protocol can serialize, it invokes PR122's public builder and canonicalizer so PR122's own PR121 -> PR69/PR114 transitive ancestry is reconstructed and revalidated fail-closed.
+
 PR120 and PR80 are pinned here only to freeze the definitions of the time-sensitive operations that a later reference proof must preserve. Their FotMob candidate observations/results are not execution evidence for this boundary.
 
 The machine contract keeps those roles separate:
