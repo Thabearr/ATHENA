@@ -17,7 +17,9 @@ The execution workflow checks out the exact owner-authorized current `main` and 
 - CLI: `d3dddecbd66b79887aef547abcd048f40a57e2a8`
 - PR #140 protocol: `1780330c4d0ab9140f0b2f6c776dfe79073ca7f8`
 - reviewed deterministic historical fitter seam: `28e33a625c02c7f005232d6c5d05d6a0a52397b7`
-- `requirements.txt`: `54d24a55dfa4c73ba3910d333257cfd2e68daf4b`
+- transitive historical Poisson-NLL implementation: `cc75af78cb6af4e3b7ebed5c3569384f2f809bf5`
+
+The last pin is required because the reviewed fitter seam reuses the frozen historical successor numerical primitives, whose `_response_nll` path calls `poisson_nll` from `domain/historical_expected_goals_component_validation.py`. The execution boundary therefore seals that transitive scoring implementation explicitly rather than relying on the top-level evaluator blob alone.
 
 The workflow also requires the exact successful V2 feature-qualification result receipt on PR #139, comment `5311318782`, from run `31990121181`.
 
@@ -76,7 +78,7 @@ python -m scripts.validate_fotmob_utc_native_expected_goals_model \
   --receipt-output fotmob-utc-native-xg-validation-receipt.json
 ```
 
-The validator itself performs no network acquisition. GitHub network access is used only by the execution control plane to retrieve the already-preserved exact Actions artifact.
+The validator itself performs no football/provider/network acquisition. No PyPI or other external Python package installation is performed by this one-shot lane: execution uses Python 3.12 plus the exact checked-out frozen repository modules. Control-plane network activity is limited to the reviewed GitHub-hosted actions/API operations needed for checkout, source-artifact retrieval, durable comments and evidence upload; it does not contact football providers or external Python package indexes.
 
 The study keeps the frozen PR #140 population:
 
