@@ -730,7 +730,7 @@ class EvidenceContractTests(unittest.TestCase):
         )
         self.assertFalse(analyzed[0]["edge_is_bookmaker_value"])
 
-    def test_pipeline_preserves_bookmaker_edge_and_eligible_selection(self):
+    def test_pipeline_quarantines_legacy_bet_from_runtime_execution(self):
         eligible = {
             "verdict": "HOME_WIN",
             "market_id": MarketId.MATCH_RESULT.value,
@@ -763,9 +763,16 @@ class EvidenceContractTests(unittest.TestCase):
 
         self.assertTrue(analyzed[0]["edge_is_bookmaker_value"])
         self.assertEqual(
-            analyzed[0]["accumulator_eligible_selection"],
-            eligible,
+            analyzed[0]["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
         )
+        self.assertEqual(
+            analyzed[0]["legacy_decision_status_before_runtime_gate"],
+            DecisionStatus.BET.value,
+        )
+        self.assertIsNone(analyzed[0]["accumulator_eligible_selection"])
+        self.assertIsNone(analyzed[0]["kelly_stake_pct"])
+        self.assertTrue(analyzed[0]["runtime_authorization_reasons"])
 
 
 if __name__ == "__main__":

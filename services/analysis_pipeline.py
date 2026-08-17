@@ -15,6 +15,101 @@ logger = logging.getLogger("athena.analysis_pipeline")
 # their status ever gets updated to finished.
 MAX_MATCH_DURATION_HOURS = 3
 
+LEGACY_RUNTIME_AUTHORIZATION_STATE = (
+    "ANALYSIS_ONLY_REVIEWED_SUCCESSOR_RUNTIME_NOT_AUTHORIZED"
+)
+LEGACY_RUNTIME_BET_BLOCK_REASON = (
+    "The legacy heuristic MatchAnalyst path is analysis-only. Reviewed "
+    "successor model, source, pricing, selection, and BET authorization has "
+    "not been granted to this runtime path."
+)
+
+
+def _quarantine_legacy_staking_record(record):
+    """Copy one exported market record and remove actionable staking advice."""
+    if not isinstance(record, dict):
+        return record
+
+    item = dict(record)
+    item.pop("legacy_kelly_stake_pct_before_runtime_gate", None)
+    if "kelly_stake_pct" in item:
+        item["kelly_stake_pct"] = None
+    return item
+
+
+def apply_runtime_authorization(analysis: dict) -> dict:
+    """Quarantine every legacy analyzer export as analysis-only.
+
+    The legacy analyzer remains useful for diagnostics while the reviewed
+    successor pipeline is being completed, but it must not outrun the reviewed
+    model/source/pricing authorization chain. Every legacy decision therefore
+    loses executable selection and staking authority. A legacy BET is further
+    downgraded to ANALYTICAL_CANDIDATE; existing NO_BET/analytical labels remain
+    unchanged.
+    """
+    safe = dict(analysis or {})
+    legacy_decision = safe.get("decision_status")
+
+    safe.pop("legacy_kelly_stake_pct_before_runtime_gate", None)
+    if legacy_decision is not None:
+        safe["legacy_decision_status_before_runtime_gate"] = legacy_decision
+    if legacy_decision == DecisionStatus.BET.value:
+        safe["decision_status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+
+    safe["accumulator_eligible_selection"] = None
+    safe["kelly_stake_pct"] = None
+    safe["runtime_authorization_state"] = LEGACY_RUNTIME_AUTHORIZATION_STATE
+    safe["runtime_authorization_reasons"] = [LEGACY_RUNTIME_BET_BLOCK_REASON]
+
+    reasons = list(safe.get("no_bet_reasons") or [])
+    if LEGACY_RUNTIME_BET_BLOCK_REASON not in reasons:
+        reasons.append(LEGACY_RUNTIME_BET_BLOCK_REASON)
+    safe["no_bet_reasons"] = reasons
+
+    if "viable_markets" in safe:
+        safe["viable_markets"] = [
+            _quarantine_legacy_staking_record(market)
+            for market in (safe.get("viable_markets") or [])
+        ]
+
+    verdicts = []
+    for verdict in safe.get("reasoning_verdicts") or []:
+        if isinstance(verdict, dict):
+            item = _quarantine_legacy_staking_record(verdict)
+            if item.get("status") == DecisionStatus.BET.value:
+                item["status"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+            verdicts.append(item)
+        else:
+            verdicts.append(verdict)
+    if "reasoning_verdicts" in safe:
+        safe["reasoning_verdicts"] = verdicts
+
+    report = safe.get("evidence_report")
+    if isinstance(report, dict):
+        report = dict(report)
+        legacy_report_decision = report.get("final_decision")
+        if legacy_report_decision is not None:
+            report["legacy_decision_status_before_runtime_gate"] = (
+                legacy_report_decision
+            )
+        if legacy_report_decision == DecisionStatus.BET.value:
+            report["final_decision"] = DecisionStatus.ANALYTICAL_CANDIDATE.value
+        report_reasons = list(report.get("decision_reasons") or [])
+        if LEGACY_RUNTIME_BET_BLOCK_REASON not in report_reasons:
+            report_reasons.append(LEGACY_RUNTIME_BET_BLOCK_REASON)
+        report["decision_reasons"] = report_reasons
+        report["runtime_authorization_state"] = (
+            LEGACY_RUNTIME_AUTHORIZATION_STATE
+        )
+        if "market_evaluations" in report:
+            report["market_evaluations"] = [
+                _quarantine_legacy_staking_record(evaluation)
+                for evaluation in (report.get("market_evaluations") or [])
+            ]
+        safe["evidence_report"] = report
+
+    return safe
+
 
 class AnalysisPipeline:
     def __init__(self, match_analyst: MatchAnalyst, form_service: TeamFormService):
@@ -127,13 +222,17 @@ class AnalysisPipeline:
 
             if fix.get("bookmaker_odds") is not None:
                 context_payload["bookmaker_odds"] = fix["bookmaker_odds"]
-            
+
             if "home_pre_elo" in fix and fix["home_pre_elo"] is not None:
                 context_payload["home_pre_elo"] = fix["home_pre_elo"]
                 context_payload["away_pre_elo"] = fix["away_pre_elo"]
 
             try:
-                analysis = self.analyst.compile_master_fixture_prediction(context_payload)
+                analysis = apply_runtime_authorization(
+                    self.analyst.compile_master_fixture_prediction(
+                        context_payload
+                    )
+                )
                 analyzed_batch.append({
                     "fixture_id": fix.get("fixture_id", 0),
                     "fixture": f"{home_team} vs {away_team}",
@@ -144,6 +243,15 @@ class AnalysisPipeline:
                     "decision_status": analysis.get(
                         "decision_status",
                         DecisionStatus.NO_BET.value,
+                    ),
+                    "legacy_decision_status_before_runtime_gate": analysis.get(
+                        "legacy_decision_status_before_runtime_gate"
+                    ),
+                    "runtime_authorization_state": analysis.get(
+                        "runtime_authorization_state"
+                    ),
+                    "runtime_authorization_reasons": analysis.get(
+                        "runtime_authorization_reasons", []
                     ),
                     "upset_alert": analysis.get("upset_alert", False),
                     "risk_score": analysis.get("risk_score", 0.0),
