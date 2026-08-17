@@ -22,8 +22,8 @@ PROTOCOL_STATE = (
     "NOT_IMPLEMENTED_NOT_EXECUTED"
 )
 BASE_MAIN_SHA = "5c46aa8fcaf4338e8968c50e1c852301f8e2e0cd"
-PROTOCOL_SHA256 = "8198325482808bf188c239855fde55f085797ee6ceb365298f5ea594bae54bee"
-PROTOCOL_SIZE = 8537
+PROTOCOL_SHA256 = "cfceeac4124f72595b97736d3dae76b518ff3a94428cb2a7a0bf9c52550c2313"
+PROTOCOL_SIZE = 8933
 NEXT_REQUIRED_BOUNDARY = (
     "IMPLEMENT_REVIEWED_FRESH_HOLDOUT_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_"
     "CALIBRATION_AND_COMPETITION_IDENTITY_FOLLOWUP"
@@ -207,6 +207,9 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
             "source_adapter_executor_blob_sha": (
                 FOTMOB_HISTORICAL_ADAPTER_EXECUTOR_BLOB_SHA
             ),
+            "legacy_field_semantics_qualification_scope": (
+                "EXISTING_REVIEWED_PARSER_QUALIFIES_MAPPED_LEGACY_TARGET_FAMILIES_ONLY"
+            ),
             "wrapper_primary_id_field": "leagues[].primaryId",
             "wrapper_id_field": "leagues[].id",
             "fixture_wrapper_id_field": "leagues[].matches[].leagueId",
@@ -218,6 +221,8 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
             "model_league_code_is_not_competition_identity": True,
             "legacy_primary_ids": list(LEGACY_PRIMARY_IDS),
             "fresh_capture_scope_not_limited_to_legacy_primary_ids": True,
+            "non_legacy_identity_requires_fresh_structural_qualification": True,
+            "non_legacy_wrapper_admission_requires_exact_positive_ids_and_wrapper_match": True,
             "competition_robustness_cluster_key": "PROVIDER_PRIMARY_ID",
             "wrapper_id_retained_for_edition_and_lineage_audit": True,
             "competition_registry_mutation_in_this_boundary": False,
@@ -247,6 +252,8 @@ def build_fresh_holdout_home_calibration_competition_identity_protocol() -> dict
             },
             "prediction_record_must_be_sealed_before_kickoff": True,
             "competition_identity_must_be_sealed_with_prediction": True,
+            "sealed_kickoff_utc_must_equal_settlement_kickoff_utc": True,
+            "kickoff_drift_disposition": "EXCLUDE_PREDICTION_NO_REUSE_OR_RETIMING",
             "settlement_must_match_fixture_and_competition_identity": True,
             "ordinary_ft_settlement_semantics_only": True,
             "cancelled_postponed_special_or_unreviewed_states_not_scored": True,

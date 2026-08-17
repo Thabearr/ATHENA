@@ -27,14 +27,14 @@ Those coefficients were selected only from the consumed `6,948` A+B rows. On tho
 
 The old 11 model codes are not the competition universe.
 
-The preserved FotMob source parser proves that the raw `data/matches` payload carries provider-native competition identity directly:
+The preserved FotMob source parser demonstrates these provider-native identity fields for the already-qualified mapped legacy families. It does **not** make a global semantics claim for every unmapped competition wrapper. The fresh implementation must independently structurally qualify every non-legacy wrapper before it can enter the holdout:
 
 - competition family identity: `leagues[].primaryId`;
 - competition wrapper/edition identity: `leagues[].id`;
 - fixture wrapper identity: `leagues[].matches[].leagueId`;
 - fixture identity: `leagues[].matches[].id`.
 
-For every admitted fixture, `match.leagueId` must exactly equal the containing wrapper `league.id`. `primaryId`, wrapper `id`, and fixture `id` must be positive integers. Names, aliases and fuzzy mapping cannot create identity.
+For every admitted fixture, `match.leagueId` must exactly equal the containing wrapper `league.id`. `primaryId`, wrapper `id`, and fixture `id` must be positive integers. Names, aliases and fuzzy mapping cannot create identity. A non-legacy wrapper that has not passed this exact fresh structural qualification is excluded rather than inferred.
 
 The 11 historical training-scope primary IDs remain `{40,47,53,54,55,57,61,64,71,87,135}`. Fresh **capture/evaluation discovery is not capped at those IDs**. `model_league_code` is legacy classification only and cannot substitute for provider-native competition identity.
 
@@ -52,7 +52,7 @@ The confirmation cannot start before `2026-08-15T00:00:00Z`, and in practice sta
 
 For each fixture, the prediction and exact competition identity must be sealed before kickoff using the earliest qualifying source capture between 24 hours and 60 minutes before kickoff. A fixture with no qualifying pre-kickoff capture is missing and may not be reconstructed after the result is known.
 
-Settlement must preserve exact fixture and competition identity and may admit only the already-reviewed ordinary-FT result semantics. Cancelled, postponed, special-result or otherwise unreviewed states are not scored.
+Settlement must preserve exact fixture, competition identity **and the sealed kickoff UTC**. If the provider later changes the kickoff, the old prediction is excluded and may not be reused, retimed or mapped onto the rescheduled fixture. Settlement may admit only the already-reviewed ordinary-FT result semantics. Cancelled, postponed, special-result or otherwise unreviewed states are not scored.
 
 ## Outcome-independent close rule
 

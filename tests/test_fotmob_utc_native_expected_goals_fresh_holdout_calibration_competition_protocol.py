@@ -67,6 +67,8 @@ def test_competition_identity_uses_exact_provider_ids_not_legacy_codes_or_names(
     assert identity["model_league_code_is_not_competition_identity"] is True
     assert tuple(identity["legacy_primary_ids"]) == LEGACY_PRIMARY_IDS
     assert identity["fresh_capture_scope_not_limited_to_legacy_primary_ids"] is True
+    assert identity["non_legacy_identity_requires_fresh_structural_qualification"] is True
+    assert identity["non_legacy_wrapper_admission_requires_exact_positive_ids_and_wrapper_match"] is True
 
 
 def test_feature_semantics_do_not_silently_expand_history_scope() -> None:
@@ -85,6 +87,8 @@ def test_fresh_holdout_is_prospective_pre_kickoff_and_outcome_independent() -> N
     assert fresh["not_before_utc"] == "2026-08-15T00:00:00Z"
     assert "REVIEWED_IMPLEMENTATION_MERGE_TIMESTAMP" in fresh["start_rule"]
     assert fresh["prediction_record_must_be_sealed_before_kickoff"] is True
+    assert fresh["sealed_kickoff_utc_must_equal_settlement_kickoff_utc"] is True
+    assert fresh["kickoff_drift_disposition"] == "EXCLUDE_PREDICTION_NO_REUSE_OR_RETIMING"
     assert fresh["no_post_kickoff_prediction_mutation"] is True
     assert fresh["no_confirmation_label_may_select_or_modify_calibration"] is True
     assert fresh["closing_rule_may_not_use_goals_errors_nll_or_calibration_results"] is True
