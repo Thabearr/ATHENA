@@ -22,6 +22,8 @@ ATHENA already pre-registered, fit, and robustness-tested a two-response home/aw
 
 The new V2 projection changes the evidence/chronology regime: canonical timezone-aware UTC, strict prior history, and exact same-kickoff batching. This protocol therefore tests the same reviewed model family on that newly qualified regime instead of silently replacing it with a new sklearn model family or tuning scheme.
 
+“Reuse exact historical successor deterministic fitter” is a transitive contract against the pinned historical protocol blob `f0b3a070bcf235a097dd737d715f9d6162505509`, not permission to reimplement only the headline constants. The later implementation must preserve that protocol's deterministic `math.fsum` reductions, training-row ordering semantics adapted only from source-local kickoff to canonical UTC kickoff, response fit order, log-of-training-response-mean intercept initialization, zero non-intercept initialization, Newton system, partial-pivot linear solve, backtracking line search, convergence rule, 200-iteration ceiling, `1e-8` gradient tolerance, `0.5` backtracking factor, `2^-20` minimum step, `20.0` absolute linear-predictor guard, `1e-12` pivot tolerance, 12-place coefficient rounding, no hyperparameter search, and no post-evaluation refit. Any implementation that substitutes different fitting mechanics fails the protocol lineage gate.
+
 The old `models/goals_model.joblib` is separately quarantined: it is a legacy Random Forest regressor for **total match goals**, trained from a different feature family. It is not a home/away expected-goals transform. The one-byte `models/expected_goals.py`, `models/poisson.py`, and `models/dixon_coles.py` placeholders are not treated as implementations.
 
 ## Frozen model arms
