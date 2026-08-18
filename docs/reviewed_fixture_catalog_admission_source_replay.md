@@ -70,10 +70,20 @@ admission.json
 The directory identity is the first 24 hexadecimal characters of SHA-256 of the
 exact canonical `ReviewedFixtureCatalogAdmission` bytes.
 
-There is deliberately no storage-only authority path. Verification requires the
-source-replayed handoff and compiler result again, reparses the exact canonical
-decision, rebuilds the admission, and requires byte-for-byte equality with the
-stored artifact.
+There is deliberately **no public storage-only authority path**. The domain
+module contains an internal semantic directory check used only after a trusted
+caller has already rebuilt the exact handoff and compiler result. Downstream
+consumption must instead call the public operator-layer
+`revalidate_stored_admission_from_sources(...)` path. That function first
+replays the raw FotMob capture directories, fixture-review decision ledger,
+checked catalog, and checked manifest, then reparses the stored canonical
+catalog-admission decision, rebuilds the complete admission, and requires
+byte-for-byte equality with the stored artifact.
+
+A caller therefore cannot obtain catalog-admission authority merely by loading
+`admission.json`, by constructing a hash-shaped Python object, or by supplying a
+previously valid handoff/compiler object without replaying its raw reviewed
+source chain.
 
 ## Failure policy
 
@@ -145,13 +155,22 @@ python scripts/replay_reviewed_fixture_catalog_admission.py store \
   --admission-decision admission-decision.json
 ```
 
+A later consumer must source-revalidate the stored admission rather than read it
+as standalone authority:
+
+```python
+from scripts.replay_reviewed_fixture_catalog_admission import (
+    revalidate_stored_admission_from_sources,
+)
+```
+
 ## Next boundary
 
 A later offline executor may consume only a source-replayed `ADMITTED`
-catalog artifact from this boundary, re-open the required SportyBet, Terms,
-Sportradar, and FotMob source evidence, assemble PR #164's
-`FullUtcReconciliationSourceBundle`, and execute/store the real reconciliation
-receipt.
+catalog artifact through the public raw-source revalidation path above, re-open
+the required SportyBet, Terms, Sportradar, and FotMob source evidence, assemble
+PR #164's `FullUtcReconciliationSourceBundle`, and execute/store the real
+reconciliation receipt.
 
 Only a resulting `UNIQUE_EXACT_FULL_UTC_MATCH_RECONCILED` receipt may advance
 to SportyBet canonical market/selection mapping.
