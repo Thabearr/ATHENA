@@ -379,18 +379,22 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
             return fresh.FreshSettlementAssessment(
                 disposition=fresh.SettlementDisposition.SETTLED_REVIEWED_ORDINARY_FT,
                 prediction=prediction,
+                detail="settled ordinary FT",
                 settled_prediction=settled,
             )
         elif fid == 102:
             return fresh.FreshSettlementAssessment(
                 disposition=fresh.SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT,
                 prediction=prediction,
-                notes="kickoff drift observed",
+                detail="kickoff drift observed",
+                settled_prediction=None,
             )
         elif fid == 103:
             return fresh.FreshSettlementAssessment(
                 disposition=fresh.SettlementDisposition.EXCLUDED_NOT_REVIEWED_ORDINARY_FT,
                 prediction=prediction,
+                detail="not reviewed ordinary FT",
+                settled_prediction=None,
             )
         raise AssertionError(f"unexpected fixture {fid}")
 
