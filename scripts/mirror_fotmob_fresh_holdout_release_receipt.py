@@ -93,6 +93,22 @@ def _sha256(value: Any, label: str) -> str:
     return value
 
 
+def verify_actions_artifact_zip_digest(zip_bytes: bytes, metadata_digest: Any) -> str:
+    """Bind exact downloaded Actions artifact ZIP bytes to GitHub's independent digest."""
+    if type(zip_bytes) is not bytes or not zip_bytes:
+        raise _error("Actions artifact ZIP must be non-empty exact bytes")
+    if type(metadata_digest) is not str or not metadata_digest.startswith("sha256:"):
+        raise _error("Actions artifact metadata lacks SHA-256 digest")
+    expected = _sha256(
+        metadata_digest.removeprefix("sha256:"),
+        "Actions artifact ZIP digest",
+    )
+    actual = hashlib.sha256(zip_bytes).hexdigest()
+    if actual != expected:
+        raise _error("Actions artifact ZIP disagrees with GitHub digest metadata")
+    return actual
+
+
 def _parse_nominal(value: Any) -> dt.datetime:
     if type(value) is not str or value != value.strip():
         raise _error("nominal scheduled time must be exact text")
@@ -249,6 +265,7 @@ def verify_release_archive_and_receipt(
     return {
         "schema_version": 1,
         "run_id": verified["run_id"],
+        "actions_artifact_zip_sha256": verified["actions_artifact_zip_sha256"],
         "release_tag": verified["release_tag"],
         "archive_name": archive_name,
         "archive_sha256": verified["archive_sha256"],
@@ -263,14 +280,6 @@ def verify_release_archive_and_receipt(
     }
 
 
-def _gh_json(endpoint: str) -> dict[str, Any]:
-    try:
-        raw = subprocess.check_output(["gh", "api", endpoint])
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise _error(f"GitHub API request failed: {endpoint}") from exc
-    return _parse_canonical_or_general_json(raw, f"GitHub API response {endpoint}")
-
-
 def _parse_canonical_or_general_json(raw: bytes, label: str) -> dict[str, Any]:
     try:
         value = json.loads(raw, object_pairs_hook=_no_duplicate_object)
@@ -279,6 +288,14 @@ def _parse_canonical_or_general_json(raw: bytes, label: str) -> dict[str, Any]:
     if type(value) is not dict:
         raise _error(f"{label} must be an object")
     return value
+
+
+def _gh_json(endpoint: str) -> dict[str, Any]:
+    try:
+        raw = subprocess.check_output(["gh", "api", endpoint])
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise _error(f"GitHub API request failed: {endpoint}") from exc
+    return _parse_canonical_or_general_json(raw, f"GitHub API response {endpoint}")
 
 
 def _gh_download(endpoint: str) -> bytes:
@@ -330,11 +347,16 @@ def mirror_run(*, repository: str, run_id: int) -> dict[str, Any]:
     artifact_id = _positive_int(artifact.get("id"), "Actions artifact id")
     artifact_name = artifact["name"]
     zip_bytes = _gh_download(f"/repos/{repository}/actions/artifacts/{artifact_id}/zip")
+    artifact_zip_sha = verify_actions_artifact_zip_digest(
+        zip_bytes,
+        artifact.get("digest"),
+    )
     verified = verify_actions_artifact_bundle(
         run_id=run_id,
         artifact_name=artifact_name,
         zip_bytes=zip_bytes,
     )
+    verified["actions_artifact_zip_sha256"] = artifact_zip_sha
 
     tag = verified["release_tag"]
     release = _release_for(repository, tag)
