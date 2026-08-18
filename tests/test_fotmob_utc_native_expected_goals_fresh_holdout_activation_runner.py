@@ -332,12 +332,14 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, state = _repo(tmp_path)
-    scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+    scheduled = dt.datetime(2026, 8, 19, 4, 7, tzinfo=UTC)
+    pred_observed = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+    kickoff = dt.datetime(2026, 8, 19, 2, 7, tzinfo=UTC)
 
     # Pre-populate 3 sealed predictions in the journal
-    pred1 = _fake_sealed_prediction(101, scheduled + dt.timedelta(hours=2), scheduled)
-    pred2 = _fake_sealed_prediction(102, scheduled + dt.timedelta(hours=2), scheduled)
-    pred3 = _fake_sealed_prediction(103, scheduled + dt.timedelta(hours=2), scheduled)
+    pred1 = _fake_sealed_prediction(101, kickoff, pred_observed)
+    pred2 = _fake_sealed_prediction(102, kickoff, pred_observed)
+    pred3 = _fake_sealed_prediction(103, kickoff, pred_observed)
 
     pred_rows = [
         runner._prediction_row(
@@ -451,7 +453,7 @@ def test_selected_close_population_and_settlement_semantics(
     # Mock close state to simulate selected close reached at selected_close
     fake_close_state = control.CloseControlState(
         evaluated_boundary_utc=selected_close,
-        decision=control.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
+        decision=fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
         selected_close_utc=selected_close,
         coverage_sha256="k" * 64,
     )
@@ -487,7 +489,7 @@ def test_selected_close_population_and_settlement_semantics(
     tail_end = selected_close + dt.timedelta(hours=24)
     fake_close_state_tail = control.CloseControlState(
         evaluated_boundary_utc=selected_close,
-        decision=control.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
+        decision=fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
         selected_close_utc=selected_close,
         coverage_sha256="k" * 64,
     )
