@@ -18,6 +18,10 @@ DETAIL_URL = (
     "https://www.sportybet.com/ng/lite/preMatch/detail?"
     "eventId=sr%3Amatch%3A123&marketGroupsName=Main&sportId=sr%3Asport%3A1"
 )
+PROTOCOL = Path(
+    "artifacts/research-protocols/"
+    "sportybet-machine-event-header-candidate-v1.json"
+)
 
 
 def _raw(
@@ -82,6 +86,31 @@ def _candidate(tmp_path: Path):
         raw_html=raw,
     )
     return candidate, manifest, inventory, raw
+
+
+def test_protocol_artifact_is_canonical_and_all_authority_false() -> None:
+    raw = PROTOCOL.read_bytes()
+    payload = json.loads(raw)
+    canonical = (
+        json.dumps(
+            payload,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        + "\n"
+    ).encode("utf-8")
+    assert raw == canonical
+    assert payload["schema_version"] == 1
+    assert payload["status"] == "RESEARCH_CANDIDATE_ONLY"
+    assert payload["matching_status"] == header.MATCHING_STATUS
+    assert payload["extraction_authority"] == header.EXTRACTION_AUTHORITY
+    assert payload["kickoff_year_capability"] == "UNPROVEN"
+    assert payload["kickoff_timezone_capability"] == header.DISPLAY_TIME_BASIS
+    assert payload["kickoff_utc_capability"] == "UNPROVEN"
+    assert set(payload["safety"]) == set(header._SAFETY_KEYS)
+    assert all(value is False for value in payload["safety"].values())
 
 
 def test_extracts_machine_visible_header_without_inventing_utc(
@@ -192,7 +221,7 @@ def test_february_29_is_not_rejected_without_a_proven_year() -> None:
     )
     assert extracted.kickoff_day == 29
     assert extracted.kickoff_month == 2
-    assert extracted.kickoff_year if hasattr(extracted, "kickoff_year") else True
+    assert not hasattr(extracted, "kickoff_year")
 
 
 def test_home_and_away_must_be_distinct() -> None:
@@ -334,6 +363,18 @@ def test_candidate_identity_fields_revalidate_source_url(
         )
     with pytest.raises(header.SportyBetMachineEventHeaderError):
         dataclasses.replace(candidate, event_id="bad")
+
+
+def test_exact_scalar_types_are_required_even_when_bool_compares_equal(
+    tmp_path: Path,
+) -> None:
+    candidate, _, _, _ = _candidate(tmp_path)
+    assert candidate.kickoff_minute == 0
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="exact integers",
+    ):
+        dataclasses.replace(candidate, kickoff_minute=False)
 
 
 def test_coordinated_candidate_tampering_is_rejected(
