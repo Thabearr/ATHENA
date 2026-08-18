@@ -42,7 +42,7 @@ HARD_CLOSE_UTC_TEXT = "2026-11-17T00:00:00Z"
 SETTLEMENT_TAIL_END_UTC_TEXT = "2026-11-18T00:00:00Z"
 
 CAPTURE_INTERVAL_MINUTES = 30
-CAPTURE_MINUTES_UTC = (0, 30)
+CAPTURE_MINUTES_UTC = (7, 37)
 REQUEST_TIMEZONE = "UTC"
 REQUEST_CCODE3 = "NGA"
 ACTIVE_REQUEST_DATE_OFFSETS_DAYS = (-1, 0, 1)
@@ -215,7 +215,7 @@ def _scheduled_tick(value: dt.datetime) -> dt.datetime:
         or tick.microsecond != 0
         or tick.minute not in CAPTURE_MINUTES_UTC
     ):
-        raise _error("scheduled tick must be an exact UTC :00 or :30 boundary")
+        raise _error("scheduled tick must be an exact UTC :07 or :37 boundary")
     return tick
 
 
@@ -488,6 +488,9 @@ def collection_control_receipt() -> dict[str, Any]:
         "capture_control": {
             "cadence_minutes": CAPTURE_INTERVAL_MINUTES,
             "utc_minutes": list(CAPTURE_MINUTES_UTC),
+            "nominal_schedule_avoids_start_of_hour": True,
+            "actual_capture_observed_at_authoritative": True,
+            "nominal_schedule_time_is_observation_time": False,
             "request_timezone": REQUEST_TIMEZONE,
             "request_ccode3": REQUEST_CCODE3,
             "active_request_date_offsets_days": list(ACTIVE_REQUEST_DATE_OFFSETS_DAYS),
@@ -514,6 +517,9 @@ def collection_control_receipt() -> dict[str, Any]:
             "known_change_then_reversion_remains_excluding": True,
             "cross_run_state_restore_required": True,
             "close_state_revalidation_from_prediction_journal_required": True,
+            "scheduler_gap_must_be_journaled_not_backfilled": True,
+            "missed_capture_opportunity_may_not_be_retrofilled": True,
+            "public_repo_schedule_auto_disable_is_coverage_risk_not_backfill_authority": True,
             "exact_bootstrap_projection_required_before_prediction_sealing": True,
         },
         "activation": {
