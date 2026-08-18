@@ -34,7 +34,9 @@ For source run `R`, the completed collection run must expose exactly one unexpir
 
 `(success|failure)-YYYYMMDDTHHMMSSZ-run-R.tar.gz`
 
-The downloaded Actions artifact ZIP must contain exactly two safe root members:
+Before trusting members inside that artifact, the mirror downloads the **entire Actions artifact ZIP** and requires its SHA-256 to equal GitHub's independent `artifact.digest` metadata (`sha256:<digest>`). A missing, malformed, or mismatching GitHub digest is a hard failure. This prevents the archive and its embedded receipt from becoming a self-referential trust pair.
+
+The digest-bound Actions artifact ZIP must then contain exactly two safe root members:
 
 - that cumulative `.tar.gz` archive; and
 - `fresh-holdout-tick-receipt.json`.
@@ -63,7 +65,7 @@ It **downloads the long-lived release archive bytes themselves**, rather than tr
 
 - exact byte size equal to the canonical receipt;
 - exact SHA-256 equal to the canonical receipt;
-- byte-for-byte equality with the archive recovered from the authoritative Actions artifact.
+- byte-for-byte equality with the archive recovered from the independently digest-bound Actions artifact.
 
 Only after the release archive passes those checks may the receipt be mirrored.
 
@@ -87,7 +89,7 @@ The post-run workflow pins:
 
 - `actions/checkout` to immutable commit `11d5960a326750d5838078e36cf38b85af677262`;
 - `actions/setup-python` to immutable commit `a26af69be951a213d495a4c3e4e4022e16d87065`;
-- `scripts/mirror_fotmob_fresh_holdout_release_receipt.py` to Git blob `b311f3136c6b06dfbe40babd66a2fb9fdf18fedf`.
+- `scripts/mirror_fotmob_fresh_holdout_release_receipt.py` to Git blob `ddabb6ae83cbe6c81c9264119a121a54715df960`.
 
 Changing the implementation file without a corresponding reviewed workflow-pin change causes the mirror job to fail closed.
 
