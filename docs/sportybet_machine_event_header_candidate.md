@@ -95,7 +95,7 @@ No later gate is skipped.
 
 ## Hosted validation
 
-The final replay-hardened exact head is validated by hosted Tests run `32154163383` / run #749. Syntax, all eight deterministic shards, and the aggregate test gate succeeded. Shard 8 contains this boundary's adversarial suite and finished `580 passed, 16 subtests passed`.
+The final exact-head hosted Tests run is `32154892971` / run #750. It tested synthetic merge `0168eb2b279d0721bb3e6c41c6f5473799492ed0` of exact head `e7b3f528467dc10794aec0de1e0beaf775e2b777` into exact base `ffb6bb552ccb03487cee44f0212396d4782544bb`. Syntax, all eight deterministic shards, and the aggregate test gate succeeded. Shard 8 contains this boundary's adversarial suite and finished `580 passed, 16 subtests passed`.
 
 No local pytest was run and no SportyBet network request is made by this PR's tests.
 
