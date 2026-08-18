@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Sequence
 from typing import Any
 
+from domain import reviewed_fixture_catalog_admission as fotmob_admission
 from domain import sportradar_user_controlled_event_metadata as metadata
 from domain import sportybet_event_local_time_basis as local_time
 from domain import sportybet_fotmob_full_utc_reconciliation as reconciliation
@@ -13,7 +14,7 @@ from domain import sportybet_sportradar_event_identity as bridge
 from domain import sportybet_sportradar_kickoff_identity_promotion as promotion
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
-from domain.fotmob_fixture_candidate_review import FotMobReviewedFixtureCatalogInput
+from domain.fotmob_data_matches_capture import FotMobDataMatchesCaptureManifest
 
 
 def revalidate_full_utc_reconciliation(
@@ -29,15 +30,16 @@ def revalidate_full_utc_reconciliation(
     event_bridge: bridge.SportyBetSportradarEventIdentityBridge,
     sportradar_evidence: metadata.SportradarUserControlledEventMetadataEvidence,
     sportradar_raw_response: bytes,
-    fixtures: Iterable[FotMobReviewedFixtureCatalogInput],
+    fotmob_admission_value: fotmob_admission.ReviewedFixtureCatalogAdmission,
+    fotmob_captures: Sequence[tuple[bytes, FotMobDataMatchesCaptureManifest]],
 ) -> reconciliation.SportyBetFotMobFullUtcReconciliation:
-    """Rebuild from exact preserved sources/population and require canonical equality."""
+    """Replay both source chains and require canonical reconciliation equality."""
 
-    if not isinstance(value, reconciliation.SportyBetFotMobFullUtcReconciliation):
+    if type(value) is not reconciliation.SportyBetFotMobFullUtcReconciliation:
         raise reconciliation.SportyBetFotMobFullUtcReconciliationError(
             "reconciliation type mismatch"
         )
-    fixture_rows = tuple(fixtures)
+    capture_rows = tuple(fotmob_captures)
     rebuilt = reconciliation.build_full_utc_reconciliation(
         kickoff_promotion=kickoff_promotion,
         event_time_basis=event_time_basis,
@@ -49,13 +51,14 @@ def revalidate_full_utc_reconciliation(
         event_bridge=event_bridge,
         sportradar_evidence=sportradar_evidence,
         sportradar_raw_response=sportradar_raw_response,
-        fixtures=fixture_rows,
+        fotmob_admission_value=fotmob_admission_value,
+        fotmob_captures=capture_rows,
     )
     if reconciliation.canonical_reconciliation_bytes(
         value
     ) != reconciliation.canonical_reconciliation_bytes(rebuilt):
         raise reconciliation.SportyBetFotMobFullUtcReconciliationError(
-            "full-UTC reconciliation is not the exact deterministic derivative of preserved sources and FotMob population"
+            "full-UTC reconciliation is not the exact deterministic derivative of preserved SportyBet/Sportradar sources and source-replayed admitted FotMob catalog"
         )
     return rebuilt
 
