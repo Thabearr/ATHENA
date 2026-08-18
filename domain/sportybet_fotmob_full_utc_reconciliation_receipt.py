@@ -318,8 +318,10 @@ def store_reconciliation_receipt(
         )
         return directory, verified
 
+    created_directory = False
     try:
         directory.mkdir(exist_ok=False)
+        created_directory = True
         _sync_directory(root)
         _sync_directory(directory)
         _write_exclusive(directory / RECONCILIATION_FILENAME, payload)
@@ -332,12 +334,13 @@ def store_reconciliation_receipt(
         _sync_directory(directory)
         _sync_directory(root)
     except Exception as exc:
-        try:
-            _cleanup_partial_directory(directory, root)
-        except Exception as cleanup_exc:
-            raise SportyBetFotMobFullUtcReconciliationReceiptError(
-                "reconciliation receipt failed and partial cleanup also failed"
-            ) from cleanup_exc
+        if created_directory:
+            try:
+                _cleanup_partial_directory(directory, root)
+            except Exception as cleanup_exc:
+                raise SportyBetFotMobFullUtcReconciliationReceiptError(
+                    "reconciliation receipt failed and partial cleanup also failed"
+                ) from cleanup_exc
         if isinstance(exc, SportyBetFotMobFullUtcReconciliationReceiptError):
             raise
         if isinstance(exc, (OSError, SportyBetLiteCaptureError)):
