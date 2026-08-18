@@ -1029,7 +1029,7 @@ def execute_collection_tick(
                 _terminal_row(
                     prediction,
                     assessment.disposition.value,
-                    assessment.notes or "provider identity or kickoff drift observed",
+                    assessment.detail or "provider identity or kickoff drift observed",
                     durable_release_tag,
                     durable_asset_name,
                 ),
