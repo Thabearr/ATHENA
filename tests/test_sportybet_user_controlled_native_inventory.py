@@ -66,8 +66,8 @@ def test_build_inventory_preserves_native_odds_lines_and_manual_time_authority(
     assert total_rows[0].availability.value == "AVAILABLE"
     assert total_rows[1].availability.value == "SUSPENDED"
     assert inventory.observation_authority == "USER_ATTESTED_NOT_PROVIDER_TIMESTAMP"
-    assert inventory.observed_at_user_attested == "2026-08-18T12:00:00Z"
-    assert inventory.imported_at_utc == "2026-08-18T12:01:00Z"
+    assert inventory.observed_at_user_attested == "2026-08-18T12:00:00.000000Z"
+    assert inventory.imported_at_utc == "2026-08-18T12:01:00.000000Z"
     assert inventory.athena_network_acquisition_performed is False
     assert inventory.provider_quote_at is None
     assert inventory.provider_snapshot_id is None
