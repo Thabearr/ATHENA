@@ -1161,7 +1161,7 @@ def execute_collection_tick(
         "network_request_count": len(current),
         "network_acquisition_performed": bool(current),
         "fresh_holdout_collection_started_by_this_run": plan.phase
-        == control.ControlPhase.ACTIVE_PREDICTION_AND_SETTLEMENT,
+        == control.ControlPhase.PREDICTION_AND_SETTLEMENT_COLLECTION,
         "durable_release_tag": durable_release_tag,
         "durable_asset_name": durable_asset_name,
         "next_required_boundary": NEXT_REQUIRED_BOUNDARY,

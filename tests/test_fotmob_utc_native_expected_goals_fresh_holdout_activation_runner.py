@@ -317,7 +317,7 @@ def test_cli_and_workflow_are_present_and_schedule_is_exact() -> None:
     assert "workflow_dispatch:" not in text
     assert "--execute-live-network" in text
     assert "athena-fresh-holdout-bootstrap-v1" in text
-    assert "athena-fresh-holdout-evidence-" in text
+    assert "FotMob UTC-Native Fresh Holdout Evidence" in text
     assert "success-" in text
     assert "failure-" in text
     assert "retention-days: 90" in text
