@@ -178,6 +178,40 @@ def test_cleanup_failure_is_not_suppressed(
         )
 
 
+def test_concurrent_directory_creation_is_never_cleaned_as_our_partial_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    state = {"payload": b'{"source":"concurrent"}\n'}
+    _mutable_stub(monkeypatch, state)
+    bundle = _bundle()
+    root = tmp_path / receipt.ALLOWED_OUTPUT_RELATIVE
+    root.mkdir(parents=True)
+    expected_id = receipt.receipt_identifier_from_bytes(state["payload"])
+    target = root / expected_id
+    original_mkdir = Path.mkdir
+
+    def concurrent_mkdir(self: Path, *args, **kwargs) -> None:
+        if self == target:
+            original_mkdir(self)
+            (self / "foreign.txt").write_text("owned by concurrent writer", encoding="utf-8")
+            raise FileExistsError("simulated concurrent creator won the race")
+        original_mkdir(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "mkdir", concurrent_mkdir)
+
+    with pytest.raises(
+        receipt.SportyBetFotMobFullUtcReconciliationReceiptError,
+        match="could not durably publish",
+    ):
+        receipt.store_reconciliation_receipt(
+            source_bundle=bundle,
+            repository_root=tmp_path,
+        )
+
+    assert target.is_dir()
+    assert (target / "foreign.txt").read_text(encoding="utf-8") == "owned by concurrent writer"
+
+
 def test_receipt_directory_traversal_and_outside_paths_fail_closed(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
