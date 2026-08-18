@@ -36,6 +36,7 @@ from domain.reviewed_fixture_catalog_admission_source_replay import (
     ADMISSION_FILENAME,
     DECISION_FILENAME,
     ReviewedFixtureCatalogAdmissionSourceReplayError,
+    _build_semantic_admission,
     _store_semantic_admission,
     _verify_semantic_admission_directory,
     build_replay_decision,
@@ -195,10 +196,11 @@ def test_exact_internal_semantic_store_is_idempotent(tmp_path: Path) -> None:
 
 def test_rejected_review_can_be_preserved_without_admitted_fixtures(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path, disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED)
+    parsed = parse_replay_decision_bytes(canonical_replay_decision_bytes(decision))
     _, admission = _store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
-        replay_decision=decision,
+        replay_decision=parsed,
         repository_root=tmp_path,
     )
     assert admission.decision.disposition.value == "REJECTED"
@@ -210,11 +212,27 @@ def test_rejected_review_can_be_preserved_without_admitted_fixtures(tmp_path: Pa
     (
         lambda raw: raw + b"\n",
         lambda raw: b" " + raw,
-        lambda raw: raw.replace(b'"ADMITTED"', b'"REJECTED"', 1),
     ),
 )
-def test_noncanonical_or_changed_decision_bytes_fail_closed(tmp_path: Path, mutate) -> None:
+def test_noncanonical_decision_bytes_fail_closed(tmp_path: Path, mutate) -> None:
     _, _, decision = _decision(tmp_path)
     raw = canonical_replay_decision_bytes(decision)
     with pytest.raises(ReviewedFixtureCatalogAdmissionSourceReplayError):
         parse_replay_decision_bytes(mutate(raw))
+
+
+def test_canonical_changed_lineage_fails_when_bound_to_replayed_sources(tmp_path: Path) -> None:
+    handoff, result, decision = _decision(tmp_path)
+    raw = canonical_replay_decision_bytes(decision)
+    original_hash = decision.decision.catalog_sha256.encode("ascii")
+    replacement_hash = ("f" * 64 if decision.decision.catalog_sha256 != "f" * 64 else "e" * 64).encode("ascii")
+    tampered_raw = raw.replace(original_hash, replacement_hash, 1)
+    assert tampered_raw != raw
+    tampered = parse_replay_decision_bytes(tampered_raw)
+    assert canonical_replay_decision_bytes(tampered) == tampered_raw
+    with pytest.raises(ReviewedFixtureCatalogAdmissionSourceReplayError):
+        _build_semantic_admission(
+            handoff=handoff,
+            fixture_catalog_result=result,
+            replay_decision=tampered,
+        )
