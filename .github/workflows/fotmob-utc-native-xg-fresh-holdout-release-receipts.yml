@@ -36,7 +36,7 @@ jobs:
         run: |
           set -euo pipefail
           actual="$(git hash-object scripts/mirror_fotmob_fresh_holdout_release_receipt.py)"
-          expected="b311f3136c6b06dfbe40babd66a2fb9fdf18fedf"
+          expected="ddabb6ae83cbe6c81c9264119a121a54715df960"
           test "${actual}" = "${expected}" || {
             echo "FATAL: release-receipt mirror implementation blob changed"
             exit 1
