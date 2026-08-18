@@ -36,12 +36,12 @@ from domain.reviewed_fixture_catalog_admission_source_replay import (
     ADMISSION_FILENAME,
     DECISION_FILENAME,
     ReviewedFixtureCatalogAdmissionSourceReplayError,
+    _store_semantic_admission,
     _verify_semantic_admission_directory,
     build_replay_decision,
     canonical_replay_decision_bytes,
     parse_replay_decision_bytes,
     replay_decision_sha256,
-    store_source_replayed_admission,
 )
 
 UTC = dt.timezone.utc
@@ -154,9 +154,9 @@ def test_replay_decision_round_trips_canonical_bytes(tmp_path: Path) -> None:
     assert rebuilt.decision.disposition.value == "ADMITTED"
 
 
-def test_source_replayed_admission_store_and_semantic_internal_verify(tmp_path: Path) -> None:
+def test_internal_semantic_store_and_verify_are_deterministic(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
-    directory, admission = store_source_replayed_admission(
+    directory, admission = _store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -175,15 +175,15 @@ def test_source_replayed_admission_store_and_semantic_internal_verify(tmp_path: 
     assert sha256_reviewed_fixture_catalog_admission(verified) == sha256_reviewed_fixture_catalog_admission(admission)
 
 
-def test_exact_replay_is_idempotent(tmp_path: Path) -> None:
+def test_exact_internal_semantic_store_is_idempotent(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
-    first_dir, first = store_source_replayed_admission(
+    first_dir, first = _store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
         repository_root=tmp_path,
     )
-    second_dir, second = store_source_replayed_admission(
+    second_dir, second = _store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -195,7 +195,7 @@ def test_exact_replay_is_idempotent(tmp_path: Path) -> None:
 
 def test_rejected_review_can_be_preserved_without_admitted_fixtures(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path, disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED)
-    _, admission = store_source_replayed_admission(
+    _, admission = _store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
