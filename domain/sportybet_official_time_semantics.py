@@ -1,13 +1,10 @@
 """Offline qualification of SportyBet's official website time semantics.
 
-This boundary preserves and qualifies a human-exported copy of SportyBet Nigeria's
-official Terms & Conditions page.  It performs no network I/O.  A successful
-qualification proves only the provider's global website rule that times relate to
-GMT unless stated otherwise.  Applying that rule to a specific event still requires
-a separate event-local override check, and the event year remains unproven.
-
-No fixture reconciliation, pricing, model integration, selection, slip construction,
-booking-code generation, execution, or BET authority is created here.
+This boundary accepts only a human-exported copy of the exact reviewed SportyBet
+Nigeria Terms & Conditions page. It performs no network I/O. A successful result
+proves only the provider's global website rule that times relate to GMT unless
+stated otherwise. Event-local override checks and event-year proof remain separate
+boundaries, and every downstream betting authority remains false.
 """
 
 from __future__ import annotations
@@ -36,7 +33,10 @@ from domain.sportybet_lite_source_capture import (
     strict_json_loads,
 )
 from domain.sportybet_machine_event_header_candidate import visible_text_tokens
-from domain.sportybet_user_controlled_evidence import read_user_html
+from domain.sportybet_user_controlled_evidence import (
+    SportyBetUserEvidenceError,
+    read_user_html,
+)
 
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-sportybet-official-time-semantics-v1"
@@ -53,7 +53,9 @@ EXPECTED_STATEMENT = (
     "All times stated on the Website and/or referred to by SportyBet staff "
     "relate to GMT unless stated otherwise."
 )
-EXPECTED_STATEMENT_SHA256 = "2fed00c2e1d3e7f2b0b6cff1e4f68ee17874529af54958a14aed68e7ca0b7de4"
+EXPECTED_STATEMENT_SHA256 = (
+    "2fed00c2e1d3e7f2b0b6cff1e4f68ee17874529af54958a14aed68e7ca0b7de4"
+)
 SEMANTIC_STATUS = "QUALIFIED_GLOBAL_WEBSITE_TIME_BASIS"
 TIME_ZONE_LABEL = "GMT"
 UTC_OFFSET_SECONDS = 0
@@ -87,10 +89,11 @@ _SAFETY_KEYS = frozenset(
         "sportybet_execution_authorized",
     }
 )
+_EXPECTED_DIRECTORY_FILES = tuple(sorted((RAW_FILENAME, QUALIFICATION_FILENAME)))
 
 
 class SportyBetOfficialTimeSemanticsError(ValueError):
-    """Raised when the official time-semantics boundary fails closed."""
+    """Raised when the official time-semantics evidence boundary fails closed."""
 
 
 def _default_safety() -> dict[str, bool]:
@@ -181,29 +184,24 @@ def _bounded_utf8_html(raw_html: Any) -> bytes:
 
 
 def extract_global_time_semantics(raw_html: Any) -> tuple[str, int]:
-    """Return the exact qualified zone label and visible occurrence count."""
+    """Qualify and return the exact global website zone plus occurrence count."""
     raw = _bounded_utf8_html(raw_html)
     try:
-        tokens = visible_text_tokens(raw)
+        visible = " ".join(visible_text_tokens(raw))
     except Exception as exc:
-        if isinstance(exc, SportyBetOfficialTimeSemanticsError):
-            raise
         raise SportyBetOfficialTimeSemanticsError(
             "official page visible-text extraction failed"
         ) from exc
-    visible = " ".join(tokens)
     matches = list(_STATEMENT_RE.finditer(visible))
     if not matches:
         raise SportyBetOfficialTimeSemanticsError(
             "official GMT-unless-stated-otherwise semantics statement not found"
         )
-    zones = {match.group("zone") for match in matches}
-    if zones != {TIME_ZONE_LABEL}:
+    if {match.group("zone") for match in matches} != {TIME_ZONE_LABEL}:
         raise SportyBetOfficialTimeSemanticsError(
             "official time semantics are conflicting or not exact GMT"
         )
-    statements = {match.group(0) for match in matches}
-    if statements != {EXPECTED_STATEMENT}:
+    if {match.group(0) for match in matches} != {EXPECTED_STATEMENT}:
         raise SportyBetOfficialTimeSemanticsError(
             "official time semantics statement text mismatch"
         )
@@ -277,9 +275,7 @@ class SportyBetOfficialTimeSemanticsQualification:
         if self.semantics_statement != EXPECTED_STATEMENT:
             raise SportyBetOfficialTimeSemanticsError("semantics_statement mismatch")
         if self.semantics_statement_sha256 != EXPECTED_STATEMENT_SHA256:
-            raise SportyBetOfficialTimeSemanticsError(
-                "semantics_statement_sha256 mismatch"
-            )
+            raise SportyBetOfficialTimeSemanticsError("semantics_statement_sha256 mismatch")
         if (
             type(self.semantics_statement_occurrence_count) is not int
             or self.semantics_statement_occurrence_count < 1
@@ -450,9 +446,7 @@ def _qualification_from_mapping(value: Any) -> SportyBetOfficialTimeSemanticsQua
             observed_at_user_attested=parse_utc_timestamp(
                 value["observed_at_user_attested"], "observed_at_user_attested"
             ),
-            imported_at_utc=parse_utc_timestamp(
-                value["imported_at_utc"], "imported_at_utc"
-            ),
+            imported_at_utc=parse_utc_timestamp(value["imported_at_utc"], "imported_at_utc"),
             observation_authority=value["observation_authority"],
             attestation=value["attestation"],
             athena_network_acquisition_performed=value[
@@ -493,9 +487,7 @@ def _validate_root(output_root: Any, *, repository_root: Path) -> Path:
     except (TypeError, ValueError) as exc:
         raise SportyBetOfficialTimeSemanticsError("output root is invalid") from exc
     if ".." in supplied.parts:
-        raise SportyBetOfficialTimeSemanticsError(
-            "output root must not contain traversal"
-        )
+        raise SportyBetOfficialTimeSemanticsError("output root must not contain traversal")
     supplied_abs = supplied if supplied.is_absolute() else repository / supplied
     try:
         _reject_symlink_components(supplied_abs, "output root")
@@ -516,9 +508,7 @@ def verify_evidence_directory(
     directory = Path(evidence_directory)
     root = Path(allowed_root)
     if ".." in directory.parts or ".." in root.parts:
-        raise SportyBetOfficialTimeSemanticsError(
-            "evidence paths must not contain traversal"
-        )
+        raise SportyBetOfficialTimeSemanticsError("evidence paths must not contain traversal")
     try:
         _reject_symlink_components(directory, "evidence directory")
         _reject_symlink_components(root, "allowed root")
@@ -533,13 +523,14 @@ def verify_evidence_directory(
         raise SportyBetOfficialTimeSemanticsError(
             "evidence directory must be a non-symlink directory"
         )
-    if sorted(item.name for item in directory.iterdir()) != [
-        QUALIFICATION_FILENAME,
-        RAW_FILENAME,
-    ]:
+    try:
+        names = tuple(sorted(item.name for item in directory.iterdir()))
+    except OSError as exc:
         raise SportyBetOfficialTimeSemanticsError(
-            "evidence directory contents mismatch"
-        )
+            "evidence directory cannot be enumerated"
+        ) from exc
+    if names != _EXPECTED_DIRECTORY_FILES:
+        raise SportyBetOfficialTimeSemanticsError("evidence directory contents mismatch")
     try:
         raw = _read_regular(
             directory / RAW_FILENAME,
@@ -556,20 +547,19 @@ def verify_evidence_directory(
         raise SportyBetOfficialTimeSemanticsError(str(exc)) from exc
     qualification = _qualification_from_mapping(mapping)
     if qualification_raw != canonical_qualification_bytes(qualification):
-        raise SportyBetOfficialTimeSemanticsError(
-            "qualification bytes are not canonical"
-        )
+        raise SportyBetOfficialTimeSemanticsError("qualification bytes are not canonical")
     if sha256_bytes(raw) != qualification.raw_sha256 or len(raw) != qualification.raw_size:
         raise SportyBetOfficialTimeSemanticsError("raw HTML identity mismatch")
     zone, occurrences = extract_global_time_semantics(raw)
-    if zone != qualification.time_zone_label or occurrences != qualification.semantics_statement_occurrence_count:
+    if (
+        zone != qualification.time_zone_label
+        or occurrences != qualification.semantics_statement_occurrence_count
+    ):
         raise SportyBetOfficialTimeSemanticsError(
             "stored qualification does not replay from raw HTML"
         )
     if directory.name != evidence_identifier(qualification):
-        raise SportyBetOfficialTimeSemanticsError(
-            "evidence directory identity mismatch"
-        )
+        raise SportyBetOfficialTimeSemanticsError("evidence directory identity mismatch")
     return qualification
 
 
@@ -587,6 +577,37 @@ def _write_exclusive(path: Path, content: bytes) -> None:
     except (OSError, SportyBetLiteCaptureError) as exc:
         raise SportyBetOfficialTimeSemanticsError(
             f"could not durably write {path.name}"
+        ) from exc
+
+
+def _cleanup_partial_directory(directory: Path, root: Path) -> None:
+    """Best-effort is forbidden: either the partial directory is removed or cleanup fails."""
+    try:
+        if not directory.exists():
+            return
+        if directory.is_symlink() or not directory.is_dir():
+            raise SportyBetOfficialTimeSemanticsError(
+                "partial evidence path changed type during cleanup"
+            )
+        entries = list(directory.iterdir())
+        if any(entry.name not in _EXPECTED_DIRECTORY_FILES for entry in entries):
+            raise SportyBetOfficialTimeSemanticsError(
+                "partial evidence directory contains an unexpected entry"
+            )
+        for entry in entries:
+            if entry.is_symlink() or not entry.is_file():
+                raise SportyBetOfficialTimeSemanticsError(
+                    "partial evidence directory contains a non-regular entry"
+                )
+            entry.unlink()
+        _sync_directory(directory)
+        directory.rmdir()
+        _sync_directory(root)
+    except SportyBetOfficialTimeSemanticsError:
+        raise
+    except (OSError, SportyBetLiteCaptureError) as exc:
+        raise SportyBetOfficialTimeSemanticsError(
+            "could not clean partial official time-semantics evidence"
         ) from exc
 
 
@@ -630,26 +651,35 @@ def store_official_time_semantics_evidence(
                 "official time-semantics evidence identifier collision"
             )
         return directory, existing
+
+    created = False
     try:
         directory.mkdir(exist_ok=False)
+        created = True
         _sync_directory(root)
         _sync_directory(directory)
-    except (OSError, SportyBetLiteCaptureError) as exc:
+        _write_exclusive(directory / RAW_FILENAME, raw)
+        _write_exclusive(
+            directory / QUALIFICATION_FILENAME,
+            canonical_qualification_bytes(qualification),
+        )
+        verified = verify_evidence_directory(directory, allowed_root=root)
+        _sync_directory(directory)
+        _sync_directory(root)
+        return directory, verified
+    except (OSError, SportyBetLiteCaptureError, SportyBetOfficialTimeSemanticsError) as exc:
+        if created:
+            try:
+                _cleanup_partial_directory(directory, root)
+            except SportyBetOfficialTimeSemanticsError as cleanup_exc:
+                raise SportyBetOfficialTimeSemanticsError(
+                    "official time-semantics evidence write failed and cleanup also failed"
+                ) from cleanup_exc
+        if isinstance(exc, SportyBetOfficialTimeSemanticsError):
+            raise
         raise SportyBetOfficialTimeSemanticsError(
-            "could not create evidence directory"
+            "could not durably store official time-semantics evidence"
         ) from exc
-    _write_exclusive(directory / RAW_FILENAME, raw)
-    _write_exclusive(
-        directory / QUALIFICATION_FILENAME,
-        canonical_qualification_bytes(qualification),
-    )
-    verified = verify_evidence_directory(directory, allowed_root=root)
-    try:
-        _sync_directory(directory)
-        _sync_directory(root)
-    except SportyBetLiteCaptureError as exc:
-        raise SportyBetOfficialTimeSemanticsError(str(exc)) from exc
-    return directory, verified
 
 
 def parse_observed_at(value: Any) -> dt.datetime:
@@ -662,7 +692,5 @@ def parse_observed_at(value: Any) -> dt.datetime:
 def read_official_time_semantics_html(path: Any) -> bytes:
     try:
         return read_user_html(path)
-    except Exception as exc:
-        if isinstance(exc, SportyBetOfficialTimeSemanticsError):
-            raise
+    except SportyBetUserEvidenceError as exc:
         raise SportyBetOfficialTimeSemanticsError(str(exc)) from exc
