@@ -4,7 +4,7 @@
 
 This implementation realizes the pure research core pre-registered by merged PR #148. It does **not** start the prospective holdout, schedule or perform network acquisition, refit any xG/calibration coefficient, calculate market probabilities, inspect prices, select bets, or authorize production/BET use.
 
-The implementation is intentionally separated from activation. A later reviewed control boundary must resolve the actual holdout start from this implementation merge timestamp and install the network/scheduling/evidence-retention lane. Until then, `fresh_holdout_started = false` and all downstream authority remains false.
+Implementation and activation remain separate. A later reviewed control boundary must resolve the actual holdout start from this implementation merge timestamp and install the network, scheduling and durable evidence-retention lane. Until that later boundary executes, `fresh_holdout_started = false` and every downstream safety flag remains false.
 
 The frozen parent protocol is:
 
@@ -14,7 +14,7 @@ The frozen parent protocol is:
 
 ## Reviewed dependency pins
 
-The implementation fails closed if any numerical/source dependency moves:
+The implementation fails closed if any numerical or source-semantic dependency moves:
 
 - UTC-native feature constructor blob `9c9e424791b65292f7bbe8849b3214c140834889`;
 - fixture-candidate builder blob `a3434951e87cfbd90dd2c43cccd413e7edfb08e0`;
@@ -22,37 +22,33 @@ The implementation fails closed if any numerical/source dependency moves:
 - reviewed ordinary-FT score adapter blob `868563206e09010fce74b4ba7954028930baad54`;
 - exact reviewed PR119 legacy bootstrap projection `10,545,099` bytes / SHA-256 `e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2` / `21,326` rows.
 
-The bootstrap is accepted only by exact bytes. The implementation does not infer its league composition from names or regenerate an approximate replacement.
+The bootstrap is accepted only by exact bytes. Metadata that merely claims the right hash, size or row count cannot construct a normal `FreshHistoryLedger`.
 
 ## Exact holdout start
 
 `resolve_holdout_start(implementation_merge_utc)` returns the first UTC `00:00` boundary strictly after the reviewed implementation merge, never earlier than `2026-08-15T00:00:00Z`.
 
-Because the boundary is strict, a merge exactly at midnight still resolves to the **next** midnight.
-
-The activation/control PR must record the actual merge timestamp and resolved start. This implementation does not guess that timestamp in advance.
+A merge exactly at midnight therefore resolves to the **next** midnight. The activation/control PR must record the actual merge timestamp and the resolved start; this implementation does not guess either in advance.
 
 ## Provider-native capture qualification
 
-`qualify_capture_fixtures(...)` consumes only the existing reviewed `FotMobDataMatchesCaptureManifest` plus exact raw bytes and re-runs the reviewed capture/schema/candidate chain before applying the stricter PR #148 identity checks.
+`qualify_capture_fixtures(...)` consumes the existing reviewed `FotMobDataMatchesCaptureManifest` plus exact raw bytes. It re-runs the reviewed capture/schema/candidate chain and then applies the stricter PR #148 provider-native identity checks.
 
-Every admitted raw wrapper/fixture must prove:
+Every admitted wrapper/fixture must prove:
 
 - `leagues[].primaryId` is an exact positive integer;
-- `leagues[].id` is an exact positive integer and wrapper IDs are unique in a capture;
-- `leagues[].matches[].id` is an exact positive integer and fixture IDs are unique in a capture;
+- `leagues[].id` is an exact positive integer and wrapper IDs are unique inside the capture;
+- `leagues[].matches[].id` is an exact positive integer and fixture IDs are unique inside the capture;
 - `leagues[].matches[].leagueId` is an exact positive integer and equals the containing wrapper `id` exactly;
-- home/away source team IDs are exact positive integers and different;
+- home and away source team IDs are exact positive integers and differ;
 - `status.utcTime` is exact UTC `Z` time;
 - raw SHA-256 and reviewed candidate extraction agree exactly with the admitted identity.
 
-Names, aliases and `model_league_code` are never used to create competition identity. A structurally malformed/non-legacy wrapper fails closed rather than being fuzzily admitted.
+Names, aliases and `model_league_code` never create competition identity. A structurally malformed wrapper fails closed rather than being fuzzily admitted.
 
-## Pre-kickoff capture selection
+## Prospective pre-kickoff seal
 
-`select_earliest_qualifying_capture(...)` requires all observations supplied for one fixture to agree on fixture ID, provider `primaryId`, wrapper ID, team IDs and kickoff UTC.
-
-A capture qualifies only when:
+`select_earliest_qualifying_capture(...)` accepts observations for exactly one FotMob fixture ID. A capture qualifies only when:
 
 `holdout_start <= capture_observed_at`
 
@@ -60,27 +56,38 @@ and
 
 `kickoff - 24h <= capture_observed_at <= kickoff - 60m`.
 
-The earliest qualifying capture is selected; capture-manifest SHA is the deterministic tie-break. No qualifying capture returns `None` and may not later be retrofilled from post-result evidence.
+The **earliest** qualifying observation is the prospective seal. If two observations at that exact earliest `observed_at` disagree on provider `primaryId`, wrapper ID, team IDs or kickoff, selection fails closed as ambiguous. A later observation does not retroactively replace the earliest seal.
+
+This distinction matters: later identity/kickoff drift is an exclusion condition, not permission to mutate or retime the original prediction.
+
+No qualifying capture returns `None`; it may not later be retrofilled from post-result evidence.
 
 ## Exact legacy-history state
 
-Fresh prediction state is seeded from the exact reviewed PR119 materialization projection. Each row is canonical, has reviewed source namespace `fotmob_data_matches_reviewed_ordinary_ft_finished_score`, and carries immutable result/evidence lineage. `build_fresh_history_ledger(...)` accepts that bootstrap only when its complete `10,545,099` bytes and SHA-256 match exactly; the public prediction API requires the resulting `FreshHistoryLedger` rather than an arbitrary caller-supplied history list.
+Fresh prediction state is seeded from the exact reviewed PR119 materialization projection. `FreshHistoryLedger` has no normal metadata/row constructor: its normal constructor requires the exact bootstrap bytes and re-parses them before a ledger exists.
 
-Reviewed fresh ordinary-FT settlements from the frozen 11 provider-primary-ID history scope may then be appended to the ledger. Non-legacy settlement rows cannot enter the history ledger.
+Reviewed fresh ordinary-FT settlements from the frozen 11 provider-primary-ID history scope may be appended later. The append API accepts the settlement-derived `SettledFreshPrediction`, revalidates its original seal against the current ledger, and only then appends its legacy history update. An arbitrary caller-created history row cannot use the public append path.
+
+The frozen update scope remains:
+
+`{40,47,53,54,55,57,61,64,71,87,135}`.
+
+Non-legacy settlement results may be evaluated, but they never update form/Elo/fatigue history state.
 
 For a target capture, only result rows satisfying both are replayed:
 
-- result kickoff is strictly before the target kickoff;
+- result kickoff is strictly before target kickoff;
 - reviewed result evidence was observed no later than the selected capture `observed_at`.
 
-The implementation then calls the already-reviewed UTC-native constructor rather than copying its mathematics. A synthetic target row with dummy `0-0` score is appended **only** so the constructor emits the target's pre-match feature row. The constructor calculates all target features before applying that target row's pending result update, so the dummy score never influences the sealed target features and is never persisted as history.
+The implementation then calls the already-reviewed UTC-native feature constructor rather than duplicating its mathematics. A synthetic target row with dummy `0-0` score exists only so that constructor emits the target's **pre-match** feature row. The constructor calculates all target features before applying the target row's pending result update, so the dummy result never influences the sealed features and is never persisted as history.
 
-The inherited reviewed semantics therefore remain exactly:
+The inherited feature semantics remain:
 
-- pre-match overall Elo, 1500 initial state, home +50 expected-score boost, divisor 400, K `32/24/16`, integer update;
+- overall pre-match Elo with frozen 1500 initial state, home +50 expected-score boost, divisor 400, K `32/24/16`, integer update;
 - recent-five form with the reviewed `0.10..0.95` formula and no default;
 - reviewed home-relative rest-day fatigue and no default;
-- UTC ordering and same-kickoff batching before state mutation.
+- strictly prior UTC history with same-kickoff batching before state mutation;
+- historical live-data freshness remains the exact reviewed blocked/null historical state.
 
 If home form, away form or fatigue is unavailable, the result is explicit `MISSING_REVIEWED_FEATURES`; nothing is imputed.
 
@@ -105,7 +112,8 @@ A `SealedFreshPrediction` binds:
 
 - resolved holdout start;
 - exact fixture/provider competition identity;
-- selected capture timestamp + manifest/raw SHA lineage;
+- selected capture timestamp plus manifest/raw SHA lineage;
+- exact reviewed bootstrap SHA-256;
 - history-prefix hash/count;
 - feature-projection hash;
 - five feature values;
@@ -113,26 +121,53 @@ A `SealedFreshPrediction` binds:
 - exact PR #148 protocol identity;
 - all safety flags false.
 
-The dataclass itself rechecks holdout-start and 24h-to-60m temporal admission, so callers cannot construct a valid-looking seal outside the pre-registration window.
+The dataclass itself reconstructs every rate from the frozen five features and rejects coherent-looking rate tampering. Before settlement, `revalidate_sealed_prediction(...)` rebuilds the complete seal from the exact history ledger and selected capture; a caller who changes both features and rates coherently still fails because the rebuilt canonical seal no longer matches.
+
+## Post-seal identity drift
+
+PR #148 states that if the provider later changes kickoff, the old prediction is excluded and may not be reused, retimed or mapped onto the rescheduled fixture.
+
+`post_seal_identity_drifted(...)` therefore compares every preserved post-seal observation for that fixture against the original sealed identity:
+
+- fixture ID;
+- provider `primaryId`;
+- wrapper ID;
+- home/away team IDs;
+- sealed kickoff UTC.
+
+Any observed difference is permanently excluding for that seal. A provider change followed by a later reversion does **not** restore eligibility.
+
+The next control lane has an important completeness duty: every qualified observation it makes after a seal must be retained in the fixture's post-seal identity journal and supplied at settlement. Omitting a known intermediate drift would violate the reviewed boundary.
 
 ## Reviewed ordinary-FT settlement binding
 
-`settle_sealed_prediction(...)` accepts the **reviewed pair-adapter result**, not a caller-fabricated score mapping. The adapter result must be `QUALIFIED_WITH_ORDINARY_FT_SCORES` and the sealed fixture must match exactly one qualified score.
+The public `settle_sealed_prediction(...)` does **not** accept a caller-fabricated score mapping or a prebuilt adapter result as sufficient evidence. It requires:
 
-Settlement must preserve exact:
+- the exact `FreshHistoryLedger` used to deterministically replay the seal;
+- every preserved post-seal identity observation;
+- first raw post-finish capture + exact reviewed manifest;
+- second raw post-finish capture + exact reviewed manifest.
 
-- fixture ID;
-- wrapper/league ID;
-- home and away team IDs;
-- sealed kickoff UTC.
+The function then:
 
-The settlement evidence hash binds the sealed prediction SHA to both adapter capture lineages and the exact qualified ordinary-FT score.
+1. revalidates the sealed prediction against exact ledger state;
+2. re-runs provider-native qualification on both raw settlement captures;
+3. re-proves provider `primaryId`, wrapper ID, fixture/team identity and sealed kickoff from those raw captures;
+4. combines those settlement identities with the preserved post-seal identity journal and excludes if **any** observation drifted;
+5. invokes the existing reviewed ordinary-FT capture-pair adapter;
+6. scores only if the sealed fixture passes that reviewed ordinary-FT gate.
 
-If the sealed provider `primaryId` belongs to `{40,47,53,54,55,57,61,64,71,87,135}`, the settled result is emitted as an authorized **research history-state update** for later fresh predictions. A non-legacy result is still evaluated/settled but produces no history-state update. This is the frozen feature-scope rule from PR #148; it is not production/model-training authorization.
+This raw-pair requalification is necessary because the reviewed ordinary-FT score adapter retains wrapper/league ID but does not retain provider `primaryId` in its score object.
+
+Cancelled, postponed, awarded, penalty, extra-time, unstable or otherwise unreviewed results do not become scored holdout labels.
+
+The final settlement evidence SHA binds the prediction SHA, exact provider competition identity, both raw/manifest pair lineages and the exact qualified score.
+
+A legacy-primary settlement emits one research history-state update. A non-legacy settlement emits none.
 
 ## Count-only close state machine
 
-`coverage_at_boundary(...)` intentionally accepts sealed predictions only—no goals, NLL, WACE, WSCE or other performance input.
+`coverage_at_boundary(...)` intentionally accepts sealed predictions only—no goals, NLL, WACE, WSCE or other performance input—and rejects a population that mixes different resolved holdout starts.
 
 Population membership is exactly:
 
@@ -155,11 +190,11 @@ At a UTC boundary it reports:
 - minimum boundary = `holdout_start + 28 days` exactly;
 - hard close = `holdout_start + 90 days` exactly;
 - before minimum: remain open;
-- at/after minimum: close immediately at the first boundary all count-only gates pass;
+- at/after minimum: close immediately at the first UTC midnight where all count-only gates pass;
 - at hard close with insufficient coverage: `FRESH_HOLDOUT_INSUFFICIENT_COVERAGE_NO_SUCCESSOR_DECISION`;
 - boundaries after hard close are invalid.
 
-Kickoff is right-exclusive at the selected close boundary. Result arrival time cannot select membership.
+Kickoff is right-exclusive at the selected close boundary. Result arrival time cannot choose membership. Goals or model performance cannot choose when the population closes.
 
 ## What this PR deliberately does not implement
 
@@ -167,17 +202,17 @@ This PR does not:
 
 - schedule or call FotMob;
 - choose the implementation merge timestamp in advance;
-- create durable capture/prediction journals;
+- create the durable capture/prediction/post-seal-drift journals;
 - upload fresh artifacts;
 - start the 28/90-day clock;
 - calculate the final pooled WACE/WSCE/NLL or competition jackknife result;
 - approve a successor;
 - authorize ScoreMatrix, probability, pricing, selection, production or BET use.
 
-The final result evaluator can be implemented before the minimum 28-day review boundary from the already-frozen PR #148 mathematics without changing the fresh evidence that collection has sealed.
+The final result evaluator may be implemented before the minimum 28-day review boundary from the already-frozen PR #148 mathematics without altering the fresh evidence sealed by the collection lane.
 
 ## Next boundary
 
 `INSTALL_REVIEWED_FRESH_HOLDOUT_FOTMOB_UTC_NATIVE_EXPECTED_GOALS_COLLECTION_CONTROL`
 
-That next PR should install the smallest reviewed activation/scheduling/evidence-retention lane around this pure core. Its merge/execution boundary must remain separate from this implementation PR.
+That next PR should install the smallest reviewed activation/scheduling/evidence-retention lane around this pure core. Its merge/execution boundary must remain separate from this implementation PR, and it must durably preserve both the prediction seal and every subsequent identity/kickoff observation for each sealed fixture.
