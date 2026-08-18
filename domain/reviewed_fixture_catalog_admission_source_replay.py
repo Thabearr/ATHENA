@@ -127,12 +127,7 @@ def _strict_sha256(value: Any, label: str) -> str:
     return value
 
 
-def _strict_string(
-    value: Any,
-    label: str,
-    *,
-    non_empty: bool = True,
-) -> str:
+def _strict_string(value: Any, label: str, *, non_empty: bool = True) -> str:
     if type(value) is not str:
         raise ReviewedFixtureCatalogAdmissionSourceReplayError(
             f"{label} must be an exact string"
@@ -220,9 +215,7 @@ class ReviewedFixtureCatalogAdmissionReplayDecision:
         }
 
 
-def canonical_replay_decision_bytes(
-    value: Any,
-) -> bytes:
+def canonical_replay_decision_bytes(value: Any) -> bytes:
     if type(value) is not ReviewedFixtureCatalogAdmissionReplayDecision:
         raise ReviewedFixtureCatalogAdmissionSourceReplayError(
             "replay decision type mismatch"
@@ -368,14 +361,13 @@ def build_source_replayed_admission(
             "replay_decision type mismatch"
         )
     try:
-        admission = build_reviewed_fixture_catalog_admission(
+        return build_reviewed_fixture_catalog_admission(
             handoff,
             fixture_catalog_result,
             replay_decision.decision,
         )
     except ReviewedFixtureCatalogAdmissionError as exc:
         raise ReviewedFixtureCatalogAdmissionSourceReplayError(str(exc)) from exc
-    return admission
 
 
 def _validate_output_root(
@@ -523,7 +515,7 @@ def _cleanup_partial(directory: Path, root: Path) -> None:
         ) from exc
 
 
-def verify_source_replayed_admission_directory(
+def _verify_semantic_admission_directory(
     admission_directory: Any,
     *,
     handoff: Any,
@@ -531,6 +523,8 @@ def verify_source_replayed_admission_directory(
     repository_root: Path,
     output_root: Path = ALLOWED_OUTPUT_RELATIVE,
 ) -> ReviewedFixtureCatalogAdmission:
+    """Internal semantic check; public consumers must replay source files first."""
+
     repository, root = _validate_output_root(
         output_root,
         repository_root=repository_root,
@@ -594,7 +588,7 @@ def store_source_replayed_admission(
 
     directory = root / sha256_reviewed_fixture_catalog_admission(admission)[:24]
     if directory.exists():
-        verified = verify_source_replayed_admission_directory(
+        verified = _verify_semantic_admission_directory(
             directory,
             handoff=handoff,
             fixture_catalog_result=fixture_catalog_result,
@@ -616,7 +610,7 @@ def store_source_replayed_admission(
         _sync_directory(directory)
         _write_exclusive(directory / ADMISSION_FILENAME, admission_raw)
         _write_exclusive(directory / DECISION_FILENAME, decision_raw)
-        verified = verify_source_replayed_admission_directory(
+        verified = _verify_semantic_admission_directory(
             directory,
             handoff=handoff,
             fixture_catalog_result=fixture_catalog_result,
@@ -663,5 +657,4 @@ __all__ = [
     "parse_replay_decision_bytes",
     "replay_decision_sha256",
     "store_source_replayed_admission",
-    "verify_source_replayed_admission_directory",
 ]
