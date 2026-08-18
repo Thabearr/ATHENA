@@ -60,6 +60,7 @@ ALLOWED_OUTPUT_RELATIVE = Path(
 )
 MAX_METADATA_MANIFEST_BYTES = MAX_MANIFEST_BYTES
 
+_LEGACY_EVENT_ID_RE = re.compile(r"^sr:match:[1-9][0-9]*$", flags=re.ASCII)
 _SPORT_EVENT_ID_RE = re.compile(r"^sr:sport_event:[1-9][0-9]*$", flags=re.ASCII)
 _SPORT_ID_RE = re.compile(r"^sr:sport:[1-9][0-9]*$", flags=re.ASCII)
 _COMPETITION_ID_RE = re.compile(r"^sr:competition:[1-9][0-9]*$", flags=re.ASCII)
@@ -441,20 +442,32 @@ class SportradarUserControlledEventMetadataEvidence:
                 "imported_at_utc must not precede user-attested observation"
             )
         if self.observation_authority != OBSERVATION_AUTHORITY or self.attestation != ATTESTATION:
-            raise SportradarUserControlledEventMetadataError("observation authority/attestation mismatch")
+            raise SportradarUserControlledEventMetadataError(
+                "observation authority/attestation mismatch"
+            )
         if self.athena_network_acquisition_performed is not False:
-            raise SportradarUserControlledEventMetadataError("ATHENA network acquisition must remain false")
+            raise SportradarUserControlledEventMetadataError(
+                "ATHENA network acquisition must remain false"
+            )
         if self.api_key_persisted is not False or self.request_headers_persisted is not False:
             raise SportradarUserControlledEventMetadataError(
                 "API keys and request headers must never be persisted"
             )
         _hash(self.source_bridge_sha256, "source_bridge_sha256")
-        _provider_id(self.source_sportybet_event_id, "source_sportybet_event_id", re.compile(r"^sr:match:[1-9][0-9]*$", flags=re.ASCII))
+        legacy_id = _provider_id(
+            self.source_sportybet_event_id,
+            "source_sportybet_event_id",
+            _LEGACY_EVENT_ID_RE,
+        )
         current_id = _provider_id(
             self.source_sportradar_event_id,
             "source_sportradar_event_id",
             _SPORT_EVENT_ID_RE,
         )
+        if legacy_id.removeprefix("sr:match:") != current_id.removeprefix("sr:sport_event:"):
+            raise SportradarUserControlledEventMetadataError(
+                "legacy/current event IDs must preserve the exact numeric payload"
+            )
         if source_event_id != current_id:
             raise SportradarUserControlledEventMetadataError(
                 "source URL event ID does not match source_sportradar_event_id"
@@ -468,8 +481,11 @@ class SportradarUserControlledEventMetadataEvidence:
             raise SportradarUserControlledEventMetadataError("response event identity mismatch")
         if self.sport_id != bridge.SOCCER_SPORT_ID:
             raise SportradarUserControlledEventMetadataError("sport_id mismatch")
-        _parse_provider_timestamp(self.start_time, "start_time")
-        _parse_provider_timestamp(self.start_time_utc_normalized, "start_time_utc_normalized")
+        _, normalized_start = _parse_provider_timestamp(self.start_time, "start_time")
+        if self.start_time_utc_normalized != normalized_start:
+            raise SportradarUserControlledEventMetadataError(
+                "start_time_utc_normalized does not match exact start_time"
+            )
         _optional_bool(self.start_time_confirmed, "start_time_confirmed")
         _optional_bool(self.date_confirmed, "date_confirmed")
         if self.replaced_by is not None:
@@ -480,6 +496,10 @@ class SportradarUserControlledEventMetadataEvidence:
         _provider_id(self.away_competitor_id, "away_competitor_id", _COMPETITOR_ID_RE)
         _text(self.home_competitor_name, "home_competitor_name")
         _text(self.away_competitor_name, "away_competitor_name")
+        if self.home_competitor_id == self.away_competitor_id:
+            raise SportradarUserControlledEventMetadataError(
+                "home and away competitor IDs must be distinct"
+            )
         if (self.provider_generated_at is None) != (
             self.provider_generated_at_utc_normalized is None
         ):
@@ -487,11 +507,13 @@ class SportradarUserControlledEventMetadataEvidence:
                 "provider generated timestamp fields must be both null or both populated"
             )
         if self.provider_generated_at is not None:
-            _parse_provider_timestamp(self.provider_generated_at, "provider_generated_at")
-            _parse_provider_timestamp(
-                self.provider_generated_at_utc_normalized,
-                "provider_generated_at_utc_normalized",
+            _, normalized_generated = _parse_provider_timestamp(
+                self.provider_generated_at, "provider_generated_at"
             )
+            if self.provider_generated_at_utc_normalized != normalized_generated:
+                raise SportradarUserControlledEventMetadataError(
+                    "provider_generated_at_utc_normalized does not match exact provider_generated_at"
+                )
         for field_name in (
             "exact_bridge_identity_matched",
             "official_response_event_identity_matched",
@@ -515,7 +537,7 @@ class SportradarUserControlledEventMetadataEvidence:
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
-        result = dataclasses.asdict(self)
+        result = {field.name: getattr(self, field.name) for field in dataclasses.fields(self)}
         result["observed_at_user_attested"] = serialize_utc(self.observed_at_user_attested)
         result["imported_at_utc"] = serialize_utc(self.imported_at_utc)
         result["safety"] = dict(self.safety)
@@ -665,7 +687,9 @@ def revalidate_event_metadata_evidence(
 
 
 def _manifest_from_mapping(value: Any) -> SportradarUserControlledEventMetadataEvidence:
-    expected = {field.name for field in dataclasses.fields(SportradarUserControlledEventMetadataEvidence)}
+    expected = {
+        field.name for field in dataclasses.fields(SportradarUserControlledEventMetadataEvidence)
+    }
     if not isinstance(value, Mapping) or set(value) != expected:
         raise SportradarUserControlledEventMetadataError("manifest keys mismatch")
     converted = dict(value)
@@ -694,7 +718,9 @@ def _validate_root(output_root: Any, *, repository_root: Path) -> Path:
     except (TypeError, ValueError) as exc:
         raise SportradarUserControlledEventMetadataError("output root is invalid") from exc
     if ".." in supplied.parts:
-        raise SportradarUserControlledEventMetadataError("output root must not contain traversal")
+        raise SportradarUserControlledEventMetadataError(
+            "output root must not contain traversal"
+        )
     supplied_abs = supplied if supplied.is_absolute() else repository / supplied
     try:
         _reject_symlink_components(supplied_abs, "output root")
@@ -748,7 +774,9 @@ def verify_evidence_directory(
             "evidence directory must be a non-symlink directory"
         )
     if tuple(sorted(item.name for item in directory.iterdir())) != _EXPECTED_DIRECTORY_FILES:
-        raise SportradarUserControlledEventMetadataError("evidence directory contents mismatch")
+        raise SportradarUserControlledEventMetadataError(
+            "evidence directory contents mismatch"
+        )
     try:
         raw = _read_regular(
             directory / RAW_FILENAME,
@@ -771,7 +799,9 @@ def verify_evidence_directory(
     except SportradarUserControlledEventMetadataError:
         raise
     except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
-        raise SportradarUserControlledEventMetadataError("manifest JSON is invalid") from exc
+        raise SportradarUserControlledEventMetadataError(
+            "manifest JSON is invalid"
+        ) from exc
     manifest = _manifest_from_mapping(mapping)
     if manifest_raw != canonical_manifest_bytes(manifest):
         raise SportradarUserControlledEventMetadataError("manifest bytes are not canonical")
@@ -824,8 +854,13 @@ def store_event_metadata_evidence(
             )
         except SportyBetLiteCaptureError as exc:
             raise SportradarUserControlledEventMetadataError(str(exc)) from exc
-        if canonical_manifest_bytes(existing) != canonical_manifest_bytes(evidence) or existing_raw != raw_response:
-            raise SportradarUserControlledEventMetadataError("evidence identifier collision")
+        if (
+            canonical_manifest_bytes(existing) != canonical_manifest_bytes(evidence)
+            or existing_raw != raw_response
+        ):
+            raise SportradarUserControlledEventMetadataError(
+                "evidence identifier collision"
+            )
         return directory, existing
     try:
         directory.mkdir(exist_ok=False)
