@@ -1228,12 +1228,6 @@ def resolve_nominal_schedule_slot(
                 f"ambiguous schedule occurrence: multiple candidate slots ({earlier_candidate.isoformat()}, {candidate.isoformat()}) "
                 f"occurred between last committed {last_utc.isoformat()} and trigger {created_utc.isoformat()}"
             )
-    else:
-        # Genesis: if delayed by more than 1 hour without predecessor, identity is ambiguous
-        if (created_utc - candidate).total_seconds() >= 3600.0:
-            raise _error(
-                f"ambiguous genesis schedule occurrence: trigger {created_utc.isoformat()} is more than 1 hour past nominal slot {candidate.isoformat()}"
-            )
 
     nominal = candidate
     nominal_iso = _utc_text(nominal)

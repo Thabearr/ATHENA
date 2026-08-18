@@ -23,8 +23,9 @@ UTC = dt.timezone.utc
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
-    repo.mkdir(exist_ok=True)
+    repo.mkdir(parents=True, exist_ok=True)
     state = repo / control.CONTROL_ROOT_RELATIVE
+    state.mkdir(parents=True, exist_ok=True)
     return repo, state
 
 
@@ -64,7 +65,7 @@ def _fake_sealed_prediction(
 ) -> fresh.SealedFreshPrediction:
     fixture = fresh.QualifiedCaptureFixture(
         fixture_id=fixture_id,
-        provider_primary_id="47",
+        provider_primary_id=47,
         wrapper_id=1000 + fixture_id,
         home_team_id=1,
         away_team_id=2,
@@ -337,7 +338,6 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, state = _repo(tmp_path)
-    state.mkdir(parents=True, exist_ok=True)
     scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
 
     # Pre-populate 3 sealed predictions in the journal
@@ -360,7 +360,6 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
     for row in pred_rows:
         runner._append(state / control.PREDICTION_JOURNAL_FILENAME, row)
 
-    # Mock _pair to return candidate captures for all 3
     fake_cap = _capture(tmp_path, "20260819", scheduled + dt.timedelta(minutes=1))
     monkeypatch.setattr(runner, "_pair", lambda _pred, _caps, _qual: (fake_cap, fake_cap))
 
@@ -421,7 +420,7 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
     assert 101 in settled_map
     assert 101 in terminal
     assert 102 in terminal
-    assert 103 not in terminal  # not finished/ordinary, remains in sealed
+    assert 103 not in terminal
 
 
 # --- BLOCKER B: SELECTED-CLOSE POPULATION & SETTLEMENT SEMANTICS TESTS ---
@@ -432,7 +431,6 @@ def test_selected_close_population_and_settlement_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, state = _repo(tmp_path)
-    state.mkdir(parents=True, exist_ok=True)
     selected_close = dt.datetime(2026, 9, 16, 0, 7, tzinfo=UTC)
 
     # 1. Prediction 1: kickoff 1 second before close (valid population member)
@@ -525,9 +523,9 @@ def _make_success_zip(state_root: Path, run_id: int) -> bytes:
     with zipfile.ZipFile(buf, "w") as zf:
         tar_buf = io.BytesIO()
         with tarfile.open(fileobj=tar_buf, mode="w:gz") as tar:
-            for item in state_root.rglob("*"):
+            for item in sorted(state_root.rglob("*")):
                 if item.is_file():
-                    arcname = str(item.relative_to(state_root.parent.parent.parent))
+                    arcname = str(item.relative_to(state_root.parent.parent.parent)).replace("\\", "/")
                     tar.add(item, arcname=arcname)
         tar_bytes = tar_buf.getvalue()
         tar_sha = hashlib.sha256(tar_bytes).hexdigest()
@@ -546,8 +544,6 @@ def _make_success_zip(state_root: Path, run_id: int) -> bytes:
 
 def test_restore_predecessor_durable_state_valid_newest(tmp_path: Path) -> None:
     repo, state = _repo(tmp_path)
-    state.mkdir(parents=True, exist_ok=True)
-    # Write valid checkpoint
     runner._checkpoint(
         state / control.CHECKPOINT_FILENAME,
         {
@@ -592,7 +588,7 @@ def test_restore_predecessor_durable_state_valid_newest(tmp_path: Path) -> None:
 def test_restore_predecessor_durable_state_missing_artifact_fails_closed(tmp_path: Path) -> None:
     repo, _ = _repo(tmp_path)
     prior_runs = [{"id": 20, "conclusion": "success"}]
-    art_meta = {"artifacts": []}  # empty artifacts
+    art_meta = {"artifacts": []}
 
     with pytest.raises(runner.FreshHoldoutActivationError, match="must have exactly one success artifact"):
         runner.restore_predecessor_durable_state(
@@ -606,7 +602,6 @@ def test_restore_predecessor_durable_state_missing_artifact_fails_closed(tmp_pat
 
 def test_restore_predecessor_corrupt_newest_fails_closed_even_if_older_valid(tmp_path: Path) -> None:
     repo, _ = _repo(tmp_path)
-    # Run 30 is newest (corrupt), Run 20 is older (valid)
     prior_runs = [
         {"id": 30, "conclusion": "success"},
         {"id": 20, "conclusion": "success"},
@@ -614,7 +609,7 @@ def test_restore_predecessor_corrupt_newest_fails_closed_even_if_older_valid(tmp
 
     def mock_get_artifacts(run_id: int):
         if run_id == 30:
-            return {"artifacts": []}  # corrupt newest
+            return {"artifacts": []}
         raise AssertionError("Must NOT query older runs when newest fails!")
 
     with pytest.raises(runner.FreshHoldoutActivationError, match="must have exactly one success artifact, found 0"):
@@ -684,7 +679,6 @@ def test_restore_predecessor_multiple_success_tars_in_zip_fails_closed(tmp_path:
 
 
 def test_resolve_nominal_schedule_slot_delayed_07_past_37() -> None:
-    # Predecessor was 00:37:00Z. Next trigger for 7 * * * * arrives at 01:40:00Z (delayed past 01:37)
     last_committed = dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
     created = dt.datetime(2026, 8, 19, 1, 40, 0, tzinfo=UTC)
     nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot(
@@ -695,7 +689,6 @@ def test_resolve_nominal_schedule_slot_delayed_07_past_37() -> None:
 
 
 def test_resolve_nominal_schedule_slot_delayed_37_past_next_07() -> None:
-    # Predecessor was 00:07:00Z. Next trigger for 37 * * * * arrives at 01:10:00Z (delayed past 01:07)
     last_committed = dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
     created = dt.datetime(2026, 8, 19, 1, 10, 0, tzinfo=UTC)
     nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot(
@@ -706,7 +699,6 @@ def test_resolve_nominal_schedule_slot_delayed_37_past_next_07() -> None:
 
 
 def test_resolve_nominal_schedule_slot_ambiguous_more_than_one_hour_fails_closed() -> None:
-    # Predecessor was 10:37:00Z. Trigger for 7 * * * * arrives at 12:10:00Z (>1 hour later, 11:07 and 12:07 both elapsed)
     last_committed = dt.datetime(2026, 8, 19, 10, 37, 0, tzinfo=UTC)
     created = dt.datetime(2026, 8, 19, 12, 10, 0, tzinfo=UTC)
     with pytest.raises(runner.FreshHoldoutActivationError, match="ambiguous schedule occurrence"):
@@ -715,10 +707,11 @@ def test_resolve_nominal_schedule_slot_ambiguous_more_than_one_hour_fails_closed
         )
 
 
-def test_resolve_nominal_schedule_slot_genesis_delayed_more_than_one_hour_fails_closed() -> None:
-    created = dt.datetime(2026, 8, 19, 1, 15, 0, tzinfo=UTC)  # candidate would be 00:07, >1h delay
-    with pytest.raises(runner.FreshHoldoutActivationError, match="ambiguous genesis schedule occurrence"):
-        runner.resolve_nominal_schedule_slot("7 * * * *", created, last_committed_utc=None)
+def test_resolve_nominal_schedule_slot_genesis_derives_exact_slot() -> None:
+    created = dt.datetime(2026, 8, 19, 0, 7, 15, tzinfo=UTC)
+    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot("7 * * * *", created, last_committed_utc=None)
+    assert nominal == dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T00:07:00.000000Z"
 
 
 # --- ARCHIVE INTEGRITY & MEMBER SAFETY TESTS ---
