@@ -30,10 +30,16 @@ The scored-population close can occur earlier than hard close. Beginning at the 
 The activation runner must use an outcome-independent UTC cadence:
 
 - every **30 minutes**;
-- exact nominal UTC minutes `:00` and `:30`;
+- exact nominal UTC minutes `:07` and `:37`;
 - no goal, result, NLL, WACE, WSCE, competition performance, bookmaker price, or bet state may alter that cadence.
 
+The off-hour slots deliberately avoid the start-of-hour scheduling peak while preserving the same 30-minute spacing.
+
 The nominal scheduled tick is control identity only. The live runner must retain the **actual reviewed capture `observed_at`** returned by the existing FotMob capture path; scheduler delay may never be rewritten as the nominal tick time.
+
+Scheduled execution is treated as best-effort transport, not evidence authority. A delayed or dropped scheduled run is a missing capture opportunity and must be journaled. It may reduce power or eventually produce the frozen insufficient-coverage state, but it never authorizes a synthetic observation, a backdated capture, or a post-result prediction retrofill.
+
+For a public repository, automatic schedule disablement after a long inactivity period is handled the same way: as a coverage/continuity risk. It cannot change the frozen start, move the selected close, or create backfill authority.
 
 During prediction/settlement collection, each tick plans three existing reviewed FotMob `data/matches` request dates:
 
@@ -119,6 +125,8 @@ with append-only or immutable evidence including:
 The runner must preserve the exact raw capture directories produced by the existing reviewed FotMob capture utility. Journal entries may reference those immutable captures/manifests by SHA; they may not replace the raw evidence.
 
 Close state must be reconstructible and revalidated from the durable prediction journal. A checkpoint claiming the population is still open cannot override a previously selected close receipt.
+
+The control journal must also record detected scheduler gaps or disabled-schedule intervals. A later run may resume future captures, but missed prospective capture opportunities remain missing permanently.
 
 ## Prediction durability rule
 
