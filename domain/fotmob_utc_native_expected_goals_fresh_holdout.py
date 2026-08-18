@@ -5,8 +5,10 @@ provider-native fixture identity from caller-supplied reviewed FotMob captures,
 selects the frozen pre-kickoff observation, reconstructs the exact reviewed
 UTC-native five-feature state from the immutable legacy bootstrap plus reviewed
 fresh legacy settlements, seals the frozen native/Elo/calibrated xG rates, and
-binds reviewed ordinary-FT settlement evidence. It performs no network
-request, installs no scheduler, and grants no production/BET authority.
+binds settlement through the reviewed ordinary-FT capture-pair adapter.
+
+It performs no network request, installs no scheduler, calculates no bookmaker
+price/probability/selection decision, and grants no production/BET authority.
 """
 from __future__ import annotations
 
@@ -50,6 +52,16 @@ BOOTSTRAP_PROJECTION_ROWS = 21_326
 SOURCE_NAMESPACE = "fotmob_data_matches_reviewed_ordinary_ft_finished_score"
 
 SAFETY_KEYS = tuple(sorted(pr148.SAFETY_KEYS))
+_FEATURE_IDS = ("home_elo", "away_elo", "home_form", "away_form", "fatigue")
+_FORM_STATUS = "CONSTRUCTED_FROM_STRICTLY_PRIOR_UTC_HISTORY"
+_ELO_STATUSES = frozenset(
+    {
+        "CONSTRUCTED_FROM_FROZEN_INITIAL_STATE_ASSUMPTION",
+        "CONSTRUCTED_FROM_STRICTLY_PRIOR_UTC_HISTORY",
+    }
+)
+_FRESH_UPDATE_KIND = "FRESH_REVIEWED_ORDINARY_FT_LEGACY_UPDATE"
+_BOOTSTRAP_KIND = "REVIEWED_PR119_BOOTSTRAP"
 
 
 class FotMobFreshHoldoutError(RuntimeError):
@@ -59,6 +71,14 @@ class FotMobFreshHoldoutError(RuntimeError):
 class PredictionDisposition(str, enum.Enum):
     SEALED_COMPLETE_CASE = "SEALED_COMPLETE_CASE"
     MISSING_REVIEWED_FEATURES = "MISSING_REVIEWED_FEATURES"
+
+
+class SettlementDisposition(str, enum.Enum):
+    SETTLED_REVIEWED_ORDINARY_FT = "SETTLED_REVIEWED_ORDINARY_FT"
+    EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT = (
+        "EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT"
+    )
+    EXCLUDED_NOT_REVIEWED_ORDINARY_FT = "EXCLUDED_NOT_REVIEWED_ORDINARY_FT"
 
 
 class HoldoutBoundaryDecision(str, enum.Enum):
@@ -170,11 +190,73 @@ def _safety() -> Mapping[str, bool]:
     return types.MappingProxyType({key: False for key in SAFETY_KEYS})
 
 
+def _rate(
+    predictors: Sequence[float], coefficients: Sequence[float], label: str
+) -> float:
+    if len(predictors) != len(coefficients):
+        raise _error(f"{label} predictor/coefficient dimension mismatch")
+    eta = math.fsum(
+        float(value) * float(coefficient)
+        for value, coefficient in zip(predictors, coefficients)
+    )
+    if not math.isfinite(eta):
+        raise _error(f"{label} linear predictor is non-finite")
+    try:
+        value = math.exp(eta)
+    except OverflowError as exc:
+        raise _error(f"{label} expected-goals rate overflowed") from exc
+    if not math.isfinite(value) or value <= 0.0:
+        raise _error(f"{label} expected-goals rate must be finite and positive")
+    return value
+
+
+def _rates_from_features(features: Mapping[str, float]) -> dict[str, float]:
+    if set(features) != set(_FEATURE_IDS):
+        raise _error("rate construction requires the exact five reviewed features")
+    predictors = (
+        1.0,
+        (float(features["home_elo"]) - 1500.0) / 400.0,
+        (float(features["away_elo"]) - 1500.0) / 400.0,
+        float(features["home_form"]) - 0.5,
+        float(features["away_form"]) - 0.5,
+        float(features["fatigue"]),
+    )
+    elo_predictors = predictors[:3]
+    native_home = _rate(
+        predictors, pr148.NATIVE_HOME_COEFFICIENTS, "native home"
+    )
+    native_away = _rate(
+        predictors, pr148.NATIVE_AWAY_COEFFICIENTS, "native away"
+    )
+    elo_home = _rate(
+        elo_predictors, pr148.ELO_ONLY_HOME_COEFFICIENTS, "Elo-only home"
+    )
+    elo_away = _rate(
+        elo_predictors, pr148.ELO_ONLY_AWAY_COEFFICIENTS, "Elo-only away"
+    )
+    try:
+        calibrated_home = pr148.apply_frozen_home_calibration(native_home)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _error("frozen home calibration failed") from exc
+    if not math.isfinite(calibrated_home) or calibrated_home <= 0.0:
+        raise _error("frozen home calibration produced invalid rate")
+    return {
+        "native_home": native_home,
+        "native_away": native_away,
+        "elo_only_home": elo_home,
+        "elo_only_away": elo_away,
+        "calibrated_home": calibrated_home,
+        "calibrated_away": native_away,
+    }
+
+
 def verify_reviewed_dependencies() -> None:
     """Fail closed if any frozen implementation dependency moved."""
     protocol = pr148.build_fresh_holdout_home_calibration_competition_identity_protocol()
-    protocol_raw = pr148.canonical_fresh_holdout_home_calibration_competition_identity_protocol_bytes(
-        protocol
+    protocol_raw = (
+        pr148.canonical_fresh_holdout_home_calibration_competition_identity_protocol_bytes(
+            protocol
+        )
     )
     if (_sha256_bytes(protocol_raw), len(protocol_raw)) != (
         pr148.PROTOCOL_SHA256,
@@ -191,10 +273,22 @@ def verify_reviewed_dependencies() -> None:
 
     pins = (
         (Path(pr148.__file__), PR148_PROTOCOL_BLOB_SHA, "PR148 protocol"),
-        (Path(utc_features.__file__), UTC_FEATURE_CONSTRUCTOR_BLOB_SHA, "UTC feature constructor"),
-        (Path(fixture_candidates.__file__), FIXTURE_CANDIDATE_BLOB_SHA, "fixture candidate builder"),
+        (
+            Path(utc_features.__file__),
+            UTC_FEATURE_CONSTRUCTOR_BLOB_SHA,
+            "UTC feature constructor",
+        ),
+        (
+            Path(fixture_candidates.__file__),
+            FIXTURE_CANDIDATE_BLOB_SHA,
+            "fixture candidate builder",
+        ),
         (Path(capture_contract.__file__), CAPTURE_CONTRACT_BLOB_SHA, "capture contract"),
-        (Path(score_adapter.__file__), ORDINARY_FT_ADAPTER_BLOB_SHA, "ordinary-FT adapter"),
+        (
+            Path(score_adapter.__file__),
+            ORDINARY_FT_ADAPTER_BLOB_SHA,
+            "ordinary-FT adapter",
+        ),
     )
     try:
         for path, expected, label in pins:
@@ -287,23 +381,39 @@ class FreshHistoryResult:
         if not fixture.isdigit() or int(fixture) < 1:
             raise _error("fixture_identifier must be a positive decimal source id")
         object.__setattr__(self, "fixture_identifier", fixture)
-        object.__setattr__(self, "home_team_id", _positive_int(self.home_team_id, "home_team_id"))
-        object.__setattr__(self, "away_team_id", _positive_int(self.away_team_id, "away_team_id"))
+        object.__setattr__(
+            self, "home_team_id", _positive_int(self.home_team_id, "home_team_id")
+        )
+        object.__setattr__(
+            self, "away_team_id", _positive_int(self.away_team_id, "away_team_id")
+        )
         if self.home_team_id == self.away_team_id:
             raise _error("history fixture cannot use one team twice")
         object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "kickoff_utc"))
-        object.__setattr__(self, "home_goals", _non_negative_int(self.home_goals, "home_goals"))
-        object.__setattr__(self, "away_goals", _non_negative_int(self.away_goals, "away_goals"))
+        object.__setattr__(
+            self, "home_goals", _non_negative_int(self.home_goals, "home_goals")
+        )
+        object.__setattr__(
+            self, "away_goals", _non_negative_int(self.away_goals, "away_goals")
+        )
         object.__setattr__(self, "observed_at", _utc(self.observed_at, "observed_at"))
         if self.observed_at <= self.kickoff_utc:
             raise _error("history result must be observed strictly after kickoff")
-        object.__setattr__(self, "evidence_sha256", _sha256(self.evidence_sha256, "evidence_sha256"))
-        object.__setattr__(self, "evidence_reference", _text(self.evidence_reference, "evidence_reference"))
+        object.__setattr__(
+            self,
+            "evidence_sha256",
+            _sha256(self.evidence_sha256, "evidence_sha256"),
+        )
+        object.__setattr__(
+            self,
+            "evidence_reference",
+            _text(self.evidence_reference, "evidence_reference"),
+        )
         source = _text(self.source_kind, "source_kind")
-        if source == "REVIEWED_PR119_BOOTSTRAP":
+        if source == _BOOTSTRAP_KIND:
             if self.provider_primary_id is not None:
                 raise _error("exact bootstrap rows must not invent per-row primaryId")
-        elif source == "FRESH_REVIEWED_ORDINARY_FT_LEGACY_UPDATE":
+        elif source == _FRESH_UPDATE_KIND:
             primary = _positive_int(self.provider_primary_id, "provider_primary_id")
             if primary not in pr148.LEGACY_PRIMARY_IDS:
                 raise _error("fresh history state update escaped frozen legacy primary IDs")
@@ -326,35 +436,135 @@ class FreshHistoryResult:
         }
 
 
-@dataclasses.dataclass(frozen=True)
+def parse_reviewed_legacy_bootstrap_projection(
+    raw: bytes,
+) -> tuple[FreshHistoryResult, ...]:
+    """Load only the exact reviewed PR119 21,326-row legacy bootstrap."""
+    if type(raw) is not bytes:
+        raise _error("bootstrap projection must be exact bytes")
+    if (len(raw), _sha256_bytes(raw)) != (
+        BOOTSTRAP_PROJECTION_SIZE,
+        BOOTSTRAP_PROJECTION_SHA256,
+    ):
+        raise _error("reviewed legacy bootstrap projection identity changed")
+
+    rows: list[FreshHistoryResult] = []
+    previous: tuple[dt.datetime, int] | None = None
+    seen: set[str] = set()
+    for line in raw.splitlines(keepends=True):
+        if not line.endswith(b"\n"):
+            raise _error("bootstrap projection contains torn NDJSON row")
+        try:
+            value = json.loads(line)
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise _error("bootstrap projection row is malformed") from exc
+        if type(value) is not dict or _canonical(value) != line:
+            raise _error("bootstrap projection row is not canonical JSON")
+        if value.get("source_namespace") != SOURCE_NAMESPACE:
+            raise _error("bootstrap source namespace changed")
+        fixture_id = _text(value.get("fixture_identifier"), "fixture_identifier")
+        if fixture_id in seen:
+            raise _error("bootstrap fixture identity duplicated")
+        seen.add(fixture_id)
+        home = _text(value.get("home_team_identifier"), "home_team_identifier")
+        away = _text(value.get("away_team_identifier"), "away_team_identifier")
+        if (
+            not home.isdigit()
+            or int(home) < 1
+            or not away.isdigit()
+            or int(away) < 1
+        ):
+            raise _error("bootstrap team identity is not a positive decimal source id")
+        row = FreshHistoryResult(
+            fixture_identifier=fixture_id,
+            home_team_id=int(home),
+            away_team_id=int(away),
+            kickoff_utc=_parse_utc(value.get("kickoff_utc"), "kickoff_utc"),
+            home_goals=_non_negative_int(value.get("home_goals"), "home_goals"),
+            away_goals=_non_negative_int(value.get("away_goals"), "away_goals"),
+            observed_at=_parse_utc(value.get("observed_at"), "observed_at"),
+            evidence_sha256=_sha256(value.get("evidence_sha256"), "evidence_sha256"),
+            evidence_reference=_text(
+                value.get("evidence_reference"), "evidence_reference"
+            ),
+            provider_primary_id=None,
+            source_kind=_BOOTSTRAP_KIND,
+        )
+        key = (row.kickoff_utc, int(row.fixture_identifier))
+        if previous is not None and key < previous:
+            raise _error("bootstrap projection UTC ordering changed")
+        previous = key
+        rows.append(row)
+    if len(rows) != BOOTSTRAP_PROJECTION_ROWS:
+        raise _error("bootstrap projection row count changed")
+    return tuple(rows)
+
+
+@dataclasses.dataclass(frozen=True, init=False)
 class FreshHistoryLedger:
+    """Immutable history ledger whose normal constructor requires exact PR119 bytes."""
+
     bootstrap_projection_sha256: str
     bootstrap_projection_size: int
     bootstrap_row_count: int
-    rows: tuple[FreshHistoryResult, ...]
+    bootstrap_rows: tuple[FreshHistoryResult, ...]
+    fresh_updates: tuple[FreshHistoryResult, ...]
 
-    def __post_init__(self) -> None:
-        if self.bootstrap_projection_sha256 != BOOTSTRAP_PROJECTION_SHA256:
-            raise _error("history ledger bootstrap SHA-256 changed")
-        if self.bootstrap_projection_size != BOOTSTRAP_PROJECTION_SIZE:
-            raise _error("history ledger bootstrap size changed")
-        if self.bootstrap_row_count != BOOTSTRAP_PROJECTION_ROWS:
-            raise _error("history ledger bootstrap row count changed")
-        if type(self.rows) is not tuple or any(type(item) is not FreshHistoryResult for item in self.rows):
-            raise _error("history ledger rows must be immutable FreshHistoryResult values")
-        if len(self.rows) < BOOTSTRAP_PROJECTION_ROWS:
-            raise _error("history ledger cannot omit reviewed bootstrap rows")
-        copied = tuple(dataclasses.replace(item) for item in self.rows)
-        bootstrap = copied[:BOOTSTRAP_PROJECTION_ROWS]
-        fresh_rows = copied[BOOTSTRAP_PROJECTION_ROWS:]
-        if any(item.source_kind != "REVIEWED_PR119_BOOTSTRAP" for item in bootstrap):
-            raise _error("history ledger bootstrap prefix source kind changed")
-        if any(item.source_kind != "FRESH_REVIEWED_ORDINARY_FT_LEGACY_UPDATE" for item in fresh_rows):
+    def __init__(self, bootstrap_projection_raw: bytes) -> None:
+        bootstrap = parse_reviewed_legacy_bootstrap_projection(bootstrap_projection_raw)
+        object.__setattr__(self, "bootstrap_projection_sha256", BOOTSTRAP_PROJECTION_SHA256)
+        object.__setattr__(self, "bootstrap_projection_size", BOOTSTRAP_PROJECTION_SIZE)
+        object.__setattr__(self, "bootstrap_row_count", BOOTSTRAP_PROJECTION_ROWS)
+        object.__setattr__(self, "bootstrap_rows", bootstrap)
+        object.__setattr__(self, "fresh_updates", ())
+
+    @property
+    def rows(self) -> tuple[FreshHistoryResult, ...]:
+        return self.bootstrap_rows + self.fresh_updates
+
+    @classmethod
+    def _with_updates(
+        cls,
+        source: "FreshHistoryLedger",
+        updates: Sequence[FreshHistoryResult],
+    ) -> "FreshHistoryLedger":
+        if type(source) is not FreshHistoryLedger:
+            raise _error("source ledger must be exact FreshHistoryLedger")
+        values = tuple(updates)
+        if any(
+            type(item) is not FreshHistoryResult or item.source_kind != _FRESH_UPDATE_KIND
+            for item in values
+        ):
             raise _error("history ledger fresh suffix escaped reviewed legacy updates")
-        fixture_ids = tuple(item.fixture_identifier for item in copied)
-        if len(set(fixture_ids)) != len(fixture_ids):
-            raise _error("history ledger fixture identity duplicated")
-        object.__setattr__(self, "rows", copied)
+        ordered = tuple(
+            sorted(
+                (dataclasses.replace(item) for item in values),
+                key=lambda item: (item.kickoff_utc, int(item.fixture_identifier)),
+            )
+        )
+        fixture_ids = {
+            item.fixture_identifier for item in source.bootstrap_rows
+        }
+        for item in ordered:
+            if item.fixture_identifier in fixture_ids:
+                raise _error("history ledger fixture identity duplicated")
+            fixture_ids.add(item.fixture_identifier)
+        result = object.__new__(cls)
+        object.__setattr__(
+            result, "bootstrap_projection_sha256", source.bootstrap_projection_sha256
+        )
+        object.__setattr__(
+            result, "bootstrap_projection_size", source.bootstrap_projection_size
+        )
+        object.__setattr__(result, "bootstrap_row_count", source.bootstrap_row_count)
+        object.__setattr__(result, "bootstrap_rows", source.bootstrap_rows)
+        object.__setattr__(result, "fresh_updates", ordered)
+        return result
+
+
+def build_fresh_history_ledger(bootstrap_projection_raw: bytes) -> FreshHistoryLedger:
+    """Build a history ledger only from the exact reviewed bootstrap bytes."""
+    return FreshHistoryLedger(bootstrap_projection_raw)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -364,6 +574,7 @@ class SealedFreshPrediction:
     protocol_sha256: str
     holdout_start_utc: dt.datetime
     fixture: QualifiedCaptureFixture
+    bootstrap_projection_sha256: str
     history_prefix_sha256: str
     history_prefix_count: int
     feature_projection_sha256: str
@@ -372,10 +583,15 @@ class SealedFreshPrediction:
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
-        if self.schema_version != 1 or self.implementation_state != IMPLEMENTATION_STATE:
-            raise _error("sealed prediction identity changed")
+        if type(self.schema_version) is not int or self.schema_version != 1:
+            raise _error("sealed prediction schema version changed")
+        if self.implementation_state != IMPLEMENTATION_STATE:
+            raise _error("sealed prediction implementation state changed")
         if self.protocol_sha256 != pr148.PROTOCOL_SHA256:
             raise _error("sealed prediction protocol identity changed")
+        if self.bootstrap_projection_sha256 != BOOTSTRAP_PROJECTION_SHA256:
+            raise _error("sealed prediction bootstrap identity changed")
+
         start = _holdout_start(self.holdout_start_utc)
         object.__setattr__(self, "holdout_start_utc", start)
         if type(self.fixture) is not QualifiedCaptureFixture:
@@ -390,6 +606,7 @@ class SealedFreshPrediction:
         ):
             raise _error("sealed prediction capture escaped frozen pre-kickoff window")
         object.__setattr__(self, "fixture", fixture)
+
         object.__setattr__(
             self,
             "history_prefix_sha256",
@@ -402,36 +619,38 @@ class SealedFreshPrediction:
             "feature_projection_sha256",
             _sha256(self.feature_projection_sha256, "feature_projection_sha256"),
         )
-        expected_features = {"home_elo", "away_elo", "home_form", "away_form", "fatigue"}
-        if not isinstance(self.features, Mapping) or set(self.features) != expected_features:
+
+        if not isinstance(self.features, Mapping) or set(self.features) != set(_FEATURE_IDS):
             raise _error("sealed prediction feature set changed")
         frozen_features: dict[str, float] = {}
-        for key, value in self.features.items():
+        for key in _FEATURE_IDS:
+            value = self.features[key]
             if type(value) not in (int, float) or not math.isfinite(float(value)):
                 raise _error(f"sealed feature {key} must be finite numeric")
             frozen_features[key] = float(value)
-        object.__setattr__(self, "features", types.MappingProxyType(frozen_features))
-        expected_rates = {
-            "native_home",
-            "native_away",
-            "elo_only_home",
-            "elo_only_away",
-            "calibrated_home",
-            "calibrated_away",
-        }
-        if not isinstance(self.rates, Mapping) or set(self.rates) != expected_rates:
+        object.__setattr__(
+            self, "features", types.MappingProxyType(dict(frozen_features))
+        )
+
+        expected_rates = _rates_from_features(frozen_features)
+        if not isinstance(self.rates, Mapping) or set(self.rates) != set(expected_rates):
             raise _error("sealed prediction rate set changed")
         frozen_rates: dict[str, float] = {}
-        for key, value in self.rates.items():
+        for key in expected_rates:
+            value = self.rates[key]
             if type(value) is not float or not math.isfinite(value) or value <= 0.0:
                 raise _error(f"sealed rate {key} must be a finite positive float")
+            if value != expected_rates[key]:
+                raise _error(f"sealed rate {key} differs from frozen feature transform")
             frozen_rates[key] = value
-        if frozen_rates["calibrated_away"] != frozen_rates["native_away"]:
-            raise _error("away calibration must remain exact native identity")
         object.__setattr__(self, "rates", types.MappingProxyType(frozen_rates))
+
         if not isinstance(self.safety, Mapping) or set(self.safety) != set(SAFETY_KEYS):
             raise _error("sealed prediction safety keys changed")
-        if any(type(value) is not bool or value is not False for value in self.safety.values()):
+        if any(
+            type(value) is not bool or value is not False
+            for value in self.safety.values()
+        ):
             raise _error("sealed prediction downstream authority must remain false")
         object.__setattr__(self, "safety", _safety())
 
@@ -442,6 +661,7 @@ class SealedFreshPrediction:
             "protocol_sha256": self.protocol_sha256,
             "holdout_start_utc": _utc_text(self.holdout_start_utc),
             "fixture": self.fixture.to_dict(),
+            "bootstrap_projection_sha256": self.bootstrap_projection_sha256,
             "history_prefix_sha256": self.history_prefix_sha256,
             "history_prefix_count": self.history_prefix_count,
             "feature_projection_sha256": self.feature_projection_sha256,
@@ -469,13 +689,20 @@ class FreshPredictionAssessment:
         if tuple(sorted(set(self.missing_feature_ids))) != self.missing_feature_ids:
             raise _error("missing_feature_ids must be sorted and unique")
         if self.disposition is PredictionDisposition.SEALED_COMPLETE_CASE:
-            if self.missing_feature_ids or type(self.sealed_prediction) is not SealedFreshPrediction:
-                raise _error("complete-case assessment must carry exactly one sealed prediction")
+            if (
+                self.missing_feature_ids
+                or type(self.sealed_prediction) is not SealedFreshPrediction
+            ):
+                raise _error(
+                    "complete-case assessment must carry exactly one sealed prediction"
+                )
             object.__setattr__(
                 self, "sealed_prediction", dataclasses.replace(self.sealed_prediction)
             )
         elif self.sealed_prediction is not None or not self.missing_feature_ids:
-            raise _error("missing-feature assessment must carry missing IDs and no prediction")
+            raise _error(
+                "missing-feature assessment must carry missing IDs and no prediction"
+            )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -485,6 +712,8 @@ class SettledFreshPrediction:
     away_goals: int
     settlement_observed_at: dt.datetime
     settlement_evidence_sha256: str
+    ordinary_ft_first_raw_sha256: str
+    ordinary_ft_second_raw_sha256: str
     ordinary_ft_first_manifest_sha256: str
     ordinary_ft_second_manifest_sha256: str
     legacy_history_state_update: FreshHistoryResult | None
@@ -492,41 +721,98 @@ class SettledFreshPrediction:
     def __post_init__(self) -> None:
         if type(self.prediction) is not SealedFreshPrediction:
             raise _error("settlement prediction type mismatch")
-        object.__setattr__(self, "prediction", dataclasses.replace(self.prediction))
-        object.__setattr__(self, "home_goals", _non_negative_int(self.home_goals, "home_goals"))
-        object.__setattr__(self, "away_goals", _non_negative_int(self.away_goals, "away_goals"))
+        prediction = dataclasses.replace(self.prediction)
+        object.__setattr__(self, "prediction", prediction)
         object.__setattr__(
-            self,
-            "settlement_observed_at",
-            _utc(self.settlement_observed_at, "settlement_observed_at"),
+            self, "home_goals", _non_negative_int(self.home_goals, "home_goals")
         )
+        object.__setattr__(
+            self, "away_goals", _non_negative_int(self.away_goals, "away_goals")
+        )
+        observed = _utc(self.settlement_observed_at, "settlement_observed_at")
+        if observed <= prediction.fixture.kickoff_utc:
+            raise _error("settlement must be observed after sealed kickoff")
+        object.__setattr__(self, "settlement_observed_at", observed)
         object.__setattr__(
             self,
             "settlement_evidence_sha256",
             _sha256(self.settlement_evidence_sha256, "settlement_evidence_sha256"),
         )
-        object.__setattr__(
-            self,
+        for label in (
+            "ordinary_ft_first_raw_sha256",
+            "ordinary_ft_second_raw_sha256",
             "ordinary_ft_first_manifest_sha256",
-            _sha256(self.ordinary_ft_first_manifest_sha256, "ordinary_ft_first_manifest_sha256"),
-        )
-        object.__setattr__(
-            self,
             "ordinary_ft_second_manifest_sha256",
-            _sha256(self.ordinary_ft_second_manifest_sha256, "ordinary_ft_second_manifest_sha256"),
-        )
-        primary = self.prediction.fixture.provider_primary_id
-        should_update = primary in pr148.LEGACY_PRIMARY_IDS
+        ):
+            object.__setattr__(self, label, _sha256(getattr(self, label), label))
+        if self.ordinary_ft_first_raw_sha256 == self.ordinary_ft_second_raw_sha256:
+            raise _error("settlement requires distinct raw capture lineages")
+        if (
+            self.ordinary_ft_first_manifest_sha256
+            == self.ordinary_ft_second_manifest_sha256
+        ):
+            raise _error("settlement requires distinct manifest lineages")
+
+        should_update = prediction.fixture.provider_primary_id in pr148.LEGACY_PRIMARY_IDS
         if should_update != (self.legacy_history_state_update is not None):
             raise _error("legacy history-state update disposition changed")
         if self.legacy_history_state_update is not None:
             if type(self.legacy_history_state_update) is not FreshHistoryResult:
                 raise _error("legacy history-state update type mismatch")
+            update = dataclasses.replace(self.legacy_history_state_update)
+            expected = (
+                str(prediction.fixture.fixture_id),
+                prediction.fixture.home_team_id,
+                prediction.fixture.away_team_id,
+                prediction.fixture.kickoff_utc,
+                self.home_goals,
+                self.away_goals,
+                self.settlement_observed_at,
+                self.settlement_evidence_sha256,
+                prediction.fixture.provider_primary_id,
+                _FRESH_UPDATE_KIND,
+            )
+            actual = (
+                update.fixture_identifier,
+                update.home_team_id,
+                update.away_team_id,
+                update.kickoff_utc,
+                update.home_goals,
+                update.away_goals,
+                update.observed_at,
+                update.evidence_sha256,
+                update.provider_primary_id,
+                update.source_kind,
+            )
+            if actual != expected:
+                raise _error("legacy history-state update does not match settlement")
+            object.__setattr__(self, "legacy_history_state_update", update)
+
+
+@dataclasses.dataclass(frozen=True)
+class FreshSettlementAssessment:
+    disposition: SettlementDisposition
+    prediction: SealedFreshPrediction
+    detail: str
+    settled_prediction: SettledFreshPrediction | None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.disposition, SettlementDisposition):
+            raise _error("settlement disposition is invalid")
+        if type(self.prediction) is not SealedFreshPrediction:
+            raise _error("settlement assessment prediction type mismatch")
+        object.__setattr__(self, "prediction", dataclasses.replace(self.prediction))
+        object.__setattr__(self, "detail", _text(self.detail, "settlement detail"))
+        if self.disposition is SettlementDisposition.SETTLED_REVIEWED_ORDINARY_FT:
+            if type(self.settled_prediction) is not SettledFreshPrediction:
+                raise _error("settled disposition requires exact settled prediction")
             object.__setattr__(
                 self,
-                "legacy_history_state_update",
-                dataclasses.replace(self.legacy_history_state_update),
+                "settled_prediction",
+                dataclasses.replace(self.settled_prediction),
             )
+        elif self.settled_prediction is not None:
+            raise _error("excluded settlement cannot carry scored result")
 
 
 def canonical_sealed_fresh_prediction_bytes(value: SealedFreshPrediction) -> bytes:
@@ -600,7 +886,7 @@ def _qualify_provider_identity_payload(
     capture_manifest_sha256: str,
     capture_raw_sha256: str,
 ) -> tuple[QualifiedCaptureFixture, ...]:
-    """Pure structural check used after the reviewed capture/schema chain."""
+    """Pure provider-native identity check after the reviewed capture/schema chain."""
     payload = _strict_json(raw_json)
     leagues = payload.get("leagues")
     if type(leagues) is not list:
@@ -612,7 +898,7 @@ def _qualify_provider_identity_payload(
         raise _error("raw capture SHA-256 lineage changed")
 
     result: list[QualifiedCaptureFixture] = []
-    seen: set[int] = set()
+    seen_fixtures: set[int] = set()
     seen_wrappers: set[int] = set()
     for league in leagues:
         if type(league) is not dict or type(league.get("matches")) is not list:
@@ -626,16 +912,20 @@ def _qualify_provider_identity_payload(
             if type(match) is not dict:
                 raise _error("match shape changed")
             fixture_id = _positive_int(match.get("id"), "match.id")
-            if fixture_id in seen:
+            if fixture_id in seen_fixtures:
                 raise _error("fixture id duplicated in one capture")
-            seen.add(fixture_id)
+            seen_fixtures.add(fixture_id)
             match_league_id = _positive_int(match.get("leagueId"), "match.leagueId")
             if match_league_id != wrapper_id:
                 raise _error("match.leagueId does not equal containing league.id")
             home = match.get("home")
             away = match.get("away")
             status = match.get("status")
-            if type(home) is not dict or type(away) is not dict or type(status) is not dict:
+            if (
+                type(home) is not dict
+                or type(away) is not dict
+                or type(status) is not dict
+            ):
                 raise _error("match home/away/status shape changed")
             home_id = _positive_int(home.get("id"), "match.home.id")
             away_id = _positive_int(away.get("id"), "match.away.id")
@@ -670,10 +960,13 @@ def qualify_capture_fixtures(
     if manifest.network_acquisition_performed is not True:
         raise _error("fresh holdout evidence requires an actual reviewed network capture")
     try:
-        bundle = fixture_candidates.build_fotmob_fixture_candidate_bundle(((raw_json, manifest),))
+        bundle = fixture_candidates.build_fotmob_fixture_candidate_bundle(
+            ((raw_json, manifest),)
+        )
         manifest_sha = capture_contract.sha256_data_matches_capture_manifest(manifest)
     except Exception as exc:
         raise _error("reviewed capture/schema/candidate chain failed") from exc
+
     qualified = _qualify_provider_identity_payload(
         raw_json,
         capture_observed_at=manifest.observed_at,
@@ -708,7 +1001,9 @@ def qualify_capture_fixtures(
             item.capture_manifest_sha256,
         )
         if actual != expected:
-            raise _error("exact provider identity disagrees with reviewed candidate extraction")
+            raise _error(
+                "exact provider identity disagrees with reviewed candidate extraction"
+            )
     return qualified
 
 
@@ -717,148 +1012,45 @@ def select_earliest_qualifying_capture(
     *,
     holdout_start: dt.datetime,
 ) -> QualifiedCaptureFixture | None:
-    if not isinstance(observations, Sequence) or isinstance(observations, (str, bytes)):
+    """Seal the earliest qualifying observation for one source fixture ID.
+
+    Later identity/kickoff drift does not retroactively change the prospective
+    seal. It is detected again at settlement and excludes the old prediction.
+    """
+    if not isinstance(observations, Sequence) or isinstance(
+        observations, (str, bytes)
+    ):
         raise _error("observations must be a sequence")
     values = tuple(observations)
     if not values:
         return None
     if any(type(item) is not QualifiedCaptureFixture for item in values):
-        raise _error("observations must contain exact QualifiedCaptureFixture values")
+        raise _error(
+            "observations must contain exact QualifiedCaptureFixture values"
+        )
+    fixture_ids = {item.fixture_id for item in values}
+    if len(fixture_ids) != 1:
+        raise _error("capture selector accepts observations for exactly one fixture id")
+
     start = _holdout_start(holdout_start)
-    identities = {item.identity() for item in values}
-    if len(identities) != 1:
-        raise _error("capture observations disagree on sealed fixture/competition identity")
-    kickoff = values[0].kickoff_utc
-    if kickoff < start:
-        return None
-    earliest = kickoff - dt.timedelta(hours=24)
-    latest = kickoff - dt.timedelta(minutes=60)
     eligible = tuple(
         item
         for item in values
-        if start <= item.capture_observed_at
-        and earliest <= item.capture_observed_at <= latest
+        if item.kickoff_utc >= start
+        and item.capture_observed_at >= start
+        and item.kickoff_utc - dt.timedelta(hours=24)
+        <= item.capture_observed_at
+        <= item.kickoff_utc - dt.timedelta(minutes=60)
     )
     if not eligible:
         return None
+
+    first_time = min(item.capture_observed_at for item in eligible)
+    first = tuple(item for item in eligible if item.capture_observed_at == first_time)
+    if len({item.identity() for item in first}) != 1:
+        raise _error("earliest qualifying capture is identity-ambiguous")
     return dataclasses.replace(
-        min(
-            eligible,
-            key=lambda item: (item.capture_observed_at, item.capture_manifest_sha256),
-        )
-    )
-
-
-def parse_reviewed_legacy_bootstrap_projection(raw: bytes) -> tuple[FreshHistoryResult, ...]:
-    """Load only the exact reviewed PR119 21,326-row legacy bootstrap."""
-    if type(raw) is not bytes:
-        raise _error("bootstrap projection must be exact bytes")
-    if (len(raw), _sha256_bytes(raw)) != (
-        BOOTSTRAP_PROJECTION_SIZE,
-        BOOTSTRAP_PROJECTION_SHA256,
-    ):
-        raise _error("reviewed legacy bootstrap projection identity changed")
-    rows: list[FreshHistoryResult] = []
-    previous: tuple[dt.datetime, int] | None = None
-    seen: set[str] = set()
-    for line in raw.splitlines(keepends=True):
-        if not line.endswith(b"\n"):
-            raise _error("bootstrap projection contains torn NDJSON row")
-        try:
-            value = json.loads(line)
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise _error("bootstrap projection row is malformed") from exc
-        if type(value) is not dict or _canonical(value) != line:
-            raise _error("bootstrap projection row is not canonical JSON")
-        if value.get("source_namespace") != SOURCE_NAMESPACE:
-            raise _error("bootstrap source namespace changed")
-        fixture_id = _text(value.get("fixture_identifier"), "fixture_identifier")
-        if fixture_id in seen:
-            raise _error("bootstrap fixture identity duplicated")
-        seen.add(fixture_id)
-        home = _text(value.get("home_team_identifier"), "home_team_identifier")
-        away = _text(value.get("away_team_identifier"), "away_team_identifier")
-        if not home.isdigit() or int(home) < 1 or not away.isdigit() or int(away) < 1:
-            raise _error("bootstrap team identity is not a positive decimal source id")
-        row = FreshHistoryResult(
-            fixture_identifier=fixture_id,
-            home_team_id=int(home),
-            away_team_id=int(away),
-            kickoff_utc=_parse_utc(value.get("kickoff_utc"), "kickoff_utc"),
-            home_goals=_non_negative_int(value.get("home_goals"), "home_goals"),
-            away_goals=_non_negative_int(value.get("away_goals"), "away_goals"),
-            observed_at=_parse_utc(value.get("observed_at"), "observed_at"),
-            evidence_sha256=_sha256(value.get("evidence_sha256"), "evidence_sha256"),
-            evidence_reference=_text(value.get("evidence_reference"), "evidence_reference"),
-            provider_primary_id=None,
-            source_kind="REVIEWED_PR119_BOOTSTRAP",
-        )
-        key = (row.kickoff_utc, int(row.fixture_identifier))
-        if previous is not None and key < previous:
-            raise _error("bootstrap projection UTC ordering changed")
-        previous = key
-        rows.append(row)
-    if len(rows) != BOOTSTRAP_PROJECTION_ROWS:
-        raise _error("bootstrap projection row count changed")
-    return tuple(rows)
-
-
-def build_fresh_history_ledger(
-    bootstrap_projection_raw: bytes,
-    *,
-    fresh_legacy_updates: Sequence[FreshHistoryResult] = (),
-) -> FreshHistoryLedger:
-    """Build a reusable ledger only from the exact reviewed bootstrap bytes."""
-    bootstrap = parse_reviewed_legacy_bootstrap_projection(bootstrap_projection_raw)
-    if not isinstance(fresh_legacy_updates, Sequence) or isinstance(
-        fresh_legacy_updates, (str, bytes)
-    ):
-        raise _error("fresh_legacy_updates must be a sequence")
-    updates = tuple(fresh_legacy_updates)
-    if any(
-        type(item) is not FreshHistoryResult
-        or item.source_kind != "FRESH_REVIEWED_ORDINARY_FT_LEGACY_UPDATE"
-        for item in updates
-    ):
-        raise _error("fresh_legacy_updates escaped reviewed legacy settlement rows")
-    ordered_updates = tuple(
-        sorted(
-            (dataclasses.replace(item) for item in updates),
-            key=lambda item: (item.kickoff_utc, int(item.fixture_identifier)),
-        )
-    )
-    return FreshHistoryLedger(
-        bootstrap_projection_sha256=BOOTSTRAP_PROJECTION_SHA256,
-        bootstrap_projection_size=BOOTSTRAP_PROJECTION_SIZE,
-        bootstrap_row_count=BOOTSTRAP_PROJECTION_ROWS,
-        rows=bootstrap + ordered_updates,
-    )
-
-
-def append_fresh_legacy_history_update(
-    ledger: FreshHistoryLedger,
-    update: FreshHistoryResult,
-) -> FreshHistoryLedger:
-    if type(ledger) is not FreshHistoryLedger:
-        raise _error("ledger must be exact FreshHistoryLedger")
-    if (
-        type(update) is not FreshHistoryResult
-        or update.source_kind != "FRESH_REVIEWED_ORDINARY_FT_LEGACY_UPDATE"
-    ):
-        raise _error("update must be a reviewed fresh legacy history row")
-    rows = tuple(ledger.rows) + (dataclasses.replace(update),)
-    bootstrap = rows[:BOOTSTRAP_PROJECTION_ROWS]
-    fresh_rows = tuple(
-        sorted(
-            rows[BOOTSTRAP_PROJECTION_ROWS:],
-            key=lambda item: (item.kickoff_utc, int(item.fixture_identifier)),
-        )
-    )
-    return FreshHistoryLedger(
-        bootstrap_projection_sha256=ledger.bootstrap_projection_sha256,
-        bootstrap_projection_size=ledger.bootstrap_projection_size,
-        bootstrap_row_count=ledger.bootstrap_row_count,
-        rows=bootstrap + fresh_rows,
+        min(first, key=lambda item: item.capture_manifest_sha256)
     )
 
 
@@ -880,7 +1072,10 @@ def _history_prefix(
         seen.add(item.fixture_identifier)
         if int(item.fixture_identifier) == target.fixture_id:
             raise _error("target fixture cannot already exist in result history")
-        if item.kickoff_utc < target.kickoff_utc and item.observed_at <= target.capture_observed_at:
+        if (
+            item.kickoff_utc < target.kickoff_utc
+            and item.observed_at <= target.capture_observed_at
+        ):
             eligible.append(dataclasses.replace(item))
     eligible.sort(key=lambda item: (item.kickoff_utc, int(item.fixture_identifier)))
     return tuple(eligible)
@@ -890,19 +1085,27 @@ def _constructor_prefix_bytes(history: Sequence[FreshHistoryResult]) -> bytes:
     return b"".join(_canonical(item.constructor_row()) for item in history)
 
 
-def _rate(predictors: Sequence[float], coefficients: Sequence[float], label: str) -> float:
-    if len(predictors) != len(coefficients):
-        raise _error(f"{label} predictor/coefficient dimension mismatch")
-    eta = math.fsum(float(value) * float(coef) for value, coef in zip(predictors, coefficients))
-    if not math.isfinite(eta):
-        raise _error(f"{label} linear predictor is non-finite")
-    try:
-        value = math.exp(eta)
-    except OverflowError as exc:
-        raise _error(f"{label} expected-goals rate overflowed") from exc
-    if not math.isfinite(value) or value <= 0.0:
-        raise _error(f"{label} expected-goals rate must be finite and positive")
-    return value
+def _validated_target_feature(
+    target_value: Mapping[str, Any],
+    key: str,
+    *,
+    allowed_statuses: frozenset[str],
+    missing_allowed: bool,
+) -> tuple[bool, float | None]:
+    feature = target_value.get(key)
+    if type(feature) is not dict:
+        raise _error(f"reviewed target feature {key} shape changed")
+    status = feature.get("status")
+    value = feature.get("value")
+    if status == "MISSING":
+        if not missing_allowed or value is not None:
+            raise _error(f"reviewed target feature {key} missingness changed")
+        return True, None
+    if status not in allowed_statuses:
+        raise _error(f"reviewed target feature {key} status changed")
+    if type(value) not in (int, float) or not math.isfinite(float(value)):
+        raise _error(f"reviewed target feature {key} value is invalid")
+    return False, float(value)
 
 
 def _build_fresh_prediction_assessment_from_rows(
@@ -919,9 +1122,11 @@ def _build_fresh_prediction_assessment_from_rows(
     start = _holdout_start(holdout_start)
     if capture.capture_observed_at < start or capture.kickoff_utc < start:
         raise _error("selected capture is outside resolved holdout start")
-    earliest = capture.kickoff_utc - dt.timedelta(hours=24)
-    latest = capture.kickoff_utc - dt.timedelta(minutes=60)
-    if not earliest <= capture.capture_observed_at <= latest:
+    if not (
+        capture.kickoff_utc - dt.timedelta(hours=24)
+        <= capture.capture_observed_at
+        <= capture.kickoff_utc - dt.timedelta(minutes=60)
+    ):
         raise _error("selected capture is outside the frozen 24h-to-60m window")
 
     prefix = _history_prefix(history, target=capture)
@@ -936,7 +1141,8 @@ def _build_fresh_prediction_assessment_from_rows(
         "away_goals": 0,
         "evidence_sha256": capture.capture_raw_sha256,
         "evidence_reference": (
-            f"fresh-holdout-capture:{capture.capture_manifest_sha256}:{capture.fixture_id}"
+            f"fresh-holdout-capture:{capture.capture_manifest_sha256}:"
+            f"{capture.fixture_id}"
         ),
     }
     constructor_rows = [item.constructor_row() for item in prefix]
@@ -965,23 +1171,55 @@ def _build_fresh_prediction_assessment_from_rows(
     if target_value is None:
         raise _error("reviewed feature projection omitted target fixture")
 
-    feature_keys = ("home_elo", "away_elo", "home_form", "away_form", "fatigue")
-    missing: list[str] = []
+    expected_target_identity = (
+        SOURCE_NAMESPACE,
+        str(capture.fixture_id),
+        _utc_text(capture.kickoff_utc),
+        str(capture.home_team_id),
+        str(capture.away_team_id),
+    )
+    actual_target_identity = (
+        target_value.get("source_namespace"),
+        target_value.get("fixture_identifier"),
+        target_value.get("kickoff_utc"),
+        target_value.get("home_team_identifier"),
+        target_value.get("away_team_identifier"),
+    )
+    if actual_target_identity != expected_target_identity:
+        raise _error("reviewed feature projection target identity changed")
+    freshness = target_value.get("historical_live_data_freshness")
+    if (
+        type(freshness) is not dict
+        or freshness.get("status") != utc_features.HISTORICAL_FRESHNESS_STATUS
+        or freshness.get("value") is not None
+    ):
+        raise _error("reviewed feature projection freshness semantics changed")
+
     values: dict[str, float] = {}
-    for key in feature_keys:
-        feature = target_value.get(key)
-        if type(feature) is not dict:
-            raise _error(f"reviewed target feature {key} shape changed")
-        status = feature.get("status")
-        value = feature.get("value")
-        if status == "MISSING":
-            if value is not None:
-                raise _error(f"reviewed target feature {key} missingness changed")
+    missing: list[str] = []
+    for key in ("home_elo", "away_elo"):
+        is_missing, value = _validated_target_feature(
+            target_value,
+            key,
+            allowed_statuses=_ELO_STATUSES,
+            missing_allowed=False,
+        )
+        if is_missing or value is None:
+            raise _error("reviewed Elo unexpectedly became missing")
+        values[key] = value
+    for key in ("home_form", "away_form", "fatigue"):
+        is_missing, value = _validated_target_feature(
+            target_value,
+            key,
+            allowed_statuses=frozenset({_FORM_STATUS}),
+            missing_allowed=True,
+        )
+        if is_missing:
             missing.append(key)
-            continue
-        if type(value) not in (int, float) or not math.isfinite(float(value)):
-            raise _error(f"reviewed target feature {key} value is invalid")
-        values[key] = float(value)
+        else:
+            assert value is not None
+            values[key] = value
+
     if missing:
         return FreshPredictionAssessment(
             disposition=PredictionDisposition.MISSING_REVIEWED_FEATURES,
@@ -990,41 +1228,19 @@ def _build_fresh_prediction_assessment_from_rows(
             sealed_prediction=None,
         )
 
-    predictors = (
-        1.0,
-        (values["home_elo"] - 1500.0) / 400.0,
-        (values["away_elo"] - 1500.0) / 400.0,
-        values["home_form"] - 0.5,
-        values["away_form"] - 0.5,
-        values["fatigue"],
-    )
-    elo_predictors = predictors[:3]
-    native_home = _rate(predictors, pr148.NATIVE_HOME_COEFFICIENTS, "native home")
-    native_away = _rate(predictors, pr148.NATIVE_AWAY_COEFFICIENTS, "native away")
-    elo_home = _rate(elo_predictors, pr148.ELO_ONLY_HOME_COEFFICIENTS, "Elo-only home")
-    elo_away = _rate(elo_predictors, pr148.ELO_ONLY_AWAY_COEFFICIENTS, "Elo-only away")
-    calibrated_home = pr148.apply_frozen_home_calibration(native_home)
-    if type(calibrated_home) is not float or not math.isfinite(calibrated_home) or calibrated_home <= 0.0:
-        raise _error("frozen home calibration produced invalid rate")
-
+    rates = _rates_from_features(values)
     sealed = SealedFreshPrediction(
         schema_version=1,
         implementation_state=IMPLEMENTATION_STATE,
         protocol_sha256=pr148.PROTOCOL_SHA256,
         holdout_start_utc=start,
         fixture=capture,
+        bootstrap_projection_sha256=BOOTSTRAP_PROJECTION_SHA256,
         history_prefix_sha256=_sha256_bytes(prefix_raw),
         history_prefix_count=len(prefix),
         feature_projection_sha256=_sha256_bytes(projection_raw),
         features=values,
-        rates={
-            "native_home": native_home,
-            "native_away": native_away,
-            "elo_only_home": elo_home,
-            "elo_only_away": elo_away,
-            "calibrated_home": calibrated_home,
-            "calibrated_away": native_away,
-        },
+        rates=rates,
         safety=_safety(),
     )
     return FreshPredictionAssessment(
@@ -1041,36 +1257,108 @@ def build_fresh_prediction_assessment(
     selected_capture: QualifiedCaptureFixture,
     holdout_start: dt.datetime,
 ) -> FreshPredictionAssessment:
-    """Public seal path requiring the exact reviewed bootstrap-ledger ancestry."""
+    """Public seal path requiring exact reviewed bootstrap bytes at ledger creation."""
     if type(history_ledger) is not FreshHistoryLedger:
         raise _error("history_ledger must be exact FreshHistoryLedger")
-    ledger = dataclasses.replace(history_ledger)
+    if history_ledger.bootstrap_projection_sha256 != BOOTSTRAP_PROJECTION_SHA256:
+        raise _error("history ledger bootstrap identity changed")
     return _build_fresh_prediction_assessment_from_rows(
-        history=ledger.rows,
+        history=history_ledger.rows,
         selected_capture=selected_capture,
         holdout_start=holdout_start,
     )
 
 
-def settle_sealed_prediction(
+def revalidate_sealed_prediction(
+    *,
+    history_ledger: FreshHistoryLedger,
     prediction: SealedFreshPrediction,
-    adapter_result: score_adapter.FotMobDataMatchesOrdinaryFtFinishedScoreAdapterResult,
-) -> SettledFreshPrediction:
-    """Bind one sealed prediction through the reviewed successful pair adapter."""
-    verify_reviewed_dependencies()
+) -> SealedFreshPrediction:
+    """Rebuild one seal from the exact history ledger before result binding."""
     if type(prediction) is not SealedFreshPrediction:
         raise _error("prediction must be exact SealedFreshPrediction")
-    if type(adapter_result) is not score_adapter.FotMobDataMatchesOrdinaryFtFinishedScoreAdapterResult:
-        raise _error("adapter_result must be exact reviewed ordinary-FT adapter result")
-    if adapter_result.pair_status is not score_adapter.AdapterPairStatus.QUALIFIED_WITH_ORDINARY_FT_SCORES:
-        raise _error("ordinary-FT adapter result does not carry qualified scores")
-    prediction = dataclasses.replace(prediction)
-    fixture = prediction.fixture
-    matches = tuple(
-        item for item in adapter_result.qualified_scores if item.fixture_id == fixture.fixture_id
+    rebuilt = build_fresh_prediction_assessment(
+        history_ledger=history_ledger,
+        selected_capture=prediction.fixture,
+        holdout_start=prediction.holdout_start_utc,
     )
+    if (
+        rebuilt.disposition is not PredictionDisposition.SEALED_COMPLETE_CASE
+        or rebuilt.sealed_prediction is None
+    ):
+        raise _error("sealed prediction no longer reconstructs as a complete case")
+    supplied_raw = canonical_sealed_fresh_prediction_bytes(prediction)
+    rebuilt_raw = canonical_sealed_fresh_prediction_bytes(rebuilt.sealed_prediction)
+    if supplied_raw != rebuilt_raw:
+        raise _error("sealed prediction differs from exact deterministic reconstruction")
+    return rebuilt.sealed_prediction
+
+
+def _one_fixture_identity(
+    fixtures: Sequence[QualifiedCaptureFixture], fixture_id: int
+) -> QualifiedCaptureFixture | None:
+    matches = tuple(item for item in fixtures if item.fixture_id == fixture_id)
+    if not matches:
+        return None
     if len(matches) != 1:
-        raise _error("sealed fixture must match exactly one qualified ordinary-FT score")
+        raise _error("capture contains duplicated target fixture identity")
+    return matches[0]
+
+
+def _settle_from_revalidated_pair(
+    *,
+    prediction: SealedFreshPrediction,
+    first_identity: QualifiedCaptureFixture,
+    second_identity: QualifiedCaptureFixture,
+    adapter_result: score_adapter.FotMobDataMatchesOrdinaryFtFinishedScoreAdapterResult,
+) -> FreshSettlementAssessment:
+    """Internal settlement core after raw capture qualification/revalidation."""
+    fixture = prediction.fixture
+    if (
+        first_identity.identity() != fixture.identity()
+        or second_identity.identity() != fixture.identity()
+    ):
+        return FreshSettlementAssessment(
+            disposition=(
+                SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT
+            ),
+            prediction=prediction,
+            detail=(
+                "post-kickoff provider fixture/primaryId/wrapper/team/kickoff identity "
+                "differs from the prospective seal"
+            ),
+            settled_prediction=None,
+        )
+    if (
+        first_identity.capture_manifest_sha256 != adapter_result.first_manifest_sha256
+        or second_identity.capture_manifest_sha256
+        != adapter_result.second_manifest_sha256
+        or first_identity.capture_raw_sha256 != adapter_result.first_raw_sha256
+        or second_identity.capture_raw_sha256 != adapter_result.second_raw_sha256
+        or first_identity.capture_observed_at != adapter_result.first_observed_at
+        or second_identity.capture_observed_at != adapter_result.second_observed_at
+    ):
+        raise _error("provider identity evidence does not match ordinary-FT adapter lineage")
+
+    if adapter_result.pair_status not in {
+        score_adapter.AdapterPairStatus.QUALIFIED_WITH_ORDINARY_FT_SCORES,
+        score_adapter.AdapterPairStatus.NO_QUALIFIED_ORDINARY_FT_SCORES,
+    }:
+        raise _error("ordinary-FT adapter result carries pair-level blocker")
+    matches = tuple(
+        item
+        for item in adapter_result.qualified_scores
+        if item.fixture_id == fixture.fixture_id
+    )
+    if not matches:
+        return FreshSettlementAssessment(
+            disposition=SettlementDisposition.EXCLUDED_NOT_REVIEWED_ORDINARY_FT,
+            prediction=prediction,
+            detail="sealed fixture did not pass the reviewed ordinary-FT score gate",
+            settled_prediction=None,
+        )
+    if len(matches) != 1:
+        raise _error("sealed fixture matched multiple qualified ordinary-FT scores")
     score = matches[0]
     if (
         score.league_id != fixture.wrapper_id
@@ -1078,10 +1366,19 @@ def settle_sealed_prediction(
         or score.away_team_id != fixture.away_team_id
         or score.kickoff_utc != fixture.kickoff_utc
     ):
-        raise _error("ordinary-FT settlement identity differs from sealed prediction")
+        return FreshSettlementAssessment(
+            disposition=(
+                SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT
+            ),
+            prediction=prediction,
+            detail="reviewed ordinary-FT score identity differs from the prospective seal",
+            settled_prediction=None,
+        )
 
     settlement_payload = {
         "prediction_sha256": sha256_sealed_fresh_prediction(prediction),
+        "provider_primary_id": fixture.provider_primary_id,
+        "wrapper_id": fixture.wrapper_id,
         "adapter_pair": {
             "first_manifest_sha256": adapter_result.first_manifest_sha256,
             "second_manifest_sha256": adapter_result.second_manifest_sha256,
@@ -1091,8 +1388,6 @@ def settle_sealed_prediction(
             "second_observed_at": _utc_text(adapter_result.second_observed_at),
         },
         "ordinary_ft_score": score.to_dict(),
-        "provider_primary_id": fixture.provider_primary_id,
-        "wrapper_id": fixture.wrapper_id,
     }
     settlement_sha = _sha256_bytes(_canonical(settlement_payload))
     update: FreshHistoryResult | None = None
@@ -1111,17 +1406,97 @@ def settle_sealed_prediction(
                 f"{score.second_manifest_sha256}:{fixture.fixture_id}"
             ),
             provider_primary_id=fixture.provider_primary_id,
-            source_kind="FRESH_REVIEWED_ORDINARY_FT_LEGACY_UPDATE",
+            source_kind=_FRESH_UPDATE_KIND,
         )
-    return SettledFreshPrediction(
+    settled = SettledFreshPrediction(
         prediction=prediction,
         home_goals=score.home_score,
         away_goals=score.away_score,
         settlement_observed_at=score.second_observed_at,
         settlement_evidence_sha256=settlement_sha,
+        ordinary_ft_first_raw_sha256=score.first_raw_sha256,
+        ordinary_ft_second_raw_sha256=score.second_raw_sha256,
         ordinary_ft_first_manifest_sha256=score.first_manifest_sha256,
         ordinary_ft_second_manifest_sha256=score.second_manifest_sha256,
         legacy_history_state_update=update,
+    )
+    return FreshSettlementAssessment(
+        disposition=SettlementDisposition.SETTLED_REVIEWED_ORDINARY_FT,
+        prediction=prediction,
+        detail="sealed fixture passed exact provider identity and reviewed ordinary-FT settlement",
+        settled_prediction=settled,
+    )
+
+
+def settle_sealed_prediction(
+    prediction: SealedFreshPrediction,
+    *,
+    history_ledger: FreshHistoryLedger,
+    first_raw_json: bytes,
+    first_manifest: capture_contract.FotMobDataMatchesCaptureManifest,
+    second_raw_json: bytes,
+    second_manifest: capture_contract.FotMobDataMatchesCaptureManifest,
+) -> FreshSettlementAssessment:
+    """Revalidate a seal and bind settlement from the exact reviewed raw capture pair.
+
+    The direct raw pair is required because the ordinary-FT score adapter retains
+    wrapper ID but not provider primaryId. Re-qualifying both raw captures is what
+    proves competition primaryId, wrapper ID, fixture/team identity and sealed
+    kickoff again at settlement.
+    """
+    verify_reviewed_dependencies()
+    prediction = revalidate_sealed_prediction(
+        history_ledger=history_ledger, prediction=prediction
+    )
+    first_fixtures = qualify_capture_fixtures(first_raw_json, first_manifest)
+    second_fixtures = qualify_capture_fixtures(second_raw_json, second_manifest)
+    first_identity = _one_fixture_identity(
+        first_fixtures, prediction.fixture.fixture_id
+    )
+    second_identity = _one_fixture_identity(
+        second_fixtures, prediction.fixture.fixture_id
+    )
+    if first_identity is None or second_identity is None:
+        return FreshSettlementAssessment(
+            disposition=(
+                SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT
+            ),
+            prediction=prediction,
+            detail="sealed fixture is absent from one or both settlement identity captures",
+            settled_prediction=None,
+        )
+    try:
+        adapter_result = score_adapter.adapt_fotmob_data_matches_ordinary_ft_finished_scores(
+            first_raw_json,
+            first_manifest,
+            second_raw_json,
+            second_manifest,
+        )
+    except Exception as exc:
+        raise _error("reviewed ordinary-FT settlement adapter failed") from exc
+    return _settle_from_revalidated_pair(
+        prediction=prediction,
+        first_identity=first_identity,
+        second_identity=second_identity,
+        adapter_result=adapter_result,
+    )
+
+
+def append_fresh_legacy_history_update(
+    ledger: FreshHistoryLedger,
+    settled_prediction: SettledFreshPrediction,
+) -> FreshHistoryLedger:
+    """Append only the settlement-derived update from a legacy primaryId fixture."""
+    if type(ledger) is not FreshHistoryLedger:
+        raise _error("ledger must be exact FreshHistoryLedger")
+    if type(settled_prediction) is not SettledFreshPrediction:
+        raise _error("settled_prediction must be exact SettledFreshPrediction")
+    update = settled_prediction.legacy_history_state_update
+    if update is None:
+        raise _error("non-legacy settlement cannot mutate frozen history state")
+    return FreshHistoryLedger._with_updates(
+        ledger,
+        ledger.fresh_updates + (update,),
     )
 
 
@@ -1138,14 +1513,19 @@ def coverage_at_boundary(
         raise _error("coverage boundary must be strictly after holdout start")
     if close.time() != dt.time.min:
         raise _error("coverage boundary must be an exact UTC midnight")
-    if not isinstance(predictions, Sequence) or isinstance(predictions, (str, bytes)):
+    if not isinstance(predictions, Sequence) or isinstance(
+        predictions, (str, bytes)
+    ):
         raise _error("predictions must be a sequence")
     values = tuple(predictions)
     if any(type(item) is not SealedFreshPrediction for item in values):
         raise _error("coverage population must contain exact sealed predictions")
+
     seen: set[int] = set()
     included: list[SealedFreshPrediction] = []
     for prediction in values:
+        if prediction.holdout_start_utc != start:
+            raise _error("coverage population mixes different holdout starts")
         fixture = prediction.fixture
         if fixture.fixture_id in seen:
             raise _error("coverage population duplicates a fixture")
@@ -1155,6 +1535,7 @@ def coverage_at_boundary(
             and start <= fixture.kickoff_utc < close
         ):
             included.append(prediction)
+
     counts = Counter(item.fixture.provider_primary_id for item in included)
     qualifying = tuple(
         sorted(
@@ -1164,11 +1545,17 @@ def coverage_at_boundary(
         )
     )
     non_legacy = tuple(
-        primary_id for primary_id in qualifying if primary_id not in pr148.LEGACY_PRIMARY_IDS
+        primary_id
+        for primary_id in qualifying
+        if primary_id not in pr148.LEGACY_PRIMARY_IDS
     )
     gates = {
-        "minimum_complete_case_fixtures": len(included) >= pr148.MINIMUM_COMPLETE_CASE_FIXTURES,
-        "minimum_qualifying_competitions": len(qualifying) >= pr148.MINIMUM_QUALIFYING_COMPETITIONS,
+        "minimum_complete_case_fixtures": (
+            len(included) >= pr148.MINIMUM_COMPLETE_CASE_FIXTURES
+        ),
+        "minimum_qualifying_competitions": (
+            len(qualifying) >= pr148.MINIMUM_QUALIFYING_COMPETITIONS
+        ),
         "minimum_non_legacy_qualifying_competitions": (
             len(non_legacy) >= pr148.MINIMUM_NON_LEGACY_QUALIFYING_COMPETITIONS
         ),
@@ -1200,13 +1587,17 @@ def evaluate_holdout_boundary(
     hard = hard_close_boundary(start)
     if current > hard:
         raise _error("cannot evaluate a boundary after the frozen hard close")
-    coverage = coverage_at_boundary(predictions, holdout_start=start, boundary=current)
+    coverage = coverage_at_boundary(
+        predictions, holdout_start=start, boundary=current
+    )
     if current < minimum:
         decision = HoldoutBoundaryDecision.OPEN_BEFORE_MINIMUM_GATE
     elif coverage["all_count_only_gates_pass"]:
         decision = HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED
     elif current == hard:
-        decision = HoldoutBoundaryDecision.CLOSE_INSUFFICIENT_COVERAGE_NO_SUCCESSOR_DECISION
+        decision = (
+            HoldoutBoundaryDecision.CLOSE_INSUFFICIENT_COVERAGE_NO_SUCCESSOR_DECISION
+        )
     else:
         decision = HoldoutBoundaryDecision.OPEN_WAITING_FOR_COUNT_ONLY_COVERAGE
     return {
@@ -1239,6 +1630,14 @@ def implementation_receipt() -> dict[str, Any]:
             "bootstrap_projection_size_bytes": BOOTSTRAP_PROJECTION_SIZE,
             "bootstrap_projection_rows": BOOTSTRAP_PROJECTION_ROWS,
         },
+        "integrity_guards": {
+            "history_ledger_normal_constructor_requires_exact_bootstrap_bytes": True,
+            "sealed_rates_reconstruct_from_frozen_features": True,
+            "settlement_revalidates_prediction_against_exact_history_ledger": True,
+            "settlement_requalifies_primary_id_wrapper_fixture_team_and_kickoff_from_raw_pair": True,
+            "later_pre_kickoff_identity_drift_does_not_retroactively_replace_earliest_seal": True,
+            "coverage_rejects_mixed_holdout_starts": True,
+        },
         "network_acquisition_performed": False,
         "fresh_holdout_started": False,
         "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
@@ -1253,6 +1652,7 @@ __all__ = [
     "FreshHistoryLedger",
     "FreshHistoryResult",
     "FreshPredictionAssessment",
+    "FreshSettlementAssessment",
     "FotMobFreshHoldoutError",
     "HoldoutBoundaryDecision",
     "IMPLEMENTATION_STATE",
@@ -1260,6 +1660,7 @@ __all__ = [
     "PredictionDisposition",
     "QualifiedCaptureFixture",
     "SealedFreshPrediction",
+    "SettlementDisposition",
     "SettledFreshPrediction",
     "append_fresh_legacy_history_update",
     "build_fresh_history_ledger",
@@ -1273,6 +1674,7 @@ __all__ = [
     "parse_reviewed_legacy_bootstrap_projection",
     "qualify_capture_fixtures",
     "resolve_holdout_start",
+    "revalidate_sealed_prediction",
     "select_earliest_qualifying_capture",
     "settle_sealed_prediction",
     "sha256_sealed_fresh_prediction",
