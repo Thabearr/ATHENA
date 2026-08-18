@@ -16,7 +16,30 @@ from domain import sportybet_sportradar_event_identity as bridge
 from domain import sportybet_sportradar_kickoff_identity_promotion as promotion
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
-from domain.fotmob_fixture_candidate_review import FotMobReviewedFixtureCatalogInput
+from domain.fixture_catalog import compile_fixture_catalog, sha256_bytes
+from domain.fotmob_data_matches_capture import (
+    CapturedFotMobDataMatchesResponse,
+    build_data_matches_capture_manifest,
+)
+from domain.fotmob_fixture_candidate_review import (
+    FixtureCandidateReviewDisposition,
+    FotMobFixtureCandidateReviewDecision,
+    build_fotmob_fixture_candidate_review_bundle,
+    sha256_fotmob_fixture_candidate,
+)
+from domain.fotmob_fixture_candidates import build_fotmob_fixture_candidate_bundle
+from domain.fotmob_fixture_catalog_handoff import (
+    build_fotmob_fixture_catalog_handoff,
+    sha256_fotmob_fixture_catalog_handoff,
+)
+from domain.reviewed_fixture_catalog_admission import (
+    REVIEWED_SOURCE_CAPABILITY,
+    ReviewedFixtureCatalogAdmissionDecision,
+    ReviewedFixtureCatalogAdmissionDisposition,
+    build_reviewed_fixture_catalog_admission,
+    sha256_reviewed_source_capability,
+)
+from domain.source_capabilities import CapabilityAvailability, SOURCE_CAPABILITY_REGISTRY
 
 UTC = dt.timezone.utc
 DETAIL_URL = (
@@ -89,7 +112,7 @@ def _sportradar_raw() -> bytes:
 
 
 def _chain(tmp_path: Path):
-    repo = tmp_path / "repo"
+    repo = tmp_path / "sportybet"
     repo.mkdir()
     event_raw = _event_raw()
     event_dir, manifest = manual.store_user_controlled_evidence(
@@ -161,35 +184,136 @@ def _chain(tmp_path: Path):
     }
 
 
-def _fixture(
-    fixture_id: int,
+def _epoch_ms(value: dt.datetime) -> int:
+    return int(value.astimezone(UTC).timestamp() * 1000)
+
+
+def _match(
+    match_id: int,
     *,
     home: str = "Example Home FC",
     away: str = "Example Away FC",
-    competition: str = "Example Country - Example League",
     kickoff: dt.datetime = dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC),
-) -> FotMobReviewedFixtureCatalogInput:
-    capture_sha = f"{fixture_id % 16:x}" * 64
-    candidate_sha = f"{(fixture_id + 1) % 16:x}" * 64
-    evidence_sha = f"{(fixture_id + 2) % 16:x}" * 64
-    return FotMobReviewedFixtureCatalogInput(
-        source_capture_manifest_sha256=capture_sha,
-        candidate_sha256=candidate_sha,
-        source_fixture_identifier=str(fixture_id),
-        home_team=home,
-        away_team=away,
-        competition=competition,
-        kickoff=kickoff,
-        source_reference="FotMob /api/data/matches capture manifest sha256:" + capture_sha,
-        reviewed_at=dt.datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
-        evidence_file_path=f"evidence/{fixture_id}.json",
-        evidence_sha256=evidence_sha,
-        reviewer_reference="hardening-reviewed",
-        notes="",
+) -> dict:
+    kickoff = kickoff.astimezone(UTC)
+    utc_time = kickoff.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return {
+        "away": {"id": 2000 + match_id, "score": 0, "name": away, "longName": away},
+        "eliminatedTeamId": None,
+        "home": {"id": 1000 + match_id, "score": 0, "name": home, "longName": home},
+        "id": match_id,
+        "leagueId": 77,
+        "status": {
+            "utcTime": utc_time,
+            "halfs": {"firstHalfStarted": ""},
+            "periodLength": 45,
+            "started": False,
+            "cancelled": False,
+            "finished": False,
+        },
+        "statusId": 1,
+        "time": kickoff.strftime("%d.%m.%Y %H:%M"),
+        "timeTS": _epoch_ms(kickoff),
+        "tournamentStage": "",
+    }
+
+
+def _capture(
+    *,
+    match: dict | None = None,
+    competition: str = "Example Country - Example League",
+):
+    payload = {
+        "leagues": [
+            {
+                "ccode": "NGA",
+                "id": 77,
+                "internalRank": 1,
+                "matches": [match or _match(3001)],
+                "name": competition,
+                "primaryId": 77,
+                "simpleLeague": False,
+            }
+        ],
+        "date": "20260818",
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    response = CapturedFotMobDataMatchesResponse(
+        status=200,
+        content_type="application/json; charset=utf-8",
+        content_length=len(raw),
+        body=raw,
+        observed_at=dt.datetime(2026, 8, 18, 9, 0, tzinfo=UTC),
+        network_acquisition_performed=True,
     )
+    manifest = build_data_matches_capture_manifest(
+        response,
+        request_date="20260818",
+        timezone="UTC",
+        ccode3="NGA",
+    )
+    return raw, manifest
 
 
-def _build(chain, fixtures):
+def _admission(
+    tmp_path: Path,
+    *,
+    match: dict | None = None,
+    competition: str = "Example Country - Example League",
+):
+    capture = _capture(match=match, competition=competition)
+    candidate_bundle = build_fotmob_fixture_candidate_bundle((capture,))
+    candidate = candidate_bundle.candidates[0]
+    review = build_fotmob_fixture_candidate_review_bundle(
+        candidate_bundle,
+        (
+            FotMobFixtureCandidateReviewDecision(
+                source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
+                source_match_id=candidate.source_match_id,
+                candidate_sha256=sha256_fotmob_fixture_candidate(candidate),
+                disposition=FixtureCandidateReviewDisposition.APPROVED,
+                reviewed_at=dt.datetime(2026, 8, 18, 10, 0, tzinfo=UTC),
+                reviewer_reference="operator:hardening-fixture-review",
+                notes="explicit source-backed review",
+            ),
+        ),
+    )
+    handoff = build_fotmob_fixture_catalog_handoff(candidate_bundle, review)
+    raw = capture[0]
+    for item in handoff.catalog_inputs:
+        evidence_path = tmp_path / item.evidence_file_path
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_bytes(raw)
+    input_path = tmp_path / "hardening-reviewed.jsonl"
+    input_path.write_bytes(handoff.catalog_input_jsonl_bytes)
+    result = compile_fixture_catalog(
+        input_path=input_path,
+        evidence_root=tmp_path,
+        as_of=dt.datetime(2026, 8, 18, 11, 0, tzinfo=UTC),
+        minimum_lead_seconds=3600,
+        code_state={
+            "evidence_git_head_sha": "b" * 40,
+            "tracked_worktree_clean": True,
+        },
+    )
+    decision = ReviewedFixtureCatalogAdmissionDecision(
+        candidate_bundle_sha256=handoff.candidate_bundle_sha256,
+        review_bundle_sha256=handoff.review_bundle_sha256,
+        handoff_sha256=sha256_fotmob_fixture_catalog_handoff(handoff),
+        catalog_sha256=sha256_bytes(result.catalog_bytes),
+        manifest_sha256=sha256_bytes(result.manifest_bytes),
+        source_capability=REVIEWED_SOURCE_CAPABILITY,
+        source_capability_sha256=sha256_reviewed_source_capability(),
+        disposition=ReviewedFixtureCatalogAdmissionDisposition.ADMITTED,
+        reviewed_at=dt.datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
+        reviewer_reference="operator:hardening-catalog-admission",
+        notes="catalog-level admission",
+    )
+    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
+    return admission, (capture,)
+
+
+def _build(chain, admission, captures):
     return full.build_full_utc_reconciliation(
         kickoff_promotion=chain["kickoff_promotion"],
         event_time_basis=chain["time_basis"],
@@ -201,11 +325,12 @@ def _build(chain, fixtures):
         event_bridge=chain["event_bridge"],
         sportradar_evidence=chain["sportradar_evidence"],
         sportradar_raw_response=chain["sportradar_raw"],
-        fixtures=fixtures,
+        fotmob_admission_value=admission,
+        fotmob_captures=captures,
     )
 
 
-def _verify(value, chain, fixtures):
+def _verify(value, chain, admission, captures):
     return full_verify.revalidate_full_utc_reconciliation(
         value,
         kickoff_promotion=chain["kickoff_promotion"],
@@ -218,19 +343,23 @@ def _verify(value, chain, fixtures):
         event_bridge=chain["event_bridge"],
         sportradar_evidence=chain["sportradar_evidence"],
         sportradar_raw_response=chain["sportradar_raw"],
-        fixtures=fixtures,
+        fotmob_admission_value=admission,
+        fotmob_captures=captures,
     )
 
 
 def test_sportradar_labels_are_not_silently_used_as_fotmob_aliases(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
-    official_label_fixture = _fixture(
-        3001,
-        home="Different Official Home Label",
-        away="Different Official Away Label",
+    admission, captures = _admission(
+        tmp_path,
+        match=_match(
+            3001,
+            home="Different Official Home Label",
+            away="Different Official Away Label",
+        ),
         competition="Different Official Competition Label",
     )
-    result = _build(chain, [official_label_fixture])
+    result = _build(chain, admission, captures)
     assert result.disposition is full.FullUtcReconciliationDisposition.NO_EXACT_FULL_UTC_MATCH
     assert result.fixture_reconciliation_authorized is False
 
@@ -239,53 +368,60 @@ def test_hash_shaped_final_artifact_forgery_is_rejected_by_source_aware_verifier
     tmp_path: Path,
 ) -> None:
     chain = _chain(tmp_path)
-    fixture = _fixture(3002)
-    result = _build(chain, [fixture])
+    admission, captures = _admission(tmp_path)
+    result = _build(chain, admission, captures)
     forged = dataclasses.replace(result, source_event_raw_sha256="e" * 64)
     with pytest.raises(
         full.SportyBetFotMobFullUtcReconciliationError,
         match="not the exact deterministic derivative",
     ):
-        _verify(forged, chain, [fixture])
+        _verify(forged, chain, admission, captures)
 
 
 def test_matched_fotmob_lineage_forgery_is_rejected_by_source_aware_verifier(
     tmp_path: Path,
 ) -> None:
     chain = _chain(tmp_path)
-    fixture = _fixture(3003)
-    result = _build(chain, [fixture])
+    admission, captures = _admission(tmp_path)
+    result = _build(chain, admission, captures)
     assert result.matched_fixture is not None
-    assert result.matched_fixture.evidence_sha256 != "f" * 64
-    forged_match = dataclasses.replace(result.matched_fixture, evidence_sha256="f" * 64)
+    forged_hash = "f" * 64
+    assert result.matched_fixture.evidence_sha256 != forged_hash
+    forged_match = dataclasses.replace(result.matched_fixture, evidence_sha256=forged_hash)
     forged = dataclasses.replace(result, matched_fixture=forged_match)
     with pytest.raises(
         full.SportyBetFotMobFullUtcReconciliationError,
         match="not the exact deterministic derivative",
     ):
-        _verify(forged, chain, [fixture])
+        _verify(forged, chain, admission, captures)
 
 
-def test_different_fotmob_population_cannot_reuse_prior_authorized_result(tmp_path: Path) -> None:
+def test_hash_shaped_fotmob_admission_lineage_forgery_is_rejected(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
-    exact = _fixture(3004)
-    result = _build(chain, [exact])
-    replacement_population = [
-        _fixture(
-            3005,
-            kickoff=dt.datetime(2026, 8, 18, 20, 1, tzinfo=UTC),
-        )
-    ]
+    admission, captures = _admission(tmp_path)
+    result = _build(chain, admission, captures)
+    forged = dataclasses.replace(result, source_fotmob_admission_sha256="c" * 64)
     with pytest.raises(
         full.SportyBetFotMobFullUtcReconciliationError,
         match="not the exact deterministic derivative",
     ):
-        _verify(result, chain, replacement_population)
+        _verify(forged, chain, admission, captures)
+
+
+def test_different_raw_capture_cannot_reuse_prior_admission_or_authorized_result(
+    tmp_path: Path,
+) -> None:
+    chain = _chain(tmp_path)
+    admission, captures = _admission(tmp_path)
+    result = _build(chain, admission, captures)
+    different_capture = _capture(match=_match(3999, home="Fabricated Home"))
+    with pytest.raises(full.SportyBetFotMobFullUtcReconciliationError):
+        _verify(result, chain, admission, (different_capture,))
 
 
 def test_raw_sportybet_tampering_is_rejected_before_fixture_authority(tmp_path: Path) -> None:
     chain = _chain(tmp_path)
-    fixture = _fixture(3006)
+    admission, captures = _admission(tmp_path)
     tampered = chain["event_raw"] + b"<!--tamper-->"
     with pytest.raises(full.SportyBetFotMobFullUtcReconciliationError):
         full.build_full_utc_reconciliation(
@@ -299,15 +435,39 @@ def test_raw_sportybet_tampering_is_rejected_before_fixture_authority(tmp_path: 
             event_bridge=chain["event_bridge"],
             sportradar_evidence=chain["sportradar_evidence"],
             sportradar_raw_response=chain["sportradar_raw"],
-            fixtures=[fixture],
+            fotmob_admission_value=admission,
+            fotmob_captures=captures,
         )
+
+
+def test_current_reviewed_source_capability_revocation_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    chain = _chain(tmp_path)
+    admission, captures = _admission(tmp_path)
+    current = SOURCE_CAPABILITY_REGISTRY[REVIEWED_SOURCE_CAPABILITY]
+    monkeypatch.setitem(
+        SOURCE_CAPABILITY_REGISTRY,
+        REVIEWED_SOURCE_CAPABILITY,
+        dataclasses.replace(
+            current,
+            reliable_fixture_identity=CapabilityAvailability.UNKNOWN,
+        ),
+    )
+    with pytest.raises(
+        full.SportyBetFotMobFullUtcReconciliationError,
+        match="identity-only PR #44 profile",
+    ):
+        _build(chain, admission, captures)
 
 
 def test_authorized_result_cannot_enable_any_non_fixture_safety_capability(
     tmp_path: Path,
 ) -> None:
     chain = _chain(tmp_path)
-    result = _build(chain, [_fixture(3007)])
+    admission, captures = _admission(tmp_path)
+    result = _build(chain, admission, captures)
     assert result.fixture_reconciliation_authorized is True
     for key in result.safety:
         if key == "fixture_reconciliation_authorized":
