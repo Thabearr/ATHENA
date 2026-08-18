@@ -28,7 +28,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Restore predecessor durable state and resolve schedule slot
+      - name: Restore newest durable lineage and resolve schedule slot
         id: state
         env:
           EVENT_NAME: ${{ github.event_name }}
@@ -44,9 +44,8 @@ jobs:
           import json
           import os
           import subprocess
-          import urllib.request
           from pathlib import Path
-          import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as lineage
 
           event_name = os.environ.get("EVENT_NAME")
           if event_name != "schedule":
@@ -59,21 +58,21 @@ jobs:
           current_run_id = int(os.environ["GITHUB_RUN_ID"])
           repo = os.environ["GITHUB_REPOSITORY"]
 
-          # Query GitHub API for workflow runs
           try:
               runs_out = subprocess.check_output(
                   [
                       "gh", "api",
-                      f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?status=success&per_page=100",
+                      f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?per_page=100",
                   ],
                   text=True,
               )
               runs_data = json.loads(runs_out)
-              prior_runs = runs_data.get("workflow_runs", [])
+              if type(runs_data) is not dict or type(runs_data.get("workflow_runs")) is not list:
+                  raise RuntimeError("malformed workflow_runs response")
+              prior_runs = runs_data["workflow_runs"]
           except Exception as exc:
               raise SystemExit(f"FATAL: failed to query workflow runs: {exc}")
 
-          # Fetch current run metadata for exact created_at
           try:
               run_out = subprocess.check_output(
                   ["gh", "api", f"/repos/{repo}/actions/runs/{current_run_id}"],
@@ -81,9 +80,13 @@ jobs:
               )
               run_data = json.loads(run_out)
               created_at_text = run_data["created_at"]
-              created_at = dt.datetime.fromisoformat(created_at_text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+              created_at = dt.datetime.fromisoformat(
+                  created_at_text.replace("Z", "+00:00")
+              ).astimezone(dt.timezone.utc)
           except Exception as exc:
-              raise SystemExit(f"FATAL: could not obtain authoritative run creation time: {exc}")
+              raise SystemExit(
+                  f"FATAL: could not obtain authoritative run creation time: {exc}"
+              )
 
           def get_run_artifacts(run_id: int):
               out = subprocess.check_output(
@@ -92,13 +95,13 @@ jobs:
               )
               return json.loads(out)
 
-          def download_artifact_zip(art_id: int) -> bytes:
+          def download_artifact_zip(artifact_id: int) -> bytes:
               return subprocess.check_output(
-                  ["gh", "api", f"/repos/{repo}/actions/artifacts/{art_id}/zip"],
+                  ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
               )
 
           try:
-              last_committed_utc = runner.restore_predecessor_durable_state(
+              restored = lineage.restore_latest_lineage_state(
                   prior_runs=prior_runs,
                   current_run_id=current_run_id,
                   get_run_artifacts=get_run_artifacts,
@@ -106,16 +109,26 @@ jobs:
                   repository_root=Path("."),
               )
           except Exception as exc:
-              raise SystemExit(f"FATAL: predecessor state restore failed: {exc}")
+              raise SystemExit(f"FATAL: predecessor lineage restore failed: {exc}")
 
-          if last_committed_utc is None:
-              print("Legitimate first Genesis: zero prior successful runs found.")
+          if restored.predecessor_run_id is None:
+              print("Legitimate first Genesis: zero prior completed campaign runs found.")
           else:
-              print(f"Authoritative predecessor restored. Last committed tick: {last_committed_utc.isoformat()}")
+              print(
+                  "Authoritative predecessor restored: "
+                  f"run={restored.predecessor_run_id} "
+                  f"conclusion={restored.predecessor_conclusion} "
+                  f"last_committed={restored.last_committed_utc} "
+                  f"last_attempted={restored.last_attempted_utc}"
+              )
 
           try:
-              nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
-                  schedule_expr, created_at, last_committed_utc=last_committed_utc
+              nominal, nominal_iso, release_tag, success_prefix, failure_prefix = (
+                  lineage.resolve_nominal_schedule_slot_from_lineage(
+                      schedule_expr,
+                      created_at,
+                      restored,
+                  )
               )
           except Exception as exc:
               raise SystemExit(f"FATAL: schedule slot resolution failed: {exc}")
@@ -150,7 +163,6 @@ jobs:
           set -euo pipefail
           python - <<'PY'
           import hashlib
-          import json
           import os
           import subprocess
           from pathlib import Path
@@ -168,7 +180,11 @@ jobs:
 
           try:
               res = subprocess.run(
-                  ["gh", "release", "download", bootstrap_tag, "--pattern", asset_name, "--repo", repo],
+                  [
+                      "gh", "release", "download", bootstrap_tag,
+                      "--pattern", asset_name,
+                      "--repo", repo,
+                  ],
                   capture_output=True,
                   text=True,
               )
@@ -189,9 +205,12 @@ jobs:
                   stdout=zip_path.open("wb"),
               )
               import zipfile
-              with zipfile.ZipFile(zip_path, "r") as zf:
-                  zf.extractall("preserved_pr119")
-              ndjson_src = Path("preserved_pr119/database/market_evidence/fotmob_data_matches_epl_historical_raw_features.ndjson")
+              with zipfile.ZipFile(zip_path, "r") as archive:
+                  archive.extractall("preserved_pr119")
+              ndjson_src = Path(
+                  "preserved_pr119/database/market_evidence/"
+                  "fotmob_data_matches_epl_historical_raw_features.ndjson"
+              )
               if not ndjson_src.is_file():
                   raise SystemExit("source ndjson missing from PR119 artifact")
               lines = ndjson_src.read_bytes().splitlines()
@@ -199,9 +218,17 @@ jobs:
                   raise SystemExit(f"unexpected line count: {len(lines)}")
               target.write_bytes(ndjson_src.read_bytes())
 
-              if not subprocess.run(["gh", "release", "view", bootstrap_tag, "--repo", repo], capture_output=True).returncode == 0:
+              if subprocess.run(
+                  ["gh", "release", "view", bootstrap_tag, "--repo", repo],
+                  capture_output=True,
+              ).returncode != 0:
                   subprocess.run(
-                      ["gh", "release", "create", bootstrap_tag, "--title", "PR119 Materialized Bootstrap Projection", "--notes", "Preserved immutable bootstrap projection for the reviewed FotMob fresh holdout.", "--repo", repo],
+                      [
+                          "gh", "release", "create", bootstrap_tag,
+                          "--title", "PR119 Materialized Bootstrap Projection",
+                          "--notes", "Preserved immutable bootstrap projection for the reviewed FotMob fresh holdout.",
+                          "--repo", repo,
+                      ],
                       check=False,
                   )
               try:
@@ -209,14 +236,21 @@ jobs:
                       ["gh", "release", "upload", bootstrap_tag, str(target), "--repo", repo],
                       check=False,
                   )
-              except Exception as e:
-                  print(f"bootstrap release upload warning: {e}")
+              except Exception as exc:
+                  print(f"bootstrap release upload warning: {exc}")
 
           raw = target.read_bytes()
           rows = raw.count(b"\n")
-          if hashlib.sha256(raw).hexdigest() != expected_sha or len(raw) != expected_size or rows != expected_rows:
+          if (
+              hashlib.sha256(raw).hexdigest() != expected_sha
+              or len(raw) != expected_size
+              or rows != expected_rows
+          ):
               raise SystemExit("bootstrap projection integrity check failed")
-          print(f"bootstrap verified: sha256={expected_sha} size={expected_size} rows={rows}")
+          print(
+              f"bootstrap verified: sha256={expected_sha} "
+              f"size={expected_size} rows={rows}"
+          )
           PY
 
       - name: Execute reviewed fresh-holdout collection tick
@@ -240,21 +274,57 @@ jobs:
           echo "exit_code=${exit_code}" >> "${GITHUB_OUTPUT}"
           exit ${exit_code}
 
+      - name: Reconcile any staged capture lineage
+        id: reconcile
+        if: always() && steps.state.outcome == 'success' && steps.execute_tick.outcome == 'failure'
+        env:
+          RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
+          FAILURE_ASSET: ${{ steps.state.outputs.failure_asset }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as lineage
+
+          result = lineage.reconcile_staged_capture_lineage(
+              durable_release_tag=os.environ["RELEASE_TAG"],
+              durable_asset_name=os.environ["FAILURE_ASSET"],
+              repository_root=Path("."),
+          )
+          print(f"failed-tick evidence reconciliation: {result}")
+          PY
+
       - name: Package durable state archive
         id: package
         if: always()
         env:
           SUCCESS_ASSET: ${{ steps.state.outputs.success_asset }}
           FAILURE_ASSET: ${{ steps.state.outputs.failure_asset }}
+          RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
+          NOMINAL_SLOT: ${{ steps.state.outputs.nominal_slot }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
           TICK_EXIT: ${{ steps.execute_tick.outputs.exit_code }}
+          RECONCILE_OUTCOME: ${{ steps.reconcile.outcome }}
         shell: bash
         run: |
           set -euo pipefail
           state_dir=".cache/athena-research/fotmob-utc-native-xg-fresh-holdout"
+          if [ -z "${NOMINAL_SLOT:-}" ]; then
+            echo "FATAL: nominal slot was not resolved; refusing to fabricate lineage archive identity"
+            exit 1
+          fi
           if [ "${TICK_EXIT:-1}" = "0" ]; then
             tar_name="${SUCCESS_ASSET}"
           else
             tar_name="${FAILURE_ASSET}"
+          fi
+          if [ -z "${tar_name:-}" ]; then
+            echo "FATAL: durable archive name is empty"
+            exit 1
           fi
           mkdir -p "${state_dir}"
           tar -czf "${tar_name}" -C . "${state_dir}"
@@ -275,14 +345,28 @@ jobs:
               try:
                   receipt_data = json.loads(receipt_path.read_bytes())
               except Exception:
-                  pass
+                  receipt_data = {}
 
+          receipt_data["workflow_run_id"] = int("${WORKFLOW_RUN_ID}")
+          receipt_data["workflow_event_schedule"] = "${EVENT_SCHEDULE}"
+          receipt_data["nominal_scheduled_for_utc"] = "${NOMINAL_SLOT}"
+          receipt_data["durable_release_tag"] = "${RELEASE_TAG}"
           receipt_data["durable_asset_name"] = "${tar_name}"
           receipt_data["durable_asset_sha256"] = tar_sha
           receipt_data["durable_asset_size_bytes"] = tar_size
+          receipt_data["tick_exit_code"] = int("${TICK_EXIT:-1}")
+          receipt_data["tick_committed"] = "${TICK_EXIT:-1}" == "0"
+          receipt_data["failure_lineage_reconcile_outcome"] = "${RECONCILE_OUTCOME:-skipped}"
 
           receipt_path.write_bytes(
-              (json.dumps(receipt_data, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+              (
+                  json.dumps(
+                      receipt_data,
+                      sort_keys=True,
+                      separators=(",", ":"),
+                  )
+                  + "\n"
+              ).encode("utf-8")
           )
           print(f"packaged {tar_name}: sha256={tar_sha} size={tar_size}")
           PY
@@ -315,6 +399,11 @@ jobs:
           tag="${RELEASE_TAG}"
           archive="${ARCHIVE_NAME}"
 
+          if [ -z "${tag:-}" ] || [ -z "${archive:-}" ]; then
+            echo "FATAL: release identity unavailable"
+            exit 1
+          fi
+
           if ! gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
             gh release create "${tag}" \
               --title "FotMob UTC-Native Fresh Holdout Evidence ${tag}" \
@@ -342,23 +431,33 @@ jobs:
           )
           release_data = json.loads(out)
           matching_assets = [
-              a for a in release_data.get("assets", [])
-              if a.get("name") == archive_name
+              asset
+              for asset in release_data.get("assets", [])
+              if asset.get("name") == archive_name
           ]
           if len(matching_assets) != 1:
               raise SystemExit(
-                  f"FATAL: release {tag} does not contain exactly one asset named {archive_name}, found {len(matching_assets)}"
+                  f"FATAL: release {tag} does not contain exactly one asset "
+                  f"named {archive_name}, found {len(matching_assets)}"
               )
           asset = matching_assets[0]
           if asset.get("state") != "uploaded":
-              raise SystemExit(f"FATAL: release asset {archive_name} state is not 'uploaded': {asset.get('state')}")
+              raise SystemExit(
+                  f"FATAL: release asset {archive_name} state is not uploaded: "
+                  f"{asset.get('state')}"
+              )
           if asset.get("size") != expected_size:
-              raise SystemExit(f"FATAL: release asset {archive_name} size mismatch: expected {expected_size}, got {asset.get('size')}")
-          print(f"Verified release asset {archive_name} on {tag} (size={expected_size}).")
+              raise SystemExit(
+                  f"FATAL: release asset {archive_name} size mismatch: "
+                  f"expected {expected_size}, got {asset.get('size')}"
+              )
+          print(
+              f"Verified release asset {archive_name} on {tag} "
+              f"(size={expected_size})."
+          )
           PY
 
-          # Re-raise tick execution failure if the tick itself failed
           if [ "${TICK_EXIT:-1}" != "0" ]; then
-            echo "Tick execution failed with exit code ${TICK_EXIT}; failure archive published."
+            echo "Tick execution failed with exit code ${TICK_EXIT}; failure archive published and retained for next-run lineage restore."
             exit "${TICK_EXIT}"
           fi
