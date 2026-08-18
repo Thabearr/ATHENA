@@ -32,7 +32,10 @@ def _raw(
     when = (
         f"<div class='when'>{date_text} {time_text}</div>"
         if combined_datetime
-        else f"<div class='date'>{date_text}</div><div class='time'>{time_text}</div>"
+        else (
+            f"<div class='date'>{date_text}</div>"
+            f"<div class='time'>{time_text}</div>"
+        )
     )
     return f'''<!doctype html><html><body>
 <div>Please turn JavaScript on in browser</div>
@@ -70,7 +73,7 @@ def _source(repo: Path, *, raw: bytes | None = None):
     return evidence_dir, manifest, inventory, raw
 
 
-def test_extracts_machine_visible_header_without_inventing_utc(tmp_path: Path) -> None:
+def _candidate(tmp_path: Path):
     repo = _repo(tmp_path)
     _, manifest, inventory, raw = _source(repo)
     candidate = header.build_machine_event_header_candidate(
@@ -78,6 +81,13 @@ def test_extracts_machine_visible_header_without_inventing_utc(tmp_path: Path) -
         inventory=inventory,
         raw_html=raw,
     )
+    return candidate, manifest, inventory, raw
+
+
+def test_extracts_machine_visible_header_without_inventing_utc(
+    tmp_path: Path,
+) -> None:
+    candidate, _, _, _ = _candidate(tmp_path)
     assert candidate.event_id == "sr:match:123"
     assert candidate.sport_id == "sr:sport:1"
     assert candidate.competition_display == "Example Country - Example League"
@@ -98,10 +108,14 @@ def test_extracts_machine_visible_header_without_inventing_utc(tmp_path: Path) -
     assert candidate.provider_quote_at is None
     assert candidate.provider_snapshot_id is None
     assert all(value is False for value in candidate.safety.values())
+    assert candidate.safety["network_acquisition_authorized"] is False
+    assert candidate.safety["booking_code_authorized"] is False
 
 
 def test_combined_datetime_text_is_supported() -> None:
-    extracted = header.extract_visible_event_header(_raw(combined_datetime=True))
+    extracted = header.extract_visible_event_header(
+        _raw(combined_datetime=True)
+    )
     assert extracted.kickoff_display == "18/08 Tuesday 20:00"
     assert extracted.home_display == "Example Home FC"
     assert extracted.away_display == "Example Away FC"
@@ -117,37 +131,75 @@ def test_script_and_style_decoys_are_ignored() -> None:
     assert extracted.kickoff_display == "18/08 Tuesday 20:00"
 
 
+def test_repeated_identical_header_is_semantically_deduplicated() -> None:
+    block = (
+        b"<h2>Example Country - Example League</h2>"
+        b"<div>18/08 Tuesday</div><div>20:00</div>"
+        b"<div>Example Home FC</div><div>Example Away FC</div>"
+    )
+    raw = _raw().replace(b"</body>", block + b"</body>")
+    extracted = header.extract_visible_event_header(raw)
+    assert extracted.home_display == "Example Home FC"
+    assert extracted.away_display == "Example Away FC"
+
+
 def test_multiple_distinct_headers_fail_closed() -> None:
     raw = _raw().replace(
         b"</body>",
         b"<h2>Other League</h2><div>19/08 Wednesday</div><div>21:00</div>"
         b"<div>Other Home</div><div>Other Away</div></body>",
     )
-    with pytest.raises(header.SportyBetMachineEventHeaderError, match="multiple"):
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="multiple",
+    ):
         header.extract_visible_event_header(raw)
 
 
 def test_missing_header_fails_closed() -> None:
     raw = _raw().replace(b"18/08 Tuesday", b"Tuesday 18 August")
-    with pytest.raises(header.SportyBetMachineEventHeaderError, match="no unique"):
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="no unique",
+    ):
         header.extract_visible_event_header(raw)
 
 
-def test_invalid_or_impossible_display_clock_fails_closed() -> None:
-    for date_text, time_text in [
+@pytest.mark.parametrize(
+    ("date_text", "time_text"),
+    [
         ("00/08 Tuesday", "20:00"),
         ("18/13 Tuesday", "20:00"),
+        ("31/02 Tuesday", "20:00"),
+        ("31/04 Tuesday", "20:00"),
         ("18/08 Tuesday", "24:00"),
         ("18/08 Tue", "20:00"),
-    ]:
-        with pytest.raises(header.SportyBetMachineEventHeaderError):
-            header.extract_visible_event_header(
-                _raw(date_text=date_text, time_text=time_text)
-            )
+    ],
+)
+def test_invalid_or_impossible_display_clock_fails_closed(
+    date_text: str,
+    time_text: str,
+) -> None:
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        header.extract_visible_event_header(
+            _raw(date_text=date_text, time_text=time_text)
+        )
+
+
+def test_february_29_is_not_rejected_without_a_proven_year() -> None:
+    extracted = header.extract_visible_event_header(
+        _raw(date_text="29/02 Thursday")
+    )
+    assert extracted.kickoff_day == 29
+    assert extracted.kickoff_month == 2
+    assert extracted.kickoff_year if hasattr(extracted, "kickoff_year") else True
 
 
 def test_home_and_away_must_be_distinct() -> None:
-    with pytest.raises(header.SportyBetMachineEventHeaderError, match="no unique"):
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="no unique",
+    ):
         header.extract_visible_event_header(
             _raw(home="Same FC", away="Same FC")
         )
@@ -175,10 +227,10 @@ def test_visible_html_whitespace_is_render_collapsed_only() -> None:
     assert extracted.away_display == "Example Away FC"
 
 
-def test_raw_html_must_be_bounded_utf8_bytes() -> None:
-    for raw in [b"", "not-bytes", b"\xff"]:
-        with pytest.raises(header.SportyBetMachineEventHeaderError):
-            header.visible_text_tokens(raw)
+@pytest.mark.parametrize("raw", [b"", "not-bytes", b"\xff"])
+def test_raw_html_must_be_bounded_utf8_bytes(raw: object) -> None:
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        header.visible_text_tokens(raw)
 
 
 def test_event_detail_lineage_is_bound_to_exact_manifest_and_inventory(
@@ -190,7 +242,10 @@ def test_event_detail_lineage_is_bound_to_exact_manifest_and_inventory(
         inventory,
         source_raw_sha256="0" * 64,
     )
-    with pytest.raises(header.SportyBetMachineEventHeaderError, match="lineage"):
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="lineage",
+    ):
         header.build_machine_event_header_candidate(
             manifest=manifest,
             inventory=tampered,
@@ -198,10 +253,15 @@ def test_event_detail_lineage_is_bound_to_exact_manifest_and_inventory(
         )
 
 
-def test_raw_byte_tampering_fails_before_header_extraction(tmp_path: Path) -> None:
+def test_raw_byte_tampering_fails_before_header_extraction(
+    tmp_path: Path,
+) -> None:
     repo = _repo(tmp_path)
     _, manifest, inventory, raw = _source(repo)
-    with pytest.raises(header.SportyBetMachineEventHeaderError, match="raw HTML"):
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="raw HTML",
+    ):
         header.build_machine_event_header_candidate(
             manifest=manifest,
             inventory=inventory,
@@ -209,10 +269,12 @@ def test_raw_byte_tampering_fails_before_header_extraction(tmp_path: Path) -> No
         )
 
 
-def test_index_evidence_cannot_create_event_header_candidate(tmp_path: Path) -> None:
+def test_index_evidence_cannot_create_event_header_candidate(
+    tmp_path: Path,
+) -> None:
     repo = _repo(tmp_path)
     raw = _raw()
-    _, manifest = manual.store_user_controlled_evidence(
+    evidence_dir, manifest = manual.store_user_controlled_evidence(
         raw,
         source_url="https://www.sportybet.com/ng/lite",
         observed_at_user_attested=OBSERVED,
@@ -221,10 +283,13 @@ def test_index_evidence_cannot_create_event_header_candidate(tmp_path: Path) -> 
         repository_root=repo,
     )
     inventory = native.build_inventory_from_evidence(
-        repo / manual.ALLOWED_OUTPUT_RELATIVE / manual.evidence_identifier(manifest),
+        evidence_dir,
         allowed_root=repo / manual.ALLOWED_OUTPUT_RELATIVE,
     )
-    with pytest.raises(header.SportyBetMachineEventHeaderError, match="event-detail"):
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="event-detail",
+    ):
         header.build_machine_event_header_candidate(
             manifest=manifest,
             inventory=inventory,
@@ -232,22 +297,18 @@ def test_index_evidence_cannot_create_event_header_candidate(tmp_path: Path) -> 
         )
 
 
-def test_candidate_canonical_bytes_and_hash_are_deterministic(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _, manifest, inventory, raw = _source(repo)
-    first = header.build_machine_event_header_candidate(
-        manifest=manifest,
-        inventory=inventory,
-        raw_html=raw,
-    )
+def test_candidate_canonical_bytes_and_hash_are_deterministic(
+    tmp_path: Path,
+) -> None:
+    candidate, manifest, inventory, raw = _candidate(tmp_path)
     second = header.build_machine_event_header_candidate(
         manifest=manifest,
         inventory=inventory,
         raw_html=raw,
     )
-    payload = header.canonical_candidate_bytes(first)
+    payload = header.canonical_candidate_bytes(candidate)
     assert payload == header.canonical_candidate_bytes(second)
-    assert header.candidate_sha256(first) == header.candidate_sha256(second)
+    assert header.candidate_sha256(candidate) == header.candidate_sha256(second)
     assert payload.endswith(b"\n")
     parsed = json.loads(payload)
     assert parsed["kickoff_year"] is None
@@ -256,20 +317,50 @@ def test_candidate_canonical_bytes_and_hash_are_deterministic(tmp_path: Path) ->
     assert all(value is False for value in parsed["safety"].values())
 
 
-def test_coordinated_candidate_tampering_is_rejected(tmp_path: Path) -> None:
-    repo = _repo(tmp_path)
-    _, manifest, inventory, raw = _source(repo)
-    candidate = header.build_machine_event_header_candidate(
-        manifest=manifest,
-        inventory=inventory,
-        raw_html=raw,
-    )
+def test_candidate_identity_fields_revalidate_source_url(
+    tmp_path: Path,
+) -> None:
+    candidate, _, _, _ = _candidate(tmp_path)
     with pytest.raises(header.SportyBetMachineEventHeaderError):
-        dataclasses.replace(candidate, kickoff_utc="2026-08-18T20:00:00Z")
+        dataclasses.replace(candidate, source_evidence_id="not-an-evidence-id")
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        dataclasses.replace(candidate, event_id="sr:match:999")
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        dataclasses.replace(candidate, sport_id="sr:sport:2")
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        dataclasses.replace(
+            candidate,
+            source_url="https://www.sportybet.com/ng/lite",
+        )
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        dataclasses.replace(candidate, event_id="bad")
+
+
+def test_coordinated_candidate_tampering_is_rejected(
+    tmp_path: Path,
+) -> None:
+    candidate, _, _, _ = _candidate(tmp_path)
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        dataclasses.replace(
+            candidate,
+            kickoff_utc="2026-08-18T20:00:00Z",
+        )
     with pytest.raises(header.SportyBetMachineEventHeaderError):
         dataclasses.replace(candidate, display_time_basis="GMT")
     with pytest.raises(header.SportyBetMachineEventHeaderError):
         dataclasses.replace(
             candidate,
-            safety={**candidate.safety, "fixture_reconciliation_authorized": True},
+            safety={
+                **candidate.safety,
+                "fixture_reconciliation_authorized": True,
+            },
+        )
+    with pytest.raises(header.SportyBetMachineEventHeaderError):
+        dataclasses.replace(
+            candidate,
+            safety={
+                key: value
+                for key, value in candidate.safety.items()
+                if key != "network_acquisition_authorized"
+            },
         )
