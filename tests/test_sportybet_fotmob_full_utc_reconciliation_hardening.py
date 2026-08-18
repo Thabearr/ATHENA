@@ -256,7 +256,8 @@ def test_matched_fotmob_lineage_forgery_is_rejected_by_source_aware_verifier(
     fixture = _fixture(3003)
     result = _build(chain, [fixture])
     assert result.matched_fixture is not None
-    forged_match = dataclasses.replace(result.matched_fixture, evidence_sha256="d" * 64)
+    assert result.matched_fixture.evidence_sha256 != "f" * 64
+    forged_match = dataclasses.replace(result.matched_fixture, evidence_sha256="f" * 64)
     forged = dataclasses.replace(result, matched_fixture=forged_match)
     with pytest.raises(
         full.SportyBetFotMobFullUtcReconciliationError,
