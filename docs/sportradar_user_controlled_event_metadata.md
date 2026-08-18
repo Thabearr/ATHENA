@@ -89,7 +89,9 @@ Each evidence directory contains exactly:
 
 The evidence ID binds the exact PR #160 bridge hash, source URL, user-attested observation time, and raw response SHA-256. Storage is no-overwrite and idempotent for exact replays. Traversal, symlink escape, extra files, non-canonical manifests, raw-byte tampering, and identity collisions fail closed.
 
-At consumption time a serialized metadata manifest is still not trusted by shape or hash fields alone. The response and exact SportyBet source chain must be supplied again; ATHENA rebuilds the evidence and requires canonical byte-for-byte equality.
+The ordinary directory verifier is intentionally only a **storage-integrity** check: it proves exact directory shape, canonical manifest bytes, preserved raw hash/size, and deterministic directory identity. Those checks do not independently prove that a hash-shaped bridge lineage field is authentic.
+
+Every downstream consumer of a stored evidence directory must therefore use the source-aware directory verifier. It first runs the storage-integrity verifier, reopens the exact preserved `response.json`, revalidates the PR #160 bridge from the exact SportyBet manifest/inventory/raw HTML, rebuilds the complete Sportradar metadata evidence, and requires canonical byte-for-byte equality with the stored manifest. This is the authoritative consumption boundary.
 
 ## What this boundary does not authorize
 
