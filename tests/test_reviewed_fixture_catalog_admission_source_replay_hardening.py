@@ -119,7 +119,7 @@ def _decision(tmp_path: Path, *, disposition=ReviewedFixtureCatalogAdmissionDisp
     return handoff, result, decision
 
 
-def test_hash_shaped_forged_decision_lineage_cannot_cross_source_replay(tmp_path: Path) -> None:
+def test_hash_shaped_forged_decision_lineage_cannot_cross_semantic_rebuild(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
     forged_native = dataclasses.replace(decision.decision, handoff_sha256="f" * 64)
     forged = replay.ReviewedFixtureCatalogAdmissionReplayDecision(
@@ -127,7 +127,7 @@ def test_hash_shaped_forged_decision_lineage_cannot_cross_source_replay(tmp_path
         safety={key: False for key in replay._SAFETY_KEYS},
     )
     with pytest.raises(replay.ReviewedFixtureCatalogAdmissionSourceReplayError):
-        replay.store_source_replayed_admission(
+        replay._store_semantic_admission(
             handoff=handoff,
             fixture_catalog_result=result,
             replay_decision=forged,
@@ -137,7 +137,7 @@ def test_hash_shaped_forged_decision_lineage_cannot_cross_source_replay(tmp_path
 
 def test_stored_admission_tampering_fails_semantic_verification(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
-    directory, _ = replay.store_source_replayed_admission(
+    directory, _ = replay._store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -156,7 +156,7 @@ def test_stored_admission_tampering_fails_semantic_verification(tmp_path: Path) 
 
 def test_stored_decision_tampering_fails_before_admission_authority(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
-    directory, _ = replay.store_source_replayed_admission(
+    directory, _ = replay._store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -175,7 +175,7 @@ def test_stored_decision_tampering_fails_before_admission_authority(tmp_path: Pa
 
 def test_unexpected_entry_fails_closed_and_is_not_deleted(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
-    directory, _ = replay.store_source_replayed_admission(
+    directory, _ = replay._store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -195,7 +195,7 @@ def test_unexpected_entry_fails_closed_and_is_not_deleted(tmp_path: Path) -> Non
 
 def test_mkdir_race_never_deletes_competing_writer_directory(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     handoff, result, decision = _decision(tmp_path)
-    expected_admission = replay.build_source_replayed_admission(
+    expected_admission = replay._build_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -216,7 +216,7 @@ def test_mkdir_race_never_deletes_competing_writer_directory(tmp_path: Path, mon
 
     monkeypatch.setattr(Path, "mkdir", competing_mkdir)
     with pytest.raises(replay.ReviewedFixtureCatalogAdmissionSourceReplayError, match="durably store"):
-        replay.store_source_replayed_admission(
+        replay._store_semantic_admission(
             handoff=handoff,
             fixture_catalog_result=result,
             replay_decision=decision,
@@ -229,7 +229,7 @@ def test_mkdir_race_never_deletes_competing_writer_directory(tmp_path: Path, mon
 def test_alternate_output_root_and_traversal_fail_closed(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
     with pytest.raises(replay.ReviewedFixtureCatalogAdmissionSourceReplayError, match="reviewed exact source-replay root"):
-        replay.store_source_replayed_admission(
+        replay._store_semantic_admission(
             handoff=handoff,
             fixture_catalog_result=result,
             replay_decision=decision,
@@ -237,7 +237,7 @@ def test_alternate_output_root_and_traversal_fail_closed(tmp_path: Path) -> None
             output_root=tmp_path / ".cache" / "wrong",
         )
     with pytest.raises(replay.ReviewedFixtureCatalogAdmissionSourceReplayError, match="traversal"):
-        replay.store_source_replayed_admission(
+        replay._store_semantic_admission(
             handoff=handoff,
             fixture_catalog_result=result,
             replay_decision=decision,
@@ -259,7 +259,7 @@ def test_replay_decision_safety_remains_false_and_immutable(tmp_path: Path) -> N
 
 def test_rejected_and_admitted_decisions_have_distinct_artifact_identity(tmp_path: Path) -> None:
     handoff, result, admitted_decision = _decision(tmp_path)
-    _, admitted = replay.store_source_replayed_admission(
+    _, admitted = replay._store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=admitted_decision,
@@ -273,7 +273,7 @@ def test_rejected_and_admitted_decisions_have_distinct_artifact_identity(tmp_pat
         reviewer_reference="operator:catalog-admission",
         notes="catalog-level rejection review",
     )
-    _, rejected = replay.store_source_replayed_admission(
+    _, rejected = replay._store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=rejected_decision,
@@ -284,7 +284,7 @@ def test_rejected_and_admitted_decisions_have_distinct_artifact_identity(tmp_pat
 
 def test_public_consumption_revalidator_runs_catalog_source_replay_first(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     handoff, result, decision = _decision(tmp_path)
-    directory, expected = replay.store_source_replayed_admission(
+    directory, expected = replay._store_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
@@ -313,4 +313,53 @@ def test_public_consumption_revalidator_runs_catalog_source_replay_first(tmp_pat
     assert len(calls) == 1
     assert calls[0]["capture_directories"] == ("capture-a",)
     assert sha256_reviewed_fixture_catalog_admission(rebuilt) == sha256_reviewed_fixture_catalog_admission(expected)
-    assert "verify_source_replayed_admission_directory" not in replay.__all__
+
+
+def test_semantic_admission_build_store_and_verify_are_not_public_domain_exports() -> None:
+    for name in (
+        "_build_semantic_admission",
+        "_store_semantic_admission",
+        "_verify_semantic_admission_directory",
+        "build_source_replayed_admission",
+        "store_source_replayed_admission",
+        "verify_source_replayed_admission_directory",
+    ):
+        assert name not in replay.__all__
+
+
+def test_checked_manifest_cannot_self_assert_a_different_generator_commit(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        replay_cli,
+        "get_code_state",
+        lambda repository: {
+            "evidence_git_head_sha": "b" * 40,
+            "tracked_worktree_clean": True,
+        },
+    )
+    with pytest.raises(
+        replay_cli.ReviewedFixtureCatalogAdmissionReplayCLIError,
+        match="does not match current clean Git HEAD",
+    ):
+        replay_cli._current_code_state(
+            tmp_path,
+            checked_manifest={"generator_commit": "a" * 40},
+        )
+
+
+def test_dirty_current_code_state_cannot_be_overridden_by_clean_manifest(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setattr(
+        replay_cli,
+        "get_code_state",
+        lambda repository: {
+            "evidence_git_head_sha": "a" * 40,
+            "tracked_worktree_clean": False,
+        },
+    )
+    with pytest.raises(
+        replay_cli.ReviewedFixtureCatalogAdmissionReplayCLIError,
+        match="tracked worktree must be exactly clean",
+    ):
+        replay_cli._current_code_state(
+            tmp_path,
+            checked_manifest={"generator_commit": "a" * 40},
+        )
