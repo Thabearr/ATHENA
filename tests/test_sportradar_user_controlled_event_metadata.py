@@ -8,14 +8,62 @@ from pathlib import Path
 import pytest
 
 from domain import sportradar_user_controlled_event_metadata as metadata
-from tests.test_sportybet_sportradar_event_identity import _build as _build_bridge
+from domain import sportybet_sportradar_event_identity as bridge
+from domain import sportybet_user_controlled_evidence as manual
+from domain import sportybet_user_controlled_native_inventory as native
 
 
 OBSERVED = dt.datetime(2026, 8, 18, 18, 0, tzinfo=dt.timezone.utc)
 IMPORTED = dt.datetime(2026, 8, 18, 18, 1, tzinfo=dt.timezone.utc)
+SPORTY_OBSERVED = dt.datetime(2026, 8, 18, 12, 0, tzinfo=dt.timezone.utc)
+SPORTY_IMPORTED = dt.datetime(2026, 8, 18, 12, 1, tzinfo=dt.timezone.utc)
 PROTOCOL = Path(
     "artifacts/research-protocols/sportradar-user-controlled-event-metadata-evidence-v1.json"
 )
+
+
+def _sporty_url() -> str:
+    return (
+        "https://www.sportybet.com/ng/lite/preMatch/detail?"
+        "eventId=sr%3Amatch%3A123&marketGroupsName=Main&sportId=sr%3Asport%3A1"
+    )
+
+
+def _sporty_raw() -> bytes:
+    return b'''<!doctype html><html><body>
+<div>Please turn JavaScript on in browser</div>
+<a>Register</a><a>Log In</a><a>Cashout</a><a>Betslip(0)</a><a>Back</a><a>Refresh</a>
+<h1>Example Country - Example League</h1>
+<div class="date">18/08 Tuesday</div><div class="time">20:00</div>
+<div class="home">Example Home FC</div><div class="away">Example Away FC</div>
+<a data-active="true" data-market-name="1X2" data-outcome-name="Home" href="/ng/lite/preMatch/detail?eventId=sr%3Amatch%3A123&marketId=1&outcomeId=1&odds=2.05&productId=3&sportId=sr%3Asport%3A1&marketGroupsName=Main">Home</a>
+<a data-active="true" data-market-name="1X2" data-outcome-name="Draw" href="/ng/lite/preMatch/detail?eventId=sr%3Amatch%3A123&marketId=1&outcomeId=2&odds=3.20&productId=3&sportId=sr%3Asport%3A1&marketGroupsName=Main">Draw</a>
+<a data-active="true" data-market-name="1X2" data-outcome-name="Away" href="/ng/lite/preMatch/detail?eventId=sr%3Amatch%3A123&marketId=1&outcomeId=3&odds=3.70&productId=3&sportId=sr%3Asport%3A1&marketGroupsName=Main">Away</a>
+</body></html>'''
+
+
+def _build_bridge(tmp_path: Path):
+    repository = tmp_path / "repo"
+    repository.mkdir()
+    sporty_raw = _sporty_raw()
+    evidence_dir, manifest = manual.store_user_controlled_evidence(
+        sporty_raw,
+        source_url=_sporty_url(),
+        observed_at_user_attested=SPORTY_OBSERVED,
+        imported_at_utc=SPORTY_IMPORTED,
+        attestation=manual.ATTESTATION,
+        repository_root=repository,
+    )
+    inventory = native.build_inventory_from_evidence(
+        evidence_dir,
+        allowed_root=repository / manual.ALLOWED_OUTPUT_RELATIVE,
+    )
+    value = bridge.build_sportradar_event_identity_bridge(
+        manifest=manifest,
+        inventory=inventory,
+        raw_html=sporty_raw,
+    )
+    return value, manifest, inventory, sporty_raw
 
 
 def _url(*, event_id: int = 123, access_level: str = "trial") -> str:
@@ -128,13 +176,9 @@ def test_official_response_is_bound_to_exact_verified_bridge(tmp_path: Path) -> 
     assert value.source_sportybet_event_id == "sr:match:123"
     assert value.source_sportradar_event_id == "sr:sport_event:123"
     assert value.response_event_id == "sr:sport_event:123"
-    assert value.source_bridge_sha256
+    assert value.source_bridge_sha256 == bridge.bridge_sha256(event_bridge)
     assert value.exact_bridge_identity_matched is True
     assert value.official_response_event_identity_matched is True
-    assert value.source_bridge_sha256 == __import__(
-        "domain.sportybet_sportradar_event_identity",
-        fromlist=["bridge_sha256"],
-    ).bridge_sha256(event_bridge)
 
 
 def test_documented_event_metadata_is_preserved_without_promotion(tmp_path: Path) -> None:
