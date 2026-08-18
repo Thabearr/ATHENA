@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from domain import sportradar_user_controlled_event_metadata as metadata
+from domain import sportradar_user_controlled_event_metadata_verification as metadata_verify
 from domain import sportybet_sportradar_event_identity as bridge
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
@@ -323,4 +324,31 @@ def test_evidence_directory_rejects_extra_files(tmp_path: Path) -> None:
         metadata.verify_evidence_directory(
             directory,
             allowed_root=repository / metadata.ALLOWED_OUTPUT_RELATIVE,
+        )
+
+
+def test_source_aware_directory_verifier_rejects_wrong_sportybet_source(tmp_path: Path) -> None:
+    event_bridge, manifest, inventory, sporty_raw = _build_bridge(tmp_path)
+    repository = tmp_path / "repo"
+    directory, _ = metadata.store_event_metadata_evidence(
+        _raw(),
+        source_url=_url(),
+        observed_at_user_attested=OBSERVED,
+        imported_at_utc=IMPORTED,
+        attestation=metadata.ATTESTATION,
+        event_bridge=event_bridge,
+        sportybet_manifest=manifest,
+        sportybet_inventory=inventory,
+        sportybet_raw_html=sporty_raw,
+        repository_root=repository,
+    )
+    tampered_sporty = sporty_raw.replace(b"Example Home FC", b"Forged Home FC", 1)
+    with pytest.raises(metadata.SportradarUserControlledEventMetadataError):
+        metadata_verify.revalidate_event_metadata_evidence_directory(
+            directory,
+            allowed_root=repository / metadata.ALLOWED_OUTPUT_RELATIVE,
+            event_bridge=event_bridge,
+            sportybet_manifest=manifest,
+            sportybet_inventory=inventory,
+            sportybet_raw_html=tampered_sporty,
         )
