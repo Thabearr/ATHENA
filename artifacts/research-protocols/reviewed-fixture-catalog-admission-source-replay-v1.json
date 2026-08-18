@@ -8,7 +8,11 @@
   "fixture_review_decision_ledger_required": true,
   "checked_catalog_required": true,
   "checked_manifest_required": true,
+  "checked_manifest_generator_commit_must_equal_current_clean_git_head": true,
+  "manifest_cannot_supply_unverified_code_state": true,
   "explicit_catalog_admission_review_decision_required": true,
+  "public_consumption_replays_raw_sources": true,
+  "semantic_object_build_store_verify_helpers_public": false,
   "storage_only_verification_authorized": false,
   "allowed_output_relative": ".cache/athena-research/reviewed-fixture-catalog-admission-source-replay",
   "directory_files": [
