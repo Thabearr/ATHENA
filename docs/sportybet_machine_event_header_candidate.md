@@ -25,9 +25,15 @@ The builder accepts only:
 2. a PR #154 `SportyBetUserControlledNativeInventory` derived from that exact evidence;
 3. the exact raw HTML bytes whose SHA-256 and byte count match the manifest.
 
-It re-proves that the PR #154 inventory carries the same evidence ID, evidence-manifest hash, raw hash, source URL, event ID and sport ID, and that its event population is exactly the source event.
+It first re-proves the evidence ID, evidence-manifest hash, raw hash, source URL, event ID, sport ID and event population. It then **re-runs the PR #154 provider-native selection extraction against the exact raw HTML bytes**, reconstructs the expected PR #154 user-controlled inventory with the manifest's exact acquisition/observation metadata, and requires the supplied inventory's canonical JSON bytes to equal that deterministic reconstruction exactly.
 
-The candidate therefore cannot be detached from the provider-native odds inventory and attached to a different HTML page without failing closed.
+This second replay matters because matching stored hashes alone is insufficient: a coordinated in-memory inventory forgery could otherwise preserve the source lineage fields while altering odds, selections, availability or other inventory metadata. Such a forged inventory now fails closed even when its own dataclass invariants remain internally coherent.
+
+The frozen protocol records this rule as:
+
+`native_inventory_revalidation = EXACT_DETERMINISTIC_REDERIVATION_FROM_SAME_RAW_HTML_REQUIRED`
+
+The candidate therefore cannot be detached from the exact provider-native odds inventory implied by the preserved source bytes without failing closed.
 
 ## Visible-text extraction rule
 
@@ -77,7 +83,7 @@ Every corresponding safety field is exactly `false`.
 
 ## Why this advances the SportyBet path
 
-Before this boundary, the event-level join candidate depended on a human copying competition, participants and kickoff from the SportyBet page. After this boundary, the competition/participants/displayed clock can be derived deterministically from the exact same provider page bytes that contain the provider-native odds.
+Before this boundary, the event-level join candidate depended on a human copying competition, participants and kickoff from the SportyBet page. After this boundary, the competition/participants/displayed clock can be derived deterministically from the exact same provider page bytes that contain the provider-native odds, while the PR #154 inventory itself is replay-verified against those bytes.
 
 The remaining event-identity blocker is narrower: prove the displayed clock's provider time basis/year semantics on preserved reviewed evidence, then re-evaluate whether an exact machine-derived SportyBet event can be reconciled to one reviewed FotMob fixture.
 
