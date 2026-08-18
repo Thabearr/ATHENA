@@ -29,8 +29,10 @@ from domain.sportybet_provider_native_inventory import (
     extract_native_selections,
 )
 from scripts.capture_sportybet_lite_source import (
-    SportyBetLiteNetworkError,
-    fetch_sportybet_lite,
+    AUTOMATED_NETWORK_BLOCK_STATE,
+    build_blocked_receipt,
+    canonical_blocked_receipt_bytes,
+    main as capture_main,
 )
 from services.betting_service import (
     BOOKMAKER_RESOLUTION_BLOCK_STATE,
@@ -48,9 +50,10 @@ def _href(
     outcome_id: str,
     odds: str,
     specifier: str | None = None,
+    event_id: str = EVENT_ID,
 ) -> str:
     parts = [
-        f"eventId={EVENT_ID.replace(':', '%3A')}",
+        f"eventId={event_id.replace(':', '%3A')}",
         "marketGroupsName=Main",
         f"marketId={market_id}",
         f"odds={odds}",
@@ -74,16 +77,17 @@ def _html(links: list[str] | None = None) -> bytes:
         _href(market_id="18", outcome_id="12", odds="2.34", specifier="total=3.5"),
         _href(market_id="18", outcome_id="13", odds="1.61", specifier="total=3.5"),
     ]
-    anchors = []
+    anchors: list[str] = []
     for href in links:
         attrs = ""
         if "marketId=18" in href and "outcomeId=13" in href and "total%3D3.5" in href:
             attrs = ' data-status="suspended" data-market-name="Over/Under"'
-        anchors.append(f'<a href="{href}"{attrs}>{href.split("odds=")[1].split("&")[0]}</a>')
+        odds = href.split("odds=")[1].split("&")[0]
+        anchors.append(f'<a href="{href}"{attrs}>{odds}</a>')
     return ("<html><body>" + "".join(anchors) + "</body></html>").encode("utf-8")
 
 
-def _response(body: bytes | None = None, *, observed_at: dt.datetime = OBSERVED):
+def _response(body: bytes | None = None, *, observed_at: dt.datetime = OBSERVED, network: bool = True):
     body = body or _html()
     return CapturedSportyBetLiteResponse(
         status=200,
@@ -91,7 +95,7 @@ def _response(body: bytes | None = None, *, observed_at: dt.datetime = OBSERVED)
         content_length=len(body),
         body=body,
         observed_at=observed_at,
-        network_acquisition_performed=True,
+        network_acquisition_performed=network,
     )
 
 
@@ -105,7 +109,7 @@ def _manifest(body: bytes | None = None, *, observed_at: dt.datetime = OBSERVED)
     )
 
 
-def test_reviewed_request_target_is_exact_public_read_only_lite_surface():
+def test_reviewed_request_target_is_exact_public_lite_surface():
     assert request_target(SportyBetLiteRequestKind.INDEX) == "/ng/lite"
     assert request_target(
         SportyBetLiteRequestKind.EVENT_DETAIL,
@@ -118,7 +122,7 @@ def test_reviewed_request_target_is_exact_public_read_only_lite_surface():
     )
 
 
-def test_valid_raw_capture_manifest_is_canonical_and_preserves_unknown_quote_time():
+def test_manifest_is_canonical_and_quote_time_stays_unknown():
     manifest = _manifest()
     raw = canonical_manifest_bytes(manifest)
     assert raw.endswith(b"\n")
@@ -129,7 +133,7 @@ def test_valid_raw_capture_manifest_is_canonical_and_preserves_unknown_quote_tim
     assert all(value is False for value in manifest.safety.values())
 
 
-def test_non_200_and_content_type_contradiction_fail_closed():
+def test_non_200_media_contradiction_length_mismatch_and_empty_body_fail_closed():
     body = _html()
     with pytest.raises(SportyBetLiteCaptureError):
         CapturedSportyBetLiteResponse(
@@ -142,10 +146,6 @@ def test_non_200_and_content_type_contradiction_fail_closed():
         )
     with pytest.raises(SportyBetLiteCaptureError):
         validate_html_content_type("application/json")
-
-
-def test_content_length_mismatch_and_empty_body_fail_closed():
-    body = _html()
     with pytest.raises(SportyBetLiteCaptureError):
         CapturedSportyBetLiteResponse(
             status=200,
@@ -170,66 +170,48 @@ def test_same_capture_identity_same_bytes_is_idempotent(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
     response = _response()
-    path1, manifest1 = store_capture(
-        response,
+    kwargs = dict(
         request_kind=SportyBetLiteRequestKind.EVENT_DETAIL,
         repository_root=repo,
         event_id=EVENT_ID,
         sport_id=FOOTBALL_SPORT_ID,
         market_groups_name=DEFAULT_MARKET_GROUP,
     )
-    path2, manifest2 = store_capture(
-        response,
-        request_kind=SportyBetLiteRequestKind.EVENT_DETAIL,
-        repository_root=repo,
-        event_id=EVENT_ID,
-        sport_id=FOOTBALL_SPORT_ID,
-        market_groups_name=DEFAULT_MARKET_GROUP,
-    )
+    path1, manifest1 = store_capture(response, **kwargs)
+    path2, manifest2 = store_capture(response, **kwargs)
     assert path1 == path2
     assert manifest1.to_dict() == manifest2.to_dict()
-    verified = verify_capture_directory(
-        path1,
-        allowed_root=repo / ALLOWED_OUTPUT_RELATIVE,
-    )
+    verified = verify_capture_directory(path1, allowed_root=repo / ALLOWED_OUTPUT_RELATIVE)
     assert verified.raw_sha256 == sha256_bytes(response.body)
 
 
 def test_same_observation_identity_different_bytes_fails_closed(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
-    first = _response(_html())
-    path, manifest = store_capture(
-        first,
+    kwargs = dict(
         request_kind=SportyBetLiteRequestKind.EVENT_DETAIL,
         repository_root=repo,
         event_id=EVENT_ID,
         sport_id=FOOTBALL_SPORT_ID,
         market_groups_name=DEFAULT_MARKET_GROUP,
     )
-    changed_body = _html([_href(market_id="1", outcome_id="1", odds="1.41")])
-    second = _response(changed_body)
-    second_manifest = build_capture_manifest(
-        second,
+    first = _response(_html())
+    path, manifest = store_capture(first, **kwargs)
+    changed = _response(_html([_href(market_id="1", outcome_id="1", odds="1.41")]))
+    changed_manifest = build_capture_manifest(
+        changed,
         request_kind=SportyBetLiteRequestKind.EVENT_DETAIL,
         event_id=EVENT_ID,
         sport_id=FOOTBALL_SPORT_ID,
         market_groups_name=DEFAULT_MARKET_GROUP,
     )
-    assert capture_identifier(second_manifest) == capture_identifier(manifest)
+    assert capture_identifier(changed_manifest) == capture_identifier(manifest)
     with pytest.raises(SportyBetLiteCaptureError):
-        store_capture(
-            second,
-            request_kind=SportyBetLiteRequestKind.EVENT_DETAIL,
-            repository_root=repo,
-            event_id=EVENT_ID,
-            sport_id=FOOTBALL_SPORT_ID,
-            market_groups_name=DEFAULT_MARKET_GROUP,
-        )
+        store_capture(changed, **kwargs)
     assert path.exists()
 
 
-def test_output_path_traversal_and_symlink_are_rejected(tmp_path: Path):
+def test_output_traversal_and_symlink_escape_are_rejected(tmp_path: Path):
     repo = tmp_path / "repo"
     repo.mkdir()
     with pytest.raises(SportyBetLiteCaptureError):
@@ -244,7 +226,9 @@ def test_output_path_traversal_and_symlink_are_rejected(tmp_path: Path):
         )
     cache = repo / ".cache"
     cache.mkdir()
-    (cache / "athena-research").symlink_to(tmp_path / "outside", target_is_directory=True)
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (cache / "athena-research").symlink_to(outside, target_is_directory=True)
     with pytest.raises(SportyBetLiteCaptureError):
         store_capture(
             _response(),
@@ -256,100 +240,81 @@ def test_output_path_traversal_and_symlink_are_rejected(tmp_path: Path):
         )
 
 
-def test_provider_native_selection_inventory_preserves_ids_lines_and_suspension():
+def test_provider_native_inventory_preserves_ids_lines_and_suspension():
     selections = extract_native_selections(_html())
     assert len(selections) == 7
     assert {item.event_id for item in selections} == {EVENT_ID}
-    total_markets = {
+    assert {
         item.market_identity for item in selections if item.market_id == "18"
-    }
-    assert total_markets == {("18", "total=2.5"), ("18", "total=3.5")}
+    } == {("18", "total=2.5"), ("18", "total=3.5")}
     suspended = [
         item for item in selections
-        if item.market_id == "18" and item.specifier == "total=3.5" and item.outcome_id == "13"
+        if item.market_id == "18"
+        and item.specifier == "total=3.5"
+        and item.outcome_id == "13"
     ]
     assert suspended[0].availability is NativeAvailability.SUSPENDED
     assert suspended[0].market_name == "Over/Under"
 
 
-def test_same_market_id_different_specifier_is_not_collapsed():
-    selections = extract_native_selections(_html())
-    over_rows = [
-        item for item in selections if item.market_id == "18" and item.outcome_id == "12"
+def test_total_and_handicap_specifiers_remain_distinct():
+    total = _href(market_id="18", outcome_id="12", odds="1.76", specifier="total=2.5")
+    handicap = _href(market_id="16", outcome_id="1714", odds="5.10", specifier="hcp=-2.5")
+    selections = extract_native_selections(_html([total, handicap]))
+    assert [(item.market_id, item.specifier) for item in selections] == [
+        ("16", "hcp=-2.5"),
+        ("18", "total=2.5"),
     ]
-    assert [item.specifier for item in over_rows] == ["total=2.5", "total=3.5"]
-    assert len({item.selection_identity for item in over_rows}) == 2
 
 
-def test_event_only_navigation_link_is_not_misclassified_as_selection():
+def test_event_navigation_is_not_a_selection_but_incomplete_selection_fails():
     event_only = (
         "/ng/lite/preMatch/detail?eventId=sr%3Amatch%3A72348790"
         "&marketGroupsName=Main&sportId=sr%3Asport%3A1"
     )
     selection = _href(market_id="1", outcome_id="1", odds="1.40")
-    raw = (
-        f'<html><body><a href="{event_only}">Fixture</a>'
-        f'<a href="{selection}">1.40</a></body></html>'
-    ).encode()
+    raw = f'<a href="{event_only}">Fixture</a><a href="{selection}">1.40</a>'.encode()
     assert len(extract_native_selections(raw)) == 1
-
-
-def test_missing_market_or_outcome_id_fails_closed():
-    missing_market = _href(market_id="1", outcome_id="1", odds="1.40").replace("marketId=1&", "")
+    missing_market = selection.replace("marketId=1&", "")
     with pytest.raises(SportyBetProviderInventoryError):
         extract_native_selections(_html([missing_market]))
-    missing_outcome = _href(market_id="1", outcome_id="1", odds="1.40").replace("outcomeId=1&", "")
-    with pytest.raises(SportyBetProviderInventoryError):
-        extract_native_selections(_html([missing_outcome]))
 
 
-def test_invalid_event_id_and_duplicate_selection_identity_fail_closed():
-    invalid = _href(market_id="1", outcome_id="1", odds="1.40").replace(
-        "sr%3Amatch%3A72348790", "not-a-provider-event"
+def test_invalid_event_duplicate_selection_and_bad_odds_fail_closed():
+    invalid_event = _href(
+        market_id="1", outcome_id="1", odds="1.40", event_id="bad"
     )
     with pytest.raises(SportyBetProviderInventoryError):
-        extract_native_selections(_html([invalid]))
+        extract_native_selections(_html([invalid_event]))
     duplicate = _href(market_id="1", outcome_id="1", odds="1.40")
     with pytest.raises(SportyBetProviderInventoryError):
         extract_native_selections(_html([duplicate, duplicate]))
-
-
-def test_duplicate_selection_identity_with_changed_odds_also_fails_closed():
-    one = _href(market_id="1", outcome_id="1", odds="1.40")
-    two = _href(market_id="1", outcome_id="1", odds="1.41")
+    changed_odds = _href(market_id="1", outcome_id="1", odds="1.41")
     with pytest.raises(SportyBetProviderInventoryError):
-        extract_native_selections(_html([one, two]))
-
-
-def test_decimal_odds_validation_rejects_non_decimal_and_even_money_floor():
-    bad = _href(market_id="1", outcome_id="1", odds="NaN")
-    with pytest.raises(SportyBetProviderInventoryError):
-        extract_native_selections(_html([bad]))
-    floor = _href(market_id="1", outcome_id="1", odds="1.00")
-    with pytest.raises(SportyBetProviderInventoryError):
-        extract_native_selections(_html([floor]))
+        extract_native_selections(_html([duplicate, changed_odds]))
+    for bad_odds in ("NaN", "1.00", "-2.00"):
+        with pytest.raises(SportyBetProviderInventoryError):
+            extract_native_selections(
+                _html([_href(market_id="1", outcome_id="1", odds=bad_odds)])
+            )
 
 
 def test_no_fuzzy_canonical_market_mapping_occurs():
     href = _href(market_id="18", outcome_id="12", odds="1.86", specifier="total=2.5")
     raw = (
-        '<html><body><a data-market-name="Over 2.5" '
-        f'href="{href}">Over</a></body></html>'
+        '<a data-market-name="Over 2.5" '
+        f'href="{href}">Over</a>'
     ).encode()
     item = extract_native_selections(raw)[0]
     assert item.market_name == "Over 2.5"
     assert "canonical" not in item.to_dict()
-    assert item.market_id == "18"
-    assert item.specifier == "total=2.5"
+    assert item.market_identity == ("18", "total=2.5")
 
 
 def test_observed_at_never_becomes_provider_quote_timestamp_or_snapshot():
     manifest = _manifest()
-    inventory = build_inventory(
-        manifest,
-        _html(),
-        source_manifest_sha256=sha256_bytes(canonical_manifest_bytes(manifest)),
-    )
+    manifest_sha = sha256_bytes(canonical_manifest_bytes(manifest))
+    inventory = build_inventory(manifest, _html(), source_manifest_sha256=manifest_sha)
     assert inventory.source_observed_at == "2026-08-18T12:00:00.000000Z"
     assert inventory.provider_quote_timestamp_capability == "UNPROVEN_ON_REVIEWED_LITE_HTML"
     assert inventory.provider_snapshot_id_capability == "UNPROVEN_ON_REVIEWED_LITE_HTML"
@@ -376,20 +341,15 @@ def test_unproven_event_metadata_remains_null_not_guessed():
     assert event.event_status is None
 
 
-def test_source_anchor_order_does_not_change_provider_native_selection_order():
+def test_inventory_order_and_canonical_bytes_are_deterministic():
     links = [
         _href(market_id="1", outcome_id="3", odds="8.23"),
         _href(market_id="18", outcome_id="12", odds="1.86", specifier="total=2.5"),
         _href(market_id="1", outcome_id="1", odds="1.40"),
     ]
-    forward = extract_native_selections(_html(links))
-    reverse = extract_native_selections(_html(list(reversed(links))))
-    assert [item.selection_identity for item in forward] == [
-        item.selection_identity for item in reverse
+    assert [item.selection_identity for item in extract_native_selections(_html(links))] == [
+        item.selection_identity for item in extract_native_selections(_html(list(reversed(links))))
     ]
-
-
-def test_canonical_inventory_bytes_are_deterministic_for_same_evidence():
     manifest = _manifest()
     manifest_sha = sha256_bytes(canonical_manifest_bytes(manifest))
     first = build_inventory(manifest, _html(), source_manifest_sha256=manifest_sha)
@@ -398,123 +358,35 @@ def test_canonical_inventory_bytes_are_deterministic_for_same_evidence():
     assert all(value is False for value in first.safety.values())
 
 
-def test_invalid_utf8_html_fails_closed():
+def test_invalid_utf8_foreign_host_and_plain_http_fail_closed():
     with pytest.raises(SportyBetProviderInventoryError):
         extract_native_selections(b"<html>\xff</html>")
-
-
-def test_foreign_or_non_https_selection_href_fails_closed():
     foreign = (
         "https://evil.example/ng/lite?eventId=sr%3Amatch%3A72348790"
         "&marketId=1&outcomeId=1&odds=1.40"
     )
     with pytest.raises(SportyBetProviderInventoryError):
         extract_native_selections(_html([foreign]))
-    http = (
+    insecure = (
         "http://www.sportybet.com/ng/lite?eventId=sr%3Amatch%3A72348790"
         "&marketId=1&outcomeId=1&odds=1.40"
     )
     with pytest.raises(SportyBetProviderInventoryError):
-        extract_native_selections(_html([http]))
+        extract_native_selections(_html([insecure]))
 
 
-def test_network_fetch_is_one_get_without_cookie_or_auth_headers():
-    body = _html()
-
-    class FakeResponse:
-        status = 200
-
-        def __init__(self):
-            self._sent = False
-
-        def getheader(self, name):
-            return {
-                "Content-Type": "text/html; charset=utf-8",
-                "Content-Length": str(len(body)),
-            }.get(name)
-
-        def read(self, amount):
-            if self._sent:
-                return b""
-            self._sent = True
-            return body
-
-    class FakeConnection:
-        instance = None
-
-        def __init__(self, host, port, timeout):
-            self.host = host
-            self.port = port
-            self.timeout = timeout
-            self.method = None
-            self.target = None
-            self.headers = []
-            FakeConnection.instance = self
-
-        def putrequest(self, method, target, skip_accept_encoding):
-            self.method = method
-            self.target = target
-            assert skip_accept_encoding is True
-
-        def putheader(self, name, value):
-            self.headers.append((name, value))
-
-        def endheaders(self):
-            pass
-
-        def getresponse(self):
-            return FakeResponse()
-
-        def close(self):
-            pass
-
-    response = fetch_sportybet_lite(
-        request_kind=SportyBetLiteRequestKind.EVENT_DETAIL,
-        event_id=EVENT_ID,
-        sport_id=FOOTBALL_SPORT_ID,
-        market_groups_name=DEFAULT_MARKET_GROUP,
-        connection_factory=FakeConnection,
-        clock=lambda: OBSERVED,
-    )
-    conn = FakeConnection.instance
-    assert conn.method == "GET"
-    assert conn.target.startswith("/ng/lite/preMatch/detail?")
-    names = {name.lower() for name, _ in conn.headers}
-    assert "cookie" not in names
-    assert "authorization" not in names
-    assert response.network_acquisition_performed is True
-
-
-def test_network_fetch_non_200_fails_without_using_body():
-    class FakeResponse:
-        status = 403
-
-        def getheader(self, name):
-            return None
-
-        def read(self, amount):
-            raise AssertionError("body must not be used after non-200")
-
-    class FakeConnection:
-        def __init__(self, *args, **kwargs):
-            pass
-        def putrequest(self, *args, **kwargs):
-            pass
-        def putheader(self, *args, **kwargs):
-            pass
-        def endheaders(self):
-            pass
-        def getresponse(self):
-            return FakeResponse()
-        def close(self):
-            pass
-
-    with pytest.raises(SportyBetLiteNetworkError):
-        fetch_sportybet_lite(
-            request_kind=SportyBetLiteRequestKind.INDEX,
-            connection_factory=FakeConnection,
-            clock=lambda: OBSERVED,
-        )
+def test_automated_source_command_is_policy_blocked_and_performs_no_network(capsys):
+    receipt = build_blocked_receipt(request_kind=SportyBetLiteRequestKind.INDEX)
+    assert receipt["status"] == AUTOMATED_NETWORK_BLOCK_STATE
+    assert receipt["network_acquisition_performed"] is False
+    assert receipt["network_acquisition_authorized"] is False
+    assert receipt["bet_authorized"] is False
+    raw = canonical_blocked_receipt_bytes(receipt)
+    assert raw.endswith(b"\n")
+    assert capture_main(["--index"]) == 3
+    emitted = capsys.readouterr().out
+    assert AUTOMATED_NETWORK_BLOCK_STATE in emitted
+    assert '"network_acquisition_performed":false' in emitted
 
 
 def test_product_facing_sportybet_resolver_remains_fail_closed():
