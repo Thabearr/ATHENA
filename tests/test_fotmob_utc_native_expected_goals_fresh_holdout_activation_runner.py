@@ -371,9 +371,9 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
                 settlement_observed_at=scheduled + dt.timedelta(minutes=2),
                 settlement_evidence_sha256="e" * 64,
                 ordinary_ft_first_raw_sha256="f" * 64,
-                ordinary_ft_second_raw_sha256="g" * 64,
-                ordinary_ft_first_manifest_sha256="h" * 64,
-                ordinary_ft_second_manifest_sha256="i" * 64,
+                ordinary_ft_second_raw_sha256="1" * 64,
+                ordinary_ft_first_manifest_sha256="2" * 64,
+                ordinary_ft_second_manifest_sha256="3" * 64,
                 legacy_history_state_update=None,
             )
             return fresh.FreshSettlementAssessment(
@@ -428,14 +428,15 @@ def test_selected_close_population_and_settlement_semantics(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     repo, state = _repo(tmp_path)
-    selected_close = dt.datetime(2026, 9, 16, 0, 7, tzinfo=UTC)
+    selected_close_boundary = dt.datetime(2026, 9, 16, 0, 0, tzinfo=UTC)
+    tick_at_close = dt.datetime(2026, 9, 16, 0, 7, tzinfo=UTC)
 
     # 1. Prediction 1: kickoff 1 second before close (valid population member)
     # 2. Prediction 2: kickoff exactly at close (outside population)
     # 3. Prediction 3: kickoff 1 second after close (outside population)
-    p_before = _fake_sealed_prediction(201, selected_close - dt.timedelta(seconds=1), selected_close - dt.timedelta(hours=2))
-    p_exact = _fake_sealed_prediction(202, selected_close, selected_close - dt.timedelta(hours=2))
-    p_after = _fake_sealed_prediction(203, selected_close + dt.timedelta(seconds=1), selected_close - dt.timedelta(hours=2))
+    p_before = _fake_sealed_prediction(201, selected_close_boundary - dt.timedelta(seconds=1), selected_close_boundary - dt.timedelta(hours=2))
+    p_exact = _fake_sealed_prediction(202, selected_close_boundary, selected_close_boundary - dt.timedelta(hours=2))
+    p_after = _fake_sealed_prediction(203, selected_close_boundary + dt.timedelta(seconds=1), selected_close_boundary - dt.timedelta(hours=2))
 
     for p in (p_before, p_exact, p_after):
         row = runner._prediction_row(
@@ -450,28 +451,29 @@ def test_selected_close_population_and_settlement_semantics(
         )
         runner._append(state / control.PREDICTION_JOURNAL_FILENAME, row)
 
-    # Mock close state to simulate selected close reached at selected_close
+    # Mock close state to simulate selected close reached at selected_close_boundary
     fake_close_state = control.CloseControlState(
-        evaluated_boundary_utc=selected_close,
-        decision=fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
-        selected_close_utc=selected_close,
-        coverage_sha256="k" * 64,
+        evaluated_boundary_utc=selected_close_boundary,
+        decision=fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED.value,
+        selected_close_utc=selected_close_boundary,
+        coverage_sha256="0" * 64,
+        _token=control._CLOSE_STATE_TOKEN,
     )
     monkeypatch.setattr(runner, "_close_state", lambda *_args, **_kwargs: fake_close_state)
     monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(runner, "_qualify", lambda _evidence: ())
     monkeypatch.setattr(runner, "_pair", lambda _pred, _caps, _qual: None)
 
-    # Run tick exactly at selected_close
+    # Run tick exactly at tick_at_close
     runner.execute_collection_tick(
-        scheduled_for=selected_close,
+        scheduled_for=tick_at_close,
         bootstrap_projection_raw=b"test-bootstrap",
         durable_release_tag="athena-fresh-holdout-evidence-2026-W37",
         durable_asset_name="success-20260916T000700Z-run-1.tar.gz",
         execute_live_network=True,
         state_root=Path(control.CONTROL_ROOT_RELATIVE),
         repository_root=repo,
-        capture_one=lambda req_date, **kw: _capture(tmp_path, req_date, selected_close + dt.timedelta(minutes=1)),
+        capture_one=lambda req_date, **kw: _capture(tmp_path, req_date, tick_at_close + dt.timedelta(minutes=1)),
     )
 
     rows = runner._rows(state / control.SETTLEMENT_JOURNAL_FILENAME)
@@ -485,13 +487,14 @@ def test_selected_close_population_and_settlement_semantics(
     # p_before (201) MUST NOT be marked EXCLUDED_OUTSIDE_SELECTED_CLOSE!
     assert 201 not in fids
 
-    # Next: run tick at selected_close + 24h (tail end) without settlement
-    tail_end = selected_close + dt.timedelta(hours=24)
+    # Next: run tick at tick_at_close + 24h (tail end) without settlement
+    tail_end = tick_at_close + dt.timedelta(hours=24)
     fake_close_state_tail = control.CloseControlState(
-        evaluated_boundary_utc=selected_close,
-        decision=fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
-        selected_close_utc=selected_close,
-        coverage_sha256="k" * 64,
+        evaluated_boundary_utc=selected_close_boundary,
+        decision=fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED.value,
+        selected_close_utc=selected_close_boundary,
+        coverage_sha256="0" * 64,
+        _token=control._CLOSE_STATE_TOKEN,
     )
     monkeypatch.setattr(runner, "_close_state", lambda *_args, **_kwargs: fake_close_state_tail)
 
