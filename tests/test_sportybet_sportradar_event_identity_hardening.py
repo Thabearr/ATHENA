@@ -6,6 +6,7 @@ import datetime as dt
 import pytest
 
 from domain import sportybet_sportradar_event_identity as bridge
+from domain import sportybet_sportradar_event_identity_verification as verify
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
 
@@ -31,7 +32,7 @@ def _raw() -> bytes:
 </body></html>'''
 
 
-def _build(tmp_path):
+def _build_with_source(tmp_path):
     repo = tmp_path / "repo"
     repo.mkdir()
     raw = _raw()
@@ -52,7 +53,11 @@ def _build(tmp_path):
         inventory=inventory,
         raw_html=raw,
     )
-    return value
+    return value, manifest, inventory, raw
+
+
+def _build(tmp_path):
+    return _build_with_source(tmp_path)[0]
 
 
 def test_current_sportradar_id_must_preserve_exact_numeric_payload(tmp_path) -> None:
@@ -181,4 +186,20 @@ def test_bridge_rejects_noncanonical_current_prefix(tmp_path) -> None:
         dataclasses.replace(
             value,
             sportradar_current_sport_event_id="SR:SPORT_EVENT:123",
+        )
+
+
+def test_hash_shaped_lineage_forgery_fails_consumption_rederivation(tmp_path) -> None:
+    value, manifest, inventory, raw = _build_with_source(tmp_path)
+    forged = dataclasses.replace(value, source_event_candidate_sha256="0" * 64)
+    assert forged.source_event_candidate_sha256 == "0" * 64
+    with pytest.raises(
+        bridge.SportyBetSportradarEventIdentityError,
+        match="exact deterministic derivative",
+    ):
+        verify.revalidate_sportradar_event_identity_bridge(
+            forged,
+            manifest=manifest,
+            inventory=inventory,
+            raw_html=raw,
         )
