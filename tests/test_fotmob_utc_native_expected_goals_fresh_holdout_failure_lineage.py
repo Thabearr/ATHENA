@@ -157,6 +157,8 @@ def _artifact_zip(
     tar_buffer = io.BytesIO()
     with tarfile.open(fileobj=tar_buffer, mode="w:gz") as tar:
         for item in sorted(state.rglob("*")):
+            if not item.is_file():
+                continue
             arcname = str(item.relative_to(state.parents[2])).replace("\\", "/")
             tar.add(item, arcname=arcname)
     tar_bytes = tar_buffer.getvalue()
@@ -279,7 +281,7 @@ def test_qualification_failure_still_preserves_raw_capture_lineage(
 def test_restore_newest_failed_artifact_carries_partial_state_and_does_not_fall_back(
     tmp_path: Path,
 ) -> None:
-    source_repo, source_state = _repo(tmp_path / "source")
+    _source_repo, source_state = _repo(tmp_path / "source")
     prior_commit = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
     failed_attempt = dt.datetime(2026, 8, 19, 0, 37, tzinfo=UTC)
     _commit_prior_tick(source_state, prior_commit)
@@ -290,7 +292,6 @@ def test_restore_newest_failed_artifact_carries_partial_state_and_does_not_fall_
         failed_attempt + dt.timedelta(minutes=1),
     )
     runner._stage(evidence, source_state / runner.WORKING_CAPTURE_DIRECTORY)
-    # Model a failure artifact created before the old runner appended capture-index.
     tar_name, zip_bytes, zip_sha = _artifact_zip(
         source_state,
         run_id=10,
@@ -333,7 +334,6 @@ def test_restore_newest_failed_artifact_carries_partial_state_and_does_not_fall_
     assert restored.predecessor_conclusion == "failure"
     assert restored.last_committed_utc == prior_commit
     assert restored.last_attempted_utc == failed_attempt
-    # Restore reconciliation promotes the staged raw capture into evidence lineage.
     capture_rows = runner._rows(dest_state / control.CAPTURE_INDEX_FILENAME)
     assert len(capture_rows) == 1
     assert capture_rows[0]["manifest_sha256"] == runner._manifest_sha(evidence)
