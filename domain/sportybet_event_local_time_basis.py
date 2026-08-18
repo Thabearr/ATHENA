@@ -1,13 +1,13 @@
 """Qualify a SportyBet event display clock as GMT without inventing its year.
 
 This boundary combines the exact PR #156 event-detail derivation with the exact
-PR #157 official Terms qualification.  It performs no network I/O.  A specific
+PR #157 official Terms qualification. It performs no network I/O. A specific
 event display clock may inherit the provider's global GMT default only when the
 Terms observation predates the event observation by no more than the frozen
 window and the preserved event page contains no reviewed visible event-local
-time-basis marker.  Any explicit marker fails closed for separate review.
+time-basis marker. Any explicit marker fails closed for separate review.
 
-The year remains unknown, so a UTC instant is never constructed here.  Fixture
+The year remains unknown, so a UTC instant is never constructed here. Fixture
 reconciliation, pricing, selection, slip construction, booking-code generation,
 execution and BET authority all remain false.
 """
@@ -26,7 +26,11 @@ from domain import sportybet_machine_event_header_candidate as header
 from domain import sportybet_official_time_semantics as terms
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
-from domain.sportybet_lite_source_capture import serialize_utc, sha256_bytes
+from domain.sportybet_lite_source_capture import (
+    SportyBetLiteRequestKind,
+    serialize_utc,
+    sha256_bytes,
+)
 
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-sportybet-event-local-time-basis-v1"
@@ -136,7 +140,7 @@ def scan_visible_time_basis_markers(raw_html: Any) -> tuple[str, ...]:
     """Return exact visible tokens containing reviewed time-basis markers.
 
     Script/style/template content is excluded by the PR #156 visible-text parser.
-    The successful default-application path requires this tuple to be empty.  An
+    The successful default-application path requires this tuple to be empty. An
     explicit GMT marker also fails closed here: explicit event-local declarations
     are intentionally routed to a separate review instead of being reinterpreted.
     """
@@ -278,7 +282,26 @@ class SportyBetEventLocalTimeBasis:
         _evidence_id(self.terms_evidence_id, "terms_evidence_id")
         _hash(self.terms_qualification_sha256, "terms_qualification_sha256")
         _hash(self.terms_raw_sha256, "terms_raw_sha256")
-        _hash(self.terms_rule_sha256, "terms_rule_sha256")
+        if self.terms_rule_sha256 != terms.EXPECTED_STATEMENT_SHA256:
+            raise SportyBetEventLocalTimeBasisError("terms_rule_sha256 mismatch")
+        try:
+            kind, source_event_id, source_sport_id, _, _ = manual.validate_source_url(
+                self.event_source_url
+            )
+        except manual.SportyBetUserEvidenceError as exc:
+            raise SportyBetEventLocalTimeBasisError(str(exc)) from exc
+        if (
+            kind is not SportyBetLiteRequestKind.EVENT_DETAIL
+            or source_event_id != self.event_id
+            or source_sport_id != self.sport_id
+        ):
+            raise SportyBetEventLocalTimeBasisError(
+                "event source URL does not match provider event/sport identity"
+            )
+        try:
+            terms.validate_source_url(self.terms_source_url)
+        except terms.SportyBetOfficialTimeSemanticsError as exc:
+            raise SportyBetEventLocalTimeBasisError(str(exc)) from exc
         event_observed = _utc(
             self.event_observed_at_user_attested,
             "event_observed_at_user_attested",
@@ -319,19 +342,20 @@ class SportyBetEventLocalTimeBasis:
             raise SportyBetEventLocalTimeBasisError(
                 "specific_event_time_basis_qualified must be exact True"
             )
-        if (
-            type(self.kickoff_day) is not int
-            or isinstance(self.kickoff_day, bool)
-            or type(self.kickoff_month) is not int
-            or isinstance(self.kickoff_month, bool)
-            or type(self.kickoff_hour) is not int
-            or isinstance(self.kickoff_hour, bool)
-            or type(self.kickoff_minute) is not int
-            or isinstance(self.kickoff_minute, bool)
-        ):
-            raise SportyBetEventLocalTimeBasisError(
-                "kickoff components must be exact integers"
+        try:
+            checked_header = header.ExtractedVisibleEventHeader(
+                competition_display=self.competition_display,
+                kickoff_display=self.kickoff_display,
+                home_display=self.home_display,
+                away_display=self.away_display,
+                kickoff_day=self.kickoff_day,
+                kickoff_month=self.kickoff_month,
+                kickoff_weekday=self.kickoff_weekday,
+                kickoff_hour=self.kickoff_hour,
+                kickoff_minute=self.kickoff_minute,
             )
+        except header.SportyBetMachineEventHeaderError as exc:
+            raise SportyBetEventLocalTimeBasisError(str(exc)) from exc
         if self.kickoff_year is not None or self.kickoff_utc is not None:
             raise SportyBetEventLocalTimeBasisError(
                 "event year and UTC instant remain unproven and must be null"
@@ -348,21 +372,13 @@ class SportyBetEventLocalTimeBasis:
             raise SportyBetEventLocalTimeBasisError(
                 "provider quote/snapshot identity remains unproven"
             )
-        if not all(
-            type(value) is str and value and value == value.strip()
-            for value in (
-                self.event_source_url,
-                self.event_id,
-                self.sport_id,
-                self.terms_source_url,
-                self.competition_display,
-                self.home_display,
-                self.away_display,
-                self.kickoff_display,
-                self.kickoff_weekday,
-            )
-        ):
-            raise SportyBetEventLocalTimeBasisError("required text field is invalid")
+        object.__setattr__(
+            self,
+            "competition_display",
+            checked_header.competition_display,
+        )
+        object.__setattr__(self, "home_display", checked_header.home_display)
+        object.__setattr__(self, "away_display", checked_header.away_display)
         object.__setattr__(self, "event_observed_at_user_attested", event_observed)
         object.__setattr__(self, "terms_observed_at_user_attested", terms_observed)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
