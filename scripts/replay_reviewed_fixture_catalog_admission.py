@@ -1,10 +1,10 @@
 """Offline operator workflow for source-replayed reviewed Fixture Catalog admission.
 
-No network acquisition occurs.  The command first replays the existing reviewed
-FotMob catalog workflow from exact capture directories and the explicit fixture
-review ledger, checks the exact catalog/manifest outputs, then either emits an
-admission-review decision template or consumes such a canonical decision and
-stores the exact source-replayed admission artifact.
+No network acquisition occurs. The command replays the existing reviewed FotMob
+catalog workflow from exact capture directories and the explicit fixture review
+ledger, checks exact catalog/manifest outputs, then either emits a catalog-
+admission review decision or consumes one and stores the exact source-replayed
+admission artifact.
 """
 
 from __future__ import annotations
@@ -249,6 +249,35 @@ def replay_catalog_sources(
     return result
 
 
+def revalidate_stored_admission_from_sources(
+    admission_directory: Path,
+    *,
+    capture_directories: Sequence[str | Path],
+    fixture_review_decision_ledger: Path,
+    check_catalog: Path,
+    check_manifest: Path,
+    repository_root: Path,
+):
+    """Public consumption path: replay raw/catalog sources before stored-byte trust."""
+
+    result = replay_catalog_sources(
+        capture_directories=capture_directories,
+        fixture_review_decision_ledger=fixture_review_decision_ledger,
+        check_catalog=check_catalog,
+        check_manifest=check_manifest,
+        repository_root=repository_root,
+    )
+    try:
+        return replay._verify_semantic_admission_directory(
+            admission_directory,
+            handoff=result.handoff,
+            fixture_catalog_result=result.fixture_catalog_result,
+            repository_root=repository_root,
+        )
+    except replay.ReviewedFixtureCatalogAdmissionSourceReplayError as exc:
+        raise ReviewedFixtureCatalogAdmissionReplayCLIError(str(exc)) from exc
+
+
 def prepare_admission_decision(
     *,
     workflow_result: FotMobReviewedFixtureCatalogWorkflowResult,
@@ -296,7 +325,7 @@ def store_from_decision_file(
             replay_decision=decision,
             repository_root=Path(repository_root),
         )
-        verified = replay.verify_source_replayed_admission_directory(
+        verified = replay._verify_semantic_admission_directory(
             directory,
             handoff=workflow_result.handoff,
             fixture_catalog_result=workflow_result.fixture_catalog_result,
@@ -410,9 +439,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = replay_catalog_sources(
             capture_directories=args.capture_directory,
-            fixture_review_decision_ledger=Path(
-                args.fixture_review_decision_ledger
-            ),
+            fixture_review_decision_ledger=Path(args.fixture_review_decision_ledger),
             check_catalog=Path(args.check_catalog),
             check_manifest=Path(args.check_manifest),
             repository_root=Path(args.repository_root),
@@ -420,9 +447,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "prepare-decision":
             decision = prepare_admission_decision(
                 workflow_result=result,
-                disposition=ReviewedFixtureCatalogAdmissionDisposition(
-                    args.disposition
-                ),
+                disposition=ReviewedFixtureCatalogAdmissionDisposition(args.disposition),
                 reviewed_at=args.reviewed_at,
                 reviewer_reference=args.reviewer_reference,
                 notes=args.notes,
