@@ -82,14 +82,7 @@ def _fake_sealed_prediction(
         "away_form": 0.5,
         "fatigue": 0.0,
     }
-    rates = {
-        "native_home": 1.4,
-        "native_away": 1.1,
-        "elo_only_home": 1.4,
-        "elo_only_away": 1.1,
-        "calibrated_home": 1.4,
-        "calibrated_away": 1.1,
-    }
+    rates = fresh._rates_from_features(features)
     return fresh.SealedFreshPrediction(
         schema_version=1,
         implementation_state=fresh.IMPLEMENTATION_STATE,
