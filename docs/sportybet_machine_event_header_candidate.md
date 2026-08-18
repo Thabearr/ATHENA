@@ -93,6 +93,12 @@ The wider product chain remains:
 
 No later gate is skipped.
 
+## Hosted validation
+
+The final replay-hardened exact head is validated by hosted Tests run `32154163383` / run #749. Syntax, all eight deterministic shards, and the aggregate test gate succeeded. Shard 8 contains this boundary's adversarial suite and finished `580 passed, 16 subtests passed`.
+
+No local pytest was run and no SportyBet network request is made by this PR's tests.
+
 ## Next boundary
 
 The next SportyBet trust boundary should preserve and qualify the provider's official displayed-time semantics as exact evidence, then test this extractor against genuine preserved event-detail pages. Only if that evidence is unambiguous should the PR #155 user-attested kickoff be replaceable with a machine-derived UTC fixture identity.
