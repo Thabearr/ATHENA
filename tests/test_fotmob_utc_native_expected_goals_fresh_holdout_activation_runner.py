@@ -344,6 +344,7 @@ def test_settlement_disposition_exact_enum_and_branch_execution(
             fresh.FreshPredictionAssessment(
                 disposition=fresh.PredictionDisposition.SEALED_COMPLETE_CASE,
                 fixture=p.fixture,
+                missing_feature_ids=(),
                 sealed_prediction=p,
             ),
             "tag",
@@ -439,6 +440,7 @@ def test_selected_close_population_and_settlement_semantics(
             fresh.FreshPredictionAssessment(
                 disposition=fresh.PredictionDisposition.SEALED_COMPLETE_CASE,
                 fixture=p.fixture,
+                missing_feature_ids=(),
                 sealed_prediction=p,
             ),
             "tag",
