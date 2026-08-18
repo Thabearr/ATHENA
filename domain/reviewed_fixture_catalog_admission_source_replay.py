@@ -1,10 +1,9 @@
-"""Source-replayed durable artifacts for reviewed FotMob Fixture Catalog admission.
+"""Durable reviewed FotMob Fixture Catalog admission artifacts.
 
-This boundary does not create fixture review or admission authority by itself.
-It accepts one explicit catalog-admission review decision, combines it with an
-already source-replayed reviewed catalog compilation, and stores the exact
-canonical ReviewedFixtureCatalogAdmission bytes plus the exact canonical review
-decision bytes.  Verification always requires the semantic sources again.
+Public authority is deliberately not available from prebuilt semantic objects.
+The helpers that combine a handoff/compiler result with a reviewed decision are
+internal to the offline source-replay operator. Downstream consumers must replay
+the raw reviewed FotMob source chain before these stored bytes can be trusted.
 """
 
 from __future__ import annotations
@@ -99,7 +98,7 @@ _SAFETY_KEYS = frozenset(
 
 
 class ReviewedFixtureCatalogAdmissionSourceReplayError(ValueError):
-    """Raised when source-replayed catalog admission cannot be proven."""
+    """Raised when reviewed catalog admission evidence fails closed."""
 
 
 def _default_safety() -> dict[str, bool]:
@@ -195,7 +194,7 @@ def _strict_json(raw: bytes, label: str) -> Any:
 
 @dataclasses.dataclass(frozen=True)
 class ReviewedFixtureCatalogAdmissionReplayDecision:
-    """Exact human review decision anchored to one replayed catalog state."""
+    """Exact human review decision anchored to one source-replayed catalog state."""
 
     decision: ReviewedFixtureCatalogAdmissionDecision
     safety: Mapping[str, bool]
@@ -316,6 +315,8 @@ def build_replay_decision(
     reviewer_reference: str,
     notes: str = "",
 ) -> ReviewedFixtureCatalogAdmissionReplayDecision:
+    """Build review bytes only; this function does not produce admission authority."""
+
     if type(handoff) is not FotMobFixtureCatalogHandoff:
         raise ReviewedFixtureCatalogAdmissionSourceReplayError(
             "handoff must be exact FotMobFixtureCatalogHandoff"
@@ -350,7 +351,7 @@ def build_replay_decision(
     )
 
 
-def build_source_replayed_admission(
+def _build_semantic_admission(
     *,
     handoff: Any,
     fixture_catalog_result: Any,
@@ -523,7 +524,7 @@ def _verify_semantic_admission_directory(
     repository_root: Path,
     output_root: Path = ALLOWED_OUTPUT_RELATIVE,
 ) -> ReviewedFixtureCatalogAdmission:
-    """Internal semantic check; public consumers must replay source files first."""
+    """Internal semantic check; public consumers must replay raw sources first."""
 
     repository, root = _validate_output_root(
         output_root,
@@ -536,7 +537,7 @@ def _verify_semantic_admission_directory(
     )
     admission_raw, decision_raw = _read_directory_payloads(directory)
     replay_decision = parse_replay_decision_bytes(decision_raw)
-    admission = build_source_replayed_admission(
+    admission = _build_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=fixture_catalog_result,
         replay_decision=replay_decision,
@@ -554,7 +555,7 @@ def _verify_semantic_admission_directory(
     return admission
 
 
-def store_source_replayed_admission(
+def _store_semantic_admission(
     *,
     handoff: Any,
     fixture_catalog_result: Any,
@@ -562,11 +563,13 @@ def store_source_replayed_admission(
     repository_root: Path,
     output_root: Path = ALLOWED_OUTPUT_RELATIVE,
 ) -> tuple[Path, ReviewedFixtureCatalogAdmission]:
+    """Internal writer; callers must source-replay before invoking this helper."""
+
     if type(replay_decision) is not ReviewedFixtureCatalogAdmissionReplayDecision:
         raise ReviewedFixtureCatalogAdmissionSourceReplayError(
             "replay_decision type mismatch"
         )
-    admission = build_source_replayed_admission(
+    admission = _build_semantic_admission(
         handoff=handoff,
         fixture_catalog_result=fixture_catalog_result,
         replay_decision=replay_decision,
@@ -652,9 +655,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "STATUS",
     "build_replay_decision",
-    "build_source_replayed_admission",
     "canonical_replay_decision_bytes",
     "parse_replay_decision_bytes",
     "replay_decision_sha256",
-    "store_source_replayed_admission",
 ]
