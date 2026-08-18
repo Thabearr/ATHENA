@@ -16,7 +16,29 @@ from domain import sportybet_sportradar_event_identity as bridge
 from domain import sportybet_sportradar_kickoff_identity_promotion as promotion
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
-from domain.fotmob_fixture_candidate_review import FotMobReviewedFixtureCatalogInput
+from domain.fixture_catalog import compile_fixture_catalog, sha256_bytes
+from domain.fotmob_data_matches_capture import (
+    CapturedFotMobDataMatchesResponse,
+    build_data_matches_capture_manifest,
+)
+from domain.fotmob_fixture_candidate_review import (
+    FixtureCandidateReviewDisposition,
+    FotMobFixtureCandidateReviewDecision,
+    build_fotmob_fixture_candidate_review_bundle,
+    sha256_fotmob_fixture_candidate,
+)
+from domain.fotmob_fixture_candidates import build_fotmob_fixture_candidate_bundle
+from domain.fotmob_fixture_catalog_handoff import (
+    build_fotmob_fixture_catalog_handoff,
+    sha256_fotmob_fixture_catalog_handoff,
+)
+from domain.reviewed_fixture_catalog_admission import (
+    REVIEWED_SOURCE_CAPABILITY,
+    ReviewedFixtureCatalogAdmissionDecision,
+    ReviewedFixtureCatalogAdmissionDisposition,
+    build_reviewed_fixture_catalog_admission,
+    sha256_reviewed_source_capability,
+)
 
 UTC = dt.timezone.utc
 EVENT_OBSERVED = dt.datetime(2026, 8, 18, 17, 0, tzinfo=UTC)
@@ -99,7 +121,7 @@ def _sportradar_raw(*, start_time: str = "2026-08-18T20:00:00Z") -> bytes:
 
 
 def _source_chain(tmp_path: Path, *, start_time: str = "2026-08-18T20:00:00Z"):
-    repo = tmp_path / "repo"
+    repo = tmp_path / "sportybet"
     repo.mkdir()
     event_raw = _event_raw()
     event_dir, manifest = manual.store_user_controlled_evidence(
@@ -171,37 +193,145 @@ def _source_chain(tmp_path: Path, *, start_time: str = "2026-08-18T20:00:00Z"):
     }
 
 
-def _fixture(
-    fixture_id: int,
-    kickoff: dt.datetime,
+def _epoch_ms(value: dt.datetime) -> int:
+    return int(value.astimezone(UTC).timestamp() * 1000)
+
+
+def _fotmob_match(
+    match_id: int,
     *,
     home: str = "Example Home FC",
     away: str = "Example Away FC",
+    competition_kickoff: dt.datetime = dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC),
+    league_id: int = 77,
+) -> dict:
+    kickoff = competition_kickoff.astimezone(UTC)
+    utc_time = kickoff.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+    return {
+        "away": {"id": 2000 + match_id, "score": 0, "name": away, "longName": away},
+        "eliminatedTeamId": None,
+        "home": {"id": 1000 + match_id, "score": 0, "name": home, "longName": home},
+        "id": match_id,
+        "leagueId": league_id,
+        "status": {
+            "utcTime": utc_time,
+            "halfs": {"firstHalfStarted": ""},
+            "periodLength": 45,
+            "started": False,
+            "cancelled": False,
+            "finished": False,
+        },
+        "statusId": 1,
+        "time": kickoff.strftime("%d.%m.%Y %H:%M"),
+        "timeTS": _epoch_ms(kickoff),
+        "tournamentStage": "",
+    }
+
+
+def _fotmob_capture(
+    matches: list[dict],
+    *,
     competition: str = "Example Country - Example League",
-) -> FotMobReviewedFixtureCatalogInput:
-    capture_sha = f"{fixture_id % 16:x}" * 64
-    candidate_sha = f"{(fixture_id + 1) % 16:x}" * 64
-    evidence_sha = f"{(fixture_id + 2) % 16:x}" * 64
-    return FotMobReviewedFixtureCatalogInput(
-        source_capture_manifest_sha256=capture_sha,
-        candidate_sha256=candidate_sha,
-        source_fixture_identifier=str(fixture_id),
-        home_team=home,
-        away_team=away,
-        competition=competition,
-        kickoff=kickoff,
-        source_reference=(
-            "FotMob /api/data/matches capture manifest sha256:" + capture_sha
-        ),
-        reviewed_at=dt.datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
-        evidence_file_path=f"evidence/{fixture_id}.json",
-        evidence_sha256=evidence_sha,
-        reviewer_reference="test-reviewed",
-        notes="",
+    observed_second: int = 0,
+):
+    payload = {
+        "leagues": [
+            {
+                "ccode": "NGA",
+                "id": 77,
+                "internalRank": 1,
+                "matches": matches,
+                "name": competition,
+                "primaryId": 77,
+                "simpleLeague": False,
+            }
+        ],
+        "date": "20260818",
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    response = CapturedFotMobDataMatchesResponse(
+        status=200,
+        content_type="application/json; charset=utf-8",
+        content_length=len(raw),
+        body=raw,
+        observed_at=dt.datetime(2026, 8, 18, 9, 0, observed_second, tzinfo=UTC),
+        network_acquisition_performed=True,
     )
+    manifest = build_data_matches_capture_manifest(
+        response,
+        request_date="20260818",
+        timezone="UTC",
+        ccode3="NGA",
+    )
+    return raw, manifest
 
 
-def _build(chain, fixtures):
+def _fotmob_admission(
+    tmp_path: Path,
+    *,
+    matches: list[dict] | None = None,
+    competition: str = "Example Country - Example League",
+    disposition: ReviewedFixtureCatalogAdmissionDisposition = (
+        ReviewedFixtureCatalogAdmissionDisposition.ADMITTED
+    ),
+):
+    capture = _fotmob_capture(
+        matches or [_fotmob_match(2001)],
+        competition=competition,
+    )
+    candidate_bundle = build_fotmob_fixture_candidate_bundle((capture,))
+    decisions = tuple(
+        FotMobFixtureCandidateReviewDecision(
+            source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
+            source_match_id=candidate.source_match_id,
+            candidate_sha256=sha256_fotmob_fixture_candidate(candidate),
+            disposition=FixtureCandidateReviewDisposition.APPROVED,
+            reviewed_at=dt.datetime(2026, 8, 18, 10, 0, tzinfo=UTC),
+            reviewer_reference="operator:full-utc-fixture-review",
+            notes="explicit reviewed FotMob fixture identity",
+        )
+        for candidate in candidate_bundle.candidates
+    )
+    review_bundle = build_fotmob_fixture_candidate_review_bundle(
+        candidate_bundle,
+        decisions,
+    )
+    handoff = build_fotmob_fixture_catalog_handoff(candidate_bundle, review_bundle)
+    raw = capture[0]
+    for item in handoff.catalog_inputs:
+        evidence_path = tmp_path / item.evidence_file_path
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_bytes(raw)
+    input_path = tmp_path / "reviewed-fotmob.jsonl"
+    input_path.write_bytes(handoff.catalog_input_jsonl_bytes)
+    result = compile_fixture_catalog(
+        input_path=input_path,
+        evidence_root=tmp_path,
+        as_of=dt.datetime(2026, 8, 18, 11, 0, tzinfo=UTC),
+        minimum_lead_seconds=3600,
+        code_state={
+            "evidence_git_head_sha": "a" * 40,
+            "tracked_worktree_clean": True,
+        },
+    )
+    decision = ReviewedFixtureCatalogAdmissionDecision(
+        candidate_bundle_sha256=handoff.candidate_bundle_sha256,
+        review_bundle_sha256=handoff.review_bundle_sha256,
+        handoff_sha256=sha256_fotmob_fixture_catalog_handoff(handoff),
+        catalog_sha256=sha256_bytes(result.catalog_bytes),
+        manifest_sha256=sha256_bytes(result.manifest_bytes),
+        source_capability=REVIEWED_SOURCE_CAPABILITY,
+        source_capability_sha256=sha256_reviewed_source_capability(),
+        disposition=disposition,
+        reviewed_at=dt.datetime(2026, 8, 18, 12, 0, tzinfo=UTC),
+        reviewer_reference="operator:full-utc-catalog-admission",
+        notes="catalog-level identity admission",
+    )
+    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
+    return admission, (capture,)
+
+
+def _build(chain, admission, captures):
     return full.build_full_utc_reconciliation(
         kickoff_promotion=chain["kickoff_promotion"],
         event_time_basis=chain["time_basis"],
@@ -213,11 +343,12 @@ def _build(chain, fixtures):
         event_bridge=chain["event_bridge"],
         sportradar_evidence=chain["sportradar_evidence"],
         sportradar_raw_response=chain["sportradar_raw"],
-        fixtures=fixtures,
+        fotmob_admission_value=admission,
+        fotmob_captures=captures,
     )
 
 
-def _revalidate(value, chain, fixtures):
+def _revalidate(value, chain, admission, captures):
     return full_verify.revalidate_full_utc_reconciliation(
         value,
         kickoff_promotion=chain["kickoff_promotion"],
@@ -230,11 +361,12 @@ def _revalidate(value, chain, fixtures):
         event_bridge=chain["event_bridge"],
         sportradar_evidence=chain["sportradar_evidence"],
         sportradar_raw_response=chain["sportradar_raw"],
-        fixtures=fixtures,
+        fotmob_admission_value=admission,
+        fotmob_captures=captures,
     )
 
 
-def test_protocol_is_canonical_and_authorizes_only_unique_fixture_reconciliation() -> None:
+def test_protocol_is_canonical_and_requires_both_source_replays() -> None:
     raw = PROTOCOL.read_bytes()
     payload = json.loads(raw)
     canonical = (
@@ -250,6 +382,10 @@ def test_protocol_is_canonical_and_authorizes_only_unique_fixture_reconciliation
     assert raw == canonical
     assert payload["schema_version"] == 1
     assert payload["requires_exact_pr162_rederivation"] is True
+    assert payload["requires_admitted_fotmob_catalog"] is True
+    assert payload["requires_fotmob_candidate_replay_from_raw_captures"] is True
+    assert payload["requires_fotmob_review_replay"] is True
+    assert payload["requires_exact_fotmob_handoff_rebuild"] is True
     assert payload["exact_matching_fields"] == [
         "home",
         "away",
@@ -267,10 +403,10 @@ def test_protocol_is_canonical_and_authorizes_only_unique_fixture_reconciliation
     assert all(value is False for value in payload["non_fixture_downstream_safety"].values())
 
 
-def test_unique_exact_full_utc_match_authorizes_fixture_reconciliation_only(tmp_path: Path) -> None:
+def test_unique_exact_source_replayed_match_authorizes_fixture_only(tmp_path: Path) -> None:
     chain = _source_chain(tmp_path)
-    fixture = _fixture(2001, dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC))
-    result = _build(chain, [fixture])
+    admission, captures = _fotmob_admission(tmp_path)
+    result = _build(chain, admission, captures)
     assert result.disposition is (
         full.FullUtcReconciliationDisposition.UNIQUE_EXACT_FULL_UTC_MATCH_RECONCILED
     )
@@ -284,40 +420,44 @@ def test_unique_exact_full_utc_match_authorizes_fixture_reconciliation_only(tmp_
         for key, value in result.safety.items()
         if key != "fixture_reconciliation_authorized"
     )
-    assert result.sportybet_kickoff_utc == dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC)
-    assert _revalidate(result, chain, [fixture]) == result
+    assert result.source_fotmob_admission_sha256 == (
+        full.fotmob_admission.sha256_reviewed_fixture_catalog_admission(admission)
+    )
+    assert _revalidate(result, chain, admission, captures) == result
 
 
 @pytest.mark.parametrize(
-    "fixture",
+    ("matches", "competition"),
     [
-        _fixture(
-            2101,
-            dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC),
-            home="example Home FC",
+        ([_fotmob_match(2101, home="example Home FC")], "Example Country - Example League"),
+        (
+            [_fotmob_match(2102, home="Example Away FC", away="Example Home FC")],
+            "Example Country - Example League",
         ),
-        _fixture(
-            2102,
-            dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC),
-            home="Example Away FC",
-            away="Example Home FC",
+        ([_fotmob_match(2103)], "Example League"),
+        (
+            [
+                _fotmob_match(
+                    2104,
+                    competition_kickoff=dt.datetime(2026, 8, 18, 20, 0, 1, tzinfo=UTC),
+                )
+            ],
+            "Example Country - Example League",
         ),
-        _fixture(
-            2103,
-            dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC),
-            competition="Example League",
-        ),
-        _fixture(2104, dt.datetime(2026, 8, 18, 20, 1, tzinfo=UTC)),
-        _fixture(2105, dt.datetime(2026, 8, 18, 20, 0, 1, tzinfo=UTC)),
-        _fixture(2106, dt.datetime(2026, 8, 18, 20, 0, 0, 1, tzinfo=UTC)),
     ],
 )
-def test_no_fuzzy_reversal_rounding_or_tolerance(
+def test_no_fuzzy_reversal_alias_or_kickoff_tolerance(
     tmp_path: Path,
-    fixture: FotMobReviewedFixtureCatalogInput,
+    matches: list[dict],
+    competition: str,
 ) -> None:
     chain = _source_chain(tmp_path)
-    result = _build(chain, [fixture])
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        matches=matches,
+        competition=competition,
+    )
+    result = _build(chain, admission, captures)
     assert result.disposition is full.FullUtcReconciliationDisposition.NO_EXACT_FULL_UTC_MATCH
     assert result.exact_match_count == 0
     assert result.matched_fixture is None
@@ -325,13 +465,13 @@ def test_no_fuzzy_reversal_rounding_or_tolerance(
     assert all(value is False for value in result.safety.values())
 
 
-def test_multiple_exact_rows_are_ambiguous_and_choose_none(tmp_path: Path) -> None:
+def test_multiple_exact_admitted_rows_are_ambiguous_and_choose_none(tmp_path: Path) -> None:
     chain = _source_chain(tmp_path)
-    fixtures = [
-        _fixture(2201, dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC)),
-        _fixture(2202, dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC)),
-    ]
-    result = _build(chain, fixtures)
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        matches=[_fotmob_match(2201), _fotmob_match(2202)],
+    )
+    result = _build(chain, admission, captures)
     assert result.disposition is (
         full.FullUtcReconciliationDisposition.AMBIGUOUS_EXACT_FULL_UTC_MATCH
     )
@@ -341,78 +481,64 @@ def test_multiple_exact_rows_are_ambiguous_and_choose_none(tmp_path: Path) -> No
     assert all(value is False for value in result.safety.values())
 
 
-def test_duplicate_fotmob_source_ids_fail_closed(tmp_path: Path) -> None:
+def test_rejected_fotmob_catalog_cannot_supply_fixture_authority(tmp_path: Path) -> None:
     chain = _source_chain(tmp_path)
-    fixtures = [
-        _fixture(2301, dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC)),
-        _fixture(2301, dt.datetime(2026, 8, 18, 20, 1, tzinfo=UTC)),
-    ]
-    with pytest.raises(
-        full.SportyBetFotMobFullUtcReconciliationError,
-        match="duplicate FotMob source_fixture_identifier",
-    ):
-        _build(chain, fixtures)
-
-
-def test_nonreviewed_fotmob_input_fails_closed(tmp_path: Path) -> None:
-    chain = _source_chain(tmp_path)
-    with pytest.raises(
-        full.SportyBetFotMobFullUtcReconciliationError,
-        match="non-reviewed FotMob",
-    ):
-        _build(chain, [object()])
-
-
-def test_empty_fotmob_population_fails_closed(tmp_path: Path) -> None:
-    chain = _source_chain(tmp_path)
-    with pytest.raises(
-        full.SportyBetFotMobFullUtcReconciliationError,
-        match="at least one reviewed FotMob fixture",
-    ):
-        _build(chain, [])
-
-
-def test_exact_subminute_provider_precision_must_match_fotmob_exactly(tmp_path: Path) -> None:
-    chain = _source_chain(tmp_path, start_time="2026-08-18T20:00:37.123456Z")
-    exact = _fixture(
-        2401,
-        dt.datetime(2026, 8, 18, 20, 0, 37, 123456, tzinfo=UTC),
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
     )
-    result = _build(chain, [exact])
-    assert result.fixture_reconciliation_authorized is True
-    assert result.matched_fixture is not None
-    nearby = _fixture(
-        2402,
-        dt.datetime(2026, 8, 18, 20, 0, 37, 123455, tzinfo=UTC),
+    with pytest.raises(
+        full.SportyBetFotMobFullUtcReconciliationError,
+        match="exact ADMITTED disposition",
+    ):
+        _build(chain, admission, captures)
+
+
+def test_provider_subminute_precision_requires_exact_fotmob_instant(tmp_path: Path) -> None:
+    chain = _source_chain(tmp_path, start_time="2026-08-18T20:00:37.123000Z")
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        matches=[
+            _fotmob_match(
+                2401,
+                competition_kickoff=dt.datetime(
+                    2026, 8, 18, 20, 0, 37, 123000, tzinfo=UTC
+                ),
+            )
+        ],
     )
-    no_match = _build(chain, [nearby])
+    exact = _build(chain, admission, captures)
+    assert exact.fixture_reconciliation_authorized is True
+
+    other_path = tmp_path / "micro-mismatch"
+    other_path.mkdir()
+    precise_chain = _source_chain(
+        other_path,
+        start_time="2026-08-18T20:00:37.123456Z",
+    )
+    mismatch_admission, mismatch_captures = _fotmob_admission(
+        other_path,
+        matches=[
+            _fotmob_match(
+                2402,
+                competition_kickoff=dt.datetime(
+                    2026, 8, 18, 20, 0, 37, 123000, tzinfo=UTC
+                ),
+            )
+        ],
+    )
+    no_match = _build(precise_chain, mismatch_admission, mismatch_captures)
     assert no_match.disposition is full.FullUtcReconciliationDisposition.NO_EXACT_FULL_UTC_MATCH
     assert no_match.fixture_reconciliation_authorized is False
 
 
-def test_fotmob_population_hash_and_result_are_order_deterministic(tmp_path: Path) -> None:
-    chain = _source_chain(tmp_path)
-    a = _fixture(2501, dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC))
-    b = _fixture(
-        2502,
-        dt.datetime(2026, 8, 19, 20, 0, tzinfo=UTC),
-        home="Other Home",
-        away="Other Away",
-    )
-    first = _build(chain, [b, a])
-    second = _build(chain, [a, b])
-    assert full.fotmob_population_sha256([a, b]) == full.fotmob_population_sha256([b, a])
-    assert full.canonical_reconciliation_bytes(first) == full.canonical_reconciliation_bytes(second)
-    assert full.reconciliation_sha256(first) == full.reconciliation_sha256(second)
-
-
 def test_forged_pr162_promotion_is_rederived_and_rejected(tmp_path: Path) -> None:
     chain = _source_chain(tmp_path)
+    admission, captures = _fotmob_admission(tmp_path)
     forged = dataclasses.replace(
         chain["kickoff_promotion"],
         source_event_raw_sha256="f" * 64,
     )
-    fixture = _fixture(2601, dt.datetime(2026, 8, 18, 20, 0, tzinfo=UTC))
     with pytest.raises(
         full.SportyBetFotMobFullUtcReconciliationError,
         match="not the exact deterministic derivative",
@@ -428,14 +554,31 @@ def test_forged_pr162_promotion_is_rederived_and_rejected(tmp_path: Path) -> Non
             event_bridge=chain["event_bridge"],
             sportradar_evidence=chain["sportradar_evidence"],
             sportradar_raw_response=chain["sportradar_raw"],
-            fixtures=[fixture],
+            fotmob_admission_value=admission,
+            fotmob_captures=captures,
         )
+
+
+def test_different_raw_fotmob_capture_cannot_reuse_admission(tmp_path: Path) -> None:
+    chain = _source_chain(tmp_path)
+    admission, _ = _fotmob_admission(tmp_path)
+    different_capture = _fotmob_capture([_fotmob_match(2601, home="Fabricated Home")])
+    with pytest.raises(full.SportyBetFotMobFullUtcReconciliationError):
+        _build(chain, admission, (different_capture,))
 
 
 def test_no_match_cannot_be_manually_promoted_to_fixture_authority(tmp_path: Path) -> None:
     chain = _source_chain(tmp_path)
-    fixture = _fixture(2701, dt.datetime(2026, 8, 18, 20, 1, tzinfo=UTC))
-    result = _build(chain, [fixture])
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        matches=[
+            _fotmob_match(
+                2701,
+                competition_kickoff=dt.datetime(2026, 8, 18, 20, 1, tzinfo=UTC),
+            )
+        ],
+    )
+    result = _build(chain, admission, captures)
     with pytest.raises(full.SportyBetFotMobFullUtcReconciliationError):
         dataclasses.replace(result, fixture_reconciliation_authorized=True)
     forged_safety = dict(result.safety)
