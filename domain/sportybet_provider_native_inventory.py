@@ -1,8 +1,8 @@
 """Deterministic provider-native inventory for reviewed SportyBet Lite HTML.
 
-The extractor intentionally stops before ATHENA fixture reconciliation and
-canonical market mapping.  Provider identifiers and source uncertainty are
-preserved exactly; unknown remains unknown.
+The extractor stops before ATHENA fixture reconciliation and canonical market
+mapping. Provider identifiers and source uncertainty are preserved; unknown
+remains unknown.
 """
 
 from __future__ import annotations
@@ -19,8 +19,14 @@ from urllib.parse import parse_qsl, urlsplit
 
 from domain.sportybet_lite_source_capture import (
     ALLOWED_HOST,
+    EVENT_DETAIL_PATH,
+    INDEX_PATH,
     SportyBetLiteCaptureError,
     SportyBetLiteCaptureManifest,
+    canonical_manifest_bytes,
+    parse_utc_timestamp,
+    serialize_utc,
+    sha256_bytes,
     validate_event_id,
     validate_sport_id,
 )
@@ -76,7 +82,8 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
     return types.MappingProxyType(detached)
 
 
-def _bounded_text(value: Any, label: str) -> str | None:
+def _bounded_label(value: Any, label: str) -> str | None:
+    """Normalize human-facing HTML labels, never provider identity fields."""
     if value is None:
         return None
     if not isinstance(value, str):
@@ -91,9 +98,26 @@ def _bounded_text(value: Any, label: str) -> str | None:
     return normalized
 
 
+def _exact_query_text(value: Any, label: str) -> str | None:
+    """Preserve decoded provider query identity exactly rather than normalizing it."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise SportyBetProviderInventoryError(f"{label} must be a string or None")
+    if not value or len(value) > MAX_TEXT:
+        raise SportyBetProviderInventoryError(
+            f"{label} must be non-empty and at most {MAX_TEXT} characters"
+        )
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise SportyBetProviderInventoryError(f"{label} contains control characters")
+    return value
+
+
 def _native_id(value: Any, label: str) -> str:
     if not isinstance(value, str) or _SAFE_NATIVE_ID_RE.fullmatch(value) is None:
-        raise SportyBetProviderInventoryError(f"{label} is not a safe provider-native ID")
+        raise SportyBetProviderInventoryError(
+            f"{label} is not a safe provider-native ID"
+        )
     return value
 
 
@@ -110,17 +134,38 @@ def validate_odds(value: Any) -> tuple[str, str]:
     return value, normalized
 
 
+def _reviewed_lite_path(path: str) -> bool:
+    return path == INDEX_PATH or path == EVENT_DETAIL_PATH or path.startswith(INDEX_PATH + "/")
+
+
 def _query_mapping(href: str) -> tuple[str, dict[str, str]]:
     try:
         parsed = urlsplit(href)
     except ValueError as exc:
         raise SportyBetProviderInventoryError("selection href is invalid") from exc
-    if parsed.scheme and parsed.scheme != "https":
-        raise SportyBetProviderInventoryError("selection href must use HTTPS")
-    if parsed.netloc and parsed.netloc not in {ALLOWED_HOST, "lite.sportybet.com"}:
-        raise SportyBetProviderInventoryError("selection href host is not SportyBet")
-    if not parsed.path.startswith("/ng/lite"):
-        raise SportyBetProviderInventoryError("selection href is outside SportyBet Lite")
+    if parsed.scheme:
+        if parsed.scheme != "https":
+            raise SportyBetProviderInventoryError("selection href must use HTTPS")
+        if parsed.username is not None or parsed.password is not None:
+            raise SportyBetProviderInventoryError(
+                "selection href must not contain user information"
+            )
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise SportyBetProviderInventoryError("selection href port is invalid") from exc
+        if parsed.hostname != ALLOWED_HOST or port is not None:
+            raise SportyBetProviderInventoryError(
+                "absolute selection href must use the exact reviewed SportyBet host"
+            )
+    elif parsed.netloc:
+        raise SportyBetProviderInventoryError(
+            "scheme-relative selection hrefs are not accepted"
+        )
+    if not _reviewed_lite_path(parsed.path):
+        raise SportyBetProviderInventoryError(
+            "selection href is outside the reviewed SportyBet Lite path boundary"
+        )
     try:
         pairs = parse_qsl(
             parsed.query,
@@ -187,13 +232,15 @@ class NativeSelection:
                 sport_id = validate_sport_id(self.sport_id)
             except SportyBetLiteCaptureError as exc:
                 raise SportyBetProviderInventoryError(str(exc)) from exc
-        product_id = None if self.product_id is None else _native_id(self.product_id, "product_id")
+        product_id = (
+            None if self.product_id is None else _native_id(self.product_id, "product_id")
+        )
         market_id = _native_id(self.market_id, "market_id")
         outcome_id = _native_id(self.outcome_id, "outcome_id")
-        market_group = _bounded_text(self.market_group, "market_group")
-        market_name = _bounded_text(self.market_name, "market_name")
-        selection_label = _bounded_text(self.selection_label, "selection_label")
-        specifier = _bounded_text(self.specifier, "specifier")
+        market_group = _exact_query_text(self.market_group, "market_group")
+        market_name = _bounded_label(self.market_name, "market_name")
+        selection_label = _bounded_label(self.selection_label, "selection_label")
+        specifier = _exact_query_text(self.specifier, "specifier")
         odds_raw, odds_decimal = validate_odds(self.odds_raw)
         if self.odds_decimal != odds_decimal:
             raise SportyBetProviderInventoryError("odds_decimal does not match odds_raw")
@@ -209,7 +256,30 @@ class NativeSelection:
             )
         if not isinstance(self.href, str) or not self.href or len(self.href) > 4096:
             raise SportyBetProviderInventoryError("href is invalid")
-        _query_mapping(self.href)
+        _, query = _query_mapping(self.href)
+        required = {"eventId", "marketId", "outcomeId", "odds"}
+        if not required.issubset(query):
+            raise SportyBetProviderInventoryError(
+                "selection href does not contain the required provider identity"
+            )
+        if query["eventId"] != event_id:
+            raise SportyBetProviderInventoryError("href eventId does not match selection")
+        if query["marketId"] != market_id:
+            raise SportyBetProviderInventoryError("href marketId does not match selection")
+        if query["outcomeId"] != outcome_id:
+            raise SportyBetProviderInventoryError("href outcomeId does not match selection")
+        if query["odds"] != odds_raw:
+            raise SportyBetProviderInventoryError("href odds do not match selection")
+        if query.get("sportId") != sport_id:
+            raise SportyBetProviderInventoryError("href sportId does not match selection")
+        if query.get("productId") != product_id:
+            raise SportyBetProviderInventoryError("href productId does not match selection")
+        if query.get("marketGroupsName") != market_group:
+            raise SportyBetProviderInventoryError(
+                "href marketGroupsName does not match selection"
+            )
+        if query.get("specifier") != specifier:
+            raise SportyBetProviderInventoryError("href specifier does not match selection")
         object.__setattr__(self, "event_id", event_id)
         object.__setattr__(self, "sport_id", sport_id)
         object.__setattr__(self, "product_id", product_id)
@@ -276,7 +346,9 @@ class NativeEvent:
                 sport_id = validate_sport_id(self.sport_id)
             except SportyBetLiteCaptureError as exc:
                 raise SportyBetProviderInventoryError(str(exc)) from exc
-        product_id = None if self.product_id is None else _native_id(self.product_id, "product_id")
+        product_id = (
+            None if self.product_id is None else _native_id(self.product_id, "product_id")
+        )
         if any(
             value is not None
             for value in (
@@ -311,6 +383,7 @@ class SportyBetProviderNativeInventory:
     source_raw_sha256: str
     source_request_target: str
     source_observed_at: str
+    source_network_acquisition_performed: bool
     provider_quote_timestamp_capability: str
     provider_snapshot_id_capability: str
     events: tuple[NativeEvent, ...]
@@ -328,10 +401,25 @@ class SportyBetProviderNativeInventory:
         ):
             if not isinstance(value, str) or re.fullmatch(r"[0-9a-f]{64}", value) is None:
                 raise SportyBetProviderInventoryError(f"{label} is invalid")
-        if not isinstance(self.source_request_target, str) or not self.source_request_target.startswith("/ng/lite"):
+        if not isinstance(self.source_request_target, str):
             raise SportyBetProviderInventoryError("source_request_target is invalid")
-        if not isinstance(self.source_observed_at, str) or not self.source_observed_at.endswith("Z"):
-            raise SportyBetProviderInventoryError("source_observed_at is invalid")
+        path = self.source_request_target.split("?", 1)[0]
+        if not _reviewed_lite_path(path):
+            raise SportyBetProviderInventoryError("source_request_target is invalid")
+        try:
+            parsed_observed_at = parse_utc_timestamp(
+                self.source_observed_at, "source_observed_at"
+            )
+        except SportyBetLiteCaptureError as exc:
+            raise SportyBetProviderInventoryError(str(exc)) from exc
+        if serialize_utc(parsed_observed_at) != self.source_observed_at:
+            raise SportyBetProviderInventoryError(
+                "source_observed_at must use canonical UTC serialization"
+            )
+        if type(self.source_network_acquisition_performed) is not bool:
+            raise SportyBetProviderInventoryError(
+                "source_network_acquisition_performed must be exact bool"
+            )
         if self.provider_quote_timestamp_capability != "UNPROVEN_ON_REVIEWED_LITE_HTML":
             raise SportyBetProviderInventoryError("quote timestamp capability mismatch")
         if self.provider_snapshot_id_capability != "UNPROVEN_ON_REVIEWED_LITE_HTML":
@@ -339,7 +427,47 @@ class SportyBetProviderNativeInventory:
         if type(self.events) is not tuple or type(self.selections) is not tuple:
             raise SportyBetProviderInventoryError("events and selections must be tuples")
         if not self.events or not self.selections:
-            raise SportyBetProviderInventoryError("inventory must contain provider-native selections")
+            raise SportyBetProviderInventoryError(
+                "inventory must contain provider-native selections"
+            )
+        if any(not isinstance(item, NativeEvent) for item in self.events):
+            raise SportyBetProviderInventoryError("events contain an invalid item")
+        if any(not isinstance(item, NativeSelection) for item in self.selections):
+            raise SportyBetProviderInventoryError("selections contain an invalid item")
+        event_ids = [item.event_id for item in self.events]
+        if len(event_ids) != len(set(event_ids)):
+            raise SportyBetProviderInventoryError("duplicate provider-native event identity")
+        selection_ids = [item.selection_identity for item in self.selections]
+        if len(selection_ids) != len(set(selection_ids)):
+            raise SportyBetProviderInventoryError(
+                "duplicate provider-native selection identity"
+            )
+        grouped: dict[str, list[NativeSelection]] = {}
+        for item in self.selections:
+            grouped.setdefault(item.event_id, []).append(item)
+        if set(grouped) != set(event_ids):
+            raise SportyBetProviderInventoryError(
+                "event inventory does not match selection event population"
+            )
+        by_event = {item.event_id: item for item in self.events}
+        for event_id, rows in grouped.items():
+            event = by_event[event_id]
+            if event.selection_count != len(rows):
+                raise SportyBetProviderInventoryError(
+                    "event selection_count does not match selections"
+                )
+            sport_ids = {row.sport_id for row in rows if row.sport_id is not None}
+            product_ids = {row.product_id for row in rows if row.product_id is not None}
+            if len(sport_ids) > 1 or len(product_ids) > 1:
+                raise SportyBetProviderInventoryError(
+                    "conflicting provider sport/product identity within one event"
+                )
+            expected_sport = next(iter(sport_ids)) if sport_ids else None
+            expected_product = next(iter(product_ids)) if product_ids else None
+            if event.sport_id != expected_sport or event.product_id != expected_product:
+                raise SportyBetProviderInventoryError(
+                    "event sport/product identity does not match selections"
+                )
         safety = _validate_safety(self.safety)
         object.__setattr__(self, "safety", safety)
 
@@ -351,6 +479,7 @@ class SportyBetProviderNativeInventory:
             "source_raw_sha256": self.source_raw_sha256,
             "source_request_target": self.source_request_target,
             "source_observed_at": self.source_observed_at,
+            "source_network_acquisition_performed": self.source_network_acquisition_performed,
             "provider_quote_timestamp_capability": self.provider_quote_timestamp_capability,
             "provider_snapshot_id_capability": self.provider_snapshot_id_capability,
             "events": [item.to_dict() for item in self.events],
@@ -405,6 +534,12 @@ class _SportyBetLiteLinkParser(HTMLParser):
         self._anchor_attrs = {}
         self._anchor_text = []
 
+    def assert_complete(self) -> None:
+        if self._anchor_href is not None:
+            raise SportyBetProviderInventoryError(
+                "unterminated anchor evidence is not accepted"
+            )
+
 
 def _selection_from_link(
     href: str,
@@ -424,33 +559,25 @@ def _selection_from_link(
         raise SportyBetProviderInventoryError(
             f"provider selection link is incomplete; missing {missing}"
         )
-    event_id = query["eventId"]
-    market_id = query["marketId"]
-    outcome_id = query["outcomeId"]
     odds_raw, odds_decimal = validate_odds(query["odds"])
-    sport_id = query.get("sportId")
-    product_id = query.get("productId")
-    market_group = query.get("marketGroupsName")
-    specifier = query.get("specifier")
     market_name = attrs.get("data-market-name")
     selection_label = attrs.get("data-outcome-name") or attrs.get("data-selection-name")
-    normalized_anchor_text = _bounded_text(anchor_text, "anchor_text")
+    normalized_anchor_text = _bounded_label(anchor_text, "anchor_text")
     if selection_label is None and normalized_anchor_text not in {None, odds_raw}:
         selection_label = normalized_anchor_text
-    availability = _explicit_availability(attrs)
     return NativeSelection(
-        event_id=event_id,
-        sport_id=sport_id,
-        product_id=product_id,
-        market_id=market_id,
-        market_group=market_group,
+        event_id=query["eventId"],
+        sport_id=query.get("sportId"),
+        product_id=query.get("productId"),
+        market_id=query["marketId"],
+        market_group=query.get("marketGroupsName"),
         market_name=market_name,
-        specifier=specifier,
-        outcome_id=outcome_id,
+        specifier=query.get("specifier"),
+        outcome_id=query["outcomeId"],
         selection_label=selection_label,
         odds_raw=odds_raw,
         odds_decimal=odds_decimal,
-        availability=availability,
+        availability=_explicit_availability(attrs),
         provider_quote_at=None,
         provider_snapshot_id=None,
         href=href,
@@ -470,6 +597,7 @@ def extract_native_selections(raw_html: Any) -> tuple[NativeSelection, ...]:
     try:
         parser.feed(text)
         parser.close()
+        parser.assert_complete()
     except SportyBetProviderInventoryError:
         raise
     except Exception as exc:
@@ -520,8 +648,11 @@ def build_inventory(
         r"[0-9a-f]{64}", source_manifest_sha256
     ) is None:
         raise SportyBetProviderInventoryError("source_manifest_sha256 is invalid")
-    from domain.sportybet_lite_source_capture import sha256_bytes, serialize_utc
-
+    exact_manifest_sha256 = sha256_bytes(canonical_manifest_bytes(manifest))
+    if source_manifest_sha256 != exact_manifest_sha256:
+        raise SportyBetProviderInventoryError(
+            "source_manifest_sha256 does not match canonical source manifest bytes"
+        )
     if type(raw_html) is not bytes:
         raise SportyBetProviderInventoryError("raw_html must be exact bytes")
     if sha256_bytes(raw_html) != manifest.raw_sha256 or len(raw_html) != manifest.raw_size:
@@ -561,6 +692,7 @@ def build_inventory(
         source_raw_sha256=manifest.raw_sha256,
         source_request_target=manifest.request_target,
         source_observed_at=serialize_utc(manifest.observed_at),
+        source_network_acquisition_performed=manifest.network_acquisition_performed,
         provider_quote_timestamp_capability="UNPROVEN_ON_REVIEWED_LITE_HTML",
         provider_snapshot_id_capability="UNPROVEN_ON_REVIEWED_LITE_HTML",
         events=tuple(sorted(events, key=lambda item: item.event_id)),
