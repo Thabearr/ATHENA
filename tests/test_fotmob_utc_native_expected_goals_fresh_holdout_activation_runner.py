@@ -15,6 +15,7 @@ import pytest
 import domain.fotmob_data_matches_capture as capture_contract
 import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
+import domain.fotmob_utc_native_expected_goals_fresh_holdout_calibration_competition_protocol as pr148
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control as control
 
 
@@ -92,7 +93,7 @@ def _fake_sealed_prediction(
     return fresh.SealedFreshPrediction(
         schema_version=1,
         implementation_state=fresh.IMPLEMENTATION_STATE,
-        protocol_sha256=fresh.EXPECTED_PROTOCOL_SHA256,
+        protocol_sha256=pr148.PROTOCOL_SHA256,
         holdout_start_utc=control.holdout_start_utc(),
         fixture=fixture,
         bootstrap_projection_sha256=fresh.BOOTSTRAP_PROJECTION_SHA256,

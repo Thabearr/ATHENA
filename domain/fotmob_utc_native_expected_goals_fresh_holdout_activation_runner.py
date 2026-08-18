@@ -1286,7 +1286,10 @@ def verify_and_extract_durable_state_archive(
                 (".cache/", "fresh-holdout-tick-receipt.json")
             ):
                 raise _error(f"unexpected archive member root: {member.name}")
-        tar.extractall(path=repo)
+        if hasattr(tarfile, "data_filter"):
+            tar.extractall(path=repo, filter="data")
+        else:
+            tar.extractall(path=repo)
 
     state_root = repo / control.CONTROL_ROOT_RELATIVE
     if state_root.exists():
