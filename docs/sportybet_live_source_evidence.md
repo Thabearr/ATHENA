@@ -2,14 +2,16 @@
 
 ## Purpose
 
-This boundary establishes a read-only evidence path for SportyBet Nigeria without
-activating the legacy betting product surface. It preserves exact source bytes
-and extracts only provider-native identifiers that can be proven from the
-reviewed public Lite HTML surface.
+This boundary establishes ATHENA's first reviewed SportyBet source-shape and
+provider-native market evidence contract without activating automated website
+acquisition or the legacy betting product surface.
 
-It does **not** authorize fixture reconciliation, canonical ATHENA market
-mapping, fresh-price use, pricing, selection, slip construction, booking codes,
-SportyBet execution, or `BET`.
+It preserves the exact request/capture contract needed for a future authorized
+source path and deterministically inventories provider-native event/market/
+outcome/odds evidence from reviewed Lite HTML bytes. It does **not** authorize
+fixture reconciliation, canonical ATHENA market mapping, fresh-price use,
+pricing, selection, slip construction, booking codes, SportyBet execution, or
+`BET`.
 
 ## Reviewed public source surface
 
@@ -33,15 +35,32 @@ query fields including, when supplied:
 
 The reviewed source showed, for example, a Total Goals selection with
 `marketId=18` and `specifier=total=2.5`, and an Asian Handicap selection with
-`marketId=16` and `specifier=hcp=-2.5`. This is source-shape evidence only; it
-is not ATHENA canonical-market equivalence.
+`marketId=16` and `specifier=hcp=-2.5`. This proves provider source shape only;
+it is not ATHENA canonical-market equivalence.
 
-The implementation uses one ordinary HTTPS `GET`, fixed transparent headers,
-no cookies, no credentials, no login, no browser impersonation, no CAPTCHA or
-anti-bot bypass, and no write/betslip action.
+## Automated-access permission is not proven
 
-This boundary does not claim or depend on a public developer API. It implements
-only the exact Lite HTML surface actually reviewed.
+ATHENA also reviewed SportyBet Nigeria's current Terms and Conditions on
+2026-08-18. The terms reserve SportyBet's right to block access where automated
+or robotic activity is indicated. Public unauthenticated accessibility is
+therefore **not** treated as permission for an ATHENA automated collector.
+
+The frozen state for this boundary is:
+
+`BLOCKED_UNTIL_EXPLICIT_SPORTYBET_AUTOMATED_ACCESS_PERMISSION`
+
+Accordingly:
+
+- `network_acquisition_authorized = false`;
+- no scheduled SportyBet collector is added;
+- PR CI performs no SportyBet request;
+- the command in `scripts/capture_sportybet_lite_source.py` performs no network
+  I/O and emits a deterministic blocked receipt;
+- no login, credentials, cookies, browser impersonation, CAPTCHA/anti-bot
+  bypass, proxy evasion, write action, betslip action, or bet placement is used.
+
+This is deliberately fail-closed. A later reviewed boundary may replace the
+block only after an explicit permitted source method is established.
 
 ## What is proven and what is not
 
@@ -50,32 +69,31 @@ displayed decimal odds, and line specifiers can be embedded in public source
 links. It does not prove a provider quote/update timestamp or provider snapshot
 ID. Consequently:
 
-- `observed_at` is the ATHENA capture time only;
+- `observed_at` is capture/observation time only;
 - `provider_quote_at` remains `null`;
 - `provider_snapshot_id` remains `null`;
-- capture time is never substituted for quote time;
+- observation time is never substituted for quote time;
 - this evidence cannot authorize a future fresh-price decision by itself.
 
 The visible Lite pages display competition, participant and kickoff text, but
 this boundary does not guess a machine-readable association for those fields.
 Until an exact representation is proven, competition IDs/names, participant
-IDs/names, kickoff and event status remain `null` in the structured event
-inventory. Exact raw HTML is retained so a later reviewed extractor can add
-those fields without rewriting history.
+IDs/names, kickoff and event status remain `null` in structured event records.
 
 ## Raw capture contract
 
-`domain/sportybet_lite_source_capture.py` freezes:
+`domain/sportybet_lite_source_capture.py` freezes the contract a future
+separately authorized acquisition method must satisfy:
 
 - provider and reviewed host;
 - exact INDEX and EVENT_DETAIL request targets;
-- request headers;
+- exact transparent request headers;
 - HTTP 200 requirement;
 - `text/html` media-type requirement;
 - bounded exact raw bytes;
 - Content-Length consistency when supplied;
 - UTC `observed_at`;
-- network-acquisition provenance;
+- explicit network-acquisition provenance;
 - raw byte size and SHA-256;
 - canonical UTF-8/LF JSON manifest;
 - fail-closed provider quote/snapshot fields;
@@ -85,21 +103,25 @@ Capture publication is restricted to:
 
 `.cache/athena-research/sportybet-live-source-captures`
 
-That root is already ignored by repository policy. Capture identity is provider
-+ exact request target + exact `observed_at`. Same identity/same bytes is
-idempotent; same identity/different bytes fails closed. Verification binds the
-capture directory name back to the canonical manifest identity, checks exact
-raw bytes/hash/size, rejects extra files, traversal and symlinks, and requires
-network provenance by default.
+That root is ignored by repository policy. Capture identity is provider + exact
+request target + exact `observed_at`. Same identity/same bytes is idempotent;
+same identity/different bytes fails closed. Verification binds the directory
+name to the canonical manifest identity, checks exact raw bytes/hash/size,
+rejects extra files, traversal and symlinks, and requires network provenance by
+default.
 
 Raw and manifest files are file-fsynced and directory entries are explicitly
 synchronized. Unsupported directory-durability platforms fail closed rather
 than silently claiming durable publication.
 
+The presence of this capture contract does **not** itself grant network
+acquisition authority.
+
 ## Provider-native inventory
 
 `domain/sportybet_provider_native_inventory.py` parses only structurally
-qualified SportyBet Lite selection links. A usable selection requires all of:
+qualified SportyBet Lite selection links from supplied evidence bytes. A usable
+selection requires all of:
 
 - valid `sr:match:<positive integer>` event ID;
 - market ID;
@@ -113,31 +135,16 @@ remain distinct; `total=2.5`, `total=3.5`, and `hcp=-2.5` are not collapsed.
 Selection identity is `(event_id, market_id, specifier, outcome_id)`. Duplicate
 selection identity is rejected, including duplicates that disagree on odds.
 
-Provider market names and labels are preserved only when they are explicitly
-attached to selection evidence. The extractor does not infer a market name from
-nearby page text and never fuzzy-maps names to ATHENA canonical markets.
-Explicit suspension/lock state is retained when attached to a qualified source
-selection; absent state remains `UNKNOWN`, never silently `AVAILABLE`. A visual
-locked item without a qualified provider-native selection link remains present
-in raw evidence rather than receiving invented IDs.
+Provider market names and labels are preserved only when explicitly attached
+to qualified selection evidence. The extractor does not infer names from nearby
+page text and never fuzzy-maps to ATHENA canonical markets. Explicit
+suspension/lock state is retained when attached to a qualified selection;
+absent state remains `UNKNOWN`, never silently `AVAILABLE`. A visual locked item
+without a qualified provider-native selection link remains raw evidence rather
+than receiving invented IDs.
 
 The inventory is canonically ordered and serialized. All downstream authority
 remains false.
-
-## Explicit live capture command
-
-The command is manual and explicit:
-
-```powershell
-python -m scripts.capture_sportybet_lite_source --index
-python -m scripts.capture_sportybet_lite_source --event-id sr:match:12345678
-```
-
-It is **not** scheduled by this PR and PR CI makes no SportyBet request. A
-successful command writes raw/manifest evidence plus provider-native inventory
-under ignored research storage. Redirects, access blocks, media-type changes,
-malformed evidence, or absence of structurally qualified selection links fail
-closed with `BLOCKED`.
 
 ## Product safety
 
@@ -152,8 +159,10 @@ execution, or BET decision is produced by this boundary.
 
 ## Next boundary
 
-After reviewed live source captures exist, the next independent boundary is
-exact SportyBet event identity reconciliation against the trusted fixture side.
-Only after exact fixture identity is proven should provider-native markets be
-mapped to canonical ATHENA semantics. Fresh quote validation and value remain
-later independent gates.
+The next SportyBet boundary is to establish a source method ATHENA is actually
+permitted to use (for example, an explicit provider-approved interface or a
+separately reviewed user-controlled evidence workflow). Only after real
+reviewed captures exist should ATHENA perform exact SportyBet event identity
+reconciliation against the trusted fixture side. Canonical market semantics,
+fresh quote validation, value, selection and BET remain later independent
+gates.
