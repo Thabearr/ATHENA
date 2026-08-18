@@ -2,12 +2,13 @@
 
 This research boundary consumes the exact PR #153 user-controlled event-detail
 manifest, the exact PR #154 provider-native inventory derived from the same HTML,
-and the preserved raw HTML bytes. It extracts only visible event-header text:
-competition, displayed date/time, home participant and away participant.
+and the preserved raw HTML bytes. Before any event-header text is trusted, the
+PR #154 inventory is deterministically re-derived from those exact bytes and must
+be byte-for-byte canonical-equivalent to the supplied inventory.
 
-The result is deliberately a candidate. The reviewed Lite HTML has not yet
-proved a provider-supplied year or timezone field, and this module does not turn
-a displayed clock into UTC by assumption. No fixture-reconciliation, pricing,
+The result remains a candidate. The reviewed Lite HTML has not yet proved a
+provider-supplied year or timezone field, and this module does not turn a
+displayed clock into UTC by assumption. No fixture-reconciliation, pricing,
 selection, slip, booking-code, execution or BET authority is created.
 """
 
@@ -27,9 +28,16 @@ from domain.sportybet_lite_source_capture import (
     MAX_RESPONSE_BYTES,
     SportyBetLiteCaptureError,
     SportyBetLiteRequestKind,
+    serialize_utc,
     sha256_bytes,
     validate_event_id,
     validate_sport_id,
+)
+from domain.sportybet_provider_native_inventory import (
+    NativeEvent,
+    NativeSelection,
+    SportyBetProviderInventoryError,
+    extract_native_selections,
 )
 
 SCHEMA_VERSION = 1
@@ -38,6 +46,9 @@ PROVIDER = "SportyBet"
 EXTRACTION_AUTHORITY = "MACHINE_DERIVED_FROM_PRESERVED_PROVIDER_HTML_VISIBLE_TEXT"
 DISPLAY_TIME_BASIS = "UNPROVEN_IN_PRESERVED_EVENT_DETAIL_HTML"
 MATCHING_STATUS = "EVENT_HEADER_CANDIDATE_ONLY"
+NATIVE_INVENTORY_REVALIDATION = (
+    "EXACT_DETERMINISTIC_REDERIVATION_FROM_SAME_RAW_HTML_REQUIRED"
+)
 MAX_RAW_BYTES = MAX_RESPONSE_BYTES
 MAX_CANONICAL_BYTES = 256 * 1024
 
@@ -73,7 +84,6 @@ _MONTH_MAX_DAY = {
     11: 30,
     12: 31,
 }
-
 _IGNORED_TAGS = frozenset({"script", "style", "noscript", "svg", "template"})
 _NAVIGATION_TOKENS = frozenset(
     {
@@ -179,8 +189,8 @@ def _validate_scalar_components(
 
 
 def _normalize_visible_text(value: str) -> str | None:
-    # HTML rendering collapses whitespace. Preserve character/case content
-    # otherwise; do not apply Unicode normalization, case folding or aliases.
+    # Browser rendering collapses whitespace. Preserve case and character content;
+    # never Unicode-normalize, case-fold, alias-map, or infer provider identity.
     collapsed = " ".join(value.split())
     return collapsed or None
 
@@ -404,16 +414,8 @@ def extract_visible_event_header(raw_html: Any) -> ExtractedVisibleEventHeader:
     for start, end, kickoff_display in _candidate_windows(tokens):
         try:
             _, competition = _nearest_content_before(tokens, start)
-            home_index, home = _next_content(
-                tokens,
-                end + 1,
-                "home_display",
-            )
-            _, away = _next_content(
-                tokens,
-                home_index + 1,
-                "away_display",
-            )
+            home_index, home = _next_content(tokens, end + 1, "home_display")
+            _, away = _next_content(tokens, home_index + 1, "away_display")
             match = _COMBINED_DATE_TIME_RE.fullmatch(kickoff_display)
             assert match is not None
             extracted.append(
@@ -450,6 +452,113 @@ def extract_visible_event_header(raw_html: Any) -> ExtractedVisibleEventHeader:
     return next(iter(unique.values()))
 
 
+def _group_events(selections: tuple[NativeSelection, ...]) -> tuple[NativeEvent, ...]:
+    grouped: dict[str, list[NativeSelection]] = {}
+    for selection in selections:
+        grouped.setdefault(selection.event_id, []).append(selection)
+    events: list[NativeEvent] = []
+    for event_id, rows in grouped.items():
+        sport_ids = {row.sport_id for row in rows if row.sport_id is not None}
+        product_ids = {row.product_id for row in rows if row.product_id is not None}
+        if len(sport_ids) > 1 or len(product_ids) > 1:
+            raise SportyBetMachineEventHeaderError(
+                "conflicting provider sport/product identity within one event"
+            )
+        try:
+            events.append(
+                NativeEvent(
+                    event_id=event_id,
+                    sport_id=next(iter(sport_ids)) if sport_ids else None,
+                    product_id=next(iter(product_ids)) if product_ids else None,
+                    competition_id=None,
+                    competition_name=None,
+                    home_participant_id=None,
+                    home_participant_name=None,
+                    away_participant_id=None,
+                    away_participant_name=None,
+                    kickoff=None,
+                    event_status=None,
+                    selection_count=len(rows),
+                )
+            )
+        except SportyBetProviderInventoryError as exc:
+            raise SportyBetMachineEventHeaderError(str(exc)) from exc
+    return tuple(sorted(events, key=lambda item: item.event_id))
+
+
+def _derive_expected_native_inventory(
+    manifest: manual.SportyBetUserControlledEvidenceManifest,
+    raw_html: bytes,
+) -> native.SportyBetUserControlledNativeInventory:
+    """Rebuild the exact PR #154 inventory from the authoritative raw evidence."""
+    try:
+        selections = extract_native_selections(raw_html)
+    except SportyBetProviderInventoryError as exc:
+        raise SportyBetMachineEventHeaderError(str(exc)) from exc
+
+    if manifest.request_kind is not SportyBetLiteRequestKind.EVENT_DETAIL:
+        raise SportyBetMachineEventHeaderError(
+            "machine event header requires event-detail evidence"
+        )
+    if manifest.event_id is None or manifest.sport_id is None:
+        raise SportyBetMachineEventHeaderError(
+            "event-detail provider identity is incomplete"
+        )
+    if {item.event_id for item in selections} != {manifest.event_id}:
+        raise SportyBetMachineEventHeaderError(
+            "event-detail HTML selection population does not match source eventId"
+        )
+    for item in selections:
+        if item.sport_id is not None and item.sport_id != manifest.sport_id:
+            raise SportyBetMachineEventHeaderError(
+                "event-detail selection sportId does not match source sportId"
+            )
+        if (
+            item.market_group is not None
+            and item.market_group != manifest.market_groups_name
+        ):
+            raise SportyBetMachineEventHeaderError(
+                "event-detail selection market group does not match source request"
+            )
+
+    events = _group_events(selections)
+    try:
+        return native.SportyBetUserControlledNativeInventory(
+            schema_version=native.SCHEMA_VERSION,
+            dataset_name=native.DATASET_NAME,
+            provider=native.PROVIDER,
+            source_evidence_id=manual.evidence_identifier(manifest),
+            source_evidence_manifest_sha256=manual.manifest_sha256(manifest),
+            source_raw_sha256=manifest.raw_sha256,
+            source_url=manifest.source_url,
+            source_request_kind=manifest.request_kind,
+            source_request_target=manifest.request_target,
+            source_event_id=manifest.event_id,
+            source_sport_id=manifest.sport_id,
+            source_market_groups_name=manifest.market_groups_name,
+            acquisition_mode=manifest.acquisition_mode,
+            observation_authority=manifest.observation_authority,
+            observed_at_user_attested=serialize_utc(
+                manifest.observed_at_user_attested
+            ),
+            imported_at_utc=serialize_utc(manifest.imported_at_utc),
+            athena_network_acquisition_performed=False,
+            provider_quote_at=None,
+            provider_snapshot_id=None,
+            provider_quote_timestamp_capability=(
+                native.PROVIDER_QUOTE_TIMESTAMP_CAPABILITY
+            ),
+            provider_snapshot_id_capability=(
+                native.PROVIDER_SNAPSHOT_ID_CAPABILITY
+            ),
+            events=events,
+            selections=selections,
+            safety=native._default_safety(),
+        )
+    except native.SportyBetUserInventoryError as exc:
+        raise SportyBetMachineEventHeaderError(str(exc)) from exc
+
+
 def _validate_lineage(
     manifest: Any,
     inventory: Any,
@@ -473,11 +582,14 @@ def _validate_lineage(
         raise SportyBetMachineEventHeaderError(
             "event-detail provider identity is incomplete"
         )
+    if type(raw_html) is not bytes:
+        raise SportyBetMachineEventHeaderError("raw HTML must be exact bytes")
     raw_sha = sha256_bytes(raw_html)
     if raw_sha != manifest.raw_sha256 or len(raw_html) != manifest.raw_size:
         raise SportyBetMachineEventHeaderError(
             "raw HTML does not match source manifest"
         )
+
     evidence_id = manual.evidence_identifier(manifest)
     manifest_sha = manual.manifest_sha256(manifest)
     if (
@@ -497,10 +609,22 @@ def _validate_lineage(
         raise SportyBetMachineEventHeaderError(
             "native inventory event population mismatch"
         )
+
+    expected_inventory = _derive_expected_native_inventory(manifest, raw_html)
+    try:
+        supplied_bytes = native.canonical_inventory_bytes(inventory)
+        expected_bytes = native.canonical_inventory_bytes(expected_inventory)
+    except native.SportyBetUserInventoryError as exc:
+        raise SportyBetMachineEventHeaderError(str(exc)) from exc
+    if supplied_bytes != expected_bytes:
+        raise SportyBetMachineEventHeaderError(
+            "native inventory is not the exact deterministic derivative of source HTML"
+        )
+
     return (
         evidence_id,
         manifest_sha,
-        native.inventory_sha256(inventory),
+        sha256_bytes(expected_bytes),
         raw_sha,
         manifest.event_id,
     )
