@@ -95,9 +95,9 @@ No later gate is skipped.
 
 ## Hosted validation
 
-The replay-hardened code, tests and frozen protocol passed hosted syntax, all eight deterministic shards and the aggregate test gate before this documentation was finalized. The exact final-head hosted run is recorded in the pull-request review metadata rather than embedded here, so updating review metadata never creates a self-referential code change. The SportyBet adversarial test shard passed `580 tests + 16 subtests` on the replay-hardened implementation.
+Hosted GitHub Actions is the authoritative full-suite gate for this boundary. Exact run identifiers and test counts are recorded in the pull-request review metadata after the final head is frozen, rather than embedded here, so validation reporting cannot create a self-referential code change.
 
-No local pytest was run and no SportyBet network request is made by this PR's tests.
+No local pytest is run and no SportyBet network request is made by this PR's tests.
 
 ## Next boundary
 
