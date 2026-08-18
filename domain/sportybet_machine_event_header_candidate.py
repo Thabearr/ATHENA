@@ -24,8 +24,11 @@ from typing import Any
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
 from domain.sportybet_lite_source_capture import (
+    SportyBetLiteCaptureError,
     SportyBetLiteRequestKind,
     sha256_bytes,
+    validate_event_id,
+    validate_sport_id,
 )
 
 SCHEMA_VERSION = 1
@@ -37,13 +40,17 @@ MATCHING_STATUS = "EVENT_HEADER_CANDIDATE_ONLY"
 MAX_RAW_BYTES = 8 * 1024 * 1024
 MAX_CANONICAL_BYTES = 256 * 1024
 
+_EVIDENCE_ID_RE = re.compile(r"^[0-9a-f]{24}$", flags=re.ASCII)
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _DATE_WEEKDAY_RE = re.compile(
     r"^(?P<day>0[1-9]|[12][0-9]|3[01])/(?P<month>0[1-9]|1[0-2]) "
     r"(?P<weekday>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)$",
     flags=re.ASCII,
 )
-_TIME_RE = re.compile(r"^(?P<hour>[01][0-9]|2[0-3]):(?P<minute>[0-5][0-9])$", flags=re.ASCII)
+_TIME_RE = re.compile(
+    r"^(?P<hour>[01][0-9]|2[0-3]):(?P<minute>[0-5][0-9])$",
+    flags=re.ASCII,
+)
 _COMBINED_DATE_TIME_RE = re.compile(
     r"^(?P<day>0[1-9]|[12][0-9]|3[01])/(?P<month>0[1-9]|1[0-2]) "
     r"(?P<weekday>Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday) "
@@ -51,6 +58,20 @@ _COMBINED_DATE_TIME_RE = re.compile(
     flags=re.ASCII,
 )
 _DECIMAL_ODDS_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$", flags=re.ASCII)
+_MONTH_MAX_DAY = {
+    1: 31,
+    2: 29,
+    3: 31,
+    4: 30,
+    5: 31,
+    6: 30,
+    7: 31,
+    8: 31,
+    9: 30,
+    10: 31,
+    11: 30,
+    12: 31,
+}
 
 _IGNORED_TAGS = frozenset({"script", "style", "noscript", "svg", "template"})
 _NAVIGATION_TOKENS = frozenset(
@@ -73,6 +94,7 @@ _SAFETY_KEYS = frozenset(
         "fixture_reconciliation_authorized",
         "fresh_price_authorized",
         "model_integration_authorized",
+        "network_acquisition_authorized",
         "pricing_authorized",
         "selection_authorized",
         "slip_construction_authorized",
@@ -114,14 +136,27 @@ def _text(value: Any, label: str, *, maximum: int = 160) -> str:
     if type(value) is not str:
         raise SportyBetMachineEventHeaderError(f"{label} must be a string")
     if not value or value != value.strip() or len(value) > maximum:
-        raise SportyBetMachineEventHeaderError(f"{label} is not canonical visible text")
+        raise SportyBetMachineEventHeaderError(
+            f"{label} is not canonical visible text"
+        )
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
-        raise SportyBetMachineEventHeaderError(f"{label} contains a control character")
+        raise SportyBetMachineEventHeaderError(
+            f"{label} contains a control character"
+        )
     return value
 
 
+def _validate_month_day(day: Any, month: Any) -> tuple[int, int]:
+    if type(day) is not int or type(month) is not int:
+        raise SportyBetMachineEventHeaderError("kickoff month/day must be exact integers")
+    maximum = _MONTH_MAX_DAY.get(month)
+    if maximum is None or day < 1 or day > maximum:
+        raise SportyBetMachineEventHeaderError("kickoff month/day is impossible")
+    return day, month
+
+
 def _normalize_visible_text(value: str) -> str | None:
-    # HTML rendering collapses ASCII whitespace.  Preserve character/case content
+    # HTML rendering collapses whitespace. Preserve character/case content
     # otherwise; do not apply Unicode normalization, case folding or aliases.
     collapsed = " ".join(value.split())
     return collapsed or None
@@ -133,18 +168,28 @@ class _VisibleTextParser(html.parser.HTMLParser):
         self._ignored_depth = 0
         self.tokens: list[str] = []
 
-    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
         del attrs
         if tag.lower() in _IGNORED_TAGS:
             self._ignored_depth += 1
 
-    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+    def handle_startendtag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
         del tag, attrs
 
     def handle_endtag(self, tag: str) -> None:
         if tag.lower() in _IGNORED_TAGS:
             if self._ignored_depth <= 0:
-                raise SportyBetMachineEventHeaderError("ignored-tag nesting is malformed")
+                raise SportyBetMachineEventHeaderError(
+                    "ignored-tag nesting is malformed"
+                )
             self._ignored_depth -= 1
 
     def handle_data(self, data: str) -> None:
@@ -159,27 +204,33 @@ class _VisibleTextParser(html.parser.HTMLParser):
             self.close()
         except SportyBetMachineEventHeaderError:
             raise
-        except Exception as exc:  # pragma: no cover - defensive HTMLParser boundary
+        except Exception as exc:  # pragma: no cover - defensive parser boundary
             raise SportyBetMachineEventHeaderError("HTML parsing failed") from exc
         if self._ignored_depth != 0:
-            raise SportyBetMachineEventHeaderError("ignored-tag nesting is incomplete")
+            raise SportyBetMachineEventHeaderError(
+                "ignored-tag nesting is incomplete"
+            )
         return tuple(self.tokens)
 
 
 def visible_text_tokens(raw_html: Any) -> tuple[str, ...]:
     if type(raw_html) is not bytes or not 0 < len(raw_html) <= MAX_RAW_BYTES:
-        raise SportyBetMachineEventHeaderError("raw_html must be bounded non-empty bytes")
+        raise SportyBetMachineEventHeaderError(
+            "raw_html must be bounded non-empty bytes"
+        )
     try:
         decoded = raw_html.decode("utf-8", errors="strict")
     except UnicodeDecodeError as exc:
-        raise SportyBetMachineEventHeaderError("raw_html must be valid UTF-8") from exc
+        raise SportyBetMachineEventHeaderError(
+            "raw_html must be valid UTF-8"
+        ) from exc
     parser = _VisibleTextParser()
     try:
         parser.feed(decoded)
         tokens = parser.close_checked()
     except SportyBetMachineEventHeaderError:
         raise
-    except Exception as exc:  # pragma: no cover - defensive HTMLParser boundary
+    except Exception as exc:  # pragma: no cover - defensive parser boundary
         raise SportyBetMachineEventHeaderError("HTML parsing failed") from exc
     if not tokens:
         raise SportyBetMachineEventHeaderError("raw_html contains no visible text")
@@ -202,34 +253,60 @@ def _event_label(token: str, label: str) -> str:
         raise SportyBetMachineEventHeaderError(f"{label} is navigation text")
     if _DECIMAL_ODDS_RE.fullmatch(value) is not None:
         raise SportyBetMachineEventHeaderError(f"{label} looks like an odds value")
-    if _DATE_WEEKDAY_RE.fullmatch(value) or _TIME_RE.fullmatch(value) or _COMBINED_DATE_TIME_RE.fullmatch(value):
-        raise SportyBetMachineEventHeaderError(f"{label} looks like date/time text")
+    if (
+        _DATE_WEEKDAY_RE.fullmatch(value)
+        or _TIME_RE.fullmatch(value)
+        or _COMBINED_DATE_TIME_RE.fullmatch(value)
+    ):
+        raise SportyBetMachineEventHeaderError(
+            f"{label} looks like date/time text"
+        )
     return value
 
 
 def _candidate_windows(tokens: tuple[str, ...]) -> list[tuple[int, int, str]]:
     windows: list[tuple[int, int, str]] = []
     for index, token in enumerate(tokens):
-        if _COMBINED_DATE_TIME_RE.fullmatch(token) is not None:
+        combined = _COMBINED_DATE_TIME_RE.fullmatch(token)
+        if combined is not None:
+            _validate_month_day(
+                int(combined.group("day")),
+                int(combined.group("month")),
+            )
             windows.append((index, index, token))
         if index + 1 < len(tokens):
             first = _DATE_WEEKDAY_RE.fullmatch(token)
             second = _TIME_RE.fullmatch(tokens[index + 1])
             if first is not None and second is not None:
-                windows.append((index, index + 1, f"{token} {tokens[index + 1]}"))
+                _validate_month_day(
+                    int(first.group("day")),
+                    int(first.group("month")),
+                )
+                windows.append(
+                    (index, index + 1, f"{token} {tokens[index + 1]}")
+                )
     return windows
 
 
-def _nearest_content_before(tokens: tuple[str, ...], start: int) -> tuple[int, str]:
+def _nearest_content_before(
+    tokens: tuple[str, ...],
+    start: int,
+) -> tuple[int, str]:
     index = start - 1
     while index >= 0 and _is_navigation_token(tokens[index]):
         index -= 1
     if index < 0:
-        raise SportyBetMachineEventHeaderError("event competition text is missing")
+        raise SportyBetMachineEventHeaderError(
+            "event competition text is missing"
+        )
     return index, _event_label(tokens[index], "competition_display")
 
 
-def _next_content(tokens: tuple[str, ...], start: int, label: str) -> tuple[int, str]:
+def _next_content(
+    tokens: tuple[str, ...],
+    start: int,
+    label: str,
+) -> tuple[int, str]:
     index = start
     while index < len(tokens) and _is_navigation_token(tokens[index]):
         index += 1
@@ -251,15 +328,30 @@ class ExtractedVisibleEventHeader:
     kickoff_minute: int
 
     def __post_init__(self) -> None:
-        competition = _event_label(self.competition_display, "competition_display")
-        kickoff = _text(self.kickoff_display, "kickoff_display", maximum=40)
+        competition = _event_label(
+            self.competition_display,
+            "competition_display",
+        )
+        kickoff = _text(
+            self.kickoff_display,
+            "kickoff_display",
+            maximum=40,
+        )
         match = _COMBINED_DATE_TIME_RE.fullmatch(kickoff)
         if match is None:
-            raise SportyBetMachineEventHeaderError("kickoff_display format mismatch")
+            raise SportyBetMachineEventHeaderError(
+                "kickoff_display format mismatch"
+            )
         home = _event_label(self.home_display, "home_display")
         away = _event_label(self.away_display, "away_display")
         if home == away:
-            raise SportyBetMachineEventHeaderError("home and away display names must differ")
+            raise SportyBetMachineEventHeaderError(
+                "home and away display names must differ"
+            )
+        _validate_month_day(
+            int(match.group("day")),
+            int(match.group("month")),
+        )
         expected = (
             int(match.group("day")),
             int(match.group("month")),
@@ -275,7 +367,9 @@ class ExtractedVisibleEventHeader:
             self.kickoff_minute,
         )
         if expected != actual:
-            raise SportyBetMachineEventHeaderError("parsed kickoff fields mismatch display text")
+            raise SportyBetMachineEventHeaderError(
+                "parsed kickoff fields mismatch display text"
+            )
         object.__setattr__(self, "competition_display", competition)
         object.__setattr__(self, "home_display", home)
         object.__setattr__(self, "away_display", away)
@@ -290,8 +384,16 @@ def extract_visible_event_header(raw_html: Any) -> ExtractedVisibleEventHeader:
     for start, end, kickoff_display in _candidate_windows(tokens):
         try:
             _, competition = _nearest_content_before(tokens, start)
-            home_index, home = _next_content(tokens, end + 1, "home_display")
-            _, away = _next_content(tokens, home_index + 1, "away_display")
+            home_index, home = _next_content(
+                tokens,
+                end + 1,
+                "home_display",
+            )
+            _, away = _next_content(
+                tokens,
+                home_index + 1,
+                "away_display",
+            )
             match = _COMBINED_DATE_TIME_RE.fullmatch(kickoff_display)
             assert match is not None
             extracted.append(
@@ -309,11 +411,22 @@ def extract_visible_event_header(raw_html: Any) -> ExtractedVisibleEventHeader:
             )
         except SportyBetMachineEventHeaderError:
             continue
-    unique = {json.dumps(item.to_dict(), sort_keys=True, separators=(",", ":")): item for item in extracted}
+    unique = {
+        json.dumps(
+            item.to_dict(),
+            sort_keys=True,
+            separators=(",", ":"),
+        ): item
+        for item in extracted
+    }
     if len(unique) != 1:
         if not unique:
-            raise SportyBetMachineEventHeaderError("no unique machine-readable event header candidate")
-        raise SportyBetMachineEventHeaderError("multiple machine-readable event header candidates")
+            raise SportyBetMachineEventHeaderError(
+                "no unique machine-readable event header candidate"
+            )
+        raise SportyBetMachineEventHeaderError(
+            "multiple machine-readable event header candidates"
+        )
     return next(iter(unique.values()))
 
 
@@ -322,17 +435,29 @@ def _validate_lineage(
     inventory: Any,
     raw_html: bytes,
 ) -> tuple[str, str, str, str, str]:
-    if not isinstance(manifest, manual.SportyBetUserControlledEvidenceManifest):
+    if not isinstance(
+        manifest,
+        manual.SportyBetUserControlledEvidenceManifest,
+    ):
         raise SportyBetMachineEventHeaderError("manifest type mismatch")
-    if not isinstance(inventory, native.SportyBetUserControlledNativeInventory):
+    if not isinstance(
+        inventory,
+        native.SportyBetUserControlledNativeInventory,
+    ):
         raise SportyBetMachineEventHeaderError("inventory type mismatch")
     if manifest.request_kind is not SportyBetLiteRequestKind.EVENT_DETAIL:
-        raise SportyBetMachineEventHeaderError("machine event header requires event-detail evidence")
+        raise SportyBetMachineEventHeaderError(
+            "machine event header requires event-detail evidence"
+        )
     if manifest.event_id is None or manifest.sport_id is None:
-        raise SportyBetMachineEventHeaderError("event-detail provider identity is incomplete")
+        raise SportyBetMachineEventHeaderError(
+            "event-detail provider identity is incomplete"
+        )
     raw_sha = sha256_bytes(raw_html)
     if raw_sha != manifest.raw_sha256 or len(raw_html) != manifest.raw_size:
-        raise SportyBetMachineEventHeaderError("raw HTML does not match source manifest")
+        raise SportyBetMachineEventHeaderError(
+            "raw HTML does not match source manifest"
+        )
     evidence_id = manual.evidence_identifier(manifest)
     manifest_sha = manual.manifest_sha256(manifest)
     if (
@@ -342,12 +467,23 @@ def _validate_lineage(
         or inventory.source_url != manifest.source_url
         or inventory.source_event_id != manifest.event_id
         or inventory.source_sport_id != manifest.sport_id
-        or inventory.source_request_kind is not SportyBetLiteRequestKind.EVENT_DETAIL
+        or inventory.source_request_kind
+        is not SportyBetLiteRequestKind.EVENT_DETAIL
     ):
-        raise SportyBetMachineEventHeaderError("native inventory lineage does not match source evidence")
+        raise SportyBetMachineEventHeaderError(
+            "native inventory lineage does not match source evidence"
+        )
     if {event.event_id for event in inventory.events} != {manifest.event_id}:
-        raise SportyBetMachineEventHeaderError("native inventory event population mismatch")
-    return evidence_id, manifest_sha, native.inventory_sha256(inventory), raw_sha, manifest.event_id
+        raise SportyBetMachineEventHeaderError(
+            "native inventory event population mismatch"
+        )
+    return (
+        evidence_id,
+        manifest_sha,
+        native.inventory_sha256(inventory),
+        raw_sha,
+        manifest.event_id,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -382,21 +518,55 @@ class SportyBetMachineEventHeaderCandidate:
     safety: Mapping[str, bool]
 
     def __post_init__(self) -> None:
-        if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != SCHEMA_VERSION
+        ):
             raise SportyBetMachineEventHeaderError("schema_version mismatch")
         if self.dataset_name != DATASET_NAME or self.provider != PROVIDER:
             raise SportyBetMachineEventHeaderError("dataset/provider mismatch")
-        _hash(self.source_evidence_manifest_sha256, "source_evidence_manifest_sha256")
-        _hash(self.source_native_inventory_sha256, "source_native_inventory_sha256")
+        if (
+            type(self.source_evidence_id) is not str
+            or _EVIDENCE_ID_RE.fullmatch(self.source_evidence_id) is None
+        ):
+            raise SportyBetMachineEventHeaderError(
+                "source_evidence_id is invalid"
+            )
+        _hash(
+            self.source_evidence_manifest_sha256,
+            "source_evidence_manifest_sha256",
+        )
+        _hash(
+            self.source_native_inventory_sha256,
+            "source_native_inventory_sha256",
+        )
         _hash(self.source_raw_sha256, "source_raw_sha256")
-        if type(self.source_evidence_id) is not str or not self.source_evidence_id:
-            raise SportyBetMachineEventHeaderError("source_evidence_id is invalid")
-        if type(self.source_url) is not str or not self.source_url:
-            raise SportyBetMachineEventHeaderError("source_url is invalid")
-        if type(self.event_id) is not str or type(self.sport_id) is not str:
-            raise SportyBetMachineEventHeaderError("provider event/sport identity is invalid")
-        if self.extraction_authority != EXTRACTION_AUTHORITY or self.matching_status != MATCHING_STATUS:
-            raise SportyBetMachineEventHeaderError("candidate authority/status mismatch")
+        try:
+            kind, event_id, sport_id, _, _ = manual.validate_source_url(
+                self.source_url
+            )
+        except manual.SportyBetUserEvidenceError as exc:
+            raise SportyBetMachineEventHeaderError(str(exc)) from exc
+        if kind is not SportyBetLiteRequestKind.EVENT_DETAIL:
+            raise SportyBetMachineEventHeaderError(
+                "source_url must be exact reviewed event-detail URL"
+            )
+        try:
+            checked_event_id = validate_event_id(self.event_id)
+            checked_sport_id = validate_sport_id(self.sport_id)
+        except SportyBetLiteCaptureError as exc:
+            raise SportyBetMachineEventHeaderError(str(exc)) from exc
+        if checked_event_id != event_id or checked_sport_id != sport_id:
+            raise SportyBetMachineEventHeaderError(
+                "provider event/sport identity does not match source_url"
+            )
+        if (
+            self.extraction_authority != EXTRACTION_AUTHORITY
+            or self.matching_status != MATCHING_STATUS
+        ):
+            raise SportyBetMachineEventHeaderError(
+                "candidate authority/status mismatch"
+            )
         header = ExtractedVisibleEventHeader(
             competition_display=self.competition_display,
             kickoff_display=self.kickoff_display,
@@ -408,13 +578,30 @@ class SportyBetMachineEventHeaderCandidate:
             kickoff_hour=self.kickoff_hour,
             kickoff_minute=self.kickoff_minute,
         )
-        if self.kickoff_year is not None or self.kickoff_timezone is not None or self.kickoff_utc is not None:
-            raise SportyBetMachineEventHeaderError("year/timezone/UTC are unproven and must remain null")
+        if (
+            self.kickoff_year is not None
+            or self.kickoff_timezone is not None
+            or self.kickoff_utc is not None
+        ):
+            raise SportyBetMachineEventHeaderError(
+                "year/timezone/UTC are unproven and must remain null"
+            )
         if self.display_time_basis != DISPLAY_TIME_BASIS:
-            raise SportyBetMachineEventHeaderError("display_time_basis mismatch")
-        if self.provider_quote_at is not None or self.provider_snapshot_id is not None:
-            raise SportyBetMachineEventHeaderError("quote/snapshot identity remains unproven")
-        object.__setattr__(self, "competition_display", header.competition_display)
+            raise SportyBetMachineEventHeaderError(
+                "display_time_basis mismatch"
+            )
+        if (
+            self.provider_quote_at is not None
+            or self.provider_snapshot_id is not None
+        ):
+            raise SportyBetMachineEventHeaderError(
+                "quote/snapshot identity remains unproven"
+            )
+        object.__setattr__(
+            self,
+            "competition_display",
+            header.competition_display,
+        )
         object.__setattr__(self, "home_display", header.home_display)
         object.__setattr__(self, "away_display", header.away_display)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
@@ -458,11 +645,13 @@ def build_machine_event_header_candidate(
     inventory: native.SportyBetUserControlledNativeInventory,
     raw_html: bytes,
 ) -> SportyBetMachineEventHeaderCandidate:
-    evidence_id, manifest_sha, inventory_sha, raw_sha, event_id = _validate_lineage(
-        manifest,
-        inventory,
-        raw_html,
-    )
+    (
+        evidence_id,
+        manifest_sha,
+        inventory_sha,
+        raw_sha,
+        event_id,
+    ) = _validate_lineage(manifest, inventory, raw_html)
     header = extract_visible_event_header(raw_html)
     assert manifest.sport_id is not None
     return SportyBetMachineEventHeaderCandidate(
@@ -512,9 +701,13 @@ def canonical_candidate_bytes(candidate: Any) -> bytes:
             + "\n"
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as exc:
-        raise SportyBetMachineEventHeaderError("candidate serialization failed") from exc
+        raise SportyBetMachineEventHeaderError(
+            "candidate serialization failed"
+        ) from exc
     if len(payload) > MAX_CANONICAL_BYTES:
-        raise SportyBetMachineEventHeaderError("candidate exceeds reviewed size limit")
+        raise SportyBetMachineEventHeaderError(
+            "candidate exceeds reviewed size limit"
+        )
     return payload
 
 
