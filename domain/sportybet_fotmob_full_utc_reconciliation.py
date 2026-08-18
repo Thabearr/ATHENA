@@ -1,14 +1,17 @@
-"""Strict SportyBet -> FotMob fixture reconciliation from provider-resolved full UTC.
+"""Strict SportyBet -> FotMob reconciliation from provider-resolved full UTC.
 
-This boundary consumes PR #162 only after that promotion is revalidated from every
-preserved upstream SportyBet, Terms, bridge and Sportradar source. It then compares
-against already-reviewed FotMob fixture inputs using exact, case-sensitive home,
-away, competition and full UTC kickoff equality.
+This boundary can authorize fixture reconciliation only after two independent source
+chains revalidate:
 
-A unique exact match may authorize only fixture reconciliation. Zero or multiple
-matches authorize nothing. No fuzzy aliases, participant reversal, kickoff
-rounding/tolerance, market mapping, pricing, selection, booking-code, execution or
-BET authority is created here.
+* PR #162 is replayed from the preserved SportyBet, Terms and Sportradar bytes.
+* The FotMob reviewed-catalog admission is replayed back through the exact raw
+  /api/data/matches captures, candidate extraction, human review decisions and
+  catalog handoff.
+
+The resulting admitted FotMob inputs are compared with exact, case-sensitive home,
+away, competition and full UTC kickoff equality. A unique exact match may authorize
+only fixture reconciliation. No fuzzy aliases, reversal, rounding/tolerance, market
+mapping, pricing, selection, booking-code, execution or BET authority is created.
 """
 
 from __future__ import annotations
@@ -20,9 +23,13 @@ import hashlib
 import json
 import re
 import types
-from collections.abc import Iterable, Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
+from domain import fotmob_fixture_candidate_review as fotmob_review
+from domain import fotmob_fixture_candidates as fotmob_candidates
+from domain import fotmob_fixture_catalog_handoff as fotmob_handoff
+from domain import reviewed_fixture_catalog_admission as fotmob_admission
 from domain import sportradar_user_controlled_event_metadata as metadata
 from domain import sportybet_event_local_time_basis as local_time
 from domain import sportybet_machine_event_header_candidate as header
@@ -32,6 +39,8 @@ from domain import sportybet_sportradar_kickoff_identity_promotion as promotion
 from domain import sportybet_sportradar_kickoff_identity_promotion_verification as promotion_verify
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
+from domain.fixture_catalog import sha256_bytes as fixture_catalog_sha256_bytes
+from domain.fotmob_data_matches_capture import FotMobDataMatchesCaptureManifest
 from domain.fotmob_fixture_candidate_review import FotMobReviewedFixtureCatalogInput
 from domain.sportybet_lite_source_capture import (
     SportyBetLiteCaptureError,
@@ -51,11 +60,19 @@ MATCHING_BASIS = (
 TIME_ZONE_LABEL = "GMT"
 UTC_OFFSET_SECONDS = 0
 MAX_CANONICAL_BYTES = 512 * 1024
+_WEEKDAYS = (
+    "Monday",
+    "Tuesday",
+    "Wednesday",
+    "Thursday",
+    "Friday",
+    "Saturday",
+    "Sunday",
+)
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _EVIDENCE_ID_RE = re.compile(r"^[0-9a-f]{24}$", flags=re.ASCII)
 _LEGACY_EVENT_ID_RE = re.compile(r"^sr:match:[1-9][0-9]*$", flags=re.ASCII)
-_SPORT_ID_RE = re.compile(r"^sr:sport:[1-9][0-9]*$", flags=re.ASCII)
 _CURRENT_EVENT_ID_RE = re.compile(r"^sr:sport_event:[1-9][0-9]*$", flags=re.ASCII)
 _SAFETY_KEYS = frozenset(
     {
@@ -169,44 +186,39 @@ def _canonical_mapping_bytes(value: Mapping[str, Any]) -> bytes:
 
 
 def _reviewed_fotmob_rows(
-    fixtures: Iterable[FotMobReviewedFixtureCatalogInput],
+    fixtures: Sequence[FotMobReviewedFixtureCatalogInput],
 ) -> tuple[FotMobReviewedFixtureCatalogInput, ...]:
-    try:
-        rows = tuple(fixtures)
-    except TypeError as exc:
-        raise SportyBetFotMobFullUtcReconciliationError(
-            "fixtures must be an iterable of reviewed FotMob inputs"
-        ) from exc
+    rows = tuple(fixtures)
     if not rows:
         raise SportyBetFotMobFullUtcReconciliationError(
-            "at least one reviewed FotMob fixture is required"
+            "admitted FotMob catalog contains no reviewed fixture inputs"
         )
     if any(type(item) is not FotMobReviewedFixtureCatalogInput for item in rows):
         raise SportyBetFotMobFullUtcReconciliationError(
-            "fixture population contains a non-reviewed FotMob catalog input"
+            "admitted FotMob catalog contains a non-reviewed input"
         )
     source_ids = [item.source_fixture_identifier for item in rows]
     if len(source_ids) != len(set(source_ids)):
         raise SportyBetFotMobFullUtcReconciliationError(
-            "duplicate FotMob source_fixture_identifier in reconciliation population"
+            "duplicate FotMob source_fixture_identifier in admitted catalog"
         )
     try:
         return tuple(sorted(rows, key=lambda item: int(item.source_fixture_identifier)))
-    except ValueError as exc:  # reviewed input already enforces canonical decimal IDs
+    except ValueError as exc:
         raise SportyBetFotMobFullUtcReconciliationError(
             "FotMob source fixture identifier is not canonical decimal"
         ) from exc
 
 
 def canonical_fotmob_population_bytes(
-    fixtures: Iterable[FotMobReviewedFixtureCatalogInput],
+    fixtures: Sequence[FotMobReviewedFixtureCatalogInput],
 ) -> bytes:
     rows = _reviewed_fotmob_rows(fixtures)
     return b"".join(_canonical_mapping_bytes(item.to_dict()) for item in rows)
 
 
 def fotmob_population_sha256(
-    fixtures: Iterable[FotMobReviewedFixtureCatalogInput],
+    fixtures: Sequence[FotMobReviewedFixtureCatalogInput],
 ) -> str:
     return hashlib.sha256(canonical_fotmob_population_bytes(fixtures)).hexdigest()
 
@@ -252,6 +264,89 @@ def _rederive_exact_promotion(
             "PR #162 does not carry the reviewed provider-kickoff-only promotion state"
         )
     return rebuilt
+
+
+def _materialize_captures(
+    captures: Any,
+) -> tuple[tuple[bytes, FotMobDataMatchesCaptureManifest], ...]:
+    if not isinstance(captures, Sequence) or isinstance(captures, (str, bytes)) or not captures:
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "fotmob_captures must be a non-empty sequence of exact (bytes, manifest) tuples"
+        )
+    materialized: list[tuple[bytes, FotMobDataMatchesCaptureManifest]] = []
+    for entry in captures:
+        if type(entry) is not tuple or len(entry) != 2:
+            raise SportyBetFotMobFullUtcReconciliationError(
+                "each FotMob capture must be an exact (bytes, manifest) tuple"
+            )
+        raw, manifest = entry
+        if type(raw) is not bytes or type(manifest) is not FotMobDataMatchesCaptureManifest:
+            raise SportyBetFotMobFullUtcReconciliationError(
+                "FotMob capture entries require exact raw bytes and capture manifests"
+            )
+        materialized.append((raw, manifest))
+    return tuple(materialized)
+
+
+def _rederive_exact_fotmob_admission(
+    supplied: Any,
+    captures: Any,
+) -> fotmob_admission.ReviewedFixtureCatalogAdmission:
+    if type(supplied) is not fotmob_admission.ReviewedFixtureCatalogAdmission:
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "fotmob_admission must be exact ReviewedFixtureCatalogAdmission"
+        )
+    capture_rows = _materialize_captures(captures)
+    try:
+        checked = dataclasses.replace(supplied)
+        rebuilt_candidate = fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)
+        rebuilt_review = fotmob_review.build_fotmob_fixture_candidate_review_bundle(
+            rebuilt_candidate,
+            checked.handoff.review_bundle.decisions,
+        )
+        rebuilt_handoff = fotmob_handoff.build_fotmob_fixture_catalog_handoff(
+            rebuilt_candidate,
+            rebuilt_review,
+        )
+        supplied_handoff_bytes = fotmob_handoff.canonical_fotmob_fixture_catalog_handoff_bytes(
+            checked.handoff
+        )
+        rebuilt_handoff_bytes = fotmob_handoff.canonical_fotmob_fixture_catalog_handoff_bytes(
+            rebuilt_handoff
+        )
+    except (
+        fotmob_admission.ReviewedFixtureCatalogAdmissionError,
+        fotmob_candidates.FotMobFixtureCandidateError,
+        fotmob_review.FotMobFixtureCandidateReviewError,
+        fotmob_handoff.FotMobFixtureCatalogHandoffError,
+    ) as exc:
+        raise SportyBetFotMobFullUtcReconciliationError(
+            f"FotMob reviewed-catalog source replay failed closed: {exc}"
+        ) from exc
+    if supplied_handoff_bytes != rebuilt_handoff_bytes:
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "FotMob admission handoff is not the exact deterministic derivative of supplied raw captures and review decisions"
+        )
+    if (
+        checked.decision.disposition
+        is not fotmob_admission.ReviewedFixtureCatalogAdmissionDisposition.ADMITTED
+    ):
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "FotMob reviewed catalog must have exact ADMITTED disposition"
+        )
+    if checked.decision.source_capability != fotmob_admission.REVIEWED_SOURCE_CAPABILITY:
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "FotMob admission source capability mismatch"
+        )
+    if not checked.admitted_fixtures:
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "FotMob ADMITTED catalog exposes no fixture identities"
+        )
+    if any(type(value) is not bool or value is not False for value in checked.safety.values()):
+        raise SportyBetFotMobFullUtcReconciliationError(
+            "FotMob admission safety must remain fail-closed"
+        )
+    return checked
 
 
 @dataclasses.dataclass(frozen=True)
@@ -349,6 +444,12 @@ class SportyBetFotMobFullUtcReconciliation:
     sportybet_utc_offset_seconds: int
     sportybet_kickoff_utc: dt.datetime
     provider_timestamp_subminute_precision_preserved: bool
+    source_fotmob_admission_sha256: str
+    source_fotmob_candidate_bundle_sha256: str
+    source_fotmob_review_bundle_sha256: str
+    source_fotmob_handoff_sha256: str
+    source_fotmob_catalog_sha256: str
+    source_fotmob_manifest_sha256: str
     fotmob_population_sha256: str
     disposition: FullUtcReconciliationDisposition
     exact_match_count: int
@@ -363,19 +464,37 @@ class SportyBetFotMobFullUtcReconciliation:
             raise SportyBetFotMobFullUtcReconciliationError("dataset/provider mismatch")
         if self.status != STATUS or self.matching_basis != MATCHING_BASIS:
             raise SportyBetFotMobFullUtcReconciliationError("status/matching_basis mismatch")
-        _hash(self.source_promotion_sha256, "source_promotion_sha256")
-        _hash(self.source_time_basis_sha256, "source_time_basis_sha256")
-        _hash(self.source_bridge_sha256, "source_bridge_sha256")
+        for label in (
+            "source_promotion_sha256",
+            "source_time_basis_sha256",
+            "source_bridge_sha256",
+            "source_metadata_evidence_sha256",
+            "source_event_manifest_sha256",
+            "source_native_inventory_sha256",
+            "source_event_raw_sha256",
+            "source_fotmob_admission_sha256",
+            "source_fotmob_candidate_bundle_sha256",
+            "source_fotmob_review_bundle_sha256",
+            "source_fotmob_handoff_sha256",
+            "source_fotmob_catalog_sha256",
+            "source_fotmob_manifest_sha256",
+            "fotmob_population_sha256",
+        ):
+            _hash(getattr(self, label), label)
         _evidence_id(self.source_metadata_evidence_id, "source_metadata_evidence_id")
-        _hash(self.source_metadata_evidence_sha256, "source_metadata_evidence_sha256")
         _evidence_id(self.source_event_evidence_id, "source_event_evidence_id")
-        _hash(self.source_event_manifest_sha256, "source_event_manifest_sha256")
-        _hash(self.source_native_inventory_sha256, "source_native_inventory_sha256")
-        _hash(self.source_event_raw_sha256, "source_event_raw_sha256")
-        _hash(self.fotmob_population_sha256, "fotmob_population_sha256")
         _provider_id(self.sportybet_event_id, "sportybet_event_id", _LEGACY_EVENT_ID_RE)
-        _provider_id(self.sportybet_sport_id, "sportybet_sport_id", _SPORT_ID_RE)
         _provider_id(self.sportradar_event_id, "sportradar_event_id", _CURRENT_EVENT_ID_RE)
+        if self.sportybet_sport_id != bridge.SOCCER_SPORT_ID:
+            raise SportyBetFotMobFullUtcReconciliationError(
+                "sportybet_sport_id must be exact soccer sr:sport:1"
+            )
+        if self.sportybet_event_id.removeprefix("sr:match:") != self.sportradar_event_id.removeprefix(
+            "sr:sport_event:"
+        ):
+            raise SportyBetFotMobFullUtcReconciliationError(
+                "legacy/current event IDs do not preserve the same numeric payload"
+            )
         try:
             kind, event_id, sport_id, _, _ = manual.validate_source_url(self.event_source_url)
         except manual.SportyBetUserEvidenceError as exc:
@@ -402,9 +521,8 @@ class SportyBetFotMobFullUtcReconciliation:
             )
         except header.SportyBetMachineEventHeaderError as exc:
             raise SportyBetFotMobFullUtcReconciliationError(str(exc)) from exc
-        if (
-            type(self.sportybet_kickoff_year) is not int
-            or isinstance(self.sportybet_kickoff_year, bool)
+        if type(self.sportybet_kickoff_year) is not int or isinstance(
+            self.sportybet_kickoff_year, bool
         ):
             raise SportyBetFotMobFullUtcReconciliationError(
                 "sportybet_kickoff_year must be an exact integer"
@@ -445,7 +563,7 @@ class SportyBetFotMobFullUtcReconciliation:
         kickoff_calendar = (
             kickoff.day,
             kickoff.month,
-            kickoff.strftime("%A"),
+            _WEEKDAYS[kickoff.weekday()],
             kickoff.hour,
             kickoff.minute,
         )
@@ -475,7 +593,7 @@ class SportyBetFotMobFullUtcReconciliation:
         ):
             if (
                 self.exact_match_count != 1
-                or not isinstance(self.matched_fixture, MatchedFotMobFullUtcFixture)
+                or type(self.matched_fixture) is not MatchedFotMobFullUtcFixture
                 or self.fixture_reconciliation_authorized is not True
             ):
                 raise SportyBetFotMobFullUtcReconciliationError(
@@ -559,6 +677,12 @@ class SportyBetFotMobFullUtcReconciliation:
             "provider_timestamp_subminute_precision_preserved": (
                 self.provider_timestamp_subminute_precision_preserved
             ),
+            "source_fotmob_admission_sha256": self.source_fotmob_admission_sha256,
+            "source_fotmob_candidate_bundle_sha256": self.source_fotmob_candidate_bundle_sha256,
+            "source_fotmob_review_bundle_sha256": self.source_fotmob_review_bundle_sha256,
+            "source_fotmob_handoff_sha256": self.source_fotmob_handoff_sha256,
+            "source_fotmob_catalog_sha256": self.source_fotmob_catalog_sha256,
+            "source_fotmob_manifest_sha256": self.source_fotmob_manifest_sha256,
             "fotmob_population_sha256": self.fotmob_population_sha256,
             "disposition": self.disposition.value,
             "exact_match_count": self.exact_match_count,
@@ -582,7 +706,8 @@ def build_full_utc_reconciliation(
     event_bridge: bridge.SportyBetSportradarEventIdentityBridge,
     sportradar_evidence: metadata.SportradarUserControlledEventMetadataEvidence,
     sportradar_raw_response: bytes,
-    fixtures: Iterable[FotMobReviewedFixtureCatalogInput],
+    fotmob_admission_value: fotmob_admission.ReviewedFixtureCatalogAdmission,
+    fotmob_captures: Sequence[tuple[bytes, FotMobDataMatchesCaptureManifest]],
 ) -> SportyBetFotMobFullUtcReconciliation:
     rebuilt = _rederive_exact_promotion(
         supplied=kickoff_promotion,
@@ -596,7 +721,11 @@ def build_full_utc_reconciliation(
         sportradar_evidence=sportradar_evidence,
         sportradar_raw_response=sportradar_raw_response,
     )
-    rows = _reviewed_fotmob_rows(fixtures)
+    admitted = _rederive_exact_fotmob_admission(
+        fotmob_admission_value,
+        fotmob_captures,
+    )
+    rows = _reviewed_fotmob_rows(admitted.handoff.catalog_inputs)
     source_kickoff = rebuilt.sportybet_kickoff_utc.astimezone(dt.timezone.utc)
     matches = tuple(
         item
@@ -618,6 +747,7 @@ def build_full_utc_reconciliation(
         disposition = FullUtcReconciliationDisposition.AMBIGUOUS_EXACT_FULL_UTC_MATCH
         matched = None
         fixture_authorized = False
+    admission_payload = admitted.to_dict()
     return SportyBetFotMobFullUtcReconciliation(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
@@ -653,6 +783,14 @@ def build_full_utc_reconciliation(
         provider_timestamp_subminute_precision_preserved=(
             rebuilt.provider_timestamp_subminute_precision_preserved
         ),
+        source_fotmob_admission_sha256=(
+            fotmob_admission.sha256_reviewed_fixture_catalog_admission(admitted)
+        ),
+        source_fotmob_candidate_bundle_sha256=admitted.handoff.candidate_bundle_sha256,
+        source_fotmob_review_bundle_sha256=admitted.handoff.review_bundle_sha256,
+        source_fotmob_handoff_sha256=admission_payload["handoff_sha256"],
+        source_fotmob_catalog_sha256=admission_payload["catalog_sha256"],
+        source_fotmob_manifest_sha256=admission_payload["manifest_sha256"],
         fotmob_population_sha256=fotmob_population_sha256(rows),
         disposition=disposition,
         exact_match_count=len(matches),
@@ -663,7 +801,7 @@ def build_full_utc_reconciliation(
 
 
 def canonical_reconciliation_bytes(value: Any) -> bytes:
-    if not isinstance(value, SportyBetFotMobFullUtcReconciliation):
+    if type(value) is not SportyBetFotMobFullUtcReconciliation:
         raise SportyBetFotMobFullUtcReconciliationError("reconciliation type mismatch")
     try:
         payload = (
