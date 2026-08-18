@@ -37,6 +37,7 @@ from domain.reviewed_fixture_catalog_admission import (
     ReviewedFixtureCatalogAdmissionDisposition,
     sha256_reviewed_fixture_catalog_admission,
 )
+from scripts.freeze_evidence_baseline import BaselineError, get_code_state
 from scripts.manage_fotmob_reviewed_fixture_catalog import (
     FotMobReviewedFixtureCatalogWorkflowError,
     FotMobReviewedFixtureCatalogWorkflowResult,
@@ -67,6 +68,7 @@ _MANIFEST_KEYS = frozenset(
     }
 )
 _SHA40 = frozenset("0123456789abcdef")
+_CODE_STATE_KEYS = frozenset({"evidence_git_head_sha", "tracked_worktree_clean"})
 
 
 class ReviewedFixtureCatalogAdmissionReplayCLIError(ValueError):
@@ -90,8 +92,25 @@ def _reject_constant(value: str) -> None:
     )
 
 
+def _reject_symlink_components(path: Path, label: str) -> None:
+    absolute = path if path.is_absolute() else Path.cwd() / path
+    if absolute.anchor:
+        current = Path(absolute.anchor)
+        parts = absolute.parts[1:]
+    else:
+        current = Path.cwd()
+        parts = absolute.parts
+    for part in parts:
+        current = current / part
+        if current.is_symlink():
+            raise ReviewedFixtureCatalogAdmissionReplayCLIError(
+                f"{label} contains a forbidden symlink component"
+            )
+
+
 def _read_regular(path: Path, *, maximum: int, label: str) -> bytes:
     candidate = Path(path)
+    _reject_symlink_components(candidate, label)
     if candidate.is_symlink():
         raise ReviewedFixtureCatalogAdmissionReplayCLIError(
             f"{label} must not be a symlink"
@@ -212,6 +231,40 @@ def _load_checked_manifest(path: Path) -> tuple[bytes, dict[str, Any]]:
     return raw, payload
 
 
+def _current_code_state(
+    repository: Path,
+    *,
+    checked_manifest: dict[str, Any],
+) -> dict[str, Any]:
+    """Prove the manifest's code identity from the actual current clean checkout."""
+
+    try:
+        state = get_code_state(repository)
+    except BaselineError as exc:
+        raise ReviewedFixtureCatalogAdmissionReplayCLIError(
+            f"current Git code state cannot be proven: {exc}"
+        ) from exc
+    if type(state) is not dict or set(state) != _CODE_STATE_KEYS:
+        raise ReviewedFixtureCatalogAdmissionReplayCLIError(
+            "current Git code-state payload shape mismatch"
+        )
+    head = state["evidence_git_head_sha"]
+    clean = state["tracked_worktree_clean"]
+    if type(head) is not str or len(head) != 40 or any(char not in _SHA40 for char in head):
+        raise ReviewedFixtureCatalogAdmissionReplayCLIError(
+            "current Git HEAD is not a canonical full lowercase SHA"
+        )
+    if clean is not True:
+        raise ReviewedFixtureCatalogAdmissionReplayCLIError(
+            "current tracked worktree must be exactly clean"
+        )
+    if head != checked_manifest["generator_commit"]:
+        raise ReviewedFixtureCatalogAdmissionReplayCLIError(
+            "checked Fixture Catalog manifest generator_commit does not match current clean Git HEAD; regenerate the checked catalog/manifest on this exact code state"
+        )
+    return state
+
+
 def replay_catalog_sources(
     *,
     capture_directories: Sequence[str | Path],
@@ -222,6 +275,7 @@ def replay_catalog_sources(
 ) -> FotMobReviewedFixtureCatalogWorkflowResult:
     repository = Path(repository_root).resolve(strict=True)
     manifest_raw, manifest = _load_checked_manifest(Path(check_manifest))
+    code_state = _current_code_state(repository, checked_manifest=manifest)
     try:
         result = run_reviewed_catalog(
             capture_directories=capture_directories,
@@ -231,10 +285,7 @@ def replay_catalog_sources(
             check_catalog=Path(check_catalog),
             check_manifest=Path(check_manifest),
             repository_root=repository,
-            code_state={
-                "evidence_git_head_sha": manifest["generator_commit"],
-                "tracked_worktree_clean": True,
-            },
+            code_state=code_state,
         )
     except FotMobReviewedFixtureCatalogWorkflowError as exc:
         raise ReviewedFixtureCatalogAdmissionReplayCLIError(str(exc)) from exc
@@ -306,12 +357,14 @@ def prepare_admission_decision(
         raise ReviewedFixtureCatalogAdmissionReplayCLIError(str(exc)) from exc
 
 
-def store_from_decision_file(
+def _store_from_decision_file(
     *,
     workflow_result: FotMobReviewedFixtureCatalogWorkflowResult,
     admission_decision_file: Path,
     repository_root: Path,
 ) -> dict[str, Any]:
+    """Internal store path; workflow_result must come from same-call source replay."""
+
     raw = _read_regular(
         Path(admission_decision_file),
         maximum=replay.MAX_DECISION_BYTES,
@@ -319,7 +372,7 @@ def store_from_decision_file(
     )
     try:
         decision = replay.parse_replay_decision_bytes(raw)
-        directory, admission = replay.store_source_replayed_admission(
+        directory, admission = replay._store_semantic_admission(
             handoff=workflow_result.handoff,
             fixture_catalog_result=workflow_result.fixture_catalog_result,
             replay_decision=decision,
@@ -454,7 +507,7 @@ def main(argv: list[str] | None = None) -> int:
             )
             sys.stdout.buffer.write(replay.canonical_replay_decision_bytes(decision))
             return 0
-        receipt = store_from_decision_file(
+        receipt = _store_from_decision_file(
             workflow_result=result,
             admission_decision_file=Path(args.admission_decision),
             repository_root=Path(args.repository_root),
