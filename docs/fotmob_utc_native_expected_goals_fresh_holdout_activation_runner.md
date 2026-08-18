@@ -43,7 +43,7 @@ If it does not yet exist, the workflow downloads the already-reviewed historical
 
 It then re-executes PR119 locally and accepts the materialized projection only if its exact frozen hash, size, and row count match. The projection is uploaded once as the bootstrap release asset. A partially created bootstrap release with a missing or wrong asset fails closed instead of silently regenerating a second authority.
 
-## Schedule identity
+## Schedule identity and cron slot isolation
 
 The scheduled workflow uses two separate cron expressions:
 
@@ -51,6 +51,13 @@ The scheduled workflow uses two separate cron expressions:
 - `37 * * * *`
 
 This preserves the frozen 30-minute cadence while making the schedule event itself identify whether the nominal slot is `:07` or `:37`.
+
+The triggering expression (`github.event.schedule`) uniquely dictates the nominal minute:
+
+- `7 * * * *` strictly evaluates nominal minute `7`;
+- `37 * * * *` strictly evaluates nominal minute `37`.
+
+A delayed `:07` event arriving after `:37` is never re-slotted to `:37`; it retains its `:07` identity. A delayed `:37` event arriving in the next hour is never re-slotted to `:07`. If transport delay causes a tick to be missed or dropped, it is treated as permanent coverage loss.
 
 The workflow obtains the current Actions run `created_at` from GitHub and resolves the latest occurrence of the event's own nominal minute not later than that creation time. A nominal slot is control identity only.
 
@@ -68,50 +75,54 @@ A dropped or disabled scheduled run therefore becomes permanent missing prospect
 
 A duplicate run for an already committed nominal slot is idempotent and performs **zero network replay**.
 
-## State restoration
+## Authoritative state restoration & genesis control
 
 Hosted Actions runners are ephemeral, so cache is never evidence authority.
 
-Before each tick, the workflow restores the latest successful immutable evidence asset from releases whose tag begins:
+Before each tick, the workflow resolves prior state with strict fail-closed genesis semantics:
 
-`athena-fresh-holdout-evidence-`
-
-Successful assets are named:
-
-`success-YYYYMMDDTHHMMSSZ-run-<run_id>.tar.gz`
-
-The lexicographically latest successful nominal timestamp is restored. The asset digest is checked before extraction, and extraction rejects absolute paths, traversal, symlinks, hard links, devices, or content outside the exact research state root.
+1. **Genesis vs Restore Distinction**: Genesis (starting from empty state) is permitted ONLY when the workflow queries GitHub Actions runs and proves that zero prior successful workflow runs exist in the repository.
+2. **Fail-Closed on Uncertainty**: If the GitHub API fails, returns malformed metadata, or permissions are insufficient, execution fails closed immediately. It NEVER falls back to empty state.
+3. **Artifact-Backed Cryptographic Restore**: The primary restore authority is the immutable GitHub Actions artifact emitted by the latest successful run.
+4. **Archive Member Safety**: Before extraction, every archive member is strictly verified:
+   - no absolute paths;
+   - no directory traversal (`..`);
+   - no symlinks (`issym()`);
+   - no hardlinks (`islnk()`);
+   - no special devices, pipes, FIFOs (`ischr()`, `isblk()`, `isfifo()`, `isdev()`);
+   - no duplicate archive entries;
+   - all paths reside under the exact allowed root.
+5. **State Invariant Verification**: After extraction, all append-only journals (`capture-index.ndjson`, `prediction-journal.ndjson`, `post-seal-identity-journal.ndjson`, `settlement-journal.ndjson`, `control-journal.ndjson`) and `checkpoint.json` are validated for canonical JSON structure, non-empty records, and pointer consistency.
 
 The state root is:
 
 `.cache/athena-research/fotmob-utc-native-xg-fresh-holdout`
 
-The durable journals are the PR #150 names:
-
-- `capture-index.ndjson`;
-- `prediction-journal.ndjson`;
-- `post-seal-identity-journal.ndjson`;
-- `settlement-journal.ndjson`;
-- `control-journal.ndjson`;
-- `checkpoint.json`.
-
 `checkpoint.json` is only a reconstructible pointer. The append-only journals remain authority.
+
+## Immediate raw capture staging & partial failure preservation
+
+To satisfy ATHENA's evidence-preservation contract, raw live captures are staged and fsynced **immediately upon successful verification of each network response**:
+
+1. Immediately after a request date response is verified against request parameters and `observed_at >= scheduled`, its exact `raw.json` and canonical `manifest.json` are written to `working-captures/<request_date>/<capture_id>/` and fsynced.
+2. This occurs BEFORE the next network request, and BEFORE qualification, prediction, or settlement operations.
+3. If a subsequent request or operation fails, the already-staged captures remain on disk and are archived into the `failure-...tar.gz` artifact.
+4. A partial tick failure preserves all raw observations made before failure without classifying the failed nominal slot as a committed tick.
+
+## Zero PyPI runtime dependencies
+
+The entire activation runner execution path (runner, FotMob data/matches capture, PR119 bootstrap materialization, PR149 fresh-holdout core, and ordinary-FT adapter) is implemented strictly using the Python 3.12 standard library.
+
+The scheduled collection workflow performs zero `pip install` commands and avoids unpinned PyPI dependencies.
 
 ## Long-lived evidence publication
 
-Every successful tick is packaged into an immutable release asset. Evidence releases are split by ISO week so the asset count remains comfortably bounded:
+Every successful tick is packaged into an archive and published:
 
-`athena-fresh-holdout-evidence-YYYY-Www`
+1. **Authoritative 90-day Actions Artifact**: Uploaded as an immutable GitHub Actions artifact with `retention-days: 90`.
+2. **Long-Lived Release Mirror**: Published to weekly ISO release tags (`athena-fresh-holdout-evidence-YYYY-Www`) without `--clobber`.
 
-The bundle contains the cumulative journals/checkpoint plus a rolling four-capture raw working ring for each provider request date. Older raw captures may disappear from later working rings, but remain preserved in the earlier immutable tick asset in which they were current evidence.
-
-The workflow verifies the uploaded release asset digest before declaring the tick durable.
-
-A 90-day Actions artifact is also uploaded as a transport/failure fallback, but it is explicitly not the long-term evidence authority.
-
-If the runner fails, the workflow attempts to publish a uniquely named `failure-...tar.gz` bundle and uploads the same material as a 90-day Actions artifact. Failure bundles are **never** selected for state restoration.
-
-If durable success-asset upload or digest verification fails, the workflow fails. The next run restores the previous successful state and records the skipped nominal slot as a scheduler gap.
+Failure bundles (`failure-...tar.gz`) are uploaded to 90-day Actions artifacts and release mirrors for auditing, but are never selected for state restoration.
 
 ## Live capture order
 
@@ -155,7 +166,7 @@ A successful active tick is ordered deliberately:
 3. revalidate or execute the required count-only close evaluation;
 4. derive the exact PR #150 request-date plan;
 5. journal any scheduler gap;
-6. execute all required reviewed live captures;
+6. execute reviewed live captures, staging each raw response immediately to disk and fsyncing;
 7. qualify provider-native identities;
 8. journal capture lineage;
 9. append every new post-seal identity observation;
@@ -163,51 +174,10 @@ A successful active tick is ordered deliberately:
 11. append legacy settlement history updates;
 12. only then construct new predictions from the current captures;
 13. append same-tick post-seal observations later than a newly selected seal;
-14. stage current raw captures into the rolling working ring;
+14. prune the rolling working ring to keep the latest 4 captures per date;
 15. commit the tick journal and reconstructible checkpoint.
 
 Settlement is before prediction construction so a result already proven by source evidence available at this tick can enter the legacy history state before a later-kickoff prediction is built.
-
-## Prediction semantics
-
-For a fixture without a prior prediction disposition, the runner asks PR #149 to select from only the actually captured current observations.
-
-The first actually observed capture inside the frozen 24-hour-to-60-minute window becomes the seal. If PR #149 reports missing reviewed form/fatigue, that missing-feature disposition is durably journaled and cannot later be replaced by a later capture.
-
-No result, model metric, market state, or price can select a prediction capture.
-
-## Post-seal identity semantics
-
-Every newly qualified observation later than a seal is appended to the post-seal identity journal.
-
-At settlement, the entire preserved observation sequence is supplied back to PR #149. Any observed fixture, `primaryId`, wrapper, team, or kickoff drift remains excluding even if a later provider response reverts to the original identity.
-
-## Settlement semantics
-
-For each unsettled seal, the runner searches the rolling raw ring for the latest two provider captures on the sealed UTC request date that:
-
-- are both post-kickoff;
-- both still contain the exact fixture through PR #149 qualification;
-- are separated by at least the reviewed 300 seconds;
-- have distinct raw and manifest lineages.
-
-PR #149 then revalidates the prediction against the exact history ledger and re-runs the reviewed ordinary-FT adapter.
-
-`EXCLUDED_NOT_REVIEWED_ORDINARY_FT` from a pair is not treated as final by the runner because a match may simply not yet be finished/stable. The fixture remains pending for later captures.
-
-A provider-identity/kickoff-drift exclusion is terminal.
-
-At the selected close, any already sealed prediction whose kickoff is on or after the right-exclusive close boundary is preserved but marked `EXCLUDED_OUTSIDE_SELECTED_CLOSE`; it is never settled into the scored population.
-
-At the end of the fixed 24-hour settlement tail, any still unresolved in-population seal is marked `UNRESOLVED_AT_SETTLEMENT_TAIL`.
-
-## Count-only close
-
-Beginning at the +28-day boundary, the runner reconstructs the sealed-prediction population and reuses PR #150's token-protected close-control function.
-
-An open state is revalidated at the latest required UTC midnight. A selected close receipt is revalidated on every later tick and is irreversible.
-
-No goals, NLL, WACE, WSCE, or other performance value enters close selection.
 
 ## Safety
 

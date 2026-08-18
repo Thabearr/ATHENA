@@ -27,21 +27,14 @@ jobs:
         uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-          cache: pip
-          cache-dependency-path: requirements.txt
-
-      - name: Install dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          python -m pip install --upgrade pip
-          python -m pip install -r requirements.txt
 
       - name: Resolve nominal schedule slot and release target
         id: slot
         env:
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
           GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
@@ -52,54 +45,47 @@ jobs:
           import os
           import subprocess
           from pathlib import Path
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
+
+          event_name = os.environ.get("EVENT_NAME")
+          if event_name != "schedule":
+              raise SystemExit(f"forbidden event trigger: {event_name!r}")
+
+          schedule_expr = os.environ.get("EVENT_SCHEDULE", "")
+          if schedule_expr not in ("7 * * * *", "37 * * * *"):
+              raise SystemExit(f"unexpected schedule expression: {schedule_expr!r}")
 
           run_id = os.environ["GITHUB_RUN_ID"]
-          now = dt.datetime.now(dt.timezone.utc)
+          repo = os.environ["GITHUB_REPOSITORY"]
 
-          # Fetch workflow run created_at if possible, fallback to current time
-          created_at = now
           try:
               out = subprocess.check_output(
-                  ["gh", "run", "view", run_id, "--json", "createdAt"],
+                  ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}"],
                   text=True,
               )
               data = json.loads(out)
-              if "createdAt" in data:
-                  created_at = dt.datetime.fromisoformat(data["createdAt"].replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-          except Exception:
-              pass
+              created_at_text = data["created_at"]
+              created_at = dt.datetime.fromisoformat(created_at_text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
+          except Exception as exc:
+              raise SystemExit(f"could not obtain authoritative run creation time: {exc}")
 
-          # Determine nominal minute from cron or closest :07/:37
-          minute = created_at.minute
-          # Find latest occurrence of :07 or :37 <= created_at
-          c07 = created_at.replace(minute=7, second=0, microsecond=0)
-          c37 = created_at.replace(minute=37, second=0, microsecond=0)
-          candidates = [c07, c37]
-          # Also check previous hour
-          prev_hour = created_at - dt.timedelta(hours=1)
-          candidates.extend([
-              prev_hour.replace(minute=7, second=0, microsecond=0),
-              prev_hour.replace(minute=37, second=0, microsecond=0),
-          ])
-          valid_candidates = [c for c in candidates if c <= created_at]
-          nominal = max(valid_candidates)
-
-          nominal_iso = nominal.strftime("%Y-%m-%dT%H:%M:%SZ")
-          nominal_compact = nominal.strftime("%Y%m%dT%H%M%SZ")
-          iso_year, iso_week, _ = nominal.isocalendar()
-          release_tag = f"athena-fresh-holdout-evidence-{iso_year}-W{iso_week:02d}"
-          success_asset = f"success-{nominal_compact}-run-{run_id}.tar.gz"
-          failure_asset = f"failure-{nominal_compact}-run-{run_id}.tar.gz"
+          nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
+              schedule_expr, created_at
+          )
+          success_asset = f"{success_prefix}{run_id}.tar.gz"
+          failure_asset = f"{failure_prefix}{run_id}.tar.gz"
 
           output_path = os.environ.get("GITHUB_OUTPUT")
           if output_path:
               with open(output_path, "a", encoding="utf-8") as fh:
                   fh.write(f"nominal_slot={nominal_iso}\n")
-                  fh.write(f"nominal_compact={nominal_compact}\n")
+                  fh.write(f"nominal_compact={nominal.strftime('%Y%m%dT%H%M%SZ')}\n")
                   fh.write(f"release_tag={release_tag}\n")
                   fh.write(f"success_asset={success_asset}\n")
                   fh.write(f"failure_asset={failure_asset}\n")
 
+          print(f"schedule: {schedule_expr}")
+          print(f"run created_at: {created_at_text}")
           print(f"nominal slot: {nominal_iso}")
           print(f"release tag: {release_tag}")
           print(f"success asset: {success_asset}")
@@ -120,10 +106,11 @@ jobs:
           import os
           import subprocess
           from pathlib import Path
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
-          expected_sha = "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2"
-          expected_size = 10_545_099
-          expected_rows = 21_326
+          expected_sha = fresh.BOOTSTRAP_PROJECTION_SHA256
+          expected_size = fresh.BOOTSTRAP_PROJECTION_SIZE
+          expected_rows = fresh.BOOTSTRAP_PROJECTION_ROWS
           bootstrap_tag = "athena-fresh-holdout-bootstrap-v1"
           asset_name = "pr119-materialized.ndjson"
           repo = os.environ["GITHUB_REPOSITORY"]
@@ -131,7 +118,6 @@ jobs:
           target = Path("pr119-materialized.ndjson")
           downloaded = False
 
-          # Try downloading from release
           try:
               res = subprocess.run(
                   ["gh", "release", "download", bootstrap_tag, "--pattern", asset_name, "--repo", repo],
@@ -148,7 +134,6 @@ jobs:
 
           if not downloaded:
               print("materializing bootstrap projection from preserved PR119 campaign artifact...")
-              # Download artifact 9249856559 from run 31887523012
               artifact_id = "9249856559"
               zip_path = Path("pr119-preserved-artifact.zip")
               subprocess.check_call(
@@ -174,33 +159,26 @@ jobs:
               if hashlib.sha256(raw).hexdigest() != expected_sha or len(raw) != expected_size:
                   raise SystemExit("materialized projection failed validation")
 
-              # Upload to release if release doesn't exist or asset is missing
               try:
                   subprocess.run(
-                      ["gh", "release", "view", bootstrap_tag, "--repo", repo],
-                      check=True,
-                      capture_output=True,
-                  )
-                  subprocess.run(
-                      ["gh", "release", "upload", bootstrap_tag, str(target), "--repo", repo, "--clobber"],
+                      [
+                          "gh", "release", "create", bootstrap_tag,
+                          "--title", "FotMob UTC-Native Fresh Holdout Bootstrap V1",
+                          "--notes", "Exact reviewed PR119 materialized bootstrap projection.",
+                          str(target),
+                          "--repo", repo,
+                      ],
                       check=True,
                   )
               except Exception:
                   try:
                       subprocess.run(
-                          [
-                              "gh", "release", "create", bootstrap_tag,
-                              "--title", "FotMob UTC-Native Fresh Holdout Bootstrap V1",
-                              "--notes", "Exact reviewed PR119 materialized bootstrap projection.",
-                              str(target),
-                              "--repo", repo,
-                          ],
+                          ["gh", "release", "upload", bootstrap_tag, str(target), "--repo", repo],
                           check=True,
                       )
                   except Exception as e:
                       print(f"bootstrap release upload warning: {e}")
 
-          # Final integrity verification
           raw = target.read_bytes()
           rows = raw.count(b"\n")
           if hashlib.sha256(raw).hexdigest() != expected_sha or len(raw) != expected_size or rows != expected_rows:
@@ -208,80 +186,110 @@ jobs:
           print(f"bootstrap verified: sha256={expected_sha} size={expected_size} rows={rows}")
           PY
 
-      - name: Restore latest durable state
+      - name: Restore latest authoritative durable state
         id: restore_state
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          NOMINAL_SLOT: ${{ steps.slot.outputs.nominal_slot }}
         shell: bash
         run: |
           set -euo pipefail
           python - <<'PY'
+          import datetime as dt
+          import hashlib
           import json
           import os
-          import re
-          import shutil
           import subprocess
-          import tarfile
+          import tempfile
+          import zipfile
           from pathlib import Path
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control as control
 
-          state_root = Path(".cache/athena-research/fotmob-utc-native-xg-fresh-holdout")
-          state_root.mkdir(parents=True, exist_ok=True)
           repo = os.environ["GITHUB_REPOSITORY"]
+          current_run_id = int(os.environ["CURRENT_RUN_ID"])
+          nominal_slot_text = os.environ["NOMINAL_SLOT"]
+          nominal_slot = dt.datetime.fromisoformat(nominal_slot_text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
 
-          # List releases starting with athena-fresh-holdout-evidence-
+          state_root = Path(control.CONTROL_ROOT_RELATIVE)
+          state_root.mkdir(parents=True, exist_ok=True)
+
           try:
               out = subprocess.check_output(
-                  ["gh", "release", "list", "--repo", repo, "--limit", "100"],
+                  [
+                      "gh", "api",
+                      f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?status=success&per_page=100",
+                  ],
                   text=True,
               )
+              runs_data = json.loads(out)
           except Exception as exc:
-              print(f"release list failed: {exc}")
-              out = ""
+              raise SystemExit(f"FATAL: failed to query workflow runs from GitHub API: {exc}")
 
-          evidence_tags = []
-          for line in out.splitlines():
-              parts = line.split("\t")
-              if parts and parts[0].startswith("athena-fresh-holdout-evidence-"):
-                  evidence_tags.append(parts[0])
+          if "workflow_runs" not in runs_data:
+              raise SystemExit("FATAL: malformed workflow_runs response from GitHub API")
 
-          success_assets = []
-          for tag in sorted(evidence_tags, reverse=True):
-              try:
-                  view_out = subprocess.check_output(
-                      ["gh", "release", "view", tag, "--repo", repo, "--json", "assets"],
-                      text=True,
-                  )
-                  data = json.loads(view_out)
-                  for asset in data.get("assets", []):
-                      name = asset.get("name", "")
-                      if name.startswith("success-") and name.endswith(".tar.gz"):
-                          match = re.match(r"^success-(\d{8}T\d{6}Z)-run-\d+\.tar\.gz$", name)
-                          if match:
-                              success_assets.append((match.group(1), tag, name))
-              except Exception as exc:
-                  print(f"release view {tag} failed: {exc}")
+          prior_runs = [
+              r for r in runs_data["workflow_runs"]
+              if r["id"] != current_run_id and r.get("conclusion") == "success"
+          ]
+          prior_runs.sort(key=lambda r: r["id"], reverse=True)
 
-          if success_assets:
-              # Sort by nominal slot timestamp
-              success_assets.sort(key=lambda x: x[0])
-              latest_slot, latest_tag, latest_asset = success_assets[-1]
-              print(f"restoring durable state from {latest_tag} / {latest_asset}...")
-              tar_path = Path(latest_asset)
-              subprocess.check_call([
-                  "gh", "release", "download", latest_tag,
-                  "--pattern", latest_asset,
-                  "--repo", repo,
-              ])
-              with tarfile.open(tar_path, "r:gz") as tar:
-                  for member in tar.getmembers():
-                      p = Path(member.name)
-                      if p.is_absolute() or ".." in p.parts or member.issym() or member.islnk():
-                          raise SystemExit(f"forbidden archive member: {member.name}")
-                  tar.extractall()
-              print("durable state restored successfully")
+          if not prior_runs:
+              print("No prior successful workflow runs found in repository.")
+              print("Legitimate first genesis: starting fresh from control state.")
           else:
-              print("no previous durable state found; starting fresh from control state")
+              restored = False
+              errors = []
+              for prior_run in prior_runs:
+                  p_id = prior_run["id"]
+                  try:
+                      art_out = subprocess.check_output(
+                          ["gh", "api", f"/repos/{repo}/actions/runs/{p_id}/artifacts"],
+                          text=True,
+                      )
+                      art_data = json.loads(art_out)
+                      success_artifacts = [
+                          a for a in art_data.get("artifacts", [])
+                          if a["name"].startswith("success-") and not a.get("expired", False)
+                      ]
+                      if not success_artifacts:
+                          continue
+
+                      art = success_artifacts[0]
+                      art_id = art["id"]
+                      art_name = art["name"]
+                      print(f"Restoring authoritative artifact {art_name} (ID: {art_id}) from run {p_id}...")
+
+                      with tempfile.TemporaryDirectory() as tmpdir:
+                          tmp = Path(tmpdir)
+                          zip_path = tmp / "artifact.zip"
+                          subprocess.check_call(
+                              ["gh", "api", f"/repos/{repo}/actions/artifacts/{art_id}/zip"],
+                              stdout=zip_path.open("wb"),
+                          )
+                          with zipfile.ZipFile(zip_path, "r") as zf:
+                              tar_names = [n for n in zf.namelist() if n.startswith("success-") and n.endswith(".tar.gz")]
+                              if not tar_names:
+                                  raise SystemExit(f"artifact zip {art_name} does not contain success tar archive")
+                              tar_name = tar_names[0]
+                              zf.extract(tar_name, path=tmp)
+                              tar_path = tmp / tar_name
+                              runner.verify_and_extract_durable_state_archive(tar_path, repository_root=Path("."))
+
+                      print(f"Successfully restored and verified durable state from run {p_id}.")
+                      restored = True
+                      break
+                  except Exception as e:
+                      errors.append(f"run {p_id}: {e}")
+
+              if not restored:
+                  raise SystemExit(
+                      f"FATAL: prior successful campaign runs exist ({len(prior_runs)} found), "
+                      f"but failed to restore authoritative predecessor state: {' | '.join(errors)}"
+                  )
           PY
 
       - name: Execute reviewed fresh-holdout collection tick
@@ -330,7 +338,7 @@ jobs:
           echo "archive_name=${tar_name}" >> "${GITHUB_OUTPUT}"
           ls -la "${tar_name}"
 
-      - name: Publish durable evidence release asset
+      - name: Publish long-lived evidence release asset
         id: publish_release
         if: always()
         env:
@@ -346,7 +354,6 @@ jobs:
           tag="${RELEASE_TAG}"
           archive="${ARCHIVE_NAME}"
 
-          # Ensure release exists
           if ! gh release view "${tag}" --repo "${repo}" >/dev/null 2>&1; then
             gh release create "${tag}" \
               --title "FotMob UTC-Native Fresh Holdout Evidence ${tag}" \
@@ -354,11 +361,10 @@ jobs:
               --repo "${repo}" || true
           fi
 
-          # Upload archive
-          gh release upload "${tag}" "${archive}" --repo "${repo}" --clobber
+          gh release upload "${tag}" "${archive}" --repo "${repo}" || true
           echo "uploaded ${archive} to release ${tag}"
 
-      - name: Upload 90-day Actions artifact
+      - name: Upload authoritative 90-day Actions artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:

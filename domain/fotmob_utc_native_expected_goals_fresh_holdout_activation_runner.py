@@ -925,7 +925,8 @@ def execute_collection_tick(
         raise _error("bootstrap projection must be exact bytes")
     ledger = _ledger(bootstrap_projection_raw, settlement_rows)
 
-    existing = _working(root / WORKING_CAPTURE_DIRECTORY)
+    working = root / WORKING_CAPTURE_DIRECTORY
+    existing = _working(working)
     current: list[CaptureEvidence] = []
     current_qualified: list[fresh.QualifiedCaptureFixture] = []
     qualified: dict[str, tuple[fresh.QualifiedCaptureFixture, ...]] = {}
@@ -944,6 +945,9 @@ def execute_collection_tick(
             if evidence.manifest.observed_at < scheduled:
                 raise _error("live capture observed_at predates nominal slot")
             sha = _manifest_sha(evidence)
+            if sha in capture_keys:
+                raise _error("new capture duplicates durable lineage")
+            _stage(evidence, working)
             rows = _qualify(evidence)
             qualified[sha] = rows
             current.append(evidence)
@@ -955,8 +959,6 @@ def execute_collection_tick(
 
     for evidence in current:
         sha = _manifest_sha(evidence)
-        if sha in capture_keys:
-            raise _error("new capture duplicates durable lineage")
         _append(
             paths["capture"],
             {
@@ -983,24 +985,6 @@ def execute_collection_tick(
     identity_map, identity_keys = _identity_state(_rows(paths["identity"]))
     all_captures = tuple(existing) + tuple(current)
 
-    if close_state is not None and close_state.selected_close_utc is not None:
-        for fixture_id, prediction in sorted(sealed.items()):
-            if (
-                fixture_id not in terminal
-                and prediction.fixture.kickoff_utc >= close_state.selected_close_utc
-            ):
-                _append(
-                    paths["settlement"],
-                    _terminal_row(
-                        prediction,
-                        "EXCLUDED_OUTSIDE_SELECTED_CLOSE",
-                        "sealed kickoff is not left-of the selected close boundary",
-                        durable_release_tag,
-                        durable_asset_name,
-                    ),
-                )
-                terminal.add(fixture_id)
-
     for fixture_id, prediction in sorted(sealed.items()):
         if fixture_id in terminal:
             continue
@@ -1019,21 +1003,65 @@ def execute_collection_tick(
                 second_manifest=second.manifest,
             )
         except Exception as exc:
-            raise _error(f"settlement failed for fixture {fixture_id}") from exc
-        if assessment.disposition is fresh.SettlementDisposition.EXCLUDED_NOT_REVIEWED_ORDINARY_FT:
-            continue
-        _append(
-            paths["settlement"],
-            _settlement_row(assessment, durable_release_tag, durable_asset_name),
-        )
-        terminal.add(fixture_id)
-        if (
-            assessment.settled_prediction is not None
-            and assessment.settled_prediction.legacy_history_state_update is not None
-        ):
-            ledger = fresh.append_fresh_legacy_history_update(
-                ledger, assessment.settled_prediction
+            raise _error(f"settlement of fixture {fixture_id} failed") from exc
+        if assessment.disposition is fresh.SettlementDisposition.SETTLED:
+            if assessment.settled_prediction is None:
+                raise _error("settlement missing settled record")
+            _append(
+                paths["settlement"],
+                _settlement_row(
+                    assessment,
+                    durable_release_tag,
+                    durable_asset_name,
+                ),
             )
+            terminal.add(fixture_id)
+            if assessment.settled_prediction.legacy_history_state_update is not None:
+                ledger = fresh.append_fresh_legacy_history_update(
+                    ledger, assessment.settled_prediction
+                )
+        elif (
+            assessment.disposition
+            is fresh.SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_DRIFT
+        ):
+            _append(
+                paths["settlement"],
+                _terminal_row(
+                    prediction,
+                    assessment.disposition.value,
+                    assessment.notes or "provider identity drift observed",
+                    durable_release_tag,
+                    durable_asset_name,
+                ),
+            )
+            terminal.add(fixture_id)
+        elif (
+            assessment.disposition
+            is fresh.SettlementDisposition.EXCLUDED_NOT_REVIEWED_ORDINARY_FT
+        ):
+            pass
+        else:
+            raise _error("settlement disposition escaped reviewed vocabulary")
+
+    if (
+        close_state is not None
+        and close_state.selected_close_utc is not None
+        and scheduled >= close_state.selected_close_utc + dt.timedelta(hours=24)
+    ):
+        for fixture_id, prediction in sorted(sealed.items()):
+            if fixture_id in terminal:
+                continue
+            _append(
+                paths["settlement"],
+                _terminal_row(
+                    prediction,
+                    "EXCLUDED_OUTSIDE_SELECTED_CLOSE",
+                    "sealed kickoff is not left-of the selected close boundary",
+                    durable_release_tag,
+                    durable_asset_name,
+                ),
+            )
+            terminal.add(fixture_id)
 
     if plan.prediction_sealing_authorized:
         grouped: dict[int, list[fresh.QualifiedCaptureFixture]] = defaultdict(list)
@@ -1084,9 +1112,6 @@ def execute_collection_tick(
             )
             terminal.add(fixture_id)
 
-    working = root / WORKING_CAPTURE_DIRECTORY
-    for evidence in current:
-        _stage(evidence, working)
     _prune(working)
 
     committed_at = _utc(clock(), "tick completion time")
@@ -1118,13 +1143,11 @@ def execute_collection_tick(
             "last_committed_scheduled_for_utc": _utc_text(scheduled),
             "phase": plan.phase.value,
             "capture_count": len(_rows(paths["capture"])),
-            "sealed_prediction_count": len(final_sealed),
-            "terminal_settlement_count": len(final_terminal),
-            "close_state": None if close_state is None else close_state.to_dict(),
+            "prediction_count": len(final_sealed),
+            "settled_or_terminal_count": len(final_terminal),
+            "control_event_count": len(_rows(paths["control"])),
             "durable_release_tag": durable_release_tag,
             "durable_asset_name": durable_asset_name,
-            "checkpoint_is_reconstructible_not_evidence_authority": True,
-            "safety": dict(_safety()),
         },
     )
     return {
@@ -1133,22 +1156,111 @@ def execute_collection_tick(
         "runner_state": RUNNER_STATE,
         "scheduled_for_utc": _utc_text(scheduled),
         "phase": plan.phase.value,
-        "disposition": "TICK_COMMITTED_REQUIRES_DURABLE_RELEASE_UPLOAD",
+        "committed_at_utc": _utc_text(committed_at),
         "request_dates": list(plan.request_dates),
-        "network_acquisition_performed": bool(current),
         "network_request_count": len(current),
-        "fresh_holdout_collection_started_by_this_run": (
-            scheduled >= control.holdout_start_utc() and bool(current)
-        ),
-        "sealed_prediction_count": len(final_sealed),
-        "terminal_settlement_count": len(final_terminal),
-        "close_state": None if close_state is None else close_state.to_dict(),
+        "network_acquisition_performed": bool(current),
+        "fresh_holdout_collection_started_by_this_run": plan.phase
+        == control.ControlPhase.ACTIVE_PREDICTION_AND_SETTLEMENT,
         "durable_release_tag": durable_release_tag,
         "durable_asset_name": durable_asset_name,
-        "durable_release_upload_completed_by_runner": False,
         "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
         "safety": dict(_safety()),
     }
+
+
+def resolve_nominal_schedule_slot(
+    schedule_expr: str,
+    created_at: dt.datetime,
+) -> tuple[dt.datetime, str, str, str, str]:
+    """Derive exact nominal schedule slot and release/asset targets from trigger and time."""
+    if type(schedule_expr) is not str or schedule_expr not in (
+        "7 * * * *",
+        "37 * * * *",
+    ):
+        raise _error(f"unexpected schedule cron expression: {schedule_expr!r}")
+    created_utc = _utc(created_at, "created_at")
+    expected_minute = 7 if schedule_expr == "7 * * * *" else 37
+    if created_utc.minute >= expected_minute:
+        nominal = created_utc.replace(minute=expected_minute, second=0, microsecond=0)
+    else:
+        nominal = (created_utc - dt.timedelta(hours=1)).replace(
+            minute=expected_minute, second=0, microsecond=0
+        )
+    nominal_iso = _utc_text(nominal)
+    nominal_compact = nominal.strftime("%Y%m%dT%H%M%SZ")
+    iso_year, iso_week, _ = nominal.isocalendar()
+    release_tag = f"athena-fresh-holdout-evidence-{iso_year}-W{iso_week:02d}"
+    success_asset_prefix = f"success-{nominal_compact}-run-"
+    failure_asset_prefix = f"failure-{nominal_compact}-run-"
+    return nominal, nominal_iso, release_tag, success_asset_prefix, failure_asset_prefix
+
+
+def verify_and_extract_durable_state_archive(
+    archive_path: Path,
+    *,
+    repository_root: Path | None = None,
+    expected_sha256: str | None = None,
+) -> None:
+    """Verify archive integrity, member safety, and extract into state root."""
+    repo = (repository_root or _repo_root()).resolve(strict=True)
+    archive = Path(archive_path).resolve(strict=True)
+    if archive.is_symlink() or not archive.is_file():
+        raise _error("archive must be a regular non-symlink file")
+    raw = archive.read_bytes()
+    if not raw:
+        raise _error("archive must be non-empty")
+    actual_sha = hashlib.sha256(raw).hexdigest()
+    if expected_sha256 is not None and actual_sha != expected_sha256:
+        raise _error("archive SHA-256 digest mismatch")
+
+    import tarfile
+
+    seen_names: set[str] = set()
+    with tarfile.open(archive, "r:gz") as tar:
+        for member in tar.getmembers():
+            if member.name in seen_names:
+                raise _error(f"duplicate archive member: {member.name}")
+            seen_names.add(member.name)
+            p = Path(member.name)
+            if p.is_absolute() or ".." in p.parts:
+                raise _error(f"forbidden archive member path: {member.name}")
+            if (
+                member.issym()
+                or member.islnk()
+                or member.ischr()
+                or member.isblk()
+                or member.isfifo()
+                or member.isdev()
+            ):
+                raise _error(f"forbidden special archive member: {member.name}")
+            if not member.name.startswith(
+                (".cache/", "fresh-holdout-tick-receipt.json")
+            ):
+                raise _error(f"unexpected archive member root: {member.name}")
+        tar.extractall(path=repo)
+
+    state_root = repo / control.CONTROL_ROOT_RELATIVE
+    if state_root.exists():
+        paths = {
+            "capture": state_root / control.CAPTURE_INDEX_FILENAME,
+            "prediction": state_root / control.PREDICTION_JOURNAL_FILENAME,
+            "identity": state_root / control.POST_SEAL_IDENTITY_JOURNAL_FILENAME,
+            "settlement": state_root / control.SETTLEMENT_JOURNAL_FILENAME,
+            "control": state_root / control.CONTROL_JOURNAL_FILENAME,
+            "checkpoint": state_root / control.CHECKPOINT_FILENAME,
+        }
+        for name, path in paths.items():
+            if path.exists():
+                _regular(path)
+                _rows(path)
+        if paths["checkpoint"].exists():
+            try:
+                cp = json.loads(paths["checkpoint"].read_bytes())
+                if type(cp) is not dict or cp.get("schema_version") != 1:
+                    raise _error("checkpoint schema version invalid")
+            except Exception as exc:
+                raise _error("checkpoint JSON validation failed") from exc
 
 
 def activation_runner_receipt() -> dict[str, Any]:
@@ -1207,6 +1319,8 @@ __all__ = [
     "WORKING_CAPTURE_LIMIT_PER_DATE",
     "activation_runner_receipt",
     "execute_collection_tick",
+    "resolve_nominal_schedule_slot",
     "validate_state_root",
+    "verify_and_extract_durable_state_archive",
     "verify_reviewed_activation_dependencies",
 ]

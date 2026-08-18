@@ -1,12 +1,17 @@
 from __future__ import annotations
 
+import ast
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
+import sys
+import tarfile
 
 import pytest
 
 import domain.fotmob_data_matches_capture as capture_contract
+import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control as control
 
@@ -316,3 +321,221 @@ def test_cli_and_workflow_are_present_and_schedule_is_exact() -> None:
     assert "success-" in text
     assert "failure-" in text
     assert "retention-days: 90" in text
+
+
+# --- BLOCKER 1 & 2: ARCHIVE VERIFICATION & SAFE EXTRACTION TESTS ---
+
+
+def test_verify_and_extract_archive_rejects_symlinks_and_hardlinks(tmp_path: Path) -> None:
+    repo, _state = _repo(tmp_path)
+    tar_path = tmp_path / "bad-symlink.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        ti = tarfile.TarInfo(name=".cache/athena-research/fotmob-utc-native-xg-fresh-holdout/link")
+        ti.type = tarfile.SYMTYPE
+        ti.linkname = "/etc/passwd"
+        tar.addfile(ti)
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="special archive member"):
+        runner.verify_and_extract_durable_state_archive(tar_path, repository_root=repo)
+
+
+def test_verify_and_extract_archive_rejects_traversal_and_absolute_paths(tmp_path: Path) -> None:
+    repo, _state = _repo(tmp_path)
+    tar_path = tmp_path / "bad-traversal.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        ti = tarfile.TarInfo(name=".cache/../../escape.txt")
+        ti.size = 4
+        tar.addfile(ti, fileobj=Path(__file__).open("rb"))
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="forbidden archive member path"):
+        runner.verify_and_extract_durable_state_archive(tar_path, repository_root=repo)
+
+
+def test_verify_and_extract_archive_verifies_sha256_digest(tmp_path: Path) -> None:
+    repo, _state = _repo(tmp_path)
+    tar_path = tmp_path / "valid.tar.gz"
+    with tarfile.open(tar_path, "w:gz") as tar:
+        pass
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="SHA-256 digest mismatch"):
+        runner.verify_and_extract_durable_state_archive(
+            tar_path, repository_root=repo, expected_sha256="0" * 64
+        )
+
+
+# --- BLOCKER 3: PARTIAL LIVE CAPTURE PRESERVATION TESTS ---
+
+
+def test_partial_capture_failure_preserves_successful_raw_captures_immediately(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state = _repo(tmp_path)
+    monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
+    scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+
+    def capture_one(request_date: str, *, repository_root: Path):
+        if request_date == "20260818":
+            return _capture(tmp_path, request_date, scheduled + dt.timedelta(minutes=1))
+        raise RuntimeError("simulated network failure on second request date")
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="one or more reviewed live captures failed"):
+        runner.execute_collection_tick(
+            scheduled_for=scheduled,
+            bootstrap_projection_raw=b"test-bootstrap",
+            durable_release_tag="athena-fresh-holdout-evidence-2026-W34",
+            durable_asset_name="success-20260819T000700Z-run-1.tar.gz",
+            execute_live_network=True,
+            state_root=Path(control.CONTROL_ROOT_RELATIVE),
+            repository_root=repo,
+            capture_one=capture_one,
+        )
+
+    # Verify that the first request date was staged to disk immediately before failure
+    working = state / runner.WORKING_CAPTURE_DIRECTORY
+    date_dir = working / "20260818"
+    assert date_dir.is_dir()
+    captures = list(date_dir.iterdir())
+    assert len(captures) == 1
+    assert (captures[0] / capture_contract.RAW_FILENAME).is_file()
+    assert (captures[0] / capture_contract.MANIFEST_FILENAME).is_file()
+
+
+def test_qualification_failure_preserves_staged_raw_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state = _repo(tmp_path)
+    monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
+    scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+
+    def fail_qualify(_evidence):
+        raise ValueError("simulated qualification parser failure")
+
+    monkeypatch.setattr(runner, "_qualify", fail_qualify)
+
+    def capture_one(request_date: str, *, repository_root: Path):
+        return _capture(tmp_path, request_date, scheduled + dt.timedelta(minutes=1))
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="live captures failed"):
+        runner.execute_collection_tick(
+            scheduled_for=scheduled,
+            bootstrap_projection_raw=b"test-bootstrap",
+            durable_release_tag="athena-fresh-holdout-evidence-2026-W34",
+            durable_asset_name="success-20260819T000700Z-run-1.tar.gz",
+            execute_live_network=True,
+            state_root=Path(control.CONTROL_ROOT_RELATIVE),
+            repository_root=repo,
+            capture_one=capture_one,
+        )
+
+    # Verify raw files were staged prior to qualification error
+    working = state / runner.WORKING_CAPTURE_DIRECTORY
+    date_dir = working / "20260818"
+    assert date_dir.is_dir()
+    captures = list(date_dir.iterdir())
+    assert len(captures) >= 1
+    assert (captures[0] / capture_contract.RAW_FILENAME).is_file()
+
+
+# --- BLOCKER 4: ZERO PYPI ENVIRONMENT TESTS ---
+
+
+def test_activation_runner_runtime_path_has_zero_external_dependencies() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    runtime_files = [
+        "domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py",
+        "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py",
+        "domain/fotmob_data_matches_capture.py",
+        "scripts/capture_fotmob_data_matches.py",
+        "domain/fotmob_data_matches_ordinary_ft_finished_score_adapter.py",
+        "domain/fotmob_utc_native_expected_goals_fresh_holdout.py",
+        "domain/fotmob_utc_native_expected_goals_fresh_holdout_collection_control.py",
+        "scripts/qualify_fotmob_historical_source_history_completeness_materialization.py",
+    ]
+    stdlib_modules = set(sys.stdlib_module_names) | {"zoneinfo"}
+    external = set()
+
+    for rel in runtime_files:
+        path = repo_root / rel
+        assert path.is_file()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=rel)
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    root_pkg = alias.name.split(".")[0]
+                    if root_pkg not in stdlib_modules and root_pkg not in ("domain", "scripts"):
+                        external.add((rel, root_pkg))
+            elif isinstance(node, ast.ImportFrom):
+                if node.module:
+                    root_pkg = node.module.split(".")[0]
+                    if root_pkg not in stdlib_modules and root_pkg not in ("domain", "scripts"):
+                        external.add((rel, root_pkg))
+
+    assert external == set()
+
+
+def test_workflow_installs_no_pypi_packages() -> None:
+    repo_root = Path(__file__).resolve().parents[1]
+    workflow = repo_root / ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+    assert workflow.is_file()
+    text = workflow.read_text(encoding="utf-8")
+    assert "pip install" not in text
+    assert "requirements.txt" not in text
+    assert "cache: pip" not in text
+
+
+# --- BLOCKER 5: CRON SCHEDULE IDENTITY TESTS ---
+
+
+def test_resolve_nominal_schedule_slot_exact_07() -> None:
+    created = dt.datetime(2026, 8, 19, 0, 7, 15, tzinfo=UTC)
+    nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
+        "7 * * * *", created
+    )
+    assert nominal == dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T00:07:00.000000Z"
+    assert release_tag == "athena-fresh-holdout-evidence-2026-W34"
+    assert success_prefix == "success-20260819T000700Z-run-"
+    assert failure_prefix == "failure-20260819T000700Z-run-"
+
+
+def test_resolve_nominal_schedule_slot_exact_37() -> None:
+    created = dt.datetime(2026, 8, 19, 0, 37, 45, tzinfo=UTC)
+    nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
+        "37 * * * *", created
+    )
+    assert nominal == dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T00:37:00.000000Z"
+    assert release_tag == "athena-fresh-holdout-evidence-2026-W34"
+    assert success_prefix == "success-20260819T003700Z-run-"
+
+
+def test_resolve_nominal_schedule_slot_delayed_07_past_37_remains_07() -> None:
+    # A :07 cron event delayed until 00:45:00Z MUST remain 00:07:00Z, never becoming 00:37:00Z
+    created = dt.datetime(2026, 8, 19, 0, 45, 0, tzinfo=UTC)
+    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot("7 * * * *", created)
+    assert nominal == dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T00:07:00.000000Z"
+
+
+def test_resolve_nominal_schedule_slot_delayed_37_past_next_hour_07_remains_37() -> None:
+    # A :37 cron event delayed until 01:10:00Z MUST remain 00:37:00Z, never becoming 01:07:00Z
+    created = dt.datetime(2026, 8, 19, 1, 10, 0, tzinfo=UTC)
+    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot("37 * * * *", created)
+    assert nominal == dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T00:37:00.000000Z"
+
+
+def test_resolve_nominal_schedule_slot_rejects_invalid_expression() -> None:
+    created = dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
+    with pytest.raises(runner.FreshHoldoutActivationError, match="unexpected schedule cron"):
+        runner.resolve_nominal_schedule_slot("0 * * * *", created)
+    with pytest.raises(runner.FreshHoldoutActivationError, match="unexpected schedule cron"):
+        runner.resolve_nominal_schedule_slot("invalid", created)
+
+
+def test_resolve_nominal_schedule_slot_rejects_timezone_naive() -> None:
+    created_naive = dt.datetime(2026, 8, 19, 0, 7, 0)
+    with pytest.raises(runner.FreshHoldoutActivationError, match="timezone-aware"):
+        runner.resolve_nominal_schedule_slot("7 * * * *", created_naive)
