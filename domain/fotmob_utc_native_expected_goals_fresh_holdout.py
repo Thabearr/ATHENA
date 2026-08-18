@@ -542,9 +542,7 @@ class FreshHistoryLedger:
                 key=lambda item: (item.kickoff_utc, int(item.fixture_identifier)),
             )
         )
-        fixture_ids = {
-            item.fixture_identifier for item in source.bootstrap_rows
-        }
+        fixture_ids = {item.fixture_identifier for item in source.bootstrap_rows}
         for item in ordered:
             if item.fixture_identifier in fixture_ids:
                 raise _error("history ledger fixture identity duplicated")
@@ -760,6 +758,11 @@ class SettledFreshPrediction:
             if type(self.legacy_history_state_update) is not FreshHistoryResult:
                 raise _error("legacy history-state update type mismatch")
             update = dataclasses.replace(self.legacy_history_state_update)
+            expected_reference = (
+                f"fresh-holdout-settlement:{self.ordinary_ft_first_manifest_sha256}:"
+                f"{self.ordinary_ft_second_manifest_sha256}:"
+                f"{prediction.fixture.fixture_id}"
+            )
             expected = (
                 str(prediction.fixture.fixture_id),
                 prediction.fixture.home_team_id,
@@ -769,6 +772,7 @@ class SettledFreshPrediction:
                 self.away_goals,
                 self.settlement_observed_at,
                 self.settlement_evidence_sha256,
+                expected_reference,
                 prediction.fixture.provider_primary_id,
                 _FRESH_UPDATE_KIND,
             )
@@ -781,6 +785,7 @@ class SettledFreshPrediction:
                 update.away_goals,
                 update.observed_at,
                 update.evidence_sha256,
+                update.evidence_reference,
                 update.provider_primary_id,
                 update.source_kind,
             )
@@ -1015,7 +1020,7 @@ def select_earliest_qualifying_capture(
     """Seal the earliest qualifying observation for one source fixture ID.
 
     Later identity/kickoff drift does not retroactively change the prospective
-    seal. It is detected again at settlement and excludes the old prediction.
+    seal. It is carried forward separately and excludes the seal at settlement.
     """
     if not isinstance(observations, Sequence) or isinstance(
         observations, (str, bytes)
@@ -1052,6 +1057,30 @@ def select_earliest_qualifying_capture(
     return dataclasses.replace(
         min(first, key=lambda item: item.capture_manifest_sha256)
     )
+
+
+def post_seal_identity_drifted(
+    prediction: SealedFreshPrediction,
+    observations: Sequence[QualifiedCaptureFixture],
+) -> bool:
+    """Return True if any observed later source identity differs from the seal."""
+    if type(prediction) is not SealedFreshPrediction:
+        raise _error("prediction must be exact SealedFreshPrediction")
+    if not isinstance(observations, Sequence) or isinstance(
+        observations, (str, bytes)
+    ):
+        raise _error("post-seal observations must be a sequence")
+    values = tuple(observations)
+    if any(type(item) is not QualifiedCaptureFixture for item in values):
+        raise _error("post-seal observations must contain exact qualified fixtures")
+    for item in values:
+        if item.fixture_id != prediction.fixture.fixture_id:
+            raise _error("post-seal observation belongs to a different fixture id")
+        if item.capture_observed_at < prediction.fixture.capture_observed_at:
+            raise _error("post-seal observation predates the prospective seal")
+        if item.identity() != prediction.fixture.identity():
+            return True
+    return False
 
 
 def _history_prefix(
@@ -1171,21 +1200,14 @@ def _build_fresh_prediction_assessment_from_rows(
     if target_value is None:
         raise _error("reviewed feature projection omitted target fixture")
 
-    expected_target_identity = (
-        SOURCE_NAMESPACE,
-        str(capture.fixture_id),
-        _utc_text(capture.kickoff_utc),
-        str(capture.home_team_id),
-        str(capture.away_team_id),
-    )
-    actual_target_identity = (
-        target_value.get("source_namespace"),
-        target_value.get("fixture_identifier"),
-        target_value.get("kickoff_utc"),
-        target_value.get("home_team_identifier"),
-        target_value.get("away_team_identifier"),
-    )
-    if actual_target_identity != expected_target_identity:
+    if (
+        target_value.get("source_namespace") != SOURCE_NAMESPACE
+        or target_value.get("fixture_identifier") != str(capture.fixture_id)
+        or target_value.get("home_team_identifier") != str(capture.home_team_id)
+        or target_value.get("away_team_identifier") != str(capture.away_team_id)
+        or _parse_utc(target_value.get("kickoff_utc"), "projected target kickoff")
+        != capture.kickoff_utc
+    ):
         raise _error("reviewed feature projection target identity changed")
     freshness = target_value.get("historical_live_data_freshness")
     if (
@@ -1432,6 +1454,7 @@ def settle_sealed_prediction(
     prediction: SealedFreshPrediction,
     *,
     history_ledger: FreshHistoryLedger,
+    post_seal_observations: Sequence[QualifiedCaptureFixture],
     first_raw_json: bytes,
     first_manifest: capture_contract.FotMobDataMatchesCaptureManifest,
     second_raw_json: bytes,
@@ -1440,9 +1463,10 @@ def settle_sealed_prediction(
     """Revalidate a seal and bind settlement from the exact reviewed raw capture pair.
 
     The direct raw pair is required because the ordinary-FT score adapter retains
-    wrapper ID but not provider primaryId. Re-qualifying both raw captures is what
-    proves competition primaryId, wrapper ID, fixture/team identity and sealed
-    kickoff again at settlement.
+    wrapper ID but not provider primaryId. Re-qualifying both raw captures proves
+    primaryId, wrapper ID, fixture/team identity and sealed kickoff again. Every
+    separately observed post-seal identity must also be supplied so a provider
+    change-and-revert cannot make an old seal scoreable again.
     """
     verify_reviewed_dependencies()
     prediction = revalidate_sealed_prediction(
@@ -1463,6 +1487,19 @@ def settle_sealed_prediction(
             ),
             prediction=prediction,
             detail="sealed fixture is absent from one or both settlement identity captures",
+            settled_prediction=None,
+        )
+    observed_after_seal = tuple(post_seal_observations) + (
+        first_identity,
+        second_identity,
+    )
+    if post_seal_identity_drifted(prediction, observed_after_seal):
+        return FreshSettlementAssessment(
+            disposition=(
+                SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT
+            ),
+            prediction=prediction,
+            detail="at least one observed post-seal provider identity or kickoff drifted",
             settled_prediction=None,
         )
     try:
@@ -1491,6 +1528,10 @@ def append_fresh_legacy_history_update(
         raise _error("ledger must be exact FreshHistoryLedger")
     if type(settled_prediction) is not SettledFreshPrediction:
         raise _error("settled_prediction must be exact SettledFreshPrediction")
+    revalidate_sealed_prediction(
+        history_ledger=ledger,
+        prediction=settled_prediction.prediction,
+    )
     update = settled_prediction.legacy_history_state_update
     if update is None:
         raise _error("non-legacy settlement cannot mutate frozen history state")
@@ -1635,7 +1676,7 @@ def implementation_receipt() -> dict[str, Any]:
             "sealed_rates_reconstruct_from_frozen_features": True,
             "settlement_revalidates_prediction_against_exact_history_ledger": True,
             "settlement_requalifies_primary_id_wrapper_fixture_team_and_kickoff_from_raw_pair": True,
-            "later_pre_kickoff_identity_drift_does_not_retroactively_replace_earliest_seal": True,
+            "observed_post_seal_identity_or_kickoff_drift_remains_excluding_even_after_reversion": True,
             "coverage_rejects_mixed_holdout_starts": True,
         },
         "network_acquisition_performed": False,
@@ -1672,6 +1713,7 @@ __all__ = [
     "implementation_receipt",
     "minimum_gate_boundary",
     "parse_reviewed_legacy_bootstrap_projection",
+    "post_seal_identity_drifted",
     "qualify_capture_fixtures",
     "resolve_holdout_start",
     "revalidate_sealed_prediction",
