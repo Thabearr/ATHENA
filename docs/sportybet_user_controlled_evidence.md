@@ -61,7 +61,7 @@ Each evidence directory contains exactly:
 
 The manifest records source URL, exact reviewed request identity, user-attested observation time, import time, acquisition mode, raw byte length/hash, null provider quote/snapshot fields, and all downstream authority as false.
 
-The evidence directory ID is deterministically bound to source URL + user-attested observation time + raw SHA-256. Same evidence is idempotent. Differing evidence cannot overwrite an existing directory. Traversal and symlink escapes fail closed. Raw and manifest files are fsynced and the same reviewed directory-durability machinery used by the PR #152 SportyBet capture boundary is reused.
+The evidence directory ID is deterministically bound to source URL + user-attested observation time + raw SHA-256. An exact replay of the same full manifest and raw bytes is idempotent; a later re-import with changed import metadata fails closed rather than overwriting earlier evidence. Differing evidence cannot overwrite an existing directory. Traversal and symlink escapes fail closed. Raw and manifest files are fsynced and the same reviewed directory-durability machinery used by the PR #152 SportyBet capture boundary is reused.
 
 The manual-evidence root is deliberately distinct from PR #152's future authorized live-capture root so user-controlled evidence can never masquerade as ATHENA-acquired network evidence.
 
