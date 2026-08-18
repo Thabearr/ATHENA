@@ -63,10 +63,11 @@ def _fake_sealed_prediction(
     fixture_id: int,
     kickoff_utc: dt.datetime,
     observed_at: dt.datetime,
+    provider_primary_id: int = 99999,
 ) -> fresh.SealedFreshPrediction:
     fixture = fresh.QualifiedCaptureFixture(
         fixture_id=fixture_id,
-        provider_primary_id=47,
+        provider_primary_id=provider_primary_id,
         wrapper_id=1000 + fixture_id,
         home_team_id=1,
         away_team_id=2,
