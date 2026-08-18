@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "dataset_name": "athena-reviewed-fixture-catalog-admission-source-replay-v1",
+  "status": "SOURCE_REPLAYED_REVIEWED_FIXTURE_CATALOG_ADMISSION",
+  "mode": "OFFLINE_USER_CONTROLLED_SOURCE_REPLAY",
+  "network_acquisition_authorized": false,
+  "source_replay_required": true,
+  "fixture_review_decision_ledger_required": true,
+  "checked_catalog_required": true,
+  "checked_manifest_required": true,
+  "explicit_catalog_admission_review_decision_required": true,
+  "storage_only_verification_authorized": false,
+  "allowed_output_relative": ".cache/athena-research/reviewed-fixture-catalog-admission-source-replay",
+  "directory_files": [
+    "admission-decision.json",
+    "admission.json"
+  ],
+  "admitted_fixture_catalog_authority_preserved_only": true,
+  "fixture_reconciliation_authorized": false,
+  "bookmaker_equivalence_authorized": false,
+  "canonical_market_mapping_authorized": false,
+  "fresh_price_authorized": false,
+  "pricing_authorized": false,
+  "model_integration_authorized": false,
+  "selection_authorized": false,
+  "slip_construction_authorized": false,
+  "booking_code_authorized": false,
+  "sportybet_execution_authorized": false,
+  "bet_authorized": false
+}
