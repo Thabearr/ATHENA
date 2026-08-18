@@ -18,14 +18,22 @@ A reconciliation attempt must receive the complete preserved source chain requir
 6. exact PR #160 SportyBet/Sportradar event-ID bridge;
 7. exact PR #161 official Sportradar metadata evidence;
 8. exact preserved Sportradar JSON response;
-9. exact PR #162 kickoff-identity promotion;
-10. one deterministic population of already-reviewed `FotMobReviewedFixtureCatalogInput` rows.
+9. exact PR #162 kickoff-identity promotion.
+
+The FotMob side must also provide:
+
+10. an exact `ReviewedFixtureCatalogAdmission` with `ADMITTED` disposition; and
+11. the exact raw FotMob `/api/data/matches` capture bytes and PR #38 capture manifests from which that admitted catalog was derived.
 
 PR #162 is revalidated at consumption time from every preserved upstream source and must be canonical-byte identical. Hash-shaped or manually constructed promotion objects are not trusted.
 
+The FotMob admission is not trusted merely because it contains structurally valid reviewed rows. ATHENA rebuilds the candidate bundle from the supplied raw capture bytes/manifests, rebuilds the review bundle from those candidates plus the admission's exact human review decisions, rebuilds the catalog handoff, and requires canonical equality with the handoff embedded in the admitted catalog. The admission itself then revalidates its compiled catalog, decision hashes, prospective admission chronology, and the current reviewed-source capability profile.
+
+This closes the authority gap that would otherwise allow a caller to manufacture a hash-shaped `FotMobReviewedFixtureCatalogInput` and obtain fixture reconciliation authority.
+
 ## Exact matching rule
 
-A FotMob row matches only when all four values are exact and case-sensitive:
+An admitted FotMob row matches only when all four values are exact and case-sensitive:
 
 - home team = SportyBet machine-readable home display;
 - away team = SportyBet machine-readable away display;
@@ -38,17 +46,19 @@ No normalization, case folding, punctuation cleanup, fuzzy name matching, alias 
 
 ## FotMob population integrity
 
-Only exact `FotMobReviewedFixtureCatalogInput` objects are accepted. The full comparison population is sorted by numeric `source_fixture_identifier` and canonically hashed, so caller ordering cannot alter lineage.
+The comparison population comes only from the source-replayed `ADMITTED` reviewed catalog handoff. Standalone `FotMobReviewedFixtureCatalogInput` objects are not a public authority input to this boundary.
 
-Duplicate FotMob source fixture identifiers fail closed before matching.
+The full admitted comparison population is sorted by numeric `source_fixture_identifier` and canonically hashed, so ordering cannot alter lineage. Duplicate FotMob source fixture identifiers fail closed before matching.
+
+The result preserves the exact hashes of the FotMob admission, candidate bundle, review bundle, handoff, compiled catalog, compiled manifest, and comparison population.
 
 ## Dispositions and authority
 
 There are exactly three dispositions:
 
-- `UNIQUE_EXACT_FULL_UTC_MATCH_RECONCILED`: exactly one reviewed FotMob row matches all four exact fields. The exact matched FotMob lineage is preserved and `fixture_reconciliation_authorized` becomes `true` for this result only.
-- `NO_EXACT_FULL_UTC_MATCH`: zero rows match. No fixture reconciliation authority is granted.
-- `AMBIGUOUS_EXACT_FULL_UTC_MATCH`: multiple reviewed rows match exactly. ATHENA chooses none and grants no fixture reconciliation authority.
+- `UNIQUE_EXACT_FULL_UTC_MATCH_RECONCILED`: exactly one source-replayed admitted FotMob row matches all four exact fields. The exact matched FotMob lineage is preserved and `fixture_reconciliation_authorized` becomes `true` for this result only.
+- `NO_EXACT_FULL_UTC_MATCH`: zero admitted rows match. No fixture reconciliation authority is granted.
+- `AMBIGUOUS_EXACT_FULL_UTC_MATCH`: multiple admitted rows match exactly. ATHENA chooses none and grants no fixture reconciliation authority.
 
 A unique exact result promotes only the SportyBet↔FotMob fixture-reconciliation capability. It does not promote bookmaker market equivalence or any pricing/selection capability.
 
@@ -56,7 +66,7 @@ A unique exact result promotes only the SportyBet↔FotMob fixture-reconciliatio
 
 Even after a unique exact fixture reconciliation, this boundary does not authorize:
 
-- SportyBet automated network acquisition;
+- SportyBet, Sportradar, or FotMob network acquisition;
 - fuzzy or inferred provider aliases;
 - canonical SportyBet market mapping;
 - SportyBet provider quote timestamp or snapshot identity;
@@ -73,9 +83,9 @@ All non-fixture downstream safety flags remain exact `false`.
 
 ## Consumption-time verification
 
-`revalidate_full_utc_reconciliation()` rebuilds PR #162 from the complete preserved source chain, rebuilds the reconciliation against the exact reviewed FotMob population, and requires canonical byte-for-byte equality with the supplied result.
+`revalidate_full_utc_reconciliation()` replays both trust chains again: PR #162 from preserved SportyBet/Terms/Sportradar sources and the FotMob admission from raw captures through candidate extraction, exact human review decisions and handoff. It then rebuilds the reconciliation and requires canonical byte-for-byte equality with the supplied result.
 
-A coordinated forged result with plausible hashes therefore cannot acquire fixture-reconciliation authority unless it is the deterministic derivative of the preserved sources and exact FotMob population.
+A coordinated forged result with plausible hashes therefore cannot acquire fixture-reconciliation authority unless it is the deterministic derivative of both preserved source chains.
 
 ## Next boundary
 
