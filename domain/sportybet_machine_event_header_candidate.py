@@ -2,12 +2,12 @@
 
 This research boundary consumes the exact PR #153 user-controlled event-detail
 manifest, the exact PR #154 provider-native inventory derived from the same HTML,
-and the preserved raw HTML bytes.  It extracts only visible event-header text:
+and the preserved raw HTML bytes. It extracts only visible event-header text:
 competition, displayed date/time, home participant and away participant.
 
-The result is deliberately a candidate.  The reviewed Lite HTML has not yet
+The result is deliberately a candidate. The reviewed Lite HTML has not yet
 proved a provider-supplied year or timezone field, and this module does not turn
-a displayed clock into UTC by assumption.  No fixture-reconciliation, pricing,
+a displayed clock into UTC by assumption. No fixture-reconciliation, pricing,
 selection, slip, booking-code, execution or BET authority is created.
 """
 
@@ -24,6 +24,7 @@ from typing import Any
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
 from domain.sportybet_lite_source_capture import (
+    MAX_RESPONSE_BYTES,
     SportyBetLiteCaptureError,
     SportyBetLiteRequestKind,
     sha256_bytes,
@@ -37,7 +38,7 @@ PROVIDER = "SportyBet"
 EXTRACTION_AUTHORITY = "MACHINE_DERIVED_FROM_PRESERVED_PROVIDER_HTML_VISIBLE_TEXT"
 DISPLAY_TIME_BASIS = "UNPROVEN_IN_PRESERVED_EVENT_DETAIL_HTML"
 MATCHING_STATUS = "EVENT_HEADER_CANDIDATE_ONLY"
-MAX_RAW_BYTES = 8 * 1024 * 1024
+MAX_RAW_BYTES = MAX_RESPONSE_BYTES
 MAX_CANONICAL_BYTES = 256 * 1024
 
 _EVIDENCE_ID_RE = re.compile(r"^[0-9a-f]{24}$", flags=re.ASCII)
@@ -148,11 +149,33 @@ def _text(value: Any, label: str, *, maximum: int = 160) -> str:
 
 def _validate_month_day(day: Any, month: Any) -> tuple[int, int]:
     if type(day) is not int or type(month) is not int:
-        raise SportyBetMachineEventHeaderError("kickoff month/day must be exact integers")
+        raise SportyBetMachineEventHeaderError(
+            "kickoff month/day must be exact integers"
+        )
     maximum = _MONTH_MAX_DAY.get(month)
     if maximum is None or day < 1 or day > maximum:
         raise SportyBetMachineEventHeaderError("kickoff month/day is impossible")
     return day, month
+
+
+def _validate_scalar_components(
+    *,
+    day: Any,
+    month: Any,
+    weekday: Any,
+    hour: Any,
+    minute: Any,
+) -> tuple[int, int, str, int, int]:
+    _validate_month_day(day, month)
+    if type(weekday) is not str:
+        raise SportyBetMachineEventHeaderError(
+            "kickoff weekday must be an exact string"
+        )
+    if type(hour) is not int or type(minute) is not int:
+        raise SportyBetMachineEventHeaderError(
+            "kickoff clock components must be exact integers"
+        )
+    return day, month, weekday, hour, minute
 
 
 def _normalize_visible_text(value: str) -> str | None:
@@ -348,9 +371,12 @@ class ExtractedVisibleEventHeader:
             raise SportyBetMachineEventHeaderError(
                 "home and away display names must differ"
             )
-        _validate_month_day(
-            int(match.group("day")),
-            int(match.group("month")),
+        actual = _validate_scalar_components(
+            day=self.kickoff_day,
+            month=self.kickoff_month,
+            weekday=self.kickoff_weekday,
+            hour=self.kickoff_hour,
+            minute=self.kickoff_minute,
         )
         expected = (
             int(match.group("day")),
@@ -359,13 +385,7 @@ class ExtractedVisibleEventHeader:
             int(match.group("hour")),
             int(match.group("minute")),
         )
-        actual = (
-            self.kickoff_day,
-            self.kickoff_month,
-            self.kickoff_weekday,
-            self.kickoff_hour,
-            self.kickoff_minute,
-        )
+        _validate_month_day(expected[0], expected[1])
         if expected != actual:
             raise SportyBetMachineEventHeaderError(
                 "parsed kickoff fields mismatch display text"
