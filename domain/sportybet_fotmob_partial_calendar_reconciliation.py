@@ -26,12 +26,14 @@ from collections.abc import Iterable, Mapping
 from typing import Any
 
 from domain import sportybet_event_local_time_basis as local_time
+from domain import sportybet_machine_event_header_candidate as header
 from domain import sportybet_official_time_semantics as terms
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
 from domain.fotmob_fixture_candidate_review import FotMobReviewedFixtureCatalogInput
 from domain.sportybet_lite_source_capture import (
     SportyBetLiteCaptureError,
+    SportyBetLiteRequestKind,
     parse_utc_timestamp,
     serialize_utc,
 )
@@ -364,9 +366,12 @@ class SportyBetFotMobPartialCalendarCandidate:
     event_source_native_inventory_sha256: str
     event_source_raw_sha256: str
     event_candidate_sha256: str
+    event_source_url: str
     terms_evidence_id: str
     terms_qualification_sha256: str
     terms_raw_sha256: str
+    terms_source_url: str
+    terms_rule_sha256: str
     fotmob_population_sha256: str
     sportybet_event_id: str
     sportybet_sport_id: str
@@ -409,17 +414,46 @@ class SportyBetFotMobPartialCalendarCandidate:
         _evidence_id(self.terms_evidence_id, "terms_evidence_id")
         _hash(self.terms_qualification_sha256, "terms_qualification_sha256")
         _hash(self.terms_raw_sha256, "terms_raw_sha256")
+        if self.terms_rule_sha256 != terms.EXPECTED_STATEMENT_SHA256:
+            raise SportyBetFotMobPartialCalendarError("terms_rule_sha256 mismatch")
         _hash(self.fotmob_population_sha256, "fotmob_population_sha256")
         _text(self.sportybet_event_id, "sportybet_event_id", maximum=160)
         _text(self.sportybet_sport_id, "sportybet_sport_id", maximum=160)
-        competition = _text(self.competition_display, "competition_display")
-        home = _text(self.home_display, "home_display")
-        away = _text(self.away_display, "away_display")
-        _text(self.kickoff_display, "kickoff_display", maximum=64)
-        if home == away:
-            raise SportyBetFotMobPartialCalendarError(
-                "SportyBet home and away display names must differ"
+        try:
+            kind, event_id, sport_id, _, _ = manual.validate_source_url(
+                self.event_source_url
             )
+        except manual.SportyBetUserEvidenceError as exc:
+            raise SportyBetFotMobPartialCalendarError(str(exc)) from exc
+        if (
+            kind is not SportyBetLiteRequestKind.EVENT_DETAIL
+            or event_id != self.sportybet_event_id
+            or sport_id != self.sportybet_sport_id
+        ):
+            raise SportyBetFotMobPartialCalendarError(
+                "event source URL does not match SportyBet event/sport identity"
+            )
+        try:
+            terms.validate_source_url(self.terms_source_url)
+        except terms.SportyBetOfficialTimeSemanticsError as exc:
+            raise SportyBetFotMobPartialCalendarError(str(exc)) from exc
+        try:
+            checked_header = header.ExtractedVisibleEventHeader(
+                competition_display=self.competition_display,
+                kickoff_display=self.kickoff_display,
+                home_display=self.home_display,
+                away_display=self.away_display,
+                kickoff_day=self.kickoff_day,
+                kickoff_month=self.kickoff_month,
+                kickoff_weekday=self.kickoff_weekday,
+                kickoff_hour=self.kickoff_hour,
+                kickoff_minute=self.kickoff_minute,
+            )
+        except header.SportyBetMachineEventHeaderError as exc:
+            raise SportyBetFotMobPartialCalendarError(str(exc)) from exc
+        competition = checked_header.competition_display
+        home = checked_header.home_display
+        away = checked_header.away_display
         if self.matching_basis != MATCHING_BASIS:
             raise SportyBetFotMobPartialCalendarError("matching_basis mismatch")
         if self.kickoff_timezone != TIME_ZONE_LABEL:
@@ -438,18 +472,6 @@ class SportyBetFotMobPartialCalendarCandidate:
             raise SportyBetFotMobPartialCalendarError(
                 "sportybet_year_proven must remain exact False"
             )
-        if (
-            type(self.kickoff_day) is not int
-            or type(self.kickoff_month) is not int
-            or type(self.kickoff_hour) is not int
-            or type(self.kickoff_minute) is not int
-            or type(self.kickoff_weekday) is not str
-        ):
-            raise SportyBetFotMobPartialCalendarError(
-                "SportyBet partial-calendar components have invalid types"
-            )
-        if self.kickoff_weekday not in _WEEKDAYS:
-            raise SportyBetFotMobPartialCalendarError("kickoff_weekday is invalid")
         if type(self.disposition) is not PartialCalendarDisposition:
             raise SportyBetFotMobPartialCalendarError("disposition is invalid")
         if (
@@ -520,9 +542,12 @@ class SportyBetFotMobPartialCalendarCandidate:
             "event_source_native_inventory_sha256": self.event_source_native_inventory_sha256,
             "event_source_raw_sha256": self.event_source_raw_sha256,
             "event_candidate_sha256": self.event_candidate_sha256,
+            "event_source_url": self.event_source_url,
             "terms_evidence_id": self.terms_evidence_id,
             "terms_qualification_sha256": self.terms_qualification_sha256,
             "terms_raw_sha256": self.terms_raw_sha256,
+            "terms_source_url": self.terms_source_url,
+            "terms_rule_sha256": self.terms_rule_sha256,
             "fotmob_population_sha256": self.fotmob_population_sha256,
             "sportybet_event_id": self.sportybet_event_id,
             "sportybet_sport_id": self.sportybet_sport_id,
@@ -600,9 +625,12 @@ def build_partial_calendar_reconciliation_candidate(
         event_source_native_inventory_sha256=rebuilt.event_source_native_inventory_sha256,
         event_source_raw_sha256=rebuilt.event_source_raw_sha256,
         event_candidate_sha256=rebuilt.event_candidate_sha256,
+        event_source_url=rebuilt.event_source_url,
         terms_evidence_id=rebuilt.terms_evidence_id,
         terms_qualification_sha256=rebuilt.terms_qualification_sha256,
         terms_raw_sha256=rebuilt.terms_raw_sha256,
+        terms_source_url=rebuilt.terms_source_url,
+        terms_rule_sha256=rebuilt.terms_rule_sha256,
         fotmob_population_sha256=fotmob_population_sha256(rows),
         sportybet_event_id=rebuilt.event_id,
         sportybet_sport_id=rebuilt.sport_id,
