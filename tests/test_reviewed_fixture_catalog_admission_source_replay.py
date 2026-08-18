@@ -27,9 +27,7 @@ from domain.fotmob_fixture_candidates import (
     FotMobFixtureCandidateBundle,
     FotMobFixtureCandidateSource,
 )
-from domain.fotmob_fixture_catalog_handoff import (
-    build_fotmob_fixture_catalog_handoff,
-)
+from domain.fotmob_fixture_catalog_handoff import build_fotmob_fixture_catalog_handoff
 from domain.reviewed_fixture_catalog_admission import (
     ReviewedFixtureCatalogAdmissionDisposition,
     sha256_reviewed_fixture_catalog_admission,
@@ -38,14 +36,13 @@ from domain.reviewed_fixture_catalog_admission_source_replay import (
     ADMISSION_FILENAME,
     DECISION_FILENAME,
     ReviewedFixtureCatalogAdmissionSourceReplayError,
+    _verify_semantic_admission_directory,
     build_replay_decision,
     canonical_replay_decision_bytes,
     parse_replay_decision_bytes,
     replay_decision_sha256,
     store_source_replayed_admission,
-    verify_source_replayed_admission_directory,
 )
-
 
 UTC = dt.timezone.utc
 RAW_EVIDENCE = b"exact preserved FotMob response bytes\n"
@@ -86,9 +83,7 @@ def _compiled(tmp_path: Path):
         source_request_date=source.request_date,
         source_observed_at=source.source_observed_at,
     )
-    duplicate_count, fixture_conflicts = candidate_module._make_fixture_observations(
-        (candidate,)
-    )
+    duplicate_count, fixture_conflicts = candidate_module._make_fixture_observations((candidate,))
     team_conflicts = candidate_module._make_team_conflicts((candidate,))
     competition_conflicts = candidate_module._make_competition_conflicts((candidate,))
     bundle = FotMobFixtureCandidateBundle(
@@ -121,7 +116,6 @@ def _compiled(tmp_path: Path):
         ),
     )
     handoff = build_fotmob_fixture_catalog_handoff(bundle, review)
-
     payload = handoff.catalog_inputs[0].to_catalog_input_dict()
     evidence_path = tmp_path / payload["evidence_file_path"]
     evidence_path.parent.mkdir(parents=True, exist_ok=True)
@@ -133,10 +127,7 @@ def _compiled(tmp_path: Path):
         evidence_root=tmp_path,
         as_of=dt.datetime(2026, 8, 10, 3, 0, tzinfo=UTC),
         minimum_lead_seconds=3600,
-        code_state={
-            "evidence_git_head_sha": "a" * 40,
-            "tracked_worktree_clean": True,
-        },
+        code_state={"evidence_git_head_sha": "a" * 40, "tracked_worktree_clean": True},
     )
     return handoff, result
 
@@ -158,41 +149,30 @@ def test_replay_decision_round_trips_canonical_bytes(tmp_path: Path) -> None:
     _, _, decision = _decision(tmp_path)
     raw = canonical_replay_decision_bytes(decision)
     rebuilt = parse_replay_decision_bytes(raw)
-
     assert canonical_replay_decision_bytes(rebuilt) == raw
     assert replay_decision_sha256(rebuilt) == hashlib.sha256(raw).hexdigest()
     assert rebuilt.decision.disposition.value == "ADMITTED"
 
 
-def test_source_replayed_admission_store_and_verify(tmp_path: Path) -> None:
+def test_source_replayed_admission_store_and_semantic_internal_verify(tmp_path: Path) -> None:
     handoff, result, decision = _decision(tmp_path)
-
     directory, admission = store_source_replayed_admission(
         handoff=handoff,
         fixture_catalog_result=result,
         replay_decision=decision,
         repository_root=tmp_path,
     )
-
-    assert sorted(item.name for item in directory.iterdir()) == sorted(
-        [ADMISSION_FILENAME, DECISION_FILENAME]
-    )
+    assert sorted(item.name for item in directory.iterdir()) == sorted([ADMISSION_FILENAME, DECISION_FILENAME])
     assert directory.name == sha256_reviewed_fixture_catalog_admission(admission)[:24]
     assert admission.decision.disposition.value == "ADMITTED"
-    assert [item.fixture_identifier for item in admission.admitted_fixtures] == [
-        "FOTMOB:1001"
-    ]
-
-    verified = verify_source_replayed_admission_directory(
+    assert [item.fixture_identifier for item in admission.admitted_fixtures] == ["FOTMOB:1001"]
+    verified = _verify_semantic_admission_directory(
         directory,
         handoff=handoff,
         fixture_catalog_result=result,
         repository_root=tmp_path,
     )
-    assert (
-        sha256_reviewed_fixture_catalog_admission(verified)
-        == sha256_reviewed_fixture_catalog_admission(admission)
-    )
+    assert sha256_reviewed_fixture_catalog_admission(verified) == sha256_reviewed_fixture_catalog_admission(admission)
 
 
 def test_exact_replay_is_idempotent(tmp_path: Path) -> None:
@@ -210,17 +190,11 @@ def test_exact_replay_is_idempotent(tmp_path: Path) -> None:
         repository_root=tmp_path,
     )
     assert second_dir == first_dir
-    assert (
-        sha256_reviewed_fixture_catalog_admission(second)
-        == sha256_reviewed_fixture_catalog_admission(first)
-    )
+    assert sha256_reviewed_fixture_catalog_admission(second) == sha256_reviewed_fixture_catalog_admission(first)
 
 
 def test_rejected_review_can_be_preserved_without_admitted_fixtures(tmp_path: Path) -> None:
-    handoff, result, decision = _decision(
-        tmp_path,
-        disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
-    )
+    handoff, result, decision = _decision(tmp_path, disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED)
     _, admission = store_source_replayed_admission(
         handoff=handoff,
         fixture_catalog_result=result,
@@ -239,10 +213,7 @@ def test_rejected_review_can_be_preserved_without_admitted_fixtures(tmp_path: Pa
         lambda raw: raw.replace(b'"ADMITTED"', b'"REJECTED"', 1),
     ),
 )
-def test_noncanonical_or_changed_decision_bytes_fail_closed(
-    tmp_path: Path,
-    mutate,
-) -> None:
+def test_noncanonical_or_changed_decision_bytes_fail_closed(tmp_path: Path, mutate) -> None:
     _, _, decision = _decision(tmp_path)
     raw = canonical_replay_decision_bytes(decision)
     with pytest.raises(ReviewedFixtureCatalogAdmissionSourceReplayError):
