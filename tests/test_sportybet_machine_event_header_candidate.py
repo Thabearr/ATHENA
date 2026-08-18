@@ -109,6 +109,9 @@ def test_protocol_artifact_is_canonical_and_all_authority_false() -> None:
     assert payload["kickoff_year_capability"] == "UNPROVEN"
     assert payload["kickoff_timezone_capability"] == header.DISPLAY_TIME_BASIS
     assert payload["kickoff_utc_capability"] == "UNPROVEN"
+    assert payload["native_inventory_revalidation"] == (
+        header.NATIVE_INVENTORY_REVALIDATION
+    )
     assert set(payload["safety"]) == set(header._SAFETY_KEYS)
     assert all(value is False for value in payload["safety"].values())
 
@@ -278,6 +281,59 @@ def test_event_detail_lineage_is_bound_to_exact_manifest_and_inventory(
         header.build_machine_event_header_candidate(
             manifest=manifest,
             inventory=tampered,
+            raw_html=raw,
+        )
+
+
+def test_coordinated_selection_forgery_with_valid_lineage_is_rejected(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _, manifest, inventory, raw = _source(repo)
+    original = inventory.selections[0]
+    forged = dataclasses.replace(
+        original,
+        odds_raw="9.99",
+        odds_decimal="9.99",
+        href=original.href.replace("odds=2.05", "odds=9.99"),
+    )
+    forged_selections = (forged,) + inventory.selections[1:]
+    forged_inventory = dataclasses.replace(
+        inventory,
+        selections=forged_selections,
+        events=header._group_events(forged_selections),
+    )
+    assert forged_inventory.source_raw_sha256 == inventory.source_raw_sha256
+    assert forged_inventory.source_evidence_id == inventory.source_evidence_id
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="exact deterministic derivative",
+    ):
+        header.build_machine_event_header_candidate(
+            manifest=manifest,
+            inventory=forged_inventory,
+            raw_html=raw,
+        )
+
+
+def test_coordinated_inventory_metadata_forgery_is_rejected(
+    tmp_path: Path,
+) -> None:
+    repo = _repo(tmp_path)
+    _, manifest, inventory, raw = _source(repo)
+    forged_inventory = dataclasses.replace(
+        inventory,
+        imported_at_utc="2026-08-18T12:02:00.000000Z",
+    )
+    assert forged_inventory.source_raw_sha256 == inventory.source_raw_sha256
+    assert forged_inventory.source_evidence_id == inventory.source_evidence_id
+    with pytest.raises(
+        header.SportyBetMachineEventHeaderError,
+        match="exact deterministic derivative",
+    ):
+        header.build_machine_event_header_candidate(
+            manifest=manifest,
+            inventory=forged_inventory,
             raw_html=raw,
         )
 
