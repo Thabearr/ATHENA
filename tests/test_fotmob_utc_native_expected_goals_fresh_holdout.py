@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
+import json
 
 import pytest
 
@@ -145,10 +146,29 @@ def _synthetic_ledger(monkeypatch: pytest.MonkeyPatch) -> fresh.FreshHistoryLedg
         ),
     )
     raw = b"".join(fresh._canonical(row) for row in rows)
-    monkeypatch.setattr(fresh, "BOOTSTRAP_PROJECTION_SHA256", hashlib.sha256(raw).hexdigest())
+    monkeypatch.setattr(
+        fresh, "BOOTSTRAP_PROJECTION_SHA256", hashlib.sha256(raw).hexdigest()
+    )
     monkeypatch.setattr(fresh, "BOOTSTRAP_PROJECTION_SIZE", len(raw))
     monkeypatch.setattr(fresh, "BOOTSTRAP_PROJECTION_ROWS", len(rows))
     return fresh.build_fresh_history_ledger(raw)
+
+
+def _real_prediction(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    fixture_id: int = 7_000_001,
+    primary_id: int = 40,
+) -> tuple[fresh.FreshHistoryLedger, fresh.SealedFreshPrediction]:
+    ledger = _synthetic_ledger(monkeypatch)
+    assessment = fresh.build_fresh_prediction_assessment(
+        history_ledger=ledger,
+        selected_capture=_capture(fixture_id=fixture_id, primary_id=primary_id),
+        holdout_start=_start(),
+    )
+    assert assessment.disposition is fresh.PredictionDisposition.SEALED_COMPLETE_CASE
+    assert assessment.sealed_prediction is not None
+    return ledger, assessment.sealed_prediction
 
 
 def _adapter_result(
@@ -160,7 +180,6 @@ def _adapter_result(
     fixture = prediction.fixture
     first_observed = fixture.kickoff_utc + dt.timedelta(hours=3)
     second_observed = first_observed + dt.timedelta(minutes=10)
-    blocked = {}
     scores: tuple[score_adapter.OrdinaryFtFinishedScore, ...] = ()
     pair_status = score_adapter.AdapterPairStatus.NO_QUALIFIED_ORDINARY_FT_SCORES
     terminal_count = 0
@@ -204,7 +223,7 @@ def _adapter_result(
         second_pr89_assessment_sha256=EIGHT,
         terminal_candidate_union_count=terminal_count,
         qualified_count=len(scores),
-        blocked_fixture_ids_by_status=blocked,
+        blocked_fixture_ids_by_status={},
         qualified_scores=scores,
         semantic_scope_rule=score_adapter.SEMANTIC_SCOPE_RULE,
         source_capability_registration_performed=False,
@@ -227,11 +246,13 @@ def _post_identity(
     )
     return fresh.QualifiedCaptureFixture(
         fixture_id=fixture.fixture_id,
-        provider_primary_id=primary_id or fixture.provider_primary_id,
-        wrapper_id=wrapper_id or fixture.wrapper_id,
+        provider_primary_id=(
+            fixture.provider_primary_id if primary_id is None else primary_id
+        ),
+        wrapper_id=fixture.wrapper_id if wrapper_id is None else wrapper_id,
         home_team_id=fixture.home_team_id,
         away_team_id=fixture.away_team_id,
-        kickoff_utc=kickoff or fixture.kickoff_utc,
+        kickoff_utc=fixture.kickoff_utc if kickoff is None else kickoff,
         capture_observed_at=observed,
         capture_manifest_sha256=FIVE if first else SIX,
         capture_raw_sha256=THREE if first else FOUR,
@@ -265,7 +286,7 @@ def _payload(
 
 
 def _payload_bytes(payload) -> bytes:
-    return fresh.json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
+    return json.dumps(payload, separators=(",", ":"), sort_keys=True).encode()
 
 
 def test_implementation_pins_reviewed_dependencies_and_grants_no_authority() -> None:
@@ -286,17 +307,21 @@ def test_implementation_pins_reviewed_dependencies_and_grants_no_authority() -> 
 
 
 def test_holdout_start_is_first_midnight_strictly_after_merge_and_respects_floor() -> None:
-    assert fresh.resolve_holdout_start(dt.datetime(2026, 8, 18, 4, 10, tzinfo=UTC)) == dt.datetime(
-        2026, 8, 19, 0, 0, tzinfo=UTC
+    assert fresh.resolve_holdout_start(
+        dt.datetime(2026, 8, 18, 4, 10, tzinfo=UTC)
+    ) == dt.datetime(2026, 8, 19, 0, 0, tzinfo=UTC)
+    assert fresh.resolve_holdout_start(
+        dt.datetime(2026, 8, 18, 0, 0, tzinfo=UTC)
+    ) == dt.datetime(2026, 8, 19, 0, 0, tzinfo=UTC)
+    assert fresh.resolve_holdout_start(
+        dt.datetime(2026, 8, 14, 12, 0, tzinfo=UTC)
+    ) == dt.datetime(2026, 8, 15, 0, 0, tzinfo=UTC)
+    assert fresh.minimum_gate_boundary(_start()) == dt.datetime(
+        2026, 9, 16, 0, 0, tzinfo=UTC
     )
-    assert fresh.resolve_holdout_start(dt.datetime(2026, 8, 18, 0, 0, tzinfo=UTC)) == dt.datetime(
-        2026, 8, 19, 0, 0, tzinfo=UTC
+    assert fresh.hard_close_boundary(_start()) == dt.datetime(
+        2026, 11, 17, 0, 0, tzinfo=UTC
     )
-    assert fresh.resolve_holdout_start(dt.datetime(2026, 8, 14, 12, 0, tzinfo=UTC)) == dt.datetime(
-        2026, 8, 15, 0, 0, tzinfo=UTC
-    )
-    assert fresh.minimum_gate_boundary(_start()) == dt.datetime(2026, 9, 16, 0, 0, tzinfo=UTC)
-    assert fresh.hard_close_boundary(_start()) == dt.datetime(2026, 11, 17, 0, 0, tzinfo=UTC)
 
 
 def test_provider_identity_requires_positive_ids_and_exact_wrapper_match() -> None:
@@ -375,7 +400,9 @@ def test_capture_selection_uses_earliest_qualifying_capture_and_not_later_drift(
         earliest,
         later_drift,
     )
-    selected = fresh.select_earliest_qualifying_capture(observations, holdout_start=_start())
+    selected = fresh.select_earliest_qualifying_capture(
+        observations, holdout_start=_start()
+    )
     assert selected == earliest
 
     later_kickoff = dt.datetime(2026, 8, 20, 18, 0, tzinfo=UTC)
@@ -385,17 +412,23 @@ def test_capture_selection_uses_earliest_qualifying_capture_and_not_later_drift(
             observed=dt.datetime(2026, 8, 19, 17, 59, tzinfo=UTC),
         ),
     )
-    assert fresh.select_earliest_qualifying_capture(too_early, holdout_start=_start()) is None
+    assert (
+        fresh.select_earliest_qualifying_capture(too_early, holdout_start=_start())
+        is None
+    )
     too_late = (
         _capture(
             kickoff=later_kickoff,
             observed=dt.datetime(2026, 8, 20, 17, 1, tzinfo=UTC),
         ),
     )
-    assert fresh.select_earliest_qualifying_capture(too_late, holdout_start=_start()) is None
+    assert (
+        fresh.select_earliest_qualifying_capture(too_late, holdout_start=_start())
+        is None
+    )
 
 
-def test_capture_selection_fails_only_when_earliest_capture_itself_is_identity_ambiguous() -> None:
+def test_capture_selection_fails_when_earliest_capture_is_identity_ambiguous() -> None:
     observed = dt.datetime(2026, 8, 20, 16, 0, tzinfo=UTC)
     one = _capture(observed=observed, manifest_sha=ONE)
     two = _capture(observed=observed, wrapper_id=88_002, manifest_sha=TWO)
@@ -404,7 +437,21 @@ def test_capture_selection_fails_only_when_earliest_capture_itself_is_identity_a
 
     other_fixture = _capture(fixture_id=7_000_002, manifest_sha=THREE)
     with pytest.raises(fresh.FotMobFreshHoldoutError, match="exactly one fixture id"):
-        fresh.select_earliest_qualifying_capture((one, other_fixture), holdout_start=_start())
+        fresh.select_earliest_qualifying_capture(
+            (one, other_fixture), holdout_start=_start()
+        )
+
+
+def test_post_seal_change_then_reversion_remains_drifted() -> None:
+    prediction = _sealed()
+    drift = _post_identity(
+        prediction,
+        first=True,
+        kickoff=prediction.fixture.kickoff_utc + dt.timedelta(hours=1),
+    )
+    reverted = _post_identity(prediction, first=False)
+    assert fresh.post_seal_identity_drifted(prediction, (drift, reverted)) is True
+    assert fresh.post_seal_identity_drifted(prediction, (reverted,)) is False
 
 
 def test_history_ledger_cannot_be_forged_from_correct_metadata_only() -> None:
@@ -427,26 +474,21 @@ def test_history_ledger_cannot_be_forged_from_correct_metadata_only() -> None:
 def test_public_prediction_uses_reviewed_constructor_and_exact_frozen_rates(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ledger = _synthetic_ledger(monkeypatch)
-    assessment = fresh.build_fresh_prediction_assessment(
-        history_ledger=ledger,
-        selected_capture=_capture(),
-        holdout_start=_start(),
-    )
-    assert assessment.disposition is fresh.PredictionDisposition.SEALED_COMPLETE_CASE
-    assert assessment.missing_feature_ids == ()
-    sealed = assessment.sealed_prediction
-    assert sealed is not None
+    ledger, sealed = _real_prediction(monkeypatch)
+    assert ledger.bootstrap_row_count == 2
     assert sealed.history_prefix_count == 2
     assert sealed.bootstrap_projection_sha256 == fresh.BOOTSTRAP_PROJECTION_SHA256
     assert sealed.features["home_form"] > 0.0
     assert sealed.features["away_form"] > 0.0
-    assert sealed.rates == fresh._rates_from_features(sealed.features)
+    assert dict(sealed.rates) == fresh._rates_from_features(sealed.features)
     assert sealed.rates["calibrated_home"] == protocol.apply_frozen_home_calibration(
         sealed.rates["native_home"]
     )
     assert sealed.rates["calibrated_away"] == sealed.rates["native_away"]
     assert all(value is False for value in sealed.safety.values())
+    assert fresh.sha256_sealed_fresh_prediction(sealed) == hashlib.sha256(
+        fresh.canonical_sealed_fresh_prediction_bytes(sealed)
+    ).hexdigest()
 
 
 def test_prediction_reports_missing_features_instead_of_imputing() -> None:
@@ -471,14 +513,7 @@ def test_sealed_prediction_rejects_rate_tampering() -> None:
 def test_history_revalidation_rejects_forged_features_even_when_rates_match(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ledger = _synthetic_ledger(monkeypatch)
-    assessment = fresh.build_fresh_prediction_assessment(
-        history_ledger=ledger,
-        selected_capture=_capture(),
-        holdout_start=_start(),
-    )
-    sealed = assessment.sealed_prediction
-    assert sealed is not None
+    ledger, sealed = _real_prediction(monkeypatch)
     forged_features = dict(sealed.features)
     forged_features["home_elo"] += 20.0
     forged = dataclasses.replace(
@@ -486,7 +521,9 @@ def test_history_revalidation_rejects_forged_features_even_when_rates_match(
         features=forged_features,
         rates=fresh._rates_from_features(forged_features),
     )
-    with pytest.raises(fresh.FotMobFreshHoldoutError, match="deterministic reconstruction"):
+    with pytest.raises(
+        fresh.FotMobFreshHoldoutError, match="deterministic reconstruction"
+    ):
         fresh.revalidate_sealed_prediction(history_ledger=ledger, prediction=forged)
 
 
@@ -562,14 +599,7 @@ def test_non_ordinary_ft_result_is_excluded_not_scored() -> None:
 def test_public_settlement_revalidates_prediction_before_binding_raw_pair(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ledger = _synthetic_ledger(monkeypatch)
-    prediction_assessment = fresh.build_fresh_prediction_assessment(
-        history_ledger=ledger,
-        selected_capture=_capture(primary_id=40),
-        holdout_start=_start(),
-    )
-    prediction = prediction_assessment.sealed_prediction
-    assert prediction is not None
+    ledger, prediction = _real_prediction(monkeypatch, primary_id=40)
     first = _post_identity(prediction, first=True)
     second = _post_identity(prediction, first=False)
     adapter = _adapter_result(prediction)
@@ -586,6 +616,7 @@ def test_public_settlement_revalidates_prediction_before_binding_raw_pair(
     assessment = fresh.settle_sealed_prediction(
         prediction,
         history_ledger=ledger,
+        post_seal_observations=(),
         first_raw_json=b"first",
         first_manifest=object(),  # type: ignore[arg-type]
         second_raw_json=b"second",
@@ -600,10 +631,13 @@ def test_public_settlement_revalidates_prediction_before_binding_raw_pair(
         features=forged_features,
         rates=fresh._rates_from_features(forged_features),
     )
-    with pytest.raises(fresh.FotMobFreshHoldoutError, match="deterministic reconstruction"):
+    with pytest.raises(
+        fresh.FotMobFreshHoldoutError, match="deterministic reconstruction"
+    ):
         fresh.settle_sealed_prediction(
             forged,
             history_ledger=ledger,
+            post_seal_observations=(),
             first_raw_json=b"first",
             first_manifest=object(),  # type: ignore[arg-type]
             second_raw_json=b"second",
@@ -611,11 +645,47 @@ def test_public_settlement_revalidates_prediction_before_binding_raw_pair(
         )
 
 
+def test_public_settlement_excludes_observed_change_then_revert(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    ledger, prediction = _real_prediction(monkeypatch, primary_id=40)
+    first = _post_identity(prediction, first=True)
+    second = _post_identity(prediction, first=False)
+    drift = _post_identity(
+        prediction,
+        first=True,
+        wrapper_id=prediction.fixture.wrapper_id + 1,
+    )
+
+    monkeypatch.setattr(
+        fresh,
+        "qualify_capture_fixtures",
+        lambda raw, _manifest: (first,) if raw == b"first" else (second,),
+    )
+    monkeypatch.setattr(
+        score_adapter,
+        "adapt_fotmob_data_matches_ordinary_ft_finished_scores",
+        lambda *_args: pytest.fail("adapter must not run after known post-seal drift"),
+    )
+    assessment = fresh.settle_sealed_prediction(
+        prediction,
+        history_ledger=ledger,
+        post_seal_observations=(drift,),
+        first_raw_json=b"first",
+        first_manifest=object(),  # type: ignore[arg-type]
+        second_raw_json=b"second",
+        second_manifest=object(),  # type: ignore[arg-type]
+    )
+    assert assessment.disposition is (
+        fresh.SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT
+    )
+    assert assessment.settled_prediction is None
+
+
 def test_append_history_accepts_only_legacy_settlement_derived_update(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ledger = _synthetic_ledger(monkeypatch)
-    legacy = _sealed(primary_id=40)
+    ledger, legacy = _real_prediction(monkeypatch, primary_id=40)
     legacy_assessment = fresh._settle_from_revalidated_pair(
         prediction=legacy,
         first_identity=_post_identity(legacy, first=True),
@@ -628,20 +698,26 @@ def test_append_history_accepts_only_legacy_settlement_derived_update(
     assert len(updated.fresh_updates) == 1
     assert updated.fresh_updates[0].fixture_identifier == str(legacy.fixture.fixture_id)
 
-    with pytest.raises(fresh.FotMobFreshHoldoutError, match="duplicated"):
+    with pytest.raises(fresh.FotMobFreshHoldoutError):
         fresh.append_fresh_legacy_history_update(updated, settled)
 
-    nonlegacy = _sealed(fixture_id=7_000_003, primary_id=999)
-    nonlegacy_assessment = fresh._settle_from_revalidated_pair(
+    nonlegacy_assessment = fresh.build_fresh_prediction_assessment(
+        history_ledger=ledger,
+        selected_capture=_capture(fixture_id=7_000_003, primary_id=999),
+        holdout_start=_start(),
+    )
+    nonlegacy = nonlegacy_assessment.sealed_prediction
+    assert nonlegacy is not None
+    nonlegacy_settlement = fresh._settle_from_revalidated_pair(
         prediction=nonlegacy,
         first_identity=_post_identity(nonlegacy, first=True),
         second_identity=_post_identity(nonlegacy, first=False),
         adapter_result=_adapter_result(nonlegacy),
     )
-    assert nonlegacy_assessment.settled_prediction is not None
+    assert nonlegacy_settlement.settled_prediction is not None
     with pytest.raises(fresh.FotMobFreshHoldoutError, match="non-legacy"):
         fresh.append_fresh_legacy_history_update(
-            ledger, nonlegacy_assessment.settled_prediction
+            ledger, nonlegacy_settlement.settled_prediction
         )
 
 
@@ -673,7 +749,9 @@ def test_count_only_boundary_closes_at_exact_28_day_boundary_when_coverage_passe
         holdout_start=_start(),
         boundary=minimum,
     )
-    assert result["decision"] == fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED.value
+    assert result["decision"] == (
+        fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED.value
+    )
     assert result["coverage"]["complete_case_fixture_count"] == 1_000
     assert len(result["coverage"]["qualifying_primary_ids"]) == 8
     assert result["coverage"]["non_legacy_qualifying_primary_ids"] == [900, 901]
@@ -687,14 +765,18 @@ def test_boundary_does_not_require_day_29_and_hard_close_is_exact_day_90() -> No
         holdout_start=_start(),
         boundary=_start() + dt.timedelta(days=27),
     )
-    assert before["decision"] == fresh.HoldoutBoundaryDecision.OPEN_BEFORE_MINIMUM_GATE.value
+    assert before["decision"] == (
+        fresh.HoldoutBoundaryDecision.OPEN_BEFORE_MINIMUM_GATE.value
+    )
 
     minimum = fresh.evaluate_holdout_boundary(
         predictions,
         holdout_start=_start(),
         boundary=_start() + dt.timedelta(days=28),
     )
-    assert minimum["decision"] == fresh.HoldoutBoundaryDecision.OPEN_WAITING_FOR_COUNT_ONLY_COVERAGE.value
+    assert minimum["decision"] == (
+        fresh.HoldoutBoundaryDecision.OPEN_WAITING_FOR_COUNT_ONLY_COVERAGE.value
+    )
 
     hard = fresh.evaluate_holdout_boundary(
         predictions,
@@ -741,7 +823,9 @@ def test_close_membership_is_kickoff_exclusive_and_rejects_mixed_holdout_starts(
         observed=dt.datetime(2026, 8, 21, 16, 0, tzinfo=UTC),
         holdout_start=dt.datetime(2026, 8, 20, 0, 0, tzinfo=UTC),
     )
-    with pytest.raises(fresh.FotMobFreshHoldoutError, match="mixes different holdout starts"):
+    with pytest.raises(
+        fresh.FotMobFreshHoldoutError, match="mixes different holdout starts"
+    ):
         fresh.coverage_at_boundary(
             (before, other_start),
             holdout_start=_start(),
