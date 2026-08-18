@@ -135,7 +135,7 @@ def validate_odds(value: Any) -> tuple[str, str]:
 
 
 def _reviewed_lite_path(path: str) -> bool:
-    return path == INDEX_PATH or path == EVENT_DETAIL_PATH or path.startswith(INDEX_PATH + "/")
+    return path in {INDEX_PATH, EVENT_DETAIL_PATH}
 
 
 def _query_mapping(href: str) -> tuple[str, dict[str, str]]:
@@ -162,9 +162,13 @@ def _query_mapping(href: str) -> tuple[str, dict[str, str]]:
         raise SportyBetProviderInventoryError(
             "scheme-relative selection hrefs are not accepted"
         )
+    if parsed.fragment:
+        raise SportyBetProviderInventoryError(
+            "selection href fragments are not part of the reviewed source identity"
+        )
     if not _reviewed_lite_path(parsed.path):
         raise SportyBetProviderInventoryError(
-            "selection href is outside the reviewed SportyBet Lite path boundary"
+            "selection href is outside the exact reviewed SportyBet Lite paths"
         )
     try:
         pairs = parse_qsl(
