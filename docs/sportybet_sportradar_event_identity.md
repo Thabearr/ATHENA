@@ -41,6 +41,14 @@ The numeric payload must be byte-for-byte the same decimal representation. Leadi
 
 The resulting artifact records both forms plus the exact SportyBet evidence lineage. `sportradar_namespace_qualified=true` means only that the exact SportyBet event-ID string conforms to the reviewed Sportradar sport-event identifier semantics.
 
+## Mandatory consumption-time revalidation
+
+A serialized bridge artifact is not trusted merely because its lineage fields look like valid hashes or because its event IDs satisfy the documented syntax.
+
+Every downstream consumer must call the exact bridge verifier with the preserved SportyBet PR #153 manifest, PR #154 native inventory, and exact event HTML. The verifier rebuilds the whole bridge through the reviewed PR #156 path and requires canonical byte-for-byte equality with the supplied bridge artifact.
+
+This makes coordinated or isolated hash-shaped lineage forgery insufficient. If the supplied bridge is not the exact deterministic derivative of the preserved SportyBet evidence, consumption fails closed before any Sportradar metadata can be associated with it.
+
 ## What this does not prove
 
 This bridge does **not** resolve the sport event. In particular it does not prove or populate:
@@ -63,4 +71,4 @@ All safety authorities remain exact `false`, including `sportradar_metadata_reso
 
 ## Next boundary
 
-The documented current resolver key gives ATHENA a non-circular way to request or ingest authoritative Sportradar event metadata later. The next narrow boundary should define a user-controlled/offline official Sportradar sport-event response contract keyed to this exact ID. If such evidence supplies an exact scheduled/start time and event identity, ATHENA can review whether it proves the missing SportyBet year without using the FotMob candidate as proof.
+The documented current resolver key gives ATHENA a non-circular way to request or ingest authoritative Sportradar event metadata later. The next narrow boundary should define a user-controlled/offline official Sportradar sport-event response contract keyed to this exact ID. That boundary must first revalidate the bridge from the preserved SportyBet evidence. Only an exact authoritative response tied to that revalidated ID may be considered for resolving the missing year/UTC; the FotMob candidate and current calendar remain prohibited as proof.
