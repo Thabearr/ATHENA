@@ -8,6 +8,7 @@ import pytest
 
 from domain import sportybet_machine_event_header_candidate as header
 from domain import sportybet_sportradar_event_identity as bridge
+from domain import sportybet_sportradar_event_identity_verification as verify
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
 
@@ -91,6 +92,7 @@ def test_protocol_is_canonical_and_keeps_all_downstream_authority_false() -> Non
     assert payload["numeric_identifier_preserved_across_prefix_migration"] is True
     assert payload["soccer_match_sport_event_identifier_uniqueness_documented"] is True
     assert payload["requires_exact_pr156_event_rederivation"] is True
+    assert payload["requires_exact_bridge_rederivation_at_consumption"] is True
     assert payload["event_metadata_resolved"] is False
     assert payload["sportybet_year_capability"] == "UNPROVEN"
     assert payload["sportybet_kickoff_utc_capability"] == "UNPROVEN"
@@ -143,6 +145,17 @@ def test_bridge_is_deterministic(tmp_path: Path) -> None:
     )
     assert bridge.canonical_bridge_bytes(value) == bridge.canonical_bridge_bytes(again)
     assert bridge.bridge_sha256(value) == bridge.bridge_sha256(again)
+
+
+def test_consumption_verifier_rebuilds_exact_bridge(tmp_path: Path) -> None:
+    value, manifest, inventory, raw = _build(tmp_path)
+    rebuilt = verify.revalidate_sportradar_event_identity_bridge(
+        value,
+        manifest=manifest,
+        inventory=inventory,
+        raw_html=raw,
+    )
+    assert bridge.canonical_bridge_bytes(rebuilt) == bridge.canonical_bridge_bytes(value)
 
 
 def test_non_soccer_sport_id_fails_closed(tmp_path: Path) -> None:
