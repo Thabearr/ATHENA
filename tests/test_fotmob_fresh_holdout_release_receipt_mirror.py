@@ -49,11 +49,40 @@ def _artifact_zip(*, archive: bytes = ARCHIVE, receipt: bytes | None = None) -> 
 
 
 def _verified() -> dict:
-    return mirror.verify_actions_artifact_bundle(
+    zip_bytes = _artifact_zip()
+    digest = mirror.verify_actions_artifact_zip_digest(
+        zip_bytes,
+        f"sha256:{hashlib.sha256(zip_bytes).hexdigest()}",
+    )
+    result = mirror.verify_actions_artifact_bundle(
         run_id=RUN_ID,
         artifact_name=ARCHIVE_NAME,
-        zip_bytes=_artifact_zip(),
+        zip_bytes=zip_bytes,
     )
+    result["actions_artifact_zip_sha256"] = digest
+    return result
+
+
+def test_actions_artifact_zip_is_bound_to_github_digest_metadata() -> None:
+    zip_bytes = _artifact_zip()
+    expected = hashlib.sha256(zip_bytes).hexdigest()
+    assert (
+        mirror.verify_actions_artifact_zip_digest(zip_bytes, f"sha256:{expected}")
+        == expected
+    )
+    with pytest.raises(
+        mirror.FreshHoldoutReleaseReceiptMirrorError,
+        match="GitHub digest metadata",
+    ):
+        mirror.verify_actions_artifact_zip_digest(
+            zip_bytes,
+            "sha256:" + "0" * 64,
+        )
+    with pytest.raises(
+        mirror.FreshHoldoutReleaseReceiptMirrorError,
+        match="lacks SHA-256 digest",
+    ):
+        mirror.verify_actions_artifact_zip_digest(zip_bytes, None)
 
 
 def test_actions_bundle_binds_exact_archive_receipt_and_run() -> None:
@@ -153,6 +182,7 @@ def test_release_verification_uploads_and_rechecks_exact_receipt() -> None:
         reload_release=lambda: release_after,
     )
     assert uploaded == [(verified["receipt_name"], verified["receipt_bytes"])]
+    assert result["actions_artifact_zip_sha256"] == verified["actions_artifact_zip_sha256"]
     assert result["release_archive_exact_bytes_verified"] is True
     assert result["release_receipt_exact_bytes_verified"] is True
     assert result["provider_network_acquisition_performed"] is False
@@ -243,7 +273,7 @@ def test_workflow_is_post_run_only_and_pins_implementation_blob() -> None:
     assert "workflow_dispatch" not in workflow
     assert "schedule:" not in workflow
     assert mirror.WORKFLOW_NAME in workflow
-    assert "b311f3136c6b06dfbe40babd66a2fb9fdf18fedf" in workflow
+    assert "ddabb6ae83cbe6c81c9264119a121a54715df960" in workflow
     assert "actions: read" in workflow
     assert "contents: write" in workflow
     assert "provider" not in workflow.lower()
