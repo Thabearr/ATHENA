@@ -8,6 +8,7 @@ from pathlib import Path
 import pytest
 
 from domain import sportradar_user_controlled_event_metadata as metadata
+from domain import sportradar_user_controlled_event_metadata_verification as metadata_verify
 from domain import sportybet_sportradar_event_identity as bridge
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
@@ -161,6 +162,7 @@ def test_protocol_is_canonical_and_keeps_promotion_closed() -> None:
     assert payload["schema_version"] == 1
     assert payload["status"] == metadata.STATUS
     assert payload["exact_bridge_revalidation_required"] is True
+    assert payload["exact_source_aware_directory_revalidation_required"] is True
     assert payload["raw_response_preserved"] is True
     assert payload["event_metadata_ingested"] is True
     assert payload["event_metadata_resolution_authorized"] is False
@@ -320,7 +322,7 @@ def test_metadata_revalidation_requires_exact_response_and_sportybet_sources(
         )
 
 
-def test_durable_store_is_idempotent_and_verifiable(tmp_path: Path) -> None:
+def test_durable_store_is_idempotent_and_source_aware_verifiable(tmp_path: Path) -> None:
     event_bridge, manifest, inventory, sporty_raw = _build_bridge(tmp_path)
     repository = tmp_path / "repo"
     raw_response = _raw()
@@ -350,8 +352,13 @@ def test_durable_store_is_idempotent_and_verifiable(tmp_path: Path) -> None:
     )
     assert first_dir == second_dir
     assert metadata.canonical_manifest_bytes(first) == metadata.canonical_manifest_bytes(second)
-    verified = metadata.verify_evidence_directory(
+
+    verified = metadata_verify.revalidate_event_metadata_evidence_directory(
         first_dir,
         allowed_root=repository / metadata.ALLOWED_OUTPUT_RELATIVE,
+        event_bridge=event_bridge,
+        sportybet_manifest=manifest,
+        sportybet_inventory=inventory,
+        sportybet_raw_html=sporty_raw,
     )
     assert metadata.evidence_sha256(verified) == metadata.evidence_sha256(first)
