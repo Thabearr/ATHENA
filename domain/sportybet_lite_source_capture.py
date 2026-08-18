@@ -1,11 +1,13 @@
 """Strict evidence contract for public read-only SportyBet Lite HTML captures.
 
-This module deliberately models source evidence only.  It does not authorize
-bookmaker equivalence, pricing, selection, slip construction, or BET.
+This module models source evidence only. It does not authorize bookmaker
+reconciliation, pricing, selection, slip construction, execution, or BET.
 """
 
 from __future__ import annotations
 
+import ctypes
+import ctypes.wintypes
 import dataclasses
 import datetime as dt
 import enum
@@ -398,19 +400,18 @@ def build_capture_manifest(
         raise SportyBetLiteCaptureError(
             "response must be CapturedSportyBetLiteResponse"
         )
-    target = request_target(
-        request_kind,
-        event_id=event_id,
-        sport_id=sport_id,
-        market_groups_name=market_groups_name,
-    )
     return SportyBetLiteCaptureManifest(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
         provider=PROVIDER,
         request_kind=request_kind,
         host=ALLOWED_HOST,
-        request_target=target,
+        request_target=request_target(
+            request_kind,
+            event_id=event_id,
+            sport_id=sport_id,
+            market_groups_name=market_groups_name,
+        ),
         request_headers=REQUEST_HEADERS,
         event_id=event_id,
         sport_id=sport_id,
@@ -512,35 +513,41 @@ def manifest_from_mapping(value: Any) -> SportyBetLiteCaptureManifest:
         raise SportyBetLiteCaptureError("request_headers must be pairs")
     try:
         request_kind = SportyBetLiteRequestKind(value["request_kind"])
-    except (TypeError, ValueError) as exc:
-        raise SportyBetLiteCaptureError("request_kind is invalid") from exc
-    return SportyBetLiteCaptureManifest(
-        schema_version=value["schema_version"],
-        dataset_name=value["dataset_name"],
-        provider=value["provider"],
-        request_kind=request_kind,
-        host=value["host"],
-        request_target=value["request_target"],
-        request_headers=tuple(tuple(item) for item in headers),
-        event_id=value["event_id"],
-        sport_id=value["sport_id"],
-        market_groups_name=value["market_groups_name"],
-        status=value["status"],
-        content_type=value["content_type"],
-        content_length=value["content_length"],
-        observed_at=parse_utc_timestamp(value["observed_at"], "observed_at"),
-        provider_quote_at=value["provider_quote_at"],
-        provider_snapshot_id=value["provider_snapshot_id"],
-        network_acquisition_performed=value["network_acquisition_performed"],
-        raw_file_name=value["raw_file_name"],
-        raw_sha256=value["raw_sha256"],
-        raw_size=value["raw_size"],
-        safety=value["safety"],
-    )
+        return SportyBetLiteCaptureManifest(
+            schema_version=value["schema_version"],
+            dataset_name=value["dataset_name"],
+            provider=value["provider"],
+            request_kind=request_kind,
+            host=value["host"],
+            request_target=value["request_target"],
+            request_headers=tuple(tuple(item) for item in headers),
+            event_id=value["event_id"],
+            sport_id=value["sport_id"],
+            market_groups_name=value["market_groups_name"],
+            status=value["status"],
+            content_type=value["content_type"],
+            content_length=value["content_length"],
+            observed_at=parse_utc_timestamp(value["observed_at"], "observed_at"),
+            provider_quote_at=value["provider_quote_at"],
+            provider_snapshot_id=value["provider_snapshot_id"],
+            network_acquisition_performed=value["network_acquisition_performed"],
+            raw_file_name=value["raw_file_name"],
+            raw_sha256=value["raw_sha256"],
+            raw_size=value["raw_size"],
+            safety=value["safety"],
+        )
+    except SportyBetLiteCaptureError:
+        raise
+    except (KeyError, TypeError, ValueError, OverflowError) as exc:
+        raise SportyBetLiteCaptureError("manifest is invalid") from exc
+
+
+def _absolute(path: Path) -> Path:
+    return path if path.is_absolute() else Path.cwd() / path
 
 
 def _reject_symlink_components(path: Path, label: str) -> None:
-    absolute = path if path.is_absolute() else Path.cwd() / path
+    absolute = _absolute(path)
     current = Path(absolute.anchor)
     for part in absolute.parts[1:]:
         current = current / part
@@ -576,6 +583,114 @@ def validate_output_root(
     return expected
 
 
+def _load_kernel32() -> Any:
+    if os.name != "nt":
+        return None
+    try:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.CreateFileW.argtypes = [
+            ctypes.wintypes.LPCWSTR,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.c_void_p,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.DWORD,
+            ctypes.wintypes.HANDLE,
+        ]
+        kernel32.CreateFileW.restype = ctypes.wintypes.HANDLE
+        kernel32.FlushFileBuffers.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.FlushFileBuffers.restype = ctypes.wintypes.BOOL
+        kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+        kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+        return kernel32
+    except (AttributeError, OSError):
+        return None
+
+
+def _sync_windows_directory(path: Path) -> None:
+    kernel32 = _load_kernel32()
+    if kernel32 is None:
+        raise SportyBetLiteCaptureError(
+            f"cannot prove directory durability on Windows: {path}"
+        )
+    handle = kernel32.CreateFileW(
+        str(path),
+        0xC0000000,
+        0x00000007,
+        None,
+        3,
+        0x02000000,
+        None,
+    )
+    invalid = {None, 0, -1, ctypes.c_void_p(-1).value}
+    if handle in invalid:
+        raise SportyBetLiteCaptureError(
+            f"could not open directory for durable synchronization: {path}"
+        )
+    failures: list[str] = []
+    try:
+        if not kernel32.FlushFileBuffers(handle):
+            failures.append("FlushFileBuffers failed")
+    finally:
+        if not kernel32.CloseHandle(handle):
+            failures.append("CloseHandle failed")
+    if failures:
+        raise SportyBetLiteCaptureError(
+            f"could not durably synchronize directory {path}: " + "; ".join(failures)
+        )
+
+
+def _sync_directory(path: Path, *, platform_name: str | None = None) -> None:
+    platform = os.name if platform_name is None else platform_name
+    if platform == "nt":
+        _sync_windows_directory(path)
+        return
+    if platform != "posix":
+        raise SportyBetLiteCaptureError(
+            f"directory durability is unsupported on platform {platform!r}"
+        )
+    flags = os.O_RDONLY
+    if hasattr(os, "O_DIRECTORY"):
+        flags |= os.O_DIRECTORY
+    try:
+        descriptor = os.open(str(path), flags)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError as exc:
+        raise SportyBetLiteCaptureError(
+            f"could not durably synchronize directory {path}"
+        ) from exc
+
+
+def _ensure_directory_tree_durable(target: Path, *, boundary: Path) -> None:
+    try:
+        relative = target.relative_to(boundary)
+    except ValueError as exc:
+        raise SportyBetLiteCaptureError("output root is outside repository") from exc
+    current = boundary
+    _sync_directory(current)
+    for component in relative.parts:
+        child = current / component
+        if not child.exists():
+            try:
+                child.mkdir()
+            except OSError as exc:
+                raise SportyBetLiteCaptureError(
+                    f"could not create durable output directory {child}"
+                ) from exc
+            _sync_directory(current)
+            _sync_directory(child)
+        elif child.is_symlink() or not child.is_dir():
+            raise SportyBetLiteCaptureError(
+                f"output component is not a regular directory: {child}"
+            )
+        else:
+            _sync_directory(child)
+        current = child
+
+
 def _read_regular(path: Path, *, maximum: int, label: str) -> bytes:
     if path.is_symlink():
         raise SportyBetLiteCaptureError(f"{label} must not be a symlink")
@@ -586,7 +701,8 @@ def _read_regular(path: Path, *, maximum: int, label: str) -> bytes:
     if not stat.S_ISREG(meta.st_mode) or not 0 < meta.st_size <= maximum:
         raise SportyBetLiteCaptureError(f"{label} must be a bounded regular file")
     try:
-        data = path.read_bytes()
+        with path.open("rb") as handle:
+            data = handle.read(maximum + 1)
     except OSError as exc:
         raise SportyBetLiteCaptureError(f"{label} cannot be read") from exc
     if not 0 < len(data) <= maximum:
@@ -613,12 +729,9 @@ def verify_capture_directory(
     try:
         resolved_root = root.resolve(strict=True)
         resolved_capture = capture.resolve(strict=True)
-    except OSError as exc:
-        raise SportyBetLiteCaptureError("capture path cannot be resolved") from exc
-    try:
         resolved_capture.relative_to(resolved_root)
-    except ValueError as exc:
-        raise SportyBetLiteCaptureError("capture escapes allowed root") from exc
+    except (OSError, ValueError) as exc:
+        raise SportyBetLiteCaptureError("capture escapes or cannot resolve under allowed root") from exc
     if capture.is_symlink() or not capture.is_dir():
         raise SportyBetLiteCaptureError(
             "capture directory must be a non-symlink directory"
@@ -626,7 +739,11 @@ def verify_capture_directory(
     names = sorted(item.name for item in capture.iterdir())
     if names != [MANIFEST_FILENAME, RAW_FILENAME]:
         raise SportyBetLiteCaptureError("capture directory contents mismatch")
-    raw = _read_regular(capture / RAW_FILENAME, maximum=MAX_RESPONSE_BYTES, label="raw response")
+    raw = _read_regular(
+        capture / RAW_FILENAME,
+        maximum=MAX_RESPONSE_BYTES,
+        label="raw response",
+    )
     manifest_raw = _read_regular(
         capture / MANIFEST_FILENAME,
         maximum=MAX_MANIFEST_BYTES,
@@ -637,17 +754,22 @@ def verify_capture_directory(
         raise SportyBetLiteCaptureError("manifest bytes are not canonical")
     if sha256_bytes(raw) != manifest.raw_sha256 or len(raw) != manifest.raw_size:
         raise SportyBetLiteCaptureError("raw evidence identity mismatch")
+    if capture.name != capture_identifier(manifest):
+        raise SportyBetLiteCaptureError("capture directory identity mismatch")
     if require_network_acquisition_performed and not manifest.network_acquisition_performed:
         raise SportyBetLiteCaptureError("capture lacks required network provenance")
     return manifest
 
 
 def _write_exclusive(path: Path, content: bytes) -> None:
+    if type(content) is not bytes:
+        raise SportyBetLiteCaptureError("capture content must be exact bytes")
     try:
         with path.open("xb") as handle:
             handle.write(content)
             handle.flush()
             os.fsync(handle.fileno())
+        _sync_directory(path.parent)
     except FileExistsError as exc:
         raise SportyBetLiteCaptureError(f"refusing to overwrite {path.name}") from exc
     except OSError as exc:
@@ -668,7 +790,10 @@ def store_capture(
         raise SportyBetLiteCaptureError(
             "response must be CapturedSportyBetLiteResponse"
         )
-    root = validate_output_root(output_root, repository_root=repository_root)
+    repository = Path(repository_root).resolve(strict=True)
+    root = validate_output_root(output_root, repository_root=repository)
+    _ensure_directory_tree_durable(root, boundary=repository)
+    _reject_symlink_components(root, "output root")
     manifest = build_capture_manifest(
         response,
         request_kind=request_kind,
@@ -676,8 +801,7 @@ def store_capture(
         sport_id=sport_id,
         market_groups_name=market_groups_name,
     )
-    capture_id = capture_identifier(manifest)
-    capture_directory = root / capture_id
+    capture_directory = root / capture_identifier(manifest)
     if capture_directory.exists():
         existing = verify_capture_directory(
             capture_directory,
@@ -698,15 +822,15 @@ def store_capture(
                 "capture identifier collision with different raw bytes"
             )
         return capture_directory, existing
-    root.mkdir(parents=True, exist_ok=True)
-    _reject_symlink_components(root, "output root")
     try:
         capture_directory.mkdir(exist_ok=False)
+        _sync_directory(root)
+        _sync_directory(capture_directory)
     except FileExistsError:
         return store_capture(
             response,
             request_kind=request_kind,
-            repository_root=repository_root,
+            repository_root=repository,
             output_root=output_root,
             event_id=event_id,
             sport_id=sport_id,
@@ -714,19 +838,16 @@ def store_capture(
         )
     except OSError as exc:
         raise SportyBetLiteCaptureError("could not create capture directory") from exc
-    try:
-        _write_exclusive(capture_directory / RAW_FILENAME, response.body)
-        _write_exclusive(
-            capture_directory / MANIFEST_FILENAME,
-            canonical_manifest_bytes(manifest),
-        )
-        verified = verify_capture_directory(
-            capture_directory,
-            allowed_root=root,
-            require_network_acquisition_performed=False,
-        )
-        return capture_directory, verified
-    except Exception:
-        # Never silently reuse a partially-written directory.  Leaving it behind
-        # is fail-closed evidence of an interrupted publication attempt.
-        raise
+    _write_exclusive(capture_directory / RAW_FILENAME, response.body)
+    _write_exclusive(
+        capture_directory / MANIFEST_FILENAME,
+        canonical_manifest_bytes(manifest),
+    )
+    verified = verify_capture_directory(
+        capture_directory,
+        allowed_root=root,
+        require_network_acquisition_performed=False,
+    )
+    _sync_directory(capture_directory)
+    _sync_directory(root)
+    return capture_directory, verified
