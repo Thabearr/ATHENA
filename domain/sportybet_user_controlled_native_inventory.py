@@ -42,6 +42,7 @@ INVENTORY_FILENAME = "inventory.json"
 ALLOWED_OUTPUT_RELATIVE = Path(
     ".cache/athena-research/sportybet-user-controlled-native-inventory"
 )
+MAX_INVENTORY_BYTES = 64 * 1024 * 1024
 PROVIDER_QUOTE_TIMESTAMP_CAPABILITY = "UNPROVEN_ON_REVIEWED_LITE_HTML"
 PROVIDER_SNAPSHOT_ID_CAPABILITY = "UNPROVEN_ON_REVIEWED_LITE_HTML"
 _EVIDENCE_ID_RE = re.compile(r"^[0-9a-f]{24}$", flags=re.ASCII)
@@ -114,8 +115,8 @@ def _group_events(selections: tuple[NativeSelection, ...]) -> tuple[NativeEvent,
             raise SportyBetUserInventoryError(
                 "conflicting provider sport/product identity within one event"
             )
-        events.append(
-            NativeEvent(
+        try:
+            event = NativeEvent(
                 event_id=event_id,
                 sport_id=next(iter(sport_ids)) if sport_ids else None,
                 product_id=next(iter(product_ids)) if product_ids else None,
@@ -129,7 +130,9 @@ def _group_events(selections: tuple[NativeSelection, ...]) -> tuple[NativeEvent,
                 event_status=None,
                 selection_count=len(items),
             )
-        )
+        except SportyBetProviderInventoryError as exc:
+            raise SportyBetUserInventoryError(str(exc)) from exc
+        events.append(event)
     return tuple(sorted(events, key=lambda item: item.event_id))
 
 
@@ -224,10 +227,13 @@ class SportyBetUserControlledNativeInventory:
             raise SportyBetUserInventoryError("observation_authority mismatch")
         _canonical_utc(self.observed_at_user_attested, "observed_at_user_attested")
         _canonical_utc(self.imported_at_utc, "imported_at_utc")
-        observed = parse_utc_timestamp(
-            self.observed_at_user_attested, "observed_at_user_attested"
-        )
-        imported = parse_utc_timestamp(self.imported_at_utc, "imported_at_utc")
+        try:
+            observed = parse_utc_timestamp(
+                self.observed_at_user_attested, "observed_at_user_attested"
+            )
+            imported = parse_utc_timestamp(self.imported_at_utc, "imported_at_utc")
+        except SportyBetLiteCaptureError as exc:
+            raise SportyBetUserInventoryError(str(exc)) from exc
         if imported < observed:
             raise SportyBetUserInventoryError(
                 "imported_at_utc must not precede user-attested observation"
@@ -297,13 +303,23 @@ class SportyBetUserControlledNativeInventory:
         }
 
 
+def _normalize_under_repository(path_value: Any, *, repository: Path, label: str) -> Path:
+    try:
+        path = Path(path_value)
+    except (TypeError, ValueError) as exc:
+        raise SportyBetUserInventoryError(f"{label} is invalid") from exc
+    if ".." in path.parts:
+        raise SportyBetUserInventoryError(f"{label} must not contain traversal")
+    return path if path.is_absolute() else repository / path
+
+
 def _load_verified_source(
     evidence_directory: Any,
     *,
     allowed_root: Path,
 ) -> tuple[manual.SportyBetUserControlledEvidenceManifest, bytes]:
     try:
-        manifest = manual.verify_evidence_directory(
+        first_manifest = manual.verify_evidence_directory(
             evidence_directory,
             allowed_root=allowed_root,
         )
@@ -312,11 +328,19 @@ def _load_verified_source(
             maximum=MAX_RESPONSE_BYTES,
             label="manual raw HTML",
         )
+        second_manifest = manual.verify_evidence_directory(
+            evidence_directory,
+            allowed_root=allowed_root,
+        )
     except (manual.SportyBetUserEvidenceError, SportyBetLiteCaptureError) as exc:
         raise SportyBetUserInventoryError(str(exc)) from exc
-    if sha256_bytes(raw) != manifest.raw_sha256 or len(raw) != manifest.raw_size:
-        raise SportyBetUserInventoryError("source raw HTML changed after verification")
-    return manifest, raw
+    if manual.canonical_manifest_bytes(first_manifest) != manual.canonical_manifest_bytes(
+        second_manifest
+    ):
+        raise SportyBetUserInventoryError("source manifest changed during verification")
+    if sha256_bytes(raw) != second_manifest.raw_sha256 or len(raw) != second_manifest.raw_size:
+        raise SportyBetUserInventoryError("source raw HTML changed during verification")
+    return second_manifest, raw
 
 
 def build_inventory_from_evidence(
@@ -368,7 +392,7 @@ def canonical_inventory_bytes(inventory: Any) -> bytes:
             "inventory must be SportyBetUserControlledNativeInventory"
         )
     try:
-        return (
+        payload = (
             json.dumps(
                 inventory.to_dict(),
                 ensure_ascii=False,
@@ -380,6 +404,9 @@ def canonical_inventory_bytes(inventory: Any) -> bytes:
         ).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as exc:
         raise SportyBetUserInventoryError("inventory serialization failed") from exc
+    if len(payload) > MAX_INVENTORY_BYTES:
+        raise SportyBetUserInventoryError("canonical inventory exceeds reviewed size limit")
+    return payload
 
 
 def inventory_sha256(inventory: Any) -> str:
@@ -394,6 +421,8 @@ def _validate_exact_root(
     label: str,
 ) -> Path:
     repository = Path(repository_root).resolve(strict=True)
+    if not repository.is_dir():
+        raise SportyBetUserInventoryError("repository_root must be a directory")
     expected = repository / relative
     try:
         supplied = Path(supplied_root)
@@ -448,27 +477,37 @@ def store_inventory_from_evidence(
         relative=ALLOWED_OUTPUT_RELATIVE,
         label="inventory root",
     )
+    evidence_path = _normalize_under_repository(
+        evidence_directory,
+        repository=repository,
+        label="evidence directory",
+    )
+    inventory = build_inventory_from_evidence(
+        evidence_path,
+        allowed_root=reviewed_evidence_root,
+    )
+    payload = canonical_inventory_bytes(inventory)
     try:
         _ensure_directory_tree_durable(reviewed_output_root, boundary=repository)
     except SportyBetLiteCaptureError as exc:
         raise SportyBetUserInventoryError(str(exc)) from exc
-    inventory = build_inventory_from_evidence(
-        evidence_directory,
-        allowed_root=reviewed_evidence_root,
-    )
     directory = reviewed_output_root / inventory.source_evidence_id
-    payload = canonical_inventory_bytes(inventory)
     if directory.exists():
+        if directory.is_symlink() or not directory.is_dir():
+            raise SportyBetUserInventoryError(
+                "inventory identity path must be a non-symlink directory"
+            )
         try:
             _reject_symlink_components(directory, "inventory directory")
+            names = sorted(item.name for item in directory.iterdir())
             existing = _read_regular(
                 directory / INVENTORY_FILENAME,
-                maximum=MAX_RESPONSE_BYTES,
+                maximum=MAX_INVENTORY_BYTES,
                 label="manual native inventory",
             )
-        except SportyBetLiteCaptureError as exc:
+        except (OSError, SportyBetLiteCaptureError) as exc:
             raise SportyBetUserInventoryError(str(exc)) from exc
-        if sorted(item.name for item in directory.iterdir()) != [INVENTORY_FILENAME]:
+        if names != [INVENTORY_FILENAME]:
             raise SportyBetUserInventoryError("inventory directory contents mismatch")
         if existing != payload:
             raise SportyBetUserInventoryError("derived inventory identity collision")
@@ -482,7 +521,7 @@ def store_inventory_from_evidence(
     _write_exclusive(directory / INVENTORY_FILENAME, payload)
     verified = verify_inventory_directory(
         directory,
-        evidence_directory=evidence_directory,
+        evidence_directory=evidence_path,
         repository_root=repository,
         evidence_root=reviewed_evidence_root,
         output_root=reviewed_output_root,
@@ -511,9 +550,16 @@ def verify_inventory_directory(
         relative=ALLOWED_OUTPUT_RELATIVE,
         label="inventory root",
     )
-    directory = Path(inventory_directory)
-    if ".." in directory.parts:
-        raise SportyBetUserInventoryError("inventory directory must not contain traversal")
+    evidence_path = _normalize_under_repository(
+        evidence_directory,
+        repository=repository,
+        label="evidence directory",
+    )
+    directory = _normalize_under_repository(
+        inventory_directory,
+        repository=repository,
+        label="inventory directory",
+    )
     try:
         _reject_symlink_components(directory, "inventory directory")
         resolved_root = reviewed_output_root.resolve(strict=True)
@@ -527,10 +573,14 @@ def verify_inventory_directory(
         raise SportyBetUserInventoryError(
             "inventory directory must be a non-symlink directory"
         )
-    if sorted(item.name for item in directory.iterdir()) != [INVENTORY_FILENAME]:
+    try:
+        names = sorted(item.name for item in directory.iterdir())
+    except OSError as exc:
+        raise SportyBetUserInventoryError("inventory directory cannot be read") from exc
+    if names != [INVENTORY_FILENAME]:
         raise SportyBetUserInventoryError("inventory directory contents mismatch")
     expected = build_inventory_from_evidence(
-        evidence_directory,
+        evidence_path,
         allowed_root=reviewed_evidence_root,
     )
     if directory.name != expected.source_evidence_id:
@@ -538,7 +588,7 @@ def verify_inventory_directory(
     try:
         stored = _read_regular(
             directory / INVENTORY_FILENAME,
-            maximum=MAX_RESPONSE_BYTES,
+            maximum=MAX_INVENTORY_BYTES,
             label="manual native inventory",
         )
     except SportyBetLiteCaptureError as exc:
