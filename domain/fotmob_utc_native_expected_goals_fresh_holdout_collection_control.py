@@ -1,9 +1,10 @@
 """Freeze the non-network collection control for the reviewed fresh xG holdout.
 
 This boundary resolves the exact PR #149 merge timestamp into the prospective
-holdout start and freezes the operational request cadence/evidence-retention
-requirements that a later activation runner must obey. Importing or executing
-this module performs no network access and does not start the holdout campaign.
+holdout start and freezes the operational request cadence, count-only close-state
+requirements, and evidence-retention obligations that a later activation runner
+must obey. Importing or executing this module performs no network access and does
+not start the holdout campaign.
 """
 from __future__ import annotations
 
@@ -11,8 +12,9 @@ import dataclasses
 import datetime as dt
 import enum
 import hashlib
+import json
 import types
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -43,8 +45,10 @@ CAPTURE_INTERVAL_MINUTES = 30
 CAPTURE_MINUTES_UTC = (0, 30)
 REQUEST_TIMEZONE = "UTC"
 REQUEST_CCODE3 = "NGA"
-REQUEST_DATE_OFFSETS_DAYS = (0, 1)
-REQUESTS_PER_ACTIVE_TICK = len(REQUEST_DATE_OFFSETS_DAYS)
+ACTIVE_REQUEST_DATE_OFFSETS_DAYS = (-1, 0, 1)
+SETTLEMENT_REQUEST_DATE_OFFSETS_DAYS = (-1, 0)
+REQUESTS_PER_ACTIVE_TICK = len(ACTIVE_REQUEST_DATE_OFFSETS_DAYS)
+REQUESTS_PER_SETTLEMENT_TICK = len(SETTLEMENT_REQUEST_DATE_OFFSETS_DAYS)
 
 CONTROL_ROOT_RELATIVE = (
     ".cache/athena-research/fotmob-utc-native-xg-fresh-holdout"
@@ -57,6 +61,14 @@ CONTROL_JOURNAL_FILENAME = "control-journal.ndjson"
 CHECKPOINT_FILENAME = "checkpoint.json"
 
 SAFETY_KEYS = tuple(sorted(fresh.SAFETY_KEYS))
+_CLOSE_STATE_TOKEN = object()
+_CLOSE_DECISIONS = frozenset(
+    {
+        fresh.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED.value,
+        fresh.HoldoutBoundaryDecision.CLOSE_INSUFFICIENT_COVERAGE_NO_SUCCESSOR_DECISION.value,
+    }
+)
+_OPEN_DECISION = fresh.HoldoutBoundaryDecision.OPEN_WAITING_FOR_COUNT_ONLY_COVERAGE.value
 
 
 class FreshHoldoutCollectionControlError(ValueError):
@@ -72,6 +84,30 @@ class ControlPhase(str, enum.Enum):
 
 def _error(message: str) -> FreshHoldoutCollectionControlError:
     return FreshHoldoutCollectionControlError(message)
+
+
+def _canonical(value: Any) -> bytes:
+    try:
+        encoded = json.dumps(
+            value,
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise _error("control evidence serialization failed") from exc
+    return (encoded + "\n").encode("utf-8")
+
+
+def _sha256(value: Any, label: str) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise _error(f"{label} must be exactly 64 lowercase hexadecimal characters")
+    return value
 
 
 def _utc(value: Any, label: str) -> dt.datetime:
@@ -124,8 +160,16 @@ def hard_close_utc() -> dt.datetime:
     return _parse_utc(HARD_CLOSE_UTC_TEXT, "hard close")
 
 
-def settlement_tail_end_utc() -> dt.datetime:
-    return _parse_utc(SETTLEMENT_TAIL_END_UTC_TEXT, "settlement tail end")
+def settlement_tail_end_utc(
+    close_state: "CloseControlState | None" = None,
+) -> dt.datetime:
+    """Return the close-specific tail end, or the latest possible hard-close tail."""
+    if close_state is None:
+        return _parse_utc(SETTLEMENT_TAIL_END_UTC_TEXT, "latest settlement tail end")
+    state = _checked_close_state(close_state)
+    if state.selected_close_utc is None:
+        raise _error("open close-control state has no settlement tail")
+    return state.selected_close_utc + dt.timedelta(days=1)
 
 
 def verify_reviewed_implementation() -> None:
@@ -154,6 +198,8 @@ def verify_reviewed_implementation() -> None:
         raise _error("minimum gate boundary changed")
     if fresh.hard_close_boundary(resolved) != hard_close_utc():
         raise _error("hard close boundary changed")
+    if hard_close_utc() + dt.timedelta(days=1) != settlement_tail_end_utc():
+        raise _error("latest settlement tail boundary changed")
 
     minimum_repeat = score_adapter.MINIMUM_REPEAT_SEPARATION_SECONDS
     if type(minimum_repeat) is not int or minimum_repeat < 1:
@@ -173,30 +219,165 @@ def _scheduled_tick(value: dt.datetime) -> dt.datetime:
     return tick
 
 
-def control_phase(value: dt.datetime) -> ControlPhase:
+@dataclasses.dataclass(frozen=True)
+class CloseControlState:
+    """Result-free close-state receipt created only by PR149's count-only evaluator."""
+
+    evaluated_boundary_utc: dt.datetime
+    decision: str
+    selected_close_utc: dt.datetime | None
+    coverage_sha256: str
+    _token: object = dataclasses.field(repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        if self._token is not _CLOSE_STATE_TOKEN:
+            raise _error("close-control state must come from reviewed count-only evaluation")
+        evaluated = _utc(self.evaluated_boundary_utc, "evaluated close boundary")
+        if evaluated.time() != dt.time.min:
+            raise _error("evaluated close boundary must be an exact UTC midnight")
+        if not (minimum_gate_utc() <= evaluated <= hard_close_utc()):
+            raise _error("evaluated close boundary escaped the frozen 28/90-day window")
+        object.__setattr__(self, "evaluated_boundary_utc", evaluated)
+        if type(self.decision) is not str or self.decision not in (_OPEN_DECISION, *_CLOSE_DECISIONS):
+            raise _error("close-control decision escaped reviewed vocabulary")
+        selected = self.selected_close_utc
+        if self.decision in _CLOSE_DECISIONS:
+            if selected is None or _utc(selected, "selected close") != evaluated:
+                raise _error("closed state must select its evaluated boundary exactly")
+            object.__setattr__(self, "selected_close_utc", evaluated)
+        elif selected is not None:
+            raise _error("open state cannot carry a selected close boundary")
+        object.__setattr__(
+            self,
+            "coverage_sha256",
+            _sha256(self.coverage_sha256, "coverage_sha256"),
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "evaluated_boundary_utc": _utc_text(self.evaluated_boundary_utc),
+            "decision": self.decision,
+            "selected_close_utc": (
+                None if self.selected_close_utc is None else _utc_text(self.selected_close_utc)
+            ),
+            "coverage_sha256": self.coverage_sha256,
+        }
+
+
+def _checked_close_state(value: Any) -> CloseControlState:
+    if type(value) is not CloseControlState or value._token is not _CLOSE_STATE_TOKEN:
+        raise _error("close_state must be exact reviewed CloseControlState")
+    return dataclasses.replace(value)
+
+
+def evaluate_close_control_state(
+    predictions: Sequence[fresh.SealedFreshPrediction],
+    *,
+    boundary: dt.datetime,
+) -> CloseControlState:
+    """Evaluate one UTC close boundary using PR149's count-only state machine only."""
+    verify_reviewed_implementation()
+    current = _utc(boundary, "close evaluation boundary")
+    if current.time() != dt.time.min:
+        raise _error("close evaluation boundary must be an exact UTC midnight")
+    if not (minimum_gate_utc() <= current <= hard_close_utc()):
+        raise _error("close evaluation boundary escaped the frozen 28/90-day window")
+    try:
+        result = fresh.evaluate_holdout_boundary(
+            predictions,
+            holdout_start=holdout_start_utc(),
+            boundary=current,
+        )
+    except Exception as exc:
+        raise _error("reviewed PR149 count-only close evaluation failed") from exc
+    decision = result.get("decision")
+    if decision not in (_OPEN_DECISION, *_CLOSE_DECISIONS):
+        raise _error("PR149 returned unexpected close decision")
+    if result.get("outcome_or_performance_input_used") is not False:
+        raise _error("PR149 close evaluation unexpectedly used outcome/performance input")
+    coverage = result.get("coverage")
+    if type(coverage) is not dict:
+        raise _error("PR149 close evaluation omitted coverage receipt")
+    return CloseControlState(
+        evaluated_boundary_utc=current,
+        decision=decision,
+        selected_close_utc=current if decision in _CLOSE_DECISIONS else None,
+        coverage_sha256=hashlib.sha256(_canonical(coverage)).hexdigest(),
+        _token=_CLOSE_STATE_TOKEN,
+    )
+
+
+def required_close_evaluation_boundary(value: dt.datetime) -> dt.datetime | None:
+    """Return the latest UTC midnight whose count-only close state must be known."""
+    current = _utc(value, "control time")
+    minimum = minimum_gate_utc()
+    if current < minimum:
+        return None
+    hard = hard_close_utc()
+    if current >= hard:
+        return hard
+    return dt.datetime.combine(current.date(), dt.time.min, tzinfo=dt.timezone.utc)
+
+
+def _validated_close_state_for_time(
+    value: dt.datetime,
+    close_state: CloseControlState | None,
+) -> CloseControlState | None:
+    current = _utc(value, "control time")
+    required = required_close_evaluation_boundary(current)
+    if required is None:
+        if close_state is not None:
+            raise _error("close_state is forbidden before the minimum gate boundary")
+        return None
+    if close_state is None:
+        raise _error("current count-only close state is required at/after the minimum gate")
+    state = _checked_close_state(close_state)
+    if state.evaluated_boundary_utc > current:
+        raise _error("close_state was evaluated in the future")
+    if state.selected_close_utc is not None:
+        if state.selected_close_utc > current:
+            raise _error("selected close boundary is in the future")
+        return state
+    if state.evaluated_boundary_utc != required:
+        raise _error("open close_state is stale for the latest required UTC boundary")
+    return state
+
+
+def control_phase(
+    value: dt.datetime,
+    *,
+    close_state: CloseControlState | None = None,
+) -> ControlPhase:
     current = _utc(value, "control time")
     start = holdout_start_utc()
-    hard = hard_close_utc()
-    tail = settlement_tail_end_utc()
     if current < start:
+        if close_state is not None:
+            raise _error("close_state is forbidden before holdout start")
         return ControlPhase.PRE_START
-    if current < hard:
+    state = _validated_close_state_for_time(current, close_state)
+    selected_close = None if state is None else state.selected_close_utc
+    if selected_close is None:
         return ControlPhase.PREDICTION_AND_SETTLEMENT_COLLECTION
-    if current < tail:
+    if current < selected_close + dt.timedelta(days=1):
         return ControlPhase.SETTLEMENT_TAIL_ONLY
     return ControlPhase.COLLECTION_COMPLETE
 
 
-def request_dates_for_tick(scheduled_tick: dt.datetime) -> tuple[str, ...]:
-    """Return exact FotMob UTC request dates for one scheduled active tick."""
+def request_dates_for_tick(
+    scheduled_tick: dt.datetime,
+    *,
+    close_state: CloseControlState | None = None,
+) -> tuple[str, ...]:
+    """Return exact FotMob UTC request dates for one scheduled control tick."""
     tick = _scheduled_tick(scheduled_tick)
-    phase = control_phase(tick)
+    phase = control_phase(tick, close_state=close_state)
     if phase in {ControlPhase.PRE_START, ControlPhase.COLLECTION_COMPLETE}:
         return ()
-    if phase is ControlPhase.SETTLEMENT_TAIL_ONLY:
-        offsets = (0,)
-    else:
-        offsets = REQUEST_DATE_OFFSETS_DAYS
+    offsets = (
+        SETTLEMENT_REQUEST_DATE_OFFSETS_DAYS
+        if phase is ControlPhase.SETTLEMENT_TAIL_ONLY
+        else ACTIVE_REQUEST_DATE_OFFSETS_DAYS
+    )
     return tuple(
         (tick.date() + dt.timedelta(days=offset)).strftime("%Y%m%d")
         for offset in offsets
@@ -210,18 +391,22 @@ class CollectionTickPlan:
     request_dates: tuple[str, ...]
     timezone: str
     ccode3: str
+    close_state: CloseControlState | None
     prediction_sealing_authorized: bool
     network_acquisition_authorized: bool
 
     def __post_init__(self) -> None:
         tick = _scheduled_tick(self.scheduled_for_utc)
         object.__setattr__(self, "scheduled_for_utc", tick)
+        state = _validated_close_state_for_time(tick, self.close_state)
+        if state is not None:
+            object.__setattr__(self, "close_state", state)
         if not isinstance(self.phase, ControlPhase):
             raise _error("tick phase is invalid")
-        expected_phase = control_phase(tick)
+        expected_phase = control_phase(tick, close_state=state)
         if self.phase is not expected_phase:
-            raise _error("tick phase does not match scheduled time")
-        expected_dates = request_dates_for_tick(tick)
+            raise _error("tick phase does not match scheduled time and close state")
+        expected_dates = request_dates_for_tick(tick, close_state=state)
         if type(self.request_dates) is not tuple or self.request_dates != expected_dates:
             raise _error("tick request-date plan changed")
         if self.timezone != REQUEST_TIMEZONE or self.ccode3 != REQUEST_CCODE3:
@@ -239,21 +424,28 @@ class CollectionTickPlan:
             "request_dates": list(self.request_dates),
             "timezone": self.timezone,
             "ccode3": self.ccode3,
+            "close_state": None if self.close_state is None else self.close_state.to_dict(),
             "prediction_sealing_authorized": self.prediction_sealing_authorized,
             "network_acquisition_authorized": self.network_acquisition_authorized,
         }
 
 
-def build_collection_tick_plan(scheduled_tick: dt.datetime) -> CollectionTickPlan:
+def build_collection_tick_plan(
+    scheduled_tick: dt.datetime,
+    *,
+    close_state: CloseControlState | None = None,
+) -> CollectionTickPlan:
     verify_reviewed_implementation()
     tick = _scheduled_tick(scheduled_tick)
-    phase = control_phase(tick)
+    state = _validated_close_state_for_time(tick, close_state)
+    phase = control_phase(tick, close_state=state)
     return CollectionTickPlan(
         scheduled_for_utc=tick,
         phase=phase,
-        request_dates=request_dates_for_tick(tick),
+        request_dates=request_dates_for_tick(tick, close_state=state),
         timezone=REQUEST_TIMEZONE,
         ccode3=REQUEST_CCODE3,
+        close_state=state,
         prediction_sealing_authorized=(
             phase is ControlPhase.PREDICTION_AND_SETTLEMENT_COLLECTION
         ),
@@ -277,18 +469,33 @@ def collection_control_receipt() -> dict[str, Any]:
             "start_utc": HOLDOUT_START_UTC_TEXT,
             "minimum_gate_utc": MINIMUM_GATE_UTC_TEXT,
             "hard_close_utc": HARD_CLOSE_UTC_TEXT,
-            "settlement_tail_end_utc": SETTLEMENT_TAIL_END_UTC_TEXT,
+            "latest_settlement_tail_end_utc": SETTLEMENT_TAIL_END_UTC_TEXT,
+            "settlement_tail_duration_hours": 24,
             "prediction_membership_close_selected_by_count_only_rules": True,
             "settlement_after_selected_close_preserves_preclose_kickoff_membership": True,
+        },
+        "close_control": {
+            "evaluation_starts_at_minimum_gate": True,
+            "evaluation_boundary": "LATEST_REQUIRED_UTC_MIDNIGHT",
+            "reviewed_evaluator": "PR149_EVALUATE_HOLDOUT_BOUNDARY",
+            "outcome_or_performance_inputs_accepted": False,
+            "open_state_must_be_current_through_latest_required_boundary": True,
+            "selected_close_immediately_disables_prediction_sealing": True,
+            "selected_close_is_irreversible": True,
+            "tail_end_rule": "SELECTED_CLOSE_UTC_PLUS_24_HOURS",
+            "hard_close_fallback_required": True,
         },
         "capture_control": {
             "cadence_minutes": CAPTURE_INTERVAL_MINUTES,
             "utc_minutes": list(CAPTURE_MINUTES_UTC),
             "request_timezone": REQUEST_TIMEZONE,
             "request_ccode3": REQUEST_CCODE3,
-            "active_request_date_offsets_days": list(REQUEST_DATE_OFFSETS_DAYS),
+            "active_request_date_offsets_days": list(ACTIVE_REQUEST_DATE_OFFSETS_DAYS),
             "active_requests_per_tick": REQUESTS_PER_ACTIVE_TICK,
-            "settlement_tail_request_date_offsets_days": [0],
+            "settlement_tail_request_date_offsets_days": list(
+                SETTLEMENT_REQUEST_DATE_OFFSETS_DAYS
+            ),
+            "settlement_requests_per_tick": REQUESTS_PER_SETTLEMENT_TICK,
             "fresh_capture_scope_limited_to_legacy_primary_ids": False,
             "all_structurally_qualified_provider_primary_ids_retained": True,
             "history_state_mutation_limited_to_frozen_legacy_primary_ids": True,
@@ -306,6 +513,7 @@ def collection_control_receipt() -> dict[str, Any]:
             "every_qualified_post_seal_identity_observation_must_be_retained": True,
             "known_change_then_reversion_remains_excluding": True,
             "cross_run_state_restore_required": True,
+            "close_state_revalidation_from_prediction_journal_required": True,
             "exact_bootstrap_projection_required_before_prediction_sealing": True,
         },
         "activation": {
@@ -319,10 +527,12 @@ def collection_control_receipt() -> dict[str, Any]:
 
 
 __all__ = [
+    "ACTIVE_REQUEST_DATE_OFFSETS_DAYS",
     "CAPTURE_INTERVAL_MINUTES",
     "CAPTURE_MINUTES_UTC",
     "CONTROL_ID",
     "CONTROL_STATE",
+    "CloseControlState",
     "CollectionTickPlan",
     "ControlPhase",
     "FreshHoldoutCollectionControlError",
@@ -334,15 +544,18 @@ __all__ = [
     "PR149_MERGE_UTC_TEXT",
     "REQUEST_CCODE3",
     "REQUEST_TIMEZONE",
+    "SETTLEMENT_REQUEST_DATE_OFFSETS_DAYS",
     "SETTLEMENT_TAIL_END_UTC_TEXT",
     "build_collection_tick_plan",
     "collection_control_receipt",
     "control_phase",
+    "evaluate_close_control_state",
     "hard_close_utc",
     "holdout_start_utc",
     "minimum_gate_utc",
     "pr149_merge_utc",
     "request_dates_for_tick",
+    "required_close_evaluation_boundary",
     "settlement_tail_end_utc",
     "verify_reviewed_implementation",
 ]
