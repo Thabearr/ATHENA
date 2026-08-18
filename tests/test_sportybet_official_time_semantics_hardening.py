@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 from pathlib import Path
 
 import pytest
@@ -18,7 +19,10 @@ def _html(*statements: str) -> bytes:
     return f"<!doctype html><html><body>{body}</body></html>".encode("utf-8")
 
 
-def _store(tmp_path: Path, raw: bytes) -> tuple[Path, semantics.SportyBetOfficialTimeSemanticsQualification]:
+def _store(
+    tmp_path: Path,
+    raw: bytes,
+) -> tuple[Path, semantics.SportyBetOfficialTimeSemanticsQualification]:
     return semantics.store_official_time_semantics_evidence(
         raw,
         source_url=semantics.SOURCE_URL,
@@ -159,3 +163,17 @@ def test_existing_complete_evidence_is_reverified_before_idempotent_return(
 
     with pytest.raises(semantics.SportyBetOfficialTimeSemanticsError):
         _store(tmp_path, raw)
+
+
+def test_protocol_forbids_retroactive_or_perpetual_semantics_promotion() -> None:
+    protocol_path = Path(
+        "artifacts/research-protocols/sportybet-official-time-semantics-v1.json"
+    )
+    protocol = json.loads(protocol_path.read_text(encoding="utf-8"))
+    assert protocol["temporal_scope"] == (
+        "OBSERVED_PROVIDER_PAGE_ONLY_NO_RETROACTIVE_OR_PERPETUAL_CLAIM"
+    )
+    assert protocol[
+        "event_application_requires_temporally_compatible_terms_evidence"
+    ] is True
+    assert protocol["specific_event_time_basis_authorized"] is False
