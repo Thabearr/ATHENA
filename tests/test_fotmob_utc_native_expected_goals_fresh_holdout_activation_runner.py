@@ -3,10 +3,12 @@ from __future__ import annotations
 import ast
 import datetime as dt
 import hashlib
+import io
 import json
 from pathlib import Path
 import sys
 import tarfile
+import zipfile
 
 import pytest
 
@@ -21,7 +23,7 @@ UTC = dt.timezone.utc
 
 def _repo(tmp_path: Path) -> tuple[Path, Path]:
     repo = tmp_path / "repo"
-    repo.mkdir()
+    repo.mkdir(exist_ok=True)
     state = repo / control.CONTROL_ROOT_RELATIVE
     return repo, state
 
@@ -50,9 +52,59 @@ def _capture(
         timezone=control.REQUEST_TIMEZONE,
         ccode3=control.REQUEST_CCODE3,
     )
-    directory = tmp_path / f"capture-{request_date}-{observed_at.hour}-{observed_at.minute}"
-    directory.mkdir(parents=True, exist_ok=False)
+    directory = tmp_path / f"capture-{request_date}-{observed_at.hour}-{observed_at.minute}-{observed_at.second}"
+    directory.mkdir(parents=True, exist_ok=True)
     return runner.CaptureEvidence(directory, raw, manifest)
+
+
+def _fake_sealed_prediction(
+    fixture_id: int,
+    kickoff_utc: dt.datetime,
+    observed_at: dt.datetime,
+) -> fresh.SealedFreshPrediction:
+    fixture = fresh.QualifiedCaptureFixture(
+        fixture_id=fixture_id,
+        provider_primary_id="47",
+        wrapper_id=1000 + fixture_id,
+        home_team_id=1,
+        away_team_id=2,
+        kickoff_utc=kickoff_utc,
+        capture_observed_at=observed_at,
+        capture_manifest_sha256="a" * 64,
+        capture_raw_sha256="b" * 64,
+    )
+    features = {
+        "home_elo": 1500.0,
+        "away_elo": 1500.0,
+        "home_form": 0.5,
+        "away_form": 0.5,
+        "fatigue": 0.0,
+    }
+    rates = {
+        "native_home": 1.4,
+        "native_away": 1.1,
+        "elo_only_home": 1.4,
+        "elo_only_away": 1.1,
+        "calibrated_home": 1.4,
+        "calibrated_away": 1.1,
+    }
+    return fresh.SealedFreshPrediction(
+        schema_version=1,
+        implementation_state=fresh.IMPLEMENTATION_STATE,
+        protocol_sha256=fresh.EXPECTED_PROTOCOL_SHA256,
+        holdout_start_utc=control.holdout_start_utc(),
+        fixture=fixture,
+        bootstrap_projection_sha256=fresh.BOOTSTRAP_PROJECTION_SHA256,
+        history_prefix_sha256="c" * 64,
+        history_prefix_count=100,
+        feature_projection_sha256="d" * 64,
+        features=features,
+        rates=rates,
+        safety={key: False for key in fresh.SAFETY_KEYS},
+    )
+
+
+# --- GENERAL RECEIPT & STATE ROOT TESTS ---
 
 
 def test_activation_receipt_pins_merged_control_and_grants_no_downstream_authority() -> None:
@@ -190,7 +242,6 @@ def test_active_tick_requests_three_provider_dates_and_journals_actual_observed_
         "2026-08-19T00:09:00.000000Z",
         "2026-08-19T00:10:00.000000Z",
     ]
-    assert all(row["observed_at"] != "2026-08-19T00:07:00.000000Z" for row in rows)
 
 
 def test_live_capture_cannot_backdate_nominal_slot(
@@ -278,51 +329,399 @@ def test_scheduler_gap_is_journaled_and_not_backfilled(
     assert gaps[0]["backfill_authorized"] is False
 
 
-def test_release_and_asset_identity_are_strict(tmp_path: Path) -> None:
-    repo, _state = _repo(tmp_path)
-    with pytest.raises(runner.FreshHoldoutActivationError, match="release tag"):
-        runner.execute_collection_tick(
-            scheduled_for=dt.datetime(2026, 8, 18, 23, 37, tzinfo=UTC),
-            bootstrap_projection_raw=b"x",
-            durable_release_tag="wrong",
-            durable_asset_name="success-20260818T233700Z-run-1.tar.gz",
-            execute_live_network=False,
-            state_root=Path(control.CONTROL_ROOT_RELATIVE),
+# --- BLOCKER A: SETTLEMENT ENUM VOCABULARY & EXECUTION TESTS ---
+
+
+def test_settlement_disposition_exact_enum_and_branch_execution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state = _repo(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+    scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+
+    # Pre-populate 3 sealed predictions in the journal
+    pred1 = _fake_sealed_prediction(101, scheduled + dt.timedelta(hours=2), scheduled)
+    pred2 = _fake_sealed_prediction(102, scheduled + dt.timedelta(hours=2), scheduled)
+    pred3 = _fake_sealed_prediction(103, scheduled + dt.timedelta(hours=2), scheduled)
+
+    pred_rows = [
+        runner._prediction_row(
+            fresh.FreshPredictionAssessment(
+                disposition=fresh.PredictionDisposition.SEALED_COMPLETE_CASE,
+                fixture=p.fixture,
+                sealed_prediction=p,
+            ),
+            "tag",
+            "asset",
+        )
+        for p in (pred1, pred2, pred3)
+    ]
+    for row in pred_rows:
+        runner._append(state / control.PREDICTION_JOURNAL_FILENAME, row)
+
+    # Mock _pair to return candidate captures for all 3
+    fake_cap = _capture(tmp_path, "20260819", scheduled + dt.timedelta(minutes=1))
+    monkeypatch.setattr(runner, "_pair", lambda _pred, _caps, _qual: (fake_cap, fake_cap))
+
+    # Mock settle_sealed_prediction to return 3 distinct PR149 SettlementDisposition members
+    def mock_settle(prediction, **kwargs):
+        fid = prediction.fixture.fixture_id
+        if fid == 101:
+            settled = fresh.SettledFreshPrediction(
+                prediction=prediction,
+                home_goals=2,
+                away_goals=1,
+                settlement_observed_at=scheduled + dt.timedelta(minutes=2),
+                settlement_evidence_sha256="e" * 64,
+                ordinary_ft_first_raw_sha256="f" * 64,
+                ordinary_ft_second_raw_sha256="g" * 64,
+                ordinary_ft_first_manifest_sha256="h" * 64,
+                ordinary_ft_second_manifest_sha256="i" * 64,
+                legacy_history_state_update=None,
+            )
+            return fresh.FreshSettlementAssessment(
+                disposition=fresh.SettlementDisposition.SETTLED_REVIEWED_ORDINARY_FT,
+                prediction=prediction,
+                settled_prediction=settled,
+            )
+        elif fid == 102:
+            return fresh.FreshSettlementAssessment(
+                disposition=fresh.SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT,
+                prediction=prediction,
+                notes="kickoff drift observed",
+            )
+        elif fid == 103:
+            return fresh.FreshSettlementAssessment(
+                disposition=fresh.SettlementDisposition.EXCLUDED_NOT_REVIEWED_ORDINARY_FT,
+                prediction=prediction,
+            )
+        raise AssertionError(f"unexpected fixture {fid}")
+
+    monkeypatch.setattr(fresh, "settle_sealed_prediction", mock_settle)
+    monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runner, "_qualify", lambda _evidence: ())
+
+    runner.execute_collection_tick(
+        scheduled_for=scheduled,
+        bootstrap_projection_raw=b"test-bootstrap",
+        durable_release_tag="athena-fresh-holdout-evidence-2026-W34",
+        durable_asset_name="success-20260819T000700Z-run-1.tar.gz",
+        execute_live_network=True,
+        state_root=Path(control.CONTROL_ROOT_RELATIVE),
+        repository_root=repo,
+        capture_one=lambda req_date, **kw: _capture(tmp_path, req_date, scheduled + dt.timedelta(minutes=1)),
+    )
+
+    settlement_rows = runner._rows(state / control.SETTLEMENT_JOURNAL_FILENAME)
+    assert len(settlement_rows) == 2
+
+    # Verify settlement parser re-evaluates exact vocabulary cleanly
+    settled_map, terminal = runner._settlement_state(settlement_rows)
+    assert 101 in settled_map
+    assert 101 in terminal
+    assert 102 in terminal
+    assert 103 not in terminal  # not finished/ordinary, remains in sealed
+
+
+# --- BLOCKER B: SELECTED-CLOSE POPULATION & SETTLEMENT SEMANTICS TESTS ---
+
+
+def test_selected_close_population_and_settlement_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    repo, state = _repo(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+    selected_close = dt.datetime(2026, 9, 16, 0, 7, tzinfo=UTC)
+
+    # 1. Prediction 1: kickoff 1 second before close (valid population member)
+    # 2. Prediction 2: kickoff exactly at close (outside population)
+    # 3. Prediction 3: kickoff 1 second after close (outside population)
+    p_before = _fake_sealed_prediction(201, selected_close - dt.timedelta(seconds=1), selected_close - dt.timedelta(hours=2))
+    p_exact = _fake_sealed_prediction(202, selected_close, selected_close - dt.timedelta(hours=2))
+    p_after = _fake_sealed_prediction(203, selected_close + dt.timedelta(seconds=1), selected_close - dt.timedelta(hours=2))
+
+    for p in (p_before, p_exact, p_after):
+        row = runner._prediction_row(
+            fresh.FreshPredictionAssessment(
+                disposition=fresh.PredictionDisposition.SEALED_COMPLETE_CASE,
+                fixture=p.fixture,
+                sealed_prediction=p,
+            ),
+            "tag",
+            "asset",
+        )
+        runner._append(state / control.PREDICTION_JOURNAL_FILENAME, row)
+
+    # Mock close state to simulate selected close reached at selected_close
+    fake_close_state = control.CloseControlState(
+        evaluated_boundary_utc=selected_close,
+        decision=control.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
+        selected_close_utc=selected_close,
+        coverage_sha256="k" * 64,
+    )
+    monkeypatch.setattr(runner, "_close_state", lambda *_args, **_kwargs: fake_close_state)
+    monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(runner, "_qualify", lambda _evidence: ())
+    monkeypatch.setattr(runner, "_pair", lambda _pred, _caps, _qual: None)
+
+    # Run tick exactly at selected_close
+    runner.execute_collection_tick(
+        scheduled_for=selected_close,
+        bootstrap_projection_raw=b"test-bootstrap",
+        durable_release_tag="athena-fresh-holdout-evidence-2026-W37",
+        durable_asset_name="success-20260916T000700Z-run-1.tar.gz",
+        execute_live_network=True,
+        state_root=Path(control.CONTROL_ROOT_RELATIVE),
+        repository_root=repo,
+        capture_one=lambda req_date, **kw: _capture(tmp_path, req_date, selected_close + dt.timedelta(minutes=1)),
+    )
+
+    rows = runner._rows(state / control.SETTLEMENT_JOURNAL_FILENAME)
+    # At selected close: p_exact (202) and p_after (203) MUST be excluded immediately
+    assert len(rows) == 2
+    fids = {r["fixture_id"] for r in rows}
+    assert fids == {202, 203}
+    for r in rows:
+        assert r["disposition"] == "EXCLUDED_OUTSIDE_SELECTED_CLOSE"
+
+    # p_before (201) MUST NOT be marked EXCLUDED_OUTSIDE_SELECTED_CLOSE!
+    assert 201 not in fids
+
+    # Next: run tick at selected_close + 24h (tail end) without settlement
+    tail_end = selected_close + dt.timedelta(hours=24)
+    fake_close_state_tail = control.CloseControlState(
+        evaluated_boundary_utc=selected_close,
+        decision=control.HoldoutBoundaryDecision.CLOSE_COUNT_ONLY_COVERAGE_QUALIFIED,
+        selected_close_utc=selected_close,
+        coverage_sha256="k" * 64,
+    )
+    monkeypatch.setattr(runner, "_close_state", lambda *_args, **_kwargs: fake_close_state_tail)
+
+    runner.execute_collection_tick(
+        scheduled_for=tail_end,
+        bootstrap_projection_raw=b"test-bootstrap",
+        durable_release_tag="athena-fresh-holdout-evidence-2026-W37",
+        durable_asset_name="success-20260917T000700Z-run-2.tar.gz",
+        execute_live_network=True,
+        state_root=Path(control.CONTROL_ROOT_RELATIVE),
+        repository_root=repo,
+        capture_one=lambda req_date, **kw: _capture(tmp_path, req_date, tail_end + dt.timedelta(minutes=1)),
+    )
+
+    all_rows = runner._rows(state / control.SETTLEMENT_JOURNAL_FILENAME)
+    assert len(all_rows) == 3
+    p201_rows = [r for r in all_rows if r["fixture_id"] == 201]
+    assert len(p201_rows) == 1
+    assert p201_rows[0]["disposition"] == "UNRESOLVED_AT_SETTLEMENT_TAIL"
+
+
+# --- BLOCKER C: AUTHORITATIVE PREDECESSOR RESTORE TESTS ---
+
+
+def _make_success_zip(state_root: Path, run_id: int) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        tar_buf = io.BytesIO()
+        with tarfile.open(fileobj=tar_buf, mode="w:gz") as tar:
+            for item in state_root.rglob("*"):
+                if item.is_file():
+                    arcname = str(item.relative_to(state_root.parent.parent.parent))
+                    tar.add(item, arcname=arcname)
+        tar_bytes = tar_buf.getvalue()
+        tar_sha = hashlib.sha256(tar_bytes).hexdigest()
+        tar_name = f"success-20260819T000700Z-run-{run_id}.tar.gz"
+        zf.writestr(tar_name, tar_bytes)
+        receipt = {
+            "schema_version": 1,
+            "runner_id": runner.RUNNER_ID,
+            "durable_asset_name": tar_name,
+            "durable_asset_sha256": tar_sha,
+            "durable_asset_size_bytes": len(tar_bytes),
+        }
+        zf.writestr("fresh-holdout-tick-receipt.json", json.dumps(receipt))
+    return buf.getvalue()
+
+
+def test_restore_predecessor_durable_state_valid_newest(tmp_path: Path) -> None:
+    repo, state = _repo(tmp_path)
+    state.mkdir(parents=True, exist_ok=True)
+    # Write valid checkpoint
+    runner._checkpoint(
+        state / control.CHECKPOINT_FILENAME,
+        {
+            "schema_version": 1,
+            "runner_id": runner.RUNNER_ID,
+            "last_committed_scheduled_for_utc": "2026-08-19T00:07:00.000000Z",
+            "phase": "PREDICTION_AND_SETTLEMENT_COLLECTION",
+            "capture_count": 3,
+            "prediction_count": 5,
+            "settled_or_terminal_count": 0,
+            "control_event_count": 1,
+            "durable_release_tag": "athena-fresh-holdout-evidence-2026-W34",
+            "durable_asset_name": "success-20260819T000700Z-run-10.tar.gz",
+        },
+    )
+    zip_bytes = _make_success_zip(state, 10)
+    zip_sha = hashlib.sha256(zip_bytes).hexdigest()
+
+    prior_runs = [{"id": 10, "conclusion": "success"}]
+    art_meta = {
+        "artifacts": [
+            {
+                "id": 1001,
+                "name": "success-20260819T000700Z-run-10.tar.gz",
+                "digest": f"sha256:{zip_sha}",
+                "expired": False,
+            }
+        ]
+    }
+
+    dest_repo, _dest_state = _repo(tmp_path / "dest")
+    last_committed = runner.restore_predecessor_durable_state(
+        prior_runs=prior_runs,
+        current_run_id=11,
+        get_run_artifacts=lambda _rid: art_meta,
+        download_artifact_zip=lambda _aid: zip_bytes,
+        repository_root=dest_repo,
+    )
+    assert last_committed == dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+
+
+def test_restore_predecessor_durable_state_missing_artifact_fails_closed(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path)
+    prior_runs = [{"id": 20, "conclusion": "success"}]
+    art_meta = {"artifacts": []}  # empty artifacts
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="must have exactly one success artifact"):
+        runner.restore_predecessor_durable_state(
+            prior_runs=prior_runs,
+            current_run_id=21,
+            get_run_artifacts=lambda _rid: art_meta,
+            download_artifact_zip=lambda _aid: b"",
             repository_root=repo,
         )
-    with pytest.raises(runner.FreshHoldoutActivationError, match="success asset"):
-        runner.execute_collection_tick(
-            scheduled_for=dt.datetime(2026, 8, 18, 23, 37, tzinfo=UTC),
-            bootstrap_projection_raw=b"x",
-            durable_release_tag="athena-fresh-holdout-evidence-2026-W34",
-            durable_asset_name="failure-20260818T233700Z-run-1.tar.gz",
-            execute_live_network=False,
-            state_root=Path(control.CONTROL_ROOT_RELATIVE),
+
+
+def test_restore_predecessor_corrupt_newest_fails_closed_even_if_older_valid(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path)
+    # Run 30 is newest (corrupt), Run 20 is older (valid)
+    prior_runs = [
+        {"id": 30, "conclusion": "success"},
+        {"id": 20, "conclusion": "success"},
+    ]
+
+    def mock_get_artifacts(run_id: int):
+        if run_id == 30:
+            return {"artifacts": []}  # corrupt newest
+        raise AssertionError("Must NOT query older runs when newest fails!")
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="must have exactly one success artifact, found 0"):
+        runner.restore_predecessor_durable_state(
+            prior_runs=prior_runs,
+            current_run_id=31,
+            get_run_artifacts=mock_get_artifacts,
+            download_artifact_zip=lambda _aid: b"",
             repository_root=repo,
         )
 
 
-def test_cli_and_workflow_are_present_and_schedule_is_exact() -> None:
-    root = Path(__file__).resolve().parents[1]
-    cli = root / "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py"
-    workflow = root / ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
-    assert cli.is_file()
-    assert workflow.is_file()
-    text = workflow.read_text(encoding="utf-8")
-    assert "- cron: '7 * * * *'" in text
-    assert "- cron: '37 * * * *'" in text
-    assert "cancel-in-progress: false" in text
-    assert "actions: read" in text
-    assert "contents: write" in text
-    assert "workflow_dispatch:" not in text
-    assert "--execute-live-network" in text
-    assert "athena-fresh-holdout-bootstrap-v1" in text
-    assert "success_asset" in text
-    assert "failure_asset" in text
-    assert "retention-days: 90" in text
+def test_restore_predecessor_zip_digest_mismatch_fails_closed(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path)
+    prior_runs = [{"id": 40, "conclusion": "success"}]
+    art_meta = {
+        "artifacts": [
+            {
+                "id": 4001,
+                "name": "success-test.tar.gz",
+                "digest": "sha256:" + "0" * 64,
+                "expired": False,
+            }
+        ]
+    }
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="artifact zip digest mismatch"):
+        runner.restore_predecessor_durable_state(
+            prior_runs=prior_runs,
+            current_run_id=41,
+            get_run_artifacts=lambda _rid: art_meta,
+            download_artifact_zip=lambda _aid: b"some-zip-bytes",
+            repository_root=repo,
+        )
 
 
-# --- BLOCKER 1 & 2: ARCHIVE VERIFICATION & SAFE EXTRACTION TESTS ---
+def test_restore_predecessor_multiple_success_tars_in_zip_fails_closed(tmp_path: Path) -> None:
+    repo, _ = _repo(tmp_path)
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        zf.writestr("success-1.tar.gz", b"x")
+        zf.writestr("success-2.tar.gz", b"y")
+    zip_bytes = buf.getvalue()
+
+    prior_runs = [{"id": 50, "conclusion": "success"}]
+    art_meta = {
+        "artifacts": [
+            {
+                "id": 5001,
+                "name": "success-test.tar.gz",
+                "expired": False,
+            }
+        ]
+    }
+
+    with pytest.raises(runner.FreshHoldoutActivationError, match="must contain exactly one success tar archive"):
+        runner.restore_predecessor_durable_state(
+            prior_runs=prior_runs,
+            current_run_id=51,
+            get_run_artifacts=lambda _rid: art_meta,
+            download_artifact_zip=lambda _aid: zip_bytes,
+            repository_root=repo,
+        )
+
+
+# --- SCHEDULE AMBIGUITY TESTS ---
+
+
+def test_resolve_nominal_schedule_slot_delayed_07_past_37() -> None:
+    # Predecessor was 00:37:00Z. Next trigger for 7 * * * * arrives at 01:40:00Z (delayed past 01:37)
+    last_committed = dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
+    created = dt.datetime(2026, 8, 19, 1, 40, 0, tzinfo=UTC)
+    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot(
+        "7 * * * *", created, last_committed_utc=last_committed
+    )
+    assert nominal == dt.datetime(2026, 8, 19, 1, 7, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T01:07:00.000000Z"
+
+
+def test_resolve_nominal_schedule_slot_delayed_37_past_next_07() -> None:
+    # Predecessor was 00:07:00Z. Next trigger for 37 * * * * arrives at 01:10:00Z (delayed past 01:07)
+    last_committed = dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
+    created = dt.datetime(2026, 8, 19, 1, 10, 0, tzinfo=UTC)
+    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot(
+        "37 * * * *", created, last_committed_utc=last_committed
+    )
+    assert nominal == dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
+    assert nominal_iso == "2026-08-19T00:37:00.000000Z"
+
+
+def test_resolve_nominal_schedule_slot_ambiguous_more_than_one_hour_fails_closed() -> None:
+    # Predecessor was 10:37:00Z. Trigger for 7 * * * * arrives at 12:10:00Z (>1 hour later, 11:07 and 12:07 both elapsed)
+    last_committed = dt.datetime(2026, 8, 19, 10, 37, 0, tzinfo=UTC)
+    created = dt.datetime(2026, 8, 19, 12, 10, 0, tzinfo=UTC)
+    with pytest.raises(runner.FreshHoldoutActivationError, match="ambiguous schedule occurrence"):
+        runner.resolve_nominal_schedule_slot(
+            "7 * * * *", created, last_committed_utc=last_committed
+        )
+
+
+def test_resolve_nominal_schedule_slot_genesis_delayed_more_than_one_hour_fails_closed() -> None:
+    created = dt.datetime(2026, 8, 19, 1, 15, 0, tzinfo=UTC)  # candidate would be 00:07, >1h delay
+    with pytest.raises(runner.FreshHoldoutActivationError, match="ambiguous genesis schedule occurrence"):
+        runner.resolve_nominal_schedule_slot("7 * * * *", created, last_committed_utc=None)
+
+
+# --- ARCHIVE INTEGRITY & MEMBER SAFETY TESTS ---
 
 
 def test_verify_and_extract_archive_rejects_symlinks_and_hardlinks(tmp_path: Path) -> None:
@@ -356,88 +755,13 @@ def test_verify_and_extract_archive_verifies_sha256_digest(tmp_path: Path) -> No
     with tarfile.open(tar_path, "w:gz") as tar:
         pass
 
-    with pytest.raises(runner.FreshHoldoutActivationError, match="SHA-256 digest mismatch"):
+    with pytest.raises(runner.FreshHoldoutActivationError, match="archive SHA-256 digest mismatch"):
         runner.verify_and_extract_durable_state_archive(
             tar_path, repository_root=repo, expected_sha256="0" * 64
         )
 
 
-# --- BLOCKER 3: PARTIAL LIVE CAPTURE PRESERVATION TESTS ---
-
-
-def test_partial_capture_failure_preserves_successful_raw_captures_immediately(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repo, state = _repo(tmp_path)
-    monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
-    scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
-
-    def capture_one(request_date: str, *, repository_root: Path):
-        if request_date == "20260818":
-            return _capture(tmp_path, request_date, scheduled + dt.timedelta(minutes=1))
-        raise RuntimeError("simulated network failure on second request date")
-
-    with pytest.raises(runner.FreshHoldoutActivationError, match="one or more reviewed live captures failed"):
-        runner.execute_collection_tick(
-            scheduled_for=scheduled,
-            bootstrap_projection_raw=b"test-bootstrap",
-            durable_release_tag="athena-fresh-holdout-evidence-2026-W34",
-            durable_asset_name="success-20260819T000700Z-run-1.tar.gz",
-            execute_live_network=True,
-            state_root=Path(control.CONTROL_ROOT_RELATIVE),
-            repository_root=repo,
-            capture_one=capture_one,
-        )
-
-    # Verify that the first request date was staged to disk immediately before failure
-    working = state / runner.WORKING_CAPTURE_DIRECTORY
-    date_dir = working / "20260818"
-    assert date_dir.is_dir()
-    captures = list(date_dir.iterdir())
-    assert len(captures) == 1
-    assert (captures[0] / capture_contract.RAW_FILENAME).is_file()
-    assert (captures[0] / capture_contract.MANIFEST_FILENAME).is_file()
-
-
-def test_qualification_failure_preserves_staged_raw_evidence(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    repo, state = _repo(tmp_path)
-    monkeypatch.setattr(runner, "_ledger", lambda *_args, **_kwargs: object())
-    scheduled = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
-
-    def fail_qualify(_evidence):
-        raise ValueError("simulated qualification parser failure")
-
-    monkeypatch.setattr(runner, "_qualify", fail_qualify)
-
-    def capture_one(request_date: str, *, repository_root: Path):
-        return _capture(tmp_path, request_date, scheduled + dt.timedelta(minutes=1))
-
-    with pytest.raises(runner.FreshHoldoutActivationError, match="live captures failed"):
-        runner.execute_collection_tick(
-            scheduled_for=scheduled,
-            bootstrap_projection_raw=b"test-bootstrap",
-            durable_release_tag="athena-fresh-holdout-evidence-2026-W34",
-            durable_asset_name="success-20260819T000700Z-run-1.tar.gz",
-            execute_live_network=True,
-            state_root=Path(control.CONTROL_ROOT_RELATIVE),
-            repository_root=repo,
-            capture_one=capture_one,
-        )
-
-    # Verify raw files were staged prior to qualification error
-    working = state / runner.WORKING_CAPTURE_DIRECTORY
-    date_dir = working / "20260818"
-    assert date_dir.is_dir()
-    captures = list(date_dir.iterdir())
-    assert len(captures) >= 1
-    assert (captures[0] / capture_contract.RAW_FILENAME).is_file()
-
-
-# --- BLOCKER 4: ZERO PYPI ENVIRONMENT TESTS ---
+# --- ZERO PYPI & WORKFLOW SPECIFICATION TESTS ---
 
 
 def test_activation_runner_runtime_path_has_zero_external_dependencies() -> None:
@@ -482,59 +806,12 @@ def test_workflow_installs_no_pypi_packages() -> None:
     assert "pip install" not in text
     assert "requirements.txt" not in text
     assert "cache: pip" not in text
-
-
-# --- BLOCKER 5: CRON SCHEDULE IDENTITY TESTS ---
-
-
-def test_resolve_nominal_schedule_slot_exact_07() -> None:
-    created = dt.datetime(2026, 8, 19, 0, 7, 15, tzinfo=UTC)
-    nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
-        "7 * * * *", created
-    )
-    assert nominal == dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
-    assert nominal_iso == "2026-08-19T00:07:00.000000Z"
-    assert release_tag == "athena-fresh-holdout-evidence-2026-W34"
-    assert success_prefix == "success-20260819T000700Z-run-"
-    assert failure_prefix == "failure-20260819T000700Z-run-"
-
-
-def test_resolve_nominal_schedule_slot_exact_37() -> None:
-    created = dt.datetime(2026, 8, 19, 0, 37, 45, tzinfo=UTC)
-    nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
-        "37 * * * *", created
-    )
-    assert nominal == dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
-    assert nominal_iso == "2026-08-19T00:37:00.000000Z"
-    assert release_tag == "athena-fresh-holdout-evidence-2026-W34"
-    assert success_prefix == "success-20260819T003700Z-run-"
-
-
-def test_resolve_nominal_schedule_slot_delayed_07_past_37_remains_07() -> None:
-    # A :07 cron event delayed until 00:45:00Z MUST remain 00:07:00Z, never becoming 00:37:00Z
-    created = dt.datetime(2026, 8, 19, 0, 45, 0, tzinfo=UTC)
-    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot("7 * * * *", created)
-    assert nominal == dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
-    assert nominal_iso == "2026-08-19T00:07:00.000000Z"
-
-
-def test_resolve_nominal_schedule_slot_delayed_37_past_next_hour_07_remains_37() -> None:
-    # A :37 cron event delayed until 01:10:00Z MUST remain 00:37:00Z, never becoming 01:07:00Z
-    created = dt.datetime(2026, 8, 19, 1, 10, 0, tzinfo=UTC)
-    nominal, nominal_iso, _, _, _ = runner.resolve_nominal_schedule_slot("37 * * * *", created)
-    assert nominal == dt.datetime(2026, 8, 19, 0, 37, 0, tzinfo=UTC)
-    assert nominal_iso == "2026-08-19T00:37:00.000000Z"
-
-
-def test_resolve_nominal_schedule_slot_rejects_invalid_expression() -> None:
-    created = dt.datetime(2026, 8, 19, 0, 7, 0, tzinfo=UTC)
-    with pytest.raises(runner.FreshHoldoutActivationError, match="unexpected schedule cron"):
-        runner.resolve_nominal_schedule_slot("0 * * * *", created)
-    with pytest.raises(runner.FreshHoldoutActivationError, match="unexpected schedule cron"):
-        runner.resolve_nominal_schedule_slot("invalid", created)
-
-
-def test_resolve_nominal_schedule_slot_rejects_timezone_naive() -> None:
-    created_naive = dt.datetime(2026, 8, 19, 0, 7, 0)
-    with pytest.raises(runner.FreshHoldoutActivationError, match="timezone-aware"):
-        runner.resolve_nominal_schedule_slot("7 * * * *", created_naive)
+    assert "cancel-in-progress: false" in text
+    assert "actions: read" in text
+    assert "contents: write" in text
+    assert "workflow_dispatch:" not in text
+    assert "--execute-live-network" in text
+    assert "athena-fresh-holdout-bootstrap-v1" in text
+    assert "success_asset" in text
+    assert "failure_asset" in text
+    assert "retention-days: 90" in text

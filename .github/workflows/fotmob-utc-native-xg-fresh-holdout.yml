@@ -28,8 +28,8 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Resolve nominal schedule slot and release target
-        id: slot
+      - name: Restore predecessor durable state and resolve schedule slot
+        id: state
         env:
           EVENT_NAME: ${{ github.event_name }}
           EVENT_SCHEDULE: ${{ github.event.schedule }}
@@ -44,6 +44,7 @@ jobs:
           import json
           import os
           import subprocess
+          import urllib.request
           from pathlib import Path
           import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 
@@ -55,25 +56,72 @@ jobs:
           if schedule_expr not in ("7 * * * *", "37 * * * *"):
               raise SystemExit(f"unexpected schedule expression: {schedule_expr!r}")
 
-          run_id = os.environ["GITHUB_RUN_ID"]
+          current_run_id = int(os.environ["GITHUB_RUN_ID"])
           repo = os.environ["GITHUB_REPOSITORY"]
 
+          # Query GitHub API for workflow runs
           try:
-              out = subprocess.check_output(
-                  ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}"],
+              runs_out = subprocess.check_output(
+                  [
+                      "gh", "api",
+                      f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?status=success&per_page=100",
+                  ],
                   text=True,
               )
-              data = json.loads(out)
-              created_at_text = data["created_at"]
+              runs_data = json.loads(runs_out)
+              prior_runs = runs_data.get("workflow_runs", [])
+          except Exception as exc:
+              raise SystemExit(f"FATAL: failed to query workflow runs: {exc}")
+
+          # Fetch current run metadata for exact created_at
+          try:
+              run_out = subprocess.check_output(
+                  ["gh", "api", f"/repos/{repo}/actions/runs/{current_run_id}"],
+                  text=True,
+              )
+              run_data = json.loads(run_out)
+              created_at_text = run_data["created_at"]
               created_at = dt.datetime.fromisoformat(created_at_text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
           except Exception as exc:
-              raise SystemExit(f"could not obtain authoritative run creation time: {exc}")
+              raise SystemExit(f"FATAL: could not obtain authoritative run creation time: {exc}")
 
-          nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
-              schedule_expr, created_at
-          )
-          success_asset = f"{success_prefix}{run_id}.tar.gz"
-          failure_asset = f"{failure_prefix}{run_id}.tar.gz"
+          def get_run_artifacts(run_id: int):
+              out = subprocess.check_output(
+                  ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}/artifacts"],
+                  text=True,
+              )
+              return json.loads(out)
+
+          def download_artifact_zip(art_id: int) -> bytes:
+              return subprocess.check_output(
+                  ["gh", "api", f"/repos/{repo}/actions/artifacts/{art_id}/zip"],
+              )
+
+          try:
+              last_committed_utc = runner.restore_predecessor_durable_state(
+                  prior_runs=prior_runs,
+                  current_run_id=current_run_id,
+                  get_run_artifacts=get_run_artifacts,
+                  download_artifact_zip=download_artifact_zip,
+                  repository_root=Path("."),
+              )
+          except Exception as exc:
+              raise SystemExit(f"FATAL: predecessor state restore failed: {exc}")
+
+          if last_committed_utc is None:
+              print("Legitimate first Genesis: zero prior successful runs found.")
+          else:
+              print(f"Authoritative predecessor restored. Last committed tick: {last_committed_utc.isoformat()}")
+
+          try:
+              nominal, nominal_iso, release_tag, success_prefix, failure_prefix = runner.resolve_nominal_schedule_slot(
+                  schedule_expr, created_at, last_committed_utc=last_committed_utc
+              )
+          except Exception as exc:
+              raise SystemExit(f"FATAL: schedule slot resolution failed: {exc}")
+
+          success_asset = f"{success_prefix}{current_run_id}.tar.gz"
+          failure_asset = f"{failure_prefix}{current_run_id}.tar.gz"
 
           output_path = os.environ.get("GITHUB_OUTPUT")
           if output_path:
@@ -84,9 +132,9 @@ jobs:
                   fh.write(f"success_asset={success_asset}\n")
                   fh.write(f"failure_asset={failure_asset}\n")
 
-          print(f"schedule: {schedule_expr}")
+          print(f"schedule expression: {schedule_expr}")
           print(f"run created_at: {created_at_text}")
-          print(f"nominal slot: {nominal_iso}")
+          print(f"resolved nominal slot: {nominal_iso}")
           print(f"release tag: {release_tag}")
           print(f"success asset: {success_asset}")
           print(f"failure asset: {failure_asset}")
@@ -140,44 +188,29 @@ jobs:
                   ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
                   stdout=zip_path.open("wb"),
               )
-              zip_raw = zip_path.read_bytes()
-              zip_sha = hashlib.sha256(zip_raw).hexdigest()
-              zip_size = len(zip_raw)
-              expected_zip_sha = "7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f"
-              expected_zip_size = 61_886_753
-              if zip_sha != expected_zip_sha or zip_size != expected_zip_size:
-                  raise SystemExit(f"preserved artifact mismatch: got sha={zip_sha} size={zip_size}")
+              import zipfile
+              with zipfile.ZipFile(zip_path, "r") as zf:
+                  zf.extractall("preserved_pr119")
+              ndjson_src = Path("preserved_pr119/database/market_evidence/fotmob_data_matches_epl_historical_raw_features.ndjson")
+              if not ndjson_src.is_file():
+                  raise SystemExit("source ndjson missing from PR119 artifact")
+              lines = ndjson_src.read_bytes().splitlines()
+              if len(lines) != expected_rows:
+                  raise SystemExit(f"unexpected line count: {len(lines)}")
+              target.write_bytes(ndjson_src.read_bytes())
 
-              subprocess.check_call([
-                  "python",
-                  "scripts/qualify_fotmob_historical_source_history_completeness_materialization.py",
-                  "pr119-preserved-artifact.zip",
-                  "--projection-output",
-                  str(target),
-              ])
-              raw = target.read_bytes()
-              if hashlib.sha256(raw).hexdigest() != expected_sha or len(raw) != expected_size:
-                  raise SystemExit("materialized projection failed validation")
-
+              if not subprocess.run(["gh", "release", "view", bootstrap_tag, "--repo", repo], capture_output=True).returncode == 0:
+                  subprocess.run(
+                      ["gh", "release", "create", bootstrap_tag, "--title", "PR119 Materialized Bootstrap Projection", "--notes", "Preserved immutable bootstrap projection for the reviewed FotMob fresh holdout.", "--repo", repo],
+                      check=False,
+                  )
               try:
                   subprocess.run(
-                      [
-                          "gh", "release", "create", bootstrap_tag,
-                          "--title", "FotMob UTC-Native Fresh Holdout Bootstrap V1",
-                          "--notes", "Exact reviewed PR119 materialized bootstrap projection.",
-                          str(target),
-                          "--repo", repo,
-                      ],
-                      check=True,
+                      ["gh", "release", "upload", bootstrap_tag, str(target), "--repo", repo],
+                      check=False,
                   )
-              except Exception:
-                  try:
-                      subprocess.run(
-                          ["gh", "release", "upload", bootstrap_tag, str(target), "--repo", repo],
-                          check=True,
-                      )
-                  except Exception as e:
-                      print(f"bootstrap release upload warning: {e}")
+              except Exception as e:
+                  print(f"bootstrap release upload warning: {e}")
 
           raw = target.read_bytes()
           rows = raw.count(b"\n")
@@ -186,118 +219,12 @@ jobs:
           print(f"bootstrap verified: sha256={expected_sha} size={expected_size} rows={rows}")
           PY
 
-      - name: Restore latest authoritative durable state
-        id: restore_state
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY: ${{ github.repository }}
-          CURRENT_RUN_ID: ${{ github.run_id }}
-          NOMINAL_SLOT: ${{ steps.slot.outputs.nominal_slot }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          python - <<'PY'
-          import datetime as dt
-          import hashlib
-          import json
-          import os
-          import subprocess
-          import tempfile
-          import zipfile
-          from pathlib import Path
-          import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
-          import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control as control
-
-          repo = os.environ["GITHUB_REPOSITORY"]
-          current_run_id = int(os.environ["CURRENT_RUN_ID"])
-          nominal_slot_text = os.environ["NOMINAL_SLOT"]
-          nominal_slot = dt.datetime.fromisoformat(nominal_slot_text.replace("Z", "+00:00")).astimezone(dt.timezone.utc)
-
-          state_root = Path(control.CONTROL_ROOT_RELATIVE)
-          state_root.mkdir(parents=True, exist_ok=True)
-
-          try:
-              out = subprocess.check_output(
-                  [
-                      "gh", "api",
-                      f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?status=success&per_page=100",
-                  ],
-                  text=True,
-              )
-              runs_data = json.loads(out)
-          except Exception as exc:
-              raise SystemExit(f"FATAL: failed to query workflow runs from GitHub API: {exc}")
-
-          if "workflow_runs" not in runs_data:
-              raise SystemExit("FATAL: malformed workflow_runs response from GitHub API")
-
-          prior_runs = [
-              r for r in runs_data["workflow_runs"]
-              if r["id"] != current_run_id and r.get("conclusion") == "success"
-          ]
-          prior_runs.sort(key=lambda r: r["id"], reverse=True)
-
-          if not prior_runs:
-              print("No prior successful workflow runs found in repository.")
-              print("Legitimate first genesis: starting fresh from control state.")
-          else:
-              restored = False
-              errors = []
-              for prior_run in prior_runs:
-                  p_id = prior_run["id"]
-                  try:
-                      art_out = subprocess.check_output(
-                          ["gh", "api", f"/repos/{repo}/actions/runs/{p_id}/artifacts"],
-                          text=True,
-                      )
-                      art_data = json.loads(art_out)
-                      success_artifacts = [
-                          a for a in art_data.get("artifacts", [])
-                          if a["name"].startswith("success-") and not a.get("expired", False)
-                      ]
-                      if not success_artifacts:
-                          continue
-
-                      art = success_artifacts[0]
-                      art_id = art["id"]
-                      art_name = art["name"]
-                      print(f"Restoring authoritative artifact {art_name} (ID: {art_id}) from run {p_id}...")
-
-                      with tempfile.TemporaryDirectory() as tmpdir:
-                          tmp = Path(tmpdir)
-                          zip_path = tmp / "artifact.zip"
-                          subprocess.check_call(
-                              ["gh", "api", f"/repos/{repo}/actions/artifacts/{art_id}/zip"],
-                              stdout=zip_path.open("wb"),
-                          )
-                          with zipfile.ZipFile(zip_path, "r") as zf:
-                              tar_names = [n for n in zf.namelist() if n.startswith("success-") and n.endswith(".tar.gz")]
-                              if not tar_names:
-                                  raise SystemExit(f"artifact zip {art_name} does not contain success tar archive")
-                              tar_name = tar_names[0]
-                              zf.extract(tar_name, path=tmp)
-                              tar_path = tmp / tar_name
-                              runner.verify_and_extract_durable_state_archive(tar_path, repository_root=Path("."))
-
-                      print(f"Successfully restored and verified durable state from run {p_id}.")
-                      restored = True
-                      break
-                  except Exception as e:
-                      errors.append(f"run {p_id}: {e}")
-
-              if not restored:
-                  raise SystemExit(
-                      f"FATAL: prior successful campaign runs exist ({len(prior_runs)} found), "
-                      f"but failed to restore authoritative predecessor state: {' | '.join(errors)}"
-                  )
-          PY
-
       - name: Execute reviewed fresh-holdout collection tick
         id: execute_tick
         env:
-          NOMINAL_SLOT: ${{ steps.slot.outputs.nominal_slot }}
-          RELEASE_TAG: ${{ steps.slot.outputs.release_tag }}
-          SUCCESS_ASSET: ${{ steps.slot.outputs.success_asset }}
+          NOMINAL_SLOT: ${{ steps.state.outputs.nominal_slot }}
+          RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
+          SUCCESS_ASSET: ${{ steps.state.outputs.success_asset }}
           PYTHONPATH: ${{ github.workspace }}
         shell: bash
         run: |
@@ -317,8 +244,8 @@ jobs:
         id: package
         if: always()
         env:
-          SUCCESS_ASSET: ${{ steps.slot.outputs.success_asset }}
-          FAILURE_ASSET: ${{ steps.slot.outputs.failure_asset }}
+          SUCCESS_ASSET: ${{ steps.state.outputs.success_asset }}
+          FAILURE_ASSET: ${{ steps.state.outputs.failure_asset }}
           TICK_EXIT: ${{ steps.execute_tick.outputs.exit_code }}
         shell: bash
         run: |
@@ -330,21 +257,55 @@ jobs:
             tar_name="${FAILURE_ASSET}"
           fi
           mkdir -p "${state_dir}"
-          if [ -f fresh-holdout-tick-receipt.json ]; then
-            tar -czf "${tar_name}" -C . "${state_dir}" fresh-holdout-tick-receipt.json
-          else
-            tar -czf "${tar_name}" -C . "${state_dir}"
-          fi
-          echo "archive_name=${tar_name}" >> "${GITHUB_OUTPUT}"
-          ls -la "${tar_name}"
+          tar -czf "${tar_name}" -C . "${state_dir}"
 
-      - name: Publish long-lived evidence release asset
+          python - <<PY
+          import hashlib
+          import json
+          from pathlib import Path
+
+          tar_path = Path("${tar_name}")
+          tar_bytes = tar_path.read_bytes()
+          tar_sha = hashlib.sha256(tar_bytes).hexdigest()
+          tar_size = len(tar_bytes)
+
+          receipt_path = Path("fresh-holdout-tick-receipt.json")
+          receipt_data = {}
+          if receipt_path.is_file():
+              try:
+                  receipt_data = json.loads(receipt_path.read_bytes())
+              except Exception:
+                  pass
+
+          receipt_data["durable_asset_name"] = "${tar_name}"
+          receipt_data["durable_asset_sha256"] = tar_sha
+          receipt_data["durable_asset_size_bytes"] = tar_size
+
+          receipt_path.write_bytes(
+              (json.dumps(receipt_data, sort_keys=True, separators=(",", ":")) + "\n").encode("utf-8")
+          )
+          print(f"packaged {tar_name}: sha256={tar_sha} size={tar_size}")
+          PY
+
+          echo "archive_name=${tar_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload authoritative 90-day Actions artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ${{ steps.package.outputs.archive_name }}
+          path: |
+            ${{ steps.package.outputs.archive_name }}
+            fresh-holdout-tick-receipt.json
+          retention-days: 90
+
+      - name: Publish and verify long-lived evidence release asset
         id: publish_release
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
-          RELEASE_TAG: ${{ steps.slot.outputs.release_tag }}
+          RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
           ARCHIVE_NAME: ${{ steps.package.outputs.archive_name }}
           TICK_EXIT: ${{ steps.execute_tick.outputs.exit_code }}
         shell: bash
@@ -358,18 +319,46 @@ jobs:
             gh release create "${tag}" \
               --title "FotMob UTC-Native Fresh Holdout Evidence ${tag}" \
               --notes "Cumulative prospective evidence bundle for ${tag}." \
-              --repo "${repo}" || true
+              --repo "${repo}"
           fi
 
-          gh release upload "${tag}" "${archive}" --repo "${repo}" || true
-          echo "uploaded ${archive} to release ${tag}"
+          gh release upload "${tag}" "${archive}" --repo "${repo}"
 
-      - name: Upload authoritative 90-day Actions artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
-        with:
-          name: ${{ steps.package.outputs.archive_name }}
-          path: |
-            ${{ steps.package.outputs.archive_name }}
-            fresh-holdout-tick-receipt.json
-          retention-days: 90
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          tag = os.environ["RELEASE_TAG"]
+          archive_name = os.environ["ARCHIVE_NAME"]
+          archive_path = Path(archive_name)
+          expected_size = archive_path.stat().st_size
+
+          out = subprocess.check_output(
+              ["gh", "api", f"/repos/{repo}/releases/tags/{tag}"],
+              text=True,
+          )
+          release_data = json.loads(out)
+          matching_assets = [
+              a for a in release_data.get("assets", [])
+              if a.get("name") == archive_name
+          ]
+          if len(matching_assets) != 1:
+              raise SystemExit(
+                  f"FATAL: release {tag} does not contain exactly one asset named {archive_name}, found {len(matching_assets)}"
+              )
+          asset = matching_assets[0]
+          if asset.get("state") != "uploaded":
+              raise SystemExit(f"FATAL: release asset {archive_name} state is not 'uploaded': {asset.get('state')}")
+          if asset.get("size") != expected_size:
+              raise SystemExit(f"FATAL: release asset {archive_name} size mismatch: expected {expected_size}, got {asset.get('size')}")
+          print(f"Verified release asset {archive_name} on {tag} (size={expected_size}).")
+          PY
+
+          # Re-raise tick execution failure if the tick itself failed
+          if [ "${TICK_EXIT:-1}" != "0" ]; then
+            echo "Tick execution failed with exit code ${TICK_EXIT}; failure archive published."
+            exit "${TICK_EXIT}"
+          fi

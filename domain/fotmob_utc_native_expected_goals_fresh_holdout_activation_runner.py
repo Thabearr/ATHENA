@@ -1004,7 +1004,7 @@ def execute_collection_tick(
             )
         except Exception as exc:
             raise _error(f"settlement of fixture {fixture_id} failed") from exc
-        if assessment.disposition is fresh.SettlementDisposition.SETTLED:
+        if assessment.disposition is fresh.SettlementDisposition.SETTLED_REVIEWED_ORDINARY_FT:
             if assessment.settled_prediction is None:
                 raise _error("settlement missing settled record")
             _append(
@@ -1022,14 +1022,14 @@ def execute_collection_tick(
                 )
         elif (
             assessment.disposition
-            is fresh.SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_DRIFT
+            is fresh.SettlementDisposition.EXCLUDED_PROVIDER_IDENTITY_OR_KICKOFF_DRIFT
         ):
             _append(
                 paths["settlement"],
                 _terminal_row(
                     prediction,
                     assessment.disposition.value,
-                    assessment.notes or "provider identity drift observed",
+                    assessment.notes or "provider identity or kickoff drift observed",
                     durable_release_tag,
                     durable_asset_name,
                 ),
@@ -1043,25 +1043,44 @@ def execute_collection_tick(
         else:
             raise _error("settlement disposition escaped reviewed vocabulary")
 
-    if (
-        close_state is not None
-        and close_state.selected_close_utc is not None
-        and scheduled >= close_state.selected_close_utc + dt.timedelta(hours=24)
-    ):
-        for fixture_id, prediction in sorted(sealed.items()):
-            if fixture_id in terminal:
-                continue
-            _append(
-                paths["settlement"],
-                _terminal_row(
-                    prediction,
-                    "EXCLUDED_OUTSIDE_SELECTED_CLOSE",
-                    "sealed kickoff is not left-of the selected close boundary",
-                    durable_release_tag,
-                    durable_asset_name,
-                ),
-            )
-            terminal.add(fixture_id)
+    # BLOCKER B: Exact Selected-Close Population Semantics
+    if close_state is not None and close_state.selected_close_utc is not None:
+        # At selected_close_utc itself: any sealed fixture with kickoff >= selected_close_utc
+        # is outside the population and becomes EXCLUDED_OUTSIDE_SELECTED_CLOSE immediately.
+        if scheduled >= close_state.selected_close_utc:
+            for fixture_id, prediction in sorted(sealed.items()):
+                if fixture_id in terminal:
+                    continue
+                if prediction.fixture.kickoff_utc >= close_state.selected_close_utc:
+                    _append(
+                        paths["settlement"],
+                        _terminal_row(
+                            prediction,
+                            "EXCLUDED_OUTSIDE_SELECTED_CLOSE",
+                            "sealed kickoff is not left-of the selected close boundary",
+                            durable_release_tag,
+                            durable_asset_name,
+                        ),
+                    )
+                    terminal.add(fixture_id)
+
+        # At selected_close_utc + 24h: any still-unresolved legitimate pre-close member
+        # becomes UNRESOLVED_AT_SETTLEMENT_TAIL.
+        if scheduled >= close_state.selected_close_utc + dt.timedelta(hours=24):
+            for fixture_id, prediction in sorted(sealed.items()):
+                if fixture_id in terminal:
+                    continue
+                _append(
+                    paths["settlement"],
+                    _terminal_row(
+                        prediction,
+                        "UNRESOLVED_AT_SETTLEMENT_TAIL",
+                        "no reviewed stable ordinary-FT settlement was qualified before tail end",
+                        durable_release_tag,
+                        durable_asset_name,
+                    ),
+                )
+                terminal.add(fixture_id)
 
     if plan.prediction_sealing_authorized:
         grouped: dict[int, list[fresh.QualifiedCaptureFixture]] = defaultdict(list)
@@ -1172,8 +1191,13 @@ def execute_collection_tick(
 def resolve_nominal_schedule_slot(
     schedule_expr: str,
     created_at: dt.datetime,
+    *,
+    last_committed_utc: dt.datetime | None = None,
 ) -> tuple[dt.datetime, str, str, str, str]:
-    """Derive exact nominal schedule slot and release/asset targets from trigger and time."""
+    """Derive exact nominal schedule slot and release/asset targets from trigger and time.
+
+    Fails closed if the cron occurrence identity is ambiguous relative to the predecessor.
+    """
     if type(schedule_expr) is not str or schedule_expr not in (
         "7 * * * *",
         "37 * * * *",
@@ -1181,12 +1205,37 @@ def resolve_nominal_schedule_slot(
         raise _error(f"unexpected schedule cron expression: {schedule_expr!r}")
     created_utc = _utc(created_at, "created_at")
     expected_minute = 7 if schedule_expr == "7 * * * *" else 37
+
+    # Find nominal candidate slot corresponding to created_utc
     if created_utc.minute >= expected_minute:
-        nominal = created_utc.replace(minute=expected_minute, second=0, microsecond=0)
+        candidate = created_utc.replace(minute=expected_minute, second=0, microsecond=0)
     else:
-        nominal = (created_utc - dt.timedelta(hours=1)).replace(
+        candidate = (created_utc - dt.timedelta(hours=1)).replace(
             minute=expected_minute, second=0, microsecond=0
         )
+
+    # Validate occurrence ambiguity
+    if last_committed_utc is not None:
+        last_utc = _utc(last_committed_utc, "last_committed_utc")
+        if candidate <= last_utc:
+            raise _error(
+                f"derived nominal slot {candidate.isoformat()} is not after last committed slot {last_utc.isoformat()}"
+            )
+        # Check if more than one occurrence of this expression elapsed between last_committed and created_utc
+        earlier_candidate = candidate - dt.timedelta(hours=1)
+        if earlier_candidate > last_utc:
+            raise _error(
+                f"ambiguous schedule occurrence: multiple candidate slots ({earlier_candidate.isoformat()}, {candidate.isoformat()}) "
+                f"occurred between last committed {last_utc.isoformat()} and trigger {created_utc.isoformat()}"
+            )
+    else:
+        # Genesis: if delayed by more than 1 hour without predecessor, identity is ambiguous
+        if (created_utc - candidate).total_seconds() >= 3600.0:
+            raise _error(
+                f"ambiguous genesis schedule occurrence: trigger {created_utc.isoformat()} is more than 1 hour past nominal slot {candidate.isoformat()}"
+            )
+
+    nominal = candidate
     nominal_iso = _utc_text(nominal)
     nominal_compact = nominal.strftime("%Y%m%dT%H%M%SZ")
     iso_year, iso_week, _ = nominal.isocalendar()
@@ -1211,8 +1260,13 @@ def verify_and_extract_durable_state_archive(
     if not raw:
         raise _error("archive must be non-empty")
     actual_sha = hashlib.sha256(raw).hexdigest()
-    if expected_sha256 is not None and actual_sha != expected_sha256:
-        raise _error("archive SHA-256 digest mismatch")
+    if expected_sha256 is not None:
+        if type(expected_sha256) is not str or len(expected_sha256) != 64:
+            raise _error("expected_sha256 must be a 64-char lowercase hex digest")
+        if actual_sha != expected_sha256.lower():
+            raise _error(
+                f"archive SHA-256 digest mismatch: expected {expected_sha256}, got {actual_sha}"
+            )
 
     import tarfile
 
@@ -1261,6 +1315,135 @@ def verify_and_extract_durable_state_archive(
                     raise _error("checkpoint schema version invalid")
             except Exception as exc:
                 raise _error("checkpoint JSON validation failed") from exc
+
+
+def restore_predecessor_durable_state(
+    *,
+    prior_runs: Sequence[Mapping[str, Any]],
+    current_run_id: int,
+    get_run_artifacts: Callable[[int], Mapping[str, Any]],
+    download_artifact_zip: Callable[[int], bytes],
+    repository_root: Path | None = None,
+) -> dt.datetime | None:
+    """Restore authoritative state from the sole newest predecessor, or initialize Genesis.
+
+    Returns last_committed_scheduled_for_utc (or None for Genesis).
+    Fails closed on any ambiguity or validation failure.
+    """
+    repo = (repository_root or _repo_root()).resolve(strict=True)
+    state_root = repo / control.CONTROL_ROOT_RELATIVE
+    state_root.mkdir(parents=True, exist_ok=True)
+
+    successful_prior = [
+        r for r in prior_runs
+        if r.get("id") != current_run_id and r.get("conclusion") == "success"
+    ]
+    successful_prior.sort(key=lambda r: int(r["id"]), reverse=True)
+
+    if not successful_prior:
+        return None
+
+    newest = successful_prior[0]
+    newest_id = int(newest["id"])
+
+    try:
+        art_data = get_run_artifacts(newest_id)
+    except Exception as exc:
+        raise _error(f"failed to fetch artifacts for newest predecessor run {newest_id}") from exc
+
+    if type(art_data) is not dict or "artifacts" not in art_data or type(art_data["artifacts"]) is not list:
+        raise _error(f"malformed artifact metadata for newest predecessor run {newest_id}")
+
+    success_arts = [
+        a for a in art_data["artifacts"]
+        if type(a) is dict
+        and type(a.get("name")) is str
+        and a["name"].startswith("success-")
+        and not a.get("expired", False)
+    ]
+
+    if len(success_arts) != 1:
+        raise _error(
+            f"newest predecessor run {newest_id} must have exactly one success artifact, found {len(success_arts)}"
+        )
+
+    art = success_arts[0]
+    art_id = art.get("id")
+    if type(art_id) is not int:
+        raise _error(f"invalid artifact id in newest predecessor run {newest_id}")
+
+    try:
+        zip_bytes = download_artifact_zip(art_id)
+    except Exception as exc:
+        raise _error(f"failed to download artifact {art_id} for newest predecessor run {newest_id}") from exc
+
+    if not zip_bytes:
+        raise _error(f"downloaded empty artifact zip for newest predecessor run {newest_id}")
+
+    expected_zip_digest = art.get("digest")
+    if expected_zip_digest is not None and type(expected_zip_digest) is str:
+        expected_hex = expected_zip_digest.split(":")[-1].lower()
+        if len(expected_hex) == 64:
+            actual_hex = hashlib.sha256(zip_bytes).hexdigest()
+            if actual_hex != expected_hex:
+                raise _error(
+                    f"artifact zip digest mismatch for run {newest_id}: expected {expected_hex}, got {actual_hex}"
+                )
+
+    import io
+    import tempfile
+    import zipfile
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes), "r")
+    except Exception as exc:
+        raise _error(f"malformed zip archive from newest predecessor run {newest_id}") from exc
+
+    tar_names = [
+        name for name in zf.namelist()
+        if name.startswith("success-") and name.endswith(".tar.gz")
+    ]
+    if len(tar_names) != 1:
+        raise _error(
+            f"artifact zip for run {newest_id} must contain exactly one success tar archive, found {len(tar_names)}"
+        )
+
+    tar_member = tar_names[0]
+    tar_bytes = zf.read(tar_member)
+
+    expected_tar_sha = None
+    if "fresh-holdout-tick-receipt.json" in zf.namelist():
+        try:
+            receipt_data = json.loads(zf.read("fresh-holdout-tick-receipt.json"))
+            if type(receipt_data) is dict and type(receipt_data.get("durable_asset_sha256")) is str:
+                expected_tar_sha = receipt_data["durable_asset_sha256"]
+        except Exception:
+            pass
+
+    with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as tmp_tar:
+        tmp_tar.write(tar_bytes)
+        tmp_tar_path = Path(tmp_tar.name)
+
+    try:
+        verify_and_extract_durable_state_archive(
+            tmp_tar_path,
+            repository_root=repo,
+            expected_sha256=expected_tar_sha,
+        )
+    finally:
+        if tmp_tar_path.exists():
+            tmp_tar_path.unlink()
+
+    checkpoint_path = state_root / control.CHECKPOINT_FILENAME
+    if not checkpoint_path.is_file():
+        raise _error(f"predecessor state extracted from run {newest_id} is missing checkpoint.json")
+
+    try:
+        cp = json.loads(checkpoint_path.read_bytes())
+        last_committed_text = cp["last_committed_scheduled_for_utc"]
+        return _parse_utc(last_committed_text, "checkpoint last_committed_scheduled_for_utc")
+    except Exception as exc:
+        raise _error("failed to parse checkpoint from extracted predecessor state") from exc
 
 
 def activation_runner_receipt() -> dict[str, Any]:
@@ -1320,6 +1503,7 @@ __all__ = [
     "activation_runner_receipt",
     "execute_collection_tick",
     "resolve_nominal_schedule_slot",
+    "restore_predecessor_durable_state",
     "validate_state_root",
     "verify_and_extract_durable_state_archive",
     "verify_reviewed_activation_dependencies",
