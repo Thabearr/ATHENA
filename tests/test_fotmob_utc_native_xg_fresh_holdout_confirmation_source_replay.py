@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import io
 import json
 from pathlib import Path
 import tarfile
@@ -60,6 +59,8 @@ def _make_bundle(
     include_missing_assessment: bool = False,
     corrupt_close: bool = False,
     bad_checkpoint_count: bool = False,
+    duplicate_commit: bool = False,
+    post_commit_control: bool = False,
 ) -> tuple[Path, Path]:
     source = tmp_path / "source"
     state = source / control.CONTROL_ROOT_RELATIVE
@@ -83,7 +84,7 @@ def _make_bundle(
     asset_name = f"success-{compact}-run-{run_id}.tar.gz"
     year, week, _weekday = final_slot.isocalendar()
     release_tag = f"athena-fresh-holdout-evidence-{year}-W{week:02d}"
-    committed_row = {
+    committed_row: dict[str, object] = {
         "schema_version": 1,
         "event": "TICK_COMMITTED",
         "scheduled_for_utc": _utc_text(final_slot),
@@ -98,7 +99,23 @@ def _make_bundle(
         "backfill_or_retrofill_performed": False,
         "outcome_or_performance_input_used_for_close": False,
     }
-    control_rows = [close_row, committed_row]
+    control_rows: list[dict[str, object]] = [close_row]
+    if duplicate_commit:
+        control_rows.append(dict(committed_row))
+    control_rows.append(committed_row)
+    if post_commit_control:
+        control_rows.append(
+            {
+                "schema_version": 1,
+                "event": "SCHEDULER_GAP_RANGE",
+                "detected_at_scheduled_for_utc": _utc_text(final_slot),
+                "previous_committed_tick_utc": None,
+                "first_missing_tick_utc": _utc_text(control.holdout_start_utc() + dt.timedelta(minutes=7)),
+                "last_missing_tick_utc": _utc_text(control.holdout_start_utc() + dt.timedelta(minutes=7)),
+                "missing_tick_count": 1,
+                "backfill_authorized": False,
+            }
+        )
     _write_rows(state / control.CONTROL_JOURNAL_FILENAME, control_rows)
 
     prediction_rows: list[dict[str, object]] = []
@@ -109,9 +126,7 @@ def _make_bundle(
             missing_feature_ids=("home_form",),
             sealed_prediction=None,
         )
-        prediction_rows.append(
-            runner._prediction_row(assessment, release_tag, asset_name)
-        )
+        prediction_rows.append(runner._prediction_row(assessment, release_tag, asset_name))
         _write_rows(state / control.PREDICTION_JOURNAL_FILENAME, prediction_rows)
 
     checkpoint = {
@@ -133,18 +148,38 @@ def _make_bundle(
         archive.add(state, arcname=control.CONTROL_ROOT_RELATIVE)
     archive_raw = archive_path.read_bytes()
     receipt = {
+        "schema_version": 1,
+        "runner_id": runner.RUNNER_ID,
+        "runner_state": runner.RUNNER_STATE,
+        "scheduled_for_utc": _utc_text(final_slot),
+        "phase": control.ControlPhase.COLLECTION_COMPLETE.value,
+        "committed_at_utc": _utc_text(committed_at),
+        "request_dates": [],
+        "network_request_count": 0,
+        "network_acquisition_performed": False,
+        "fresh_holdout_collection_started_by_this_run": False,
+        "durable_release_tag": release_tag,
         "durable_asset_name": asset_name,
+        "next_required_boundary": runner.NEXT_REQUIRED_BOUNDARY,
+        "safety": {key: False for key in runner.SAFETY_KEYS},
+        "workflow_run_id": run_id,
+        "workflow_event_schedule": "7 * * * *",
+        "nominal_scheduled_for_utc": _utc_text(final_slot),
         "durable_asset_sha256": hashlib.sha256(archive_raw).hexdigest(),
         "durable_asset_size_bytes": len(archive_raw),
-        "durable_release_tag": release_tag,
-        "nominal_scheduled_for_utc": _utc_text(final_slot),
-        "tick_committed": True,
         "tick_exit_code": 0,
-        "workflow_run_id": run_id,
+        "tick_committed": True,
+        "failure_lineage_reconcile_outcome": "skipped",
     }
     receipt_path = tmp_path / f"{asset_name}.receipt.json"
     receipt_path.write_bytes(_canonical(receipt))
     return archive_path, receipt_path
+
+
+def _rewrite_receipt(receipt: Path, **changes: object) -> None:
+    value = json.loads(receipt.read_bytes())
+    value.update(changes)
+    receipt.write_bytes(_canonical(value))
 
 
 def test_terminal_empty_campaign_replays_to_frozen_insufficient_coverage(tmp_path: Path) -> None:
@@ -156,6 +191,7 @@ def test_terminal_empty_campaign_replays_to_frozen_insufficient_coverage(tmp_pat
     )
 
     assert result["replay_id"] == replay.REPLAY_ID
+    assert result["source_scope"] == replay.SOURCE_SCOPE
     assert result["source_counts"] == {
         "capture_rows": 0,
         "prediction_assessment_rows": 0,
@@ -170,6 +206,8 @@ def test_terminal_empty_campaign_replays_to_frozen_insufficient_coverage(tmp_pat
     assert result["confirmation_result_sha256"] == (
         evaluator.sha256_fresh_holdout_confirmation_result(confirmation)
     )
+    assert result["durable_state_journals_replayed"] is True
+    assert result["provider_raw_capture_rederivation_performed"] is False
     assert result["network_acquisition_performed"] is False
     assert result["model_or_calibration_refit_performed"] is False
     assert result["automatic_successor_approval"] is False
@@ -197,18 +235,13 @@ def test_missing_feature_assessment_is_reconstructed_not_silently_dropped(tmp_pa
 
 def test_receipt_must_bind_exact_archive_digest(tmp_path: Path) -> None:
     archive, receipt = _make_bundle(tmp_path)
-    value = json.loads(receipt.read_bytes())
-    value["durable_asset_sha256"] = "0" * 64
-    receipt.write_bytes(_canonical(value))
+    _rewrite_receipt(receipt, durable_asset_sha256="0" * 64)
 
     with pytest.raises(
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="disagree with tick receipt SHA-256",
     ):
-        replay.replay_fresh_holdout_confirmation(
-            archive_path=archive,
-            receipt_path=receipt,
-        )
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
 def test_noncanonical_receipt_fails_closed(tmp_path: Path) -> None:
@@ -220,10 +253,44 @@ def test_noncanonical_receipt_fails_closed(tmp_path: Path) -> None:
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="canonical compact sorted-key JSON",
     ):
-        replay.replay_fresh_holdout_confirmation(
-            archive_path=archive,
-            receipt_path=receipt,
-        )
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_receipt_must_be_exact_terminal_runner_receipt(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path)
+    _rewrite_receipt(receipt, runner_id="FORGED_RUNNER")
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="runner_id changed",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_receipt_cron_identity_must_match_nominal_slot(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path)
+    _rewrite_receipt(receipt, workflow_event_schedule="37 * * * *")
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="cron identity disagrees",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_terminal_receipt_cannot_claim_provider_requests(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path)
+    _rewrite_receipt(
+        receipt,
+        network_request_count=1,
+        network_acquisition_performed=True,
+    )
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="unexpectedly records network requests",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
 def test_stored_count_only_close_is_revalidated(tmp_path: Path) -> None:
@@ -233,10 +300,7 @@ def test_stored_count_only_close_is_revalidated(tmp_path: Path) -> None:
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="stored selected close disagrees",
     ):
-        replay.replay_fresh_holdout_confirmation(
-            archive_path=archive,
-            receipt_path=receipt,
-        )
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
 def test_checkpoint_must_match_append_only_journal_counts(tmp_path: Path) -> None:
@@ -246,10 +310,27 @@ def test_checkpoint_must_match_append_only_journal_counts(tmp_path: Path) -> Non
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="checkpoint disagrees",
     ):
-        replay.replay_fresh_holdout_confirmation(
-            archive_path=archive,
-            receipt_path=receipt,
-        )
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_duplicate_committed_slot_cannot_be_sorted_away(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path, duplicate_commit=True)
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="committed tick journal is duplicated or out of order",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_terminal_commit_must_remain_final_control_row(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path, post_commit_control=True)
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="terminal TICK_COMMITTED must be the final control journal row",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
 def test_failure_named_archive_cannot_be_promoted_to_confirmation(tmp_path: Path) -> None:
@@ -266,35 +347,29 @@ def test_failure_named_archive_cannot_be_promoted_to_confirmation(tmp_path: Path
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="canonical success archive name",
     ):
-        replay.replay_fresh_holdout_confirmation(
-            archive_path=failure,
-            receipt_path=replacement,
-        )
+        replay.replay_fresh_holdout_confirmation(archive_path=failure, receipt_path=replacement)
 
 
-def test_receipt_nominal_slot_must_match_final_committed_state(tmp_path: Path) -> None:
+def test_receipt_nominal_slot_must_match_archive_name(tmp_path: Path) -> None:
     archive, receipt = _make_bundle(tmp_path)
-    value = json.loads(receipt.read_bytes())
     shifted = control.settlement_tail_end_utc() + dt.timedelta(minutes=37)
-    value["nominal_scheduled_for_utc"] = _utc_text(shifted)
-    receipt.write_bytes(_canonical(value))
+    _rewrite_receipt(
+        receipt,
+        nominal_scheduled_for_utc=_utc_text(shifted),
+        scheduled_for_utc=_utc_text(shifted),
+        workflow_event_schedule="37 * * * *",
+    )
 
     with pytest.raises(
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="success archive nominal slot disagrees",
     ):
-        replay.replay_fresh_holdout_confirmation(
-            archive_path=archive,
-            receipt_path=receipt,
-        )
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
 def test_canonical_source_replay_hash_is_deterministic(tmp_path: Path) -> None:
     archive, receipt = _make_bundle(tmp_path)
-    result = replay.replay_fresh_holdout_confirmation(
-        archive_path=archive,
-        receipt_path=receipt,
-    )
+    result = replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
     raw = replay.canonical_source_replay_result_bytes(result)
     assert raw.endswith(b"\n")
     assert replay.sha256_source_replay_result(result) == hashlib.sha256(raw).hexdigest()
