@@ -16,6 +16,7 @@ import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 MAIN_SHA = "a" * 40
 HEAD_1 = "1" * 40
 HEAD_2 = "2" * 40
+RELEASE_TAG = "athena-fresh-holdout-evidence-2026-W34"
 
 
 def canonical(value):
@@ -65,10 +66,18 @@ def archive_bytes(rows):
     )
     raw = io.BytesIO()
     with tarfile.open(fileobj=raw, mode="w:gz") as tar:
-        info = tarfile.TarInfo(member)
-        info.size = len(body)
-        info.mode = 0o600
-        tar.addfile(info, io.BytesIO(body))
+        if rows:
+            info = tarfile.TarInfo(member)
+            info.size = len(body)
+            info.mode = 0o600
+            tar.addfile(info, io.BytesIO(body))
+        else:
+            root = tarfile.TarInfo(
+                ".cache/athena-research/fotmob-utc-native-xg-fresh-holdout"
+            )
+            root.type = tarfile.DIRTYPE
+            root.mode = 0o700
+            tar.addfile(root)
     return raw.getvalue()
 
 
@@ -85,18 +94,22 @@ def evidence_bundle(run_id, slot, *, success=True, rows=()):
     )
     kind = "success" if success else "failure"
     name = f"{kind}-{compact}-run-{run_id}.tar.gz"
-    archive = archive_bytes(rows)
+    materialized = []
+    for source in rows:
+        row = dict(source)
+        if row.get("event") == "TICK_COMMITTED" and row.get("scheduled_for_utc") == slot:
+            row["durable_release_tag"] = RELEASE_TAG
+            row["durable_asset_name"] = name
+        materialized.append(row)
+    archive = archive_bytes(materialized)
     minute = int(slot[14:16])
     receipt = {
         "durable_asset_name": name,
         "durable_asset_sha256": hashlib.sha256(archive).hexdigest(),
         "durable_asset_size_bytes": len(archive),
-        "durable_release_tag": "athena-fresh-holdout-evidence-2026-W34",
+        "durable_release_tag": RELEASE_TAG,
+        "failure_lineage_reconcile_outcome": "skipped" if success else "success",
         "nominal_scheduled_for_utc": slot,
-        "runner_id": audit.activation.RUNNER_ID,
-        "safety": {key: False for key in audit.activation.SAFETY_KEYS},
-        "scheduled_for_utc": slot,
-        "schema_version": 1,
         "tick_committed": success,
         "tick_exit_code": 0 if success else 1,
         "workflow_event_schedule": (
@@ -104,6 +117,17 @@ def evidence_bundle(run_id, slot, *, success=True, rows=()):
         ),
         "workflow_run_id": run_id,
     }
+    if success:
+        receipt.update(
+            {
+                "runner_id": audit.activation.RUNNER_ID,
+                "safety": {
+                    key: False for key in audit.activation.SAFETY_KEYS
+                },
+                "scheduled_for_utc": slot,
+                "schema_version": 1,
+            }
+        )
     receipt_raw = canonical(receipt)
     zipped = io.BytesIO()
     with zipfile.ZipFile(
@@ -171,10 +195,7 @@ class FakeGitHub:
     ):
         self.runs = list(runs)
         self.bundles = dict(bundles)
-        self.sidecars = sidecars
-        self.release_mismatch = release_mismatch
         self.digest_mismatch = digest_mismatch
-        self.sidecar_mismatch = sidecar_mismatch
         self.page_calls = []
         self.release_bytes = {}
         self.release_assets = {}
@@ -199,7 +220,7 @@ class FakeGitHub:
             if sidecars:
                 receipt_bytes = bundle["receipt"]
                 if sidecar_mismatch and run_id == max(self.bundles):
-                    receipt_bytes = receipt_bytes + b"x"
+                    receipt_bytes += b"x"
                 self.release_bytes[receipt_id] = receipt_bytes
                 assets.append(
                     {
@@ -217,9 +238,7 @@ class FakeGitHub:
     def runs_page(self, page, per_page):
         self.page_calls.append((page, per_page))
         start = (page - 1) * per_page
-        return {
-            "workflow_runs": self.runs[start : start + per_page]
-        }
+        return {"workflow_runs": self.runs[start : start + per_page]}
 
     def artifacts(self, run_id):
         bundle = self.bundles[run_id]
@@ -305,7 +324,13 @@ def test_later_gap_proves_first_slot_missing_without_inventing_run():
     assert result["first_nominal_slot_head_sha"] is None
 
 
-def test_verified_first_slot_failure_is_uncommitted_until_gap_witness():
+def test_minimal_first_slot_failure_is_verified_uncommitted_attempt():
+    bundle = evidence_bundle(
+        103,
+        "2026-08-19T00:07:00Z",
+        success=False,
+        rows=(),
+    )
     result = do_audit(
         FakeGitHub(
             [
@@ -316,14 +341,7 @@ def test_verified_first_slot_failure_is_uncommitted_until_gap_witness():
                     conclusion="failure",
                 )
             ],
-            {
-                103: evidence_bundle(
-                    103,
-                    "2026-08-19T00:07:00Z",
-                    success=False,
-                    rows=[failure_event()],
-                )
-            },
+            {103: bundle},
         )
     )
     assert result["first_nominal_slot_status"] == (
@@ -337,10 +355,9 @@ def test_failure_then_gap_makes_durable_missing_but_keeps_failed_run_visible():
         104,
         "2026-08-19T00:07:00Z",
         success=False,
-        rows=[failure_event()],
+        rows=(),
     )
     later_rows = [
-        failure_event(),
         gap(
             "2026-08-19T00:07:00Z",
             "2026-08-19T00:07:00Z",
@@ -376,6 +393,29 @@ def test_failure_then_gap_makes_durable_missing_but_keeps_failed_run_visible():
         row["run_id"] == 104 and row["tick_committed"] is False
         for row in result["runs"]
     )
+
+
+def test_failure_archive_may_preserve_qualification_failure_control_evidence():
+    bundle = evidence_bundle(
+        106,
+        "2026-08-19T00:07:00Z",
+        success=False,
+        rows=[failure_event()],
+    )
+    result = do_audit(
+        FakeGitHub(
+            [
+                run(
+                    106,
+                    "2026-08-19T00:08:00Z",
+                    head_sha=HEAD_1,
+                    conclusion="failure",
+                )
+            ],
+            {106: bundle},
+        )
+    )
+    assert result["verified_failure_count"] == 1
 
 
 def test_expanding_repeated_gap_ranges_match_producer_semantics():
@@ -439,22 +479,14 @@ def test_duplicate_committed_row_fails_closed():
         )
 
 
-def test_malformed_gap_count_fails_closed():
-    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
-        audit.validate_control_lineage(
-            [
-                gap(
-                    "2026-08-19T00:07:00Z",
-                    "2026-08-19T00:07:00Z",
-                    "2026-08-19T00:37:00Z",
-                    2,
-                )
-            ]
-        )
-
-
-def test_gap_detection_must_advance_in_append_order():
-    rows = [
+def test_malformed_gap_count_and_reversed_detection_fail_closed():
+    bad = [
+        gap(
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:37:00Z",
+            2,
+        ),
         gap(
             "2026-08-19T00:07:00Z",
             "2026-08-19T00:37:00Z",
@@ -469,7 +501,9 @@ def test_gap_detection_must_advance_in_append_order():
         ),
     ]
     with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
-        audit.validate_control_lineage(rows)
+        audit.validate_control_lineage([bad[0]])
+    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
+        audit.validate_control_lineage(bad[1:])
 
 
 def test_unknown_control_event_fails_closed():
@@ -640,15 +674,16 @@ def test_two_verified_runs_for_same_nominal_slot_fail_closed():
         "2026-08-19T00:07:00Z",
         rows=[committed("2026-08-19T00:07:00Z")],
     )
-    fake = FakeGitHub(
-        [
-            run(115, "2026-08-19T00:08:00Z", head_sha=HEAD_1),
-            run(116, "2026-08-19T00:09:00Z", head_sha=HEAD_2),
-        ],
-        {115: one, 116: two},
-    )
     with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
-        do_audit(fake)
+        do_audit(
+            FakeGitHub(
+                [
+                    run(115, "2026-08-19T00:08:00Z", head_sha=HEAD_1),
+                    run(116, "2026-08-19T00:09:00Z", head_sha=HEAD_2),
+                ],
+                {115: one, 116: two},
+            )
+        )
 
 
 def test_later_success_cannot_leave_an_earlier_slot_unresolved():
@@ -681,12 +716,14 @@ def test_run_created_at_cannot_predate_proven_nominal_slot():
         )
 
 
-def test_receipt_runner_schema_schedule_and_safety_are_semantically_bound():
+def test_success_receipt_runner_schema_schedule_and_safety_are_bound():
     mutators = [
         lambda value: value.__setitem__("runner_id", "OTHER"),
         lambda value: value.__setitem__("schema_version", 2),
         lambda value: value.__setitem__("workflow_event_schedule", "37 * * * *"),
-        lambda value: value["safety"].__setitem__(next(iter(value["safety"])), True),
+        lambda value: value["safety"].__setitem__(
+            next(iter(value["safety"])), True
+        ),
     ]
     for offset, mutate in enumerate(mutators):
         run_id = 120 + offset
@@ -709,6 +746,60 @@ def test_receipt_runner_schema_schedule_and_safety_are_semantically_bound():
                     {run_id: bundle},
                 )
             )
+
+
+def test_failure_optional_rich_fields_fail_closed_if_present_and_wrong():
+    bundle = evidence_bundle(
+        124,
+        "2026-08-19T00:07:00Z",
+        success=False,
+        rows=(),
+    )
+    replace_receipt(bundle, lambda value: value.__setitem__("runner_id", "OTHER"))
+    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
+        do_audit(
+            FakeGitHub(
+                [
+                    run(
+                        124,
+                        "2026-08-19T00:08:00Z",
+                        head_sha=HEAD_1,
+                        conclusion="failure",
+                    )
+                ],
+                {124: bundle},
+            )
+        )
+
+
+def test_success_commit_row_must_bind_release_and_asset_identity():
+    slot = "2026-08-19T00:07:00Z"
+    bundle = evidence_bundle(125, slot, rows=[committed(slot)])
+    with zipfile.ZipFile(io.BytesIO(bundle["zip"]), "r") as source:
+        receipt = source.read("fresh-holdout-tick-receipt.json")
+    bad_row = committed(slot)
+    bad_row["durable_release_tag"] = RELEASE_TAG
+    bad_row["durable_asset_name"] = "success-20260819T000700Z-run-999.tar.gz"
+    bad_archive = archive_bytes([bad_row])
+    receipt_value = json.loads(receipt)
+    receipt_value["durable_asset_sha256"] = hashlib.sha256(bad_archive).hexdigest()
+    receipt_value["durable_asset_size_bytes"] = len(bad_archive)
+    bad_receipt = canonical(receipt_value)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(bundle["artifact_name"], bad_archive)
+        zf.writestr("fresh-holdout-tick-receipt.json", bad_receipt)
+    bundle["archive"] = bad_archive
+    bundle["receipt"] = bad_receipt
+    bundle["zip"] = out.getvalue()
+    bundle["zip_digest"] = "sha256:" + hashlib.sha256(bundle["zip"]).hexdigest()
+    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
+        do_audit(
+            FakeGitHub(
+                [run(125, "2026-08-19T00:08:00Z", head_sha=HEAD_1)],
+                {125: bundle},
+            )
+        )
 
 
 def test_every_output_safety_authority_is_false():
@@ -741,9 +832,7 @@ def test_workflow_is_owner_only_read_only_exact_and_immutable_pinned():
         ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml"
     ).read_text()
     assert "github.event.issue.number == 170" in text
-    assert (
-        "github.event.comment.user.login == github.repository_owner" in text
-    )
+    assert "github.event.comment.user.login == github.repository_owner" in text
     assert "READ_ONLY_ACTIONS_LINEAGE_AUDIT" in text
     assert "([0-9a-f]{40})" in text
     assert "actions: read" in text
@@ -759,7 +848,7 @@ def test_workflow_is_owner_only_read_only_exact_and_immutable_pinned():
         "901ab137d6601a3485eac30da7e6bad7eeefa397",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd",
-        "bc5bf06b75f0e38656af0a93c9769ce546cfd0b5",
+        "aaf8dbe8534dfc10b707d34511fd4327dc81850e",
     ):
         assert pin in text
     assert "fotmob.com" not in text.lower()
