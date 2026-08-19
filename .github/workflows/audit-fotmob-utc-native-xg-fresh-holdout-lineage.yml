@@ -1,0 +1,147 @@
+name: Audit FotMob UTC-Native xG Fresh-Holdout Actions Lineage
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: read
+  contents: read
+  pull-requests: read
+  issues: write
+
+concurrency:
+  group: fotmob-utc-native-xg-fresh-holdout-lineage-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.issue.number == 170 &&
+      github.event.comment.user.login == github.repository_owner &&
+      startsWith(github.event.comment.body, '/athena-audit-fresh-holdout-lineage')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate exact owner audit command and merged control PR
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const controlPr = 170;
+            const body = String(context.payload.comment.body || '').replace(/\r\n/g, '\n');
+            const match = /^\/athena-audit-fresh-holdout-lineage\nmain-sha: ([0-9a-f]{40})\nconfirm: READ_ONLY_ACTIONS_LINEAGE_AUDIT$/.exec(body);
+            if (!match) {
+              core.setFailed('Fresh-holdout audit command must be the exact three-line reviewed command.');
+              return;
+            }
+            if (context.issue.number !== controlPr || context.payload.comment.user.login !== context.repo.owner) {
+              core.setFailed('Fresh-holdout audit is owner-only and bound to PR #170.');
+              return;
+            }
+            const expectedMain = match[1];
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: controlPr,
+            });
+            if (pr.state !== 'closed' || !pr.merged_at || !pr.merge_commit_sha) {
+              core.setFailed('PR #170 must be merged and closed before the audit can run.');
+              return;
+            }
+            const { data: ref } = await github.rest.git.getRef({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: 'heads/main',
+            });
+            if (ref.object.sha !== expectedMain) {
+              core.setFailed(`Current main=${ref.object.sha} differs from requested ${expectedMain}.`);
+              return;
+            }
+            core.setOutput('main_sha', expectedMain);
+
+      - name: Check out exact authorized main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.guard.outputs.main_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Verify exact checkout and reviewed dependency blobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.main_sha }}"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py)" = "901ab137d6601a3485eac30da7e6bad7eeefa397"
+          test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "aaf8dbe8534dfc10b707d34511fd4327dc81850e"
+
+      - name: Execute read-only GitHub lineage audit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/audit_fotmob_fresh_holdout_actions_lineage.py \
+            --repository "${GITHUB_REPOSITORY}" \
+            --expected-main-sha "${{ steps.guard.outputs.main_sha }}" \
+            --output fresh-holdout-actions-lineage-audit.json \
+            > fresh-holdout-actions-lineage-audit.stdout
+
+      - name: Upload audit result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fresh-holdout-actions-lineage-audit-${{ github.run_id }}
+          path: |
+            fresh-holdout-actions-lineage-audit.json
+            fresh-holdout-actions-lineage-audit.stdout
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Post compact audit result
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const fs = require('fs');
+            const result = JSON.parse(fs.readFileSync('fresh-holdout-actions-lineage-audit.json', 'utf8'));
+            const firstRun = result.first_nominal_slot_run_id === null ? 'null' : String(result.first_nominal_slot_run_id);
+            const firstHead = result.first_nominal_slot_head_sha === null ? 'null' : String(result.first_nominal_slot_head_sha);
+            const lines = [
+              'ATHENA FRESH-HOLDOUT LINEAGE AUDIT',
+              '',
+              `audit-state: ${result.audit_state}`,
+              `observed-main: ${result.observed_main_sha}`,
+              `first-nominal-slot: ${result.first_nominal_slot_utc}`,
+              `first-slot-status: ${result.first_nominal_slot_status}`,
+              `first-run-id: ${firstRun}`,
+              `first-run-head-sha: ${firstHead}`,
+              `latest-verified-nominal-slot: ${result.latest_verified_nominal_slot_utc}`,
+              `latest-verified-run-id: ${result.latest_verified_run_id}`,
+              `committed-slot-count: ${result.committed_slot_count}`,
+              `durably-recorded-missing-slot-count: ${result.durably_recorded_missing_slot_count}`,
+              `verified-failure-count: ${result.verified_failure_count}`,
+              `unverified-completed-run-count: ${result.unverified_completed_run_count}`,
+              `incomplete-run-count: ${result.incomplete_run_count}`,
+              `audit-actions-run-id: ${context.runId}`,
+              'provider-network-acquisition-performed-by-audit: false',
+              'backfill-authorized: false',
+              'model-approval-authorized: false',
+              'pricing-authorized: false',
+              'selection-authorized: false',
+              'bet-authorized: false',
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 170,
+              body: lines.join('\n'),
+            });
