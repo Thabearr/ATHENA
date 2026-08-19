@@ -24,6 +24,7 @@ def canonical(value):
 def committed(slot):
     return {
         "backfill_or_retrofill_performed": False,
+        "committed_at_utc": slot,
         "event": "TICK_COMMITTED",
         "nominal_schedule_time_used_as_observation_time": False,
         "schema_version": 1,
@@ -130,12 +131,14 @@ class FakeGitHub:
         sidecars=True,
         release_mismatch=False,
         digest_mismatch=False,
+        sidecar_mismatch=False,
     ):
         self.runs = list(runs)
         self.bundles = dict(bundles)
         self.sidecars = sidecars
         self.release_mismatch = release_mismatch
         self.digest_mismatch = digest_mismatch
+        self.sidecar_mismatch = sidecar_mismatch
         self.page_calls = []
         self.release_bytes = {}
         self.release_assets = {}
@@ -158,7 +161,10 @@ class FakeGitHub:
                 }
             ]
             if sidecars:
-                self.release_bytes[receipt_id] = bundle["receipt"]
+                receipt_bytes = bundle["receipt"]
+                if sidecar_mismatch and run_id == max(self.bundles):
+                    receipt_bytes = receipt_bytes + b"x"
+                self.release_bytes[receipt_id] = receipt_bytes
                 assets.append(
                     {
                         "id": receipt_id,
@@ -276,12 +282,7 @@ def test_verified_first_slot_failure_remains_uncommitted_until_gap_witness():
 
 
 def test_failure_then_gap_makes_durable_missing_authoritative_but_keeps_failed_run():
-    b1 = evidence_bundle(
-        104,
-        "2026-08-19T00:07:00Z",
-        success=False,
-        rows=[failure_event()],
-    )
+    b1 = evidence_bundle(104, "2026-08-19T00:07:00Z", success=False, rows=[failure_event()])
     rows2 = [
         failure_event(),
         gap(
@@ -303,9 +304,27 @@ def test_failure_then_gap_makes_durable_missing_authoritative_but_keeps_failed_r
     result = do_audit(fake)
     assert result["first_nominal_slot_status"] == "FIRST_SLOT_DURABLY_RECORDED_MISSING"
     assert result["first_nominal_slot_run_id"] == 104
-    assert any(
-        r["run_id"] == 104 and r["tick_committed"] is False for r in result["runs"]
-    )
+    assert any(r["run_id"] == 104 and r["tick_committed"] is False for r in result["runs"])
+
+
+def test_expanding_repeated_gap_ranges_are_consistent_not_contradictory():
+    rows = [
+        gap(
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:37:00Z",
+            1,
+        ),
+        gap(
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:37:00Z",
+            "2026-08-19T01:07:00Z",
+            2,
+        ),
+    ]
+    committed_slots, missing_slots = audit.validate_control_lineage(rows)
+    assert committed_slots == set()
+    assert missing_slots == {0, 1}
 
 
 def test_commit_inside_prior_gap_fails_closed():
@@ -381,6 +400,25 @@ def test_malformed_gap_range_or_count_fails_closed(row):
         audit.validate_control_lineage([row])
 
 
+def test_gap_detection_must_advance_in_append_order():
+    rows = [
+        gap(
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:37:00Z",
+            "2026-08-19T01:07:00Z",
+            2,
+        ),
+        gap(
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:37:00Z",
+            1,
+        ),
+    ]
+    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
+        audit.validate_control_lineage(rows)
+
+
 def test_artifact_digest_mismatch_is_partial_never_verified():
     b = evidence_bundle(
         109,
@@ -395,6 +433,46 @@ def test_artifact_digest_mismatch_is_partial_never_verified():
     result = do_audit(fake)
     assert result["verified_completed_run_count"] == 0
     assert result["unverified_completed_run_count"] == 1
+    assert result["audit_state"] == "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
+
+
+def test_receipt_archive_hash_mismatch_never_becomes_verified():
+    b = evidence_bundle(
+        115,
+        "2026-08-19T00:07:00Z",
+        rows=[committed("2026-08-19T00:07:00Z")],
+    )
+    with zipfile.ZipFile(io.BytesIO(b["zip"]), "r") as source:
+        receipt = source.read("fresh-holdout-tick-receipt.json")
+    changed_archive = b["archive"] + b"tamper"
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", compression=zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr(b["artifact_name"], changed_archive)
+        zf.writestr("fresh-holdout-tick-receipt.json", receipt)
+    b["zip"] = out.getvalue()
+    b["zip_digest"] = "sha256:" + hashlib.sha256(b["zip"]).hexdigest()
+    fake = FakeGitHub(
+        [run(115, "2026-08-19T00:08:00Z", head_sha=HEAD_1)],
+        {115: b},
+    )
+    result = do_audit(fake)
+    assert result["verified_completed_run_count"] == 0
+    assert result["unverified_completed_run_count"] == 1
+
+
+def test_release_sidecar_byte_mismatch_is_partial_durability():
+    b = evidence_bundle(
+        116,
+        "2026-08-19T00:07:00Z",
+        rows=[committed("2026-08-19T00:07:00Z")],
+    )
+    fake = FakeGitHub(
+        [run(116, "2026-08-19T00:08:00Z", head_sha=HEAD_1)],
+        {116: b},
+        sidecar_mismatch=True,
+    )
+    result = do_audit(fake)
+    assert result["runs"][0]["release_state"] == "RELEASE_DURABILITY_UNVERIFIED"
     assert result["audit_state"] == "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
 
 
@@ -466,7 +544,7 @@ def test_more_than_one_hundred_runs_are_paginated():
     assert result["audit_state"] == "NO_COMPLETED_CAMPAIGN_EVIDENCE"
 
 
-def test_in_progress_run_is_not_committed_evidence():
+def test_in_progress_run_is_not_committed_evidence_and_makes_audit_partial():
     fake = FakeGitHub(
         [
             run(
@@ -481,7 +559,9 @@ def test_in_progress_run_is_not_committed_evidence():
     )
     result = do_audit(fake)
     assert result["verified_completed_run_count"] == 0
+    assert result["incomplete_run_count"] == 1
     assert result["runs"][0]["evidence_state"] == "INCOMPLETE_NOT_EVIDENCE"
+    assert result["audit_state"] == "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
 
 
 def test_unknown_control_event_fails_closed():
