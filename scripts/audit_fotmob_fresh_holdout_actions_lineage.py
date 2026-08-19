@@ -87,14 +87,14 @@ def _canonical(value: Any) -> bytes:
 def _parse_json(raw: bytes, label: str) -> dict[str, Any]:
     if type(raw) is not bytes or not raw:
         raise _error(f"{label} must be non-empty bytes")
-    seen_duplicate = False
+    duplicate = False
 
     def pairs(values: list[tuple[str, Any]]) -> dict[str, Any]:
-        nonlocal seen_duplicate
+        nonlocal duplicate
         out: dict[str, Any] = {}
         for key, value in values:
             if key in out:
-                seen_duplicate = True
+                duplicate = True
             out[key] = value
         return out
 
@@ -102,7 +102,7 @@ def _parse_json(raw: bytes, label: str) -> dict[str, Any]:
         value = json.loads(raw, object_pairs_hook=pairs)
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise _error(f"{label} is malformed JSON") from exc
-    if seen_duplicate or type(value) is not dict:
+    if duplicate or type(value) is not dict:
         raise _error(f"{label} contains duplicate keys or is not an object")
     return value
 
@@ -125,7 +125,9 @@ def _utc_text(value: dt.datetime) -> str:
 
 def _blob_sha(path: Path) -> str:
     raw = path.read_bytes()
-    return hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+    return hashlib.sha1(
+        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+    ).hexdigest()
 
 
 def verify_reviewed_dependencies(repository_root: Path | None = None) -> None:
@@ -204,43 +206,53 @@ def validate_control_lineage(
     last_committed_index = -1
     last_gap_detected = -1
     for position, source in enumerate(rows):
-        if type(source) is not dict:
-            source = dict(source)
-        event = source.get("event")
+        row = source if type(source) is dict else dict(source)
+        event = row.get("event")
         if event not in ALLOWED_CONTROL_EVENTS:
-            raise _error(f"control event {event!r} escaped reviewed vocabulary at row {position}")
+            raise _error(
+                f"control event {event!r} escaped reviewed vocabulary at row {position}"
+            )
         if event == "TICK_COMMITTED":
-            index = _slot_index(_validate_slot(source.get("scheduled_for_utc"), "committed slot"))
+            index = _slot_index(
+                _validate_slot(row.get("scheduled_for_utc"), "committed slot")
+            )
             if index <= last_committed_index or index in committed:
                 raise _error("committed slots are duplicated or reordered")
             if index in missing:
                 raise _error("committed slot appears inside a durable scheduler gap")
-            if source.get("backfill_or_retrofill_performed") is not False:
+            if row.get("backfill_or_retrofill_performed") is not False:
                 raise _error("committed tick changed no-backfill semantics")
-            if source.get("nominal_schedule_time_used_as_observation_time") is not False:
+            if row.get("nominal_schedule_time_used_as_observation_time") is not False:
                 raise _error("committed tick used nominal schedule time as observation time")
-            committed_at = _parse_utc(source.get("committed_at_utc"), "committed_at")
+            committed_at = _parse_utc(row.get("committed_at_utc"), "committed_at")
             if committed_at < _slot_at(index):
                 raise _error("committed_at predates nominal scheduled slot")
             committed.add(index)
             last_committed_index = index
         elif event == "SCHEDULER_GAP_RANGE":
-            if source.get("backfill_authorized") is not False:
+            if row.get("backfill_authorized") is not False:
                 raise _error("scheduler gap changed backfill authority")
             detected = _slot_index(
-                _validate_slot(source.get("detected_at_scheduled_for_utc"), "gap detection slot")
+                _validate_slot(
+                    row.get("detected_at_scheduled_for_utc"), "gap detection slot"
+                )
             )
-            first = _slot_index(_validate_slot(source.get("first_missing_tick_utc"), "gap first slot"))
-            last = _slot_index(_validate_slot(source.get("last_missing_tick_utc"), "gap last slot"))
-            count = source.get("missing_tick_count")
-            previous = source.get("previous_committed_tick_utc")
+            first = _slot_index(
+                _validate_slot(row.get("first_missing_tick_utc"), "gap first slot")
+            )
+            last = _slot_index(
+                _validate_slot(row.get("last_missing_tick_utc"), "gap last slot")
+            )
+            count = row.get("missing_tick_count")
+            previous = row.get("previous_committed_tick_utc")
             expected_previous = None if last_committed_index < 0 else last_committed_index
-            if previous is None:
-                observed_previous = None
-            else:
-                observed_previous = _slot_index(
+            observed_previous = (
+                None
+                if previous is None
+                else _slot_index(
                     _validate_slot(previous, "gap previous committed slot")
                 )
+            )
             if (
                 type(count) is not int
                 or count < 1
@@ -251,26 +263,39 @@ def validate_control_lineage(
                 or observed_previous != expected_previous
                 or first != (0 if expected_previous is None else expected_previous + 1)
             ):
-                raise _error("scheduler gap range/count/detection/lineage semantics changed")
+                raise _error(
+                    "scheduler gap range/count/detection/lineage semantics changed"
+                )
             gap_slots = set(range(first, last + 1))
             if gap_slots & committed:
                 raise _error("scheduler gap overlaps an already committed slot")
             missing.update(gap_slots)
             last_gap_detected = detected
         elif event == "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED":
-            if source.get("tick_committed") is not False or source.get("backfill_authorized") is not False:
+            if (
+                row.get("tick_committed") is not False
+                or row.get("backfill_authorized") is not False
+            ):
                 raise _error("uncommitted qualification failure changed authority")
         elif event == "COUNT_ONLY_CLOSE_EVALUATION":
-            if source.get("outcome_or_performance_input_used") is not False:
-                raise _error("count-only close evaluation used outcome/performance input")
+            if row.get("outcome_or_performance_input_used") is not False:
+                raise _error(
+                    "count-only close evaluation used outcome/performance input"
+                )
     return committed, missing
 
 
-def _asset_by_name(release: Mapping[str, Any], name: str) -> Mapping[str, Any] | None:
+def _asset_by_name(
+    release: Mapping[str, Any], name: str
+) -> Mapping[str, Any] | None:
     assets = release.get("assets")
     if type(assets) is not list:
         raise _error("GitHub Release assets payload is malformed")
-    matches = [asset for asset in assets if type(asset) is dict and asset.get("name") == name]
+    matches = [
+        asset
+        for asset in assets
+        if type(asset) is dict and asset.get("name") == name
+    ]
     if len(matches) > 1:
         raise _error(f"GitHub Release duplicated asset name {name}")
     return None if not matches else matches[0]
@@ -286,7 +311,10 @@ def _release_state(
     archive = _asset_by_name(release, archive_name)
     if archive is None or archive.get("state") != "uploaded":
         return "RELEASE_DURABILITY_UNVERIFIED"
-    if archive.get("size") != verified["archive_size_bytes"] or type(archive.get("id")) is not int:
+    if (
+        archive.get("size") != verified["archive_size_bytes"]
+        or type(archive.get("id")) is not int
+    ):
         return "RELEASE_DURABILITY_UNVERIFIED"
     try:
         release_archive = download_release_asset(archive["id"])
@@ -294,7 +322,8 @@ def _release_state(
         return "RELEASE_DURABILITY_UNVERIFIED"
     if (
         release_archive != verified["archive_bytes"]
-        or hashlib.sha256(release_archive).hexdigest() != verified["archive_sha256"]
+        or hashlib.sha256(release_archive).hexdigest()
+        != verified["archive_sha256"]
     ):
         return "RELEASE_DURABILITY_UNVERIFIED"
 
@@ -317,10 +346,14 @@ def _release_state(
     return "RELEASE_ARCHIVE_AND_RECEIPT_VERIFIED"
 
 
-def _extract_control_rows(archive_bytes: bytes, expected_sha256: str) -> tuple[dict[str, Any], ...]:
+def _extract_control_rows(
+    archive_bytes: bytes, expected_sha256: str
+) -> tuple[dict[str, Any], ...]:
     if hashlib.sha256(archive_bytes).hexdigest() != expected_sha256:
         raise _error("archive bytes changed before durable-state extraction")
-    with tempfile.TemporaryDirectory(prefix="athena-fresh-holdout-audit-") as temporary:
+    with tempfile.TemporaryDirectory(
+        prefix="athena-fresh-holdout-audit-"
+    ) as temporary:
         root = Path(temporary)
         archive_path = root / "evidence.tar.gz"
         archive_path.write_bytes(archive_bytes)
@@ -343,7 +376,9 @@ def _run_is_collection_candidate(run: Mapping[str, Any]) -> bool:
     )
 
 
-def _candidate_artifact(artifacts_payload: Mapping[str, Any], run_id: int) -> Mapping[str, Any]:
+def _candidate_artifact(
+    artifacts_payload: Mapping[str, Any], run_id: int
+) -> Mapping[str, Any]:
     artifacts = artifacts_payload.get("artifacts")
     if type(artifacts) is not list:
         raise UnverifiedRunEvidenceError("workflow artifacts payload is malformed")
@@ -396,17 +431,30 @@ def audit_actions_lineage(
     repository_root: Path | None = None,
 ) -> dict[str, Any]:
     """Audit existing GitHub evidence without mutating GitHub or provider state."""
-    if type(repository) is not str or repository.count("/") != 1 or repository != repository.strip():
+    if (
+        type(repository) is not str
+        or repository.count("/") != 1
+        or repository != repository.strip()
+    ):
         raise _error("repository must be exact owner/name")
-    if type(expected_main_sha) is not str or SHA40_RE.fullmatch(expected_main_sha) is None:
+    if (
+        type(expected_main_sha) is not str
+        or SHA40_RE.fullmatch(expected_main_sha) is None
+    ):
         raise _error("expected_main_sha must be lowercase 40-hex")
     if verify_dependencies:
         verify_reviewed_dependencies(repository_root)
 
     main = get_main_ref()
-    observed_main = main.get("object", {}).get("sha") if type(main.get("object")) is dict else main.get("sha")
+    observed_main = (
+        main.get("object", {}).get("sha")
+        if type(main.get("object")) is dict
+        else main.get("sha")
+    )
     if observed_main != expected_main_sha:
-        raise _error(f"current main {observed_main!r} differs from expected {expected_main_sha!r}")
+        raise _error(
+            f"current main {observed_main!r} differs from expected {expected_main_sha!r}"
+        )
 
     campaign_start = _parse_utc(CAMPAIGN_START_UTC, "campaign start")
     runs: list[Mapping[str, Any]] = []
@@ -427,8 +475,14 @@ def audit_actions_lineage(
                     timestamp = _parse_utc(value["created_at"], "run created_at")
                 except FreshHoldoutActionsLineageAuditError:
                     continue
-                oldest = timestamp if oldest is None or timestamp < oldest else oldest
-        if len(values) < per_page or (oldest is not None and oldest < campaign_start):
+                oldest = (
+                    timestamp
+                    if oldest is None or timestamp < oldest
+                    else oldest
+                )
+        if len(values) < per_page or (
+            oldest is not None and oldest < campaign_start
+        ):
             break
         page += 1
         if page > 100:
@@ -439,9 +493,17 @@ def audit_actions_lineage(
         if not _run_is_collection_candidate(run):
             continue
         created = _parse_utc(run.get("created_at"), "run created_at")
+        run_id = run.get("id")
+        if type(run_id) is not int or run_id < 1:
+            raise _error("campaign run id is invalid")
         if created >= campaign_start:
             candidates.append(run)
-    candidates.sort(key=lambda row: (_parse_utc(row["created_at"], "run created_at"), int(row["id"])))
+    candidates.sort(
+        key=lambda row: (
+            _parse_utc(row["created_at"], "run created_at"),
+            row["id"],
+        )
+    )
 
     records: list[dict[str, Any]] = []
     verified_by_slot: dict[int, dict[str, Any]] = {}
@@ -453,9 +515,7 @@ def audit_actions_lineage(
 
     for run in candidates:
         record = _normal_run_record(run)
-        run_id = run.get("id")
-        if type(run_id) is not int or run_id < 1:
-            raise _error("campaign run id is invalid")
+        run_id = run["id"]
         if run.get("status") != "completed":
             incomplete_runs += 1
             record["evidence_state"] = "INCOMPLETE_NOT_EVIDENCE"
@@ -469,20 +529,66 @@ def audit_actions_lineage(
                 )
             artifact = _candidate_artifact(get_run_artifacts(run_id), run_id)
             zip_bytes = download_artifact_zip(artifact["id"])
-            zip_sha = mirror.verify_actions_artifact_zip_digest(zip_bytes, artifact.get("digest"))
+            zip_sha = mirror.verify_actions_artifact_zip_digest(
+                zip_bytes, artifact.get("digest")
+            )
             verified = mirror.verify_actions_artifact_bundle(
                 run_id=run_id,
                 artifact_name=artifact["name"],
                 zip_bytes=zip_bytes,
             )
             verified["actions_artifact_zip_sha256"] = zip_sha
-            receipt = _parse_json(verified["receipt_bytes"], "canonical tick receipt")
-            nominal = _validate_slot(receipt.get("nominal_scheduled_for_utc"), "receipt nominal slot")
+            receipt = _parse_json(
+                verified["receipt_bytes"], "canonical tick receipt"
+            )
+            if (
+                receipt.get("schema_version") != 1
+                or receipt.get("runner_id") != activation.RUNNER_ID
+            ):
+                raise _error("canonical tick receipt runner/schema identity changed")
+            nominal = _validate_slot(
+                receipt.get("nominal_scheduled_for_utc"), "receipt nominal slot"
+            )
+            scheduled = _validate_slot(
+                receipt.get("scheduled_for_utc"), "receipt scheduled_for"
+            )
+            if scheduled != nominal:
+                raise _error(
+                    "canonical tick receipt scheduled_for disagrees with nominal slot"
+                )
+            expected_schedule = (
+                "7 * * * *" if nominal.minute == 7 else "37 * * * *"
+            )
+            if receipt.get("workflow_event_schedule") != expected_schedule:
+                raise _error("canonical tick receipt cron identity changed")
+            safety = receipt.get("safety")
+            if (
+                type(safety) is not dict
+                or set(safety) != set(activation.SAFETY_KEYS)
+                or any(value is not False for value in safety.values())
+            ):
+                raise _error(
+                    "canonical tick receipt downstream safety authority changed"
+                )
+            run_created = _parse_utc(run.get("created_at"), "run created_at")
+            if run_created < nominal:
+                raise _error(
+                    "workflow run created_at predates its proven nominal slot"
+                )
             slot_index = _slot_index(nominal)
             if slot_index in verified_by_slot:
-                raise _error("multiple verified workflow runs map to one nominal slot")
-            rows = _extract_control_rows(verified["archive_bytes"], verified["archive_sha256"])
+                raise _error(
+                    "multiple verified workflow runs map to one nominal slot"
+                )
+            rows = _extract_control_rows(
+                verified["archive_bytes"], verified["archive_sha256"]
+            )
             committed, missing = validate_control_lineage(rows)
+            unresolved_prior = set(range(slot_index)) - committed - missing
+            if unresolved_prior:
+                raise _error(
+                    "verified cumulative state leaves earlier nominal slots unresolved"
+                )
             tick_committed = receipt.get("tick_committed")
             artifact_match = ARTIFACT_RE.fullmatch(artifact["name"])
             if artifact_match is None:
@@ -490,7 +596,9 @@ def audit_actions_lineage(
             kind = artifact_match.group(1)
             if kind == "success":
                 if tick_committed is not True or slot_index not in committed:
-                    raise _error("verified success run lacks matching committed control row")
+                    raise _error(
+                        "verified success run lacks matching committed control row"
+                    )
             else:
                 if tick_committed is not False or slot_index in committed:
                     raise _error("verified failure run became committed")
@@ -522,27 +630,36 @@ def audit_actions_lineage(
             journals_by_slot[slot_index] = rows
         except UnverifiedRunEvidenceError as exc:
             unverified_completed += 1
-            record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+            record["verification_error"] = (
+                f"{type(exc).__name__}: {str(exc)[:300]}"
+            )
         except FreshHoldoutActionsLineageAuditError:
             raise
         except Exception as exc:
             unverified_completed += 1
-            record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+            record["verification_error"] = (
+                f"{type(exc).__name__}: {str(exc)[:300]}"
+            )
         records.append(record)
 
-    # The newest verified archive is the cumulative source of slot lineage. Earlier verified
-    # journals must be prefixes of later journals; otherwise the append-only campaign forked.
     ordered_slots = sorted(journals_by_slot)
     previous: tuple[dict[str, Any], ...] = ()
     for index in ordered_slots:
         current = journals_by_slot[index]
-        if len(current) < len(previous) or current[: len(previous)] != previous:
-            raise _error("verified cumulative control journal is not append-only across runs")
+        if (
+            len(current) < len(previous)
+            or current[: len(previous)] != previous
+        ):
+            raise _error(
+                "verified cumulative control journal is not append-only across runs"
+            )
         previous = current
 
     if ordered_slots:
         latest_slot = ordered_slots[-1]
-        committed, missing = validate_control_lineage(journals_by_slot[latest_slot])
+        committed, missing = validate_control_lineage(
+            journals_by_slot[latest_slot]
+        )
         latest_nominal = _slot_at(latest_slot)
     else:
         latest_slot = -1
@@ -570,8 +687,14 @@ def audit_actions_lineage(
                 {
                     "slot_utc": _utc_text(_slot_at(index)),
                     "state": state,
-                    "run_id": None if run_record is None else run_record["run_id"],
-                    "head_sha": None if run_record is None else run_record.get("head_sha"),
+                    "run_id": (
+                        None if run_record is None else run_record["run_id"]
+                    ),
+                    "head_sha": (
+                        None
+                        if run_record is None
+                        else run_record.get("head_sha")
+                    ),
                 }
             )
 
@@ -586,7 +709,11 @@ def audit_actions_lineage(
         first_status = "FIRST_SLOT_UNRESOLVED"
 
     verified_completed = len(verified_by_slot)
-    if verified_completed == 0 and unverified_completed == 0 and incomplete_runs == 0:
+    if (
+        verified_completed == 0
+        and unverified_completed == 0
+        and incomplete_runs == 0
+    ):
         audit_state = "NO_COMPLETED_CAMPAIGN_EVIDENCE"
     elif unverified_completed or incomplete_runs or release_partial:
         audit_state = "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
@@ -605,17 +732,29 @@ def audit_actions_lineage(
         "campaign_start_utc": CAMPAIGN_START_UTC,
         "first_nominal_slot_utc": FIRST_SLOT_UTC,
         "first_nominal_slot_status": first_status,
-        "first_nominal_slot_run_id": None if first_record is None else first_record["run_id"],
-        "first_nominal_slot_head_sha": None if first_record is None else first_record.get("head_sha"),
-        "latest_verified_nominal_slot_utc": None if latest_nominal is None else _utc_text(latest_nominal),
-        "latest_verified_run_id": None if latest_slot < 0 else verified_by_slot[latest_slot]["run_id"],
+        "first_nominal_slot_run_id": (
+            None if first_record is None else first_record["run_id"]
+        ),
+        "first_nominal_slot_head_sha": (
+            None if first_record is None else first_record.get("head_sha")
+        ),
+        "latest_verified_nominal_slot_utc": (
+            None if latest_nominal is None else _utc_text(latest_nominal)
+        ),
+        "latest_verified_run_id": (
+            None
+            if latest_slot < 0
+            else verified_by_slot[latest_slot]["run_id"]
+        ),
         "verified_completed_run_count": verified_completed,
         "unverified_completed_run_count": unverified_completed,
         "incomplete_run_count": incomplete_runs,
         "verified_failure_count": verified_failures,
         "committed_slot_count": len(committed),
         "durably_recorded_missing_slot_count": len(missing),
-        "unresolved_slot_count": sum(1 for row in slot_rows if row["state"] == "UNRESOLVED"),
+        "unresolved_slot_count": sum(
+            1 for row in slot_rows if row["state"] == "UNRESOLVED"
+        ),
         "runs": records,
         "slots": slot_rows,
         "safety": {key: False for key in SAFETY_KEYS},
@@ -635,7 +774,13 @@ def _gh_json(endpoint: str) -> dict[str, Any]:
 def _gh_download(endpoint: str) -> bytes:
     try:
         return subprocess.check_output(
-            ["gh", "api", "-H", "Accept: application/octet-stream", endpoint]
+            [
+                "gh",
+                "api",
+                "-H",
+                "Accept: application/octet-stream",
+                endpoint,
+            ]
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise _error(f"GitHub binary download failed: {endpoint}") from exc
@@ -655,16 +800,22 @@ def _cli_audit(repository: str, expected_main_sha: str) -> dict[str, Any]:
         )
 
     def get_run_artifacts(run_id: int) -> Mapping[str, Any]:
-        return _gh_json(f"/repos/{repository}/actions/runs/{run_id}/artifacts")
+        return _gh_json(
+            f"/repos/{repository}/actions/runs/{run_id}/artifacts"
+        )
 
     def download_artifact_zip(artifact_id: int) -> bytes:
-        return _gh_download(f"/repos/{repository}/actions/artifacts/{artifact_id}/zip")
+        return _gh_download(
+            f"/repos/{repository}/actions/artifacts/{artifact_id}/zip"
+        )
 
     def get_release(tag: str) -> Mapping[str, Any]:
         return _gh_json(f"/repos/{repository}/releases/tags/{tag}")
 
     def download_release_asset(asset_id: int) -> bytes:
-        return _gh_download(f"/repos/{repository}/releases/assets/{asset_id}")
+        return _gh_download(
+            f"/repos/{repository}/releases/assets/{asset_id}"
+        )
 
     return audit_actions_lineage(
         repository=repository,
@@ -680,7 +831,10 @@ def _cli_audit(repository: str, expected_main_sha: str) -> dict[str, Any]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="Read-only GitHub Actions lineage audit for the FotMob UTC-native xG fresh holdout."
+        description=(
+            "Read-only GitHub Actions lineage audit for the FotMob UTC-native xG "
+            "fresh holdout."
+        )
     )
     parser.add_argument("--repository", required=True)
     parser.add_argument("--expected-main-sha", required=True)
