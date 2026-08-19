@@ -17,40 +17,80 @@ concurrency:
 jobs:
   audit:
     if: >-
-      github.event.issue.pull_request &&
-      github.event.issue.number == 170 &&
       github.event.comment.user.login == github.repository_owner &&
-      startsWith(github.event.comment.body, '/athena-audit-fresh-holdout-lineage')
+      startsWith(github.event.comment.body, '/athena-audit-fresh-holdout-lineage') &&
+      (
+        (
+          github.event.issue.pull_request &&
+          github.event.issue.number == 170
+        ) ||
+        (
+          !github.event.issue.pull_request &&
+          github.event.issue.number == 172 &&
+          github.event.issue.state == 'open'
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - name: Validate exact owner audit command and merged control PR
+      - name: Validate exact owner audit command and control surface
         id: guard
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
-            const controlPr = 170;
+            const legacyControlPr = 170;
+            const controlIssue = 172;
+            const exactControlIssueTitle = 'ATHENA Fresh-Holdout Lineage Audit Control';
             const body = String(context.payload.comment.body || '').replace(/\r\n/g, '\n');
             const match = /^\/athena-audit-fresh-holdout-lineage\nmain-sha: ([0-9a-f]{40})\nconfirm: READ_ONLY_ACTIONS_LINEAGE_AUDIT$/.exec(body);
             if (!match) {
               core.setFailed('Fresh-holdout audit command must be the exact three-line reviewed command.');
               return;
             }
-            if (context.issue.number !== controlPr || context.payload.comment.user.login !== context.repo.owner) {
-              core.setFailed('Fresh-holdout audit is owner-only and bound to PR #170.');
+            if (context.payload.comment.user.login !== context.repo.owner) {
+              core.setFailed('Fresh-holdout audit is repository-owner only.');
               return;
             }
+
+            const isPullRequest = Boolean(context.payload.issue.pull_request);
+            const isLegacyControlPr = isPullRequest && context.issue.number === legacyControlPr;
+            const isOpenControlIssue =
+              !isPullRequest &&
+              context.issue.number === controlIssue &&
+              context.payload.issue.state === 'open';
+            if (!isLegacyControlPr && !isOpenControlIssue) {
+              core.setFailed('Fresh-holdout audit is bound to legacy PR #170 or open control issue #172 only.');
+              return;
+            }
+
+            if (isLegacyControlPr) {
+              const { data: pr } = await github.rest.pulls.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: legacyControlPr,
+              });
+              if (pr.state !== 'closed' || !pr.merged_at || !pr.merge_commit_sha) {
+                core.setFailed('Legacy control PR #170 must remain merged and closed.');
+                return;
+              }
+            } else {
+              const { data: issue } = await github.rest.issues.get({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: controlIssue,
+              });
+              if (issue.state !== 'open' || issue.pull_request) {
+                core.setFailed('Fresh-holdout control issue #172 must remain an open issue, not a pull request.');
+                return;
+              }
+              if (issue.user?.login !== context.repo.owner || issue.title !== exactControlIssueTitle) {
+                core.setFailed('Fresh-holdout control issue #172 identity drifted from the reviewed owner/title binding.');
+                return;
+              }
+            }
+
             const expectedMain = match[1];
-            const { data: pr } = await github.rest.pulls.get({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: controlPr,
-            });
-            if (pr.state !== 'closed' || !pr.merged_at || !pr.merge_commit_sha) {
-              core.setFailed('PR #170 must be merged and closed before the audit can run.');
-              return;
-            }
             const { data: ref } = await github.rest.git.getRef({
               owner: context.repo.owner,
               repo: context.repo.repo,
@@ -61,6 +101,7 @@ jobs:
               return;
             }
             core.setOutput('main_sha', expectedMain);
+            core.setOutput('comment_target', String(context.issue.number));
             core.setOutput('authorized', 'true');
 
       - name: Check out exact authorized main
@@ -143,12 +184,19 @@ jobs:
               'selection-authorized: false',
               'bet-authorized: false',
             ];
-            await github.rest.issues.createComment({
+            const target = Number('${{ steps.guard.outputs.comment_target }}');
+            const common = {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: 170,
               body: lines.join('\n'),
-            });
+            };
+            if (target === 172) {
+              await github.rest.issues.createComment({ ...common, issue_number: 172 });
+            } else if (target === 170) {
+              await github.rest.issues.createComment({ ...common, issue_number: 170 });
+            } else {
+              core.setFailed(`Unexpected authorized comment target ${target}.`);
+            }
 
       - name: Post fail-closed control-workflow result
         if: ${{ failure() && steps.guard.outputs.authorized == 'true' }}
@@ -172,9 +220,16 @@ jobs:
               'selection-authorized: false',
               'bet-authorized: false',
             ];
-            await github.rest.issues.createComment({
+            const target = Number('${{ steps.guard.outputs.comment_target }}');
+            const common = {
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: 170,
               body: lines.join('\n'),
-            });
+            };
+            if (target === 172) {
+              await github.rest.issues.createComment({ ...common, issue_number: 172 });
+            } else if (target === 170) {
+              await github.rest.issues.createComment({ ...common, issue_number: 170 });
+            } else {
+              core.setFailed(`Unexpected authorized comment target ${target}.`);
+            }
