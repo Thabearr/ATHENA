@@ -13,7 +13,7 @@ import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 
 
 PRE_PR175_WORKFLOW_BLOB_SHA = "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
-POST_PR175_WORKFLOW_BLOB_SHA = "4e1a7c47f47a0d2b89363191340dc5918c4b154e"
+POST_PR175_WORKFLOW_BLOB_SHA = "1ff52e32ade3422ca1605bc4546dc8d0813ec316"
 
 
 def main(argv: Sequence[str] | None = None) -> int:

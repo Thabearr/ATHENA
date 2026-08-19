@@ -97,7 +97,10 @@ jobs:
 
           def download_artifact_zip(artifact_id: int) -> bytes:
               return subprocess.check_output(
-                  ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                  [
+                      "gh", "api", "-H", "Accept: application/vnd.github+json",
+                      f"/repos/{repo}/actions/artifacts/{artifact_id}/zip",
+                  ],
               )
 
           try:
@@ -158,6 +161,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          PYTHONPATH: ${{ github.workspace }}
         shell: bash
         run: |
           set -euo pipefail
@@ -227,7 +231,10 @@ jobs:
               zip_path = Path("pr119-preserved-artifact.zip")
               with zip_path.open("wb") as handle:
                   subprocess.check_call(
-                      ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                      [
+                          "gh", "api", "-H", "Accept: application/vnd.github+json",
+                          f"/repos/{repo}/actions/artifacts/{artifact_id}/zip",
+                      ],
                       stdout=handle,
                   )
               artifact_raw = zip_path.read_bytes()
@@ -499,6 +506,6 @@ jobs:
           PY
 
           if [ "${TICK_EXIT:-1}" != "0" ]; then
-            echo "Tick execution failed with exit code ${TICK_EXIT}; failure archive published and retained for next-run lineage restore."
-            exit "${TICK_EXIT}"
+            echo "Tick execution failed with exit code ${TICK_EXIT:-1}; failure archive published and retained for next-run lineage restore."
+            exit "${TICK_EXIT:-1}"
           fi
