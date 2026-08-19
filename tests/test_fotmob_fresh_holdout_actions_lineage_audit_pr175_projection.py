@@ -1,5 +1,6 @@
 from pathlib import Path
 
+import pytest
 import yaml
 
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
@@ -43,17 +44,20 @@ def test_control_workflow_verifies_current_collection_and_projection_blobs():
     assert isinstance(parsed, dict)
     assert "1ff52e32ade3422ca1605bc4546dc8d0813ec316" in text
     assert _git_blob_sha(PROJECTION_SCRIPT) == (
-        "5d4cef38e97261aa67f835b0132f6e8335108726"
+        "a6e7f0be41d5582b9d0ad77d5579033eb8309141"
     )
-    assert "5d4cef38e97261aa67f835b0132f6e8335108726" in text
+    assert "a6e7f0be41d5582b9d0ad77d5579033eb8309141" in text
     assert "aaf8dbe8534dfc10b707d34511fd4327dc81850e" in text
     assert "audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py" in text
 
 
-def test_projection_changes_only_reviewed_workflow_dependency_identity():
+def test_projection_keeps_reviewed_engine_and_adds_only_compatible_binary_transport():
     text = PROJECTION_SCRIPT.read_text(encoding="utf-8")
     assert "audit.WORKFLOW_BLOB_SHA = POST_PR175_WORKFLOW_BLOB_SHA" in text
+    assert "audit._gh_download = _gh_download_compatible" in text
     assert "audit.main(argv)" in text
+    assert "application/vnd.github+json" in text
+    assert "application/octet-stream" in text
     for forbidden in (
         "requests.",
         "urllib",
@@ -66,6 +70,46 @@ def test_projection_changes_only_reviewed_workflow_dependency_identity():
         "bet_authorized = True",
     ):
         assert forbidden not in text
+
+
+def test_transport_uses_json_media_type_for_actions_artifact_zip(monkeypatch):
+    calls = []
+
+    def fake_check_output(args):
+        calls.append(args)
+        return b"artifact-zip"
+
+    monkeypatch.setattr(projection.subprocess, "check_output", fake_check_output)
+    endpoint = "/repos/Thabearr/ATHENA/actions/artifacts/9366326461/zip"
+    assert projection._gh_download_compatible(endpoint) == b"artifact-zip"
+    assert calls == [[
+        "gh", "api", "-H", "Accept: application/vnd.github+json", endpoint
+    ]]
+
+
+def test_transport_keeps_octet_stream_for_release_asset(monkeypatch):
+    calls = []
+
+    def fake_check_output(args):
+        calls.append(args)
+        return b"release-asset"
+
+    monkeypatch.setattr(projection.subprocess, "check_output", fake_check_output)
+    endpoint = "/repos/Thabearr/ATHENA/releases/assets/123456789"
+    assert projection._gh_download_compatible(endpoint) == b"release-asset"
+    assert calls == [[
+        "gh", "api", "-H", "Accept: application/octet-stream", endpoint
+    ]]
+
+
+def test_transport_rejects_unreviewed_binary_endpoint():
+    with pytest.raises(
+        audit.FreshHoldoutActionsLineageAuditError,
+        match="unsupported GitHub binary download endpoint",
+    ):
+        projection._gh_download_compatible(
+            "/repos/Thabearr/ATHENA/actions/runs/32256052482/logs"
+        )
 
 
 def test_audit_control_permissions_remain_read_only_except_issue_result_comment():
