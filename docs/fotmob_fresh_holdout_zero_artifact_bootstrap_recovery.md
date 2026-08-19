@@ -67,3 +67,5 @@ ATHENA Patch Bridge validates the exact patch against the synthetic pull-request
 merge with all eight hosted test shards plus repository syntax before it may push
 the implementation head. Normal pull-request CI remains the final merge gate on
 the exact reviewed head; no repository-wide local pytest run is required.
+
+<!-- identity-hardening implementation in progress -->
