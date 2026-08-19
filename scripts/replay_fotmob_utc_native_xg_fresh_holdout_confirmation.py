@@ -1,13 +1,12 @@
-"""Replay one terminal fresh-holdout evidence archive into the frozen evaluator.
+"""Replay one terminal PR151 durable state into the frozen PR167 evaluator.
 
-This boundary is deliberately offline. It accepts exact durable bytes already emitted
-by the reviewed PR151 scheduled runner, verifies the final success receipt and
-cumulative state archive, reconstructs the append-only prediction/settlement/control
-journals, re-proves the selected count-only close, and only then invokes PR167's pure
-confirmation evaluator.
+This boundary is deliberately offline. It verifies exact durable archive/receipt
+bytes already emitted by the reviewed scheduled runner, reconstructs its append-only
+state, re-proves the result-free close decision, and only then invokes PR167.
 
-It performs no provider acquisition, no model/calibration fitting, no pricing, no
-selection, and grants no production or BET authority.
+The source scope here is the PR151 durable state artifact itself. This module does
+not claim to re-download or re-derive every historical FotMob raw capture. It performs
+no provider acquisition, model/calibration fitting, pricing, selection, or BET action.
 """
 from __future__ import annotations
 
@@ -28,7 +27,8 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout_confirmation_evalua
 
 SCHEMA_VERSION = 1
 REPLAY_ID = "FOTMOB_UTC_NATIVE_XG_FRESH_HOLDOUT_CONFIRMATION_SOURCE_REPLAY_V1"
-REPLAY_STATE = "IMPLEMENTED_OFFLINE_SOURCE_REPLAY_NOT_PRODUCTION_APPROVED"
+REPLAY_STATE = "IMPLEMENTED_OFFLINE_PR151_DURABLE_STATE_REPLAY_NOT_PRODUCTION_APPROVED"
+SOURCE_SCOPE = "PR151_DURABLE_STATE_ARCHIVE_AND_CANONICAL_TICK_RECEIPT"
 NEXT_REQUIRED_BOUNDARY = "REVIEW_SOURCE_REPLAYED_FRESH_HOLDOUT_CONFIRMATION_RESULT"
 
 PR151_RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
@@ -40,7 +40,7 @@ SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 
 
 class FreshHoldoutConfirmationSourceReplayError(RuntimeError):
-    """Raised when terminal source replay cannot be proven exactly."""
+    """Raised when durable-state source replay cannot be proven exactly."""
 
 
 def _error(message: str) -> FreshHoldoutConfirmationSourceReplayError:
@@ -96,6 +96,12 @@ def _positive_int(value: Any, label: str) -> int:
     return value
 
 
+def _non_negative_int(value: Any, label: str) -> int:
+    if type(value) is not int or value < 0:
+        raise _error(f"{label} must be an exact non-negative integer")
+    return value
+
+
 def _utc(value: Any, label: str) -> dt.datetime:
     if type(value) is not str or not value.endswith("Z") or value != value.strip():
         raise _error(f"{label} must be exact UTC Z text")
@@ -106,6 +112,17 @@ def _utc(value: Any, label: str) -> dt.datetime:
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise _error(f"{label} must be timezone-aware")
     return parsed.astimezone(dt.timezone.utc)
+
+
+def _scheduled_utc(value: Any, label: str) -> dt.datetime:
+    parsed = _utc(value, label)
+    if (
+        parsed.second
+        or parsed.microsecond
+        or parsed.minute not in control.CAPTURE_MINUTES_UTC
+    ):
+        raise _error(f"{label} escaped reviewed :07/:37 schedule lattice")
+    return parsed
 
 
 def _utc_text(value: dt.datetime) -> str:
@@ -132,7 +149,8 @@ def verify_reviewed_dependencies() -> None:
         raise _error("could not inspect reviewed dependency blobs") from exc
     runner.verify_reviewed_activation_dependencies()
     evaluator.verify_reviewed_dependencies()
-    if any(evaluator.implementation_receipt()["safety"].values()):
+    receipt = evaluator.implementation_receipt()
+    if any(receipt["safety"].values()):
         raise _error("frozen evaluator downstream authority changed")
 
 
@@ -144,6 +162,64 @@ def _read_exact_regular(path: Path, label: str) -> bytes:
     if not raw:
         raise _error(f"{label} must be non-empty")
     return raw
+
+
+def _require_exact_runner_receipt(
+    receipt: Mapping[str, Any],
+    *,
+    archive_name: str,
+    compact: str,
+    run_id: int,
+) -> dt.datetime:
+    if receipt.get("schema_version") != 1:
+        raise _error("tick receipt schema version changed")
+    if receipt.get("runner_id") != runner.RUNNER_ID:
+        raise _error("tick receipt runner_id changed")
+    if receipt.get("runner_state") != runner.RUNNER_STATE:
+        raise _error("tick receipt runner_state changed")
+    if receipt.get("phase") != control.ControlPhase.COLLECTION_COMPLETE.value:
+        raise _error("terminal tick receipt must prove COLLECTION_COMPLETE")
+
+    nominal = _scheduled_utc(
+        receipt.get("nominal_scheduled_for_utc"), "nominal scheduled time"
+    )
+    scheduled = _scheduled_utc(receipt.get("scheduled_for_utc"), "runner scheduled time")
+    if nominal != scheduled:
+        raise _error("receipt nominal slot disagrees with runner scheduled slot")
+    if nominal.strftime("%Y%m%dT%H%M%SZ") != compact:
+        raise _error("success archive nominal slot disagrees with tick receipt")
+
+    schedule_expr = receipt.get("workflow_event_schedule")
+    expected_expr = "7 * * * *" if nominal.minute == 7 else "37 * * * *"
+    if schedule_expr != expected_expr:
+        raise _error("workflow cron identity disagrees with nominal slot")
+    if receipt.get("workflow_run_id") != run_id:
+        raise _error("tick receipt workflow_run_id changed")
+
+    if receipt.get("durable_asset_name") != archive_name:
+        raise _error("tick receipt durable asset name changed")
+    release_tag = receipt.get("durable_release_tag")
+    if type(release_tag) is not str or RELEASE_TAG_RE.fullmatch(release_tag) is None:
+        raise _error("tick receipt durable release tag is invalid")
+
+    if _non_negative_int(receipt.get("network_request_count"), "network request count") != 0:
+        raise _error("COLLECTION_COMPLETE receipt unexpectedly records network requests")
+    if receipt.get("network_acquisition_performed") is not False:
+        raise _error("COLLECTION_COMPLETE receipt unexpectedly records provider acquisition")
+    if receipt.get("fresh_holdout_collection_started_by_this_run") is not False:
+        raise _error("terminal receipt unexpectedly claims fresh collection started this run")
+    if receipt.get("next_required_boundary") != runner.NEXT_REQUIRED_BOUNDARY:
+        raise _error("tick receipt next boundary changed")
+
+    safety = receipt.get("safety")
+    if type(safety) is not dict or set(safety) != set(runner.SAFETY_KEYS):
+        raise _error("tick receipt safety vocabulary changed")
+    if any(value is not False for value in safety.values()):
+        raise _error("tick receipt changed downstream safety authority")
+
+    if receipt.get("tick_exit_code") != 0 or receipt.get("tick_committed") is not True:
+        raise _error("terminal replay requires a committed zero-exit success tick")
+    return nominal
 
 
 def _verify_final_receipt(
@@ -161,17 +237,12 @@ def _verify_final_receipt(
     run_id = _positive_int(receipt.get("workflow_run_id"), "workflow_run_id")
     if int(run_text) != run_id:
         raise _error("success archive run id disagrees with tick receipt")
-    if receipt.get("durable_asset_name") != archive_name:
-        raise _error("tick receipt durable asset name changed")
-
-    release_tag = receipt.get("durable_release_tag")
-    if type(release_tag) is not str or RELEASE_TAG_RE.fullmatch(release_tag) is None:
-        raise _error("tick receipt durable release tag is invalid")
-    nominal = _utc(receipt.get("nominal_scheduled_for_utc"), "nominal scheduled time")
-    if nominal.second or nominal.microsecond or nominal.minute not in control.CAPTURE_MINUTES_UTC:
-        raise _error("tick receipt nominal time escaped reviewed :07/:37 lattice")
-    if nominal.strftime("%Y%m%dT%H%M%SZ") != compact:
-        raise _error("success archive nominal slot disagrees with tick receipt")
+    _require_exact_runner_receipt(
+        receipt,
+        archive_name=archive_name,
+        compact=compact,
+        run_id=run_id,
+    )
 
     expected_sha = _sha256_text(
         receipt.get("durable_asset_sha256"), "durable archive digest"
@@ -183,9 +254,6 @@ def _verify_final_receipt(
         raise _error("durable archive bytes disagree with tick receipt SHA-256")
     if len(archive_raw) != expected_size:
         raise _error("durable archive bytes disagree with tick receipt size")
-    if receipt.get("tick_exit_code") != 0 or receipt.get("tick_committed") is not True:
-        raise _error("terminal replay requires a committed zero-exit success tick")
-
     return receipt, archive_raw, receipt_raw
 
 
@@ -281,9 +349,8 @@ def _terminal_records(
         fixture_id = row.get("fixture_id")
         if type(fixture_id) is not int or fixture_id < 1:
             raise _error("settlement journal fixture id is invalid")
-        disposition_text = row.get("disposition")
         try:
-            disposition = evaluator.TerminalDisposition(disposition_text)
+            disposition = evaluator.TerminalDisposition(row.get("disposition"))
         except (TypeError, ValueError) as exc:
             raise _error("settlement disposition escaped evaluator terminal vocabulary") from exc
         settled_prediction = None
@@ -303,6 +370,89 @@ def _terminal_records(
         )
     records.sort(key=lambda value: value.fixture_id)
     return tuple(records)
+
+
+def _selected_close(
+    control_rows: Sequence[dict[str, Any]],
+    sealed: Sequence[fresh.SealedFreshPrediction],
+) -> dt.datetime:
+    close_rows: list[tuple[int, dt.datetime, dict[str, Any]]] = []
+    for index, row in enumerate(control_rows):
+        if row.get("event") != "COUNT_ONLY_CLOSE_EVALUATION":
+            continue
+        boundary = _utc(row.get("evaluated_boundary_utc"), "close evaluation boundary")
+        if boundary.time() != dt.time.min:
+            raise _error("stored close evaluation escaped exact UTC midnight")
+        if close_rows and boundary <= close_rows[-1][1]:
+            raise _error("count-only close journal is duplicated or out of order")
+        close_rows.append((index, boundary, row))
+    selected = [item for item in close_rows if item[2].get("selected_close_utc") is not None]
+    if len(selected) != 1:
+        raise _error("terminal state must contain exactly one selected count-only close")
+    selected_index, selected_close, selected_row = selected[0]
+    if close_rows[-1][0] != selected_index:
+        raise _error("count-only close evaluation exists after selected close")
+    if selected_row.get("outcome_or_performance_input_used") is not False:
+        raise _error("stored selected close does not prove outcome-independent decision")
+    stored_selected = _utc(selected_row.get("selected_close_utc"), "selected close")
+    if stored_selected != selected_close:
+        raise _error("stored selected close differs from evaluated boundary")
+    try:
+        revalidated = control.evaluate_close_control_state(tuple(sealed), boundary=selected_close)
+    except Exception as exc:
+        raise _error("stored selected close failed frozen count-only replay") from exc
+    expected = {
+        "evaluated_boundary_utc": selected_row.get("evaluated_boundary_utc"),
+        "decision": selected_row.get("decision"),
+        "selected_close_utc": selected_row.get("selected_close_utc"),
+        "coverage_sha256": selected_row.get("coverage_sha256"),
+    }
+    if revalidated.to_dict() != expected:
+        raise _error("stored selected close disagrees with frozen count-only replay")
+    return selected_close
+
+
+def _final_commit(
+    control_rows: Sequence[dict[str, Any]],
+    *,
+    selected_close: dt.datetime,
+    receipt: Mapping[str, Any],
+) -> tuple[dt.datetime, dt.datetime]:
+    previous: dt.datetime | None = None
+    commits: list[tuple[int, dt.datetime, dt.datetime, dict[str, Any]]] = []
+    for index, row in enumerate(control_rows):
+        event = row.get("event")
+        if event == "SCHEDULER_GAP_RANGE" and row.get("backfill_authorized") is not False:
+            raise _error("scheduler gap row changed backfill authority")
+        if event != "TICK_COMMITTED":
+            continue
+        scheduled = _scheduled_utc(row.get("scheduled_for_utc"), "committed scheduled time")
+        committed_at = _utc(row.get("committed_at_utc"), "committed_at")
+        if committed_at < scheduled:
+            raise _error("committed_at predates nominal scheduled slot")
+        if previous is not None and scheduled <= previous:
+            raise _error("committed tick journal is duplicated or out of order")
+        previous = scheduled
+        commits.append((index, scheduled, committed_at, row))
+    if not commits:
+        raise _error("terminal archive contains no committed collection tick")
+    index, scheduled, committed_at, row = commits[-1]
+    if index != len(control_rows) - 1:
+        raise _error("terminal TICK_COMMITTED must be the final control journal row")
+    if row.get("phase") != control.ControlPhase.COLLECTION_COMPLETE.value:
+        raise _error("terminal replay requires final COLLECTION_COMPLETE tick")
+    tail_end = selected_close + dt.timedelta(hours=24)
+    if scheduled < tail_end or committed_at < tail_end:
+        raise _error("terminal archive predates selected-close settlement tail")
+
+    nominal = _scheduled_utc(receipt.get("nominal_scheduled_for_utc"), "receipt nominal time")
+    if nominal != scheduled:
+        raise _error("final receipt nominal slot disagrees with latest committed state")
+    if row.get("durable_asset_name") != receipt.get("durable_asset_name"):
+        raise _error("latest committed tick durable asset disagrees with receipt")
+    if row.get("durable_release_tag") != receipt.get("durable_release_tag"):
+        raise _error("latest committed tick release tag disagrees with receipt")
+    return scheduled, committed_at
 
 
 def _verify_terminal_state(
@@ -333,60 +483,15 @@ def _verify_terminal_state(
         if value.sealed_prediction is not None
     )
     terminals = _terminal_records(settlement_rows)
-
-    selected_rows = [
-        row
-        for row in control_rows
-        if row.get("event") == "COUNT_ONLY_CLOSE_EVALUATION"
-        and row.get("selected_close_utc") is not None
-    ]
-    if len(selected_rows) != 1:
-        raise _error("terminal state must contain exactly one selected count-only close")
-    selected_row = selected_rows[0]
-    if selected_row.get("outcome_or_performance_input_used") is not False:
-        raise _error("stored selected close does not prove outcome-independent decision")
-    selected_close = _utc(selected_row.get("selected_close_utc"), "selected close")
-    if selected_close.time() != dt.time.min:
-        raise _error("stored selected close escaped exact UTC midnight")
-    try:
-        revalidated = control.evaluate_close_control_state(
-            tuple(value for value in sealed if value is not None),
-            boundary=selected_close,
-        )
-    except Exception as exc:
-        raise _error("stored selected close failed frozen count-only replay") from exc
-    expected_close = {
-        "evaluated_boundary_utc": selected_row.get("evaluated_boundary_utc"),
-        "decision": selected_row.get("decision"),
-        "selected_close_utc": selected_row.get("selected_close_utc"),
-        "coverage_sha256": selected_row.get("coverage_sha256"),
-    }
-    if revalidated.to_dict() != expected_close:
-        raise _error("stored selected close disagrees with frozen count-only replay")
-
-    committed_rows = [row for row in control_rows if row.get("event") == "TICK_COMMITTED"]
-    if not committed_rows:
-        raise _error("terminal archive contains no committed collection tick")
-    parsed_committed: list[tuple[dt.datetime, dt.datetime, dict[str, Any]]] = []
-    for row in committed_rows:
-        scheduled = _utc(row.get("scheduled_for_utc"), "committed scheduled time")
-        committed_at = _utc(row.get("committed_at_utc"), "committed_at")
-        parsed_committed.append((scheduled, committed_at, row))
-    parsed_committed.sort(key=lambda value: value[0])
-    latest_scheduled, latest_committed_at, latest_row = parsed_committed[-1]
-    if latest_row.get("phase") != control.ControlPhase.COLLECTION_COMPLETE.value:
-        raise _error("terminal replay requires final COLLECTION_COMPLETE tick")
-    tail_end = selected_close + dt.timedelta(hours=24)
-    if latest_scheduled < tail_end or latest_committed_at < tail_end:
-        raise _error("terminal archive predates selected-close settlement tail")
-
-    receipt_nominal = _utc(receipt.get("nominal_scheduled_for_utc"), "receipt nominal time")
-    if receipt_nominal != latest_scheduled:
-        raise _error("final receipt nominal slot disagrees with latest committed state")
-    if latest_row.get("durable_asset_name") != receipt.get("durable_asset_name"):
-        raise _error("latest committed tick durable asset disagrees with receipt")
-    if latest_row.get("durable_release_tag") != receipt.get("durable_release_tag"):
-        raise _error("latest committed tick release tag disagrees with receipt")
+    selected_close = _selected_close(
+        control_rows,
+        tuple(value for value in sealed if value is not None),
+    )
+    latest_scheduled, evaluated_at = _final_commit(
+        control_rows,
+        selected_close=selected_close,
+        receipt=receipt,
+    )
 
     try:
         sealed_map, _processed = runner._prediction_state(prediction_rows)
@@ -416,7 +521,7 @@ def _verify_terminal_state(
         "terminal_rows": len(settlement_rows),
         "control_rows": len(control_rows),
     }
-    return assessments, terminals, selected_close, latest_committed_at, counts
+    return assessments, terminals, selected_close, evaluated_at, counts
 
 
 def replay_fresh_holdout_confirmation(
@@ -424,7 +529,7 @@ def replay_fresh_holdout_confirmation(
     archive_path: Path,
     receipt_path: Path,
 ) -> dict[str, Any]:
-    """Source-replay one terminal cumulative archive into PR167, fully offline."""
+    """Replay one terminal cumulative PR151 state into PR167, fully offline."""
     verify_reviewed_dependencies()
     receipt, archive_raw, receipt_raw = _verify_final_receipt(
         archive_path=Path(archive_path), receipt_path=Path(receipt_path)
@@ -458,15 +563,17 @@ def replay_fresh_holdout_confirmation(
             evaluated_at_utc=evaluated_at,
         )
     except evaluator.FreshHoldoutConfirmationEvaluatorError as exc:
-        raise _error("PR167 frozen confirmation evaluation rejected source replay") from exc
-    if any(result.get("safety", {}).values()):
-        raise _error("source-replayed evaluator result changed downstream authority")
+        raise _error("PR167 frozen confirmation evaluation rejected durable-state replay") from exc
+    safety = result.get("safety")
+    if type(safety) is not dict or any(value is not False for value in safety.values()):
+        raise _error("durable-state replay changed downstream evaluator authority")
 
     result_sha = evaluator.sha256_fresh_holdout_confirmation_result(result)
     return {
         "schema_version": SCHEMA_VERSION,
         "replay_id": REPLAY_ID,
         "replay_state": REPLAY_STATE,
+        "source_scope": SOURCE_SCOPE,
         "workflow_run_id": receipt["workflow_run_id"],
         "nominal_scheduled_for_utc": receipt["nominal_scheduled_for_utc"],
         "durable_release_tag": receipt["durable_release_tag"],
@@ -480,6 +587,8 @@ def replay_fresh_holdout_confirmation(
         "source_counts": counts,
         "confirmation_result": result,
         "confirmation_result_sha256": result_sha,
+        "durable_state_journals_replayed": True,
+        "provider_raw_capture_rederivation_performed": False,
         "network_acquisition_performed": False,
         "model_or_calibration_refit_performed": False,
         "automatic_successor_approval": False,
@@ -487,7 +596,7 @@ def replay_fresh_holdout_confirmation(
         "selection_authorized": False,
         "bet_authorized": False,
         "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
-        "safety": dict(result["safety"]),
+        "safety": dict(safety),
     }
 
 
@@ -512,7 +621,7 @@ def _write_new(path: Path, raw: bytes) -> None:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Offline source replay for the frozen FotMob fresh-holdout confirmation."
+        description="Offline PR151 durable-state replay for frozen fresh-holdout confirmation."
     )
     parser.add_argument("--archive", type=Path, required=True)
     parser.add_argument("--receipt", type=Path, required=True)
@@ -546,6 +655,7 @@ __all__ = [
     "NEXT_REQUIRED_BOUNDARY",
     "REPLAY_ID",
     "REPLAY_STATE",
+    "SOURCE_SCOPE",
     "canonical_source_replay_result_bytes",
     "replay_fresh_holdout_confirmation",
     "sha256_source_replay_result",
