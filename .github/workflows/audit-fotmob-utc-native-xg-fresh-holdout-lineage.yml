@@ -61,6 +61,7 @@ jobs:
               return;
             }
             core.setOutput('main_sha', expectedMain);
+            core.setOutput('authorized', 'true');
 
       - name: Check out exact authorized main
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -85,6 +86,7 @@ jobs:
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "aaf8dbe8534dfc10b707d34511fd4327dc81850e"
 
       - name: Execute read-only GitHub lineage audit
+        id: lineage_audit
         env:
           GH_TOKEN: ${{ github.token }}
           PYTHONPATH: ${{ github.workspace }}
@@ -98,6 +100,7 @@ jobs:
             > fresh-holdout-actions-lineage-audit.stdout
 
       - name: Upload audit result
+        if: ${{ success() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: fresh-holdout-actions-lineage-audit-${{ github.run_id }}
@@ -108,6 +111,7 @@ jobs:
           retention-days: 90
 
       - name: Post compact audit result
+        if: ${{ success() }}
         uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
@@ -135,6 +139,35 @@ jobs:
               'provider-network-acquisition-performed-by-audit: false',
               'backfill-authorized: false',
               'model-approval-authorized: false',
+              'pricing-authorized: false',
+              'selection-authorized: false',
+              'bet-authorized: false',
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 170,
+              body: lines.join('\n'),
+            });
+
+      - name: Post fail-closed control-workflow result
+        if: ${{ failure() && steps.guard.outputs.authorized == 'true' }}
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const observedMain = '${{ steps.guard.outputs.main_sha }}';
+            const lines = [
+              'ATHENA FRESH-HOLDOUT LINEAGE AUDIT',
+              '',
+              'audit-state: AUDIT_CONTROL_WORKFLOW_FAILED_CLOSED',
+              `observed-main: ${observedMain}`,
+              'lineage-result-authority: false',
+              'first-slot-status: NOT_DERIVED',
+              `audit-actions-run-id: ${context.runId}`,
+              'provider-network-acquisition-performed-by-audit: false',
+              'backfill-authorized: false',
+              'model-approval-authorized: false',
+              'production-authorized: false',
               'pricing-authorized: false',
               'selection-authorized: false',
               'bet-authorized: false',
