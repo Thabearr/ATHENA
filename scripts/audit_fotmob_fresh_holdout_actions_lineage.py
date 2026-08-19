@@ -60,6 +60,10 @@ class FreshHoldoutActionsLineageAuditError(RuntimeError):
     """Raised when GitHub lineage cannot be interpreted without guessing."""
 
 
+class UnverifiedRunEvidenceError(RuntimeError):
+    """Raised when one completed run lacks sufficient transport evidence to verify."""
+
+
 def _error(message: str) -> FreshHoldoutActionsLineageAuditError:
     return FreshHoldoutActionsLineageAuditError(message)
 
@@ -148,6 +152,8 @@ def verify_reviewed_dependencies(repository_root: Path | None = None) -> None:
 def _slot_index(value: dt.datetime) -> int:
     first = _parse_utc(FIRST_SLOT_UTC, "first slot")
     value = value.astimezone(dt.timezone.utc)
+    if value.second or value.microsecond or value.minute not in control.CAPTURE_MINUTES_UTC:
+        raise _error("timestamp escaped reviewed exact :07/:37 boundary")
     seconds = int((value - first).total_seconds())
     step = control.CAPTURE_INTERVAL_MINUTES * 60
     if seconds < 0 or seconds % step:
@@ -184,11 +190,7 @@ def _canonical_rows(raw: bytes, label: str) -> tuple[dict[str, Any], ...]:
 
 
 def _read_control_rows(extracted_root: Path) -> tuple[dict[str, Any], ...]:
-    path = (
-        extracted_root
-        / control.CONTROL_ROOT_RELATIVE
-        / control.CONTROL_JOURNAL_FILENAME
-    )
+    path = extracted_root / control.CONTROL_ROOT_RELATIVE / control.CONTROL_JOURNAL_FILENAME
     if not path.is_file() or path.is_symlink():
         raise _error("durable archive is missing canonical control journal")
     return _canonical_rows(path.read_bytes(), "control journal")
@@ -213,6 +215,10 @@ def validate_control_lineage(
                 raise _error("committed slots are duplicated or reordered")
             if index in missing:
                 raise _error("committed slot appears inside a durable scheduler gap")
+            if source.get("backfill_or_retrofill_performed") is not False:
+                raise _error("committed tick changed no-backfill semantics")
+            if source.get("nominal_schedule_time_used_as_observation_time") is not False:
+                raise _error("committed tick used nominal schedule time as observation time")
             committed.add(index)
             last_committed_index = index
         elif event == "SCHEDULER_GAP_RANGE":
@@ -224,14 +230,24 @@ def validate_control_lineage(
             first = _slot_index(_validate_slot(source.get("first_missing_tick_utc"), "gap first slot"))
             last = _slot_index(_validate_slot(source.get("last_missing_tick_utc"), "gap last slot"))
             count = source.get("missing_tick_count")
+            previous = source.get("previous_committed_tick_utc")
+            expected_previous = None if last_committed_index < 0 else last_committed_index
+            if previous is None:
+                observed_previous = None
+            else:
+                observed_previous = _slot_index(
+                    _validate_slot(previous, "gap previous committed slot")
+                )
             if (
                 type(count) is not int
                 or count < 1
                 or last < first
                 or count != last - first + 1
-                or detected <= last
+                or detected != last + 1
+                or observed_previous != expected_previous
+                or first != (0 if expected_previous is None else expected_previous + 1)
             ):
-                raise _error("scheduler gap range/count/detection semantics changed")
+                raise _error("scheduler gap range/count/detection/lineage semantics changed")
             if first <= last_gap_end:
                 raise _error("scheduler gap ranges overlap or move backward")
             gap_slots = set(range(first, last + 1))
@@ -328,7 +344,7 @@ def _run_is_collection_candidate(run: Mapping[str, Any]) -> bool:
 def _candidate_artifact(artifacts_payload: Mapping[str, Any], run_id: int) -> Mapping[str, Any]:
     artifacts = artifacts_payload.get("artifacts")
     if type(artifacts) is not list:
-        raise _error("workflow artifacts payload is malformed")
+        raise UnverifiedRunEvidenceError("workflow artifacts payload is malformed")
     values = [
         item
         for item in artifacts
@@ -339,10 +355,12 @@ def _candidate_artifact(artifacts_payload: Mapping[str, Any], run_id: int) -> Ma
         and item["name"].endswith(f"-run-{run_id}.tar.gz")
     ]
     if len(values) != 1:
-        raise _error("completed campaign run does not expose exactly one canonical unexpired artifact")
+        raise UnverifiedRunEvidenceError(
+            "completed campaign run does not expose exactly one canonical unexpired artifact"
+        )
     artifact = values[0]
     if type(artifact.get("id")) is not int:
-        raise _error("Actions artifact id is invalid")
+        raise UnverifiedRunEvidenceError("Actions artifact id is invalid")
     return artifact
 
 
@@ -442,7 +460,9 @@ def audit_actions_lineage(
         try:
             head_sha = run.get("head_sha")
             if type(head_sha) is not str or SHA40_RE.fullmatch(head_sha) is None:
-                raise _error("completed campaign run head_sha is not exact lowercase 40-hex")
+                raise UnverifiedRunEvidenceError(
+                    "completed campaign run head_sha is not exact lowercase 40-hex"
+                )
             artifact = _candidate_artifact(get_run_artifacts(run_id), run_id)
             zip_bytes = download_artifact_zip(artifact["id"])
             zip_sha = mirror.verify_actions_artifact_zip_digest(zip_bytes, artifact.get("digest"))
@@ -471,12 +491,15 @@ def audit_actions_lineage(
                 if tick_committed is not False or slot_index in committed:
                     raise _error("verified failure run became committed")
                 verified_failures += 1
-            release = get_release(verified["release_tag"])
-            release_state = _release_state(
-                verified=verified,
-                release=release,
-                download_release_asset=download_release_asset,
-            )
+            try:
+                release = get_release(verified["release_tag"])
+                release_state = _release_state(
+                    verified=verified,
+                    release=release,
+                    download_release_asset=download_release_asset,
+                )
+            except Exception:
+                release_state = "RELEASE_DURABILITY_UNVERIFIED"
             if release_state != "RELEASE_ARCHIVE_AND_RECEIPT_VERIFIED":
                 release_partial = True
             record.update(
@@ -493,6 +516,9 @@ def audit_actions_lineage(
             )
             verified_by_slot[slot_index] = record
             journals_by_slot[slot_index] = rows
+        except UnverifiedRunEvidenceError as exc:
+            unverified_completed += 1
+            record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
         except FreshHoldoutActionsLineageAuditError:
             raise
         except Exception as exc:
@@ -518,9 +544,7 @@ def audit_actions_lineage(
         latest_nominal = None
 
     failed_attempts = {
-        index
-        for index, record in verified_by_slot.items()
-        if record.get("tick_committed") is False
+        index for index, record in verified_by_slot.items() if record.get("tick_committed") is False
     }
     slot_rows: list[dict[str, Any]] = []
     if latest_slot >= 0:
