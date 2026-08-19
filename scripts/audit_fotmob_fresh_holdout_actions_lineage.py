@@ -202,7 +202,7 @@ def validate_control_lineage(
     committed: set[int] = set()
     missing: set[int] = set()
     last_committed_index = -1
-    last_gap_end = -1
+    last_gap_detected = -1
     for position, source in enumerate(rows):
         if type(source) is not dict:
             source = dict(source)
@@ -219,6 +219,9 @@ def validate_control_lineage(
                 raise _error("committed tick changed no-backfill semantics")
             if source.get("nominal_schedule_time_used_as_observation_time") is not False:
                 raise _error("committed tick used nominal schedule time as observation time")
+            committed_at = _parse_utc(source.get("committed_at_utc"), "committed_at")
+            if committed_at < _slot_at(index):
+                raise _error("committed_at predates nominal scheduled slot")
             committed.add(index)
             last_committed_index = index
         elif event == "SCHEDULER_GAP_RANGE":
@@ -244,17 +247,16 @@ def validate_control_lineage(
                 or last < first
                 or count != last - first + 1
                 or detected != last + 1
+                or detected <= last_gap_detected
                 or observed_previous != expected_previous
                 or first != (0 if expected_previous is None else expected_previous + 1)
             ):
                 raise _error("scheduler gap range/count/detection/lineage semantics changed")
-            if first <= last_gap_end:
-                raise _error("scheduler gap ranges overlap or move backward")
             gap_slots = set(range(first, last + 1))
             if gap_slots & committed:
                 raise _error("scheduler gap overlaps an already committed slot")
             missing.update(gap_slots)
-            last_gap_end = last
+            last_gap_detected = detected
         elif event == "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED":
             if source.get("tick_committed") is not False or source.get("backfill_authorized") is not False:
                 raise _error("uncommitted qualification failure changed authority")
@@ -445,6 +447,7 @@ def audit_actions_lineage(
     verified_by_slot: dict[int, dict[str, Any]] = {}
     journals_by_slot: dict[int, tuple[dict[str, Any], ...]] = {}
     unverified_completed = 0
+    incomplete_runs = 0
     verified_failures = 0
     release_partial = False
 
@@ -454,6 +457,7 @@ def audit_actions_lineage(
         if type(run_id) is not int or run_id < 1:
             raise _error("campaign run id is invalid")
         if run.get("status") != "completed":
+            incomplete_runs += 1
             record["evidence_state"] = "INCOMPLETE_NOT_EVIDENCE"
             records.append(record)
             continue
@@ -526,6 +530,8 @@ def audit_actions_lineage(
             record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
         records.append(record)
 
+    # The newest verified archive is the cumulative source of slot lineage. Earlier verified
+    # journals must be prefixes of later journals; otherwise the append-only campaign forked.
     ordered_slots = sorted(journals_by_slot)
     previous: tuple[dict[str, Any], ...] = ()
     for index in ordered_slots:
@@ -544,7 +550,9 @@ def audit_actions_lineage(
         latest_nominal = None
 
     failed_attempts = {
-        index for index, record in verified_by_slot.items() if record.get("tick_committed") is False
+        index
+        for index, record in verified_by_slot.items()
+        if record.get("tick_committed") is False
     }
     slot_rows: list[dict[str, Any]] = []
     if latest_slot >= 0:
@@ -578,9 +586,9 @@ def audit_actions_lineage(
         first_status = "FIRST_SLOT_UNRESOLVED"
 
     verified_completed = len(verified_by_slot)
-    if verified_completed == 0 and unverified_completed == 0:
+    if verified_completed == 0 and unverified_completed == 0 and incomplete_runs == 0:
         audit_state = "NO_COMPLETED_CAMPAIGN_EVIDENCE"
-    elif unverified_completed or release_partial:
+    elif unverified_completed or incomplete_runs or release_partial:
         audit_state = "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
     else:
         audit_state = "VERIFIED_COMPLETE_TO_LATEST_OBSERVED_RUN"
@@ -603,6 +611,7 @@ def audit_actions_lineage(
         "latest_verified_run_id": None if latest_slot < 0 else verified_by_slot[latest_slot]["run_id"],
         "verified_completed_run_count": verified_completed,
         "unverified_completed_run_count": unverified_completed,
+        "incomplete_run_count": incomplete_runs,
         "verified_failure_count": verified_failures,
         "committed_slot_count": len(committed),
         "durably_recorded_missing_slot_count": len(missing),
