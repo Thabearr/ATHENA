@@ -165,6 +165,7 @@ jobs:
           import hashlib
           import os
           import subprocess
+          import sys
           from pathlib import Path
           import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
@@ -175,7 +176,15 @@ jobs:
           asset_name = "pr119-materialized.ndjson"
           repo = os.environ["GITHUB_REPOSITORY"]
 
-          target = Path("pr119-materialized.ndjson")
+          artifact_id = "9249856559"
+          expected_artifact_sha = "7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f"
+          expected_artifact_size = 61_886_753
+          executor = "scripts/qualify_fotmob_historical_source_history_completeness_materialization.py"
+          expected_executor_blob = "2409676b4993a25024e2e8554e84e3525e7c5e6e"
+          expected_receipt_sha = "da8037cd9b4a4f91be942a4052e76134b66cc94221ed66e624c14008c9e562a0"
+          expected_receipt_size = 6_810
+
+          target = Path(asset_name)
           downloaded = False
 
           try:
@@ -190,33 +199,60 @@ jobs:
               )
               if res.returncode == 0 and target.is_file():
                   raw = target.read_bytes()
-                  if hashlib.sha256(raw).hexdigest() == expected_sha and len(raw) == expected_size:
+                  if (
+                      hashlib.sha256(raw).hexdigest() == expected_sha
+                      and len(raw) == expected_size
+                      and raw.count(b"\n") == expected_rows
+                  ):
                       downloaded = True
-                      print("restored bootstrap projection from release asset")
+                      print("restored exact bootstrap projection from release asset")
+                  else:
+                      target.unlink(missing_ok=True)
+                      print("bootstrap release asset identity mismatch; rebuilding from frozen PR119 source")
           except Exception as exc:
+              target.unlink(missing_ok=True)
               print(f"release download check: {exc}")
 
           if not downloaded:
-              print("materializing bootstrap projection from preserved PR119 campaign artifact...")
-              artifact_id = "9249856559"
+              print("materializing exact bootstrap projection from preserved PR119 campaign artifact...")
+              actual_executor_blob = subprocess.check_output(
+                  ["git", "rev-parse", f"HEAD:{executor}"],
+                  text=True,
+              ).strip()
+              if actual_executor_blob != expected_executor_blob:
+                  raise SystemExit(
+                      "reviewed PR119 materialization executor blob identity changed"
+                  )
+
               zip_path = Path("pr119-preserved-artifact.zip")
+              with zip_path.open("wb") as handle:
+                  subprocess.check_call(
+                      ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
+                      stdout=handle,
+                  )
+              artifact_raw = zip_path.read_bytes()
+              if (
+                  len(artifact_raw) != expected_artifact_size
+                  or hashlib.sha256(artifact_raw).hexdigest() != expected_artifact_sha
+              ):
+                  raise SystemExit("preserved PR119 artifact ZIP identity changed")
+
+              receipt_path = Path("pr119-materialization-receipt.json")
               subprocess.check_call(
-                  ["gh", "api", f"/repos/{repo}/actions/artifacts/{artifact_id}/zip"],
-                  stdout=zip_path.open("wb"),
+                  [
+                      sys.executable,
+                      executor,
+                      str(zip_path),
+                      "--output", str(receipt_path),
+                      "--projection-output", str(target),
+                  ]
               )
-              import zipfile
-              with zipfile.ZipFile(zip_path, "r") as archive:
-                  archive.extractall("preserved_pr119")
-              ndjson_src = Path(
-                  "preserved_pr119/database/market_evidence/"
-                  "fotmob_data_matches_epl_historical_raw_features.ndjson"
-              )
-              if not ndjson_src.is_file():
-                  raise SystemExit("source ndjson missing from PR119 artifact")
-              lines = ndjson_src.read_bytes().splitlines()
-              if len(lines) != expected_rows:
-                  raise SystemExit(f"unexpected line count: {len(lines)}")
-              target.write_bytes(ndjson_src.read_bytes())
+              receipt_raw = receipt_path.read_bytes()
+              if (
+                  len(receipt_raw) != expected_receipt_size
+                  or hashlib.sha256(receipt_raw).hexdigest() != expected_receipt_sha
+              ):
+                  raise SystemExit("replayed PR119 materialization receipt identity changed")
 
               if subprocess.run(
                   ["gh", "release", "view", bootstrap_tag, "--repo", repo],
@@ -233,7 +269,10 @@ jobs:
                   )
               try:
                   subprocess.run(
-                      ["gh", "release", "upload", bootstrap_tag, str(target), "--repo", repo],
+                      [
+                          "gh", "release", "upload", bootstrap_tag, str(target),
+                          "--clobber", "--repo", repo,
+                      ],
                       check=False,
                   )
               except Exception as exc:
@@ -368,7 +407,9 @@ jobs:
                   + "\n"
               ).encode("utf-8")
           )
-          print(f"packaged {tar_name}: sha256={tar_sha} size={tar_size}")
+          print(
+              f"packaged {tar_path.name}: sha256={tar_sha} size={tar_size}"
+          )
           PY
 
           echo "archive_name=${tar_name}" >> "${GITHUB_OUTPUT}"
