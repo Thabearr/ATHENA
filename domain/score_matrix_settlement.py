@@ -21,7 +21,9 @@ _AH_METHOD = "normalized_score_matrix_asian_handicap_settlement"
 
 
 def _side(value: Any) -> str:
-    normalized = str(value).strip().upper()
+    if not isinstance(value, str):
+        raise ValueError("side must be HOME or AWAY")
+    normalized = value.strip().upper()
     if normalized not in {"HOME", "AWAY"}:
         raise ValueError("side must be HOME or AWAY")
     return normalized
@@ -37,14 +39,17 @@ def _quarter_line(value: Any) -> tuple[float, int]:
     line = float(value)
     quarter_units = line * 4.0
     nearest = round(quarter_units)
-    if not math.isclose(
-        quarter_units,
-        float(nearest),
-        rel_tol=0.0,
-        abs_tol=1e-12,
-    ):
+    if quarter_units != float(nearest):
         raise ValueError("Asian Handicap line must be an exact multiple of 0.25")
     return nearest / 4.0, int(nearest)
+
+
+def _quarter_components(line: float, quarter_units: int) -> tuple[float, ...]:
+    if quarter_units % 2 == 0:
+        return (line,)
+    lower = (quarter_units - 1) / 4.0
+    upper = (quarter_units + 1) / 4.0
+    return (lower, upper)
 
 
 def _decimal_odds(value: Any) -> float:
@@ -117,13 +122,14 @@ class SettlementProbabilities:
             if components:
                 raise ValueError("component_lines require an explicit handicap line")
         else:
-            canonical_line, _ = _quarter_line(self.line)
+            canonical_line, quarter_units = _quarter_line(self.line)
             object.__setattr__(self, "line", canonical_line)
-            if len(components) not in {1, 2}:
-                raise ValueError(
-                    "Asian Handicap settlement requires one or two component lines"
-                )
             canonical_components = tuple(_quarter_line(item)[0] for item in components)
+            expected_components = _quarter_components(canonical_line, quarter_units)
+            if canonical_components != expected_components:
+                raise ValueError(
+                    "component_lines do not exactly match the canonical handicap line"
+                )
             object.__setattr__(self, "component_lines", canonical_components)
 
     @property
@@ -154,19 +160,22 @@ class SettlementProbabilities:
         return self.push + 0.5 * self.half_win + 0.5 * self.half_loss
 
     @property
-    def settlement_adjusted_win_probability(self) -> float | None:
-        """Break-even win probability after push/split stake portions are removed."""
-        win = self.effective_win_mass
-        loss = self.effective_loss_mass
-        active = win + loss
+    def active_stake_mass(self) -> float:
+        """Expected fraction of stake exposed to win or loss rather than return."""
+        return self.effective_win_mass + self.effective_loss_mass
+
+    @property
+    def break_even_probability(self) -> float | None:
+        """Equivalent win probability after neutral stake portions are removed."""
+        active = self.active_stake_mass
         if active <= 0.0:
             return None
-        return win / active
+        return self.effective_win_mass / active
 
     @property
     def fair_decimal_odds(self) -> float | None:
         """Return zero-margin decimal odds under this settlement distribution."""
-        probability = self.settlement_adjusted_win_probability
+        probability = self.break_even_probability
         if probability is None or probability <= 0.0:
             return None
         return 1.0 / probability
@@ -192,9 +201,8 @@ class SettlementProbabilities:
             "effective_win_mass": self.effective_win_mass,
             "effective_loss_mass": self.effective_loss_mass,
             "neutral_stake_mass": self.neutral_stake_mass,
-            "settlement_adjusted_win_probability": (
-                self.settlement_adjusted_win_probability
-            ),
+            "active_stake_mass": self.active_stake_mass,
+            "break_even_probability": self.break_even_probability,
             "fair_decimal_odds": self.fair_decimal_odds,
             "method": self.method,
             "side": self.side,
@@ -245,14 +253,6 @@ def _component_outcome(
     if adjusted_margin < 0.0:
         return "LOSS"
     return "PUSH"
-
-
-def _quarter_components(line: float, quarter_units: int) -> tuple[float, ...]:
-    if quarter_units % 2 == 0:
-        return (line,)
-    lower = (quarter_units - 1) / 4.0
-    upper = (quarter_units + 1) / 4.0
-    return (lower, upper)
 
 
 def asian_handicap_settlement(
