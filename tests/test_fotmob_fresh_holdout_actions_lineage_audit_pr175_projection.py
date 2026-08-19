@@ -12,6 +12,9 @@ WORKFLOW = Path(
 COLLECTION_WORKFLOW = Path(
     ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
 )
+PROJECTION_SCRIPT = Path(
+    "scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py"
+)
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -39,15 +42,16 @@ def test_control_workflow_verifies_current_collection_and_projection_blobs():
     parsed = yaml.safe_load(text)
     assert isinstance(parsed, dict)
     assert "4e1a7c47f47a0d2b89363191340dc5918c4b154e" in text
-    assert "9da028000ac2df5c4d9098dad0fd4ef8d53374ca" in text
+    assert _git_blob_sha(PROJECTION_SCRIPT) == (
+        "adaaaab0b8eef212c198066b9c75e04b4acd7d30"
+    )
+    assert "adaaaab0b8eef212c198066b9c75e04b4acd7d30" in text
     assert "aaf8dbe8534dfc10b707d34511fd4327dc81850e" in text
     assert "audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py" in text
 
 
 def test_projection_changes_only_reviewed_workflow_dependency_identity():
-    text = Path(
-        "scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py"
-    ).read_text(encoding="utf-8")
+    text = PROJECTION_SCRIPT.read_text(encoding="utf-8")
     assert "audit.WORKFLOW_BLOB_SHA = POST_PR175_WORKFLOW_BLOB_SHA" in text
     assert "audit.main(argv)" in text
     for forbidden in (
