@@ -84,8 +84,11 @@ Duplicate JSON keys, non-canonical formatting, wrong types, or semantic drift fa
 - every capture-index and post-seal identity row must remain canonical;
 - PR151's post-seal identity parser is rerun, so duplicate `(fixture_id, capture_manifest_sha256)` identity keys and observation/row identity disagreement fail closed;
 - every capture manifest SHA-256 must be valid and unique in the capture index;
-- capture rows must preserve `schema_version == 1`, valid raw SHA-256, exact UTC `observed_at`, and `network_acquisition_performed == true`;
-- every post-seal identity observation must be anchored to a manifest SHA-256 present in the durable capture index.
+- capture rows must preserve `schema_version == 1`, valid raw SHA-256/size, exact UTC `observed_at`, and `network_acquisition_performed == true`;
+- a `preserved_from_uncommitted_tick` marker, when present, must remain exactly true;
+- every post-seal identity observation must be anchored to a manifest SHA-256 present in the durable capture index;
+- the identity observation's raw SHA-256 and `capture_observed_at` must equal that indexed capture;
+- every post-seal identity observation must belong to a fixture that has an actual sealed prediction in the durable prediction journal.
 
 These checks prevent a locally canonical but semantically forged identity journal or duplicated capture-manifest lineage from being accepted merely because the archive structure itself is valid.
 
@@ -95,6 +98,9 @@ These checks prevent a locally canonical but semantically forged identity journa
 - PR151's prediction-state parser revalidates every sealed prediction hash and fixture identity;
 - missing-feature assessments are explicitly reconstructed instead of silently disappearing;
 - PR151's settlement parser revalidates terminal identities and settled prediction payloads;
+- every terminal settlement row must reference a fixture with a sealed prediction;
+- every row-level `prediction_sha256` must equal the exact sealed prediction journal hash;
+- any nested settled-prediction payload must bind back to the same sealed prediction;
 - only PR167's exact terminal vocabulary is accepted.
 
 ### 6. Result-free close replay
@@ -110,10 +116,13 @@ These checks prevent a locally canonical but semantically forged identity journa
 
 ### 7. Terminal committed-lineage replay
 
+The durable control vocabulary is limited to the reviewed runner/failure-lineage events: `COUNT_ONLY_CLOSE_EVALUATION`, `SCHEDULER_GAP_RANGE`, `TICK_COMMITTED`, and `UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED`. Unknown event types fail closed.
+
 - committed `:07/:37` slots must be strictly increasing in journal order;
 - duplicate or reordered committed slots fail closed rather than being sorted away;
 - `committed_at_utc` may not predate its nominal slot;
 - every `SCHEDULER_GAP_RANGE` must preserve `backfill_authorized == false`;
+- an `UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED` row must preserve `tick_committed == false` and `backfill_authorized == false` and must bind its manifest/raw SHA-256/observed-at values to the indexed preserved capture;
 - the final control-journal row must be the terminal `TICK_COMMITTED` row;
 - that row must be `COLLECTION_COMPLETE` and at/after selected close + 24 hours;
 - its nominal slot, committed-at time, release tag, and asset name must match the final receipt exactly.
@@ -155,7 +164,7 @@ Even an eventual PR167 all-pass signal remains **review-required**. PR169 cannot
 
 Scheduler gaps are evidence, not data to repair. PR151 records `SCHEDULER_GAP_RANGE` with `backfill_authorized: false`; PR169 refuses any gap row that changes that authority and never converts a gap into an observation.
 
-A `failure-...tar.gz` archive may preserve genuine prospective source observations through PR151's failed-tick lineage, but it is not eligible to become a terminal confirmation result. PR169 accepts only a final committed success archive after the settlement tail.
+A `failure-...tar.gz` archive may preserve genuine prospective source observations through the failed-tick lineage, including capture-index rows marked `preserved_from_uncommitted_tick: true` and non-committed qualification-failure control evidence. Those rows remain auditable source evidence but do not commit the failed nominal tick. A failure archive itself is not eligible to become a terminal confirmation result: PR169 accepts only a final committed success archive after the settlement tail.
 
 ## CLI
 
