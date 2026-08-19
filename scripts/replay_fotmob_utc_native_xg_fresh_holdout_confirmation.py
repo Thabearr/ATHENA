@@ -37,6 +37,32 @@ PR167_EVALUATOR_BLOB_SHA = "1f07292e66254ece0de25dc70e10964502a3839a"
 ARTIFACT_RE = re.compile(r"^success-(\d{8}T\d{6}Z)-run-(\d+)\.tar\.gz$")
 RELEASE_TAG_RE = re.compile(r"^athena-fresh-holdout-evidence-\d{4}-W\d{2}$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+TERMINAL_RECEIPT_KEYS = frozenset(
+    {
+        "schema_version",
+        "runner_id",
+        "runner_state",
+        "scheduled_for_utc",
+        "phase",
+        "committed_at_utc",
+        "request_dates",
+        "network_request_count",
+        "network_acquisition_performed",
+        "fresh_holdout_collection_started_by_this_run",
+        "durable_release_tag",
+        "durable_asset_name",
+        "next_required_boundary",
+        "safety",
+        "workflow_run_id",
+        "workflow_event_schedule",
+        "nominal_scheduled_for_utc",
+        "durable_asset_sha256",
+        "durable_asset_size_bytes",
+        "tick_exit_code",
+        "tick_committed",
+        "failure_lineage_reconcile_outcome",
+    }
+)
 
 
 class FreshHoldoutConfirmationSourceReplayError(RuntimeError):
@@ -171,6 +197,8 @@ def _require_exact_runner_receipt(
     compact: str,
     run_id: int,
 ) -> dt.datetime:
+    if set(receipt) != TERMINAL_RECEIPT_KEYS:
+        raise _error("tick receipt key set changed from exact terminal workflow schema")
     if receipt.get("schema_version") != 1:
         raise _error("tick receipt schema version changed")
     if receipt.get("runner_id") != runner.RUNNER_ID:
@@ -188,6 +216,9 @@ def _require_exact_runner_receipt(
         raise _error("receipt nominal slot disagrees with runner scheduled slot")
     if nominal.strftime("%Y%m%dT%H%M%SZ") != compact:
         raise _error("success archive nominal slot disagrees with tick receipt")
+    receipt_committed_at = _utc(receipt.get("committed_at_utc"), "receipt committed_at")
+    if receipt_committed_at < nominal:
+        raise _error("receipt committed_at predates nominal scheduled slot")
 
     schedule_expr = receipt.get("workflow_event_schedule")
     expected_expr = "7 * * * *" if nominal.minute == 7 else "37 * * * *"
@@ -201,6 +232,8 @@ def _require_exact_runner_receipt(
     release_tag = receipt.get("durable_release_tag")
     if type(release_tag) is not str or RELEASE_TAG_RE.fullmatch(release_tag) is None:
         raise _error("tick receipt durable release tag is invalid")
+    if receipt.get("request_dates") != []:
+        raise _error("COLLECTION_COMPLETE receipt unexpectedly carries request dates")
 
     if _non_negative_int(receipt.get("network_request_count"), "network request count") != 0:
         raise _error("COLLECTION_COMPLETE receipt unexpectedly records network requests")
@@ -210,6 +243,8 @@ def _require_exact_runner_receipt(
         raise _error("terminal receipt unexpectedly claims fresh collection started this run")
     if receipt.get("next_required_boundary") != runner.NEXT_REQUIRED_BOUNDARY:
         raise _error("tick receipt next boundary changed")
+    if receipt.get("failure_lineage_reconcile_outcome") != "skipped":
+        raise _error("successful terminal receipt changed failure-lineage reconcile outcome")
 
     safety = receipt.get("safety")
     if type(safety) is not dict or set(safety) != set(runner.SAFETY_KEYS):
@@ -448,6 +483,9 @@ def _final_commit(
     nominal = _scheduled_utc(receipt.get("nominal_scheduled_for_utc"), "receipt nominal time")
     if nominal != scheduled:
         raise _error("final receipt nominal slot disagrees with latest committed state")
+    receipt_committed_at = _utc(receipt.get("committed_at_utc"), "receipt committed_at")
+    if receipt_committed_at != committed_at:
+        raise _error("final receipt committed_at disagrees with latest committed state")
     if row.get("durable_asset_name") != receipt.get("durable_asset_name"):
         raise _error("latest committed tick durable asset disagrees with receipt")
     if row.get("durable_release_tag") != receipt.get("durable_release_tag"):
