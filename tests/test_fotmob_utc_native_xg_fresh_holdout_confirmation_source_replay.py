@@ -171,6 +171,7 @@ def _make_bundle(
         "tick_committed": True,
         "failure_lineage_reconcile_outcome": "skipped",
     }
+    assert set(receipt) == replay.TERMINAL_RECEIPT_KEYS
     receipt_path = tmp_path / f"{asset_name}.receipt.json"
     receipt_path.write_bytes(_canonical(receipt))
     return archive_path, receipt_path
@@ -256,6 +257,17 @@ def test_noncanonical_receipt_fails_closed(tmp_path: Path) -> None:
         replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
+def test_receipt_key_set_is_exact(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path)
+    _rewrite_receipt(receipt, ignored_forged_field="must not be ignored")
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="key set changed",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
 def test_receipt_must_be_exact_terminal_runner_receipt(tmp_path: Path) -> None:
     archive, receipt = _make_bundle(tmp_path)
     _rewrite_receipt(receipt, runner_id="FORGED_RUNNER")
@@ -329,6 +341,21 @@ def test_terminal_commit_must_remain_final_control_row(tmp_path: Path) -> None:
     with pytest.raises(
         replay.FreshHoldoutConfirmationSourceReplayError,
         match="terminal TICK_COMMITTED must be the final control journal row",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_receipt_committed_at_must_match_terminal_control_row(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path)
+    value = json.loads(receipt.read_bytes())
+    committed = dt.datetime.fromisoformat(
+        value["committed_at_utc"].replace("Z", "+00:00")
+    )
+    _rewrite_receipt(receipt, committed_at_utc=_utc_text(committed + dt.timedelta(seconds=1)))
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="receipt committed_at disagrees",
     ):
         replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
