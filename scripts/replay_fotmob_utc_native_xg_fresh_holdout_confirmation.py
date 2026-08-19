@@ -514,6 +514,34 @@ def _verify_terminal_state(
         raise _error("terminal archive must contain a regular checkpoint")
     checkpoint = _canonical_object(paths["checkpoint"].read_bytes(), "checkpoint")
 
+    try:
+        _identity_map, identity_keys = runner._identity_state(identity_rows)
+        capture_manifest_keys = {
+            _sha256_text(row.get("manifest_sha256"), "capture manifest")
+            for row in capture_rows
+        }
+    except Exception as exc:
+        raise _error("identity/capture journals failed reviewed PR151 replay") from exc
+    if len(identity_keys) != len(identity_rows):
+        raise _error("post-seal identity journal population changed")
+    if len(capture_manifest_keys) != len(capture_rows):
+        raise _error("capture index duplicated a manifest")
+    for row in capture_rows:
+        if row.get("schema_version") != 1:
+            raise _error("capture index schema version changed")
+        _sha256_text(row.get("raw_sha256"), "capture raw SHA-256")
+        _utc(row.get("observed_at"), "capture observed_at")
+        if row.get("network_acquisition_performed") is not True:
+            raise _error("capture index row lost live acquisition evidence")
+    for row in identity_rows:
+        if row.get("schema_version") != 1:
+            raise _error("post-seal identity journal schema version changed")
+        manifest_sha = _sha256_text(
+            row.get("capture_manifest_sha256"), "identity capture manifest"
+        )
+        if manifest_sha not in capture_manifest_keys:
+            raise _error("post-seal identity observation is not anchored to capture index")
+
     assessments = _prediction_assessments(prediction_rows)
     sealed = tuple(
         value.sealed_prediction
