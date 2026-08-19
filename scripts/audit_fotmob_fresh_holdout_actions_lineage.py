@@ -1,8 +1,8 @@
 """Read-only GitHub Actions lineage audit for the FotMob UTC-native xG fresh holdout.
 
-The audit may read GitHub metadata and evidence bytes already emitted by the reviewed
-scheduled campaign. It never contacts a football provider, reruns a workflow, repairs
-Release assets, backfills a slot, or changes model/betting authority.
+The audit reads only GitHub metadata and evidence bytes already emitted by the reviewed
+scheduled campaign. It never contacts a football provider, reruns a workflow, repairs a
+Release, backfills a slot, or changes model/betting authority.
 """
 from __future__ import annotations
 
@@ -61,7 +61,7 @@ class FreshHoldoutActionsLineageAuditError(RuntimeError):
 
 
 class UnverifiedRunEvidenceError(RuntimeError):
-    """Raised when one completed run lacks sufficient transport evidence to verify."""
+    """Raised when one completed run lacks enough transport evidence to verify."""
 
 
 def _error(message: str) -> FreshHoldoutActionsLineageAuditError:
@@ -120,7 +120,9 @@ def _parse_utc(value: Any, label: str) -> dt.datetime:
 
 
 def _utc_text(value: dt.datetime) -> str:
-    return value.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    return value.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace(
+        "+00:00", "Z"
+    )
 
 
 def _blob_sha(path: Path) -> str:
@@ -132,12 +134,11 @@ def _blob_sha(path: Path) -> str:
 
 def verify_reviewed_dependencies(repository_root: Path | None = None) -> None:
     repo = (repository_root or Path(__file__).resolve().parents[1]).resolve(strict=True)
-    expected = (
+    for relative, digest, label in (
         (RUNNER_PATH, RUNNER_BLOB_SHA, "PR151 activation runner"),
         (MIRROR_PATH, MIRROR_BLOB_SHA, "PR168 receipt mirror"),
         (WORKFLOW_PATH, WORKFLOW_BLOB_SHA, "scheduled collection workflow"),
-    )
-    for relative, digest, label in expected:
+    ):
         path = repo / relative
         if not path.is_file() or path.is_symlink():
             raise _error(f"{label} path is unavailable")
@@ -191,10 +192,16 @@ def _canonical_rows(raw: bytes, label: str) -> tuple[dict[str, Any], ...]:
     return tuple(rows)
 
 
-def _read_control_rows(extracted_root: Path) -> tuple[dict[str, Any], ...]:
+def _read_control_rows(
+    extracted_root: Path, *, required: bool
+) -> tuple[dict[str, Any], ...]:
     path = extracted_root / control.CONTROL_ROOT_RELATIVE / control.CONTROL_JOURNAL_FILENAME
+    if not path.exists():
+        if required:
+            raise _error("durable archive is missing canonical control journal")
+        return ()
     if not path.is_file() or path.is_symlink():
-        raise _error("durable archive is missing canonical control journal")
+        raise _error("durable control journal is not a regular file")
     return _canonical_rows(path.read_bytes(), "control journal")
 
 
@@ -243,16 +250,14 @@ def validate_control_lineage(
             last = _slot_index(
                 _validate_slot(row.get("last_missing_tick_utc"), "gap last slot")
             )
-            count = row.get("missing_tick_count")
             previous = row.get("previous_committed_tick_utc")
             expected_previous = None if last_committed_index < 0 else last_committed_index
             observed_previous = (
                 None
                 if previous is None
-                else _slot_index(
-                    _validate_slot(previous, "gap previous committed slot")
-                )
+                else _slot_index(_validate_slot(previous, "gap previous committed slot"))
             )
+            count = row.get("missing_tick_count")
             if (
                 type(count) is not int
                 or count < 1
@@ -279,9 +284,7 @@ def validate_control_lineage(
                 raise _error("uncommitted qualification failure changed authority")
         elif event == "COUNT_ONLY_CLOSE_EVALUATION":
             if row.get("outcome_or_performance_input_used") is not False:
-                raise _error(
-                    "count-only close evaluation used outcome/performance input"
-                )
+                raise _error("count-only close evaluation used outcome/performance input")
     return committed, missing
 
 
@@ -292,9 +295,7 @@ def _asset_by_name(
     if type(assets) is not list:
         raise _error("GitHub Release assets payload is malformed")
     matches = [
-        asset
-        for asset in assets
-        if type(asset) is dict and asset.get("name") == name
+        asset for asset in assets if type(asset) is dict and asset.get("name") == name
     ]
     if len(matches) > 1:
         raise _error(f"GitHub Release duplicated asset name {name}")
@@ -307,8 +308,7 @@ def _release_state(
     release: Mapping[str, Any],
     download_release_asset: Callable[[int], bytes],
 ) -> str:
-    archive_name = verified["artifact_name"]
-    archive = _asset_by_name(release, archive_name)
+    archive = _asset_by_name(release, verified["artifact_name"])
     if archive is None or archive.get("state") != "uploaded":
         return "RELEASE_DURABILITY_UNVERIFIED"
     if (
@@ -322,13 +322,11 @@ def _release_state(
         return "RELEASE_DURABILITY_UNVERIFIED"
     if (
         release_archive != verified["archive_bytes"]
-        or hashlib.sha256(release_archive).hexdigest()
-        != verified["archive_sha256"]
+        or hashlib.sha256(release_archive).hexdigest() != verified["archive_sha256"]
     ):
         return "RELEASE_DURABILITY_UNVERIFIED"
 
-    receipt_name = verified["receipt_name"]
-    sidecar = _asset_by_name(release, receipt_name)
+    sidecar = _asset_by_name(release, verified["receipt_name"])
     if sidecar is None:
         return "RELEASE_ARCHIVE_VERIFIED_RECEIPT_MISSING"
     if (
@@ -347,13 +345,14 @@ def _release_state(
 
 
 def _extract_control_rows(
-    archive_bytes: bytes, expected_sha256: str
+    archive_bytes: bytes,
+    expected_sha256: str,
+    *,
+    require_control: bool,
 ) -> tuple[dict[str, Any], ...]:
     if hashlib.sha256(archive_bytes).hexdigest() != expected_sha256:
         raise _error("archive bytes changed before durable-state extraction")
-    with tempfile.TemporaryDirectory(
-        prefix="athena-fresh-holdout-audit-"
-    ) as temporary:
+    with tempfile.TemporaryDirectory(prefix="athena-fresh-holdout-audit-") as temporary:
         root = Path(temporary)
         archive_path = root / "evidence.tar.gz"
         archive_path.write_bytes(archive_bytes)
@@ -362,17 +361,19 @@ def _extract_control_rows(
             repository_root=root,
             expected_sha256=expected_sha256,
         )
-        return _read_control_rows(root)
+        return _read_control_rows(root, required=require_control)
 
 
 def _run_is_collection_candidate(run: Mapping[str, Any]) -> bool:
     path = run.get("path")
+    path_matches = type(path) is str and (
+        path == WORKFLOW_PATH or path.startswith(WORKFLOW_PATH + "@")
+    )
     return (
         run.get("name") == WORKFLOW_NAME
         and run.get("event") == "schedule"
         and run.get("head_branch") == "main"
-        and type(path) is str
-        and path.startswith(WORKFLOW_PATH)
+        and path_matches
     )
 
 
@@ -395,10 +396,9 @@ def _candidate_artifact(
         raise UnverifiedRunEvidenceError(
             "completed campaign run does not expose exactly one canonical unexpired artifact"
         )
-    artifact = values[0]
-    if type(artifact.get("id")) is not int:
+    if type(values[0].get("id")) is not int:
         raise UnverifiedRunEvidenceError("Actions artifact id is invalid")
-    return artifact
+    return values[0]
 
 
 def _normal_run_record(run: Mapping[str, Any]) -> dict[str, Any]:
@@ -415,6 +415,26 @@ def _normal_run_record(run: Mapping[str, Any]) -> dict[str, Any]:
         "release_state": "NOT_CHECKED",
         "verification_error": None,
     }
+
+
+def _validate_optional_rich_failure_receipt(
+    receipt: Mapping[str, Any], nominal: dt.datetime
+) -> None:
+    if "schema_version" in receipt and receipt.get("schema_version") != 1:
+        raise _error("failure receipt schema identity changed")
+    if "runner_id" in receipt and receipt.get("runner_id") != activation.RUNNER_ID:
+        raise _error("failure receipt runner identity changed")
+    if "scheduled_for_utc" in receipt:
+        if _validate_slot(receipt.get("scheduled_for_utc"), "failure scheduled_for") != nominal:
+            raise _error("failure receipt scheduled_for disagrees with nominal slot")
+    if "safety" in receipt:
+        safety = receipt.get("safety")
+        if (
+            type(safety) is not dict
+            or set(safety) != set(activation.SAFETY_KEYS)
+            or any(value is not False for value in safety.values())
+        ):
+            raise _error("failure receipt downstream safety authority changed")
 
 
 def audit_actions_lineage(
@@ -437,10 +457,7 @@ def audit_actions_lineage(
         or repository != repository.strip()
     ):
         raise _error("repository must be exact owner/name")
-    if (
-        type(expected_main_sha) is not str
-        or SHA40_RE.fullmatch(expected_main_sha) is None
-    ):
+    if type(expected_main_sha) is not str or SHA40_RE.fullmatch(expected_main_sha) is None:
         raise _error("expected_main_sha must be lowercase 40-hex")
     if verify_dependencies:
         verify_reviewed_dependencies(repository_root)
@@ -475,14 +492,8 @@ def audit_actions_lineage(
                     timestamp = _parse_utc(value["created_at"], "run created_at")
                 except FreshHoldoutActionsLineageAuditError:
                     continue
-                oldest = (
-                    timestamp
-                    if oldest is None or timestamp < oldest
-                    else oldest
-                )
-        if len(values) < per_page or (
-            oldest is not None and oldest < campaign_start
-        ):
+                oldest = timestamp if oldest is None or timestamp < oldest else oldest
+        if len(values) < per_page or (oldest is not None and oldest < campaign_start):
             break
         page += 1
         if page > 100:
@@ -538,50 +549,53 @@ def audit_actions_lineage(
                 zip_bytes=zip_bytes,
             )
             verified["actions_artifact_zip_sha256"] = zip_sha
-            receipt = _parse_json(
-                verified["receipt_bytes"], "canonical tick receipt"
-            )
-            if (
-                receipt.get("schema_version") != 1
-                or receipt.get("runner_id") != activation.RUNNER_ID
-            ):
-                raise _error("canonical tick receipt runner/schema identity changed")
+            receipt = _parse_json(verified["receipt_bytes"], "canonical tick receipt")
             nominal = _validate_slot(
                 receipt.get("nominal_scheduled_for_utc"), "receipt nominal slot"
             )
-            scheduled = _validate_slot(
-                receipt.get("scheduled_for_utc"), "receipt scheduled_for"
-            )
-            if scheduled != nominal:
-                raise _error(
-                    "canonical tick receipt scheduled_for disagrees with nominal slot"
-                )
-            expected_schedule = (
-                "7 * * * *" if nominal.minute == 7 else "37 * * * *"
-            )
+            expected_schedule = "7 * * * *" if nominal.minute == 7 else "37 * * * *"
             if receipt.get("workflow_event_schedule") != expected_schedule:
                 raise _error("canonical tick receipt cron identity changed")
-            safety = receipt.get("safety")
-            if (
-                type(safety) is not dict
-                or set(safety) != set(activation.SAFETY_KEYS)
-                or any(value is not False for value in safety.values())
-            ):
-                raise _error(
-                    "canonical tick receipt downstream safety authority changed"
-                )
+            reconcile_outcome = receipt.get("failure_lineage_reconcile_outcome")
+            if type(reconcile_outcome) is not str or not reconcile_outcome:
+                raise _error("canonical tick receipt reconcile outcome is missing")
             run_created = _parse_utc(run.get("created_at"), "run created_at")
             if run_created < nominal:
-                raise _error(
-                    "workflow run created_at predates its proven nominal slot"
-                )
+                raise _error("workflow run created_at predates its proven nominal slot")
             slot_index = _slot_index(nominal)
             if slot_index in verified_by_slot:
-                raise _error(
-                    "multiple verified workflow runs map to one nominal slot"
-                )
+                raise _error("multiple verified workflow runs map to one nominal slot")
+
+            artifact_match = ARTIFACT_RE.fullmatch(artifact["name"])
+            if artifact_match is None:
+                raise _error("verified artifact name changed after verification")
+            kind = artifact_match.group(1)
+            tick_committed = receipt.get("tick_committed")
+
+            if kind == "success":
+                if (
+                    receipt.get("schema_version") != 1
+                    or receipt.get("runner_id") != activation.RUNNER_ID
+                ):
+                    raise _error("success receipt runner/schema identity changed")
+                if _validate_slot(
+                    receipt.get("scheduled_for_utc"), "success scheduled_for"
+                ) != nominal:
+                    raise _error("success receipt scheduled_for disagrees with nominal slot")
+                safety = receipt.get("safety")
+                if (
+                    type(safety) is not dict
+                    or set(safety) != set(activation.SAFETY_KEYS)
+                    or any(value is not False for value in safety.values())
+                ):
+                    raise _error("success receipt downstream safety authority changed")
+            else:
+                _validate_optional_rich_failure_receipt(receipt, nominal)
+
             rows = _extract_control_rows(
-                verified["archive_bytes"], verified["archive_sha256"]
+                verified["archive_bytes"],
+                verified["archive_sha256"],
+                require_control=(kind == "success"),
             )
             committed, missing = validate_control_lineage(rows)
             unresolved_prior = set(range(slot_index)) - committed - missing
@@ -589,20 +603,32 @@ def audit_actions_lineage(
                 raise _error(
                     "verified cumulative state leaves earlier nominal slots unresolved"
                 )
-            tick_committed = receipt.get("tick_committed")
-            artifact_match = ARTIFACT_RE.fullmatch(artifact["name"])
-            if artifact_match is None:
-                raise _error("verified artifact name changed after verification")
-            kind = artifact_match.group(1)
+
             if kind == "success":
                 if tick_committed is not True or slot_index not in committed:
-                    raise _error(
-                        "verified success run lacks matching committed control row"
+                    raise _error("verified success run lacks matching committed control row")
+                commit_rows = [
+                    row
+                    for row in rows
+                    if row.get("event") == "TICK_COMMITTED"
+                    and _slot_index(
+                        _validate_slot(row.get("scheduled_for_utc"), "commit binding slot")
                     )
+                    == slot_index
+                ]
+                if len(commit_rows) != 1:
+                    raise _error("success slot does not have one exact committed row")
+                commit_row = commit_rows[0]
+                if (
+                    commit_row.get("durable_release_tag") != verified["release_tag"]
+                    or commit_row.get("durable_asset_name") != artifact["name"]
+                ):
+                    raise _error("success commit row durable identity disagrees with receipt")
             else:
                 if tick_committed is not False or slot_index in committed:
                     raise _error("verified failure run became committed")
                 verified_failures += 1
+
             try:
                 release = get_release(verified["release_tag"])
                 release_state = _release_state(
@@ -630,26 +656,19 @@ def audit_actions_lineage(
             journals_by_slot[slot_index] = rows
         except UnverifiedRunEvidenceError as exc:
             unverified_completed += 1
-            record["verification_error"] = (
-                f"{type(exc).__name__}: {str(exc)[:300]}"
-            )
+            record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
         except FreshHoldoutActionsLineageAuditError:
             raise
         except Exception as exc:
             unverified_completed += 1
-            record["verification_error"] = (
-                f"{type(exc).__name__}: {str(exc)[:300]}"
-            )
+            record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
         records.append(record)
 
     ordered_slots = sorted(journals_by_slot)
     previous: tuple[dict[str, Any], ...] = ()
     for index in ordered_slots:
         current = journals_by_slot[index]
-        if (
-            len(current) < len(previous)
-            or current[: len(previous)] != previous
-        ):
+        if len(current) < len(previous) or current[: len(previous)] != previous:
             raise _error(
                 "verified cumulative control journal is not append-only across runs"
             )
@@ -657,9 +676,7 @@ def audit_actions_lineage(
 
     if ordered_slots:
         latest_slot = ordered_slots[-1]
-        committed, missing = validate_control_lineage(
-            journals_by_slot[latest_slot]
-        )
+        committed, missing = validate_control_lineage(journals_by_slot[latest_slot])
         latest_nominal = _slot_at(latest_slot)
     else:
         latest_slot = -1
@@ -687,14 +704,8 @@ def audit_actions_lineage(
                 {
                     "slot_utc": _utc_text(_slot_at(index)),
                     "state": state,
-                    "run_id": (
-                        None if run_record is None else run_record["run_id"]
-                    ),
-                    "head_sha": (
-                        None
-                        if run_record is None
-                        else run_record.get("head_sha")
-                    ),
+                    "run_id": None if run_record is None else run_record["run_id"],
+                    "head_sha": None if run_record is None else run_record.get("head_sha"),
                 }
             )
 
@@ -709,11 +720,7 @@ def audit_actions_lineage(
         first_status = "FIRST_SLOT_UNRESOLVED"
 
     verified_completed = len(verified_by_slot)
-    if (
-        verified_completed == 0
-        and unverified_completed == 0
-        and incomplete_runs == 0
-    ):
+    if verified_completed == 0 and unverified_completed == 0 and incomplete_runs == 0:
         audit_state = "NO_COMPLETED_CAMPAIGN_EVIDENCE"
     elif unverified_completed or incomplete_runs or release_partial:
         audit_state = "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
@@ -732,9 +739,7 @@ def audit_actions_lineage(
         "campaign_start_utc": CAMPAIGN_START_UTC,
         "first_nominal_slot_utc": FIRST_SLOT_UTC,
         "first_nominal_slot_status": first_status,
-        "first_nominal_slot_run_id": (
-            None if first_record is None else first_record["run_id"]
-        ),
+        "first_nominal_slot_run_id": None if first_record is None else first_record["run_id"],
         "first_nominal_slot_head_sha": (
             None if first_record is None else first_record.get("head_sha")
         ),
@@ -742,9 +747,7 @@ def audit_actions_lineage(
             None if latest_nominal is None else _utc_text(latest_nominal)
         ),
         "latest_verified_run_id": (
-            None
-            if latest_slot < 0
-            else verified_by_slot[latest_slot]["run_id"]
+            None if latest_slot < 0 else verified_by_slot[latest_slot]["run_id"]
         ),
         "verified_completed_run_count": verified_completed,
         "unverified_completed_run_count": unverified_completed,
@@ -774,13 +777,7 @@ def _gh_json(endpoint: str) -> dict[str, Any]:
 def _gh_download(endpoint: str) -> bytes:
     try:
         return subprocess.check_output(
-            [
-                "gh",
-                "api",
-                "-H",
-                "Accept: application/octet-stream",
-                endpoint,
-            ]
+            ["gh", "api", "-H", "Accept: application/octet-stream", endpoint]
         )
     except (OSError, subprocess.CalledProcessError) as exc:
         raise _error(f"GitHub binary download failed: {endpoint}") from exc
@@ -800,22 +797,16 @@ def _cli_audit(repository: str, expected_main_sha: str) -> dict[str, Any]:
         )
 
     def get_run_artifacts(run_id: int) -> Mapping[str, Any]:
-        return _gh_json(
-            f"/repos/{repository}/actions/runs/{run_id}/artifacts"
-        )
+        return _gh_json(f"/repos/{repository}/actions/runs/{run_id}/artifacts")
 
     def download_artifact_zip(artifact_id: int) -> bytes:
-        return _gh_download(
-            f"/repos/{repository}/actions/artifacts/{artifact_id}/zip"
-        )
+        return _gh_download(f"/repos/{repository}/actions/artifacts/{artifact_id}/zip")
 
     def get_release(tag: str) -> Mapping[str, Any]:
         return _gh_json(f"/repos/{repository}/releases/tags/{tag}")
 
     def download_release_asset(asset_id: int) -> bytes:
-        return _gh_download(
-            f"/repos/{repository}/releases/assets/{asset_id}"
-        )
+        return _gh_download(f"/repos/{repository}/releases/assets/{asset_id}")
 
     return audit_actions_lineage(
         repository=repository,
