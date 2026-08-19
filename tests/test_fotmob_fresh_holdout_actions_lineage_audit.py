@@ -182,6 +182,47 @@ def run(
     }
 
 
+def preacquisition_jobs(
+    *,
+    restore="failure",
+    bootstrap="skipped",
+    collection="skipped",
+    reconcile="skipped",
+    job_name="execute fresh holdout tick",
+):
+    return {
+        "jobs": [
+            {
+                "name": job_name,
+                "status": "completed",
+                "conclusion": "failure",
+                "steps": [
+                    {
+                        "name": "Restore newest durable lineage and resolve schedule slot",
+                        "status": "completed",
+                        "conclusion": restore,
+                    },
+                    {
+                        "name": "Restore or materialize PR119 bootstrap projection",
+                        "status": "completed",
+                        "conclusion": bootstrap,
+                    },
+                    {
+                        "name": "Execute reviewed fresh-holdout collection tick",
+                        "status": "completed",
+                        "conclusion": collection,
+                    },
+                    {
+                        "name": "Reconcile any staged capture lineage",
+                        "status": "completed",
+                        "conclusion": reconcile,
+                    },
+                ],
+            }
+        ]
+    }
+
+
 class FakeGitHub:
     def __init__(
         self,
@@ -192,10 +233,15 @@ class FakeGitHub:
         release_mismatch=False,
         digest_mismatch=False,
         sidecar_mismatch=False,
+        artifact_payloads=None,
+        job_payloads=None,
     ):
         self.runs = list(runs)
         self.bundles = dict(bundles)
         self.digest_mismatch = digest_mismatch
+        self.artifact_payloads = dict(artifact_payloads or {})
+        self.job_payloads = None if job_payloads is None else dict(job_payloads)
+        self.job_calls = []
         self.page_calls = []
         self.release_bytes = {}
         self.release_assets = {}
@@ -241,6 +287,10 @@ class FakeGitHub:
         return {"workflow_runs": self.runs[start : start + per_page]}
 
     def artifacts(self, run_id):
+        if run_id in self.artifact_payloads:
+            return self.artifact_payloads[run_id]
+        if run_id not in self.bundles:
+            return {"artifacts": []}
         bundle = self.bundles[run_id]
         digest = bundle["zip_digest"]
         if self.digest_mismatch and run_id == max(self.bundles):
@@ -255,6 +305,10 @@ class FakeGitHub:
                 }
             ]
         }
+
+    def jobs(self, run_id):
+        self.job_calls.append(run_id)
+        return self.job_payloads[run_id]
 
     def artifact_zip(self, artifact_id):
         return self.bundles[artifact_id - 5000]["zip"]
@@ -279,6 +333,7 @@ def do_audit(fake):
         download_artifact_zip=fake.artifact_zip,
         get_release=fake.release,
         download_release_asset=fake.release_asset,
+        get_run_jobs=None if fake.job_payloads is None else fake.jobs,
         verify_dependencies=False,
     )
 
@@ -416,6 +471,344 @@ def test_failure_archive_may_preserve_qualification_failure_control_evidence():
         )
     )
     assert result["verified_failure_count"] == 1
+
+
+def test_reviewed_restore_failure_is_verified_before_genesis():
+    fake = FakeGitHub(
+        [
+            run(
+                140,
+                "2026-08-19T00:08:00Z",
+                head_sha=HEAD_1,
+                conclusion="failure",
+            )
+        ],
+        {},
+        job_payloads={140: preacquisition_jobs()},
+    )
+    result = do_audit(fake)
+    assert result["runs"][0]["evidence_state"] == (
+        "VERIFIED_PREACQUISITION_CONTROL_FAILURE"
+    )
+    assert result["verified_preacquisition_control_failure_count"] == 1
+    assert result["verified_completed_run_count"] == 0
+    assert result["campaign_origin_recovery_state"] == (
+        audit.CAMPAIGN_ORIGIN_RECOVERY_OPEN
+    )
+    assert result["audit_state"] == "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
+
+
+def test_reviewed_bootstrap_failure_is_verified_before_genesis():
+    result = do_audit(
+        FakeGitHub(
+            [
+                run(
+                    141,
+                    "2026-08-19T00:08:00Z",
+                    head_sha=HEAD_1,
+                    conclusion="failure",
+                )
+            ],
+            {},
+            job_payloads={
+                141: preacquisition_jobs(restore="success", bootstrap="failure")
+            },
+        )
+    )
+    assert result["runs"][0]["evidence_state"] == (
+        "VERIFIED_PREACQUISITION_CONTROL_FAILURE"
+    )
+
+
+@pytest.mark.parametrize(
+    "jobs_payload",
+    [
+        preacquisition_jobs(job_name="altered collection job"),
+        {
+            "jobs": preacquisition_jobs()["jobs"]
+            + preacquisition_jobs()["jobs"]
+        },
+        {
+            "jobs": [
+                {
+                    **preacquisition_jobs()["jobs"][0],
+                    "steps": preacquisition_jobs()["jobs"][0]["steps"][:-1],
+                }
+            ]
+        },
+        {
+            "jobs": [
+                {
+                    **preacquisition_jobs()["jobs"][0],
+                    "steps": [
+                        {
+                            **preacquisition_jobs()["jobs"][0]["steps"][0],
+                            "name": "Altered restore step",
+                        },
+                        *preacquisition_jobs()["jobs"][0]["steps"][1:],
+                    ],
+                }
+            ]
+        },
+    ],
+)
+def test_altered_job_count_name_or_missing_step_fails_closed(jobs_payload):
+    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
+        do_audit(
+            FakeGitHub(
+                [
+                    run(
+                        142,
+                        "2026-08-19T00:08:00Z",
+                        head_sha=HEAD_1,
+                        conclusion="failure",
+                    )
+                ],
+                {},
+                job_payloads={142: jobs_payload},
+            )
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    [
+        lambda payload: payload["jobs"][0]["steps"][0].__setitem__(
+            "status", "in_progress"
+        ),
+        lambda payload: payload["jobs"][0]["steps"][0].__setitem__(
+            "conclusion", "cancelled"
+        ),
+    ],
+)
+def test_wrong_reviewed_step_status_or_conclusion_is_not_promoted(mutate):
+    jobs = preacquisition_jobs()
+    mutate(jobs)
+    result = do_audit(
+        FakeGitHub(
+            [
+                run(
+                    143,
+                    "2026-08-19T00:08:00Z",
+                    head_sha=HEAD_1,
+                    conclusion="failure",
+                )
+            ],
+            {},
+            job_payloads={143: jobs},
+        )
+    )
+    assert result["runs"][0]["evidence_state"] == "UNVERIFIED"
+    assert result["verified_preacquisition_control_failure_count"] == 0
+    assert result["campaign_origin_recovery_state"] == (
+        audit.CAMPAIGN_ORIGIN_RECOVERY_CLOSED
+    )
+
+
+def test_wrong_event_or_branch_cannot_enter_preacquisition_proof():
+    base = run(
+        144,
+        "2026-08-19T00:08:00Z",
+        head_sha=HEAD_1,
+        conclusion="failure",
+    )
+    for field, value in (("event", "workflow_dispatch"), ("head_branch", "other")):
+        candidate = dict(base)
+        candidate[field] = value
+        assert audit.failure_lineage._prove_preacquisition_control_failure(
+            candidate,
+            {"artifacts": []},
+            lambda _run_id: preacquisition_jobs(),
+        ) is False
+        assert audit._run_is_collection_candidate(candidate) is False
+
+
+@pytest.mark.parametrize(
+    "artifact_payload",
+    [
+        {"artifacts": {}},
+        {"artifacts": [{"id": 1, "name": "other", "expired": False}]},
+        {
+            "artifacts": [
+                {
+                    "id": 1,
+                    "name": "failure-20260819T000700Z-run-145.tar.gz",
+                    "expired": False,
+                },
+                {
+                    "id": 2,
+                    "name": "success-20260819T000700Z-run-145.tar.gz",
+                    "expired": False,
+                },
+            ]
+        },
+    ],
+)
+def test_nonzero_malformed_or_duplicate_artifacts_are_never_reclassified(
+    artifact_payload,
+):
+    fake = FakeGitHub(
+        [
+            run(
+                145,
+                "2026-08-19T00:08:00Z",
+                head_sha=HEAD_1,
+                conclusion="failure",
+            )
+        ],
+        {},
+        artifact_payloads={145: artifact_payload},
+        job_payloads={145: preacquisition_jobs()},
+    )
+    result = do_audit(fake)
+    assert result["runs"][0]["evidence_state"] == "UNVERIFIED"
+    assert result["verified_preacquisition_control_failure_count"] == 0
+    assert fake.job_calls == []
+
+
+def test_unproven_completed_run_closes_prefix_for_later_zero_artifact_run():
+    with pytest.raises(
+        audit.FreshHoldoutActionsLineageAuditError,
+        match="chronological prefix closed",
+    ):
+        do_audit(
+            FakeGitHub(
+                [
+                    run(
+                        146,
+                        "2026-08-19T00:08:00Z",
+                        head_sha=HEAD_1,
+                        conclusion="failure",
+                    ),
+                    run(
+                        147,
+                        "2026-08-19T00:38:00Z",
+                        head_sha=HEAD_2,
+                        conclusion="failure",
+                    ),
+                ],
+                {},
+                job_payloads={
+                    146: preacquisition_jobs(restore="success", bootstrap="success"),
+                    147: preacquisition_jobs(),
+                },
+            )
+        )
+
+
+def test_canonical_evidence_closes_genesis_recovery_phase():
+    slot = "2026-08-19T00:07:00Z"
+    result = do_audit(
+        FakeGitHub(
+            [run(148, "2026-08-19T00:08:00Z", head_sha=HEAD_1)],
+            {148: evidence_bundle(148, slot, rows=[committed(slot)])},
+        )
+    )
+    assert result["campaign_origin_recovery_state"] == (
+        audit.CAMPAIGN_ORIGIN_RECOVERY_CLOSED
+    )
+    assert result["runs"][0]["campaign_origin_recovery_state_before"] == (
+        audit.CAMPAIGN_ORIGIN_RECOVERY_OPEN
+    )
+    assert result["runs"][0]["campaign_origin_recovery_state_after"] == (
+        audit.CAMPAIGN_ORIGIN_RECOVERY_CLOSED
+    )
+
+
+def test_zero_artifact_shape_after_canonical_evidence_cannot_reopen_genesis():
+    slot = "2026-08-19T00:07:00Z"
+    with pytest.raises(
+        audit.FreshHoldoutActionsLineageAuditError,
+        match="chronological prefix closed",
+    ):
+        do_audit(
+            FakeGitHub(
+                [
+                    run(149, "2026-08-19T00:08:00Z", head_sha=HEAD_1),
+                    run(
+                        150,
+                        "2026-08-19T00:38:00Z",
+                        head_sha=HEAD_2,
+                        conclusion="failure",
+                    ),
+                ],
+                {149: evidence_bundle(149, slot, rows=[committed(slot)])},
+                job_payloads={150: preacquisition_jobs()},
+            )
+        )
+
+
+def test_canonical_failure_with_unresolved_prior_remains_verified_and_partial():
+    result = do_audit(
+        FakeGitHub(
+            [
+                run(
+                    151,
+                    "2026-08-19T00:38:00Z",
+                    head_sha=HEAD_2,
+                    conclusion="failure",
+                )
+            ],
+            {
+                151: evidence_bundle(
+                    151,
+                    "2026-08-19T00:37:00Z",
+                    success=False,
+                    rows=(),
+                )
+            },
+        )
+    )
+    assert result["runs"][0]["evidence_state"] == "VERIFIED_UNCOMMITTED_ATTEMPT"
+    assert result["runs"][0]["tick_committed"] is False
+    assert result["slots"][0]["state"] == "UNRESOLVED"
+    assert result["slots"][1]["state"] == "VERIFIED_UNCOMMITTED_ATTEMPT"
+    assert result["audit_state"] == "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
+
+
+def test_later_cumulative_gap_can_resolve_earlier_slots_without_backfill():
+    failed = evidence_bundle(
+        152,
+        "2026-08-19T00:37:00Z",
+        success=False,
+        rows=(),
+    )
+    later_rows = [
+        gap(
+            "2026-08-19T00:07:00Z",
+            "2026-08-19T00:37:00Z",
+            "2026-08-19T01:07:00Z",
+            2,
+        ),
+        committed("2026-08-19T01:07:00Z"),
+    ]
+    result = do_audit(
+        FakeGitHub(
+            [
+                run(
+                    152,
+                    "2026-08-19T00:38:00Z",
+                    head_sha=HEAD_1,
+                    conclusion="failure",
+                ),
+                run(153, "2026-08-19T01:08:00Z", head_sha=HEAD_2),
+            ],
+            {
+                152: failed,
+                153: evidence_bundle(
+                    153, "2026-08-19T01:07:00Z", rows=later_rows
+                ),
+            },
+        )
+    )
+    assert result["unresolved_slot_count"] == 0
+    assert result["durably_recorded_missing_slot_count"] == 2
+    assert result["audit_state"] == "VERIFIED_COMPLETE_TO_LATEST_OBSERVED_RUN"
+    assert all(
+        row.get("backfill_authorized") is False
+        for row in later_rows
+        if row["event"] == "SCHEDULER_GAP_RANGE"
+    )
 
 
 def test_expanding_repeated_gap_ranges_match_producer_semantics():
@@ -818,6 +1211,25 @@ def test_every_output_safety_authority_is_false():
     assert not any(result["safety"].values())
 
 
+def test_pr178_failure_lineage_dependency_is_exactly_pinned(monkeypatch):
+    dependency = Path(audit.FAILURE_LINEAGE_PATH)
+    assert audit.FAILURE_LINEAGE_BLOB_SHA == (
+        "2ae03405f63c0951eb61c4be0db1ba9dff318f21"
+    )
+    assert audit._blob_sha(dependency) == audit.FAILURE_LINEAGE_BLOB_SHA
+    monkeypatch.setattr(
+        audit,
+        "WORKFLOW_BLOB_SHA",
+        audit._blob_sha(Path(audit.WORKFLOW_PATH)),
+    )
+    monkeypatch.setattr(audit, "FAILURE_LINEAGE_BLOB_SHA", "0" * 40)
+    with pytest.raises(
+        audit.FreshHoldoutActionsLineageAuditError,
+        match="PR178 pre-acquisition failure lineage blob changed",
+    ):
+        audit.verify_reviewed_dependencies(Path.cwd())
+
+
 def test_workflow_parses_as_yaml():
     text = Path(
         ".github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml"
@@ -848,7 +1260,15 @@ def test_workflow_is_owner_only_read_only_exact_and_immutable_pinned():
         "901ab137d6601a3485eac30da7e6bad7eeefa397",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd",
-        "aaf8dbe8534dfc10b707d34511fd4327dc81850e",
+        "2ae03405f63c0951eb61c4be0db1ba9dff318f21",
+        audit._blob_sha(
+            Path("scripts/audit_fotmob_fresh_holdout_actions_lineage.py")
+        ),
+        audit._blob_sha(
+            Path(
+                "scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py"
+            )
+        ),
     ):
         assert pin in text
     assert "fotmob.com" not in text.lower()

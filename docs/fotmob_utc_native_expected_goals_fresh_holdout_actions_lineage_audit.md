@@ -23,8 +23,9 @@ The audit pins and revalidates:
 - PR151 activation runner Git blob: `901ab137d6601a3485eac30da7e6bad7eeefa397`
 - PR168 Release receipt mirror Git blob: `ddabb6ae83cbe6c81c9264119a121a54715df960`
 - scheduled collection workflow Git blob: `2310d2253b00b8ddd995d7a28e0d67e6ea9381dd`
+- PR178 pre-acquisition failure-lineage Git blob: `2ae03405f63c0951eb61c4be0db1ba9dff318f21`
 
-The post-merge control workflow also pins the exact reviewed PR #170 audit-script Git blob. If that implementation drifts after review, the owner-triggered audit refuses to execute.
+The post-merge control workflow also pins the exact current reviewed audit-script (`e3cdb18845403d92f94933f68c2bd06e55660de0`) and PR175 projection (`6c64e4d96f9a389ea8cec9417dc19e496b97d3a7`) Git blobs. If either implementation drifts after review, the owner-triggered audit refuses to execute. PR184 deliberately updates the audit engine, so the projection no longer claims that the original PR170 engine is byte-for-byte unchanged.
 
 The existing PR168 `verify_actions_artifact_zip_digest(...)` and `verify_actions_artifact_bundle(...)` functions remain the artifact/receipt cryptographic boundary. The existing PR151 `verify_and_extract_durable_state_archive(...)` remains the archive member/extraction boundary.
 
@@ -36,13 +37,14 @@ For each observed scheduled run after the campaign origin, the audit:
 2. enumerates the scheduled collection workflow with pagination;
 3. requires the reviewed workflow name, `schedule` event, `main` branch, and reviewed workflow path;
 4. never treats queued/in-progress runs as completed evidence;
-5. for a completed run, requires exactly one unexpired canonical `success-*` or `failure-*` evidence artifact;
-6. binds downloaded ZIP bytes to GitHub's independent artifact `digest`;
-7. verifies exact archive + canonical tick receipt using PR168;
-8. verifies the matching long-lived Release archive byte-for-byte;
-9. verifies the mirrored `.receipt.json` sidecar when present, or reports it missing without repairing it;
-10. extracts durable state only into an isolated temporary root through PR151;
-11. validates append-only control lineage and reconstructs scheduled-slot state.
+5. while the chronological campaign-origin prefix remains open, allows an exact zero-artifact completed run only when the pinned PR178 GitHub-job predicate proves a reviewed pre-acquisition control failure;
+6. otherwise, for a completed run, requires exactly one unexpired canonical `success-*` or `failure-*` evidence artifact;
+7. binds downloaded ZIP bytes to GitHub's independent artifact `digest`;
+8. verifies exact archive + canonical tick receipt using PR168;
+9. verifies the matching long-lived Release archive byte-for-byte;
+10. verifies the mirrored `.receipt.json` sidecar when present, or reports it missing without repairing it;
+11. extracts durable state only into an isolated temporary root through PR151;
+12. validates append-only control lineage and reconstructs scheduled-slot state.
 
 No provider URL is requested anywhere in this flow.
 
@@ -90,7 +92,11 @@ A later cumulative `SCHEDULER_GAP_RANGE` is allowed to prove that an earlier nom
 
 A slot may never be both committed and durably missing. A later commit inside an already recorded gap is a lineage contradiction and fails closed. Consecutive failed ticks may legitimately append expanding gap ranges that repeat already-known missing slots, for example `00:07..00:07` followed by `00:07..00:37`; the audit accepts that producer-compatible cumulative form only when detection advances and the range remains consistent with the last committed anchor.
 
-A later verified run may not silently leap over an unexplained earlier slot. Before a run at slot `n` becomes verified, its cumulative durable state must account for every earlier slot as either committed or durably missing.
+A successful run may not silently leap over an unexplained earlier slot. Before a success at slot `n` becomes verified, its cumulative durable state must account for every earlier slot as either committed or durably missing.
+
+A canonical failure artifact remains a verified exact uncommitted attempt even when an earlier nominal slot is unresolved. It does not infer missingness for that slot, and the audit stays `PARTIAL_UNVERIFIED_GITHUB_LINEAGE`. A later cumulative `SCHEDULER_GAP_RANGE` may durably account for the earlier slot under the unchanged `backfill_authorized: false` rule.
+
+Campaign-origin recovery is a chronological prefix, not a per-run retry. Incomplete runs do not close the prefix. Each proven zero-artifact pre-acquisition control failure may remain inside it, but the first completed run with canonical campaign evidence—or any completed run that cannot itself be proven by the exact PR178 predicate—closes it permanently. A later zero-artifact run cannot reopen Genesis or be stepped across. Malformed, duplicate, expired, mismatched, or otherwise noncanonical artifact metadata is never reinterpreted as zero-artifact proof.
 
 ## Failure evidence
 

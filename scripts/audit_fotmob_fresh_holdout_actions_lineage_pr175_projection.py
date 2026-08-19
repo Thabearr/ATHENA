@@ -1,11 +1,11 @@
-"""Pin the lineage audit to the post-PR175 workflow and compatible GitHub transport.
+"""Project the current reviewed lineage audit onto PR175 transport semantics.
 
-The reviewed PR170 audit engine remains byte-for-byte pinned. PR175 changed the
-scheduled collection workflow identity, and GitHub's Actions artifact archive
-endpoint now requires the JSON media type while release-asset binary downloads
-continue to require application/octet-stream. This compatibility entrypoint
-updates only those reviewed integration boundaries before delegating to the
-unchanged audit engine.
+The owner-only control workflow independently pins the current audit-engine
+blob. PR175 changed the scheduled collection workflow identity, and GitHub's
+Actions artifact archive endpoint requires the JSON media type while Release
+asset downloads continue to require application/octet-stream. This entrypoint
+keeps that binary-transport compatibility boundary and delegates all lineage
+policy to the current reviewed engine.
 """
 
 from __future__ import annotations

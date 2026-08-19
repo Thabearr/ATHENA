@@ -29,9 +29,11 @@ A canonical failure artifact remains evidence of an exact uncommitted attempt ev
 
 A successful canonical tick is still forbidden from silently leaping over an unresolved earlier slot. The existing success binding, append-only journal validation, Release verification, exact timestamps, no-backfill semantics, and all downstream false-authority gates remain unchanged.
 
-## Implementation sequencing
+## Implementation state machine
 
-The implementation head is intentionally advanced before the reviewed patch is applied so earlier queued Patch Bridge commands become stale and fail closed instead of competing to mutate the branch. Only the single SHA-bound patch issued for the new exact head is eligible to proceed.
+The audit processes candidates chronologically with an explicit `OPEN_GENESIS_PREFIX` / `CLOSED_BY_COMPLETED_CAMPAIGN_EVIDENCE` state. Incomplete runs leave the state unchanged. An exact zero-artifact run can stay inside the open prefix only when the pinned PR178 predicate proves it. Every other completed run closes the prefix before its canonical transport is interpreted. Once closed, a later zero-artifact run is a fail-closed contradiction rather than a new Genesis candidate.
+
+Malformed or nonzero artifact payloads never enter PR178 proof. They retain the existing unverified/fail-closed transport semantics. Canonical failure artifacts remain verified uncommitted attempts despite earlier unresolved slots; canonical success continues to hard-fail when cumulative state leaps those slots.
 
 ## Explicit non-authorities
 
