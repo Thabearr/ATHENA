@@ -61,6 +61,8 @@ def _make_bundle(
     bad_checkpoint_count: bool = False,
     duplicate_commit: bool = False,
     post_commit_control: bool = False,
+    include_unanchored_identity: bool = False,
+    duplicate_capture_manifest: bool = False,
 ) -> tuple[Path, Path]:
     source = tmp_path / "source"
     state = source / control.CONTROL_ROOT_RELATIVE
@@ -129,12 +131,47 @@ def _make_bundle(
         prediction_rows.append(runner._prediction_row(assessment, release_tag, asset_name))
         _write_rows(state / control.PREDICTION_JOURNAL_FILENAME, prediction_rows)
 
+    capture_rows: list[dict[str, object]] = []
+    if duplicate_capture_manifest:
+        observed = control.holdout_start_utc() + dt.timedelta(days=3, hours=12)
+        for index, raw_sha in enumerate(("2" * 64, "3" * 64), start=1):
+            capture_rows.append(
+                {
+                    "schema_version": 1,
+                    "request_date": "20260822",
+                    "timezone": control.REQUEST_TIMEZONE,
+                    "ccode3": control.REQUEST_CCODE3,
+                    "observed_at": _utc_text(observed + dt.timedelta(minutes=index)),
+                    "raw_sha256": raw_sha,
+                    "raw_size": 100 + index,
+                    "manifest_sha256": "1" * 64,
+                    "working_capture_relative": f"working-captures/20260822/capture-{index}",
+                    "durable_release_tag": release_tag,
+                    "durable_asset_name": asset_name,
+                    "network_acquisition_performed": True,
+                }
+            )
+        _write_rows(state / control.CAPTURE_INDEX_FILENAME, capture_rows)
+
+    if include_unanchored_identity:
+        _write_rows(
+            state / control.POST_SEAL_IDENTITY_JOURNAL_FILENAME,
+            [
+                {
+                    "schema_version": 1,
+                    "fixture_id": _fixture().fixture_id,
+                    "capture_manifest_sha256": _fixture().capture_manifest_sha256,
+                    "observation": _fixture().to_dict(),
+                }
+            ],
+        )
+
     checkpoint = {
         "schema_version": 1,
         "runner_id": runner.RUNNER_ID,
         "last_committed_scheduled_for_utc": _utc_text(final_slot),
         "phase": control.ControlPhase.COLLECTION_COMPLETE.value,
-        "capture_count": 0,
+        "capture_count": len(capture_rows),
         "prediction_count": 0,
         "settled_or_terminal_count": 0,
         "control_event_count": len(control_rows) + (1 if bad_checkpoint_count else 0),
@@ -232,6 +269,26 @@ def test_missing_feature_assessment_is_reconstructed_not_silently_dropped(tmp_pa
     assert confirmation["prediction_assessment_count_before_close"] == 1
     assert confirmation["missing_feature_prediction_count"] == 1
     assert confirmation["missing_feature_id_counts"] == {"home_form": 1}
+
+
+def test_unanchored_post_seal_identity_observation_fails_closed(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path, include_unanchored_identity=True)
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="not anchored to capture index",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_duplicate_capture_manifest_lineage_fails_closed(tmp_path: Path) -> None:
+    archive, receipt = _make_bundle(tmp_path, duplicate_capture_manifest=True)
+
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="capture index duplicated a manifest",
+    ):
+        replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
 
 def test_receipt_must_bind_exact_archive_digest(tmp_path: Path) -> None:
