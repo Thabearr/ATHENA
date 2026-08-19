@@ -79,7 +79,17 @@ Duplicate JSON keys, non-canonical formatting, wrong types, or semantic drift fa
 - the existing PR151 archive verifier rejects traversal, duplicate archive members, symlinks, devices, and unexpected roots;
 - extraction occurs only into a temporary replay directory, never over an operator's live research state.
 
-### 4. Append-only prediction and settlement replay
+### 4. Capture and post-seal identity lineage replay
+
+- every capture-index and post-seal identity row must remain canonical;
+- PR151's post-seal identity parser is rerun, so duplicate `(fixture_id, capture_manifest_sha256)` identity keys and observation/row identity disagreement fail closed;
+- every capture manifest SHA-256 must be valid and unique in the capture index;
+- capture rows must preserve `schema_version == 1`, valid raw SHA-256, exact UTC `observed_at`, and `network_acquisition_performed == true`;
+- every post-seal identity observation must be anchored to a manifest SHA-256 present in the durable capture index.
+
+These checks prevent a locally canonical but semantically forged identity journal or duplicated capture-manifest lineage from being accepted merely because the archive structure itself is valid.
+
+### 5. Append-only prediction and settlement replay
 
 - every NDJSON journal row must remain canonical;
 - PR151's prediction-state parser revalidates every sealed prediction hash and fixture identity;
@@ -87,7 +97,7 @@ Duplicate JSON keys, non-canonical formatting, wrong types, or semantic drift fa
 - PR151's settlement parser revalidates terminal identities and settled prediction payloads;
 - only PR167's exact terminal vocabulary is accepted.
 
-### 5. Result-free close replay
+### 6. Result-free close replay
 
 - count-only close evaluations must remain strictly increasing in append order;
 - duplicate or reordered close evaluations fail closed;
@@ -98,7 +108,7 @@ Duplicate JSON keys, non-canonical formatting, wrong types, or semantic drift fa
 - `evaluate_close_control_state(...)` is rerun from the sealed prediction population;
 - decision, boundary, and coverage SHA-256 must match exactly.
 
-### 6. Terminal committed-lineage replay
+### 7. Terminal committed-lineage replay
 
 - committed `:07/:37` slots must be strictly increasing in journal order;
 - duplicate or reordered committed slots fail closed rather than being sorted away;
@@ -106,9 +116,9 @@ Duplicate JSON keys, non-canonical formatting, wrong types, or semantic drift fa
 - every `SCHEDULER_GAP_RANGE` must preserve `backfill_authorized == false`;
 - the final control-journal row must be the terminal `TICK_COMMITTED` row;
 - that row must be `COLLECTION_COMPLETE` and at/after selected close + 24 hours;
-- its nominal slot, release tag, and asset name must match the final receipt exactly.
+- its nominal slot, committed-at time, release tag, and asset name must match the final receipt exactly.
 
-### 7. Checkpoint reconstruction
+### 8. Checkpoint reconstruction
 
 The checkpoint must exactly equal the reconstructed append-only state for:
 
