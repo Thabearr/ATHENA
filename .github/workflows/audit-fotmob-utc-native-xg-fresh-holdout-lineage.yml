@@ -82,7 +82,7 @@ jobs:
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py)" = "901ab137d6601a3485eac30da7e6bad7eeefa397"
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
-          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "bc5bf06b75f0e38656af0a93c9769ce546cfd0b5"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "aaf8dbe8534dfc10b707d34511fd4327dc81850e"
 
       - name: Execute read-only GitHub lineage audit
         env:
