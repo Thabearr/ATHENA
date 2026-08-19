@@ -28,12 +28,20 @@ _ARTIFACT_NAME = re.compile(
     r"^(success|failure)-(\d{8}T\d{6}Z)-run-(\d+)\.tar\.gz$"
 )
 _PREACQUISITION_JOB_NAME = "execute fresh holdout tick"
-_PREACQUISITION_REQUIRED_STEPS = {
-    "Restore newest durable lineage and resolve schedule slot": "failure",
-    "Restore or materialize PR119 bootstrap projection": "skipped",
-    "Execute reviewed fresh-holdout collection tick": "skipped",
-    "Reconcile any staged capture lineage": "skipped",
-}
+_PREACQUISITION_ALLOWED_STEP_OUTCOMES = (
+    {
+        "Restore newest durable lineage and resolve schedule slot": "failure",
+        "Restore or materialize PR119 bootstrap projection": "skipped",
+        "Execute reviewed fresh-holdout collection tick": "skipped",
+        "Reconcile any staged capture lineage": "skipped",
+    },
+    {
+        "Restore newest durable lineage and resolve schedule slot": "success",
+        "Restore or materialize PR119 bootstrap projection": "failure",
+        "Execute reviewed fresh-holdout collection tick": "skipped",
+        "Reconcile any staged capture lineage": "skipped",
+    },
+)
 
 
 class FreshHoldoutFailureLineageError(RuntimeError):
@@ -315,13 +323,20 @@ def _prove_preacquisition_control_failure(
         if name in by_name:
             raise _error(f"completed run {run_id} duplicated job step {name!r}")
         by_name[name] = step
-    for name, expected_conclusion in _PREACQUISITION_REQUIRED_STEPS.items():
+    reviewed_step_names = tuple(_PREACQUISITION_ALLOWED_STEP_OUTCOMES[0])
+    for name in reviewed_step_names:
         step = by_name.get(name)
         if step is None:
             raise _error(f"completed run {run_id} is missing reviewed job step {name!r}")
-        if step.get("status") != "completed" or step.get("conclusion") != expected_conclusion:
+        if step.get("status") != "completed":
             return False
-    return True
+    return any(
+        all(
+            by_name[name].get("conclusion") == expected[name]
+            for name in reviewed_step_names
+        )
+        for expected in _PREACQUISITION_ALLOWED_STEP_OUTCOMES
+    )
 
 
 def _artifact_digest(metadata: Mapping[str, Any], run_id: int) -> str:
