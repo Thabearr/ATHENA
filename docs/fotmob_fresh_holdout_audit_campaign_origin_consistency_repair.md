@@ -27,6 +27,10 @@ A canonical failure artifact remains evidence of an exact uncommitted attempt ev
 
 A successful canonical tick is still forbidden from silently leaping over an unresolved earlier slot. The existing success binding, append-only journal validation, Release verification, exact timestamps, no-backfill semantics, and all downstream false-authority gates remain unchanged.
 
+## Implementation sequencing
+
+The implementation head is intentionally advanced before the reviewed patch is applied so earlier queued Patch Bridge commands become stale and fail closed instead of competing to mutate the branch. Only the single SHA-bound patch issued for the new exact head is eligible to proceed.
+
 ## Explicit non-authorities
 
 This repair performs no provider request, workflow rerun, observation replay, backfill, retrofill, Release repair, model approval, production promotion, bookmaker pricing, selection, execution, or `BET` authorization.
