@@ -129,6 +129,7 @@ jobs:
               `durably-recorded-missing-slot-count: ${result.durably_recorded_missing_slot_count}`,
               `verified-failure-count: ${result.verified_failure_count}`,
               `unverified-completed-run-count: ${result.unverified_completed_run_count}`,
+              `incomplete-run-count: ${result.incomplete_run_count}`,
               `audit-actions-run-id: ${context.runId}`,
               'provider-network-acquisition-performed-by-audit: false',
               'backfill-authorized: false',
