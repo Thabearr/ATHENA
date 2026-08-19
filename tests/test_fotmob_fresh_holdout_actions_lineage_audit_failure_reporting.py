@@ -57,7 +57,8 @@ def test_failure_comment_is_explicitly_non_authoritative_and_does_not_invent_lin
 
 
 def test_failure_reporting_keeps_every_downstream_authority_false():
-    text = _text()[text.index("- name: Post fail-closed control-workflow result") :]
+    full_text = _text()
+    text = full_text[full_text.index("- name: Post fail-closed control-workflow result") :]
     for line in (
         "provider-network-acquisition-performed-by-audit: false",
         "backfill-authorized: false",
