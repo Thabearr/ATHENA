@@ -23,6 +23,8 @@ That makes the audit abort on the first canonical post-recovery failure before i
 
 The audit should reuse the exact pinned producer-side pre-acquisition proof rather than inventing a second policy. A zero-artifact completed run may be classified as `VERIFIED_PREACQUISITION_CONTROL_FAILURE` only when that existing predicate succeeds against GitHub job metadata.
 
+The classification remains campaign-origin-only. Once any canonical campaign artifact has been observed, a later zero-artifact pre-acquisition-shaped failure cannot reopen Genesis or be silently skipped; the audit fails closed at that contradiction, matching the producer-side recovery boundary.
+
 A canonical failure artifact remains evidence of an exact uncommitted attempt even when earlier slots are still unresolved. It does not make those earlier slots missing. Any unresolved slot keeps the overall audit `PARTIAL_UNVERIFIED_GITHUB_LINEAGE` until a later cumulative archive durably accounts for it.
 
 A successful canonical tick is still forbidden from silently leaping over an unresolved earlier slot. The existing success binding, append-only journal validation, Release verification, exact timestamps, no-backfill semantics, and all downstream false-authority gates remain unchanged.
