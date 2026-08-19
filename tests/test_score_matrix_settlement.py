@@ -16,9 +16,7 @@ class ScoreMatrixSettlementTests(unittest.TestCase):
     def assertSettlementPartitions(self, settlement):
         self.assertAlmostEqual(settlement.total_probability, 1.0, places=14)
         self.assertAlmostEqual(
-            settlement.effective_win_mass
-            + settlement.effective_loss_mass
-            + settlement.neutral_stake_mass,
+            settlement.active_stake_mass + settlement.neutral_stake_mass,
             1.0,
             places=14,
         )
@@ -32,7 +30,7 @@ class ScoreMatrixSettlementTests(unittest.TestCase):
         self.assertEqual(settlement.half_loss, 0.0)
         self.assertAlmostEqual(settlement.full_loss, self.matrix.away_win, places=15)
         self.assertAlmostEqual(
-            settlement.settlement_adjusted_win_probability,
+            settlement.break_even_probability,
             self.matrix.home_win / (self.matrix.home_win + self.matrix.away_win),
             places=15,
         )
@@ -46,20 +44,20 @@ class ScoreMatrixSettlementTests(unittest.TestCase):
         self.assertAlmostEqual(home.push, away.push, places=15)
         self.assertAlmostEqual(home.full_loss, away.full_win, places=15)
         self.assertAlmostEqual(
-            home.settlement_adjusted_win_probability
-            + away.settlement_adjusted_win_probability,
+            home.break_even_probability + away.break_even_probability,
             1.0,
             places=15,
         )
 
-    def test_all_draw_dnb_has_no_invented_action_probability(self):
+    def test_all_draw_dnb_has_no_invented_break_even_probability(self):
         matrix = build_score_matrix(0.0, 0.0)
         settlement = draw_no_bet_settlement(matrix, "HOME")
 
         self.assertEqual(settlement.full_win, 0.0)
         self.assertEqual(settlement.push, 1.0)
         self.assertEqual(settlement.full_loss, 0.0)
-        self.assertIsNone(settlement.settlement_adjusted_win_probability)
+        self.assertEqual(settlement.active_stake_mass, 0.0)
+        self.assertIsNone(settlement.break_even_probability)
         self.assertIsNone(settlement.fair_decimal_odds)
         self.assertEqual(settlement.expected_profit(2.0), 0.0)
 
@@ -97,8 +95,8 @@ class ScoreMatrixSettlementTests(unittest.TestCase):
         self.assertAlmostEqual(ah.push, dnb.push, places=15)
         self.assertAlmostEqual(ah.full_loss, dnb.full_loss, places=15)
         self.assertAlmostEqual(
-            ah.settlement_adjusted_win_probability,
-            dnb.settlement_adjusted_win_probability,
+            ah.break_even_probability,
+            dnb.break_even_probability,
             places=15,
         )
 
@@ -182,7 +180,7 @@ class ScoreMatrixSettlementTests(unittest.TestCase):
                 )
 
     def test_non_quarter_handicap_lines_fail_closed(self):
-        for line in (-0.10, 0.10, 0.30, 1.10, math.pi):
+        for line in (-0.10, 0.10, 0.30, 1.10, math.pi, 0.2500000000001):
             with self.subTest(line=line):
                 with self.assertRaises(ValueError):
                     asian_handicap_settlement(self.matrix, "HOME", line)
@@ -214,6 +212,20 @@ class ScoreMatrixSettlementTests(unittest.TestCase):
                 full_loss=0.3,
                 method="test",
                 side="HOME",
+            )
+
+    def test_distribution_constructor_rejects_wrong_component_lines(self):
+        with self.assertRaises(ValueError):
+            SettlementProbabilities(
+                full_win=0.4,
+                half_win=0.1,
+                push=0.0,
+                half_loss=0.1,
+                full_loss=0.4,
+                method="test",
+                side="HOME",
+                line=-0.25,
+                component_lines=(-1.0, -0.5),
             )
 
 
