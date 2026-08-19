@@ -60,3 +60,10 @@ pricing, selection, or execution authority. The next boundary after merge is
 to wait for the next ordinary scheduled `:07`/`:37` run and then re-run the
 read-only lineage audit. The failed historical run must not be manually
 rerun.
+
+## Validation boundary
+
+ATHENA Patch Bridge validates the exact patch against the synthetic pull-request
+merge with all eight hosted test shards plus repository syntax before it may push
+the implementation head. Normal pull-request CI remains the final merge gate on
+the exact reviewed head; no repository-wide local pytest run is required.
