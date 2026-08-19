@@ -1,100 +1,151 @@
-# FotMob UTC-native xG fresh-holdout confirmation source replay
+# FotMob UTC-native xG fresh-holdout confirmation durable-state replay
 
 ## Status
 
-`IMPLEMENTED_OFFLINE_SOURCE_REPLAY_NOT_PRODUCTION_APPROVED`
+`IMPLEMENTED_OFFLINE_PR151_DURABLE_STATE_REPLAY_NOT_PRODUCTION_APPROVED`
 
-This boundary connects the durable prospective collection evidence created by the reviewed PR151 runner to the frozen PR167 confirmation evaluator. It is intentionally offline and cannot acquire provider data, refit a model, change calibration, authorize pricing, choose a selection, or issue a BET.
+This boundary connects the cumulative prospective state emitted by the reviewed PR151 scheduled runner to the frozen PR167 confirmation evaluator. It is intentionally offline and cannot acquire provider data, refit a model, change calibration, authorize pricing, choose a selection, or issue a BET.
 
-The source-replay implementation is:
+Implementation:
 
 - `scripts/replay_fotmob_utc_native_xg_fresh_holdout_confirmation.py`
 
-The frozen evaluator remains:
+Frozen evaluator:
 
 - `domain/fotmob_utc_native_expected_goals_fresh_holdout_confirmation_evaluator.py`
 
+## Exact source scope
+
+The replay scope is deliberately precise:
+
+`PR151_DURABLE_STATE_ARCHIVE_AND_CANONICAL_TICK_RECEIPT`
+
+PR151 already seals prospective source observations, prediction assessments, post-seal identity observations, terminal settlements, control events, and checkpoint state into an append-only cumulative research state. PR169 revalidates and reconstructs that durable state.
+
+PR169 does **not** claim to contact FotMob again or independently re-derive every provider raw response from the network. `provider_raw_capture_rederivation_performed` remains false in its result.
+
+PR168 is the transport/durability layer that, while the Actions artifact still exists, independently binds the Actions ZIP to GitHub `artifact.digest`, checks archive↔receipt equality, checks the long-lived Release archive byte-for-byte, and mirrors the exact canonical receipt beside that archive. PR169 accepts the resulting exact local archive/receipt bytes as its offline input boundary; it does not make a second GitHub API assertion about how those local bytes were obtained.
+
 ## Why this boundary exists
 
-PR167 accepts exact reviewed Python objects. The prospective campaign, however, is persisted as cumulative durable state: append-only prediction, settlement, identity, capture, and control journals plus a checkpoint, packaged into a run-bound archive and committed by `fresh-holdout-tick-receipt.json`.
+PR167 accepts exact reviewed Python objects. The live campaign persists durable bytes. Joining those representations with an ad-hoc review-time parser would create an unaudited trust gap.
 
-Those two representations must not be joined by an ad-hoc parser at review time. This source-replay boundary performs that translation under fail-closed rules and re-proves the frozen count-only close before fresh outcomes are evaluated.
+PR169 therefore reconstructs PR167 inputs only after the terminal PR151 archive and receipt re-prove the frozen collection semantics.
 
-## Required inputs
+## Required input
 
-The replay accepts exactly two local files:
+The replay accepts exactly:
 
-1. a canonical terminal **success** archive named `success-YYYYMMDDTHHMMSSZ-run-<RUN_ID>.tar.gz`; and
-2. its canonical `fresh-holdout-tick-receipt.json` bytes, normally preserved long-term beside the archive by the PR168 release-receipt mirror.
+1. a terminal committed success archive named `success-YYYYMMDDTHHMMSSZ-run-<RUN_ID>.tar.gz`; and
+2. the exact canonical tick-receipt bytes for that archive.
 
-No GitHub or provider network request is performed by this replay script.
+No GitHub or provider network request is performed by the replay script.
 
 ## Verification chain
 
-Before PR167 is invoked, replay requires all of the following:
+Before PR167 is invoked, replay requires all of the following.
 
-1. **Frozen implementation identity**
-   - PR151 activation-runner Git blob is exactly `901ab137d6601a3485eac30da7e6bad7eeefa397`.
-   - PR167 evaluator Git blob is exactly `1f07292e66254ece0de25dc70e10964502a3839a`.
-   - Both modules must independently revalidate their reviewed dependency chains and preserve every safety authority as false.
+### 1. Frozen implementation identity
 
-2. **Canonical final receipt**
-   - compact sorted-key JSON with a trailing newline;
-   - no duplicate JSON keys;
-   - exact positive workflow run ID;
-   - canonical success archive name bound to that run ID;
-   - canonical release tag;
-   - exact `:07` or `:37` UTC nominal slot matching the archive name;
-   - `tick_exit_code == 0` and `tick_committed == true`.
+- PR151 activation-runner Git blob: `901ab137d6601a3485eac30da7e6bad7eeefa397`.
+- PR167 evaluator Git blob: `1f07292e66254ece0de25dc70e10964502a3839a`.
+- Both modules independently revalidate their reviewed dependency chains.
+- Every downstream safety authority remains false.
 
-3. **Archive commitment**
-   - receipt SHA-256 equals the actual archive SHA-256;
-   - receipt size equals the actual archive byte size;
-   - the existing PR151 archive verifier rejects traversal, duplicate members, symlinks, devices, and unexpected roots;
-   - extraction happens only into a temporary replay directory, never over the operator's live research state.
+### 2. Exact terminal PR151 receipt
 
-4. **Append-only journal replay**
-   - every NDJSON journal row must remain canonical;
-   - PR151's prediction-state parser must revalidate every sealed prediction hash and fixture identity;
-   - missing-feature assessments are reconstructed explicitly rather than silently discarded;
-   - PR151's settlement parser must revalidate every terminal disposition and settled prediction;
-   - only PR167's exact terminal vocabulary is accepted.
+The canonical compact sorted-key receipt must prove:
 
-5. **Frozen count-only close replay**
-   - exactly one stored `COUNT_ONLY_CLOSE_EVALUATION` may carry `selected_close_utc`;
-   - it must explicitly prove `outcome_or_performance_input_used == false`;
-   - the selected close must be an exact UTC midnight;
-   - `evaluate_close_control_state(...)` is rerun from the sealed prediction population;
-   - decision, selected boundary, evaluated boundary, and coverage SHA-256 must exactly match the stored close row.
+- `schema_version == 1`;
+- exact PR151 `runner_id` and `runner_state`;
+- `phase == COLLECTION_COMPLETE`;
+- exact positive workflow run ID matching the archive name;
+- `scheduled_for_utc == nominal_scheduled_for_utc`;
+- exact UTC `:07` or `:37` slot;
+- exact cron identity (`7 * * * *` or `37 * * * *`) matching that slot;
+- canonical release tag and asset name;
+- zero network requests and `network_acquisition_performed == false` for the final collection-complete tick;
+- no claim that fresh collection started in that terminal tick;
+- exact PR151 next-boundary value;
+- exact safety-key vocabulary with every value false;
+- `tick_exit_code == 0` and `tick_committed == true`.
 
-6. **Terminal cumulative state**
-   - a committed tick must exist after the selected close's 24-hour settlement tail;
-   - the latest committed tick must be `COLLECTION_COMPLETE`;
-   - the final receipt's nominal slot, release tag, and archive name must equal the latest committed state;
-   - checkpoint row counts must exactly equal the append-only capture, prediction, settlement, and control journals;
-   - checkpoint runner ID, final phase, final slot, release tag, and archive name must match exactly.
+Duplicate JSON keys, non-canonical formatting, wrong types, or semantic drift fail closed.
 
-Only after all six layers pass are reconstructed `FreshPredictionAssessment` and `TerminalSettlementRecord` objects handed to PR167.
+### 3. Archive commitment and safe extraction
 
-## Result
+- receipt SHA-256 equals the supplied archive SHA-256;
+- receipt byte size equals the supplied archive byte size;
+- the existing PR151 archive verifier rejects traversal, duplicate archive members, symlinks, devices, and unexpected roots;
+- extraction occurs only into a temporary replay directory, never over an operator's live research state.
 
-The replay emits canonical JSON containing:
+### 4. Append-only prediction and settlement replay
 
-- exact source archive and receipt SHA-256/size;
-- workflow run ID, nominal slot, release tag, and archive identity;
+- every NDJSON journal row must remain canonical;
+- PR151's prediction-state parser revalidates every sealed prediction hash and fixture identity;
+- missing-feature assessments are explicitly reconstructed instead of silently disappearing;
+- PR151's settlement parser revalidates terminal identities and settled prediction payloads;
+- only PR167's exact terminal vocabulary is accepted.
+
+### 5. Result-free close replay
+
+- count-only close evaluations must remain strictly increasing in append order;
+- duplicate or reordered close evaluations fail closed;
+- exactly one close row may select a close;
+- no later close evaluation may exist after that selected close;
+- the selected boundary must equal the evaluated exact UTC midnight;
+- the stored row must prove `outcome_or_performance_input_used == false`;
+- `evaluate_close_control_state(...)` is rerun from the sealed prediction population;
+- decision, boundary, and coverage SHA-256 must match exactly.
+
+### 6. Terminal committed-lineage replay
+
+- committed `:07/:37` slots must be strictly increasing in journal order;
+- duplicate or reordered committed slots fail closed rather than being sorted away;
+- `committed_at_utc` may not predate its nominal slot;
+- every `SCHEDULER_GAP_RANGE` must preserve `backfill_authorized == false`;
+- the final control-journal row must be the terminal `TICK_COMMITTED` row;
+- that row must be `COLLECTION_COMPLETE` and at/after selected close + 24 hours;
+- its nominal slot, release tag, and asset name must match the final receipt exactly.
+
+### 7. Checkpoint reconstruction
+
+The checkpoint must exactly equal the reconstructed append-only state for:
+
+- runner ID;
+- final nominal slot;
+- `COLLECTION_COMPLETE` phase;
+- capture-row count;
+- sealed-prediction count;
+- terminal-settlement count;
+- control-event count;
+- release tag;
+- durable asset name.
+
+Only after every layer passes are reconstructed `FreshPredictionAssessment` and `TerminalSettlementRecord` objects supplied to PR167.
+
+## Output
+
+The replay emits canonical JSON binding:
+
+- the explicit durable-state source scope;
+- archive and receipt SHA-256/size;
+- workflow run ID, nominal slot, release tag, and asset identity;
 - selected close and evidence-derived evaluation time;
-- source journal counts;
-- the complete PR167 confirmation result;
-- the PR167 canonical result SHA-256;
-- all downstream safety/production authorities still false.
+- source-journal counts;
+- the complete PR167 result;
+- the canonical PR167 result SHA-256;
+- `durable_state_journals_replayed == true`;
+- `provider_raw_capture_rederivation_performed == false`;
+- all downstream production/pricing/selection/BET authorities false.
 
-A passing PR167 result remains **review-required**. This boundary cannot automatically approve a successor model or enable any betting path.
+Even an eventual PR167 all-pass signal remains **review-required**. PR169 cannot approve the successor automatically.
 
 ## Missing and failed scheduled ticks
 
-Scheduler gaps are evidence. They are not backfilled. The PR151 runner records `SCHEDULER_GAP_RANGE` with `backfill_authorized: false` when a nominal observation is missing from committed lineage. Source replay does not transform a gap into an observation and does not infer success merely because a cron occurrence should have happened.
+Scheduler gaps are evidence, not data to repair. PR151 records `SCHEDULER_GAP_RANGE` with `backfill_authorized: false`; PR169 refuses any gap row that changes that authority and never converts a gap into an observation.
 
-Likewise, a `failure-...tar.gz` archive is not eligible for terminal confirmation evaluation. Failure archives may preserve genuine source observations for prospective lineage, but they cannot be promoted to a completed confirmation result.
+A `failure-...tar.gz` archive may preserve genuine prospective source observations through PR151's failed-tick lineage, but it is not eligible to become a terminal confirmation result. PR169 accepts only a final committed success archive after the settlement tail.
 
 ## CLI
 
@@ -102,27 +153,29 @@ Likewise, a `failure-...tar.gz` archive is not eligible for terminal confirmatio
 python scripts/replay_fotmob_utc_native_xg_fresh_holdout_confirmation.py \
   --archive /path/to/success-YYYYMMDDTHHMMSSZ-run-RUN_ID.tar.gz \
   --receipt /path/to/success-YYYYMMDDTHHMMSSZ-run-RUN_ID.tar.gz.receipt.json \
-  --output /path/to/new-source-replay-result.json
+  --output /path/to/new-durable-state-replay-result.json
 ```
 
-`--output` is optional. If supplied, the path is no-overwrite: an existing path fails closed. Canonical result JSON is always printed to stdout on success.
+`--output` is optional. If supplied, the destination is no-overwrite. Canonical result JSON is printed to stdout on success.
 
 ## Explicit non-authorities
 
-This PR does **not**:
+PR169 does not:
 
-- contact FotMob, SportyBet, Sportradar, or any other provider;
-- repair or backfill missing scheduled observations;
+- contact FotMob, SportyBet, Sportradar, or any provider;
+- backfill or retrofill a missing schedule slot;
+- fabricate a first-tick success from cron occurrence;
+- independently claim current GitHub Actions metadata for local input bytes;
 - change the frozen home calibration;
 - fit or refit any model;
 - approve the xG successor automatically;
 - establish bookmaker equivalence;
 - map SportyBet markets or selections;
-- prove fresh bookmaker price evidence;
-- authorize pricing, selection, accumulator/slip construction, booking codes, execution, or BET.
+- prove fresh bookmaker pricing;
+- authorize pricing, selection, slip/ACCA construction, booking codes, execution, or BET.
 
 ## Next boundary
 
 `REVIEW_SOURCE_REPLAYED_FRESH_HOLDOUT_CONFIRMATION_RESULT`
 
-That review can happen only after the prospective campaign reaches a legitimate frozen close and terminal settlement state. Until then, the source-replay implementation may be tested synthetically but must not be represented as an executed fresh-holdout confirmation.
+That review can occur only after the real campaign reaches a legitimate frozen close and terminal settlement state. Until then the replay implementation can be tested synthetically, but must not be represented as an executed fresh-holdout confirmation.
