@@ -126,7 +126,7 @@ jobs:
           # Pre-PR175 collection workflow blob retained as provenance: 2310d2253b00b8ddd995d7a28e0d67e6ea9381dd
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "1ff52e32ade3422ca1605bc4546dc8d0813ec316"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "aaf8dbe8534dfc10b707d34511fd4327dc81850e"
-          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "5d4cef38e97261aa67f835b0132f6e8335108726"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "a6e7f0be41d5582b9d0ad77d5579033eb8309141"
 
       - name: Execute read-only GitHub lineage audit
         id: lineage_audit
