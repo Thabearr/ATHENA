@@ -67,7 +67,7 @@ The first nominal slot is summarized as one of:
 
 A later cumulative `SCHEDULER_GAP_RANGE` is allowed to prove that an earlier nominal slot became legitimate prospective missingness. Such a gap must retain `backfill_authorized: false`. The audit never retrofills it.
 
-A slot may never be both committed and durably missing. A later commit inside an already recorded gap is treated as a lineage contradiction and fails closed.
+A slot may never be both committed and durably missing. A later commit inside an already recorded gap is treated as a lineage contradiction and fails closed. Consecutive failed ticks may legitimately append expanding gap ranges that repeat already-known missing slots (for example `00:07..00:07` followed by `00:07..00:37`); the audit accepts that producer-compatible cumulative form only when detection advances and the repeated range remains consistent with the last committed anchor.
 
 ## Failure evidence
 
@@ -123,7 +123,7 @@ The output path is no-overwrite. The result is canonical compact sorted-key JSON
 - `PARTIAL_UNVERIFIED_GITHUB_LINEAGE`
 - `NO_COMPLETED_CAMPAIGN_EVIDENCE`
 
-Partial transport or Release durability is never promoted to complete.
+Partial transport or Release durability is never promoted to complete. An observed scheduled run that is still queued or in progress is also reported through `incomplete_run_count` and keeps the audit in `PARTIAL_UNVERIFIED_GITHUB_LINEAGE`; it is never interpreted as committed evidence.
 
 ## Explicit non-authorities
 
