@@ -15,6 +15,15 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout_confirmation_evalua
 import scripts.replay_fotmob_utc_native_xg_fresh_holdout_confirmation as replay
 
 
+FEATURES = {
+    "home_elo": 1300.0,
+    "away_elo": 1300.0,
+    "home_form": 0.2,
+    "away_form": 0.2,
+    "fatigue": 0.0,
+}
+
+
 def _canonical(value: object) -> bytes:
     return (
         json.dumps(
@@ -46,6 +55,53 @@ def _fixture() -> fresh.QualifiedCaptureFixture:
         capture_manifest_sha256="1" * 64,
         capture_raw_sha256="2" * 64,
     )
+
+
+def _sealed_prediction() -> fresh.SealedFreshPrediction:
+    fixture = _fixture()
+    return fresh.SealedFreshPrediction(
+        schema_version=1,
+        implementation_state=fresh.IMPLEMENTATION_STATE,
+        protocol_sha256=fresh.pr148.PROTOCOL_SHA256,
+        holdout_start_utc=control.holdout_start_utc(),
+        fixture=fixture,
+        bootstrap_projection_sha256=fresh.BOOTSTRAP_PROJECTION_SHA256,
+        history_prefix_sha256="3" * 64,
+        history_prefix_count=1,
+        feature_projection_sha256="4" * 64,
+        features=dict(FEATURES),
+        rates=fresh._rates_from_features(FEATURES),
+        safety={key: False for key in fresh.SAFETY_KEYS},
+    )
+
+
+def _capture_row(*, raw_sha: str = "2" * 64) -> dict[str, object]:
+    fixture = _fixture()
+    return {
+        "schema_version": 1,
+        "request_date": "20260822",
+        "timezone": control.REQUEST_TIMEZONE,
+        "ccode3": control.REQUEST_CCODE3,
+        "observed_at": _utc_text(fixture.capture_observed_at),
+        "raw_sha256": raw_sha,
+        "raw_size": 101,
+        "manifest_sha256": fixture.capture_manifest_sha256,
+        "working_capture_relative": "working-captures/20260822/capture-1",
+        "durable_release_tag": "athena-fresh-holdout-evidence-2026-W34",
+        "durable_asset_name": "failure-20260822T120700Z-run-1.tar.gz",
+        "network_acquisition_performed": True,
+        "preserved_from_uncommitted_tick": True,
+    }
+
+
+def _identity_row() -> dict[str, object]:
+    fixture = _fixture()
+    return {
+        "schema_version": 1,
+        "fixture_id": fixture.fixture_id,
+        "capture_manifest_sha256": fixture.capture_manifest_sha256,
+        "observation": fixture.to_dict(),
+    }
 
 
 def _write_rows(path: Path, rows: list[dict[str, object]]) -> None:
@@ -156,14 +212,7 @@ def _make_bundle(
     if include_unanchored_identity:
         _write_rows(
             state / control.POST_SEAL_IDENTITY_JOURNAL_FILENAME,
-            [
-                {
-                    "schema_version": 1,
-                    "fixture_id": _fixture().fixture_id,
-                    "capture_manifest_sha256": _fixture().capture_manifest_sha256,
-                    "observation": _fixture().to_dict(),
-                }
-            ],
+            [_identity_row()],
         )
 
     checkpoint = {
@@ -276,7 +325,7 @@ def test_unanchored_post_seal_identity_observation_fails_closed(tmp_path: Path) 
 
     with pytest.raises(
         replay.FreshHoldoutConfirmationSourceReplayError,
-        match="not anchored to capture index",
+        match="lacks a sealed prediction|not anchored to capture index",
     ):
         replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
 
@@ -289,6 +338,97 @@ def test_duplicate_capture_manifest_lineage_fails_closed(tmp_path: Path) -> None
         match="capture index duplicated a manifest",
     ):
         replay.replay_fresh_holdout_confirmation(archive_path=archive, receipt_path=receipt)
+
+
+def test_identity_anchor_must_match_capture_raw_sha_and_time() -> None:
+    prediction = _sealed_prediction()
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="raw SHA disagrees with capture index",
+    ):
+        replay._verify_durable_cross_journal_lineage(
+            capture_rows=(_capture_row(raw_sha="3" * 64),),
+            identity_rows=(_identity_row(),),
+            control_rows=(),
+            settlement_rows=(),
+            sealed_map={prediction.fixture.fixture_id: prediction},
+        )
+
+
+def test_identity_observation_must_reference_sealed_population() -> None:
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="lacks a sealed prediction",
+    ):
+        replay._verify_durable_cross_journal_lineage(
+            capture_rows=(_capture_row(),),
+            identity_rows=(_identity_row(),),
+            control_rows=(),
+            settlement_rows=(),
+            sealed_map={},
+        )
+
+
+def test_unknown_control_event_cannot_be_ignored() -> None:
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="control event escaped reviewed durable-state vocabulary",
+    ):
+        replay._verify_durable_cross_journal_lineage(
+            capture_rows=(),
+            identity_rows=(),
+            control_rows=({"schema_version": 1, "event": "FORGED_CONTROL_EVENT"},),
+            settlement_rows=(),
+            sealed_map={},
+        )
+
+
+def test_failed_tick_qualification_event_must_bind_preserved_capture() -> None:
+    fixture = _fixture()
+    event = {
+        "schema_version": 1,
+        "event": "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED",
+        "capture_manifest_sha256": fixture.capture_manifest_sha256,
+        "capture_raw_sha256": "3" * 64,
+        "observed_at": _utc_text(fixture.capture_observed_at),
+        "detail": "synthetic qualification failure",
+        "tick_committed": False,
+        "backfill_authorized": False,
+    }
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="failed-capture qualification event disagrees with capture index",
+    ):
+        replay._verify_durable_cross_journal_lineage(
+            capture_rows=(_capture_row(),),
+            identity_rows=(),
+            control_rows=(event,),
+            settlement_rows=(),
+            sealed_map={},
+        )
+
+
+def test_terminal_prediction_sha_must_bind_sealed_prediction() -> None:
+    prediction = _sealed_prediction()
+    row = runner._terminal_row(
+        prediction,
+        "UNRESOLVED_AT_SETTLEMENT_TAIL",
+        "synthetic terminal",
+        "athena-fresh-holdout-evidence-2026-W34",
+        "success-20261118T000700Z-run-1.tar.gz",
+    )
+    row["prediction_sha256"] = "0" * 64
+    with pytest.raises(
+        replay.FreshHoldoutConfirmationSourceReplayError,
+        match="terminal settlement prediction SHA disagrees with prediction journal",
+    ):
+        replay._verify_durable_cross_journal_lineage(
+            capture_rows=(),
+            identity_rows=(),
+            control_rows=(),
+            settlement_rows=(row,),
+            sealed_map={prediction.fixture.fixture_id: prediction},
+        )
 
 
 def test_receipt_must_bind_exact_archive_digest(tmp_path: Path) -> None:
