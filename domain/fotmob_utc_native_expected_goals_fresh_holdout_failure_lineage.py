@@ -12,8 +12,10 @@ import datetime as dt
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
+import subprocess
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 import zipfile
@@ -25,6 +27,13 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control 
 _ARTIFACT_NAME = re.compile(
     r"^(success|failure)-(\d{8}T\d{6}Z)-run-(\d+)\.tar\.gz$"
 )
+_PREACQUISITION_JOB_NAME = "execute fresh holdout tick"
+_PREACQUISITION_REQUIRED_STEPS = {
+    "Restore newest durable lineage and resolve schedule slot": "failure",
+    "Restore or materialize PR119 bootstrap projection": "skipped",
+    "Execute reviewed fresh-holdout collection tick": "skipped",
+    "Reconcile any staged capture lineage": "skipped",
+}
 
 
 class FreshHoldoutFailureLineageError(RuntimeError):
@@ -70,6 +79,7 @@ class RestoredFailureLineage:
     predecessor_asset_name: str | None
     last_committed_utc: dt.datetime | None
     last_attempted_utc: dt.datetime | None
+    skipped_preacquisition_failure_run_ids: tuple[int, ...] = ()
 
 
 def _paths(root: Path) -> dict[str, Path]:
@@ -197,10 +207,19 @@ def reconcile_staged_capture_lineage(
     }
 
 
+def _run_created_at(value: Mapping[str, Any], run_id: int) -> dt.datetime | None:
+    created_at = value.get("created_at")
+    if created_at is None:
+        return None
+    return _parse_utc(created_at, f"workflow run {run_id} created_at")
+
+
 def _completed_prior_runs(
     prior_runs: Sequence[Mapping[str, Any]], current_run_id: int
-) -> list[Mapping[str, Any]]:
+) -> tuple[list[Mapping[str, Any]], bool]:
     out: list[Mapping[str, Any]] = []
+    saw_pre_campaign_completed = False
+    start = control.holdout_start_utc()
     for value in prior_runs:
         if type(value) is not dict:
             raise _error("workflow run metadata must be objects")
@@ -214,9 +233,95 @@ def _completed_prior_runs(
         conclusion = value.get("conclusion")
         if type(conclusion) is not str or not conclusion:
             raise _error(f"completed workflow run {run_id} has invalid conclusion")
+        created_at = _run_created_at(value, run_id)
+        if created_at is not None and created_at < start:
+            saw_pre_campaign_completed = True
+            continue
         out.append(value)
     out.sort(key=lambda row: int(row["id"]), reverse=True)
-    return out
+    return out, saw_pre_campaign_completed
+
+
+def _github_run_jobs(run_id: int) -> Mapping[str, Any]:
+    repo = os.environ.get("GITHUB_REPOSITORY")
+    if type(repo) is not str or repo.count("/") != 1 or not all(repo.split("/")):
+        raise _error("GITHUB_REPOSITORY is unavailable for pre-acquisition proof")
+    if not os.environ.get("GH_TOKEN"):
+        raise _error("GH_TOKEN is unavailable for pre-acquisition proof")
+    try:
+        output = subprocess.check_output(
+            [
+                "gh",
+                "api",
+                f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+            ],
+            text=True,
+        )
+        value = json.loads(output)
+    except Exception as exc:
+        raise _error(f"failed to query jobs for completed run {run_id}") from exc
+    if type(value) is not dict:
+        raise _error(f"malformed jobs response for completed run {run_id}")
+    return value
+
+
+def _prove_preacquisition_control_failure(
+    run: Mapping[str, Any],
+    artifact_data: Mapping[str, Any],
+    get_run_jobs: Callable[[int], Mapping[str, Any]],
+) -> bool:
+    run_id = int(run["id"])
+    if run.get("conclusion") != "failure":
+        return False
+    created_at = _run_created_at(run, run_id)
+    if created_at is None or created_at < control.holdout_start_utc():
+        return False
+    if run.get("event") != "schedule" or run.get("head_branch") != "main":
+        return False
+    artifacts = artifact_data.get("artifacts")
+    if type(artifacts) is not list or artifacts:
+        return False
+
+    try:
+        jobs_data = get_run_jobs(run_id)
+    except FreshHoldoutFailureLineageError:
+        raise
+    except Exception as exc:
+        raise _error(f"failed to fetch jobs for completed run {run_id}") from exc
+    if type(jobs_data) is not dict or type(jobs_data.get("jobs")) is not list:
+        raise _error(f"malformed jobs metadata for completed run {run_id}")
+    jobs = [
+        job
+        for job in jobs_data["jobs"]
+        if type(job) is dict and job.get("name") == _PREACQUISITION_JOB_NAME
+    ]
+    if len(jobs) != 1:
+        raise _error(
+            f"completed run {run_id} must expose exactly one reviewed collection job"
+        )
+    job = jobs[0]
+    if job.get("status") != "completed" or job.get("conclusion") != "failure":
+        raise _error(f"completed run {run_id} collection job state is not exact failure")
+    steps = job.get("steps")
+    if type(steps) is not list:
+        raise _error(f"completed run {run_id} job steps are missing")
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for step in steps:
+        if type(step) is not dict:
+            raise _error(f"completed run {run_id} job step metadata is malformed")
+        name = step.get("name")
+        if type(name) is not str:
+            raise _error(f"completed run {run_id} job step name is invalid")
+        if name in by_name:
+            raise _error(f"completed run {run_id} duplicated job step {name!r}")
+        by_name[name] = step
+    for name, expected_conclusion in _PREACQUISITION_REQUIRED_STEPS.items():
+        step = by_name.get(name)
+        if step is None:
+            raise _error(f"completed run {run_id} is missing reviewed job step {name!r}")
+        if step.get("status") != "completed" or step.get("conclusion") != expected_conclusion:
+            return False
+    return True
 
 
 def _artifact_digest(metadata: Mapping[str, Any], run_id: int) -> str:
@@ -262,14 +367,17 @@ def restore_latest_lineage_state(
     current_run_id: int,
     get_run_artifacts: Callable[[int], Mapping[str, Any]],
     download_artifact_zip: Callable[[int], bytes],
+    get_run_jobs: Callable[[int], Mapping[str, Any]] | None = None,
     repository_root: Path | None = None,
 ) -> RestoredFailureLineage:
     """Restore the newest completed scheduled run, including a failed tick.
 
-    The newest completed run is the sole predecessor. Failure artifacts are not
-    skipped: they may contain real staged source observations that must remain in
-    the prospective evidence lineage even though their nominal tick never became
-    ``TICK_COMMITTED``.
+    A canonical failure artifact is never skipped: it may contain real staged source
+    observations. The only exception is campaign-origin recovery when every completed
+    in-campaign run has zero artifacts and GitHub job metadata proves its reviewed
+    acquisition and reconciliation steps were never entered. That recovery may only
+    establish Genesis; it may not fall back across such a failure to an older campaign
+    artifact.
     """
     runner.verify_reviewed_activation_dependencies()
     if type(current_run_id) is not int or current_run_id < 1:
@@ -279,35 +387,88 @@ def restore_latest_lineage_state(
         Path(control.CONTROL_ROOT_RELATIVE), repository_root=repo
     )
 
-    completed = _completed_prior_runs(prior_runs, current_run_id)
+    completed, saw_pre_campaign_completed = _completed_prior_runs(
+        prior_runs, current_run_id
+    )
     if not completed:
         return RestoredFailureLineage(None, None, None, None, None)
 
-    newest = completed[0]
+    jobs_reader = get_run_jobs or _github_run_jobs
+    skipped_preacquisition: list[int] = []
+    newest: Mapping[str, Any] | None = None
+    canonical: list[Mapping[str, Any]] = []
+    artifact_data: Mapping[str, Any] | None = None
+
+    for candidate in completed:
+        run_id = int(candidate["id"])
+        conclusion = str(candidate["conclusion"])
+        try:
+            candidate_artifacts = get_run_artifacts(run_id)
+        except Exception as exc:
+            raise _error(f"failed to fetch artifacts for newest completed run {run_id}") from exc
+        if (
+            type(candidate_artifacts) is not dict
+            or type(candidate_artifacts.get("artifacts")) is not list
+        ):
+            raise _error(f"malformed artifact metadata for newest completed run {run_id}")
+
+        candidate_canonical: list[Mapping[str, Any]] = []
+        for artifact in candidate_artifacts["artifacts"]:
+            if type(artifact) is not dict or artifact.get("expired", False):
+                continue
+            name = artifact.get("name")
+            if type(name) is str and _ARTIFACT_NAME.fullmatch(name):
+                candidate_canonical.append(artifact)
+
+        if len(candidate_canonical) == 1:
+            if skipped_preacquisition:
+                raise _error(
+                    "campaign-origin pre-acquisition recovery cannot fall back across "
+                    f"runs {skipped_preacquisition} to older canonical run {run_id}"
+                )
+            newest = candidate
+            canonical = candidate_canonical
+            artifact_data = candidate_artifacts
+            break
+
+        if len(candidate_canonical) == 0 and _prove_preacquisition_control_failure(
+            candidate,
+            candidate_artifacts,
+            jobs_reader,
+        ):
+            skipped_preacquisition.append(run_id)
+            continue
+
+        raise _error(
+            f"newest completed run {run_id} must have exactly one canonical state "
+            f"artifact, found {len(candidate_canonical)}"
+        )
+
+    if newest is None:
+        if not skipped_preacquisition:
+            raise _error("completed campaign lineage resolved no predecessor")
+        if len(prior_runs) >= 100 and not saw_pre_campaign_completed:
+            raise _error(
+                "campaign-origin recovery cannot prove Genesis because the 100-run "
+                "workflow query window did not reach a pre-campaign completed run"
+            )
+        print(
+            "Campaign-origin recovery proved pre-acquisition control failures with "
+            "zero artifacts; no source observation is being reconstructed or "
+            f"backfilled. skipped_run_ids={','.join(map(str, skipped_preacquisition))}"
+        )
+        return RestoredFailureLineage(
+            None,
+            None,
+            None,
+            None,
+            None,
+            tuple(skipped_preacquisition),
+        )
+
     run_id = int(newest["id"])
     conclusion = str(newest["conclusion"])
-
-    try:
-        artifact_data = get_run_artifacts(run_id)
-    except Exception as exc:
-        raise _error(f"failed to fetch artifacts for newest completed run {run_id}") from exc
-    if (
-        type(artifact_data) is not dict
-        or type(artifact_data.get("artifacts")) is not list
-    ):
-        raise _error(f"malformed artifact metadata for newest completed run {run_id}")
-
-    canonical = []
-    for artifact in artifact_data["artifacts"]:
-        if type(artifact) is not dict or artifact.get("expired", False):
-            continue
-        name = artifact.get("name")
-        if type(name) is str and _ARTIFACT_NAME.fullmatch(name):
-            canonical.append(artifact)
-    if len(canonical) != 1:
-        raise _error(
-            f"newest completed run {run_id} must have exactly one canonical state artifact, found {len(canonical)}"
-        )
+    assert artifact_data is not None and len(canonical) == 1
 
     artifact = canonical[0]
     artifact_name = str(artifact["name"])
