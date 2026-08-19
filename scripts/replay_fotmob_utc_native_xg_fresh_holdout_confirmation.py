@@ -63,6 +63,14 @@ TERMINAL_RECEIPT_KEYS = frozenset(
         "failure_lineage_reconcile_outcome",
     }
 )
+CONTROL_EVENT_VOCABULARY = frozenset(
+    {
+        "COUNT_ONLY_CLOSE_EVALUATION",
+        "SCHEDULER_GAP_RANGE",
+        "TICK_COMMITTED",
+        "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED",
+    }
+)
 
 
 class FreshHoldoutConfirmationSourceReplayError(RuntimeError):
@@ -407,6 +415,104 @@ def _terminal_records(
     return tuple(records)
 
 
+def _verify_durable_cross_journal_lineage(
+    *,
+    capture_rows: Sequence[dict[str, Any]],
+    identity_rows: Sequence[dict[str, Any]],
+    control_rows: Sequence[dict[str, Any]],
+    settlement_rows: Sequence[dict[str, Any]],
+    sealed_map: Mapping[int, fresh.SealedFreshPrediction],
+) -> None:
+    """Re-prove relationships that individual PR151 journal parsers cannot see."""
+    captures: dict[str, tuple[str, dt.datetime]] = {}
+    for row in capture_rows:
+        if row.get("schema_version") != 1:
+            raise _error("capture index schema version changed")
+        manifest_sha = _sha256_text(row.get("manifest_sha256"), "capture manifest")
+        if manifest_sha in captures:
+            raise _error("capture index duplicated a manifest")
+        raw_sha = _sha256_text(row.get("raw_sha256"), "capture raw SHA-256")
+        observed_at = _utc(row.get("observed_at"), "capture observed_at")
+        _positive_int(row.get("raw_size"), "capture raw size")
+        if row.get("network_acquisition_performed") is not True:
+            raise _error("capture index row lost live acquisition evidence")
+        preserved = row.get("preserved_from_uncommitted_tick")
+        if preserved is not None and preserved is not True:
+            raise _error("uncommitted capture preservation flag changed")
+        captures[manifest_sha] = (raw_sha, observed_at)
+
+    try:
+        _identity_map, identity_keys = runner._identity_state(identity_rows)
+    except Exception as exc:
+        raise _error("post-seal identity journal failed reviewed PR151 replay") from exc
+    if len(identity_keys) != len(identity_rows):
+        raise _error("post-seal identity journal population changed")
+    for row in identity_rows:
+        if row.get("schema_version") != 1:
+            raise _error("post-seal identity journal schema version changed")
+        fixture_id = row.get("fixture_id")
+        if fixture_id not in sealed_map:
+            raise _error("post-seal identity observation lacks a sealed prediction")
+        manifest_sha = _sha256_text(
+            row.get("capture_manifest_sha256"), "identity capture manifest"
+        )
+        anchor = captures.get(manifest_sha)
+        if anchor is None:
+            raise _error("post-seal identity observation is not anchored to capture index")
+        try:
+            observation = runner._fixture(row.get("observation"))
+        except Exception as exc:
+            raise _error("post-seal identity observation failed reviewed replay") from exc
+        raw_sha, observed_at = anchor
+        if observation.capture_raw_sha256 != raw_sha:
+            raise _error("post-seal identity raw SHA disagrees with capture index")
+        if observation.capture_observed_at != observed_at:
+            raise _error("post-seal identity observed_at disagrees with capture index")
+
+    for row in control_rows:
+        if row.get("schema_version") != 1:
+            raise _error("control journal schema version changed")
+        event = row.get("event")
+        if event not in CONTROL_EVENT_VOCABULARY:
+            raise _error("control event escaped reviewed durable-state vocabulary")
+        if event != "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED":
+            continue
+        if row.get("tick_committed") is not False:
+            raise _error("failed-capture qualification event changed commit state")
+        if row.get("backfill_authorized") is not False:
+            raise _error("failed-capture qualification event changed backfill authority")
+        manifest_sha = _sha256_text(
+            row.get("capture_manifest_sha256"), "failed qualification manifest"
+        )
+        raw_sha = _sha256_text(
+            row.get("capture_raw_sha256"), "failed qualification raw SHA-256"
+        )
+        observed_at = _utc(row.get("observed_at"), "failed qualification observed_at")
+        anchor = captures.get(manifest_sha)
+        if anchor is None:
+            raise _error("failed-capture qualification event lacks capture-index anchor")
+        if anchor != (raw_sha, observed_at):
+            raise _error("failed-capture qualification event disagrees with capture index")
+
+    for row in settlement_rows:
+        fixture_id = row.get("fixture_id")
+        prediction = sealed_map.get(fixture_id)
+        if prediction is None:
+            raise _error("terminal settlement row lacks a sealed prediction")
+        expected_sha = fresh.sha256_sealed_fresh_prediction(prediction)
+        if row.get("prediction_sha256") != expected_sha:
+            raise _error("terminal settlement prediction SHA disagrees with prediction journal")
+        payload = row.get("settled_prediction")
+        if payload is None:
+            continue
+        try:
+            settled = runner._settled(payload)
+        except Exception as exc:
+            raise _error("terminal settled payload failed reviewed replay") from exc
+        if fresh.sha256_sealed_fresh_prediction(settled.prediction) != expected_sha:
+            raise _error("terminal settled payload disagrees with prediction journal")
+
+
 def _selected_close(
     control_rows: Sequence[dict[str, Any]],
     sealed: Sequence[fresh.SealedFreshPrediction],
@@ -514,56 +620,29 @@ def _verify_terminal_state(
         raise _error("terminal archive must contain a regular checkpoint")
     checkpoint = _canonical_object(paths["checkpoint"].read_bytes(), "checkpoint")
 
-    try:
-        _identity_map, identity_keys = runner._identity_state(identity_rows)
-        capture_manifest_keys = {
-            _sha256_text(row.get("manifest_sha256"), "capture manifest")
-            for row in capture_rows
-        }
-    except Exception as exc:
-        raise _error("identity/capture journals failed reviewed PR151 replay") from exc
-    if len(identity_keys) != len(identity_rows):
-        raise _error("post-seal identity journal population changed")
-    if len(capture_manifest_keys) != len(capture_rows):
-        raise _error("capture index duplicated a manifest")
-    for row in capture_rows:
-        if row.get("schema_version") != 1:
-            raise _error("capture index schema version changed")
-        _sha256_text(row.get("raw_sha256"), "capture raw SHA-256")
-        _utc(row.get("observed_at"), "capture observed_at")
-        if row.get("network_acquisition_performed") is not True:
-            raise _error("capture index row lost live acquisition evidence")
-    for row in identity_rows:
-        if row.get("schema_version") != 1:
-            raise _error("post-seal identity journal schema version changed")
-        manifest_sha = _sha256_text(
-            row.get("capture_manifest_sha256"), "identity capture manifest"
-        )
-        if manifest_sha not in capture_manifest_keys:
-            raise _error("post-seal identity observation is not anchored to capture index")
-
     assessments = _prediction_assessments(prediction_rows)
-    sealed = tuple(
-        value.sealed_prediction
-        for value in assessments
-        if value.sealed_prediction is not None
+    try:
+        sealed_map, _processed = runner._prediction_state(prediction_rows)
+        _settled_map, terminal_ids = runner._settlement_state(settlement_rows)
+    except Exception as exc:
+        raise _error("terminal population replay failed") from exc
+    _verify_durable_cross_journal_lineage(
+        capture_rows=capture_rows,
+        identity_rows=identity_rows,
+        control_rows=control_rows,
+        settlement_rows=settlement_rows,
+        sealed_map=sealed_map,
     )
+
+    sealed = tuple(value for _key, value in sorted(sealed_map.items()))
     terminals = _terminal_records(settlement_rows)
-    selected_close = _selected_close(
-        control_rows,
-        tuple(value for value in sealed if value is not None),
-    )
+    selected_close = _selected_close(control_rows, sealed)
     latest_scheduled, evaluated_at = _final_commit(
         control_rows,
         selected_close=selected_close,
         receipt=receipt,
     )
 
-    try:
-        sealed_map, _processed = runner._prediction_state(prediction_rows)
-        _settled_map, terminal_ids = runner._settlement_state(settlement_rows)
-    except Exception as exc:
-        raise _error("checkpoint population replay failed") from exc
     expected_checkpoint = {
         "schema_version": 1,
         "runner_id": runner.RUNNER_ID,
