@@ -23,7 +23,9 @@ def canonical(value):
 
 def committed(slot):
     return {
+        "backfill_or_retrofill_performed": False,
         "event": "TICK_COMMITTED",
+        "nominal_schedule_time_used_as_observation_time": False,
         "schema_version": 1,
         "scheduled_for_utc": slot,
     }
