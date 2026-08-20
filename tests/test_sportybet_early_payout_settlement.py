@@ -143,9 +143,8 @@ def test_receipt_is_immutable_canonical_json_and_coordinated_mutation_fails():
         )
         + "\n"
     ).encode("utf-8")
-    forged = dataclasses.replace(receipt, review_scope="FORGED")
     with pytest.raises(SportyBetEarlyPayoutSettlementError):
-        canonical_sportybet_early_payout_settlement_receipt_bytes(forged)
+        dataclasses.replace(receipt, review_scope="FORGED")
     with pytest.raises(SportyBetEarlyPayoutSettlementError):
         revalidate_sportybet_early_payout_settlement_receipt(
             receipt=receipt,

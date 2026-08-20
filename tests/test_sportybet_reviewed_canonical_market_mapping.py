@@ -160,6 +160,8 @@ def test_1up_maps_identifier_without_claiming_promotion_equivalence(monkeypatch)
 
 
 def test_1up_exact_settlement_receipt_upgrades_only_bookmaker_equivalence(monkeypatch):
+    monkeypatch.setattr(mapping.native, "inventory_sha256", lambda value: INV_SHA)
+    monkeypatch.setattr(mapping.reconciliation, "canonical_reconciliation_bytes", lambda value: b"reconciliation\n")
     row = _selection(market="1up", name="Match Result 1UP", spec=None, outcome="1", label="Home")
     decision = _decision(row, market=MarketId.MATCH_RESULT_1UP, outcome=OutcomeId.HOME, line=None)
     receipt = reviewed_sportybet_early_payout_settlement_receipt()
@@ -188,6 +190,8 @@ def test_1up_exact_settlement_receipt_upgrades_only_bookmaker_equivalence(monkey
 
 
 def test_early_payout_mapping_rejects_wrong_receipt_bytes(monkeypatch):
+    monkeypatch.setattr(mapping.native, "inventory_sha256", lambda value: INV_SHA)
+    monkeypatch.setattr(mapping.reconciliation, "canonical_reconciliation_bytes", lambda value: b"reconciliation\n")
     row = _selection(market="2up", name="Match Result 2UP", spec=None, outcome="2", label="Away")
     decision = _decision(row, market=MarketId.MATCH_RESULT_2UP, outcome=OutcomeId.AWAY, line=None)
     receipt = reviewed_sportybet_early_payout_settlement_receipt()
