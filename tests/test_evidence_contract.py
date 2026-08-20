@@ -162,12 +162,14 @@ class EvidenceContractTests(unittest.TestCase):
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_1UP].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_2UP].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_1UP].selectable)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_2UP].selectable)
 
     def test_missing_form_data_is_recorded_as_defaulted(self):
         result = self._compile(form_score=None)
@@ -582,25 +584,35 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(result[0]["outcome_id"], OutcomeId.HOME.value)
         self.assertTrue(result[0]["edge_is_bookmaker_value"])
 
-    def test_disabled_markets_are_reported_but_never_selected(self):
+    def test_analytical_early_payout_markets_are_reported_but_never_selected(self):
         result = self._compile()
         evaluations = result["evidence_report"]["market_evaluations"]
-        disabled = [
+        early_payout = [
             evaluation
             for evaluation in evaluations
-            if evaluation["model_status"] == ModelStatus.DISABLED.value
+            if evaluation["market_id"]
+            in {
+                MarketId.MATCH_RESULT_1UP.value,
+                MarketId.MATCH_RESULT_2UP.value,
+            }
         ]
 
         self.assertEqual(
-            {evaluation["market_id"] for evaluation in disabled},
+            {evaluation["market_id"] for evaluation in early_payout},
             {
                 MarketId.MATCH_RESULT_1UP.value,
                 MarketId.MATCH_RESULT_2UP.value,
             },
         )
-        self.assertTrue(all(not evaluation["selected"] for evaluation in disabled))
         self.assertTrue(
-            all(evaluation["rejection_reasons"] for evaluation in disabled)
+            all(
+                evaluation["model_status"] == ModelStatus.EXPERIMENTAL.value
+                for evaluation in early_payout
+            )
+        )
+        self.assertTrue(all(not evaluation["selected"] for evaluation in early_payout))
+        self.assertTrue(
+            all(evaluation["rejection_reasons"] for evaluation in early_payout)
         )
         weh = [
             evaluation

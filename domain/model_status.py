@@ -346,13 +346,28 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
         probability_method="normalized_score_matrix_win_to_nil",
         reason="Away win-to-nil YES and NO are complementary matrix events.",
     ),
-    MarketId.MATCH_RESULT_1UP: _blocked(
-        "Blocked because provider promotion rules and lead-path probability "
-        "modelling are both required."
+    MarketId.MATCH_RESULT_1UP: _available(
+        status=ModelStatus.EXPERIMENTAL,
+        probability_method=(
+            "independent_poisson_conditional_goal_order_lead_path_v1"
+        ),
+        reason=(
+            "The reviewed SportyBet 1X2-1UP settlement and exact conditional "
+            "goal-order lead-path projection are analytically callable from a "
+            "normalized score matrix. Events overlap; pricing and selection "
+            "remain unauthorized."
+        ),
     ),
-    MarketId.MATCH_RESULT_2UP: _blocked(
-        "Blocked because provider promotion rules and lead-path probability "
-        "modelling are both required."
+    MarketId.MATCH_RESULT_2UP: _available(
+        status=ModelStatus.EXPERIMENTAL,
+        probability_method=(
+            "independent_poisson_conditional_goal_order_lead_path_v1"
+        ),
+        reason=(
+            "The reviewed SportyBet 1X2-2UP settlement combines the exact "
+            "conditional two-goal lead path with the ordinary full-time-win "
+            "fallback. Events overlap; pricing and selection remain unauthorized."
+        ),
     ),
 }
 

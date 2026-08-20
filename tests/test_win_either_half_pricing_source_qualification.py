@@ -667,8 +667,8 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "DRAW_NO_BET": "EXPERIMENTAL",
             "HOME_WIN_TO_NIL": "EXPERIMENTAL",
             "AWAY_WIN_TO_NIL": "EXPERIMENTAL",
-            "MATCH_RESULT_1UP": "DISABLED",
-            "MATCH_RESULT_2UP": "DISABLED",
+            "MATCH_RESULT_1UP": "EXPERIMENTAL",
+            "MATCH_RESULT_2UP": "EXPERIMENTAL",
         }
         self.assertEqual(
             {market.value: status.status.value for market, status in MODEL_STATUS_REGISTRY.items()},
@@ -678,6 +678,8 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
         self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
         self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable)
         self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_1UP].selectable)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_2UP].selectable)
         self.assertEqual(len(MarketId), 15)
 
     def test_mandatory_gate_sets_cover_distinct_roles(self):

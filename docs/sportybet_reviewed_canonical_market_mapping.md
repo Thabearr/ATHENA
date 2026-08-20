@@ -26,7 +26,34 @@ Source labels must exist and match exactly. Opaque IDs without reviewed labels s
 
 Total Goals requires exact `total=<decimal>` and Asian Handicap exact `hcp=<decimal>`; the provider decimal must equal the canonical line. A provider specifier cannot disappear into a canonical non-line market.
 
-1UP/2UP identifiers may be mapped so the complete 15-market namespace is preserved, but their provider-specific early-payout rules remain unproven. They therefore carry `PROVIDER_PROMOTION_RULES_UNPROVEN` and `bookmaker_equivalence_authorized = false`. Standard mappings carry `REVIEWED_STANDARD_SETTLEMENT_EQUIVALENCE` only for the exact reviewed provider selection.
+1UP/2UP identifiers may be mapped so the complete 15-market namespace is
+preserved. Historical calls without the later exact SportyBet early-payout
+settlement receipt remain `PROVIDER_PROMOTION_RULES_UNPROVEN`, preserving the
+earlier receipt semantics. A new mapping call may supply that exact immutable
+receipt and its canonical bytes. The receipt alone is insufficient: the
+source-replayed selection must also have exact provider mapped market ID
+`60200` for `MATCH_RESULT_1UP` or `60100` for `MATCH_RESULT_2UP`, as bound by
+the Nigeria configuration's source-market-`1` mappings. Only then may the
+exact early-payout selection carry
+`REVIEWED_SPORTYBET_EARLY_PAYOUT_SETTLEMENT_EQUIVALENCE` and its settlement
+receipt SHA. This upgrades provider settlement equivalence only; price
+freshness, pricing, selection, execution, and BET authority remain false.
+
+The receipt binds the official SportyBet Nigeria 1X2/1UP/2UP help clauses and
+the preserved raw Nigeria configuration capture (118,608 bytes, SHA-256
+`c27ea6ee2eff74eb1f6ca8c90d241d63ece333171196225439c0e97a2faf86c7`).
+It freezes the complete `one_x_two_one_up` (`1` -> `60200`) and
+`one_x_two_two_up` (`1` -> `60100`) identity ancestry, enablement booleans,
+football sport scope, and settlement-feature lists. Any changed evidence,
+provider ID, or receipt bytes fail closed. Standard
+mappings continue to carry `REVIEWED_STANDARD_SETTLEMENT_EQUIVALENCE` only for
+the exact reviewed provider selection.
+
+Abandonment ancestry is also market-specific. The 1UP assertion is derived
+from the exact Nigeria 1UP “once settled” clause plus the football interruption
+rule that otherwise voids undecided bets. The 2UP assertion remains bound to
+its direct abandoned-match winner clause. Neither is inferred merely from the
+other market.
 
 ## Price and execution boundary
 
