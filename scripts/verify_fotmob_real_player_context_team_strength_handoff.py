@@ -1,4 +1,4 @@
-"""Build the exact PR194 real FotMob player-context team-strength handoff proof."""
+"""Build the exact PR194 real FotMob player-context team-strength candidate proof."""
 
 from __future__ import annotations
 
@@ -97,6 +97,7 @@ def run(*, source_root: Path, output_root: Path, repository_head_sha: str) -> No
         "source_state_fresh_until": handoff.source_state_fresh_until.isoformat().replace(
             "+00:00", "Z"
         ),
+        "candidate_mapping_verified": True,
         "authority": dict(handoff.authority),
     }
     (output_root / "proof-receipt.json").write_bytes(_canonical(proof))
@@ -109,7 +110,8 @@ def run(*, source_root: Path, output_root: Path, repository_head_sha: str) -> No
         print(f"{key}={feature_values[key]}")
     print(f"missing_feature_count={handoff.missing_feature_count}")
     print(f"blocked_feature_count={handoff.blocked_feature_count}")
-    print("team_strength_feature_authorized=true")
+    print("team_strength_candidate_mapping_verified=true")
+    print("team_strength_feature_authorized=false")
     print("prospective_reuse_after_source_freshness_authorized=false")
     print("probability_pricing_selection_bet_authorized=false")
 
