@@ -933,7 +933,12 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
                 manifest["stage_3_features"]["feature_csv"], feature_identity
             )
             self.assertEqual(
-                manifest["market_safety"]["home_win_either_half"], "DISABLED"
+                manifest["market_safety"]["home_win_either_half"],
+                {
+                    "model_status": "EXPERIMENTAL",
+                    "pricing_authority": "NOT_AUTHORIZED",
+                    "selection_authority": "NOT_AUTHORIZED",
+                },
             )
             self.assertEqual(
                 manifest["numerical_reproducibility"]["thread_limit"],

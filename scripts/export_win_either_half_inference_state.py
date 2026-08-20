@@ -42,6 +42,8 @@ from domain.win_either_half_inference import (
     INFERENCE_AUTHORITY,
     INFERENCE_STATE_PATH,
     SCHEMA_VERSION,
+    _calibrate_base_probability,
+    _predict_win_either_half_with_state,
     canonical_win_either_half_inference_state_bytes,
     fingerprint_win_either_half_inference_state,
     validate_win_either_half_inference_state,
@@ -177,11 +179,119 @@ def _load_calibrated_predictions(
 
 def _assert_probability(actual: float, expected: float, label: str) -> None:
     if canonical_float(actual) != canonical_float(expected):
-        raise WinEitherHalfInferenceStateExportError(f"{label} differs")
+        raise WinEitherHalfInferenceStateExportError(
+            f"{label} differs: actual={canonical_float(actual):.12f}, "
+            f"expected={canonical_float(expected):.12f}"
+        )
 
 
 def _target_values(rows: Sequence[Mapping[str, Any]], target: str) -> np.ndarray:
     return np.asarray([int(row[target]) for row in rows], dtype=int)
+
+
+def assert_serialized_runtime_parity(
+    *,
+    state: Mapping[str, Any],
+    ordered_rows: Sequence[Mapping[str, Any]],
+    stage_4_predictions: Mapping[tuple[str, str], float],
+    stage_4b_predictions: Mapping[tuple[str, str, str], Mapping[str, Any]],
+    oof_predictions_by_target: Mapping[
+        str, Sequence[Mapping[str, Any]]
+    ],
+) -> None:
+    """Prove the committed stdlib calculation matches frozen predictions.
+
+    Final TRAIN-state base predictions are checked for every Stage 3 row.
+    Their selected calibration is checked for every validation/final-test row.
+    OOF rows used fold-specific base models, so their recorded base values are
+    passed through the same deployed calibration primitive and checked without
+    falsely claiming that the final TRAIN model generated those OOF values.
+    """
+
+    frozen_state = validate_win_either_half_inference_state(state)
+    for row in ordered_rows:
+        fixture_identity = row["fixture_identity"]
+        features = {name: row[name] for name in PRE_MATCH_FEATURE_NAMES}
+        prediction = _predict_win_either_half_with_state(features, frozen_state)
+        runtime_values = {
+            "home_win_either_half_yes": (
+                prediction.home_base_yes_probability,
+                prediction.home_yes_probability,
+            ),
+            "away_win_either_half_yes": (
+                prediction.away_base_yes_probability,
+                prediction.away_yes_probability,
+            ),
+        }
+        for target, (base_probability, calibrated_probability) in (
+            runtime_values.items()
+        ):
+            try:
+                expected_base = stage_4_predictions[(fixture_identity, target)]
+            except KeyError as exc:
+                raise WinEitherHalfInferenceStateExportError(
+                    "serialized runtime Stage 4 identity is missing"
+                ) from exc
+            _assert_probability(
+                base_probability,
+                expected_base,
+                "serialized runtime Stage 4A "
+                f"{target} {fixture_identity} base probability",
+            )
+            if row["split"] == "TRAIN":
+                continue
+            role = (
+                "VALIDATION_SELECTION"
+                if row["split"] == "VALIDATION"
+                else "FINAL_TEST"
+            )
+            try:
+                expected = stage_4b_predictions[
+                    (fixture_identity, target, role)
+                ]
+            except KeyError as exc:
+                raise WinEitherHalfInferenceStateExportError(
+                    "serialized runtime Stage 4B identity is missing"
+                ) from exc
+            _assert_probability(
+                base_probability,
+                expected["model_probability"],
+                f"serialized runtime Stage 4B {role} {target} base probability",
+            )
+            _assert_probability(
+                calibrated_probability,
+                expected["calibrated_probability"],
+                f"serialized runtime Stage 4B {role} {target} calibrated probability",
+            )
+
+    for target in TARGETS:
+        target_state = frozen_state["targets"][target]
+        try:
+            oof_rows = oof_predictions_by_target[target]
+        except KeyError as exc:
+            raise WinEitherHalfInferenceStateExportError(
+                "serialized runtime OOF target is missing"
+            ) from exc
+        for row in oof_rows:
+            try:
+                expected = stage_4b_predictions[
+                    (
+                        row["fixture_identity"],
+                        target,
+                        "CALIBRATION_FIT_OOF",
+                    )
+                ]
+            except KeyError as exc:
+                raise WinEitherHalfInferenceStateExportError(
+                    "serialized runtime OOF identity is missing"
+                ) from exc
+            _assert_probability(
+                _calibrate_base_probability(
+                    float(row["model_probability"]), target_state
+                ),
+                expected["calibrated_probability"],
+                f"serialized runtime Stage 4B OOF {target} calibrated probability",
+            )
 
 
 def build_win_either_half_inference_state(
@@ -285,6 +395,7 @@ def build_win_either_half_inference_state(
         value.identifier: value for value in default_calibration_configurations()
     }
     target_states = {}
+    oof_predictions_by_target = {}
     for target in TARGETS:
         fitted = fit_benchmark_candidate(
             FROZEN_STAGE_4_BASE_CONFIGURATION,
@@ -310,6 +421,7 @@ def build_win_either_half_inference_state(
         )
         if len(oof["predictions"]) != 10_635:
             raise WinEitherHalfInferenceStateExportError("OOF row count drifted")
+        oof_predictions_by_target[target] = tuple(oof["predictions"])
         selected_calibration = calibration_manifest["selected_calibrations"][target]
         calibrator = fit_calibrator(
             calibrator_configurations[selected_calibration],
@@ -408,6 +520,13 @@ def build_win_either_half_inference_state(
         fingerprint_win_either_half_inference_state(state)
     )
     validate_win_either_half_inference_state(state)
+    assert_serialized_runtime_parity(
+        state=state,
+        ordered_rows=ordered_rows,
+        stage_4_predictions=frozen_predictions,
+        stage_4b_predictions=calibrated,
+        oof_predictions_by_target=oof_predictions_by_target,
+    )
     return state
 
 

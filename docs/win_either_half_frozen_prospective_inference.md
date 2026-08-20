@@ -43,6 +43,23 @@ reproduces every recorded Stage 4B OOF, validation, and independent final-test
 base/calibrated probability. VALIDATION and FINAL_TEST labels are never used to
 fit the deployed base state.
 
+After serialization, the exporter also runs the deployed stdlib calculation,
+not the sklearn objects, across the frozen rows. It requires exact 12-decimal
+parity for the final TRAIN-state base probability on all 21,791 rows and for
+the selected calibrated probability on every validation/final-test row. For
+the 10,635 OOF rows per target, which necessarily came from fold-specific base
+models, it applies the deployed calibration primitive to the recorded OOF base
+probability and requires exact calibrated parity. This keeps the OOF ancestry
+honest while proving the serialized preprocessor, dot-product association,
+sigmoid, and isotonic/identity runtime state.
+
+The stdlib numerical path deliberately reproduces two Stage 4 implementation
+details that can affect the twelfth decimal: the single-threaded BLAS
+five-term dot-product association and the frozen array-rounding/expit policy.
+Algebraically equivalent `fsum`, negative-logit sigmoid, or direct Python
+`round(value, 12)` implementations are rejected when they drift from the
+recorded canonical probability.
+
 The committed state is
 `artifacts/model-states/win-either-half-analytical-inference-v1.json`:
 
@@ -89,6 +106,13 @@ WEH.
 Both WEH markets are `EXPERIMENTAL` analytical capabilities with ordinary
 YES/NO event settlement. Stage 4B calibration is frozen research evidence, not
 fresh bookmaker/value confirmation.
+
+New half-time evidence baselines use schema v2. They record the truthful
+current `EXPERIMENTAL` maturity and independently record pricing and selection
+authority as `NOT_AUTHORIZED`. The already-committed schema-v1 baseline and
+its descendant research receipts retain their historical `DISABLED` bytes;
+those bytes are reconstructed only by the explicit version-aware verification
+path. New baseline generation cannot emit the legacy projection.
 
 ## Authority
 

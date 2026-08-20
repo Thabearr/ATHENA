@@ -36,6 +36,11 @@ from domain.win_either_half_inference import (
     predict_win_either_half,
     validate_win_either_half_inference_state,
 )
+from scripts.export_win_either_half_inference_state import (
+    WinEitherHalfInferenceStateExportError,
+    assert_serialized_runtime_parity,
+    build_win_either_half_inference_state,
+)
 
 
 class WinEitherHalfInferenceTests(unittest.TestCase):
@@ -58,7 +63,8 @@ class WinEitherHalfInferenceTests(unittest.TestCase):
 
     @staticmethod
     def _canonical(value):
-        rounded = round(float(value), CANONICAL_PROBABILITY_DECIMAL_PLACES)
+        scale = 10 ** CANONICAL_PROBABILITY_DECIMAL_PLACES
+        rounded = round(float(value) * scale) / scale
         return 0.0 if rounded == 0.0 else rounded
 
     @classmethod
@@ -96,6 +102,68 @@ class WinEitherHalfInferenceTests(unittest.TestCase):
         )
         self.assertNotIn("fixture_identity", content.decode("utf-8"))
         self.assertNotIn("kickoff_utc", content.decode("utf-8"))
+
+    def test_exporter_requires_serialized_stdlib_runtime_parity(self):
+        state = self._mutable_state()
+        features = {
+            name: state["preprocessing"]["means"][index]
+            for index, name in enumerate(PRE_MATCH_FEATURE_NAMES)
+        }
+        row = {
+            **features,
+            "fixture_identity": "synthetic-validation-fixture",
+            "split": "VALIDATION",
+        }
+        prediction = _predict_win_either_half_with_state(features, state)
+        bases = {
+            "home_win_either_half_yes": prediction.home_base_yes_probability,
+            "away_win_either_half_yes": prediction.away_base_yes_probability,
+        }
+        calibrated = {
+            "home_win_either_half_yes": prediction.home_yes_probability,
+            "away_win_either_half_yes": prediction.away_yes_probability,
+        }
+        stage_4 = {
+            (row["fixture_identity"], target): probability
+            for target, probability in bases.items()
+        }
+        stage_4b = {}
+        oof = {}
+        for target in bases:
+            stage_4b[(row["fixture_identity"], target, "VALIDATION_SELECTION")] = {
+                "model_probability": bases[target],
+                "calibrated_probability": calibrated[target],
+            }
+            stage_4b[("synthetic-oof", target, "CALIBRATION_FIT_OOF")] = {
+                "model_probability": bases[target],
+                "calibrated_probability": calibrated[target],
+            }
+            oof[target] = ({
+                "fixture_identity": "synthetic-oof",
+                "model_probability": bases[target],
+            },)
+
+        assert_serialized_runtime_parity(
+            state=state,
+            ordered_rows=(row,),
+            stage_4_predictions=stage_4,
+            stage_4b_predictions=stage_4b,
+            oof_predictions_by_target=oof,
+        )
+        drifted = dict(stage_4)
+        drifted[(row["fixture_identity"], "home_win_either_half_yes")] += 0.1
+        with self.assertRaises(WinEitherHalfInferenceStateExportError):
+            assert_serialized_runtime_parity(
+                state=state,
+                ordered_rows=(row,),
+                stage_4_predictions=drifted,
+                stage_4b_predictions=stage_4b,
+                oof_predictions_by_target=oof,
+            )
+        self.assertIn(
+            "assert_serialized_runtime_parity(",
+            inspect.getsource(build_win_either_half_inference_state),
+        )
 
     def test_feature_preprocessor_model_and_calibrator_dimensions_are_exact(self):
         state = load_win_either_half_inference_state()
@@ -187,10 +255,17 @@ class WinEitherHalfInferenceTests(unittest.TestCase):
             ("away_win_either_half_yes", prediction.away_base_yes_probability),
         ):
             target_state = state["targets"][target]
-            linear = target_state["intercept"] + math.fsum(
+            products = [
                 coefficient * value
                 for coefficient, value in zip(target_state["coefficients"], scaled)
-            )
+            ]
+            dot_product = 0.0
+            for offset in range(0, len(products), 5):
+                block = 0.0
+                for product in products[offset : offset + 5]:
+                    block += product
+                dot_product += block
+            linear = target_state["intercept"] + dot_product
             expected = self._canonical(1.0 / (1.0 + math.exp(-linear)))
             self.assertEqual(actual, expected)
         self.assertEqual(
@@ -204,6 +279,9 @@ class WinEitherHalfInferenceTests(unittest.TestCase):
             prediction.away_yes_probability,
             prediction.away_base_yes_probability,
         )
+
+    def test_runtime_uses_exact_stage_4_array_rounding_policy(self):
+        self.assertEqual(self._canonical(0.7072992498665001), 0.707299249866)
 
     def test_home_isotonic_clips_and_interpolates_while_away_is_identity(self):
         for raw, expected in ((0.1, 0.1), (0.35, 0.25), (0.5, 0.4), (0.95, 0.9)):

@@ -13,9 +13,11 @@ from pathlib import Path
 from unittest.mock import patch
 
 from database.database import Database
-from domain.model_status import ModelStatus
+from domain.model_status import ModelStatus, PricingAuthority, SelectionAuthority
 from scripts.freeze_evidence_baseline import (
     BaselineError,
+    LEGACY_SCHEMA_VERSION,
+    SCHEMA_VERSION,
     build_cache_manifest,
     build_evidence_baseline,
     compare_baselines,
@@ -23,6 +25,7 @@ from scripts.freeze_evidence_baseline import (
     load_baseline,
     main,
     get_code_state,
+    rebuild_evidence_baseline_for_verification,
     validate_expectations,
     validate_ready_baseline,
     verify_revision_relationship,
@@ -233,9 +236,18 @@ class EvidenceBaselineTests(unittest.TestCase):
             },
             "football_data_uk_cache": {"file_count": 66},
             "market_safety": {
-                "home_win_either_half": "DISABLED",
-                "away_win_either_half": "DISABLED",
+                "home_win_either_half": {
+                    "model_status": "EXPERIMENTAL",
+                    "pricing_authority": "NOT_AUTHORIZED",
+                    "selection_authority": "NOT_AUTHORIZED",
+                },
+                "away_win_either_half": {
+                    "model_status": "EXPERIMENTAL",
+                    "pricing_authority": "NOT_AUTHORIZED",
+                    "selection_authority": "NOT_AUTHORIZED",
+                },
             },
+            "schema_version": SCHEMA_VERSION,
         }
 
     def test_output_is_deterministic_across_database_insertion_order(self):
@@ -256,11 +268,63 @@ class EvidenceBaselineTests(unittest.TestCase):
             self.assertEqual(first["sources"], second["sources"])
             self.assertEqual(
                 first["market_safety"]["home_win_either_half"],
-                ModelStatus.DISABLED.value,
+                {
+                    "model_status": ModelStatus.EXPERIMENTAL.value,
+                    "pricing_authority": PricingAuthority.NOT_AUTHORIZED.value,
+                    "selection_authority": SelectionAuthority.NOT_AUTHORIZED.value,
+                },
             )
             self.assertEqual(
                 first["market_safety"]["away_win_either_half"],
-                ModelStatus.DISABLED.value,
+                {
+                    "model_status": ModelStatus.EXPERIMENTAL.value,
+                    "pricing_authority": PricingAuthority.NOT_AUTHORIZED.value,
+                    "selection_authority": SelectionAuthority.NOT_AUTHORIZED.value,
+                },
+            )
+
+    def test_new_baseline_is_truthful_and_v1_is_verification_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            database = root / "athena.db"
+            cache = root / "cache"
+            self._create_database(database)
+            self._create_cache(cache)
+            current = self._build(database, cache)
+            self.assertEqual(current["schema_version"], SCHEMA_VERSION)
+            self.assertEqual(
+                current["market_safety"]["home_win_either_half"],
+                {
+                    "model_status": "EXPERIMENTAL",
+                    "pricing_authority": "NOT_AUTHORIZED",
+                    "selection_authority": "NOT_AUTHORIZED",
+                },
+            )
+
+            legacy = deepcopy(current)
+            legacy["schema_version"] = LEGACY_SCHEMA_VERSION
+            legacy["market_safety"] = {
+                "away_win_either_half": "DISABLED",
+                "home_win_either_half": "DISABLED",
+            }
+            rebuilt = rebuild_evidence_baseline_for_verification(
+                legacy,
+                database_path=database,
+                cache_directory=cache,
+                baseline_name=legacy["baseline_name"],
+                code_state=legacy["code"],
+                generated_at_utc=legacy["generated_at_utc"],
+            )
+            self.assertEqual(rebuilt, legacy)
+            self.assertEqual(
+                build_evidence_baseline(
+                    database_path=database,
+                    cache_directory=cache,
+                    baseline_name=legacy["baseline_name"],
+                    code_state=legacy["code"],
+                    generated_at_utc=legacy["generated_at_utc"],
+                )["schema_version"],
+                SCHEMA_VERSION,
             )
 
     def test_logical_fingerprint_changes_for_ht_and_ft_score_changes(self):
@@ -709,7 +773,9 @@ class EvidenceBaselineTests(unittest.TestCase):
             current["audit"]["readiness"] = "DATA_INVALID"
             current["sources"] = {"changed": {}}
             current["football_data_uk_cache"]["manifest_sha256"] = "cache-drift"
-            current["market_safety"]["home_win_either_half"] = "ACTIVE"
+            current["market_safety"]["home_win_either_half"][
+                "model_status"
+            ] = "ACTIVE"
 
             differences = compare_baselines(
                 stored,
@@ -754,12 +820,12 @@ class EvidenceBaselineTests(unittest.TestCase):
     def test_market_safety_and_expectation_mismatch(self):
         artifact = self._ready_artifact()
         self.assertEqual(
-            artifact["market_safety"]["home_win_either_half"],
-            ModelStatus.DISABLED.value,
+            artifact["market_safety"]["home_win_either_half"]["model_status"],
+            ModelStatus.EXPERIMENTAL.value,
         )
         self.assertEqual(
-            artifact["market_safety"]["away_win_either_half"],
-            ModelStatus.DISABLED.value,
+            artifact["market_safety"]["away_win_either_half"]["model_status"],
+            ModelStatus.EXPERIMENTAL.value,
         )
         validate_expectations(
             artifact,
@@ -772,7 +838,9 @@ class EvidenceBaselineTests(unittest.TestCase):
             validate_expectations(artifact, total_fixtures=1)
 
         unsafe = deepcopy(artifact)
-        unsafe["market_safety"]["home_win_either_half"] = "ACTIVE"
+        unsafe["market_safety"]["home_win_either_half"][
+            "selection_authority"
+        ] = "AUTHORIZED"
         with self.assertRaises(BaselineError):
             validate_ready_baseline(unsafe)
 

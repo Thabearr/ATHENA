@@ -320,15 +320,21 @@ def load_win_either_half_inference_state(
 def _canonical_probability(value: float) -> float:
     if not math.isfinite(value) or not 0.0 <= value <= 1.0:
         raise WinEitherHalfInferenceError("probability must be finite and in [0, 1]")
-    rounded = round(value, CANONICAL_PROBABILITY_DECIMAL_PLACES)
+    # Stage 4A/4B canonicalized arrays with numpy.round.  For probabilities,
+    # its frozen operation is the equivalent scale/rint/unscale sequence, not
+    # Python's direct round(value, places), which differs at some half-ULPs.
+    scale = 10 ** CANONICAL_PROBABILITY_DECIMAL_PLACES
+    rounded = round(value * scale) / scale
     return 0.0 if rounded == 0.0 else rounded
 
 
 def _sigmoid(value: float) -> float:
-    if value >= 0.0:
-        return 1.0 / (1.0 + math.exp(-value))
-    exponent = math.exp(value)
-    return exponent / (1.0 + exponent)
+    # Match the frozen sklearn/scipy expit path for finite deployed logits.
+    # The algebraically equivalent negative branch e^x/(1+e^x) can differ by
+    # one ULP and cross the 12-decimal canonical boundary.
+    if value < -709.0:
+        return 0.0
+    return 1.0 / (1.0 + math.exp(-value))
 
 
 def _isotonic_transform(probability: float, calibration: Mapping[str, Any]) -> float:
@@ -353,11 +359,35 @@ def _base_probability(
     target_state: Mapping[str, Any],
 ) -> float:
     coefficients = target_state["coefficients"]
-    linear = float(target_state["intercept"]) + math.fsum(
+    # Stage 4's single-threaded BLAS ddot uses its frozen five-term unroll.
+    # Reproduce that association explicitly in stdlib Python: a mathematically
+    # equivalent fsum can cross a canonical 12-decimal boundary by one unit.
+    products = tuple(
         float(coefficient) * value
         for coefficient, value in zip(coefficients, values)
     )
+    dot_product = 0.0
+    for offset in range(0, len(products), 5):
+        block = 0.0
+        for product in products[offset : offset + 5]:
+            block += product
+        dot_product += block
+    linear = float(target_state["intercept"]) + dot_product
     return _canonical_probability(_sigmoid(linear))
+
+
+def _calibrate_base_probability(
+    probability: float,
+    target_state: Mapping[str, Any],
+) -> float:
+    """Apply the exact deployed stdlib calibration path to one base value."""
+
+    calibration = target_state["calibration"]
+    if calibration["identifier"] == HOME_CALIBRATION_IDENTIFIER:
+        return _isotonic_transform(probability, calibration)
+    if calibration["identifier"] == AWAY_CALIBRATION_IDENTIFIER:
+        return _canonical_probability(probability)
+    raise WinEitherHalfInferenceError("target calibration identifier drifted")
 
 
 @dataclass(frozen=True)
@@ -494,8 +524,8 @@ def _predict_win_either_half_with_state(
     away_state = frozen["targets"]["away_win_either_half_yes"]
     home_base = _base_probability(scaled, home_state)
     away_base = _base_probability(scaled, away_state)
-    home_yes = _isotonic_transform(home_base, home_state["calibration"])
-    away_yes = _canonical_probability(away_base)
+    home_yes = _calibrate_base_probability(home_base, home_state)
+    away_yes = _calibrate_base_probability(away_base, away_state)
     home_no = _canonical_probability(1.0 - home_yes)
     away_no = _canonical_probability(1.0 - away_yes)
     return WinEitherHalfAnalyticalPrediction(
