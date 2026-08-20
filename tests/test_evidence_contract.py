@@ -301,11 +301,16 @@ class EvidenceContractTests(unittest.TestCase):
 
     def test_reciprocal_probability_is_only_model_fair_odds(self):
         result = self._compile()
-        verdict = result["reasoning_verdicts"][0]
+        verdict = next(
+            evaluation
+            for evaluation in result["evidence_report"]["market_evaluations"]
+            if evaluation["market_id"] == MarketId.MATCH_RESULT.value
+            and evaluation["outcome_id"] == OutcomeId.HOME.value
+        )
 
         self.assertAlmostEqual(
             verdict["model_fair_odds"],
-            1.0 / verdict["model_probability"],
+            1.0 / verdict["probability"],
             places=3,
         )
         self.assertIsNone(verdict["bookmaker_odds"])
@@ -333,11 +338,8 @@ class EvidenceContractTests(unittest.TestCase):
             1.0 / 0.60,
         )
 
-    def test_exact_complete_pricing_is_required_for_bet(self):
-        analytical = self._compile()
-        selection = resolve_legacy_selection(
-            analytical["recommended_analytical_verdict"]
-        )
+    def test_exact_complete_pricing_cannot_create_selection_authority(self):
+        selection = make_selection(MarketId.MATCH_RESULT, OutcomeId.HOME)
         context = self._fixture_context()
         context["bookmaker_odds"] = self._quotes_for_selection(selection)
 
@@ -346,25 +348,16 @@ class EvidenceContractTests(unittest.TestCase):
             quote_current_time=self.QUOTE_NOW,
         )
 
-        self.assertEqual(priced["decision_status"], DecisionStatus.BET.value)
-        candidate = priced["viable_markets"][0]
-        self.assertEqual(candidate["market_id"], selection.market_id.value)
-        self.assertEqual(candidate["outcome_id"], selection.outcome_id.value)
-        self.assertEqual(candidate["line"], selection.line)
-        self.assertIsNotNone(candidate["edge_pp"])
-        self.assertIsNotNone(candidate["kelly_stake_pct"])
-        self.assertTrue(candidate["edge_is_bookmaker_value"])
-        self.assertTrue(priced["edge_is_bookmaker_value"])
         self.assertEqual(
-            priced["accumulator_eligible_selection"]["verdict"],
-            candidate["verdict"],
+            priced["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
         )
+        self.assertEqual(priced["viable_markets"], [])
+        self.assertIsNone(priced["accumulator_eligible_selection"])
+        self.assertFalse(priced["edge_is_bookmaker_value"])
 
     def test_odds_for_another_market_cannot_price_selected_market(self):
-        analytical = self._compile()
-        selected = resolve_legacy_selection(
-            analytical["recommended_analytical_verdict"]
-        )
+        selected = make_selection(MarketId.MATCH_RESULT, OutcomeId.HOME)
         other_market = (
             MarketId.BTTS
             if selected.market_id != MarketId.BTTS
@@ -389,11 +382,7 @@ class EvidenceContractTests(unittest.TestCase):
             result["decision_status"],
             DecisionStatus.ANALYTICAL_CANDIDATE.value,
         )
-        self.assertIsNone(result["viable_markets"][0]["bookmaker_odds"])
-        self.assertIsNone(result["viable_markets"][0]["edge_pp"])
-        self.assertFalse(
-            result["viable_markets"][0]["edge_is_bookmaker_value"]
-        )
+        self.assertEqual(result["viable_markets"], [])
         self.assertFalse(result["edge_is_bookmaker_value"])
         self.assertIsNone(result["accumulator_eligible_selection"])
 
@@ -604,7 +593,6 @@ class EvidenceContractTests(unittest.TestCase):
             {
                 MarketId.HOME_WIN_EITHER_HALF.value,
                 MarketId.AWAY_WIN_EITHER_HALF.value,
-                MarketId.DRAW_NO_BET.value,
                 MarketId.MATCH_RESULT_1UP.value,
                 MarketId.MATCH_RESULT_2UP.value,
             },
@@ -626,13 +614,13 @@ class EvidenceContractTests(unittest.TestCase):
             [],
         )
         dnb_status = MODEL_STATUS_REGISTRY[MarketId.DRAW_NO_BET]
-        self.assertIsNone(dnb_status.probability_method)
         self.assertEqual(
-            dnb_status.missing_input_policy,
-            MissingInputPolicy.REJECT_MARKET,
+            dnb_status.probability_method,
+            "normalized_score_matrix_draw_no_bet_settlement",
         )
+        self.assertFalse(dnb_status.selectable)
 
-    def test_home_and_away_dnb_remain_visible_but_never_viable(self):
+    def test_dnb_legacy_scalar_proxy_is_absent_and_never_viable(self):
         result = self._compile()
         dnb_evaluations = [
             evaluation
@@ -642,19 +630,17 @@ class EvidenceContractTests(unittest.TestCase):
             if evaluation["market_id"] == MarketId.DRAW_NO_BET.value
         ]
 
-        self.assertEqual(
-            {evaluation["outcome_id"] for evaluation in dnb_evaluations},
-            {OutcomeId.HOME.value, OutcomeId.AWAY.value},
-        )
+        self.assertEqual(len(dnb_evaluations), 1)
         self.assertTrue(
             all(
-                evaluation["model_status"] == ModelStatus.DISABLED.value
+                evaluation["model_status"] == ModelStatus.EXPERIMENTAL.value
                 for evaluation in dnb_evaluations
             )
         )
         self.assertTrue(
             all(
-                evaluation["probability_method"] is None
+                evaluation["probability_method"]
+                == "normalized_score_matrix_draw_no_bet_settlement"
                 for evaluation in dnb_evaluations
             )
         )
@@ -668,7 +654,7 @@ class EvidenceContractTests(unittest.TestCase):
             )
         )
 
-    def test_no_bet_evidence_includes_explicit_decision_reasons(self):
+    def test_analytical_evidence_includes_explicit_authority_reason(self):
         with patch(
             "intelligence.match_analyst.build_viable_market_candidates",
             return_value=[],
@@ -676,15 +662,18 @@ class EvidenceContractTests(unittest.TestCase):
             result = self._compile()
 
         report = result["evidence_report"]
-        self.assertEqual(result["decision_status"], DecisionStatus.NO_BET.value)
+        self.assertEqual(
+            result["decision_status"],
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
+        )
         self.assertEqual(
             report["final_decision"],
-            DecisionStatus.NO_BET.value,
+            DecisionStatus.ANALYTICAL_CANDIDATE.value,
         )
         self.assertTrue(report["decision_reasons"])
         self.assertEqual(
-            report["decision_reasons"],
             result["no_bet_reasons"],
+            [],
         )
 
     def test_data_completeness_is_deterministic_for_the_same_input(self):

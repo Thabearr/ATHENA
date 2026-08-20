@@ -349,7 +349,11 @@ def test_malformed_registry_fails_closed(monkeypatch, mutation) -> None:
                 probability_inputs=("home_form", "home_form"),
             )
         else:
-            replacement = dataclasses.replace(base, probability_method=None)
+            # MarketModelStatus now rejects this contradiction during normal
+            # construction. Forge it only to keep exercising the downstream
+            # canonical-registry fail-closed boundary independently.
+            replacement = dataclasses.replace(base)
+            object.__setattr__(replacement, "probability_method", None)
         registry[MarketId.MATCH_RESULT] = replacement
     monkeypatch.setattr(module, "MODEL_STATUS_REGISTRY", registry)
     monkeypatch.setattr(module, "get_model_status", lambda market_id: registry[market_id])
@@ -685,6 +689,10 @@ def test_registry_view_contains_live_reason_without_secondary_registry() -> None
     assert match_result["probability_inputs"] == list(
         MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT].probability_inputs
     )
+    assert match_result["analytical_probability_capability"] == "AVAILABLE"
+    assert match_result["settlement_capability"] == "ORDINARY_EVENT_PROBABILITY"
+    assert match_result["pricing_authority"] == "NOT_AUTHORIZED"
+    assert match_result["selection_authority"] == "NOT_AUTHORIZED"
 
 
 def test_experimental_missing_inputs_do_not_become_research_satisfied() -> None:

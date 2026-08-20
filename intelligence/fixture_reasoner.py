@@ -18,18 +18,22 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 import math
 
+from domain.markets import MarketId
+from domain.model_status import get_model_status
+
 # ---------------------------------------------------------------------
 # 1. Data model
 # ---------------------------------------------------------------------
 @dataclass
 class FixtureOption:
-    """One selectable outcome on a fixture (e.g. 'Home Win', 'Over 2.5')."""
+    """One analytical outcome (e.g. 'Home Win', 'Over 2.5')."""
     market: str                  # mutually-exclusive group, e.g. "1X2"
     label: str                   # e.g. "Home Win"
     model_prob: float            # calibrated model probability (0-1)
     bookmaker_odds: Optional[float] = None  # genuine current decimal odds
     n_effective: Optional[int] = None      # effective sample size behind model_prob
     correlation_tag: Optional[str] = None  # cross-market correlation group
+    market_id: Optional[MarketId] = None   # exact authority lookup; never inferred
 
     @property
     def model_fair_odds(self) -> Optional[float]:
@@ -145,6 +149,30 @@ class FixtureReasoner:
             markets.setdefault(opt.market, []).append(opt)
 
         for market, opts in markets.items():
+            authority_proven = all(
+                type(option.market_id) is MarketId
+                and get_model_status(option.market_id).pricing_authorized
+                and get_model_status(option.market_id).selectable
+                for option in opts
+            )
+            if not authority_proven:
+                for opt in opts:
+                    lo, hi = wilson_interval(opt.model_prob, opt.n_effective)
+                    verdicts.append(OptionVerdict(
+                        option=opt,
+                        fair_prob=None,
+                        edge_pp=None,
+                        kelly_stake_pct=None,
+                        ci_low=lo,
+                        ci_high=hi,
+                        status="ANALYTICAL_CANDIDATE",
+                        reason=(
+                            f"{opt.label}: analytical probability is available, "
+                            "but exact registry pricing and selection authority "
+                            "are both absent. Supplied odds cannot expand authority."
+                        ),
+                    ))
+                continue
             if any(
                 o.bookmaker_odds is None
                 or o.bookmaker_odds <= 1.0

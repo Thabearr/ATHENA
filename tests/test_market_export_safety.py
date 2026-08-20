@@ -232,10 +232,15 @@ class ExportSelectionPreservationTests(unittest.TestCase):
             self._analyzed_fixtures(),
             fold_size=8,
         )
-        self.assert_selection_identity(accumulator["legs"])
+        self.assertEqual(accumulator["decision_status"], "NO_BET")
+        self.assertEqual(accumulator["legs"], [])
 
-        # jsonable_encoder represents the API -> JSON -> frontend boundary.
-        frontend_payload = jsonable_encoder(accumulator)
+        # Existing canonical legs remain serializable for audit/export tests;
+        # the accumulator did not authorize or create them.
+        frontend_payload = jsonable_encoder({
+            "decision_status": "NO_BET",
+            "legs": self._analyzed_fixtures(),
+        })
         self.assert_selection_identity(frontend_payload["legs"])
 
         response = TestClient(app).post(
@@ -353,7 +358,7 @@ class AccumulatorCapabilityGateTests(unittest.TestCase):
             current_time_provider=lambda: self.CURRENT_TIME,
         ).generate_accumulator([fixture], fold_size=1)
 
-    def test_every_disabled_market_is_rejected_from_direct_input(self):
+    def test_every_market_without_selection_authority_is_rejected(self):
         disabled_selections = (
             (
                 MarketId.HOME_WIN_EITHER_HALF,
@@ -365,8 +370,6 @@ class AccumulatorCapabilityGateTests(unittest.TestCase):
                 OutcomeId.YES,
                 "away-either-half",
             ),
-            (MarketId.DRAW_NO_BET, OutcomeId.HOME, "dnb-home"),
-            (MarketId.DRAW_NO_BET, OutcomeId.AWAY, "dnb-away"),
             (MarketId.MATCH_RESULT_1UP, OutcomeId.HOME, "one-up"),
             (MarketId.MATCH_RESULT_2UP, OutcomeId.AWAY, "two-up"),
         )
@@ -396,9 +399,23 @@ class AccumulatorCapabilityGateTests(unittest.TestCase):
                 self.assertEqual(result["decision_status"], "NO_BET")
                 self.assertEqual(result["legs"], [])
                 self.assertIn(
-                    "disabled for accumulator use",
+                    "no explicit selection authority",
                     result["no_bet_reasons"][0],
                 )
+
+        analytically_available = self._generate(
+            self._priced_fixture(
+                MarketId.MATCH_RESULT,
+                OutcomeId.HOME,
+                fixture_id="analytical-match-result",
+            )
+        )
+        self.assertEqual(analytically_available["decision_status"], "NO_BET")
+        self.assertEqual(analytically_available["legs"], [])
+        self.assertIn(
+            "no explicit selection authority",
+            analytically_available["no_bet_reasons"][0],
+        )
 
     def test_integer_and_quarter_handicap_lines_are_rejected(self):
         for line in (-2.0, -1.0, 0.0, 1.0, 2.0, -0.75, -0.25, 0.25, 0.75):
@@ -414,12 +431,9 @@ class AccumulatorCapabilityGateTests(unittest.TestCase):
 
                 self.assertEqual(result["decision_status"], "NO_BET")
                 self.assertEqual(result["legs"], [])
-                self.assertIn(
-                    "only exact half-goal lines",
-                    result["no_bet_reasons"][0],
-                )
+                self.assertIn("no explicit selection authority", result["no_bet_reasons"][0])
 
-    def test_supported_half_goal_handicaps_are_accepted(self):
+    def test_supported_half_goal_handicaps_are_analytical_only(self):
         for index, line in enumerate(
             (-2.5, -1.5, -0.5, 0.5, 1.5, 2.5)
         ):
@@ -436,17 +450,12 @@ class AccumulatorCapabilityGateTests(unittest.TestCase):
                     )
                 )
 
-                self.assertEqual(result["decision_status"], "BET")
-                self.assertEqual(len(result["legs"]), 1)
-                self.assertEqual(
-                    result["legs"][0]["market_id"],
-                    MarketId.ASIAN_HANDICAP.value,
+                self.assertEqual(result["decision_status"], "NO_BET")
+                self.assertEqual(result["legs"], [])
+                self.assertIn(
+                    "no explicit selection authority",
+                    result["no_bet_reasons"][0],
                 )
-                self.assertEqual(
-                    result["legs"][0]["outcome_id"],
-                    outcome_id.value,
-                )
-                self.assertEqual(result["legs"][0]["line"], line)
 
 
 class NoBetFallbackTests(unittest.TestCase):
@@ -461,17 +470,7 @@ class NoBetFallbackTests(unittest.TestCase):
             {"DC_1X": 0.73},
             {},
         )
-        self.assertEqual(len(candidates), 1)
-        self.assertAlmostEqual(candidates[0]["edge"], 0.01)
-        self.assertFalse(candidates[0]["is_bookmaker_edge"])
-        self.assertEqual(
-            candidates[0]["edge_method"],
-            "global_baseline_delta",
-        )
-        self.assertEqual(
-            candidates[0]["probability_method"],
-            "normalized_score_matrix_result_sum",
-        )
+        self.assertEqual(candidates, [])
 
     def test_empty_accumulator_is_an_explicit_no_bet(self):
         result = AccumulatorEngine().generate_accumulator([], fold_size=5)
@@ -503,7 +502,7 @@ class NoBetFallbackTests(unittest.TestCase):
             result["no_bet_reasons"][0],
         )
 
-    def test_missing_bookmaker_odds_is_an_explicit_no_bet(self):
+    def test_missing_bookmaker_odds_cannot_bypass_selection_authority(self):
         result = AccumulatorEngine().generate_accumulator(
             [
                 {
@@ -522,7 +521,7 @@ class NoBetFallbackTests(unittest.TestCase):
         self.assertEqual(result["decision_status"], "NO_BET")
         self.assertEqual(result["legs"], [])
         self.assertIn(
-            "no validated current bookmaker odds",
+            "no explicit selection authority",
             result["no_bet_reasons"][0],
         )
 

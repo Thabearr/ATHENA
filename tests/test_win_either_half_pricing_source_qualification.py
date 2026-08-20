@@ -664,7 +664,7 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "AWAY_WIN_EITHER_HALF": "DISABLED",
             "DOUBLE_CHANCE": "ACTIVE",
             "BTTS": "EXPERIMENTAL",
-            "DRAW_NO_BET": "DISABLED",
+            "DRAW_NO_BET": "EXPERIMENTAL",
             "HOME_WIN_TO_NIL": "EXPERIMENTAL",
             "AWAY_WIN_TO_NIL": "EXPERIMENTAL",
             "MATCH_RESULT_1UP": "DISABLED",
