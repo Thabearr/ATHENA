@@ -83,72 +83,75 @@ _SCORE_MATRIX_MARKETS = frozenset(
 )
 
 
-_MODEL_LEAGUE_EVIDENCE = {
-    ModelLeagueFamily.SCORE_MATRIX_XG: ModelLeagueEvidenceState(
-        family=ModelLeagueFamily.SCORE_MATRIX_XG,
-        ranking_authorized=False,
-        primary_metric="mean_joint_poisson_nll",
-        evidence_references=(
-            "docs/fotmob_utc_native_expected_goals_model_validation_result_review.md",
+# No separate mutable backing dict is retained: callers receive only this
+# MappingProxyType, so runtime code cannot change a reviewed authority bit or
+# evidence blocker in place.
+MODEL_LEAGUE_EVIDENCE: Mapping[
+    ModelLeagueFamily, ModelLeagueEvidenceState
+] = MappingProxyType(
+    {
+        ModelLeagueFamily.SCORE_MATRIX_XG: ModelLeagueEvidenceState(
+            family=ModelLeagueFamily.SCORE_MATRIX_XG,
+            ranking_authorized=False,
+            primary_metric="mean_joint_poisson_nll",
+            evidence_references=(
+                "docs/fotmob_utc_native_expected_goals_model_validation_result_review.md",
+            ),
+            blocker=(
+                "COMPETITION_IDENTITY_ABSENT_FROM_FROZEN_XG_VALIDATION: the reviewed "
+                "xG result explicitly states league/competition robustness is blocked."
+            ),
         ),
-        blocker=(
-            "COMPETITION_IDENTITY_ABSENT_FROM_FROZEN_XG_VALIDATION: the reviewed "
-            "xG result explicitly states league/competition robustness is blocked."
+        ModelLeagueFamily.WIN_EITHER_HALF_HOME: ModelLeagueEvidenceState(
+            family=ModelLeagueFamily.WIN_EITHER_HALF_HOME,
+            ranking_authorized=False,
+            primary_metric="binary_log_loss_then_brier_then_ece",
+            evidence_references=(
+                "docs/win_either_half_calibration_research.md",
+                "artifacts/research-manifests/win-either-half-calibration-v1.json",
+            ),
+            blocker=(
+                "EXACT_LEAGUE_METRIC_BYTES_NOT_COMMITTED: the reviewed documentation "
+                "contains qualitative subgroup conclusions and hashes the 356-row "
+                "subgroup CSV, but the exact per-league metric rows are not committed "
+                "or otherwise replayable from this repository boundary."
+            ),
         ),
-    ),
-    ModelLeagueFamily.WIN_EITHER_HALF_HOME: ModelLeagueEvidenceState(
-        family=ModelLeagueFamily.WIN_EITHER_HALF_HOME,
-        ranking_authorized=False,
-        primary_metric="binary_log_loss_then_brier_then_ece",
-        evidence_references=(
-            "docs/win_either_half_calibration_research.md",
-            "artifacts/research-manifests/win-either-half-calibration-v1.json",
+        ModelLeagueFamily.WIN_EITHER_HALF_AWAY: ModelLeagueEvidenceState(
+            family=ModelLeagueFamily.WIN_EITHER_HALF_AWAY,
+            ranking_authorized=False,
+            primary_metric="binary_log_loss_then_brier_then_ece",
+            evidence_references=(
+                "docs/win_either_half_calibration_research.md",
+                "artifacts/research-manifests/win-either-half-calibration-v1.json",
+            ),
+            blocker=(
+                "EXACT_LEAGUE_METRIC_BYTES_NOT_COMMITTED: Away retains identity "
+                "calibration, but no exact committed per-league final-test metric table "
+                "exists at this boundary from which a comparative league order can be "
+                "reconstructed."
+            ),
         ),
-        blocker=(
-            "EXACT_LEAGUE_METRIC_BYTES_NOT_COMMITTED: the reviewed documentation "
-            "contains qualitative subgroup conclusions and hashes the 356-row "
-            "subgroup CSV, but the exact per-league metric rows are not committed "
-            "or otherwise replayable from this repository boundary."
+        ModelLeagueFamily.EARLY_PAYOUT_LEAD_PATH: ModelLeagueEvidenceState(
+            family=ModelLeagueFamily.EARLY_PAYOUT_LEAD_PATH,
+            ranking_authorized=False,
+            primary_metric="independent_market_probability_log_loss",
+            evidence_references=("domain/early_payout_lead_path_probabilities.py",),
+            blocker=(
+                "NO_INDEPENDENT_LEAGUE_LEVEL_VALIDATION: 1UP/2UP analytical semantics "
+                "are reviewed, but no league-stratified held-out validation exists."
+            ),
         ),
-    ),
-    ModelLeagueFamily.WIN_EITHER_HALF_AWAY: ModelLeagueEvidenceState(
-        family=ModelLeagueFamily.WIN_EITHER_HALF_AWAY,
-        ranking_authorized=False,
-        primary_metric="binary_log_loss_then_brier_then_ece",
-        evidence_references=(
-            "docs/win_either_half_calibration_research.md",
-            "artifacts/research-manifests/win-either-half-calibration-v1.json",
-        ),
-        blocker=(
-            "EXACT_LEAGUE_METRIC_BYTES_NOT_COMMITTED: Away retains identity "
-            "calibration, but no exact committed per-league final-test metric table "
-            "exists at this boundary from which a comparative league order can be "
-            "reconstructed."
-        ),
-    ),
-    ModelLeagueFamily.EARLY_PAYOUT_LEAD_PATH: ModelLeagueEvidenceState(
-        family=ModelLeagueFamily.EARLY_PAYOUT_LEAD_PATH,
-        ranking_authorized=False,
-        primary_metric="independent_market_probability_log_loss",
-        evidence_references=("domain/early_payout_lead_path_probabilities.py",),
-        blocker=(
-            "NO_INDEPENDENT_LEAGUE_LEVEL_VALIDATION: 1UP/2UP analytical semantics "
-            "are reviewed, but no league-stratified held-out validation exists."
-        ),
-    ),
-}
-
-# Public audit view is immutable. A candidate cannot mutate the process-wide
-# evidence registry to manufacture a ranking.
-MODEL_LEAGUE_EVIDENCE: Mapping[ModelLeagueFamily, ModelLeagueEvidenceState] = (
-    MappingProxyType(_MODEL_LEAGUE_EVIDENCE)
+    }
 )
 
 # Future reviewed evidence-ranked orders must be committed here only after the
 # associated ModelLeagueEvidenceState has ranking_authorized=True and the exact
-# replayable metric evidence has been reviewed. The empty immutable registry is
-# intentional at this boundary.
-_EVIDENCE_RANKS: Mapping[ModelLeagueFamily, Mapping[str, int]] = MappingProxyType({})
+# replayable metric evidence has been reviewed. The outer registry is immutable;
+# when populated, each nested league-rank mapping must also be MappingProxyType.
+MODEL_LEAGUE_RANKS: Mapping[
+    ModelLeagueFamily, Mapping[str, int]
+] = MappingProxyType({})
 
 
 def model_league_family_for_market(market_id: Any) -> ModelLeagueFamily | None:
@@ -187,7 +190,7 @@ def resolve_model_league_priority(
     """Resolve effective league order without inventing model reliability.
 
     Caller-supplied reliability scores/ranks are ignored. Only the immutable
-    reviewed registry in this module can create an evidence-ranked override.
+    reviewed registries in this module can create an evidence-ranked override.
     """
 
     league_entry = resolve_league_priority(league_name)
@@ -215,7 +218,7 @@ def resolve_model_league_priority(
         )
 
     evidence = MODEL_LEAGUE_EVIDENCE[family]
-    ranked = _EVIDENCE_RANKS.get(family, {})
+    ranked = MODEL_LEAGUE_RANKS.get(family, {})
     if evidence.ranking_authorized and canonical_league in ranked:
         return ModelLeaguePriorityResolution(
             policy_version=MODEL_LEAGUE_RELIABILITY_POLICY_VERSION,
