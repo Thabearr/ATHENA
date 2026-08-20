@@ -1,0 +1,148 @@
+name: Execute FotMob Prospective Player-Context Campaign
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_request_date:
+        description: Exact frozen request date
+        required: true
+        default: '2026-08-22'
+        type: string
+      expected_home_team:
+        description: Exact expected source home-team text
+        required: true
+        default: Nottingham Forest
+        type: string
+      expected_away_team:
+        description: Exact expected source away-team text
+        required: true
+        default: Leeds United
+        type: string
+      expected_kickoff_utc:
+        description: Exact expected source kickoff
+        required: true
+        default: '2026-08-22T14:00:00Z'
+        type: string
+      fixture_review_candidate_sha:
+        description: Exact PR40 candidate SHA; blank preserves evidence and stops before review
+        required: false
+        default: ''
+        type: string
+      fixture_review_disposition:
+        description: Explicit PR41 disposition; never defaults to approval
+        required: true
+        default: NOT_GRANTED
+        type: choice
+        options:
+          - NOT_GRANTED
+          - APPROVED
+      catalog_admission_disposition:
+        description: Explicit PR45 disposition; never defaults to admission
+        required: true
+        default: NOT_GRANTED
+        type: choice
+        options:
+          - NOT_GRANTED
+          - ADMITTED
+
+concurrency:
+  group: athena-fotmob-prospective-player-context-campaign-v1
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    if: >-
+      github.actor == 'Thabearr' &&
+      github.ref_name == 'evidence/fotmob-prospective-player-context-campaign'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out exact dispatched head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify owner, branch, and exact dispatched checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_ACTOR}" = "Thabearr"
+          test "${GITHUB_REF_NAME}" = "evidence/fotmob-prospective-player-context-campaign"
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          git merge-base --is-ancestor 74cec8bc649bc8d2181ca2806a460a84664f7f2e "${GITHUB_SHA}"
+          test -z "$(git status --short --untracked-files=no)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Execute transparent prospective campaign
+        id: campaign
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/run_fotmob_prospective_player_context_campaign.py \
+            --base-sha "74cec8bc649bc8d2181ca2806a460a84664f7f2e" \
+            --repository-head-sha "${GITHUB_SHA}" \
+            --output-directory campaign-artifact \
+            --target-request-date '${{ inputs.target_request_date }}' \
+            --expected-home-team '${{ inputs.expected_home_team }}' \
+            --expected-away-team '${{ inputs.expected_away_team }}' \
+            --expected-kickoff-utc '${{ inputs.expected_kickoff_utc }}' \
+            --fixture-review-candidate-sha '${{ inputs.fixture_review_candidate_sha }}' \
+            --fixture-review-disposition '${{ inputs.fixture_review_disposition }}' \
+            --catalog-admission-disposition '${{ inputs.catalog_admission_disposition }}' \
+            --execute-live-network | tee campaign-result.txt
+          result="$(tail -n 1 campaign-result.txt)"
+          echo "result=${result}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload exact evidence on success or fail-closed conclusion
+        id: upload
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fotmob-prospective-player-context-evidence
+          path: |
+            campaign-artifact/
+            campaign-result.txt
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish campaign summary
+        if: always()
+        shell: bash
+        env:
+          CAMPAIGN_RESULT: ${{ steps.campaign.outputs.result }}
+          UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
+        run: |
+          set -euo pipefail
+          {
+            echo '## FotMob prospective player-context evidence campaign'
+            echo
+            echo "- head: ${GITHUB_SHA}"
+            echo "- run: ${GITHUB_RUN_ID}"
+            echo "- campaign result: ${CAMPAIGN_RESULT:-RUNNER_DID_NOT_RETURN_RESULT}"
+            echo "- artifact: fotmob-prospective-player-context-evidence"
+            echo "- upload: ${UPLOAD_OUTCOME}"
+            echo '- semantic array authorization: false'
+            echo '- team-strength feature authorization: false'
+            echo '- probability/pricing/selection/BET authorization: false'
+          } >> "${GITHUB_STEP_SUMMARY}"
