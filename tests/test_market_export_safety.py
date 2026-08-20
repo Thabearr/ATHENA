@@ -502,7 +502,7 @@ class NoBetFallbackTests(unittest.TestCase):
             result["no_bet_reasons"][0],
         )
 
-    def test_missing_bookmaker_odds_is_an_explicit_no_bet(self):
+    def test_missing_bookmaker_odds_cannot_bypass_selection_authority(self):
         result = AccumulatorEngine().generate_accumulator(
             [
                 {
@@ -521,7 +521,7 @@ class NoBetFallbackTests(unittest.TestCase):
         self.assertEqual(result["decision_status"], "NO_BET")
         self.assertEqual(result["legs"], [])
         self.assertIn(
-            "no validated current bookmaker odds",
+            "no explicit selection authority",
             result["no_bet_reasons"][0],
         )
 
