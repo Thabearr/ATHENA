@@ -1,0 +1,171 @@
+name: Verify Real FotMob Player-Context Array Admission
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+concurrency:
+  group: athena-real-fotmob-player-context-array-admission-v1
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    if: >-
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/fotmob-real-player-context-array-admission'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Validate exact PR193 source lineage
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setFailed('pull_request payload required');
+              return;
+            }
+            if (pr.base.sha !== '79c9e82c0d4604147bbef1704656ab4eec24fa35') {
+              core.setFailed(`PR base ${pr.base.sha} differs from frozen PR192 merge base.`);
+              return;
+            }
+            if (
+              pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo ||
+              pr.head.ref !== 'evidence/fotmob-real-player-context-array-admission'
+            ) {
+              core.setFailed('exact same-repository branch binding failed');
+              return;
+            }
+
+            const sourceArtifactId = 9422055017;
+            const sourceRunId = 32410775191;
+            const sourceHeadSha = '46f76e8033d3d498131c6f893111b437b6b459a9';
+            const sourceDigest = 'sha256:db5dc12b8863cbac15f210e018ddf0af9b9011a6ad8c3958a473a597254f44b5';
+            const { data: artifact } = await github.rest.actions.getArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: sourceArtifactId,
+            });
+            if (
+              artifact.id !== sourceArtifactId ||
+              artifact.name !== 'fotmob-prospective-player-context-evidence' ||
+              artifact.expired ||
+              artifact.size_in_bytes !== 974969 ||
+              artifact.digest !== sourceDigest ||
+              !artifact.workflow_run ||
+              artifact.workflow_run.id !== sourceRunId ||
+              artifact.workflow_run.head_sha !== sourceHeadSha
+            ) {
+              core.setFailed('exact PR192 source artifact identity/provenance mismatch');
+              return;
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: sourceRunId,
+            });
+            if (
+              run.status !== 'completed' ||
+              run.conclusion !== 'success' ||
+              run.event !== 'pull_request' ||
+              run.head_sha !== sourceHeadSha ||
+              run.name !== 'Execute FotMob Prospective Player-Context Campaign'
+            ) {
+              core.setFailed('source workflow run is not the exact successful PR192 evidence run');
+              return;
+            }
+            core.setOutput('head_sha', pr.head.sha);
+            core.setOutput('artifact_id', String(sourceArtifactId));
+            core.setOutput('run_id', String(sourceRunId));
+
+      - name: Checkout exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.guard.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify frozen ancestry and clean checkout
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.head_sha }}"
+          git merge-base --is-ancestor 79c9e82c0d4604147bbef1704656ab4eec24fa35 HEAD
+          test -z "$(git status --short --untracked-files=no)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download exact successful PR192 evidence artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.guard.outputs.artifact_id }}
+          path: source-evidence
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ steps.guard.outputs.run_id }}
+
+      - name: Full-replay exact evidence and build semantic admission
+        id: admission
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          EXACT_HEAD_SHA: ${{ steps.guard.outputs.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/verify_fotmob_real_player_context_admission.py \
+            --source-root source-evidence/fotmob-prospective-player-context-evidence \
+            --output-root admission-proof \
+            --repository-head-sha "${EXACT_HEAD_SHA}" \
+            | tee admission-summary.txt
+          admission_sha="$(awk -F= '/^admission_sha256=/{print $2}' admission-summary.txt)"
+          test "${#admission_sha}" -eq 64
+          echo "admission_sha=${admission_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload exact semantic admission proof
+        id: upload
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: fotmob-real-player-context-array-admission
+          path: admission-proof/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Publish exact boundary summary
+        shell: bash
+        run: |
+          set -euo pipefail
+          {
+            echo '## Real FotMob player-context array admission'
+            echo
+            echo "- exact PR head: ${{ steps.guard.outputs.head_sha }}"
+            echo "- source PR192 run: ${{ steps.guard.outputs.run_id }}"
+            echo "- source artifact id: ${{ steps.guard.outputs.artifact_id }}"
+            echo "- admission SHA-256: ${{ steps.admission.outputs.admission_sha }}"
+            echo '- exact-observation array semantics: AUTHORIZED'
+            echo '- expected starting-XI semantics: AUTHORIZED for this exact predicted observation'
+            echo '- unavailable-player semantics: AUTHORIZED for this exact observation'
+            echo '- bench semantics: NOT AUTHORIZED / source root missing'
+            echo '- position semantics: NOT AUTHORIZED'
+            echo '- market-value semantics: NOT AUTHORIZED'
+            echo '- current-state freshness beyond classification instant: NOT AUTHORIZED'
+            echo '- team-strength/model/probability/pricing/selection/BET authority: FALSE'
+          } >> "${GITHUB_STEP_SUMMARY}"
