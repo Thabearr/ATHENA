@@ -48,7 +48,6 @@ class AccumulatorEngine:
             current_time_provider
             or (lambda: datetime.now(timezone.utc))
         )
-        # Markets ranked by historical reliability (proven in betting)
         self.market_reliability = {
             "TO_QUALIFY_HOME": 0.95,
             "TO_QUALIFY_AWAY": 0.95,
@@ -191,9 +190,9 @@ class AccumulatorEngine:
         """Generate an accumulator from pre-filtered fixtures.
 
         If every candidate carries ATHENA priority metadata, the incoming order
-        is authoritative for *consideration order* and is preserved.  This is
-        required for strict league exhaustion: a later weighted re-sort must not
-        pull a lower-priority league ahead of an unexhausted higher-priority one.
+        is the consideration order.  ATHENA walks that entire ordered reserve
+        until the requested fold is filled or the pool is exhausted, so one
+        rejected higher-priority fixture does not cause an avoidable shortfall.
 
         Callers without priority metadata retain the historical score fallback.
         """
@@ -222,17 +221,21 @@ class AccumulatorEngine:
             for fix in eligible
         )
         if priority_ordered:
-            top_fixtures = eligible[:fold_size]
+            candidate_fixtures = eligible
         else:
             scored = [(fix, self._score_fixture(fix)) for fix in eligible]
             scored.sort(key=lambda item: item[1], reverse=True)
-            top_fixtures = [fix for fix, _ in scored[:fold_size]]
+            candidate_fixtures = [fix for fix, _ in scored[:fold_size]]
 
         legs = []
         rejected_reasons = []
+        attempted_fixtures = []
         compounded_odds = 1.0
 
-        for fix in top_fixtures:
+        for fix in candidate_fixtures:
+            if len(legs) >= fold_size:
+                break
+            attempted_fixtures.append(fix)
             verdict = fix.get("verdict")
             try:
                 prepared_fixture = serialize_leg(fix)
@@ -382,7 +385,7 @@ class AccumulatorEngine:
                 "legs": [],
                 "evidence_reports": [
                     fix["evidence_report"]
-                    for fix in top_fixtures
+                    for fix in attempted_fixtures
                     if fix.get("evidence_report")
                 ],
                 "eligible_count": len(eligible),
@@ -399,8 +402,8 @@ class AccumulatorEngine:
             "eligible_count": len(eligible),
             "available_count": len(analyzed_fixtures),
             "priority_policy_version": (
-                top_fixtures[0].get("priority_policy_version")
-                if priority_ordered and top_fixtures
+                candidate_fixtures[0].get("priority_policy_version")
+                if priority_ordered and candidate_fixtures
                 else None
             ),
         }
