@@ -38,8 +38,18 @@ jobs:
           if text.count(old_output) != 1:
               raise SystemExit('expected source artifact output block once')
           text = text.replace(old_output, new_output, 1)
-          old_download = """          artifact-ids: ${{ steps.guard.outputs.source_artifact_id }}\n          path: source-campaign-artifact\n          github-token: ${{ github.token }}\n          repository: ${{ github.repository }}\n"""
-          new_download = """          artifact-ids: ${{ steps.guard.outputs.source_artifact_id }}\n          path: source-campaign-artifact\n          github-token: ${{ github.token }}\n          repository: ${{ github.repository }}\n          run-id: ${{ steps.guard.outputs.source_run_id }}\n"""
+
+          artifact_expr = '$' + '{{ steps.guard.outputs.source_artifact_id }}'
+          token_expr = '$' + '{{ github.token }}'
+          repository_expr = '$' + '{{ github.repository }}'
+          run_expr = '$' + '{{ steps.guard.outputs.source_run_id }}'
+          old_download = (
+              f"          artifact-ids: {artifact_expr}\n"
+              "          path: source-campaign-artifact\n"
+              f"          github-token: {token_expr}\n"
+              f"          repository: {repository_expr}\n"
+          )
+          new_download = old_download + f"          run-id: {run_expr}\n"
           if text.count(old_download) != 1:
               raise SystemExit('expected download-artifact block once')
           text = text.replace(old_download, new_download, 1)
@@ -48,7 +58,12 @@ jobs:
           test_path = Path('tests/test_fotmob_prospective_player_context_campaign.py')
           tests = test_path.read_text(encoding='utf-8')
           old_assert = """    assert \"actions/download-artifact@\" in workflow\n    assert \"if: always()\" in workflow\n"""
-          new_assert = """    assert \"actions/download-artifact@\" in workflow\n    assert \"core.setOutput('source_run_id', sourceRun[1])\" in workflow\n    assert \"run-id: ${{ steps.guard.outputs.source_run_id }}\" in workflow\n    assert \"if: always()\" in workflow\n"""
+          new_assert = (
+              "    assert \"actions/download-artifact@\" in workflow\n"
+              "    assert \"core.setOutput('source_run_id', sourceRun[1])\" in workflow\n"
+              f"    assert \"run-id: {run_expr}\" in workflow\n"
+              "    assert \"if: always()\" in workflow\n"
+          )
           if tests.count(old_assert) != 1:
               raise SystemExit('expected workflow regression assertion block once')
           tests = tests.replace(old_assert, new_assert, 1)
