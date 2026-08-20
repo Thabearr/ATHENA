@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from config.league_priority import (
     PRIORITY_BASIS,
     PRIORITY_POLICY_VERSION,
@@ -17,8 +19,10 @@ from domain.accumulator_priority import (
 from domain.markets import MarketId
 from domain.model_league_reliability import (
     MODEL_LEAGUE_EVIDENCE,
+    MODEL_LEAGUE_RANKS,
     MODEL_LEAGUE_RELIABILITY_POLICY_VERSION,
     LeagueReliabilityBasis,
+    ModelLeagueEvidenceState,
     ModelLeagueFamily,
     model_league_family_for_market,
     resolve_model_league_priority,
@@ -120,6 +124,7 @@ def test_all_fifteen_markets_map_to_explicit_model_league_family() -> None:
 def test_current_model_families_cannot_claim_evidence_ranked_order() -> None:
     assert set(MODEL_LEAGUE_EVIDENCE) == set(ModelLeagueFamily)
     assert all(not state.ranking_authorized for state in MODEL_LEAGUE_EVIDENCE.values())
+    assert dict(MODEL_LEAGUE_RANKS) == {}
 
     xg = resolve_model_league_priority("Premier League", market_id="MATCH_RESULT")
     assert xg.family == ModelLeagueFamily.SCORE_MATRIX_XG
@@ -134,6 +139,20 @@ def test_current_model_families_cannot_claim_evidence_ranked_order() -> None:
     assert home_weh.basis == LeagueReliabilityBasis.BOOTSTRAP_FALLBACK
     assert home_weh.effective_rank == 3
     assert "EXACT_LEAGUE_METRIC_BYTES_NOT_COMMITTED" in home_weh.reason
+
+
+def test_reviewed_model_league_registries_are_runtime_immutable() -> None:
+    forged_state = ModelLeagueEvidenceState(
+        family=ModelLeagueFamily.SCORE_MATRIX_XG,
+        ranking_authorized=True,
+        primary_metric="forged",
+        evidence_references=("forged",),
+        blocker=None,
+    )
+    with pytest.raises(TypeError):
+        MODEL_LEAGUE_EVIDENCE[ModelLeagueFamily.SCORE_MATRIX_XG] = forged_state
+    with pytest.raises(TypeError):
+        MODEL_LEAGUE_RANKS[ModelLeagueFamily.SCORE_MATRIX_XG] = {"Premier League": 99}
 
 
 def test_caller_cannot_forge_model_reliability_rank() -> None:
