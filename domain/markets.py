@@ -269,9 +269,10 @@ MARKET_REGISTRY: Dict[MarketId, MarketDefinition] = {
         family=MarketFamily.EARLY_PAYOUT,
         display_name="1X2 - 1UP",
         settlement_semantics=(
-            "Selects a regulation-time match winner under a bookmaker's 1UP "
-            "early-payout promotion. Early settlement is provider-specific and "
-            "must not be inferred without that provider's rules."
+            "SportyBet Home/Away settles as won on an irreversible one-goal "
+            "lead trigger or ordinary regulation-time victory; Draw settles "
+            "from the regulation-time full-time result. The three selections "
+            "are overlapping events."
         ),
         supported_outcomes=(OutcomeId.HOME, OutcomeId.DRAW, OutcomeId.AWAY),
         aliases=("1X2_1UP",),
@@ -281,9 +282,10 @@ MARKET_REGISTRY: Dict[MarketId, MarketDefinition] = {
         family=MarketFamily.EARLY_PAYOUT,
         display_name="1X2 - 2UP",
         settlement_semantics=(
-            "Selects a regulation-time match winner under a bookmaker's 2UP "
-            "early-payout promotion. Early settlement is provider-specific and "
-            "must not be inferred without that provider's rules."
+            "SportyBet Home/Away settles as won on an irreversible two-goal "
+            "lead trigger or ordinary regulation-time victory; Draw settles "
+            "from the regulation-time full-time result. The three selections "
+            "are overlapping events."
         ),
         supported_outcomes=(OutcomeId.HOME, OutcomeId.DRAW, OutcomeId.AWAY),
         aliases=("1X2_2UP",),

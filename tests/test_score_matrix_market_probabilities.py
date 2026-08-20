@@ -79,13 +79,7 @@ class ScoreMatrixMarketProbabilityTests(unittest.TestCase):
             if status.analytical_probability_capability
             is AnalyticalProbabilityCapability.AVAILABLE
         }
-        self.assertEqual(
-            set(MarketId) - available,
-            {
-                MarketId.MATCH_RESULT_1UP,
-                MarketId.MATCH_RESULT_2UP,
-            },
-        )
+        self.assertEqual(set(MarketId) - available, set())
         for status in MODEL_STATUS_REGISTRY.values():
             self.assertIs(status.pricing_authority, PricingAuthority.NOT_AUTHORIZED)
             self.assertIs(

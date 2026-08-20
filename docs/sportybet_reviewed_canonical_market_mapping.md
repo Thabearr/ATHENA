@@ -26,7 +26,21 @@ Source labels must exist and match exactly. Opaque IDs without reviewed labels s
 
 Total Goals requires exact `total=<decimal>` and Asian Handicap exact `hcp=<decimal>`; the provider decimal must equal the canonical line. A provider specifier cannot disappear into a canonical non-line market.
 
-1UP/2UP identifiers may be mapped so the complete 15-market namespace is preserved, but their provider-specific early-payout rules remain unproven. They therefore carry `PROVIDER_PROMOTION_RULES_UNPROVEN` and `bookmaker_equivalence_authorized = false`. Standard mappings carry `REVIEWED_STANDARD_SETTLEMENT_EQUIVALENCE` only for the exact reviewed provider selection.
+1UP/2UP identifiers may be mapped so the complete 15-market namespace is
+preserved. Historical calls without the later exact SportyBet early-payout
+settlement receipt remain `PROVIDER_PROMOTION_RULES_UNPROVEN`, preserving the
+earlier receipt semantics. A new mapping call may supply that exact immutable
+receipt and its canonical bytes. Only then may the exact early-payout
+selection carry
+`REVIEWED_SPORTYBET_EARLY_PAYOUT_SETTLEMENT_EQUIVALENCE` and its settlement
+receipt SHA. This upgrades provider settlement equivalence only; price
+freshness, pricing, selection, execution, and BET authority remain false.
+
+The receipt binds official SportyBet 1X2/1UP/2UP help clauses and the exact
+reviewed `one_x_two_one_up` / `one_x_two_two_up` site-configuration key
+projection. Any changed evidence or receipt bytes fail closed. Standard
+mappings continue to carry `REVIEWED_STANDARD_SETTLEMENT_EQUIVALENCE` only for
+the exact reviewed provider selection.
 
 ## Price and execution boundary
 

@@ -8,6 +8,11 @@ import pytest
 
 from domain import sportybet_fotmob_full_utc_reconciliation as reconciliation
 from domain import sportybet_reviewed_canonical_market_mapping as mapping
+from domain.sportybet_early_payout_settlement import (
+    canonical_sportybet_early_payout_settlement_receipt_bytes,
+    reviewed_sportybet_early_payout_settlement_receipt,
+    sha256_sportybet_early_payout_settlement_receipt,
+)
 from domain import sportybet_user_controlled_native_inventory as native
 from domain.markets import MARKET_REGISTRY, MarketId, OutcomeId
 from domain.sportybet_provider_native_inventory import NativeAvailability, NativeSelection
@@ -152,6 +157,51 @@ def test_1up_maps_identifier_without_claiming_promotion_equivalence(monkeypatch)
     assert result.safety["fresh_price_authorized"] is False
     assert result.safety["selection_authorized"] is False
     assert result.safety["bet_authorized"] is False
+
+
+def test_1up_exact_settlement_receipt_upgrades_only_bookmaker_equivalence(monkeypatch):
+    row = _selection(market="1up", name="Match Result 1UP", spec=None, outcome="1", label="Home")
+    decision = _decision(row, market=MarketId.MATCH_RESULT_1UP, outcome=OutcomeId.HOME, line=None)
+    receipt = reviewed_sportybet_early_payout_settlement_receipt()
+    result = mapping._build(
+        _reconciled(),
+        _inventory(row),
+        (decision,),
+        early_payout_settlement_receipt=receipt,
+        early_payout_settlement_receipt_bytes=(
+            canonical_sportybet_early_payout_settlement_receipt_bytes(receipt)
+        ),
+    )
+    mapped = result.mapped_selections[0]
+
+    assert mapped.settlement_equivalence_authority is (
+        mapping.SettlementEquivalenceAuthority.REVIEWED_SPORTYBET_EARLY_PAYOUT_SETTLEMENT_EQUIVALENCE
+    )
+    assert mapped.settlement_evidence_sha256 == (
+        sha256_sportybet_early_payout_settlement_receipt(receipt)
+    )
+    assert mapped.bookmaker_equivalence_authorized is True
+    assert mapped.fresh_price_authorized is False
+    assert result.safety["pricing_authorized"] is False
+    assert result.safety["selection_authorized"] is False
+    assert result.safety["bet_authorized"] is False
+
+
+def test_early_payout_mapping_rejects_wrong_receipt_bytes(monkeypatch):
+    row = _selection(market="2up", name="Match Result 2UP", spec=None, outcome="2", label="Away")
+    decision = _decision(row, market=MarketId.MATCH_RESULT_2UP, outcome=OutcomeId.AWAY, line=None)
+    receipt = reviewed_sportybet_early_payout_settlement_receipt()
+    with pytest.raises(mapping.SportyBetReviewedCanonicalMarketMappingError):
+        mapping._build(
+            _reconciled(),
+            _inventory(row),
+            (decision,),
+            early_payout_settlement_receipt=receipt,
+            early_payout_settlement_receipt_bytes=(
+                canonical_sportybet_early_payout_settlement_receipt_bytes(receipt)
+                + b"\n"
+            ),
+        )
 
 
 def test_representation_report_does_not_invent_15_market_coverage(monkeypatch):

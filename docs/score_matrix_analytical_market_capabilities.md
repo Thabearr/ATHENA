@@ -79,9 +79,12 @@ proxy. They are analytically available only through the separate frozen WEH
 Stage 4A/4B predictor and its exact specialized 74-feature input namespace.
 That availability grants no pricing or selection authority.
 
-`MATCH_RESULT_1UP` and `MATCH_RESULT_2UP` remain blocked because exact provider
-promotion rules and a lead-path probability model are both required. Full-time
-win probability is not a proxy for either family.
+`MATCH_RESULT_1UP` and `MATCH_RESULT_2UP` are analytically available only
+through `domain.early_payout_lead_path_probabilities`. That separate projector
+binds the exact reviewed SportyBet settlement receipt and combines conditional
+goal-order path counts with the normalized matrix. The events overlap and are
+not ordinary 1X2 sums. This generic direct-score projector continues to reject
+them so it cannot substitute full-time win probability.
 
 ## Legacy runtime containment
 
