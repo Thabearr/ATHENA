@@ -125,7 +125,7 @@ def test_plan_is_exactly_anchored_to_pr48_and_fixed_route(tmp_path: Path) -> Non
         request_started_at=REQUEST_AT,
     )
     assert source_match_id_from_fixture_identifier("FOTMOB:1001") == "1001"
-    assert request_target("1001") == "/api/matchDetails?matchId=1001"
+    assert request_target("1001") == "/api/data/matchDetails?matchId=1001"
     assert plan.verification_receipt_bytes == receipt_bytes
     assert plan.fixture_identifier == "FOTMOB:1001"
     assert plan.source_match_id == "1001"
@@ -217,7 +217,7 @@ def test_success_is_one_transparent_bounded_request_with_all_downstream_flags_fa
         clock=_Clock(REQUEST_AT, SEND_AT, OBSERVED_AT),
     )
     assert calls == [(ALLOWED_HOST, 443, REQUEST_TIMEOUT_SECONDS)]
-    assert connection.requests == [("GET", "/api/matchDetails?matchId=1001", True)]
+    assert connection.requests == [("GET", "/api/data/matchDetails?matchId=1001", True)]
     assert connection.headers == list(REQUEST_HEADERS)
     assert connection.endheaders_calls == 1
     assert response.read_calls == [MAX_SAMPLE_BYTES]

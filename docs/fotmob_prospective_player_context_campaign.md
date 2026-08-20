@@ -97,6 +97,15 @@ workflow: `campaign-mode`, `repository-head-sha`, `source-run-id`,
 `fixture-candidate-sha256`, both explicit dispositions, and the exact
 `REPLAY_EXACT_ARTIFACT_AND_CAPTURE_MATCH_DETAILS` confirmation.
 
+## Reviewed match-details route migration
+
+During the real prospective campaign, the historical reviewed route `/api/matchDetails` returned a non-200 response. A separate transparent discovery-only hosted diagnostic at the same exact PR head and source match id observed:
+
+- `/api/matchDetails?matchId=<id>` → HTTP 404, HTML;
+- `/api/data/matchDetails?matchId=<id>` → HTTP 200, `application/json; charset=utf-8`.
+
+The PR #49 live request builder is therefore migrated to `/api/data/matchDetails` for prospective requests. Historical pre-migration plans remain audit-replayable under a strict timestamp cutoff. No X-Mas header, cookie, browser impersonation, bypass client, or semantic inference was introduced. The diagnostic itself is discovery evidence only; the trusted evidence path still begins only when the exact PR #50 response is durably captured and replayed through PR #52/53.
+
 ## Transparent acquisition
 
 Both live calls reuse existing reviewed ATHENA capture paths. They use

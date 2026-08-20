@@ -28,7 +28,11 @@ SCHEMA_VERSION = 1
 DATASET_NAME = "athena-fotmob-reviewed-match-details-probe-v1"
 ALLOWED_HOST = "www.fotmob.com"
 HTTPS_PORT = 443
-ALLOWED_PATH = "/api/matchDetails"
+LEGACY_ALLOWED_PATH = "/api/matchDetails"
+ALLOWED_PATH = "/api/data/matchDetails"
+ROUTE_MIGRATION_EFFECTIVE_AT = datetime.datetime(
+    2026, 8, 20, 19, 42, 27, tzinfo=datetime.timezone.utc
+)
 MAX_SAMPLE_BYTES = 4096
 USER_AGENT = "ATHENA/1.0"
 MEDIA_EXPECTATION = "application/json"
@@ -156,6 +160,14 @@ def request_target(source_match_id: Any) -> str:
     return f"{ALLOWED_PATH}?matchId={source_match_id}"
 
 
+def legacy_request_target(source_match_id: Any) -> str:
+    """Reconstruct the pre-migration route only for historical plan replay."""
+
+    # Reuse the current validator so legacy replay cannot weaken match-id syntax.
+    request_target(source_match_id)
+    return f"{LEGACY_ALLOWED_PATH}?matchId={source_match_id}"
+
+
 def _revalidate_verified_bootstrap_artifact(
     value: Any,
     receipt_bytes: Any,
@@ -272,9 +284,16 @@ class FotMobMatchDetailsProbePlan:
             raise FotMobReviewedMatchDetailsProbeError(
                 "host must be exactly www.fotmob.com"
             )
-        if self.request_target != request_target(source_match_id):
+        current_target = request_target(source_match_id)
+        legacy_target = legacy_request_target(source_match_id)
+        if self.request_target == legacy_target:
+            if started >= ROUTE_MIGRATION_EFFECTIVE_AT:
+                raise FotMobReviewedMatchDetailsProbeError(
+                    "legacy match-details route is audit-only after the reviewed route migration"
+                )
+        elif self.request_target != current_target:
             raise FotMobReviewedMatchDetailsProbeError(
-                "request_target does not match the reviewed match-details route"
+                "request_target does not match a reviewed match-details route"
             )
         if type(self.request_headers) is not tuple or self.request_headers != REQUEST_HEADERS:
             raise FotMobReviewedMatchDetailsProbeError(

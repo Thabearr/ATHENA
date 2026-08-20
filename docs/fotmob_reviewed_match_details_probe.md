@@ -28,7 +28,7 @@ PR #49 does **not** parse football data. It determines only whether one exact re
 The only reviewed target in this PR is:
 
 ```text
-https://www.fotmob.com/api/matchDetails?matchId=<positive decimal source match id>
+https://www.fotmob.com/api/data/matchDetails?matchId=<positive decimal source match id>
 ```
 
 The source match id is not supplied independently. It is derived from an exact source-scoped fixture identifier already present in the exact PR #48 receipt:
@@ -38,6 +38,10 @@ FOTMOB:1001 → matchId=1001
 ```
 
 No aliasing, fuzzy matching, team-name matching, global identity resolution, or caller-provided alternate source id is allowed.
+
+### 2026-08-20 transparent route migration
+
+A hosted transparent diagnostic for the exact reviewed Saturday fixture observed the historical `/api/matchDetails` route return HTTP 404 while `/api/data/matchDetails` returned HTTP 200 with `application/json; charset=utf-8`. The live builder therefore emits only the `/api/data/matchDetails` route for new requests. Pre-migration `/api/matchDetails` plans remain revalidatable only when their exact `request_started_at` predates `2026-08-20T19:42:27Z`, preserving historical audit without permitting the obsolete route for new acquisition. This migration changes transport location only; it grants no football semantics or downstream authority.
 
 ## Exact upstream gate
 
@@ -69,7 +73,7 @@ The completed response observation must also be strictly before kickoff. If a re
 The request uses `http.client.HTTPSConnection` directly with:
 
 ```text
-GET /api/matchDetails?matchId=<id>
+GET /api/data/matchDetails?matchId=<id>
 Accept: application/json
 User-Agent: ATHENA/1.0
 ```
