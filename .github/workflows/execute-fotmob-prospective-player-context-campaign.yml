@@ -73,6 +73,7 @@ jobs:
                 return;
               }
               core.setOutput('source_artifact_id', '');
+              core.setOutput('source_run_id', '');
               core.setOutput('source_head_sha', '');
               core.setOutput('candidate_sha', '');
               return;
@@ -125,6 +126,7 @@ jobs:
               return;
             }
             core.setOutput('source_artifact_id', artifactId[1]);
+            core.setOutput('source_run_id', sourceRun[1]);
             core.setOutput('source_head_sha', artifact.workflow_run.head_sha);
             core.setOutput('candidate_sha', candidate[1]);
 
@@ -165,6 +167,7 @@ jobs:
           path: source-campaign-artifact
           github-token: ${{ github.token }}
           repository: ${{ github.repository }}
+          run-id: ${{ steps.guard.outputs.source_run_id }}
 
       - name: Execute transparent prospective campaign stage
         id: campaign
