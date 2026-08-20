@@ -1,7 +1,7 @@
 """Exact PR193 player-context -> PR190 team-strength feature handoff.
 
 This boundary replays the frozen PR192 evidence through PR193, then maps only
-semantics actually admitted by PR193 into the PR190 candidate schema.  It does
+semantics actually admitted by PR193 into the PR190 candidate schema. It does
 not invent bench, position, historical-player, base-strength, probability,
 pricing, selection, or BET authority.
 """
@@ -9,6 +9,7 @@ pricing, selection, or BET authority.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
 import hashlib
 import json
 import re
@@ -61,10 +62,11 @@ _AUTHORITY = tuple(
         }.items()
     )
 )
-_EXPECTED_AVAILABLE_FEATURE_IDS = (
-    "away_unavailable_player_count",
-    "home_unavailable_player_count",
-)
+_EXPECTED_AVAILABLE_FEATURES = {
+    "away_unavailable_player_count": 5.0,
+    "home_unavailable_player_count": 1.0,
+}
+_EXPECTED_AVAILABLE_FEATURE_IDS = tuple(sorted(_EXPECTED_AVAILABLE_FEATURES))
 
 
 class RealPlayerContextTeamStrengthHandoffError(ValueError):
@@ -92,16 +94,26 @@ def _canonical(value: Any) -> bytes:
 
 
 def _source_identity(prefix: str, value: int | str) -> str:
+    if type(prefix) is not str or not prefix or prefix != prefix.strip():
+        raise RealPlayerContextTeamStrengthHandoffError("source identity prefix must be exact text")
     if type(value) is int:
         kind = "INTEGER"
-    elif type(value) is str and value:
+    elif type(value) is str and value and value == value.strip():
         kind = "STRING"
     else:
-        raise RealPlayerContextTeamStrengthHandoffError("source identity must be exact int/non-empty string")
+        raise RealPlayerContextTeamStrengthHandoffError(
+            "source identity must be exact int/non-empty trimmed string"
+        )
     return f"{prefix}:{kind}:{value}"
 
 
-def _new(**values: Any) -> ReviewedRealFotMobTeamStrengthHandoff:
+def _aware_utc(value: Any, label: str) -> dt.datetime:
+    if not isinstance(value, dt.datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise RealPlayerContextTeamStrengthHandoffError(f"{label} must be timezone-aware datetime")
+    return value.astimezone(dt.timezone.utc)
+
+
+def _new(**values: Any) -> "ReviewedRealFotMobTeamStrengthHandoff":
     obj = object.__new__(ReviewedRealFotMobTeamStrengthHandoff)
     expected = {field.name for field in dataclasses.fields(ReviewedRealFotMobTeamStrengthHandoff)}
     if set(values) != expected:
@@ -124,9 +136,9 @@ class ReviewedRealFotMobTeamStrengthHandoff:
     source_match_id: str
     home_team_id: str
     away_team_id: str
-    source_observed_at: Any
-    source_classified_at: Any
-    source_state_fresh_until: Any
+    source_observed_at: dt.datetime
+    source_classified_at: dt.datetime
+    source_state_fresh_until: dt.datetime
     candidate: TeamStrengthContextCandidate
     candidate_sha256: str
     candidate_size: int
@@ -153,8 +165,27 @@ class ReviewedRealFotMobTeamStrengthHandoff:
             raise RealPlayerContextTeamStrengthHandoffError("source raw SHA drift")
         if type(self.source_admission_size) is not int or self.source_admission_size <= 0:
             raise RealPlayerContextTeamStrengthHandoffError("source admission size drift")
+        if type(self.fixture_identifier) is not str or not self.fixture_identifier:
+            raise RealPlayerContextTeamStrengthHandoffError("fixture identity drift")
+        if type(self.source_match_id) is not str or not self.source_match_id:
+            raise RealPlayerContextTeamStrengthHandoffError("source match identity drift")
+        if (
+            type(self.home_team_id) is not str
+            or type(self.away_team_id) is not str
+            or not self.home_team_id
+            or not self.away_team_id
+            or self.home_team_id == self.away_team_id
+        ):
+            raise RealPlayerContextTeamStrengthHandoffError("team identity drift")
+        observed = _aware_utc(self.source_observed_at, "source_observed_at")
+        classified = _aware_utc(self.source_classified_at, "source_classified_at")
+        fresh_until = _aware_utc(self.source_state_fresh_until, "source_state_fresh_until")
+        if observed >= classified:
+            raise RealPlayerContextTeamStrengthHandoffError("source observation must precede classification")
         if type(self.candidate) is not TeamStrengthContextCandidate:
             raise RealPlayerContextTeamStrengthHandoffError("nested value must be exact PR190 candidate")
+        if classified >= self.candidate.kickoff:
+            raise RealPlayerContextTeamStrengthHandoffError("classification must remain prospective")
         candidate_bytes = canonical_team_strength_context_candidate_bytes(self.candidate)
         if self.candidate_sha256 != _sha(candidate_bytes) or self.candidate_size != len(candidate_bytes):
             raise RealPlayerContextTeamStrengthHandoffError("nested candidate canonical identity drift")
@@ -167,28 +198,49 @@ class ReviewedRealFotMobTeamStrengthHandoff:
             self.fixture_identifier,
             self.home_team_id,
             self.away_team_id,
-            self.source_classified_at,
+            classified,
         ):
             raise RealPlayerContextTeamStrengthHandoffError("nested fixture/team/as-of identity drift")
-        if self.candidate.home_lineup_state is not LineupState.UNVERIFIED_LINEUP_STATE or self.candidate.away_lineup_state is not LineupState.UNVERIFIED_LINEUP_STATE:
-            raise RealPlayerContextTeamStrengthHandoffError("missing bench must keep aggregate lineup state unverified")
-        if any(value for _, value in self.candidate.safety):
-            raise RealPlayerContextTeamStrengthHandoffError("nested PR190 candidate safety must remain all false")
-        available = tuple(
-            sorted(
-                item.feature_id.value
-                for item in self.candidate.features
-                if item.status is FeatureStatus.AVAILABLE
+        if (
+            self.candidate.home_lineup_state is not LineupState.UNVERIFIED_LINEUP_STATE
+            or self.candidate.away_lineup_state is not LineupState.UNVERIFIED_LINEUP_STATE
+        ):
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "missing bench must keep aggregate lineup state unverified"
             )
-        )
+        if any(value for _, value in self.candidate.safety):
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "nested PR190 candidate safety must remain all false"
+            )
+        available_rows = {
+            item.feature_id.value: item.value
+            for item in self.candidate.features
+            if item.status is FeatureStatus.AVAILABLE
+        }
+        available = tuple(sorted(available_rows))
         missing = sum(item.status is FeatureStatus.MISSING for item in self.candidate.features)
         blocked = sum(item.status is FeatureStatus.BLOCKED for item in self.candidate.features)
-        if available != _EXPECTED_AVAILABLE_FEATURE_IDS or self.available_feature_ids != available:
-            raise RealPlayerContextTeamStrengthHandoffError("available feature set exceeds exact admitted semantics")
+        if available_rows != _EXPECTED_AVAILABLE_FEATURES or self.available_feature_ids != available:
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "available feature set exceeds exact admitted semantics"
+            )
         if self.missing_feature_count != missing or self.blocked_feature_count != blocked:
             raise RealPlayerContextTeamStrengthHandoffError("feature status counts drift")
-        if self.source_state_fresh_until != self.source_classified_at:
-            raise RealPlayerContextTeamStrengthHandoffError("source freshness must not project beyond PR193 classification")
+        if any(
+            item.source_position is not None or item.position_group is not PositionGroup.UNKNOWN
+            for item in self.candidate.player_components
+        ):
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "position semantics leaked into team-strength candidate"
+            )
+        if any(item.status is FeatureStatus.AVAILABLE for item in self.candidate.player_components):
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "historical player features require reviewed history"
+            )
+        if fresh_until != classified:
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "source freshness must not project beyond PR193 classification"
+            )
         if tuple(self.authority.items()) != _AUTHORITY:
             raise RealPlayerContextTeamStrengthHandoffError("handoff authority drift")
 
@@ -221,6 +273,8 @@ class ReviewedRealFotMobTeamStrengthHandoff:
 def _candidate_from_admission(
     admission: ReviewedRealFotMobPlayerContextAdmission,
 ) -> TeamStrengthContextCandidate:
+    if type(admission) is not ReviewedRealFotMobPlayerContextAdmission:
+        raise RealPlayerContextTeamStrengthHandoffError("source must be exact PR193 admission")
     authority = dict(admission.authority)
     required_true = (
         "availability_array_semantics_authorized",
@@ -248,7 +302,9 @@ def _candidate_from_admission(
     for record_set in admission.record_sets:
         previous = side_team_ids.get(record_set.team_side)
         if previous is not None and previous != record_set.source_team_id:
-            raise RealPlayerContextTeamStrengthHandoffError("one team side binds multiple provider teams")
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "one team side binds multiple provider teams"
+            )
         side_team_ids[record_set.team_side] = record_set.source_team_id
     if set(side_team_ids) != {TeamSide.HOME, TeamSide.AWAY}:
         raise RealPlayerContextTeamStrengthHandoffError("exact HOME/AWAY team identity missing")
@@ -266,14 +322,14 @@ def _candidate_from_admission(
             kind = PlayerRecordKind.UNAVAILABLE
             unavailable_reason = record.unavailability_type
         else:
-            raise RealPlayerContextTeamStrengthHandoffError("unreviewed player scope cannot enter handoff")
+            raise RealPlayerContextTeamStrengthHandoffError(
+                "unreviewed player scope cannot enter handoff"
+            )
         player_records.append(
             PlayerRecordCandidate(
                 team_id=team_ids[record.team_side],
                 player_id=_source_identity("FOTMOB_PLAYER", record.provider_player_id),
                 kind=kind,
-                # PR190 has one aggregate lineup-state field. Because PR193 found no
-                # reviewed bench root, EXPECTED starters cannot make the whole lineup complete.
                 lineup_state=LineupState.UNVERIFIED_LINEUP_STATE,
                 source_position=None,
                 position_group=PositionGroup.UNKNOWN,
@@ -318,7 +374,9 @@ def _candidate_from_admission(
             evidence=(anchor,),
         )
     if set(availability) != {TeamSide.HOME, TeamSide.AWAY}:
-        raise RealPlayerContextTeamStrengthHandoffError("exact availability completeness is missing")
+        raise RealPlayerContextTeamStrengthHandoffError(
+            "exact availability completeness is missing"
+        )
 
     try:
         return build_team_strength_context_candidate(
@@ -342,7 +400,9 @@ def _candidate_from_admission(
             away_player_history_completeness=None,
         )
     except TeamStrengthContextError as exc:
-        raise RealPlayerContextTeamStrengthHandoffError("PR190 candidate reconstruction failed") from exc
+        raise RealPlayerContextTeamStrengthHandoffError(
+            "PR190 candidate reconstruction failed"
+        ) from exc
 
 
 def build_reviewed_real_fotmob_team_strength_handoff(
@@ -363,7 +423,9 @@ def build_reviewed_real_fotmob_team_strength_handoff(
         )
         admission_bytes = canonical_reviewed_real_fotmob_player_context_admission_bytes(admission)
     except Exception as exc:
-        raise RealPlayerContextTeamStrengthHandoffError("exact PR193 source replay failed") from exc
+        raise RealPlayerContextTeamStrengthHandoffError(
+            "exact PR193 source replay failed"
+        ) from exc
 
     candidate = _candidate_from_admission(admission)
     candidate_bytes = canonical_team_strength_context_candidate_bytes(candidate)
@@ -392,15 +454,21 @@ def build_reviewed_real_fotmob_team_strength_handoff(
         candidate_sha256=_sha(candidate_bytes),
         candidate_size=len(candidate_bytes),
         available_feature_ids=available,
-        missing_feature_count=sum(item.status is FeatureStatus.MISSING for item in candidate.features),
-        blocked_feature_count=sum(item.status is FeatureStatus.BLOCKED for item in candidate.features),
+        missing_feature_count=sum(
+            item.status is FeatureStatus.MISSING for item in candidate.features
+        ),
+        blocked_feature_count=sum(
+            item.status is FeatureStatus.BLOCKED for item in candidate.features
+        ),
         authority=types.MappingProxyType(dict(_AUTHORITY)),
     )
 
 
 def canonical_reviewed_real_fotmob_team_strength_handoff_bytes(value: Any) -> bytes:
     if type(value) is not ReviewedRealFotMobTeamStrengthHandoff:
-        raise RealPlayerContextTeamStrengthHandoffError("value must be exact reviewed handoff")
+        raise RealPlayerContextTeamStrengthHandoffError(
+            "value must be exact reviewed handoff"
+        )
     canonical_team_strength_context_candidate_bytes(value.candidate)
     value.__post_init__()
     return _canonical(value.to_dict())
