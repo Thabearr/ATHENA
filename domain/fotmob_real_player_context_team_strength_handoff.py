@@ -1,9 +1,9 @@
-"""Exact PR193 player-context -> PR190 team-strength feature handoff.
+"""Exact PR193 player-context -> PR190 team-strength candidate handoff.
 
 This boundary replays the frozen PR192 evidence through PR193, then maps only
-semantics actually admitted by PR193 into the PR190 candidate schema. It does
-not invent bench, position, historical-player, base-strength, probability,
-pricing, selection, or BET authority.
+semantics actually admitted by PR193 into the PR190 candidate schema. It proves
+the mapping but grants no team-strength feature, probability, pricing,
+selection, or BET authority.
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ from domain.fotmob_team_strength_fixture_intelligence import (
 
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-fotmob-real-player-context-team-strength-handoff-v1"
-HANDOFF_SCOPE = "EXACT_PR193_OBSERVATION_TEAM_STRENGTH_FEATURE_HANDOFF_ONLY"
+HANDOFF_SCOPE = "EXACT_PR193_OBSERVATION_TEAM_STRENGTH_CANDIDATE_HANDOFF_ONLY"
 SOURCE_ADMISSION_SHA256 = "acf53d913ee3d7a6c4f357860aa2730b5122ad8a169f4a38bcc4ab882c6d4ad8"
 SOURCE_ADMISSION_SIZE = 14089
 EXPECTED_CANDIDATE_SHA256 = "cc48bbcea5a17ff57a39cc951c5e69005008d857366359528aaf46f979c30745"
@@ -71,7 +71,7 @@ _AUTHORITY = tuple(
             "production_approval_authorized": False,
             "prospective_reuse_after_source_freshness_authorized": False,
             "selection_authorized": False,
-            "team_strength_feature_authorized": True,
+            "team_strength_feature_authorized": False,
         }.items()
     )
 )
@@ -162,7 +162,7 @@ class ReviewedRealFotMobTeamStrengthHandoff:
 
     def __init__(self, *_: Any, **__: Any) -> None:
         raise RealPlayerContextTeamStrengthHandoffError(
-            "authoritative handoff only from exact PR193 source replay"
+            "source-replayed handoff only from exact PR193 source replay"
         )
 
     def __post_init__(self) -> None:
