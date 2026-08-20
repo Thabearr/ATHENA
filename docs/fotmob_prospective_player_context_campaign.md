@@ -38,9 +38,12 @@ the exact source candidate:
 
 These values are comparisons, not fixture authority. The source match ID and
 `FOTMOB:<id>` fixture identity are recovered from the verified dataMatches
-capture. Matching is exact: there is no case folding, trimming, aliasing,
-nearest-time selection, fuzzy name comparison, public-page ID, or SportyBet
-input. Zero or multiple exact candidates fail closed.
+capture. Matching is exact against the reviewed `home_long_name` and
+`away_long_name` candidate fields; source display names such as `Nottm Forest`
+and `Leeds` are preserved in the candidate but are not target selectors. There
+is no case folding, trimming, aliasing, nearest-time selection, fuzzy name
+comparison, public-page ID, or SportyBet input. Zero or multiple exact
+candidates fail closed.
 
 ## Explicit review continuation
 
