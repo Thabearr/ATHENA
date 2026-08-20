@@ -26,7 +26,11 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from domain.markets import MARKET_REGISTRY, MarketId, OutcomeId
-from domain.model_status import MODEL_STATUS_REGISTRY
+from domain.model_status import (
+    MODEL_STATUS_REGISTRY,
+    PricingAuthority,
+    SelectionAuthority,
+)
 from domain.win_either_half_pricing_source_qualification import (
     canonical_market_registry_snapshot,
 )
@@ -655,15 +659,21 @@ def build_outputs(
         for market in sorted(MarketId, key=lambda item: item.value)
     }
 
-    # Assert 15 canonical markets and Win Either Half disabled
+    # Assert 15 canonical markets and Win Either Half authority disabled.
     if len(market_reg_snapshot) != 15:
         raise ProspectiveReplayExportError(
             f"Expected 15 canonical markets, found {len(market_reg_snapshot)}"
         )
-    if model_status_dict.get("HOME_WIN_EITHER_HALF") != "DISABLED":
-        raise ProspectiveReplayExportError("HOME_WIN_EITHER_HALF must be DISABLED")
-    if model_status_dict.get("AWAY_WIN_EITHER_HALF") != "DISABLED":
-        raise ProspectiveReplayExportError("AWAY_WIN_EITHER_HALF must be DISABLED")
+    for market in (MarketId.HOME_WIN_EITHER_HALF, MarketId.AWAY_WIN_EITHER_HALF):
+        definition = MODEL_STATUS_REGISTRY[market]
+        if (
+            definition.pricing_authority is not PricingAuthority.NOT_AUTHORIZED
+            or definition.selection_authority
+            is not SelectionAuthority.NOT_AUTHORIZED
+        ):
+            raise ProspectiveReplayExportError(
+                f"{market.value} must remain pricing/selection unauthorized"
+            )
 
     # Table 7: manifest JSON
     manifest_outputs: dict[str, Any] = {}

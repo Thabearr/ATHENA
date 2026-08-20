@@ -1035,8 +1035,9 @@ class WinEitherHalfPricingEvidenceTests(unittest.TestCase):
             self.assertNotIn(path, tracked)
         for market in PERMITTED_MARKETS:
             self.assertEqual(
-                MODEL_STATUS_REGISTRY[market].status, ModelStatus.DISABLED
+                MODEL_STATUS_REGISTRY[market].status, ModelStatus.EXPERIMENTAL
             )
+            self.assertFalse(MODEL_STATUS_REGISTRY[market].selectable)
 
 
 if __name__ == "__main__":

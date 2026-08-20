@@ -155,7 +155,10 @@ class EvidenceContractTests(unittest.TestCase):
             MODEL_STATUS_REGISTRY[
                 MarketId.HOME_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_1UP].status,

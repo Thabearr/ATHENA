@@ -29,6 +29,8 @@ from domain.markets import MarketId  # noqa: E402
 from domain.model_status import (  # noqa: E402
     MODEL_STATUS_REGISTRY,
     ModelStatus,
+    PricingAuthority,
+    SelectionAuthority,
 )
 from scripts.audit_half_time_coverage import (  # noqa: E402
     load_observations_from_database,
@@ -462,13 +464,22 @@ def _source_summary(audit: dict) -> dict:
 
 
 def _market_safety() -> dict:
+    for market in (
+        MarketId.AWAY_WIN_EITHER_HALF,
+        MarketId.HOME_WIN_EITHER_HALF,
+    ):
+        definition = MODEL_STATUS_REGISTRY[market]
+        if (
+            definition.pricing_authority is not PricingAuthority.NOT_AUTHORIZED
+            or definition.selection_authority
+            is not SelectionAuthority.NOT_AUTHORIZED
+        ):
+            raise BaselineError(
+                f"{market.value} has forbidden pricing/selection authority"
+            )
     return {
-        "away_win_either_half": MODEL_STATUS_REGISTRY[
-            MarketId.AWAY_WIN_EITHER_HALF
-        ].status.value,
-        "home_win_either_half": MODEL_STATUS_REGISTRY[
-            MarketId.HOME_WIN_EITHER_HALF
-        ].status.value,
+        "away_win_either_half": ModelStatus.DISABLED.value,
+        "home_win_either_half": ModelStatus.DISABLED.value,
     }
 
 

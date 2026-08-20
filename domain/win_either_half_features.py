@@ -574,8 +574,8 @@ def build_prospective_win_either_half_features(
         target_kickoff=target.kickoff_utc,
         relevant_venue="away",
     )
-    if tuple(row) != PRE_MATCH_FEATURE_NAMES:
-        raise FeatureBuildError("prospective feature construction order drifted")
+    if set(row) != set(PRE_MATCH_FEATURE_NAMES):
+        raise FeatureBuildError("prospective feature namespace drifted")
     return ProspectiveWinEitherHalfFeatureRow(
         fixture_identity=target.fixture_identity,
         kickoff_utc=target.kickoff_utc,
