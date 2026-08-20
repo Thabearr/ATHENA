@@ -1,13 +1,13 @@
 """Evidence-gated model-specific league priority for ATHENA accumulators.
 
-This module is deliberately stricter than the bootstrap league registry.  A
+This module is deliberately stricter than the bootstrap league registry. A
 model family may override the bootstrap league order only when ATHENA possesses
 reviewed, league-identified held-out evidence with exact committed/replayable
-metrics for that family.  Qualitative summaries, prestige, caller-provided
+metrics for that family. Qualitative summaries, prestige, caller-provided
 scores, and unsupported competition labels never create a reliability rank.
 
 At the current boundary no model family has enough reviewed league-level
-validation evidence to override the bootstrap order.  The resolver therefore
+validation evidence to override the bootstrap order. The resolver therefore
 returns an auditable bootstrap fallback while preserving the exact blocker that
 prevents evidence-ranked ordering.
 """
@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from config.league_priority import (
@@ -82,7 +83,7 @@ _SCORE_MATRIX_MARKETS = frozenset(
 )
 
 
-MODEL_LEAGUE_EVIDENCE: dict[ModelLeagueFamily, ModelLeagueEvidenceState] = {
+_MODEL_LEAGUE_EVIDENCE = {
     ModelLeagueFamily.SCORE_MATRIX_XG: ModelLeagueEvidenceState(
         family=ModelLeagueFamily.SCORE_MATRIX_XG,
         ranking_authorized=False,
@@ -129,9 +130,7 @@ MODEL_LEAGUE_EVIDENCE: dict[ModelLeagueFamily, ModelLeagueEvidenceState] = {
         family=ModelLeagueFamily.EARLY_PAYOUT_LEAD_PATH,
         ranking_authorized=False,
         primary_metric="independent_market_probability_log_loss",
-        evidence_references=(
-            "domain/early_payout_lead_path_probabilities.py",
-        ),
+        evidence_references=("domain/early_payout_lead_path_probabilities.py",),
         blocker=(
             "NO_INDEPENDENT_LEAGUE_LEVEL_VALIDATION: 1UP/2UP analytical semantics "
             "are reviewed, but no league-stratified held-out validation exists."
@@ -139,12 +138,17 @@ MODEL_LEAGUE_EVIDENCE: dict[ModelLeagueFamily, ModelLeagueEvidenceState] = {
     ),
 }
 
+# Public audit view is immutable. A candidate cannot mutate the process-wide
+# evidence registry to manufacture a ranking.
+MODEL_LEAGUE_EVIDENCE: Mapping[ModelLeagueFamily, ModelLeagueEvidenceState] = (
+    MappingProxyType(_MODEL_LEAGUE_EVIDENCE)
+)
 
 # Future reviewed evidence-ranked orders must be committed here only after the
 # associated ModelLeagueEvidenceState has ranking_authorized=True and the exact
-# replayable metric evidence has been reviewed.  The empty registry is
+# replayable metric evidence has been reviewed. The empty immutable registry is
 # intentional at this boundary.
-_EVIDENCE_RANKS: dict[ModelLeagueFamily, dict[str, int]] = {}
+_EVIDENCE_RANKS: Mapping[ModelLeagueFamily, Mapping[str, int]] = MappingProxyType({})
 
 
 def model_league_family_for_market(market_id: Any) -> ModelLeagueFamily | None:
@@ -182,7 +186,7 @@ def resolve_model_league_priority(
 ) -> ModelLeaguePriorityResolution:
     """Resolve effective league order without inventing model reliability.
 
-    Caller-supplied reliability scores/ranks are ignored.  Only the immutable
+    Caller-supplied reliability scores/ranks are ignored. Only the immutable
     reviewed registry in this module can create an evidence-ranked override.
     """
 
