@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import ast
+import hashlib
 import inspect
 
 import pytest
@@ -38,7 +39,11 @@ AS_OF = KICKOFF - dt.timedelta(hours=2)
 
 
 def anchor(seed: str, observed_at: dt.datetime | None = None) -> EvidenceAnchor:
-    return EvidenceAnchor(f"fotmob://{seed}", observed_at or AS_OF - dt.timedelta(days=1), (seed[0] if seed else "a") * 64)
+    return EvidenceAnchor(
+        f"fotmob://{seed}",
+        observed_at or AS_OF - dt.timedelta(days=1),
+        hashlib.sha256(seed.encode("utf-8")).hexdigest(),
+    )
 
 
 def player(team: str, pid: str, kind: PlayerRecordKind, *, state=LineupState.EXPECTED, group=PositionGroup.FWD, seed="a"):
