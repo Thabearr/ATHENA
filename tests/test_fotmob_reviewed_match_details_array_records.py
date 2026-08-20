@@ -217,7 +217,7 @@ def test_provider_player_identity_is_unique_across_both_fixture_teams():
 def test_starter_unavailable_conflict_is_not_resolved():
     value = json.loads(_raw())
     value["lineups"]["home"]["unavailable"] = [{"id": 101, "teamId": 10, "isHome": True, "position": "GK", "reason": "injury"}]
-    with pytest.raises(ReviewedMatchDetailsArrayRecordsError, match="contradictory reviewed scopes"):
+    with pytest.raises(ReviewedMatchDetailsArrayRecordsError, match="contradictory reviewed fixture scopes"):
         build_case(raw=_raw(value))
 
 
