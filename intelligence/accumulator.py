@@ -16,7 +16,7 @@ from domain.markets import (
     serialize_leg,
     serialize_selection,
 )
-from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.model_status import MODEL_STATUS_REGISTRY
 from domain.pricing import (
     DEFAULT_MAX_QUOTE_AGE_SECONDS,
     parse_bookmaker_quotes,
@@ -97,13 +97,10 @@ class AccumulatorEngine:
         model_status = MODEL_STATUS_REGISTRY[
             canonical_selection.market_id
         ]
-        if model_status.status in {
-            ModelStatus.DISABLED,
-            ModelStatus.UNSUPPORTED,
-        }:
+        if not model_status.selectable:
             return (
-                f"{prepared_fixture['market_display_name']} is "
-                f"{model_status.status.value.lower()} for accumulator use: "
+                f"{prepared_fixture['market_display_name']} has no explicit "
+                "selection authority for accumulator use: "
                 f"{model_status.reason}"
             )
 

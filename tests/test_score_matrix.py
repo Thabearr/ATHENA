@@ -233,7 +233,7 @@ class NormalizedScoreMatrixTests(unittest.TestCase):
 
         self.assertEqual(candidates, [])
 
-    def test_ranking_boost_can_reorder_eligible_candidates(self):
+    def test_ranking_boost_cannot_create_selection_authority(self):
         probabilities = {
             "DC_1X": 0.74,
             "DC_X2": 0.65,
@@ -244,39 +244,21 @@ class NormalizedScoreMatrixTests(unittest.TestCase):
             {"DC_1X": 0.02},
         )
 
-        self.assertEqual(
-            [candidate["verdict"] for candidate in unboosted],
-            ["DC_X2", "DC_1X"],
-        )
-        self.assertEqual(
-            [candidate["verdict"] for candidate in boosted],
-            ["DC_1X", "DC_X2"],
-        )
+        self.assertEqual(unboosted, [])
+        self.assertEqual(boosted, [])
 
-    def test_ranking_boost_does_not_change_model_probability_or_edge(self):
+    def test_ranking_boost_does_not_promote_analytical_probability(self):
         unboosted = build_viable_market_candidates(
             {"DC_1X": 0.73},
             {},
-        )[0]
+        )
         boosted = build_viable_market_candidates(
             {"DC_1X": 0.73},
             {"DC_1X": 0.20},
-        )[0]
+        )
 
-        self.assertEqual(boosted["prob"], unboosted["prob"])
-        self.assertEqual(
-            boosted["model_fair_odds"],
-            unboosted["model_fair_odds"],
-        )
-        self.assertEqual(
-            boosted["edge_above_baseline"],
-            unboosted["edge_above_baseline"],
-        )
-        self.assertEqual(boosted["ranking_boost"], 0.20)
-        self.assertGreater(
-            boosted["ranking_score"],
-            unboosted["ranking_score"],
-        )
+        self.assertEqual(unboosted, [])
+        self.assertEqual(boosted, [])
 
 
 if __name__ == "__main__":

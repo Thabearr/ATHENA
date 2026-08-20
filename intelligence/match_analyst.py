@@ -249,6 +249,16 @@ def build_market_evaluations(
                 outcome_id=selection.outcome_id,
                 line=selection.line,
                 model_status=model_definition.status,
+                analytical_probability_capability=(
+                    model_definition.analytical_probability_capability
+                ),
+                settlement_capability=model_definition.settlement_capability,
+                calibration_status=model_definition.calibration_status,
+                fresh_confirmation_status=(
+                    model_definition.fresh_confirmation_status
+                ),
+                pricing_authority=model_definition.pricing_authority,
+                selection_authority=model_definition.selection_authority,
                 probability=probability,
                 probability_method=(
                     candidate.get("probability_method")
@@ -283,6 +293,16 @@ def build_market_evaluations(
                 ].supported_outcomes[0],
                 line=None,
                 model_status=model_definition.status,
+                analytical_probability_capability=(
+                    model_definition.analytical_probability_capability
+                ),
+                settlement_capability=model_definition.settlement_capability,
+                calibration_status=model_definition.calibration_status,
+                fresh_confirmation_status=(
+                    model_definition.fresh_confirmation_status
+                ),
+                pricing_authority=model_definition.pricing_authority,
+                selection_authority=model_definition.selection_authority,
                 probability=None,
                 probability_method=model_definition.probability_method,
                 probability_inputs=model_definition.probability_inputs,
@@ -927,8 +947,9 @@ class MatchAnalyst:
             "UNDER_35": prob_under_35,
             "GG_YES": prob_gg,
             "GG_NO": score_distribution.btts_no,
-            "DNB_HOME": prob_home_win,
-            "DNB_AWAY": prob_away_win,
+            # DNB is deliberately absent here: home/away win mass alone is not
+            # a DNB probability. The canonical score-matrix projector exposes
+            # its complete win/push/loss settlement distribution instead.
             # Win-either-half is intentionally disabled until ATHENA has a
             # valid half-by-half score model. Full-time win probability * 1.35
             # is not a defensible probability calculation.
@@ -1020,12 +1041,12 @@ class MatchAnalyst:
                 selected_verdict=None,
                 min_probability=MIN_PROB,
             )
-            no_bet_reasons = [
-                "No market cleared the minimum probability and "
-                "positive baseline-delta thresholds."
+            analytical_reasons = [
+                "Score-matrix probabilities remain available for reporting, "
+                "but no market has explicit selection authority."
             ]
             return {
-                "decision_status": DecisionStatus.NO_BET.value,
+                "decision_status": DecisionStatus.ANALYTICAL_CANDIDATE.value,
                 "recommended_analytical_verdict": None,
                 "edge_differential": None,
                 "edge_is_bookmaker_value": False,
@@ -1035,13 +1056,13 @@ class MatchAnalyst:
                 "stale_data": stale_data,
                 "viable_markets": [],
                 "reasoning_verdicts": [],
-                "no_bet_reasons": no_bet_reasons,
+                "no_bet_reasons": [],
                 "evidence_report": build_fixture_evidence_report(
                     fixture_context,
                     evidence_items,
                     market_evaluations,
-                    DecisionStatus.NO_BET,
-                    no_bet_reasons,
+                    DecisionStatus.ANALYTICAL_CANDIDATE,
+                    analytical_reasons,
                     score_matrix_audit=score_matrix_audit,
                 ),
             }

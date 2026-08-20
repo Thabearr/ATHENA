@@ -33,10 +33,16 @@ from domain.fotmob_reviewed_match_details_model_feature_handoff import (
 )
 from domain.markets import MarketId
 from domain.model_status import (
+    AnalyticalProbabilityCapability,
+    CalibrationStatus,
+    FreshConfirmationStatus,
     MODEL_STATUS_REGISTRY,
     MarketModelStatus,
     MissingInputPolicy,
     ModelStatus,
+    PricingAuthority,
+    SelectionAuthority,
+    SettlementCapability,
     get_model_status,
 )
 
@@ -186,6 +192,16 @@ def _registry_records() -> tuple[dict[str, Any], ...]:
             raise _error("registry model status must be exact ModelStatus")
         if not isinstance(definition.missing_input_policy, MissingInputPolicy):
             raise _error("registry missing-input policy must be exact MissingInputPolicy")
+        typed_capabilities = (
+            (definition.analytical_probability_capability, AnalyticalProbabilityCapability),
+            (definition.settlement_capability, SettlementCapability),
+            (definition.calibration_status, CalibrationStatus),
+            (definition.fresh_confirmation_status, FreshConfirmationStatus),
+            (definition.pricing_authority, PricingAuthority),
+            (definition.selection_authority, SelectionAuthority),
+        )
+        if any(not isinstance(value, expected) for value, expected in typed_capabilities):
+            raise _error("registry capability/authority metadata must remain typed")
 
         if definition.probability_method is None:
             probability_method = None
@@ -228,6 +244,16 @@ def _registry_records() -> tuple[dict[str, Any], ...]:
                 "probability_inputs": [item.value for item in feature_ids],
                 "pricing_inputs": list(pricing_inputs),
                 "missing_input_policy": definition.missing_input_policy.value,
+                "analytical_probability_capability": (
+                    definition.analytical_probability_capability.value
+                ),
+                "settlement_capability": definition.settlement_capability.value,
+                "calibration_status": definition.calibration_status.value,
+                "fresh_confirmation_status": (
+                    definition.fresh_confirmation_status.value
+                ),
+                "pricing_authority": definition.pricing_authority.value,
+                "selection_authority": definition.selection_authority.value,
             }
         )
     return tuple(records)

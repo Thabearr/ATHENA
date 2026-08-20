@@ -7,7 +7,15 @@ from enum import Enum
 from typing import Any, Dict, List, Mapping, Optional, Sequence
 
 from domain.markets import DecisionStatus, MarketId, OutcomeId
-from domain.model_status import ModelStatus
+from domain.model_status import (
+    AnalyticalProbabilityCapability,
+    CalibrationStatus,
+    FreshConfirmationStatus,
+    ModelStatus,
+    PricingAuthority,
+    SelectionAuthority,
+    SettlementCapability,
+)
 
 
 class EvidenceStatus(str, Enum):
@@ -80,6 +88,12 @@ class MarketEvaluation:
     outcome_id: OutcomeId
     line: Optional[float]
     model_status: ModelStatus
+    analytical_probability_capability: AnalyticalProbabilityCapability
+    settlement_capability: SettlementCapability
+    calibration_status: CalibrationStatus
+    fresh_confirmation_status: FreshConfirmationStatus
+    pricing_authority: PricingAuthority
+    selection_authority: SelectionAuthority
     probability: Optional[float]
     probability_method: Optional[str]
     probability_inputs: Sequence[str]
@@ -98,6 +112,14 @@ class MarketEvaluation:
             "outcome_id": self.outcome_id.value,
             "line": self.line,
             "model_status": self.model_status.value,
+            "analytical_probability_capability": (
+                self.analytical_probability_capability.value
+            ),
+            "settlement_capability": self.settlement_capability.value,
+            "calibration_status": self.calibration_status.value,
+            "fresh_confirmation_status": self.fresh_confirmation_status.value,
+            "pricing_authority": self.pricing_authority.value,
+            "selection_authority": self.selection_authority.value,
             "probability": self.probability,
             "probability_method": self.probability_method,
             "probability_inputs": list(self.probability_inputs),
