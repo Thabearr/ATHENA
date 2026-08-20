@@ -385,7 +385,7 @@ def build_reviewed_real_fotmob_player_context_admission(
     if type(general) is not dict or type(content) is not dict:
         raise RealPlayerContextAdmissionError("required response objects missing")
     if (general.get("matchId"), general.get("matchTimeUTCDate"), general.get("started"), general.get("finished")) != (
-        int(SOURCE_MATCH_ID), "2026-08-22T14:00:00.000Z", False, False):
+        SOURCE_MATCH_ID, "2026-08-22T14:00:00.000Z", False, False):
         raise RealPlayerContextAdmissionError("fixture state drift")
     if general.get("homeTeam") != {"name": HOME_TEAM_NAME, "id": HOME_TEAM_ID} or general.get("awayTeam") != {"name": AWAY_TEAM_NAME, "id": AWAY_TEAM_ID}:
         raise RealPlayerContextAdmissionError("HOME/AWAY identity drift")
