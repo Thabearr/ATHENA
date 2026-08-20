@@ -5,6 +5,9 @@ import math
 from pathlib import Path
 import unittest
 
+from domain.early_payout_lead_path_probabilities import (
+    project_early_payout_market,
+)
 from domain.markets import MarketId, OutcomeId
 from domain.model_status import (
     AnalyticalProbabilityCapability,
@@ -243,7 +246,16 @@ class ScoreMatrixMarketProbabilityTests(unittest.TestCase):
             total_goal_lines=(1.5, 2.5, 3.5),
             asian_handicap_home_lines=(-0.25, 0.0, 0.5),
         )
-        represented = {item.market_id for item in projections}
+        early_payout_projections = tuple(
+            project_early_payout_market(self.matrix, market)
+            for market in (
+                MarketId.MATCH_RESULT_1UP,
+                MarketId.MATCH_RESULT_2UP,
+            )
+        )
+        represented = {item.market_id for item in projections} | {
+            item.market_id for item in early_payout_projections
+        }
         self.assertEqual(
             represented,
             {
