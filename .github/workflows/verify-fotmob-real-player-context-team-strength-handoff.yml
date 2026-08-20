@@ -122,7 +122,7 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.guard.outputs.run_id }}
 
-      - name: Full-replay PR193 and build team-strength handoff
+      - name: Full-replay PR193 and build team-strength candidate handoff
         id: handoff
         env:
           PYTHONPATH: ${{ github.workspace }}
@@ -137,9 +137,11 @@ jobs:
             | tee handoff-summary.txt
           handoff_sha="$(awk -F= '/^handoff_sha256=/{print $2}' handoff-summary.txt)"
           test "${#handoff_sha}" -eq 64
+          grep -Fx 'team_strength_candidate_mapping_verified=true' handoff-summary.txt
+          grep -Fx 'team_strength_feature_authorized=false' handoff-summary.txt
           echo "handoff_sha=${handoff_sha}" >> "${GITHUB_OUTPUT}"
 
-      - name: Upload exact team-strength handoff proof
+      - name: Upload exact team-strength candidate handoff proof
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: fotmob-real-player-context-team-strength-handoff
@@ -153,15 +155,17 @@ jobs:
         run: |
           set -euo pipefail
           {
-            echo '## Real FotMob player-context team-strength handoff'
+            echo '## Real FotMob player-context team-strength candidate handoff'
             echo
             echo "- exact PR head: ${{ steps.guard.outputs.head_sha }}"
             echo "- source PR192 run: ${{ steps.guard.outputs.run_id }}"
             echo "- source artifact id: ${{ steps.guard.outputs.artifact_id }}"
             echo "- handoff SHA-256: ${{ steps.handoff.outputs.handoff_sha }}"
-            echo '- exact-observation team-strength feature authority: TRUE'
-            echo '- available features: home/away unavailable-player count only'
+            echo '- exact source-replayed candidate mapping: VERIFIED'
+            echo '- team-strength feature authority: FALSE'
+            echo '- candidate AVAILABLE resolutions: home/away unavailable-player count only'
             echo '- aggregate lineup state: UNVERIFIED because bench root was not reviewed/present'
+            echo '- PR191 PR65/PR66 authority path: NOT BYPASSED'
             echo '- position semantics: NOT USED'
             echo '- historical player evidence: NOT USED'
             echo '- reuse after PR193 freshness instant: FALSE'
