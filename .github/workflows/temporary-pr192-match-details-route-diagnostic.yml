@@ -1,0 +1,42 @@
+name: Temporary PR192 Match-Details Route Diagnostic
+
+on:
+  pull_request:
+    types: [edited]
+
+jobs:
+  diagnose:
+    if: >-
+      github.event.pull_request.number == 192 &&
+      github.actor == 'Thabearr' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/fotmob-prospective-player-context-campaign' &&
+      contains(github.event.pull_request.body, '<!-- ATHENA_PR192_ROUTE_DIAGNOSTIC_V1 -->')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Probe transparent FotMob match-details route variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          for route in \
+            '/api/matchDetails?matchId=5795367' \
+            '/api/data/matchDetails?matchId=5795367'
+          do
+            headers="$(mktemp)"
+            body="$(mktemp)"
+            status="$(curl --silent --show-error --max-time 30 \
+              --header 'Accept: application/json' \
+              --header 'User-Agent: ATHENA/1.0' \
+              --dump-header "$headers" \
+              --output "$body" \
+              --write-out '%{http_code}' \
+              "https://www.fotmob.com${route}")"
+            content_type="$(awk 'BEGIN{IGNORECASE=1} /^content-type:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$headers")"
+            location="$(awk 'BEGIN{IGNORECASE=1} /^location:/ {sub(/^[^:]*:[[:space:]]*/, ""); sub(/\r$/, ""); print; exit}' "$headers")"
+            size="$(wc -c < "$body" | tr -d ' ')"
+            sha="$(sha256sum "$body" | awk '{print $1}')"
+            echo "route=${route} status=${status} content_type=${content_type:-NONE} location=${location:-NONE} size=${size} sha256=${sha}"
+            rm -f "$headers" "$body"
+          done
