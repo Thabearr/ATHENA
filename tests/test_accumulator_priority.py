@@ -62,7 +62,6 @@ def test_alias_matching_is_whole_name_not_substring() -> None:
 def test_accents_and_punctuation_normalize_without_fuzzy_matching() -> None:
     assert resolve_league_priority("Süper Lig").canonical_name == "Süper Lig"
     assert resolve_league_priority("SUPER-LIG").canonical_name == "Süper Lig"
-    assert resolve_league_priority("random super lig reserve").canonical_name if False else True
     assert resolve_league_priority("random super lig reserve") is None
 
 
