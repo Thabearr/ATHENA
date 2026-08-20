@@ -1,0 +1,113 @@
+name: Temporary PR192 Route Migration Implementation
+
+on:
+  pull_request:
+    types: [edited]
+
+jobs:
+  implement:
+    if: >-
+      github.event.pull_request.number == 192 &&
+      github.actor == 'Thabearr' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/fotmob-prospective-player-context-campaign' &&
+      contains(github.event.pull_request.body, '<!-- ATHENA_PR192_ROUTE_MIGRATION_IMPLEMENT_V1 -->')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout implementation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: evidence/fotmob-prospective-player-context-campaign
+          fetch-depth: 0
+      - name: Apply reviewed transparent route migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          def replace_exact(path, old, new, count=1):
+              p = Path(path)
+              text = p.read_text(encoding='utf-8')
+              actual = text.count(old)
+              if actual != count:
+                  raise SystemExit(f'{path}: expected {count} occurrences, found {actual}: {old!r}')
+              p.write_text(text.replace(old, new), encoding='utf-8')
+
+          replace_exact(
+              'domain/fotmob_reviewed_match_details_probe.py',
+              'ALLOWED_PATH = "/api/matchDetails"\nMAX_SAMPLE_BYTES = 4096',
+              'LEGACY_ALLOWED_PATH = "/api/matchDetails"\nALLOWED_PATH = "/api/data/matchDetails"\nROUTE_MIGRATION_EFFECTIVE_AT = datetime.datetime(\n    2026, 8, 20, 19, 42, 27, tzinfo=datetime.timezone.utc\n)\nMAX_SAMPLE_BYTES = 4096',
+          )
+          replace_exact(
+              'domain/fotmob_reviewed_match_details_probe.py',
+              '    return f"{ALLOWED_PATH}?matchId={source_match_id}"\n\n\ndef _revalidate_verified_bootstrap_artifact(',
+              '    return f"{ALLOWED_PATH}?matchId={source_match_id}"\n\n\ndef legacy_request_target(source_match_id: Any) -> str:\n    """Reconstruct the pre-migration route only for historical plan replay."""\n\n    # Reuse the current validator so legacy replay cannot weaken match-id syntax.\n    request_target(source_match_id)\n    return f"{LEGACY_ALLOWED_PATH}?matchId={source_match_id}"\n\n\ndef _revalidate_verified_bootstrap_artifact(',
+          )
+          replace_exact(
+              'domain/fotmob_reviewed_match_details_probe.py',
+              '        if self.request_target != request_target(source_match_id):\n            raise FotMobReviewedMatchDetailsProbeError(\n                "request_target does not match the reviewed match-details route"\n            )',
+              '        current_target = request_target(source_match_id)\n        legacy_target = legacy_request_target(source_match_id)\n        if self.request_target == legacy_target:\n            if started >= ROUTE_MIGRATION_EFFECTIVE_AT:\n                raise FotMobReviewedMatchDetailsProbeError(\n                    "legacy match-details route is audit-only after the reviewed route migration"\n                )\n        elif self.request_target != current_target:\n            raise FotMobReviewedMatchDetailsProbeError(\n                "request_target does not match a reviewed match-details route"\n            )',
+          )
+
+          replace_exact(
+              'tests/test_fotmob_reviewed_match_details_probe.py',
+              'assert request_target("1001") == "/api/matchDetails?matchId=1001"',
+              'assert request_target("1001") == "/api/data/matchDetails?matchId=1001"',
+          )
+          replace_exact(
+              'tests/test_fotmob_reviewed_match_details_probe.py',
+              'assert connection.requests == [("GET", "/api/matchDetails?matchId=1001", True)]',
+              'assert connection.requests == [("GET", "/api/data/matchDetails?matchId=1001", True)]',
+          )
+          replace_exact(
+              'tests/test_capture_fotmob_reviewed_match_details.py',
+              'assert connection.requests == [("GET", "/api/matchDetails?matchId=1001", True)]',
+              'assert connection.requests == [("GET", "/api/data/matchDetails?matchId=1001", True)]',
+          )
+
+          replace_exact(
+              'docs/fotmob_reviewed_match_details_probe.md',
+              'https://www.fotmob.com/api/matchDetails?matchId=<positive decimal source match id>',
+              'https://www.fotmob.com/api/data/matchDetails?matchId=<positive decimal source match id>',
+          )
+          replace_exact(
+              'docs/fotmob_reviewed_match_details_probe.md',
+              'GET /api/matchDetails?matchId=<id>',
+              'GET /api/data/matchDetails?matchId=<id>',
+          )
+          replace_exact(
+              'docs/fotmob_reviewed_match_details_probe.md',
+              'No aliasing, fuzzy matching, team-name matching, global identity resolution, or caller-provided alternate source id is allowed.\n',
+              'No aliasing, fuzzy matching, team-name matching, global identity resolution, or caller-provided alternate source id is allowed.\n\n### 2026-08-20 transparent route migration\n\nA hosted transparent diagnostic for the exact reviewed Saturday fixture observed the historical `/api/matchDetails` route return HTTP 404 while `/api/data/matchDetails` returned HTTP 200 with `application/json; charset=utf-8`. The live builder therefore emits only the `/api/data/matchDetails` route for new requests. Pre-migration `/api/matchDetails` plans remain revalidatable only when their exact `request_started_at` predates `2026-08-20T19:42:27Z`, preserving historical audit without permitting the obsolete route for new acquisition. This migration changes transport location only; it grants no football semantics or downstream authority.\n',
+          )
+
+          campaign_doc = Path('docs/fotmob_prospective_player_context_campaign.md')
+          text = campaign_doc.read_text(encoding='utf-8')
+          marker = '## Transparent acquisition\n'
+          if text.count(marker) != 1:
+              raise SystemExit('campaign doc transparent acquisition marker drift')
+          note = '''## Reviewed match-details route migration\n\nDuring the real prospective campaign, the historical reviewed route `/api/matchDetails` returned a non-200 response. A separate transparent discovery-only hosted diagnostic at the same exact PR head and source match id observed:\n\n- `/api/matchDetails?matchId=<id>` → HTTP 404, HTML;\n- `/api/data/matchDetails?matchId=<id>` → HTTP 200, `application/json; charset=utf-8`.\n\nThe PR #49 live request builder is therefore migrated to `/api/data/matchDetails` for prospective requests. Historical pre-migration plans remain audit-replayable under a strict timestamp cutoff. No X-Mas header, cookie, browser impersonation, bypass client, or semantic inference was introduced. The diagnostic itself is discovery evidence only; the trusted evidence path still begins only when the exact PR #50 response is durably captured and replayed through PR #52/53.\n\n'''
+          campaign_doc.write_text(text.replace(marker, note + marker), encoding='utf-8')
+          PY
+
+          git rm .github/workflows/temporary-pr192-match-details-route-diagnostic.yml
+          git rm .github/workflows/temporary-pr192-route-migration-implementation.yml
+          git diff --check
+          git status --short
+      - name: Commit exact route migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Thabearr'
+          git config user.email '113853913+Thabearr@users.noreply.github.com'
+          git add domain/fotmob_reviewed_match_details_probe.py \
+                  tests/test_fotmob_reviewed_match_details_probe.py \
+                  tests/test_capture_fotmob_reviewed_match_details.py \
+                  docs/fotmob_reviewed_match_details_probe.md \
+                  docs/fotmob_prospective_player_context_campaign.md
+          git commit -m 'Migrate reviewed FotMob match-details route'
+          git push origin HEAD:evidence/fotmob-prospective-player-context-campaign
