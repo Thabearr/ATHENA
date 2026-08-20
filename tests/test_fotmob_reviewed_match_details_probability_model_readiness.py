@@ -349,12 +349,11 @@ def test_malformed_registry_fails_closed(monkeypatch, mutation) -> None:
                 probability_inputs=("home_form", "home_form"),
             )
         else:
-            with pytest.raises(
-                ValueError,
-                match="analytically available market requires a method",
-            ):
-                dataclasses.replace(base, probability_method=None)
-            return
+            # MarketModelStatus now rejects this contradiction during normal
+            # construction. Forge it only to keep exercising the downstream
+            # canonical-registry fail-closed boundary independently.
+            replacement = dataclasses.replace(base)
+            object.__setattr__(replacement, "probability_method", None)
         registry[MarketId.MATCH_RESULT] = replacement
     monkeypatch.setattr(module, "MODEL_STATUS_REGISTRY", registry)
     monkeypatch.setattr(module, "get_model_status", lambda market_id: registry[market_id])
