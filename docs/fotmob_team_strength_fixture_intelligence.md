@@ -1,101 +1,121 @@
-# Reviewed FotMob team strength and fixture intelligence
+# FotMob team strength and fixture intelligence candidate
 
 ## Boundary
 
-This boundary produces transparent, deterministic candidate features answering
-how strong the two teams are expected to be for one fixture. It stops before
+This module preserves transparent, deterministic candidate calculations for
+base strength, available-team strength, and fixture context. It stops before
 expected-goals adjustment or probability inference.
 
-The layers remain separate:
+The reviewed FotMob lineup/injury array lineage required to authorize a real
+team-strength snapshot does not yet exist at this repository base. The
+caller-constructible result is therefore `TeamStrengthContextCandidate`, with:
 
-1. **Base team strength** preserves reviewed Elo, form, attack, defence,
-   historical xG and venue-performance components independently.
-2. **Available team strength** uses exact provider player IDs, explicitly
-   expected or confirmed lineups, unavailable-player evidence, strictly-prior
-   starts/minutes/ratings, positional groups, continuity and bench coverage.
-3. **Fixture context** exposes raw rest and schedule-window counts. Reviewed
-   weather or venue values may be retained as
-   `SUPPORTED_CONTEXT_NOT_YET_MODEL_FEATURE`; no coefficient is invented.
-4. A future PR #191 may compare models and decide empirically whether any
-   candidate variable improves expected-goals prediction.
+- dataset `athena-fotmob-team-strength-fixture-intelligence-candidate-v1`;
+- scope `SCHEMA_ONLY_CANDIDATE_PENDING_FULLY_REVALIDATED_FOTMOB_ARRAY_LINEAGE`;
+- lineage status `BLOCKED_MISSING_FULLY_REVALIDATED_FOTMOB_ARRAY_LINEAGE`;
+- every authority flag, including `team_strength_feature_authorized`, false.
 
-The existing six `ModelFeatureId` values are unchanged. This module defines a
-separate team-strength/context namespace and does not relabel player evidence
-as form, Elo, fatigue, or freshness.
+`build_team_strength_context_snapshot(...)` always fails closed. A caller-
+supplied SHA, source reference, semantic label, or completeness candidate can
+never create an authorized snapshot.
 
-## Reviewed source-record structures
+The calculation layers remain separate:
 
-The module does not parse arbitrary FotMob arrays and does not approve wildcard
-paths. No raw lineup/injury JSON path was promoted because the preserved
-reviewed evidence at this base does not establish one. The exact supported
-boundary is instead the following narrow set of source-anchored semantic record
-types; an upstream extractor must establish these records before this builder
-can consume them:
+1. **Base team strength** keeps Elo, form, attack, defence, historical xG and
+   venue-performance candidates independent.
+2. **Available team strength** keeps player identity, lineup, availability,
+   starts, minutes, ratings, position, continuity and depth components visible.
+3. **Fixture context** keeps raw rest and schedule counts. Supported scalar
+   context may be retained as `SUPPORTED_CONTEXT_NOT_YET_MODEL_FEATURE`.
+4. Future work may admit the evidence lineage; PR #191 may only test variables
+   after that admission exists.
 
-- `ReviewedPlayerRecord`: exact team/player IDs, starter/bench/unavailable role,
-  explicit lineup state, exact source position and reviewed coarse position,
-  unavailability reason, observation time, source reference and evidence hash;
-- `HistoricalPlayerAppearance`: completed strictly-prior fixture identity,
-  team/player IDs, starter state, minutes, optional rating and venue side;
-- `HistoricalTeamFixture`: completed fixture/team identity and kickoff used for
-  schedule measures;
-- `BaseStrengthComponent`: one reviewed long-term component with its own
-  evidence anchor;
-- `SupportedContextRecord`: preserved reviewed context that is not yet a model
-  feature.
+The existing six `ModelFeatureId` values remain unchanged. The separate typed
+66-member `TeamStrengthFeatureId` namespace does not relabel player evidence as
+form, Elo, fatigue, or freshness.
 
-Array order is irrelevant. Exact player IDs anchor identity. Duplicate or
-contradictory current records fail closed. Display names are not identity.
-Unknown source structures must first receive their own semantics review; the
-legacy advanced scraper is not connected.
+## Source and semantic status
 
-Availability-list completeness, player-history completeness, and schedule-
-history completeness are not inferred from an empty tuple. Each team requires
-its own `EvidenceAnchor` receipt for those claims. Without the corresponding
-receipt, dependent values remain `MISSING`; contradictory availability is
-`BLOCKED`. The canonical snapshot carries every material source reference,
-observation time, and evidence SHA, while every feature links to the exact SHA
-set that produced it.
+No raw lineup/injury JSON path is approved here because the preserved reviewed
+evidence at this base establishes none. `PlayerRecordCandidate`, historical
+appearance/fixture candidates, base components, and context records are schema
+objects, not proof that their contents came from FotMob.
 
-## Timing and lineup semantics
+Candidate evidence records preserve `SUPPORTED`, `STALE`, `CONFLICTED`, or
+`UNVERIFIED` status. Current player evidence also requires `valid_through`.
+Stale, conflicted, unverified, or expired evidence blocks affected resolutions.
+These status fields remain candidate inputs: only a future full-lineage adapter
+may derive them from reviewed artifacts.
 
-Every material observation must be at or before the snapshot `as_of`, and
-`as_of` must be strictly before kickoff. Post-kickoff evidence is rejected.
-Historical appearances and fixtures contribute only when their kickoff is
-strictly before the target kickoff; same-kickoff and future records are
-excluded.
+Expected versus confirmed lineup state and source-position-to-GK/DEF/MID/FWD
+mapping likewise remain unauthorized caller assertions in this candidate
+layer. Proximity to kickoff never upgrades a lineup, and neither shirt number
+nor player name supplies a position mapping.
 
-Lineup states are exactly `CONFIRMED`, `EXPECTED`, `NOT_AVAILABLE`, or
-`UNVERIFIED_LINEUP_STATE`. Proximity to kickoff never upgrades a lineup.
-Missing/unverified lineups remain blocked, and missing availability evidence
-does not become zero unavailable players.
+The future authoritative adapter must:
 
-## Player quality and reliability
+1. fully replay the existing PR52→PR65 reviewed match-details chain;
+2. mechanically bind exact raw array records and provider/player identities;
+3. revalidate reviewed lineup, availability, position and freshness semantics;
+4. reconstruct every candidate input from those receipts rather than accepting
+   caller values;
+5. compare the rebuilt canonical snapshot to the supplied artifact and bytes.
 
-No subjective impact weight exists. Immutable per-player records expose
-previous-5 and previous-10 starts, minutes and team-minute share; recent XI
-participation; minutes-weighted rating; rating observation count; and rating
-minutes. The separate team namespace exposes availability shares, XI arithmetic
-and minutes-weighted rating, position-group rating components, most-recent and
-five-match continuity, retained minutes, replacement counts, replacement
-evidence gaps, and bench coverage.
+Until that exists, team-strength feature authority remains false.
 
-Ratings remain missing when no rating sample exists; they are never zero-filled.
-GK, DEF, MID and FWD aggregates remain separate. A source position can be
-preserved while its reviewed coarse mapping remains `UNKNOWN`; neither shirt
-number nor player name supplies a mapping. Five- and ten-match evidence windows
-remain visible rather than one being declared best.
+## Completeness
 
-The snapshot resolves the complete, typed 66-member
-`TeamStrengthFeatureId` namespace. It never adds to or changes the six generic
-`ModelFeatureId` members.
+An empty tuple or plain `EvidenceAnchor` never proves completeness.
+`CompletenessReceiptCandidate` binds:
+
+- provider and source dataset;
+- exact scope (`CURRENT_AVAILABILITY`, `SCHEDULE_HISTORY`, or
+  `PLAYER_HISTORY`);
+- target fixture, team and as-of;
+- exact time range and fixture identities;
+- record count and source evidence set;
+- disposition `CANDIDATE_ONLY_UNREVIEWED`.
+
+Counts and identities must reconcile with the supplied candidate records. The
+typed receipt exposes what was claimed but does not make the claim reviewed.
+A future reviewed completeness receipt must be source-bound and full-replayed
+before absence or sparse history may create an authorized zero/count.
+
+## Timing and coverage
+
+`as_of` is strictly before kickoff. Material observations must be at or before
+`as_of` and before kickoff. Historical appearances bind to exact completed
+fixture identity, kickoff, team and venue and contribute only when strictly
+earlier than the target. Same-kickoff and future records are excluded.
+
+Per-player candidate records expose previous-5 and previous-10:
+
+- starts and start share;
+- minutes and team-minute share;
+- exact contributing fixture count;
+- exact window coverage;
+- minutes-weighted rating, rating count and rating minutes;
+- recent-XI participation.
+
+Thus one contributing match may have candidate `start_share_previous_10=1.0`,
+but it also records count `1` and coverage `0.1`; it cannot look like a complete
+ten-match sample.
+
+Missing ratings remain missing, not zero. Missing context cannot be labelled
+`SUPPORTED_CONTEXT_NOT_YET_MODEL_FEATURE`; supported context requires a
+non-null immutable scalar and `SUPPORTED` evidence status.
 
 ## Authority
 
-`team_strength_feature_authorized=true` means only that this deterministic
-feature snapshot may be constructed. Probability inference and adjustment,
-pricing, selection, production approval and BET authority are all false.
+Every authority flag is false:
 
-This PR does not claim that injuries, ratings, continuity, depth or schedule
-features improve prediction merely because they are plausible. They are
-candidate explanatory variables for the future frozen model competition.
+- team-strength feature authorization;
+- probability inference or adjustment;
+- pricing;
+- selection;
+- production approval;
+- BET.
+
+The calculations do not establish that injuries, ratings, continuity, depth or
+schedule improve prediction. They remain candidate explanatory variables until
+reviewed lineage exists and a later frozen competition evaluates them.
