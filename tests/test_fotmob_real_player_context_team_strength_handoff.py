@@ -6,14 +6,16 @@ from pathlib import Path
 import pytest
 
 from domain.fotmob_real_player_context_team_strength_handoff import (
+    EXPECTED_CANDIDATE_SHA256,
     HANDOFF_SCOPE,
+    SOURCE_ADMISSION_SHA256,
     RealPlayerContextTeamStrengthHandoffError,
     ReviewedRealFotMobTeamStrengthHandoff,
     _source_identity,
 )
 
 
-def test_authoritative_handoff_has_no_public_constructor() -> None:
+def test_source_replayed_handoff_has_no_public_constructor() -> None:
     with pytest.raises(
         RealPlayerContextTeamStrengthHandoffError,
         match="only from exact PR193 source replay",
@@ -21,8 +23,13 @@ def test_authoritative_handoff_has_no_public_constructor() -> None:
         ReviewedRealFotMobTeamStrengthHandoff()
 
 
-def test_handoff_scope_is_exact_observation_only() -> None:
-    assert HANDOFF_SCOPE == "EXACT_PR193_OBSERVATION_TEAM_STRENGTH_FEATURE_HANDOFF_ONLY"
+def test_handoff_scope_is_exact_candidate_observation_only() -> None:
+    assert HANDOFF_SCOPE == "EXACT_PR193_OBSERVATION_TEAM_STRENGTH_CANDIDATE_HANDOFF_ONLY"
+
+
+def test_source_and_candidate_identities_are_exactly_frozen() -> None:
+    assert SOURCE_ADMISSION_SHA256 == "acf53d913ee3d7a6c4f357860aa2730b5122ad8a169f4a38bcc4ab882c6d4ad8"
+    assert EXPECTED_CANDIDATE_SHA256 == "cc48bbcea5a17ff57a39cc951c5e69005008d857366359528aaf46f979c30745"
 
 
 def test_source_identity_preserves_provider_type() -> None:
@@ -32,7 +39,7 @@ def test_source_identity_preserves_provider_type() -> None:
         _source_identity("FOTMOB_TEAM", " 10203 ")
 
 
-def test_boundary_hard_codes_only_exact_admitted_available_features() -> None:
+def test_boundary_hard_codes_only_exact_admitted_available_candidate_features() -> None:
     source = Path("domain/fotmob_real_player_context_team_strength_handoff.py").read_text(
         encoding="utf-8"
     )
@@ -46,12 +53,12 @@ def test_boundary_hard_codes_only_exact_admitted_available_features() -> None:
     assert "base_components=()" in source
 
 
-def test_boundary_authorizes_feature_handoff_but_not_model_or_bet_decision() -> None:
+def test_boundary_verifies_candidate_mapping_without_feature_or_bet_authority() -> None:
     source = Path("domain/fotmob_real_player_context_team_strength_handoff.py").read_text(
         encoding="utf-8"
     )
     for token in (
-        '"team_strength_feature_authorized": True',
+        '"team_strength_feature_authorized": False',
         '"prospective_reuse_after_source_freshness_authorized": False',
         '"bench_semantics_used": False',
         '"position_semantics_used": False',
@@ -90,7 +97,7 @@ def test_verifier_imports_no_network_sportybet_or_probability_runtime() -> None:
     assert not any(token in name for name in imports for token in forbidden)
 
 
-def test_hosted_proof_is_offline_and_exact_pr192_artifact_bound() -> None:
+def test_hosted_proof_is_offline_exact_source_bound_and_candidate_only() -> None:
     workflow = Path(
         ".github/workflows/verify-fotmob-real-player-context-team-strength-handoff.yml"
     ).read_text(encoding="utf-8")
@@ -101,6 +108,8 @@ def test_hosted_proof_is_offline_and_exact_pr192_artifact_bound() -> None:
         "db5dc12b8863cbac15f210e018ddf0af9b9011a6ad8c3958a473a597254f44b5",
         "actions/download-artifact@",
         "persist-credentials: false",
+        "team_strength_candidate_mapping_verified=true",
+        "team_strength_feature_authorized=false",
     ):
         assert token in workflow
     assert "curl " not in workflow
