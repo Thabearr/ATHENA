@@ -17,7 +17,9 @@ from domain import sportybet_fotmob_full_utc_reconciliation_receipt as receipts
 from domain import sportybet_user_controlled_native_inventory as native
 from domain.markets import MARKET_REGISTRY, InvalidSelectionError, MarketId, OutcomeId, make_selection
 from domain.sportybet_early_payout_settlement import (
+    ONE_UP_PROVIDER_MAPPED_MARKET_ID,
     SportyBetEarlyPayoutSettlementReceipt,
+    TWO_UP_PROVIDER_MAPPED_MARKET_ID,
     canonical_sportybet_early_payout_settlement_receipt_bytes,
     reviewed_sportybet_early_payout_settlement_receipt,
     sha256_sportybet_early_payout_settlement_receipt,
@@ -275,6 +277,15 @@ class MappedSportyBetCanonicalSelection:
         if self.bookmaker_equivalence_authorized is not expected_equivalence:
             raise _fail("bookmaker equivalence authority mismatch")
         if reviewed_early:
+            expected_provider_market_id = {
+                MarketId.MATCH_RESULT_1UP: ONE_UP_PROVIDER_MAPPED_MARKET_ID,
+                MarketId.MATCH_RESULT_2UP: TWO_UP_PROVIDER_MAPPED_MARKET_ID,
+            }[self.canonical_market_id]
+            if self.provider_market_id != expected_provider_market_id:
+                raise _fail(
+                    "early-payout settlement equivalence requires the exact "
+                    "reviewed provider mapped market identity"
+                )
             expected_receipt = reviewed_sportybet_early_payout_settlement_receipt()
             expected_sha = sha256_sportybet_early_payout_settlement_receipt(
                 expected_receipt
@@ -330,7 +341,7 @@ class MappedSportyBetCanonicalSelection:
 def _validated_early_payout_evidence(
     receipt: SportyBetEarlyPayoutSettlementReceipt | None,
     receipt_bytes: bytes | None,
-) -> str | None:
+) -> SportyBetEarlyPayoutSettlementReceipt | None:
     if receipt is None and receipt_bytes is None:
         return None
     if type(receipt) is not SportyBetEarlyPayoutSettlementReceipt or type(receipt_bytes) is not bytes:
@@ -341,14 +352,14 @@ def _validated_early_payout_evidence(
         raise _fail("early-payout settlement receipt differs from reviewed evidence")
     if receipt_bytes != expected_bytes:
         raise _fail("early-payout settlement receipt bytes differ from reviewed evidence")
-    return sha256_sportybet_early_payout_settlement_receipt(expected)
+    return expected
 
 
 def _map_one(
     selection: NativeSelection,
     decision: ReviewedCanonicalMappingDecision,
     *,
-    early_payout_settlement_evidence_sha256: str | None = None,
+    early_payout_settlement_receipt: SportyBetEarlyPayoutSettlementReceipt | None = None,
 ) -> MappedSportyBetCanonicalSelection:
     if selection.market_name is None or selection.selection_label is None:
         raise _fail("reviewed mapping requires exact provider market and selection labels")
@@ -362,9 +373,24 @@ def _map_one(
     except InvalidSelectionError as exc:
         raise _fail(str(exc)) from exc
     early = canonical.market_id in _EARLY
+    early_evidence_sha256 = None
+    if early and early_payout_settlement_receipt is not None:
+        rules = {
+            rule.market_id: rule
+            for rule in early_payout_settlement_receipt.market_rules
+        }
+        rule = rules.get(canonical.market_id)
+        if rule is None or selection.market_id != rule.provider_mapped_market_id:
+            raise _fail(
+                "early-payout receipt does not prove this exact provider mapped "
+                "market identity"
+            )
+        early_evidence_sha256 = sha256_sportybet_early_payout_settlement_receipt(
+            early_payout_settlement_receipt
+        )
     authority = (
         SettlementEquivalenceAuthority.REVIEWED_SPORTYBET_EARLY_PAYOUT_SETTLEMENT_EQUIVALENCE
-        if early and early_payout_settlement_evidence_sha256 is not None
+        if early and early_evidence_sha256 is not None
         else (
             SettlementEquivalenceAuthority.PROVIDER_PROMOTION_RULES_UNPROVEN
             if early
@@ -391,10 +417,10 @@ def _map_one(
         canonical_selection_display_name=canonical.selection_display_name,
         settlement_equivalence_authority=authority,
         settlement_evidence_sha256=(
-            early_payout_settlement_evidence_sha256 if early else None
+            early_evidence_sha256 if early else None
         ),
         bookmaker_equivalence_authorized=(
-            not early or early_payout_settlement_evidence_sha256 is not None
+            not early or early_evidence_sha256 is not None
         ),
         canonical_market_mapping_authorized=True,
         fresh_price_authorized=False,
@@ -518,7 +544,7 @@ def _build(
         raise _fail("provider quote timestamp/snapshot capability remains unproven")
 
     decisions = _decisions(review_decisions)
-    early_evidence_sha = _validated_early_payout_evidence(
+    early_evidence_receipt = _validated_early_payout_evidence(
         early_payout_settlement_receipt,
         early_payout_settlement_receipt_bytes,
     )
@@ -536,7 +562,7 @@ def _build(
             _map_one(
                 selection,
                 decision,
-                early_payout_settlement_evidence_sha256=early_evidence_sha,
+                early_payout_settlement_receipt=early_evidence_receipt,
             )
         )
     mapped_rows = tuple(sorted(mapped, key=lambda x: (TARGET_MARKET_IDS.index(x.canonical_market_id), x.canonical_outcome_id.value, x.canonical_line or 0.0, x.provider_market_id, x.provider_outcome_id)))

@@ -30,15 +30,22 @@ Total Goals requires exact `total=<decimal>` and Asian Handicap exact `hcp=<deci
 preserved. Historical calls without the later exact SportyBet early-payout
 settlement receipt remain `PROVIDER_PROMOTION_RULES_UNPROVEN`, preserving the
 earlier receipt semantics. A new mapping call may supply that exact immutable
-receipt and its canonical bytes. Only then may the exact early-payout
-selection carry
+receipt and its canonical bytes. The receipt alone is insufficient: the
+source-replayed selection must also have exact provider mapped market ID
+`60200` for `MATCH_RESULT_1UP` or `60100` for `MATCH_RESULT_2UP`, as bound by
+the Nigeria configuration's source-market-`1` mappings. Only then may the
+exact early-payout selection carry
 `REVIEWED_SPORTYBET_EARLY_PAYOUT_SETTLEMENT_EQUIVALENCE` and its settlement
 receipt SHA. This upgrades provider settlement equivalence only; price
 freshness, pricing, selection, execution, and BET authority remain false.
 
-The receipt binds official SportyBet 1X2/1UP/2UP help clauses and the exact
-reviewed `one_x_two_one_up` / `one_x_two_two_up` site-configuration key
-projection. Any changed evidence or receipt bytes fail closed. Standard
+The receipt binds the official SportyBet Nigeria 1X2/1UP/2UP help clauses and
+the preserved raw Nigeria configuration capture (118,608 bytes, SHA-256
+`c27ea6ee2eff74eb1f6ca8c90d241d63ece333171196225439c0e97a2faf86c7`).
+It freezes the complete `one_x_two_one_up` (`1` -> `60200`) and
+`one_x_two_two_up` (`1` -> `60100`) identity ancestry, enablement booleans,
+football sport scope, and settlement-feature lists. Any changed evidence,
+provider ID, or receipt bytes fail closed. Standard
 mappings continue to carry `REVIEWED_STANDARD_SETTLEMENT_EQUIVALENCE` only for
 the exact reviewed provider selection.
 

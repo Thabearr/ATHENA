@@ -15,26 +15,33 @@ authority remain false.
 
 ## Provider evidence
 
-The frozen provider receipt uses exact review projections from SportyBet's
-official [football rules](https://www.sportybet.com/gh/help?nav=sports) and
-[early-payout help](https://www.sportybet.com/tz/help?nav=others), plus the
-reviewed canonical projection of the captured site-configuration keys:
+The frozen provider receipt is jurisdiction-specific. It binds SportyBet
+Nigeria's official [football rules](https://lite.sportybet.com/ng/help?nav=sports)
+and the raw preserved Nigeria capture `www_sportybet_com 2.html`; Ghana and
+Tanzania help surfaces are not used. A canonical tracked source-evidence
+manifest records the rendered Nigeria clauses and the raw capture's exact
+118,608-byte / SHA-256 identity.
 
-- `one_x_two_one_up` -> `MATCH_RESULT_1UP`;
-- `one_x_two_two_up` -> `MATCH_RESULT_2UP`.
+- `one_x_two_one_up`: source market `1` -> provider mapped market `60200`;
+- `one_x_two_two_up`: source market `1` -> provider mapped market `60100`.
 
-Exact source projection identities are:
+Both captured entries require `preMatch=true`, `live=true`, football sport ID
+`sr:sport:1`, and their corresponding provider settlement-feature list
+(`[[1,60200]]` / `[[1,60100]]`). The receipt therefore proves more than the
+configuration-key names.
+
+Exact evidence identities are:
 
 | Evidence | Bytes | SHA-256 |
 |---|---:|---|
-| Official football-help clauses | 691 | `aeaed927e27acc4b288e17e07f6929ac72233a05a0da561fcb8f003b682e925a` |
-| Official early-payout clauses | 502 | `9be284608bae3f551a71d42c5f1f17331e35b499c8e7e0969cb7d9d63547851a` |
-| Captured site-configuration key projection | 40 | `30a9b91af55a66610ede5731bfb03648ccc3c1cc9a0280b388124c24b0478240` |
+| Canonical Nigeria source-evidence manifest | 1,856 | `f09f96d906a6afe9e349660043dd85325b375916adf13bfc5c0c4f1ff881e8ba` |
+| Official Nigeria rendered-help section inside manifest | 922 | `87a1a4b56a9349b0987b6a38c85cadf4dd2ccd18066c916659351c75345f3b13` |
+| Preserved raw Nigeria site configuration | 118,608 | `c27ea6ee2eff74eb1f6ca8c90d241d63ece333171196225439c0e97a2faf86c7` |
 
-The canonical settlement receipt is 2,029 bytes with SHA-256
-`123868403511a175d3eccba8613f5681c56ddcb3cdb304aa132104dd90e0ca10`.
-Changed source text, configuration keys, receipt objects, or receipt bytes fail
-closed.
+The canonical settlement receipt is 2,279 bytes with SHA-256
+`acdefca105e53d55a3dfad767cfc9a4b0b2731f720b8256d12f55effbc452152`.
+Changed Nigeria clauses, raw-capture anchors, mappings, enablement state,
+receipt objects, or receipt bytes fail closed.
 
 SportyBet defines ordinary 1X2 as selecting the regulation-time match winner
 and describes 1UP/2UP as an earlier payout in the dedicated 1X2 products. The
@@ -51,7 +58,8 @@ selection or BET authority.
 
 Historical PR166 mapping receipts remain byte-compatible: without the new
 exact settlement receipt they retain `PROVIDER_PROMOTION_RULES_UNPROVEN`.
-Supplying the exact receipt and bytes permits only
+Supplying the exact receipt and bytes permits only when the source-replayed
+selection also has provider market ID `60200` for 1UP or `60100` for 2UP:
 `REVIEWED_SPORTYBET_EARLY_PAYOUT_SETTLEMENT_EQUIVALENCE`; it still grants no
 fresh-price, pricing, selection, execution, or BET authority.
 

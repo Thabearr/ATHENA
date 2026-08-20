@@ -162,7 +162,7 @@ def test_1up_maps_identifier_without_claiming_promotion_equivalence(monkeypatch)
 def test_1up_exact_settlement_receipt_upgrades_only_bookmaker_equivalence(monkeypatch):
     monkeypatch.setattr(mapping.native, "inventory_sha256", lambda value: INV_SHA)
     monkeypatch.setattr(mapping.reconciliation, "canonical_reconciliation_bytes", lambda value: b"reconciliation\n")
-    row = _selection(market="1up", name="Match Result 1UP", spec=None, outcome="1", label="Home")
+    row = _selection(market="60200", name="Match Result 1UP", spec=None, outcome="1", label="Home")
     decision = _decision(row, market=MarketId.MATCH_RESULT_1UP, outcome=OutcomeId.HOME, line=None)
     receipt = reviewed_sportybet_early_payout_settlement_receipt()
     result = mapping._build(
@@ -187,12 +187,17 @@ def test_1up_exact_settlement_receipt_upgrades_only_bookmaker_equivalence(monkey
     assert result.safety["pricing_authorized"] is False
     assert result.safety["selection_authorized"] is False
     assert result.safety["bet_authorized"] is False
+    with pytest.raises(
+        mapping.SportyBetReviewedCanonicalMarketMappingError,
+        match="exact reviewed provider mapped market identity",
+    ):
+        dataclasses.replace(mapped, provider_market_id="99999")
 
 
 def test_early_payout_mapping_rejects_wrong_receipt_bytes(monkeypatch):
     monkeypatch.setattr(mapping.native, "inventory_sha256", lambda value: INV_SHA)
     monkeypatch.setattr(mapping.reconciliation, "canonical_reconciliation_bytes", lambda value: b"reconciliation\n")
-    row = _selection(market="2up", name="Match Result 2UP", spec=None, outcome="2", label="Away")
+    row = _selection(market="60100", name="Match Result 2UP", spec=None, outcome="2", label="Away")
     decision = _decision(row, market=MarketId.MATCH_RESULT_2UP, outcome=OutcomeId.AWAY, line=None)
     receipt = reviewed_sportybet_early_payout_settlement_receipt()
     with pytest.raises(mapping.SportyBetReviewedCanonicalMarketMappingError):
@@ -204,6 +209,50 @@ def test_early_payout_mapping_rejects_wrong_receipt_bytes(monkeypatch):
             early_payout_settlement_receipt_bytes=(
                 canonical_sportybet_early_payout_settlement_receipt_bytes(receipt)
                 + b"\n"
+            ),
+        )
+
+
+@pytest.mark.parametrize(
+    "canonical_market,provider_market_id",
+    (
+        (MarketId.MATCH_RESULT_1UP, "1up"),
+        (MarketId.MATCH_RESULT_1UP, "60100"),
+        (MarketId.MATCH_RESULT_2UP, "2up"),
+        (MarketId.MATCH_RESULT_2UP, "60200"),
+        (MarketId.MATCH_RESULT_2UP, "99999"),
+    ),
+)
+def test_valid_receipt_cannot_upgrade_wrong_provider_market_identity(
+    monkeypatch, canonical_market, provider_market_id
+):
+    monkeypatch.setattr(mapping.native, "inventory_sha256", lambda value: INV_SHA)
+    monkeypatch.setattr(mapping.reconciliation, "canonical_reconciliation_bytes", lambda value: b"reconciliation\n")
+    row = _selection(
+        market=provider_market_id,
+        name="Match Result early payout",
+        spec=None,
+        outcome="1",
+        label="Home",
+    )
+    decision = _decision(
+        row,
+        market=canonical_market,
+        outcome=OutcomeId.HOME,
+        line=None,
+    )
+    receipt = reviewed_sportybet_early_payout_settlement_receipt()
+    with pytest.raises(
+        mapping.SportyBetReviewedCanonicalMarketMappingError,
+        match="exact provider mapped market identity",
+    ):
+        mapping._build(
+            _reconciled(),
+            _inventory(row),
+            (decision,),
+            early_payout_settlement_receipt=receipt,
+            early_payout_settlement_receipt_bytes=(
+                canonical_sportybet_early_payout_settlement_receipt_bytes(receipt)
             ),
         )
 

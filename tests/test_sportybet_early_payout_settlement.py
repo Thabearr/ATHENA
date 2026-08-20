@@ -6,32 +6,29 @@ import pytest
 
 from domain.markets import MarketId
 from domain.sportybet_early_payout_settlement import (
-    CAPTURED_SITE_CONFIGURATION_PROJECTION_BYTES,
-    OFFICIAL_EARLY_PAYOUT_HELP_REVIEW_BYTES,
-    OFFICIAL_FOOTBALL_HELP_REVIEW_BYTES,
+    OFFICIAL_NIGERIA_FOOTBALL_HELP_URL,
+    PRESERVED_NIGERIA_CONFIGURATION_SHA256,
+    PRESERVED_NIGERIA_CONFIGURATION_SIZE,
+    SOURCE_EVIDENCE_SHA256,
+    SOURCE_EVIDENCE_SIZE,
     SportyBetEarlyPayoutSettlementError,
     build_sportybet_early_payout_settlement_receipt,
     canonical_sportybet_early_payout_settlement_receipt_bytes,
     revalidate_sportybet_early_payout_settlement_receipt,
     reviewed_sportybet_early_payout_settlement_receipt,
     sha256_sportybet_early_payout_settlement_receipt,
+    source_evidence_manifest_bytes,
 )
 
 
 EXPECTED_RECEIPT_SHA256 = (
-    "123868403511a175d3eccba8613f5681c56ddcb3cdb304aa132104dd90e0ca10"
+    "acdefca105e53d55a3dfad767cfc9a4b0b2731f720b8256d12f55effbc452152"
 )
 
 
 def _build():
     return build_sportybet_early_payout_settlement_receipt(
-        official_football_help_review_bytes=OFFICIAL_FOOTBALL_HELP_REVIEW_BYTES,
-        official_early_payout_help_review_bytes=(
-            OFFICIAL_EARLY_PAYOUT_HELP_REVIEW_BYTES
-        ),
-        captured_site_configuration_projection_bytes=(
-            CAPTURED_SITE_CONFIGURATION_PROJECTION_BYTES
-        ),
+        source_evidence_manifest_bytes=source_evidence_manifest_bytes(),
     )
 
 
@@ -40,7 +37,7 @@ def test_exact_source_bound_receipt_identity_and_revalidation():
     receipt_bytes = canonical_sportybet_early_payout_settlement_receipt_bytes(receipt)
 
     assert receipt == reviewed_sportybet_early_payout_settlement_receipt()
-    assert len(receipt_bytes) == 2029
+    assert len(receipt_bytes) == 2279
     assert sha256_sportybet_early_payout_settlement_receipt(receipt) == (
         EXPECTED_RECEIPT_SHA256
     )
@@ -48,67 +45,51 @@ def test_exact_source_bound_receipt_identity_and_revalidation():
         revalidate_sportybet_early_payout_settlement_receipt(
             receipt=receipt,
             receipt_bytes=receipt_bytes,
-            official_football_help_review_bytes=OFFICIAL_FOOTBALL_HELP_REVIEW_BYTES,
-            official_early_payout_help_review_bytes=(
-                OFFICIAL_EARLY_PAYOUT_HELP_REVIEW_BYTES
-            ),
-            captured_site_configuration_projection_bytes=(
-                CAPTURED_SITE_CONFIGURATION_PROJECTION_BYTES
-            ),
+            source_evidence_manifest_bytes=source_evidence_manifest_bytes(),
         )
         == receipt
     )
 
 
-@pytest.mark.parametrize(
-    "field,mutated",
-    (
-        (
-            "official_football_help_review_bytes",
-            OFFICIAL_FOOTBALL_HELP_REVIEW_BYTES + b"changed",
-        ),
-        (
-            "official_early_payout_help_review_bytes",
-            OFFICIAL_EARLY_PAYOUT_HELP_REVIEW_BYTES.replace(b"2UP", b"3UP", 1),
-        ),
-        (
-            "captured_site_configuration_projection_bytes",
-            CAPTURED_SITE_CONFIGURATION_PROJECTION_BYTES.replace(
-                b"one_x_two_two_up", b"one_x_two_three_up"
-            ),
-        ),
-    ),
-)
-def test_changed_provider_source_evidence_fails_closed(field, mutated):
-    values = {
-        "official_football_help_review_bytes": OFFICIAL_FOOTBALL_HELP_REVIEW_BYTES,
-        "official_early_payout_help_review_bytes": (
-            OFFICIAL_EARLY_PAYOUT_HELP_REVIEW_BYTES
-        ),
-        "captured_site_configuration_projection_bytes": (
-            CAPTURED_SITE_CONFIGURATION_PROJECTION_BYTES
-        ),
-    }
-    values[field] = mutated
+def test_changed_provider_source_evidence_fails_closed():
+    mutated = source_evidence_manifest_bytes().replace(b'"mapped_market_id":"60200"', b'"mapped_market_id":"99999"')
     with pytest.raises(SportyBetEarlyPayoutSettlementError):
-        build_sportybet_early_payout_settlement_receipt(**values)
+        build_sportybet_early_payout_settlement_receipt(
+            source_evidence_manifest_bytes=mutated
+        )
+
+
+def test_nigeria_source_manifest_binds_real_help_and_raw_configuration_ancestry():
+    receipt = _build()
+    assert receipt.source_evidence_manifest_sha256 == SOURCE_EVIDENCE_SHA256
+    assert receipt.source_evidence_manifest_size == SOURCE_EVIDENCE_SIZE
+    assert receipt.sources[0].source_identity == OFFICIAL_NIGERIA_FOOTBALL_HELP_URL
+    assert receipt.sources[1].sha256 == PRESERVED_NIGERIA_CONFIGURATION_SHA256
+    assert receipt.sources[1].byte_size == PRESERVED_NIGERIA_CONFIGURATION_SIZE
 
 
 def test_receipt_freezes_1up_2up_settlement_and_site_configuration_keys():
     receipt = _build()
     one_up, two_up = receipt.market_rules
 
-    assert (one_up.market_id, one_up.provider_configuration_key, one_up.lead_threshold) == (
+    assert (one_up.market_id, one_up.provider_configuration_key, one_up.provider_source_market_id, one_up.provider_mapped_market_id, one_up.lead_threshold) == (
         MarketId.MATCH_RESULT_1UP,
         "one_x_two_one_up",
+        "1",
+        "60200",
         1,
     )
-    assert (two_up.market_id, two_up.provider_configuration_key, two_up.lead_threshold) == (
+    assert (two_up.market_id, two_up.provider_configuration_key, two_up.provider_source_market_id, two_up.provider_mapped_market_id, two_up.lead_threshold) == (
         MarketId.MATCH_RESULT_2UP,
         "one_x_two_two_up",
+        "1",
+        "60100",
         2,
     )
     for rule in receipt.market_rules:
+        assert rule.provider_pre_match_enabled is True
+        assert rule.provider_live_enabled is True
+        assert rule.provider_settlement_feature_enabled is True
         assert rule.event_topology == "OVERLAPPING_EVENTS"
         assert rule.selected_team_settlement == (
             "LEAD_THRESHOLD_HIT_OR_REGULATION_TIME_WIN"
@@ -149,13 +130,7 @@ def test_receipt_is_immutable_canonical_json_and_coordinated_mutation_fails():
         revalidate_sportybet_early_payout_settlement_receipt(
             receipt=receipt,
             receipt_bytes=receipt_bytes + b"\n",
-            official_football_help_review_bytes=OFFICIAL_FOOTBALL_HELP_REVIEW_BYTES,
-            official_early_payout_help_review_bytes=(
-                OFFICIAL_EARLY_PAYOUT_HELP_REVIEW_BYTES
-            ),
-            captured_site_configuration_projection_bytes=(
-                CAPTURED_SITE_CONFIGURATION_PROJECTION_BYTES
-            ),
+            source_evidence_manifest_bytes=source_evidence_manifest_bytes(),
         )
 
 
@@ -164,8 +139,6 @@ def test_provider_receipt_builder_accepts_no_price_or_authority_override():
         build_sportybet_early_payout_settlement_receipt
     ).parameters
     assert set(parameters) == {
-        "official_football_help_review_bytes",
-        "official_early_payout_help_review_bytes",
-        "captured_site_configuration_projection_bytes",
+        "source_evidence_manifest_bytes",
     }
     assert not ({"odds", "price", "selection_authorized", "bet_authorized"} & set(parameters))
