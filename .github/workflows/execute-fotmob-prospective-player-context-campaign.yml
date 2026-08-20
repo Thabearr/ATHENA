@@ -193,7 +193,7 @@ jobs:
           )
           if [ "${CAMPAIGN_MODE}" = 'CONTINUE_EXACT_FIXTURE_ARTIFACT' ]; then
             args+=(
-              --source-campaign-artifact-directory source-campaign-artifact
+              --source-campaign-artifact-directory source-campaign-artifact/fotmob-prospective-player-context-evidence
               --source-repository-head-sha "${SOURCE_HEAD_SHA}"
               --fixture-review-candidate-sha "${CANDIDATE_SHA}"
               --fixture-review-disposition APPROVED
