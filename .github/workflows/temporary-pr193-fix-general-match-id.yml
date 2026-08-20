@@ -1,0 +1,50 @@
+name: Temporary PR193 General Match ID Fix
+
+on:
+  pull_request:
+    types: [edited]
+
+jobs:
+  implement:
+    if: >-
+      github.event.pull_request.number == 193 &&
+      github.actor == 'Thabearr' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/fotmob-real-player-context-array-admission' &&
+      contains(github.event.pull_request.body, '<!-- ATHENA_PR193_FIX_GENERAL_MATCH_ID -->')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+    steps:
+      - name: Checkout exact implementation branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: evidence/fotmob-real-player-context-array-admission
+          fetch-depth: 0
+      - name: Apply exact source-type correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          path = Path('domain/fotmob_real_player_context_array_admission.py')
+          text = path.read_text(encoding='utf-8')
+          old = '''    if (general.get("matchId"), general.get("matchTimeUTCDate"), general.get("started"), general.get("finished")) != (\n        int(SOURCE_MATCH_ID), "2026-08-22T14:00:00.000Z", False, False):'''
+          new = '''    if (general.get("matchId"), general.get("matchTimeUTCDate"), general.get("started"), general.get("finished")) != (\n        SOURCE_MATCH_ID, "2026-08-22T14:00:00.000Z", False, False):'''
+          if text.count(old) != 1:
+              raise SystemExit(f'expected exactly one fixture-state comparison, found {text.count(old)}')
+          path.write_text(text.replace(old, new), encoding='utf-8')
+          PY
+          git diff --check
+          git diff --exit-code -- . ':!domain/fotmob_real_player_context_array_admission.py' || true
+          git diff -- domain/fotmob_real_player_context_array_admission.py
+      - name: Commit exact correction
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name 'Thabearr'
+          git config user.email '113853913+Thabearr@users.noreply.github.com'
+          git add domain/fotmob_real_player_context_array_admission.py
+          git commit -m 'Fix exact general match-id source type'
+          git push origin HEAD:evidence/fotmob-real-player-context-array-admission
