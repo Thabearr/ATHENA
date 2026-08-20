@@ -17,7 +17,15 @@ import types
 from typing import Any, Mapping
 
 from domain.fotmob_real_player_context_array_admission import (
+    AWAY_TEAM_ID as PR193_AWAY_TEAM_ID,
+    CLASSIFIED_AT as PR193_CLASSIFIED_AT,
     DATASET_NAME as ADMISSION_DATASET_NAME,
+    FIXTURE_IDENTIFIER as PR193_FIXTURE_IDENTIFIER,
+    HOME_TEAM_ID as PR193_HOME_TEAM_ID,
+    KICKOFF as PR193_KICKOFF,
+    OBSERVED_AT as PR193_OBSERVED_AT,
+    RAW_SHA256 as PR193_RAW_SHA256,
+    SOURCE_MATCH_ID as PR193_SOURCE_MATCH_ID,
     PlayerContextSetScope,
     ReviewedRealFotMobPlayerContextAdmission,
     build_reviewed_real_fotmob_player_context_admission,
@@ -43,6 +51,11 @@ from domain.fotmob_team_strength_fixture_intelligence import (
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-fotmob-real-player-context-team-strength-handoff-v1"
 HANDOFF_SCOPE = "EXACT_PR193_OBSERVATION_TEAM_STRENGTH_FEATURE_HANDOFF_ONLY"
+SOURCE_ADMISSION_SHA256 = "acf53d913ee3d7a6c4f357860aa2730b5122ad8a169f4a38bcc4ab882c6d4ad8"
+SOURCE_ADMISSION_SIZE = 14089
+EXPECTED_CANDIDATE_SHA256 = "cc48bbcea5a17ff57a39cc951c5e69005008d857366359528aaf46f979c30745"
+EXPECTED_HOME_TEAM_ID = f"FOTMOB_TEAM:INTEGER:{PR193_HOME_TEAM_ID}"
+EXPECTED_AWAY_TEAM_ID = f"FOTMOB_TEAM:INTEGER:{PR193_AWAY_TEAM_ID}"
 _SHA = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 
 _AUTHORITY = tuple(
@@ -159,46 +172,47 @@ class ReviewedRealFotMobTeamStrengthHandoff:
             HANDOFF_SCOPE,
         ):
             raise RealPlayerContextTeamStrengthHandoffError("handoff identity drift")
-        if type(self.source_admission_sha256) is not str or _SHA.fullmatch(self.source_admission_sha256) is None:
-            raise RealPlayerContextTeamStrengthHandoffError("source admission SHA drift")
-        if type(self.source_raw_sha256) is not str or _SHA.fullmatch(self.source_raw_sha256) is None:
-            raise RealPlayerContextTeamStrengthHandoffError("source raw SHA drift")
-        if type(self.source_admission_size) is not int or self.source_admission_size <= 0:
-            raise RealPlayerContextTeamStrengthHandoffError("source admission size drift")
-        if type(self.fixture_identifier) is not str or not self.fixture_identifier:
-            raise RealPlayerContextTeamStrengthHandoffError("fixture identity drift")
-        if type(self.source_match_id) is not str or not self.source_match_id:
-            raise RealPlayerContextTeamStrengthHandoffError("source match identity drift")
-        if (
-            type(self.home_team_id) is not str
-            or type(self.away_team_id) is not str
-            or not self.home_team_id
-            or not self.away_team_id
-            or self.home_team_id == self.away_team_id
-        ):
-            raise RealPlayerContextTeamStrengthHandoffError("team identity drift")
         observed = _aware_utc(self.source_observed_at, "source_observed_at")
         classified = _aware_utc(self.source_classified_at, "source_classified_at")
         fresh_until = _aware_utc(self.source_state_fresh_until, "source_state_fresh_until")
-        if observed >= classified:
-            raise RealPlayerContextTeamStrengthHandoffError("source observation must precede classification")
+        exact_source = (
+            self.source_admission_sha256 == SOURCE_ADMISSION_SHA256
+            and self.source_admission_size == SOURCE_ADMISSION_SIZE
+            and self.source_raw_sha256 == PR193_RAW_SHA256
+            and self.fixture_identifier == PR193_FIXTURE_IDENTIFIER
+            and self.source_match_id == PR193_SOURCE_MATCH_ID
+            and self.home_team_id == EXPECTED_HOME_TEAM_ID
+            and self.away_team_id == EXPECTED_AWAY_TEAM_ID
+            and observed == PR193_OBSERVED_AT
+            and classified == PR193_CLASSIFIED_AT
+            and fresh_until == PR193_CLASSIFIED_AT
+        )
+        if not exact_source:
+            raise RealPlayerContextTeamStrengthHandoffError("exact PR193 source identity drift")
+        if observed >= classified or classified >= PR193_KICKOFF:
+            raise RealPlayerContextTeamStrengthHandoffError("source temporal identity drift")
         if type(self.candidate) is not TeamStrengthContextCandidate:
             raise RealPlayerContextTeamStrengthHandoffError("nested value must be exact PR190 candidate")
-        if classified >= self.candidate.kickoff:
-            raise RealPlayerContextTeamStrengthHandoffError("classification must remain prospective")
         candidate_bytes = canonical_team_strength_context_candidate_bytes(self.candidate)
-        if self.candidate_sha256 != _sha(candidate_bytes) or self.candidate_size != len(candidate_bytes):
+        candidate_sha = _sha(candidate_bytes)
+        if (
+            candidate_sha != EXPECTED_CANDIDATE_SHA256
+            or self.candidate_sha256 != EXPECTED_CANDIDATE_SHA256
+            or self.candidate_size != len(candidate_bytes)
+        ):
             raise RealPlayerContextTeamStrengthHandoffError("nested candidate canonical identity drift")
         if (
             self.candidate.fixture_identifier,
             self.candidate.home_team_id,
             self.candidate.away_team_id,
             self.candidate.as_of,
+            self.candidate.kickoff,
         ) != (
-            self.fixture_identifier,
-            self.home_team_id,
-            self.away_team_id,
-            classified,
+            PR193_FIXTURE_IDENTIFIER,
+            EXPECTED_HOME_TEAM_ID,
+            EXPECTED_AWAY_TEAM_ID,
+            PR193_CLASSIFIED_AT,
+            PR193_KICKOFF,
         ):
             raise RealPlayerContextTeamStrengthHandoffError("nested fixture/team/as-of identity drift")
         if (
@@ -237,10 +251,6 @@ class ReviewedRealFotMobTeamStrengthHandoff:
             raise RealPlayerContextTeamStrengthHandoffError(
                 "historical player features require reviewed history"
             )
-        if fresh_until != classified:
-            raise RealPlayerContextTeamStrengthHandoffError(
-                "source freshness must not project beyond PR193 classification"
-            )
         if tuple(self.authority.items()) != _AUTHORITY:
             raise RealPlayerContextTeamStrengthHandoffError("handoff authority drift")
 
@@ -275,6 +285,9 @@ def _candidate_from_admission(
 ) -> TeamStrengthContextCandidate:
     if type(admission) is not ReviewedRealFotMobPlayerContextAdmission:
         raise RealPlayerContextTeamStrengthHandoffError("source must be exact PR193 admission")
+    admission_bytes = canonical_reviewed_real_fotmob_player_context_admission_bytes(admission)
+    if _sha(admission_bytes) != SOURCE_ADMISSION_SHA256 or len(admission_bytes) != SOURCE_ADMISSION_SIZE:
+        raise RealPlayerContextTeamStrengthHandoffError("source admission canonical identity drift")
     authority = dict(admission.authority)
     required_true = (
         "availability_array_semantics_authorized",
@@ -306,7 +319,10 @@ def _candidate_from_admission(
                 "one team side binds multiple provider teams"
             )
         side_team_ids[record_set.team_side] = record_set.source_team_id
-    if set(side_team_ids) != {TeamSide.HOME, TeamSide.AWAY}:
+    if side_team_ids != {
+        TeamSide.HOME: PR193_HOME_TEAM_ID,
+        TeamSide.AWAY: PR193_AWAY_TEAM_ID,
+    }:
         raise RealPlayerContextTeamStrengthHandoffError("exact HOME/AWAY team identity missing")
 
     team_ids = {
@@ -379,7 +395,7 @@ def _candidate_from_admission(
         )
 
     try:
-        return build_team_strength_context_candidate(
+        candidate = build_team_strength_context_candidate(
             fixture_identifier=admission.fixture_identifier,
             home_team_id=team_ids[TeamSide.HOME],
             away_team_id=team_ids[TeamSide.AWAY],
@@ -403,6 +419,10 @@ def _candidate_from_admission(
         raise RealPlayerContextTeamStrengthHandoffError(
             "PR190 candidate reconstruction failed"
         ) from exc
+    candidate_bytes = canonical_team_strength_context_candidate_bytes(candidate)
+    if _sha(candidate_bytes) != EXPECTED_CANDIDATE_SHA256:
+        raise RealPlayerContextTeamStrengthHandoffError("rebuilt PR190 candidate identity drift")
+    return candidate
 
 
 def build_reviewed_real_fotmob_team_strength_handoff(
@@ -426,6 +446,8 @@ def build_reviewed_real_fotmob_team_strength_handoff(
         raise RealPlayerContextTeamStrengthHandoffError(
             "exact PR193 source replay failed"
         ) from exc
+    if _sha(admission_bytes) != SOURCE_ADMISSION_SHA256 or len(admission_bytes) != SOURCE_ADMISSION_SIZE:
+        raise RealPlayerContextTeamStrengthHandoffError("exact PR193 admission identity drift")
 
     candidate = _candidate_from_admission(admission)
     candidate_bytes = canonical_team_strength_context_candidate_bytes(candidate)
@@ -440,8 +462,8 @@ def build_reviewed_real_fotmob_team_strength_handoff(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
         handoff_scope=HANDOFF_SCOPE,
-        source_admission_sha256=_sha(admission_bytes),
-        source_admission_size=len(admission_bytes),
+        source_admission_sha256=SOURCE_ADMISSION_SHA256,
+        source_admission_size=SOURCE_ADMISSION_SIZE,
         source_raw_sha256=admission.raw_sha256,
         fixture_identifier=admission.fixture_identifier,
         source_match_id=admission.source_match_id,
@@ -451,7 +473,7 @@ def build_reviewed_real_fotmob_team_strength_handoff(
         source_classified_at=admission.classified_at,
         source_state_fresh_until=admission.classified_at,
         candidate=candidate,
-        candidate_sha256=_sha(candidate_bytes),
+        candidate_sha256=EXPECTED_CANDIDATE_SHA256,
         candidate_size=len(candidate_bytes),
         available_feature_ids=available,
         missing_feature_count=sum(
