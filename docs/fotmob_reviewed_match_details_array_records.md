@@ -37,7 +37,9 @@ Provider team IDs and an independent reviewed Boolean establish HOME/AWAY.
 First/second array position, parity and display order are forbidden. Qualified
 nonempty records require `PLAYER_ID`; optional `TEAM_ID` and `IS_HOME_TEAM`
 members must reconcile with the root-level binding. Duplicated player IDs, or
-the same player in contradictory starter/bench/unavailable scopes, fail closed.
+the same player on either fixture side or in contradictory
+starter/bench/unavailable scopes, fail closed. Provider-player identity is
+fixture-global; team scoping cannot make one provider identity into two players.
 
 ## Lineup, position, qualification and freshness
 

@@ -122,6 +122,30 @@ def test_incomplete_unavailable_array_does_not_turn_absence_into_zero():
     assert home.blockers == (FeatureBlocker.MISSING_AVAILABILITY_EVIDENCE,)
 
 
+@pytest.mark.parametrize(
+    "incomplete_scope",
+    (ArrayRecordSetScope.STARTING_XI, ArrayRecordSetScope.BENCH),
+)
+def test_incomplete_starter_or_bench_sets_cannot_make_lineup_features_available(incomplete_scope):
+    helper = _helper()
+    raw = helper._raw()
+    chain = helper._pr53(raw)
+    decisions = tuple(
+        dataclasses.replace(decision, completeness_attested=False)
+        if decision.scope is incomplete_scope
+        else decision
+        for decision in helper._decisions(chain[0])
+    )
+    context, _, _, _, _ = build_context(decisions=decisions)
+    result = _features(context)
+    assert context.candidate.home_lineup_state.value == "UNVERIFIED_LINEUP_STATE"
+    assert context.candidate.away_lineup_state.value == "UNVERIFIED_LINEUP_STATE"
+    assert result["home_available_bench_player_count"].status is FeatureStatus.BLOCKED
+    assert result["away_available_bench_player_count"].status is FeatureStatus.BLOCKED
+    assert result["home_xi_recent_rating_mean"].status is FeatureStatus.BLOCKED
+    assert result["away_xi_recent_rating_mean"].status is FeatureStatus.BLOCKED
+
+
 def test_naked_candidate_and_caller_historical_rows_cannot_cross_authoritative_adapter():
     context, _, _, _, _ = build_context()
     with pytest.raises(TeamStrengthContextError):

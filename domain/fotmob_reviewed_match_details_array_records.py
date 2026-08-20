@@ -506,8 +506,10 @@ class ReviewedMatchDetailsArrayRecords:
             raise ReviewedMatchDetailsArrayRecordsError("extracted records must be identity-sorted")
         if self.completeness_receipts != tuple(sorted(self.completeness_receipts, key=lambda x: x.identity_key())):
             raise ReviewedMatchDetailsArrayRecordsError("completeness receipts must be sorted")
-        if len({(x.team_side, x.provider_player_id) for x in self.records}) != len(self.records):
-            raise ReviewedMatchDetailsArrayRecordsError("duplicate/contradictory provider player identity")
+        if len({_scalar_key(x.provider_player_id) for x in self.records}) != len(self.records):
+            raise ReviewedMatchDetailsArrayRecordsError(
+                "provider player identity must be unique across the exact fixture observation"
+            )
         if tuple(self.safety.items()) != _SAFETY:
             raise ReviewedMatchDetailsArrayRecordsError("array artifact safety drift")
 
@@ -720,8 +722,10 @@ def build_reviewed_match_details_array_records(
     if not {x.source_value for x in position_mappings}.issubset(observed_positions):
         raise ReviewedMatchDetailsArrayRecordsError("position mapping contains value absent from exact observation")
     extracted_tuple = tuple(sorted(extracted, key=lambda x: x.identity_key()))
-    if len({(x.team_side, _scalar_key(x.provider_player_id)) for x in extracted_tuple}) != len(extracted_tuple):
-        raise ReviewedMatchDetailsArrayRecordsError("same provider player appears in contradictory reviewed scopes")
+    if len({_scalar_key(x.provider_player_id) for x in extracted_tuple}) != len(extracted_tuple):
+        raise ReviewedMatchDetailsArrayRecordsError(
+            "same provider player appears in contradictory reviewed fixture scopes"
+        )
     return ReviewedMatchDetailsArrayRecords(
         SCHEMA_VERSION, DATASET_NAME, REVIEW_SCOPE,
         hashlib.sha256(exact_assessment_bytes).hexdigest(), rebuilt.evidence_receipt_sha256,

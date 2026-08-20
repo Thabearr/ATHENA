@@ -27,6 +27,10 @@ pricing, selection, production approval, or BET.
 - A supported exact unavailable-set completeness receipt is projected into the
   PR190 candidate receipt shape solely so the unchanged candidate calculator
   can run. Its reviewed authority remains anchored in the outer array artifact.
+- Expected/confirmed lineup state enters PR190 calculations only when both the
+  exact starting-XI and bench sets have current reviewed completeness receipts.
+  An incomplete set forces `UNVERIFIED_LINEUP_STATE`, so bench counts and every
+  other lineup-dependent feature remain non-available.
 
 Contradictory provider player identity fails closed rather than selecting a
 winner.

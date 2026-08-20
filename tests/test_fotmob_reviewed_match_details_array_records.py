@@ -207,6 +207,13 @@ def test_array_index_is_provenance_not_identity_and_duplicate_player_fails_close
         build_case(raw=_raw(value))
 
 
+def test_provider_player_identity_is_unique_across_both_fixture_teams():
+    value = json.loads(_raw())
+    value["lineups"]["away"]["starters"][0]["id"] = 101
+    with pytest.raises(ReviewedMatchDetailsArrayRecordsError, match="exact fixture|fixture scopes"):
+        build_case(raw=_raw(value))
+
+
 def test_starter_unavailable_conflict_is_not_resolved():
     value = json.loads(_raw())
     value["lineups"]["home"]["unavailable"] = [{"id": 101, "teamId": 10, "isHome": True, "position": "GK", "reason": "injury"}]

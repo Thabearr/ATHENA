@@ -107,6 +107,20 @@ def _evidence_status(status: ReviewedArrayEvidenceStatus) -> EvidenceStatus:
 
 
 def _lineup_state(array: ReviewedMatchDetailsArrayRecords, side: TeamSide) -> LineupState:
+    complete_scopes = {
+        receipt.scope
+        for receipt in array.completeness_receipts
+        if receipt.team_side is side
+        and receipt.scope in {ArrayRecordSetScope.STARTING_XI, ArrayRecordSetScope.BENCH}
+        and array.classified_at
+        <= next(
+            decision.fresh_until
+            for decision in array.decisions
+            if decision.team_side is side and decision.scope is receipt.scope
+        )
+    }
+    if complete_scopes != {ArrayRecordSetScope.STARTING_XI, ArrayRecordSetScope.BENCH}:
+        return LineupState.UNVERIFIED_LINEUP_STATE
     relevant = tuple(
         record for record in array.records
         if record.team_side is side
