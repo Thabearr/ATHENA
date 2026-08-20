@@ -396,6 +396,7 @@ def test_workflow_is_owner_only_branch_bound_and_uploads_on_failure() -> None:
     assert "actions/download-artifact@" in workflow
     assert "core.setOutput('source_run_id', sourceRun[1])" in workflow
     assert "run-id: ${{ steps.guard.outputs.source_run_id }}" in workflow
+    assert "--source-campaign-artifact-directory source-campaign-artifact/fotmob-prospective-player-context-evidence" in workflow
     assert "if: always()" in workflow
     assert "persist-credentials: false" in workflow
 
