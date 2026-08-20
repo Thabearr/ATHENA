@@ -23,11 +23,11 @@ REVIEW_SCOPE = "EXACT_SPORTYBET_NIGERIA_1UP_2UP_PROVIDER_SETTLEMENT_REVIEW"
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 SOURCE_EVIDENCE_PATH = REPOSITORY_ROOT / "artifacts" / "research-manifests" / "sportybet-ng-early-payout-settlement-source-evidence-v1.json"
-SOURCE_EVIDENCE_SHA256 = "f09f96d906a6afe9e349660043dd85325b375916adf13bfc5c0c4f1ff881e8ba"
-SOURCE_EVIDENCE_SIZE = 1_856
+SOURCE_EVIDENCE_SHA256 = "af371490fb3e72dc9b5d3422a6b36af28ff4246ee6ead23b0c957e26c398afe4"
+SOURCE_EVIDENCE_SIZE = 2_059
 OFFICIAL_NIGERIA_FOOTBALL_HELP_URL = "https://lite.sportybet.com/ng/help?nav=sports"
-OFFICIAL_NIGERIA_HELP_SECTION_SHA256 = "87a1a4b56a9349b0987b6a38c85cadf4dd2ccd18066c916659351c75345f3b13"
-OFFICIAL_NIGERIA_HELP_SECTION_SIZE = 922
+OFFICIAL_NIGERIA_HELP_SECTION_SHA256 = "b28ce8535057454e5ff93f562dea3fb6178439707f7cbf542c155366ef5cdab7"
+OFFICIAL_NIGERIA_HELP_SECTION_SIZE = 1_125
 PRESERVED_NIGERIA_CONFIGURATION_FILE = "www_sportybet_com 2.html"
 PRESERVED_NIGERIA_CONFIGURATION_SHA256 = "c27ea6ee2eff74eb1f6ca8c90d241d63ece333171196225439c0e97a2faf86c7"
 PRESERVED_NIGERIA_CONFIGURATION_SIZE = 118_608
@@ -52,6 +52,7 @@ _EXPECTED_CLAUSES = {
     "1UP_DRAW": "Betting on the draw in this market is the same as in regular 1X2, it is resulted on the full-time score regardless of how and when any goals are scored (which is why the odds are the same).",
     "2UP": "2UP will reward you earlier if your team takes a two-goal lead, e.g. 2-0, 0-2, 3-1, 1-3. Once settled, the final result no longer matters - win, lose or draw!",
     "2UP_ABANDONMENT": "If a match is abandoned and a team has gone two or more goals ahead then bets on that selection will still be paid as winners.",
+    "FOOTBALL_INTERRUPTION": "If a match is interrupted and continued within 48h after initial kickoff, all open bets will be settled with the final result. Otherwise all undecided bets are considered void.",
 }
 _EXPECTED_MARKET_MAPPINGS = (
     {"enabled": {"live": True, "pre_match": True}, "mapped_market_id": "60200", "name": "1UP", "provider_configuration_key": "one_x_two_one_up", "source_market_id": "1", "support_sport_ids": ["sr:sport:1"]},
@@ -155,6 +156,7 @@ class SportyBetEarlyPayoutMarketRule:
     draw_settlement: str
     full_time_win_fallback: bool
     early_trigger_irreversible: bool
+    triggered_selection_abandonment_proof_clause_ids: tuple[str, ...]
     triggered_selection_stands_if_abandoned: bool
 
     def __post_init__(self) -> None:
@@ -174,6 +176,12 @@ class SportyBetEarlyPayoutMarketRule:
             raise SportyBetEarlyPayoutSettlementError("selected-team settlement semantics drifted")
         if self.draw_settlement != "REGULATION_TIME_FULL_TIME_DRAW":
             raise SportyBetEarlyPayoutSettlementError("draw settlement drifted")
+        expected_abandonment_clauses = {
+            MarketId.MATCH_RESULT_1UP: ("1UP", "FOOTBALL_INTERRUPTION"),
+            MarketId.MATCH_RESULT_2UP: ("2UP_ABANDONMENT",),
+        }[self.market_id]
+        if self.triggered_selection_abandonment_proof_clause_ids != expected_abandonment_clauses:
+            raise SportyBetEarlyPayoutSettlementError("abandonment proof ancestry drifted")
         if self.full_time_win_fallback is not True or self.early_trigger_irreversible is not True or self.triggered_selection_stands_if_abandoned is not True:
             raise SportyBetEarlyPayoutSettlementError("reviewed early-payout rule booleans must remain true")
 
@@ -192,6 +200,9 @@ class SportyBetEarlyPayoutMarketRule:
             "draw_settlement": self.draw_settlement,
             "full_time_win_fallback": self.full_time_win_fallback,
             "early_trigger_irreversible": self.early_trigger_irreversible,
+            "triggered_selection_abandonment_proof_clause_ids": list(
+                self.triggered_selection_abandonment_proof_clause_ids
+            ),
             "triggered_selection_stands_if_abandoned": self.triggered_selection_stands_if_abandoned,
         }
 
@@ -257,6 +268,30 @@ class SportyBetEarlyPayoutSettlementReceipt:
         }
 
 
+def _abandonment_proof(
+    clauses: dict[str, str], market_id: MarketId
+) -> tuple[tuple[str, ...], bool]:
+    if market_id is MarketId.MATCH_RESULT_1UP:
+        clause_ids = ("1UP", "FOOTBALL_INTERRUPTION")
+        proven = (
+            "Once settled, the final result no longer matters"
+            in clauses["1UP"]
+            and "all undecided bets are considered void"
+            in clauses["FOOTBALL_INTERRUPTION"]
+        )
+    elif market_id is MarketId.MATCH_RESULT_2UP:
+        clause_ids = ("2UP_ABANDONMENT",)
+        proven = (
+            "bets on that selection will still be paid as winners"
+            in clauses["2UP_ABANDONMENT"]
+        )
+    else:
+        raise SportyBetEarlyPayoutSettlementError(
+            "abandonment proof requested for unsupported market"
+        )
+    return clause_ids, proven
+
+
 def build_sportybet_early_payout_settlement_receipt(*, source_evidence_manifest_bytes: bytes) -> SportyBetEarlyPayoutSettlementReceipt:
     """Build only from the exact reviewed Nigeria source-evidence manifest."""
     manifest = _source_manifest(source_evidence_manifest_bytes)
@@ -266,8 +301,15 @@ def build_sportybet_early_payout_settlement_receipt(*, source_evidence_manifest_
         SportyBetSettlementSourceEvidence(OFFICIAL_NIGERIA_FOOTBALL_HELP_URL, "OFFICIAL_NIGERIA_RENDERED_HELP_SECTION", _sha256(help_bytes), len(help_bytes)),
         SportyBetSettlementSourceEvidence(PRESERVED_NIGERIA_CONFIGURATION_FILE, "PRESERVED_NIGERIA_RAW_SITE_CONFIGURATION", configuration["sha256"], configuration["byte_size"]),
     )
-    rules = tuple(
-        SportyBetEarlyPayoutMarketRule(
+    rules_list = []
+    for market_id, key, source_id, mapped_id, threshold in (
+        (MarketId.MATCH_RESULT_1UP, "one_x_two_one_up", "1", "60200", 1),
+        (MarketId.MATCH_RESULT_2UP, "one_x_two_two_up", "1", "60100", 2),
+    ):
+        proof_clause_ids, abandonment_proven = _abandonment_proof(
+            manifest["official_help"]["clauses"], market_id
+        )
+        rules_list.append(SportyBetEarlyPayoutMarketRule(
             market_id=market_id,
             provider_configuration_key=key,
             provider_source_market_id=source_id,
@@ -281,13 +323,10 @@ def build_sportybet_early_payout_settlement_receipt(*, source_evidence_manifest_
             draw_settlement="REGULATION_TIME_FULL_TIME_DRAW",
             full_time_win_fallback=True,
             early_trigger_irreversible=True,
-            triggered_selection_stands_if_abandoned=True,
-        )
-        for market_id, key, source_id, mapped_id, threshold in (
-            (MarketId.MATCH_RESULT_1UP, "one_x_two_one_up", "1", "60200", 1),
-            (MarketId.MATCH_RESULT_2UP, "one_x_two_two_up", "1", "60100", 2),
-        )
-    )
+            triggered_selection_abandonment_proof_clause_ids=proof_clause_ids,
+            triggered_selection_stands_if_abandoned=abandonment_proven,
+        ))
+    rules = tuple(rules_list)
     return SportyBetEarlyPayoutSettlementReceipt(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,

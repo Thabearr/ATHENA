@@ -34,12 +34,12 @@ Exact evidence identities are:
 
 | Evidence | Bytes | SHA-256 |
 |---|---:|---|
-| Canonical Nigeria source-evidence manifest | 1,856 | `f09f96d906a6afe9e349660043dd85325b375916adf13bfc5c0c4f1ff881e8ba` |
-| Official Nigeria rendered-help section inside manifest | 922 | `87a1a4b56a9349b0987b6a38c85cadf4dd2ccd18066c916659351c75345f3b13` |
+| Canonical Nigeria source-evidence manifest | 2,059 | `af371490fb3e72dc9b5d3422a6b36af28ff4246ee6ead23b0c957e26c398afe4` |
+| Official Nigeria rendered-help section inside manifest | 1,125 | `b28ce8535057454e5ff93f562dea3fb6178439707f7cbf542c155366ef5cdab7` |
 | Preserved raw Nigeria site configuration | 118,608 | `c27ea6ee2eff74eb1f6ca8c90d241d63ece333171196225439c0e97a2faf86c7` |
 
-The canonical settlement receipt is 2,279 bytes with SHA-256
-`acdefca105e53d55a3dfad767cfc9a4b0b2731f720b8256d12f55effbc452152`.
+The canonical settlement receipt is 2,434 bytes with SHA-256
+`921db06634ba4d210f100591c0c9acda5ae44db49452936e2229095530c01f76`.
 Changed Nigeria clauses, raw-capture anchors, mappings, enablement state,
 receipt objects, or receipt bytes fail closed.
 
@@ -50,8 +50,13 @@ and the irreversible lead trigger. This matters for 2UP: a 1-0 final Home win
 is a winning Home selection even though Home never led by two. Draw remains
 the ordinary full-time draw result.
 
-The official evidence also preserves that an already-triggered early payout
-stands after abandonment. ATHENA models no abandonment probability. The
+The abandonment proof is market-specific and explicit in the receipt. For
+1UP it requires both the clause that the one-goal trigger is already settled
+and the Nigeria football interruption rule that otherwise only undecided bets
+are void. For 2UP it uses the direct clause that an already-triggered selection
+is still paid as a winner after abandonment. The boolean for each rule is
+derived from its exact frozen clause IDs; it is not a shared assumption.
+ATHENA models no abandonment probability. The
 analytical probabilities are explicitly normal-completion regulation-time
 football probabilities; the unmodelled abandonment process prevents any
 selection or BET authority.

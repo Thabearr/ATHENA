@@ -49,6 +49,12 @@ provider ID, or receipt bytes fail closed. Standard
 mappings continue to carry `REVIEWED_STANDARD_SETTLEMENT_EQUIVALENCE` only for
 the exact reviewed provider selection.
 
+Abandonment ancestry is also market-specific. The 1UP assertion is derived
+from the exact Nigeria 1UP “once settled” clause plus the football interruption
+rule that otherwise voids undecided bets. The 2UP assertion remains bound to
+its direct abandoned-match winner clause. Neither is inferred merely from the
+other market.
+
 ## Price and execution boundary
 
 Mapped selections retain exact source odds and availability for traceability, but the reviewed Lite source still proves neither provider quote time nor provider snapshot identity. Consequently `provider_quote_at` and `provider_snapshot_id` remain null, while fresh-price, pricing, model-integration, selection, slip, booking-code, SportyBet execution and BET authority remain false. No SportyBet network I/O is added.

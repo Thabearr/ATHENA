@@ -22,7 +22,7 @@ from domain.sportybet_early_payout_settlement import (
 
 
 EXPECTED_RECEIPT_SHA256 = (
-    "acdefca105e53d55a3dfad767cfc9a4b0b2731f720b8256d12f55effbc452152"
+    "921db06634ba4d210f100591c0c9acda5ae44db49452936e2229095530c01f76"
 )
 
 
@@ -37,7 +37,7 @@ def test_exact_source_bound_receipt_identity_and_revalidation():
     receipt_bytes = canonical_sportybet_early_payout_settlement_receipt_bytes(receipt)
 
     assert receipt == reviewed_sportybet_early_payout_settlement_receipt()
-    assert len(receipt_bytes) == 2279
+    assert len(receipt_bytes) == 2434
     assert sha256_sportybet_early_payout_settlement_receipt(receipt) == (
         EXPECTED_RECEIPT_SHA256
     )
@@ -98,6 +98,25 @@ def test_receipt_freezes_1up_2up_settlement_and_site_configuration_keys():
         assert rule.full_time_win_fallback is True
         assert rule.early_trigger_irreversible is True
         assert rule.triggered_selection_stands_if_abandoned is True
+
+    assert one_up.triggered_selection_abandonment_proof_clause_ids == (
+        "1UP",
+        "FOOTBALL_INTERRUPTION",
+    )
+    assert two_up.triggered_selection_abandonment_proof_clause_ids == (
+        "2UP_ABANDONMENT",
+    )
+
+
+def test_1up_abandonment_cannot_outlive_its_exact_nigeria_proof_ancestry():
+    one_up = _build().market_rules[0]
+    with pytest.raises(SportyBetEarlyPayoutSettlementError):
+        dataclasses.replace(
+            one_up,
+            triggered_selection_abandonment_proof_clause_ids=("1UP",),
+        )
+    with pytest.raises(SportyBetEarlyPayoutSettlementError):
+        dataclasses.replace(one_up, triggered_selection_stands_if_abandoned=False)
 
 
 def test_abandonment_semantics_do_not_invent_abandonment_probability_or_authority():
