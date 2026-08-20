@@ -349,7 +349,12 @@ def test_malformed_registry_fails_closed(monkeypatch, mutation) -> None:
                 probability_inputs=("home_form", "home_form"),
             )
         else:
-            replacement = dataclasses.replace(base, probability_method=None)
+            with pytest.raises(
+                ValueError,
+                match="analytically available market requires a method",
+            ):
+                dataclasses.replace(base, probability_method=None)
+            return
         registry[MarketId.MATCH_RESULT] = replacement
     monkeypatch.setattr(module, "MODEL_STATUS_REGISTRY", registry)
     monkeypatch.setattr(module, "get_model_status", lambda market_id: registry[market_id])
