@@ -172,7 +172,7 @@ def test_exact_live_capture_is_one_request_and_writes_exact_pr50_bytes(tmp_path:
     )
 
     assert calls == [(ALLOWED_HOST, 443, REQUEST_TIMEOUT_SECONDS)]
-    assert connection.requests == [("GET", "/api/matchDetails?matchId=1001", True)]
+    assert connection.requests == [("GET", "/api/data/matchDetails?matchId=1001", True)]
     assert connection.headers == list(REQUEST_HEADERS)
     assert connection.endheaders_calls == 1
     assert connection.closed is True
