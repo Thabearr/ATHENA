@@ -3,14 +3,23 @@
 ## Reviewed authorization handoff
 
 The adapter is the only boundary in this PR that may set
-`team_strength_feature_authorized=true`. It first full-revalidates PR52/53 and
-the exact reviewed array artifact, reconstructs PR190 inputs mechanically, and
-calls the unchanged `build_team_strength_context_candidate(...)`.
+`team_strength_feature_authorized=true`. It first full-revalidates the exact
+PR52→PR65 admitted Fixture Intelligence artifact, the PR66 model-feature
+handoff, PR52/53 array source bytes, and the exact reviewed array artifact. The
+array raw/PR53 identity must occur in the admitted PR65 materialization inputs.
+Fixture, source match, kickoff, and as-of must agree exactly across the array,
+PR65, and PR66 lineages. Only then does it reconstruct PR190 inputs mechanically
+and call the unchanged `build_team_strength_context_candidate(...)`.
 
 It then records and revalidates the exact nested candidate canonical SHA and
 size. The nested PR190 candidate remains candidate-only with every safety flag
 false. A naked candidate, caller SHA, caller record kind, caller position group,
 or caller completeness assertion never becomes authority.
+
+The authoritative wrapper has no public construction path: direct construction
+and `dataclasses.replace(...)` fail. The internal factory is reached only after
+complete source replay. The full revalidator repeats that replay and rejects
+coordinated object/byte mutation.
 
 The wrapper grants no authority for probability inference or adjustment,
 pricing, selection, production approval, or BET.
@@ -24,6 +33,9 @@ pricing, selection, production approval, or BET.
   remain unverified/unknown.
 - `SUPPORTED`, `STALE`, `CONFLICTED`, and `UNVERIFIED` are preserved into the
   PR190 evidence status vocabulary.
+- Exact AVAILABLE PR66 home/away form and Elo resolutions may populate only
+  their matching PR190 base components. Missing or blocked PR66 resolutions
+  remain missing; no other base component is inferred.
 - A supported exact unavailable-set completeness receipt is projected into the
   PR190 candidate receipt shape solely so the unchanged candidate calculator
   can run. Its reviewed authority remains anchored in the outer array artifact.
@@ -52,10 +64,9 @@ This adapter accepts no historical appearances or historical fixtures. Main has
 no reviewed historical player starts/minutes/ratings lineage at this boundary,
 so player-history, ratings, continuity and replacement-quality features remain
 missing. Schedule completeness is also absent, so rest/load features remain
-missing. Base Elo/form could only enter through a future explicit PR66 replay;
-this narrow adapter accepts none, so all base components remain missing rather
-than being inferred. Attack, defence, historical xG and venue performance are
-not synthesized.
+missing. PR66 may establish exact available home/away form or Elo. Attack,
+defence, historical xG and venue performance remain missing and are not
+synthesized.
 
 No subjective player-impact coefficient, injury weight, xG adjustment,
 probability calculation, bookmaker input, price, selection, or bet exists.

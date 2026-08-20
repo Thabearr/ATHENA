@@ -39,6 +39,7 @@ from domain.fotmob_team_strength_fixture_intelligence import LineupState, Positi
 
 
 RAW_OBJECT = {
+    "alpha": {"value": 100},
     "fixtureTeams": {
         "home": {"id": 10, "isHome": True, "lineupStatus": "confirmed"},
         "away": {"id": 20, "isHome": False, "lineupStatus": "confirmed"},
@@ -121,12 +122,20 @@ def _decisions(evidence, *, qualification=ArrayReviewQualification.QUALIFIED, co
     return tuple(result)
 
 
-def build_case(raw=None, *, decisions=None, mappings=None, positions=None):
+def build_case(
+    raw=None,
+    *,
+    decisions=None,
+    mappings=None,
+    positions=None,
+    reviewed_at=None,
+    classified_at=None,
+):
     raw = raw or _raw()
     chain = _pr53(raw)
     evidence = chain[0]
-    reviewed_at = evidence.observed_at + dt.timedelta(seconds=1)
-    classified_at = reviewed_at + dt.timedelta(seconds=1)
+    reviewed_at = reviewed_at or evidence.observed_at + dt.timedelta(seconds=1)
+    classified_at = classified_at or reviewed_at + dt.timedelta(seconds=1)
     decisions = decisions or _decisions(evidence)
     artifact = build_reviewed_match_details_array_records(
         evidence=evidence,

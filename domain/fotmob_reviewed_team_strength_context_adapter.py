@@ -22,7 +22,22 @@ from domain.fotmob_reviewed_match_details_array_records import (
     canonical_reviewed_match_details_array_records_bytes,
     revalidate_reviewed_match_details_array_records,
 )
+from domain.fixture_model_features import ModelFeatureId, ModelFeatureStatus
+from domain.fotmob_reviewed_match_details_fixture_intelligence_snapshot import (
+    FotMobReviewedMatchDetailsFixtureIntelligenceSnapshotError,
+    ReviewedMatchDetailsFixtureIntelligenceSnapshot,
+    canonical_reviewed_match_details_fixture_intelligence_snapshot_bytes,
+    revalidate_reviewed_match_details_fixture_intelligence_snapshot,
+)
+from domain.fotmob_reviewed_match_details_model_feature_handoff import (
+    FotMobReviewedMatchDetailsModelFeatureHandoffError,
+    ReviewedMatchDetailsModelFeatureHandoff,
+    canonical_reviewed_match_details_model_feature_handoff_bytes,
+    revalidate_reviewed_match_details_model_feature_handoff,
+)
 from domain.fotmob_team_strength_fixture_intelligence import (
+    BaseStrengthComponent,
+    BaseStrengthComponentId,
     CompletenessReceiptCandidate,
     CompletenessScope,
     EvidenceAnchor,
@@ -134,7 +149,18 @@ def _lineup_state(array: ReviewedMatchDetailsArrayRecords, side: TeamSide) -> Li
     return next(iter(states))
 
 
-@dataclasses.dataclass(frozen=True)
+def _new_reviewed_context(**values: Any) -> ReviewedFotMobTeamStrengthContext:
+    value = object.__new__(ReviewedFotMobTeamStrengthContext)
+    expected = {field.name for field in dataclasses.fields(ReviewedFotMobTeamStrengthContext)}
+    if set(values) != expected:
+        raise ReviewedTeamStrengthContextAdapterError("internal authoritative field set drift")
+    for name, item in values.items():
+        object.__setattr__(value, name, item)
+    value.__post_init__()
+    return value
+
+
+@dataclasses.dataclass(frozen=True, init=False)
 class ReviewedFotMobTeamStrengthContext:
     schema_version: int
     dataset_name: str
@@ -142,6 +168,12 @@ class ReviewedFotMobTeamStrengthContext:
     source_array_artifact_sha256: str
     source_array_artifact_size: int
     source_raw_sha256: str
+    source_pr65_artifact_sha256: str
+    source_pr65_artifact_size: int
+    source_pr66_handoff_sha256: str
+    source_pr66_handoff_size: int
+    source_fixture_intelligence_snapshot_sha256: str
+    source_model_feature_snapshot_sha256: str
     fixture_identifier: str
     source_match_id: str
     home_team_id: str
@@ -151,12 +183,26 @@ class ReviewedFotMobTeamStrengthContext:
     candidate_size: int
     safety: Mapping[str, bool]
 
+    def __init__(self, *_: Any, **__: Any) -> None:
+        raise ReviewedTeamStrengthContextAdapterError(
+            "authoritative wrapper can only be created by exact source replay"
+        )
+
     def __post_init__(self) -> None:
         if (self.schema_version, self.dataset_name, self.adapter_scope) != (SCHEMA_VERSION, DATASET_NAME, ADAPTER_SCOPE):
             raise ReviewedTeamStrengthContextAdapterError("adapter identity drift")
         _sha(self.source_array_artifact_sha256, "source_array_artifact_sha256")
         _positive(self.source_array_artifact_size, "source_array_artifact_size")
         _sha(self.source_raw_sha256, "source_raw_sha256")
+        _sha(self.source_pr65_artifact_sha256, "source_pr65_artifact_sha256")
+        _positive(self.source_pr65_artifact_size, "source_pr65_artifact_size")
+        _sha(self.source_pr66_handoff_sha256, "source_pr66_handoff_sha256")
+        _positive(self.source_pr66_handoff_size, "source_pr66_handoff_size")
+        _sha(
+            self.source_fixture_intelligence_snapshot_sha256,
+            "source_fixture_intelligence_snapshot_sha256",
+        )
+        _sha(self.source_model_feature_snapshot_sha256, "source_model_feature_snapshot_sha256")
         if type(self.fixture_identifier) is not str or not self.fixture_identifier:
             raise ReviewedTeamStrengthContextAdapterError("fixture identifier drift")
         if type(self.source_match_id) is not str or not self.source_match_id:
@@ -183,6 +229,12 @@ class ReviewedFotMobTeamStrengthContext:
             "source_array_artifact_sha256": self.source_array_artifact_sha256,
             "source_array_artifact_size": self.source_array_artifact_size,
             "source_raw_sha256": self.source_raw_sha256,
+            "source_pr65_artifact_sha256": self.source_pr65_artifact_sha256,
+            "source_pr65_artifact_size": self.source_pr65_artifact_size,
+            "source_pr66_handoff_sha256": self.source_pr66_handoff_sha256,
+            "source_pr66_handoff_size": self.source_pr66_handoff_size,
+            "source_fixture_intelligence_snapshot_sha256": self.source_fixture_intelligence_snapshot_sha256,
+            "source_model_feature_snapshot_sha256": self.source_model_feature_snapshot_sha256,
             "fixture_identifier": self.fixture_identifier,
             "source_match_id": self.source_match_id,
             "home_team_id": self.home_team_id,
@@ -194,7 +246,14 @@ class ReviewedFotMobTeamStrengthContext:
         }
 
 
-def _build_from_array(array: ReviewedMatchDetailsArrayRecords, exact_array_bytes: bytes) -> ReviewedFotMobTeamStrengthContext:
+def _build_from_array(
+    array: ReviewedMatchDetailsArrayRecords,
+    exact_array_bytes: bytes,
+    pr65: ReviewedMatchDetailsFixtureIntelligenceSnapshot,
+    exact_pr65_bytes: bytes,
+    handoff: ReviewedMatchDetailsModelFeatureHandoff,
+    exact_handoff_bytes: bytes,
+) -> ReviewedFotMobTeamStrengthContext:
     side_team_ids: dict[TeamSide, str | int] = {}
     for decision in array.decisions:
         previous = side_team_ids.get(decision.team_side)
@@ -230,6 +289,31 @@ def _build_from_array(array: ReviewedMatchDetailsArrayRecords, exact_array_bytes
         ))
     raw_anchor = EvidenceAnchor(
         f"fotmob-match-details-raw:{array.source_match_id}", array.observed_at, array.raw_sha256
+    )
+    feature_snapshot_anchor = EvidenceAnchor(
+        f"fotmob-reviewed-model-features:{handoff.model_feature_snapshot_sha256}",
+        handoff.as_of,
+        handoff.model_feature_snapshot_sha256,
+    )
+    feature_index = {
+        item.feature_id: item for item in handoff.model_feature_snapshot.features
+    }
+    base_bindings = (
+        (ModelFeatureId.HOME_FORM, home_team_id, BaseStrengthComponentId.FORM),
+        (ModelFeatureId.AWAY_FORM, away_team_id, BaseStrengthComponentId.FORM),
+        (ModelFeatureId.HOME_ELO, home_team_id, BaseStrengthComponentId.ELO),
+        (ModelFeatureId.AWAY_ELO, away_team_id, BaseStrengthComponentId.ELO),
+    )
+    base_components = tuple(
+        BaseStrengthComponent(
+            team_id=team_id,
+            component_id=component_id,
+            value=feature_index[feature_id].value,
+            evidence=feature_snapshot_anchor,
+            evidence_status=EvidenceStatus.SUPPORTED,
+        )
+        for feature_id, team_id, component_id in base_bindings
+        if feature_index[feature_id].status is ModelFeatureStatus.AVAILABLE
     )
     availability_receipts: dict[TeamSide, CompletenessReceiptCandidate | None] = {
         TeamSide.HOME: None,
@@ -270,7 +354,7 @@ def _build_from_array(array: ReviewedMatchDetailsArrayRecords, exact_array_bytes
             player_records=tuple(player_records),
             historical_appearances=(),
             historical_fixtures=(),
-            base_components=(),
+            base_components=base_components,
             supported_context=(),
             home_availability_completeness=availability_receipts[TeamSide.HOME],
             away_availability_completeness=availability_receipts[TeamSide.AWAY],
@@ -282,18 +366,36 @@ def _build_from_array(array: ReviewedMatchDetailsArrayRecords, exact_array_bytes
         candidate_bytes = canonical_team_strength_context_candidate_bytes(candidate)
     except TeamStrengthContextError as exc:
         raise ReviewedTeamStrengthContextAdapterError("PR190 candidate reconstruction failed") from exc
-    return ReviewedFotMobTeamStrengthContext(
-        SCHEMA_VERSION, DATASET_NAME, ADAPTER_SCOPE,
-        hashlib.sha256(exact_array_bytes).hexdigest(), len(exact_array_bytes), array.raw_sha256,
-        array.fixture_identifier, array.source_match_id, home_team_id, away_team_id,
-        candidate, hashlib.sha256(candidate_bytes).hexdigest(), len(candidate_bytes),
-        types.MappingProxyType(dict(_SAFETY)),
+    return _new_reviewed_context(
+        schema_version=SCHEMA_VERSION,
+        dataset_name=DATASET_NAME,
+        adapter_scope=ADAPTER_SCOPE,
+        source_array_artifact_sha256=hashlib.sha256(exact_array_bytes).hexdigest(),
+        source_array_artifact_size=len(exact_array_bytes),
+        source_raw_sha256=array.raw_sha256,
+        source_pr65_artifact_sha256=hashlib.sha256(exact_pr65_bytes).hexdigest(),
+        source_pr65_artifact_size=len(exact_pr65_bytes),
+        source_pr66_handoff_sha256=hashlib.sha256(exact_handoff_bytes).hexdigest(),
+        source_pr66_handoff_size=len(exact_handoff_bytes),
+        source_fixture_intelligence_snapshot_sha256=pr65.snapshot_sha256,
+        source_model_feature_snapshot_sha256=handoff.model_feature_snapshot_sha256,
+        fixture_identifier=array.fixture_identifier,
+        source_match_id=array.source_match_id,
+        home_team_id=home_team_id,
+        away_team_id=away_team_id,
+        candidate=candidate,
+        candidate_sha256=hashlib.sha256(candidate_bytes).hexdigest(),
+        candidate_size=len(candidate_bytes),
+        safety=types.MappingProxyType(dict(_SAFETY)),
     )
 
 
 def build_reviewed_fotmob_team_strength_context(
     *, evidence: Any, evidence_receipt_bytes: Any, manifest_bytes: Any, raw_bytes: Any,
     assessment: Any, assessment_bytes: Any, array_artifact: Any, array_artifact_bytes: Any,
+    materialization_inputs: Any, candidate_set: Any, candidate_set_bytes: Any,
+    admission: Any, admission_bytes: Any, pr65_artifact: Any, pr65_artifact_bytes: Any,
+    pr66_handoff: Any, pr66_handoff_bytes: Any,
 ) -> ReviewedFotMobTeamStrengthContext:
     try:
         rebuilt = revalidate_reviewed_match_details_array_records(
@@ -303,17 +405,91 @@ def build_reviewed_fotmob_team_strength_context(
             artifact_bytes=array_artifact_bytes,
         )
         exact_array_bytes = canonical_reviewed_match_details_array_records_bytes(rebuilt)
-    except ReviewedMatchDetailsArrayRecordsError as exc:
-        raise ReviewedTeamStrengthContextAdapterError("reviewed array lineage failed full replay") from exc
-    return _build_from_array(rebuilt, exact_array_bytes)
+        rebuilt_pr65 = revalidate_reviewed_match_details_fixture_intelligence_snapshot(
+            materialization_inputs=materialization_inputs,
+            candidate_set=candidate_set,
+            candidate_set_bytes=candidate_set_bytes,
+            admission=admission,
+            admission_bytes=admission_bytes,
+            artifact=pr65_artifact,
+            artifact_bytes=pr65_artifact_bytes,
+        )
+        exact_pr65_bytes = canonical_reviewed_match_details_fixture_intelligence_snapshot_bytes(
+            rebuilt_pr65
+        )
+        rebuilt_handoff = revalidate_reviewed_match_details_model_feature_handoff(
+            materialization_inputs=materialization_inputs,
+            candidate_set=candidate_set,
+            candidate_set_bytes=candidate_set_bytes,
+            admission=admission,
+            admission_bytes=admission_bytes,
+            artifact=rebuilt_pr65,
+            artifact_bytes=exact_pr65_bytes,
+            handoff=pr66_handoff,
+            handoff_bytes=pr66_handoff_bytes,
+        )
+        exact_handoff_bytes = canonical_reviewed_match_details_model_feature_handoff_bytes(
+            rebuilt_handoff
+        )
+    except (
+        ReviewedMatchDetailsArrayRecordsError,
+        FotMobReviewedMatchDetailsFixtureIntelligenceSnapshotError,
+        FotMobReviewedMatchDetailsModelFeatureHandoffError,
+    ) as exc:
+        raise ReviewedTeamStrengthContextAdapterError(
+            "reviewed PR52→PR66 plus array lineage failed full replay"
+        ) from exc
+    if (
+        rebuilt.fixture_identifier,
+        rebuilt.source_match_id,
+        rebuilt.kickoff,
+        rebuilt.classified_at,
+    ) != (
+        rebuilt_pr65.fixture_identifier,
+        rebuilt_pr65.source_match_id,
+        rebuilt_pr65.kickoff,
+        rebuilt_pr65.classified_at,
+    ) or (
+        rebuilt.fixture_identifier,
+        rebuilt.source_match_id,
+        rebuilt.kickoff,
+        rebuilt.classified_at,
+    ) != (
+        rebuilt_handoff.fixture_identifier,
+        rebuilt_handoff.source_match_id,
+        rebuilt_handoff.kickoff,
+        rebuilt_handoff.as_of,
+    ):
+        raise ReviewedTeamStrengthContextAdapterError(
+            "array, PR65 and PR66 fixture/source/kickoff/as-of identity mismatch"
+        )
+    exact_array_member = tuple(
+        item
+        for item in materialization_inputs
+        if getattr(getattr(item, "evidence", None), "raw_sha256", None) == rebuilt.raw_sha256
+        and hashlib.sha256(getattr(item, "assessment_bytes", b"")).hexdigest()
+        == rebuilt.structure_sha256
+    )
+    if not exact_array_member:
+        raise ReviewedTeamStrengthContextAdapterError(
+            "exact array raw/PR53 observation is absent from admitted PR65 materialization inputs"
+        )
+    return _build_from_array(
+        rebuilt,
+        exact_array_bytes,
+        rebuilt_pr65,
+        exact_pr65_bytes,
+        rebuilt_handoff,
+        exact_handoff_bytes,
+    )
 
 
 def canonical_reviewed_fotmob_team_strength_context_bytes(value: Any) -> bytes:
     if type(value) is not ReviewedFotMobTeamStrengthContext:
         raise ReviewedTeamStrengthContextAdapterError("value must be exact reviewed adapter wrapper")
     canonical_team_strength_context_candidate_bytes(value.candidate)
-    rebuilt = dataclasses.replace(value, safety=types.MappingProxyType(dict(value.safety)))
-    return _canonical(rebuilt.to_dict())
+    value.__post_init__()
+    return _canonical(value.to_dict())
 
 
 def sha256_reviewed_fotmob_team_strength_context(value: Any) -> str:
@@ -323,6 +499,9 @@ def sha256_reviewed_fotmob_team_strength_context(value: Any) -> str:
 def revalidate_reviewed_fotmob_team_strength_context(
     *, evidence: Any, evidence_receipt_bytes: Any, manifest_bytes: Any, raw_bytes: Any,
     assessment: Any, assessment_bytes: Any, array_artifact: Any, array_artifact_bytes: Any,
+    materialization_inputs: Any, candidate_set: Any, candidate_set_bytes: Any,
+    admission: Any, admission_bytes: Any, pr65_artifact: Any, pr65_artifact_bytes: Any,
+    pr66_handoff: Any, pr66_handoff_bytes: Any,
     context: Any, context_bytes: Any,
 ) -> ReviewedFotMobTeamStrengthContext:
     if type(context) is not ReviewedFotMobTeamStrengthContext or type(context_bytes) is not bytes:
@@ -333,6 +512,11 @@ def revalidate_reviewed_fotmob_team_strength_context(
         manifest_bytes=manifest_bytes, raw_bytes=raw_bytes, assessment=assessment,
         assessment_bytes=assessment_bytes, array_artifact=array_artifact,
         array_artifact_bytes=array_artifact_bytes,
+        materialization_inputs=materialization_inputs, candidate_set=candidate_set,
+        candidate_set_bytes=candidate_set_bytes, admission=admission,
+        admission_bytes=admission_bytes, pr65_artifact=pr65_artifact,
+        pr65_artifact_bytes=pr65_artifact_bytes, pr66_handoff=pr66_handoff,
+        pr66_handoff_bytes=pr66_handoff_bytes,
     )
     exact = canonical_reviewed_fotmob_team_strength_context_bytes(rebuilt)
     if supplied != exact or context_bytes != exact:
