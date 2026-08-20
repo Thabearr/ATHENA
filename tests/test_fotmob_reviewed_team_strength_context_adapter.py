@@ -62,7 +62,7 @@ def test_full_array_replay_authorizes_wrapper_while_nested_pr190_safety_stays_fa
     safety = dict(context.safety)
     assert safety["team_strength_feature_authorized"] is True
     assert all(not value for key, value in safety.items() if key != "team_strength_feature_authorized")
-    assert all(value is False for value in context.candidate.safety.values())
+    assert all(value is False for _, value in context.candidate.safety)
     assert context.source_raw_sha256 == artifact.raw_sha256
     assert context.candidate.fixture_identifier == artifact.fixture_identifier
     assert context.home_team_id == "FOTMOB_TEAM:INTEGER:10"

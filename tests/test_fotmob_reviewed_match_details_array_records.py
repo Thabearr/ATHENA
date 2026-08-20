@@ -163,7 +163,13 @@ def test_exact_pr52_pr53_array_review_extracts_identity_sorted_records_and_empty
 
 def test_raw_key_names_and_unobserved_patterns_never_self_authorize():
     chain = _pr53(_raw())
-    bad = dataclasses.replace(_decisions(chain[0])[0], array_root_pointer="/lineups/home/players", record_pointer_pattern="/lineups/home/players/*")
+    bad_root = "/lineups/home/players"
+    bad = dataclasses.replace(
+        _decisions(chain[0])[0],
+        array_root_pointer=bad_root,
+        record_pointer_pattern=bad_root + "/*",
+        member_reviews=_members(bad_root, ArrayRecordSetScope.STARTING_XI),
+    )
     with pytest.raises(ReviewedMatchDetailsArrayRecordsError, match="array root"):
         build_case(decisions=(bad,) + _decisions(chain[0])[1:])
 
