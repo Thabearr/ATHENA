@@ -34,7 +34,7 @@ class AccumulatorEngine:
     3. Market reliability (proven markets only)
     4. Risk-adjusted selection (allows some upset alerts if edge is exceptional)
     """
-    
+
     def __init__(
         self,
         min_edge: float = 0.05,
@@ -50,34 +50,38 @@ class AccumulatorEngine:
         )
         # Markets ranked by historical reliability (proven in betting)
         self.market_reliability = {
-            "TO_QUALIFY_HOME": 0.95,      # Knockout - very predictable
+            "TO_QUALIFY_HOME": 0.95,
             "TO_QUALIFY_AWAY": 0.95,
-            "1X2_2UP_HOME": 0.90,         # Strong wins - reliable
+            "1X2_2UP_HOME": 0.90,
             "1X2_2UP_AWAY": 0.90,
-            "1X2_1UP_HOME": 0.85,         # Moderate wins
+            "1X2_1UP_HOME": 0.85,
             "1X2_1UP_AWAY": 0.85,
-            "DNB_HOME": 0.80,              # Draw no bet
+            "DNB_HOME": 0.80,
             "DNB_AWAY": 0.80,
-            "DC_1X": 0.75,                 # Double chance - decent
+            "DC_1X": 0.75,
             "DC_X2": 0.75,
             "DC_12": 0.75,
-            "HOME_OR_OVER_25": 0.70,       # Combo bets
+            "HOME_OR_OVER_25": 0.70,
             "AWAY_OR_OVER_25": 0.70,
-            "HOME_WIN_TO_NIL_NO": 0.65,    # Win to nil
+            "HOME_WIN_TO_NIL_NO": 0.65,
             "AWAY_WIN_TO_NIL_NO": 0.65,
-            "ASIAN_HANDICAP_HOME_PLUS_1_5": 0.60,  # Handicaps
+            "ASIAN_HANDICAP_HOME_PLUS_1_5": 0.60,
             "ASIAN_HANDICAP_AWAY_PLUS_1_5": 0.60,
-            "WIN_EITHER_HALF_HOME_YES": 0.55,      # Half bets
+            "WIN_EITHER_HALF_HOME_YES": 0.55,
             "WIN_EITHER_HALF_AWAY_YES": 0.55,
-            "GG_YES": 0.50,                # Both teams to score
+            "GG_YES": 0.50,
             "GG_NO": 0.50,
-            "OVER_15": 0.45,               # Over/under
+            "OVER_15": 0.45,
             "UNDER_35": 0.45,
         }
 
-    def map_verdict_to_market_string(self, verdict: str, home_team: str, away_team: str) -> tuple:
-        """
-        Map a registered legacy verdict to its display tuple.
+    def map_verdict_to_market_string(
+        self,
+        verdict: str,
+        home_team: str,
+        away_team: str,
+    ) -> tuple:
+        """Map a registered legacy verdict to its display tuple.
 
         Unknown verdicts fail loudly instead of silently becoming a Double
         Chance Home-or-Draw selection.
@@ -94,9 +98,7 @@ class AccumulatorEngine:
         prepared_fixture: dict,
     ):
         """Return why a canonical selection cannot enter an accumulator."""
-        model_status = MODEL_STATUS_REGISTRY[
-            canonical_selection.market_id
-        ]
+        model_status = MODEL_STATUS_REGISTRY[canonical_selection.market_id]
         if not model_status.selectable:
             return (
                 f"{prepared_fixture['market_display_name']} has no explicit "
@@ -116,77 +118,88 @@ class AccumulatorEngine:
         return None
 
     def _score_fixture(self, fixture: dict) -> float:
-        """
-        Score a fixture for acca inclusion.
-        Higher score = more reliable for accumulator.
-        
-        Factors:
-        - Market reliability (60% weight)
-        - Edge strength (30% weight)
-        - Risk adjustment (10% weight)
+        """Score a fixture for legacy acca inclusion fallback.
+
+        The reviewed league/fixture priority planner supersedes this score when
+        candidates carry ``priority_policy_version``.  This method remains only
+        for callers that have not yet crossed the new priority boundary.
         """
         verdict = fixture.get("verdict", "DC_1X")
         edge = fixture.get("edge", 0.0)
         risk_score = fixture.get("risk_score", 100)
         upset_alert = fixture.get("upset_alert", False)
-        
-        # Market reliability score (0-100)
+
         market_score = self.market_reliability.get(verdict, 40) * 100
-        
-        # Edge score (0-100, capped at edge=0.20)
-        edge_score = min(edge * 500, 100)  # 0.20 edge = 100 score
-        
-        # Risk adjustment (penalize high risk, but allow if edge is strong)
-        risk_penalty = (risk_score / 100) * 30  # Risk can reduce score by up to 30
-        upset_penalty = 15 if upset_alert else 0  # Upset alerts get -15
-        
-        total_score = (market_score * 0.60) + (edge_score * 0.30) - risk_penalty - upset_penalty
-        
+        edge_score = min(edge * 500, 100)
+        risk_penalty = (risk_score / 100) * 30
+        upset_penalty = 15 if upset_alert else 0
+
+        total_score = (
+            (market_score * 0.60)
+            + (edge_score * 0.30)
+            - risk_penalty
+            - upset_penalty
+        )
         return max(total_score, 0)
 
     def _is_acca_eligible(self, fixture: dict, strict: bool = False) -> bool:
-        """
-        Determine if a fixture is eligible for accumulator under strict risk rules.
-        Hedged safety markets (Double Chance, DNB, Over/Under lines, Handicaps, Combos)
-        explicitly hedge against upset alerts, making them foolproof even during upset alerts.
-        """
+        """Determine if a fixture is eligible under the legacy risk rules."""
         edge = fixture.get("edge", 0.0)
         upset_alert = fixture.get("upset_alert", False)
         risk_score = fixture.get("risk_score", 100)
         verdict = fixture.get("verdict", "")
-        
-        # Minimum edge requirement
+
         if edge < self.min_edge:
             return False
 
         hedged_safety_markets = {
-            "DC_1X", "DC_X2", "DC_12", "DNB_HOME", "DNB_AWAY",
-            "OVER_15", "UNDER_35", "OVER_05", "UNDER_45", "UNDER_55",
-            "AH_HOME_PLUS_15", "AH_AWAY_PLUS_15", "AH_HOME_PLUS_25", "AH_AWAY_PLUS_25",
-            "HOME_OR_OVER_25", "AWAY_OR_OVER_25", "DRAW_OR_OVER_25",
-            "TO_QUALIFY_HOME", "TO_QUALIFY_AWAY", "WIN_EITHER_HALF_HOME_YES", "WIN_EITHER_HALF_AWAY_YES"
+            "DC_1X",
+            "DC_X2",
+            "DC_12",
+            "DNB_HOME",
+            "DNB_AWAY",
+            "OVER_15",
+            "UNDER_35",
+            "OVER_05",
+            "UNDER_45",
+            "UNDER_55",
+            "AH_HOME_PLUS_15",
+            "AH_AWAY_PLUS_15",
+            "AH_HOME_PLUS_25",
+            "AH_AWAY_PLUS_25",
+            "HOME_OR_OVER_25",
+            "AWAY_OR_OVER_25",
+            "DRAW_OR_OVER_25",
+            "TO_QUALIFY_HOME",
+            "TO_QUALIFY_AWAY",
+            "WIN_EITHER_HALF_HOME_YES",
+            "WIN_EITHER_HALF_AWAY_YES",
         }
 
-        # Straight 1X2 win bets are rejected on upset alerts in strict mode
         if strict and upset_alert and verdict not in hedged_safety_markets:
             return False
-        
-        # Extremely high risk scores (>85) are rejected regardless of market
         if risk_score > 85:
             return False
-        
         return True
 
-    def generate_accumulator(self, analyzed_fixtures: list, fold_size: int, strict: bool = False) -> dict:
+    def generate_accumulator(
+        self,
+        analyzed_fixtures: list,
+        fold_size: int,
+        strict: bool = False,
+    ) -> dict:
+        """Generate an accumulator from pre-filtered fixtures.
+
+        If every candidate carries ATHENA priority metadata, the incoming order
+        is authoritative for *consideration order* and is preserved.  This is
+        required for strict league exhaustion: a later weighted re-sort must not
+        pull a lower-priority league ahead of an unexhausted higher-priority one.
+
+        Callers without priority metadata retain the historical score fallback.
         """
-        Generate accumulator by scoring and ranking the pre-filtered fixtures
-        from AccaFilter. AccaFilter already handles risk, correlation, and
-        category diversity enforcement — this method only scores and orders.
-        """
-        # Trust AccaFilter's pre-filtered output — it already handles strict mode
         requested_fold_size = fold_size
         eligible = list(analyzed_fixtures)
-        
+
         if len(eligible) < fold_size:
             if len(eligible) == 0:
                 return {
@@ -200,23 +213,26 @@ class AccumulatorEngine:
                     "legs": [],
                     "evidence_reports": [],
                     "eligible_count": 0,
-                    "available_count": len(analyzed_fixtures)
+                    "available_count": len(analyzed_fixtures),
                 }
             fold_size = len(eligible)
-        
-        # Score all eligible fixtures
-        scored = [(f, self._score_fixture(f)) for f in eligible]
-        # Sort by score (highest first)
-        scored.sort(key=lambda x: x[1], reverse=True)
-        
-        # Take top N for the acca
-        top_fixtures = [f for f, _ in scored[:fold_size]]
-        
+
+        priority_ordered = bool(eligible) and all(
+            isinstance(fix, dict) and fix.get("priority_policy_version")
+            for fix in eligible
+        )
+        if priority_ordered:
+            top_fixtures = eligible[:fold_size]
+        else:
+            scored = [(fix, self._score_fixture(fix)) for fix in eligible]
+            scored.sort(key=lambda item: item[1], reverse=True)
+            top_fixtures = [fix for fix, _ in scored[:fold_size]]
+
         legs = []
         rejected_reasons = []
         compounded_odds = 1.0
-        
-        for idx, fix in enumerate(top_fixtures):
+
+        for fix in top_fixtures:
             verdict = fix.get("verdict")
             try:
                 prepared_fixture = serialize_leg(fix)
@@ -260,11 +276,10 @@ class AccumulatorEngine:
                     current_time=self.current_time_provider(),
                     max_quote_age_seconds=self.max_quote_age_seconds,
                 )
-                exact_quote = (
-                    validated_quotes[0] if validated_quotes else None
-                )
+                exact_quote = validated_quotes[0] if validated_quotes else None
             except (MarketRegistryError, TypeError, ValueError):
                 exact_quote = None
+
             if (
                 not isinstance(bookmaker_odds, (int, float))
                 or isinstance(bookmaker_odds, bool)
@@ -272,19 +287,11 @@ class AccumulatorEngine:
                 or exact_quote is None
                 or not exact_quote.is_genuine
                 or not exact_quote.is_current
-                or not quote_matches_selection(
-                    exact_quote,
-                    canonical_selection,
-                )
-                or abs(
-                    exact_quote.bookmaker_odds - float(bookmaker_odds)
-                ) > 1e-9
+                or not quote_matches_selection(exact_quote, canonical_selection)
+                or abs(exact_quote.bookmaker_odds - float(bookmaker_odds)) > 1e-9
                 or fix.get("edge_is_bookmaker_value") is not True
                 or not isinstance(fix.get("edge_pp"), (int, float))
-                or not isinstance(
-                    fix.get("kelly_stake_pct"),
-                    (int, float),
-                )
+                or not isinstance(fix.get("kelly_stake_pct"), (int, float))
             ):
                 reason = (
                     f"{fix.get('fixture', 'Unknown fixture')}: no validated "
@@ -297,49 +304,72 @@ class AccumulatorEngine:
 
             leg_odds = round(float(bookmaker_odds), 4)
             compounded_odds *= leg_odds
-            
-            legs.append({
-                "fixture_id": fix.get("fixture_id"),
-                "fixture": fix["fixture"],
-                "home_team": fix.get("home_team"),
-                "away_team": fix.get("away_team"),
-                "league": fix.get("league"),
-                "match_date": fix.get("match_date"),
-                "verdict": verdict,
-                "market_id": prepared_fixture["market_id"],
-                "outcome_id": prepared_fixture["outcome_id"],
-                "line": prepared_fixture["line"],
-                "display_label": prepared_fixture["display_label"],
-                "market_family": prepared_fixture["market_family"],
-                "market_display_name": prepared_fixture[
-                    "market_display_name"
-                ],
-                "outcome_display_name": prepared_fixture[
-                    "outcome_display_name"
-                ],
-                "settlement_semantics": prepared_fixture[
-                    "settlement_semantics"
-                ],
-                # Compatibility labels for existing UI consumers.
-                "market": prepared_fixture["market_display_name"],
-                "selection": prepared_fixture["outcome_display_name"],
-                "edge": round(fix["edge"], 3),
-                "edge_is_bookmaker_value": fix.get(
-                    "edge_is_bookmaker_value",
-                    False,
-                ),
-                "edge_method": fix.get("edge_method"),
-                "edge_pp": round(float(fix["edge_pp"]), 4),
-                "kelly_stake_pct": round(
-                    float(fix["kelly_stake_pct"]), 4
-                ),
-                "estimated_probability": fix.get("estimated_probability"),
-                "probability_method": fix.get("probability_method"),
-                "evidence_report": fix.get("evidence_report"),
-                "risk_score": round(fix["risk_score"], 1),
-                "odds": leg_odds,
-                "odds_source": "bookmaker",
-            })
+
+            legs.append(
+                {
+                    "fixture_id": fix.get("fixture_id"),
+                    "fixture": fix["fixture"],
+                    "home_team": fix.get("home_team"),
+                    "away_team": fix.get("away_team"),
+                    "league": fix.get("league"),
+                    "match_date": fix.get("match_date"),
+                    "verdict": verdict,
+                    "market_id": prepared_fixture["market_id"],
+                    "outcome_id": prepared_fixture["outcome_id"],
+                    "line": prepared_fixture["line"],
+                    "display_label": prepared_fixture["display_label"],
+                    "market_family": prepared_fixture["market_family"],
+                    "market_display_name": prepared_fixture[
+                        "market_display_name"
+                    ],
+                    "outcome_display_name": prepared_fixture[
+                        "outcome_display_name"
+                    ],
+                    "settlement_semantics": prepared_fixture[
+                        "settlement_semantics"
+                    ],
+                    "market": prepared_fixture["market_display_name"],
+                    "selection": prepared_fixture["outcome_display_name"],
+                    "edge": round(fix["edge"], 3),
+                    "edge_is_bookmaker_value": fix.get(
+                        "edge_is_bookmaker_value",
+                        False,
+                    ),
+                    "edge_method": fix.get("edge_method"),
+                    "edge_pp": round(float(fix["edge_pp"]), 4),
+                    "kelly_stake_pct": round(
+                        float(fix["kelly_stake_pct"]),
+                        4,
+                    ),
+                    "estimated_probability": fix.get("estimated_probability"),
+                    "probability_method": fix.get("probability_method"),
+                    "evidence_report": fix.get("evidence_report"),
+                    "risk_score": round(fix["risk_score"], 1),
+                    "odds": leg_odds,
+                    "odds_source": "bookmaker",
+                    "priority_policy_version": fix.get(
+                        "priority_policy_version"
+                    ),
+                    "league_priority_policy_version": fix.get(
+                        "league_priority_policy_version"
+                    ),
+                    "league_priority_tier": fix.get("league_priority_tier"),
+                    "league_priority_rank": fix.get("league_priority_rank"),
+                    "league_priority_name": fix.get("league_priority_name"),
+                    "fixture_priority_probability": fix.get(
+                        "fixture_priority_probability"
+                    ),
+                    "fixture_priority_risk_score": fix.get(
+                        "fixture_priority_risk_score"
+                    ),
+                    "fixture_priority_freshness": fix.get(
+                        "fixture_priority_freshness"
+                    ),
+                    "fixture_priority_edge_pp": fix.get(
+                        "fixture_priority_edge_pp"
+                    ),
+                }
+            )
 
         if not legs:
             return {
@@ -358,7 +388,7 @@ class AccumulatorEngine:
                 "eligible_count": len(eligible),
                 "available_count": len(analyzed_fixtures),
             }
-        
+
         return {
             "decision_status": DecisionStatus.BET.value,
             "no_bet_reasons": [],
@@ -368,4 +398,9 @@ class AccumulatorEngine:
             "legs": legs,
             "eligible_count": len(eligible),
             "available_count": len(analyzed_fixtures),
+            "priority_policy_version": (
+                top_fixtures[0].get("priority_policy_version")
+                if priority_ordered and top_fixtures
+                else None
+            ),
         }
