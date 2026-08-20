@@ -238,7 +238,10 @@ def test_canonical_identity_and_evidence_mutation_fail_closed():
         dataclasses.replace(result, source_evidence_sha256s=("b" * 64, "a" * 64))
     mutated_time = build()
     object.__setattr__(mutated_time.source_evidence[0], "observed_at", KICKOFF + dt.timedelta(seconds=1))
-    with pytest.raises(TeamStrengthContextError, match="post-as_of or post-kickoff"):
+    with pytest.raises(
+        TeamStrengthContextError,
+        match="(post-as_of or post-kickoff|completeness evidence observed after as_of)",
+    ):
         canonical_team_strength_context_candidate_bytes(mutated_time)
     mutated_hash = build()
     object.__setattr__(mutated_hash.source_evidence[0], "evidence_sha256", "not-a-sha")
