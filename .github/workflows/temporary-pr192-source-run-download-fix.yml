@@ -1,0 +1,70 @@
+name: Temporary PR192 source-run artifact fix
+
+on:
+  pull_request:
+    types: [edited]
+
+jobs:
+  patch:
+    if: >-
+      github.event.pull_request.number == 192 &&
+      github.actor == 'Thabearr' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/fotmob-prospective-player-context-campaign' &&
+      contains(github.event.pull_request.body, '<!-- ATHENA_IMPL_PATCH_SOURCE_RUN_20260820 -->')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: read
+
+    steps:
+      - name: Check out exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Apply exact prior-run artifact download fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+
+          workflow_path = Path('.github/workflows/execute-fotmob-prospective-player-context-campaign.yml')
+          text = workflow_path.read_text(encoding='utf-8')
+          old_output = """            core.setOutput('source_artifact_id', artifactId[1]);\n            core.setOutput('source_head_sha', artifact.workflow_run.head_sha);\n            core.setOutput('candidate_sha', candidate[1]);\n"""
+          new_output = """            core.setOutput('source_artifact_id', artifactId[1]);\n            core.setOutput('source_run_id', sourceRun[1]);\n            core.setOutput('source_head_sha', artifact.workflow_run.head_sha);\n            core.setOutput('candidate_sha', candidate[1]);\n"""
+          if text.count(old_output) != 1:
+              raise SystemExit('expected source artifact output block once')
+          text = text.replace(old_output, new_output, 1)
+          old_download = """          artifact-ids: ${{ steps.guard.outputs.source_artifact_id }}\n          path: source-campaign-artifact\n          github-token: ${{ github.token }}\n          repository: ${{ github.repository }}\n"""
+          new_download = """          artifact-ids: ${{ steps.guard.outputs.source_artifact_id }}\n          path: source-campaign-artifact\n          github-token: ${{ github.token }}\n          repository: ${{ github.repository }}\n          run-id: ${{ steps.guard.outputs.source_run_id }}\n"""
+          if text.count(old_download) != 1:
+              raise SystemExit('expected download-artifact block once')
+          text = text.replace(old_download, new_download, 1)
+          workflow_path.write_text(text, encoding='utf-8')
+
+          test_path = Path('tests/test_fotmob_prospective_player_context_campaign.py')
+          tests = test_path.read_text(encoding='utf-8')
+          old_assert = """    assert \"actions/download-artifact@\" in workflow\n    assert \"if: always()\" in workflow\n"""
+          new_assert = """    assert \"actions/download-artifact@\" in workflow\n    assert \"core.setOutput('source_run_id', sourceRun[1])\" in workflow\n    assert \"run-id: ${{ steps.guard.outputs.source_run_id }}\" in workflow\n    assert \"if: always()\" in workflow\n"""
+          if tests.count(old_assert) != 1:
+              raise SystemExit('expected workflow regression assertion block once')
+          tests = tests.replace(old_assert, new_assert, 1)
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+
+          git diff --check
+          git diff -- .github/workflows/execute-fotmob-prospective-player-context-campaign.yml tests/test_fotmob_prospective_player_context_campaign.py
+
+      - name: Remove temporary workflow and commit exact fix
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm .github/workflows/temporary-pr192-source-run-download-fix.yml
+          git config user.name 'ATHENA implementation bridge'
+          git config user.email 'actions@users.noreply.github.com'
+          git add .github/workflows/execute-fotmob-prospective-player-context-campaign.yml tests/test_fotmob_prospective_player_context_campaign.py
+          git commit -m 'Fix PR192 prior-run artifact replay download'
+          git push origin HEAD:evidence/fotmob-prospective-player-context-campaign
