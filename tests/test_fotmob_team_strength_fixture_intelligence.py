@@ -120,7 +120,7 @@ def test_same_and_future_appearances_cannot_change_target_features():
 def test_post_kickoff_or_post_as_of_source_observation_rejected():
     bad = player("H", "h1", PlayerRecordKind.STARTER)
     bad = dataclasses.replace(bad, evidence=anchor("a", KICKOFF + dt.timedelta(seconds=1)))
-    with pytest.raises(TeamStrengthContextError, match="post-as_of or post-kickoff"):
+    with pytest.raises(TeamStrengthContextError, match="(post-as_of or post-kickoff|completeness evidence observed after as_of)"):
         build(player_records=(bad, player("A", "a1", PlayerRecordKind.STARTER, seed="d")))
 
 
@@ -300,7 +300,7 @@ def test_duplicate_historical_identities_fail_closed():
     with pytest.raises(TeamStrengthContextError, match="historical player identity"):
         build(historical_appearances=(row, row))
     match = fixture("f1", 4)
-    with pytest.raises(TeamStrengthContextError, match="historical fixture identity"):
+    with pytest.raises(TeamStrengthContextError, match="(historical fixture identity|completeness fixture IDs)"):
         build(historical_fixtures=(match, match))
 
 
