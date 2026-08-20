@@ -816,14 +816,20 @@ class WinEitherHalfResearchTests(unittest.TestCase):
                     manifest=manifest,
                 )
 
-    def test_both_win_either_half_markets_remain_disabled(self):
+    def test_both_win_either_half_markets_are_analytical_but_unselectable(self):
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
         with self.assertRaises(ResearchExportError):
             validate_market_safety(

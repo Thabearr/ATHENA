@@ -1110,14 +1110,20 @@ class WinEitherHalfBenchmarkTests(unittest.TestCase):
                 self.assertIn("--feature-csv", result.stdout)
                 self.assertIn("--check", result.stdout)
 
-    def test_no_generated_rows_models_or_databases_are_tracked_and_markets_disabled(self):
+    def test_no_generated_rows_or_databases_are_tracked_and_markets_unselectable(self):
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
         tracked = subprocess.run(
             ["git", "ls-files"],

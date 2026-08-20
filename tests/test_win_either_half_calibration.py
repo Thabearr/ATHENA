@@ -902,8 +902,9 @@ class WinEitherHalfCalibrationTests(unittest.TestCase):
         ):
             with self.subTest(market=market):
                 self.assertEqual(
-                    MODEL_STATUS_REGISTRY[market].status, ModelStatus.DISABLED
+                    MODEL_STATUS_REGISTRY[market].status, ModelStatus.EXPERIMENTAL
                 )
+                self.assertFalse(MODEL_STATUS_REGISTRY[market].selectable)
 
         with patch.object(
             socket.socket,

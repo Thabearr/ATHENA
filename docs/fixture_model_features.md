@@ -22,8 +22,9 @@ The canonical dataset is
 
 ## Current feature registry
 
-The v1 registry intentionally mirrors the current non-empty
-`probability_inputs` in `domain/model_status.py`:
+The v1 registry defines the six
+`GENERIC_FIXTURE_MODEL_FEATURES` inputs used by ScoreMatrix model houses in
+`domain/model_status.py`:
 
 | Feature ID | Intelligence category | Exact source field |
 | --- | --- | --- |
@@ -38,6 +39,11 @@ The v1 registry intentionally mirrors the current non-empty
 and decision concern. Availability, lineup, xG, weather, and other upstream
 context are not mapped until a later reviewed schema defines their feature
 semantics.
+
+Specialized model families may own a different typed input namespace. Frozen
+Win Either Half inference uses `SPECIALIZED_WEH_PRE_MATCH_FEATURES` and an
+exact ordered 74-feature contract; this generic six-feature snapshot does not
+claim to evaluate or satisfy that namespace.
 
 This contract does not compute form from results, ELO from match history,
 fatigue from rest days, or freshness from the clock. It does not normalize,

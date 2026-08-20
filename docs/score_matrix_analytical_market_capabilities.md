@@ -71,10 +71,13 @@ Handicap accepts an exact quarter-goal HOME line and exposes the AWAY side at
 the exact opposite line, preserving integer, half-goal, and quarter-goal
 settlement semantics.
 
-## Analytically blocked markets
+## Specialized analytical markets and remaining blocks
 
-`HOME_WIN_EITHER_HALF` and `AWAY_WIN_EITHER_HALF` remain blocked because a
-full-time score matrix is not a half-by-half probability model.
+`HOME_WIN_EITHER_HALF` and `AWAY_WIN_EITHER_HALF` remain excluded from the
+ScoreMatrix projector because full-time score probability is not a half-by-half
+proxy. They are analytically available only through the separate frozen WEH
+Stage 4A/4B predictor and its exact specialized 74-feature input namespace.
+That availability grants no pricing or selection authority.
 
 `MATCH_RESULT_1UP` and `MATCH_RESULT_2UP` remain blocked because exact provider
 promotion rules and a lead-path probability model are both required. Full-time

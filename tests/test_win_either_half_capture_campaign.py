@@ -1229,14 +1229,20 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Stage 5B3", result.stdout)
 
-    def test_markets_remain_disabled(self) -> None:
+    def test_markets_remain_unselectable(self) -> None:
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
 
 

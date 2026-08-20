@@ -41,10 +41,12 @@ from domain.model_status import (
     MissingInputPolicy,
     ModelStatus,
     PricingAuthority,
+    ProbabilityInputNamespace,
     SelectionAuthority,
     SettlementCapability,
     get_model_status,
 )
+from domain.win_either_half_features import PRE_MATCH_FEATURE_NAMES
 
 
 SCHEMA_VERSION = 1
@@ -79,6 +81,7 @@ class DeclaredInputStatus(str, enum.Enum):
 class ProbabilityReadinessStatus(str, enum.Enum):
     BLOCKED_MODEL_STATUS = "BLOCKED_MODEL_STATUS"
     BLOCKED_FEATURE_INPUTS = "BLOCKED_FEATURE_INPUTS"
+    BLOCKED_INPUT_NAMESPACE_NOT_OWNED = "BLOCKED_INPUT_NAMESPACE_NOT_OWNED"
     BLOCKED_UNREVIEWED_TRANSFORM = "BLOCKED_UNREVIEWED_TRANSFORM"
     RESEARCH_ONLY_UNREVIEWED_TRANSFORM = "RESEARCH_ONLY_UNREVIEWED_TRANSFORM"
 
@@ -91,6 +94,9 @@ class ProbabilityReadinessReason(str, enum.Enum):
         "REVIEWED_EXPECTED_GOALS_TRANSFORM_NOT_ESTABLISHED"
     )
     EXPERIMENTAL_RESEARCH_ONLY = "EXPERIMENTAL_RESEARCH_ONLY"
+    SPECIALIZED_INPUT_NAMESPACE_NOT_OWNED = (
+        "SPECIALIZED_INPUT_NAMESPACE_NOT_OWNED"
+    )
 
 
 def _error(message: str) -> FotMobReviewedMatchDetailsProbabilityModelReadinessError:
@@ -199,6 +205,7 @@ def _registry_records() -> tuple[dict[str, Any], ...]:
             (definition.fresh_confirmation_status, FreshConfirmationStatus),
             (definition.pricing_authority, PricingAuthority),
             (definition.selection_authority, SelectionAuthority),
+            (definition.probability_input_namespace, ProbabilityInputNamespace),
         )
         if any(not isinstance(value, expected) for value, expected in typed_capabilities):
             raise _error("registry capability/authority metadata must remain typed")
@@ -222,13 +229,22 @@ def _registry_records() -> tuple[dict[str, Any], ...]:
             "registry probability_inputs",
         )
         feature_ids: list[ModelFeatureId] = []
-        for item in probability_inputs:
-            try:
-                feature_ids.append(ModelFeatureId(item))
-            except ValueError as exc:
-                raise _error(
-                    "registry probability input is not an exact PR #31 ModelFeatureId"
-                ) from exc
+        if (
+            definition.probability_input_namespace
+            is ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
+        ):
+            for item in probability_inputs:
+                try:
+                    feature_ids.append(ModelFeatureId(item))
+                except ValueError as exc:
+                    raise _error(
+                        "generic registry probability input is not an exact PR #31 "
+                        "ModelFeatureId"
+                    ) from exc
+        elif probability_inputs != PRE_MATCH_FEATURE_NAMES:
+            raise _error(
+                "specialized WEH registry inputs differ from exact frozen namespace"
+            )
         if len(feature_ids) != len(set(feature_ids)):
             raise _error("registry probability inputs must not contain duplicates")
         pricing_inputs = _validate_string_tuple(
@@ -241,7 +257,15 @@ def _registry_records() -> tuple[dict[str, Any], ...]:
                 "model_status": definition.status.value,
                 "probability_method": probability_method,
                 "reason": reason,
-                "probability_inputs": [item.value for item in feature_ids],
+                "probability_input_namespace": (
+                    definition.probability_input_namespace.value
+                ),
+                "probability_inputs": (
+                    [item.value for item in feature_ids]
+                    if definition.probability_input_namespace
+                    is ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
+                    else list(probability_inputs)
+                ),
                 "pricing_inputs": list(pricing_inputs),
                 "missing_input_policy": definition.missing_input_policy.value,
                 "analytical_probability_capability": (
@@ -332,11 +356,21 @@ class ProbabilityFeatureAudit:
 def _expected_readiness(
     model_status: ModelStatus,
     unavailable: tuple[ModelFeatureId, ...],
+    probability_input_namespace: ProbabilityInputNamespace,
 ) -> tuple[
     DeclaredInputStatus,
     ProbabilityReadinessStatus,
     tuple[ProbabilityReadinessReason, ...],
 ]:
+    if (
+        probability_input_namespace
+        is ProbabilityInputNamespace.SPECIALIZED_WEH_PRE_MATCH_FEATURES
+    ):
+        return (
+            DeclaredInputStatus.BLOCKED,
+            ProbabilityReadinessStatus.BLOCKED_INPUT_NAMESPACE_NOT_OWNED,
+            (ProbabilityReadinessReason.SPECIALIZED_INPUT_NAMESPACE_NOT_OWNED,),
+        )
     declared = (
         DeclaredInputStatus.SATISFIED
         if not unavailable
@@ -385,7 +419,9 @@ class ProbabilityMarketReadiness:
     market_id: MarketId
     model_status: ModelStatus
     probability_method: str | None
+    probability_input_namespace: ProbabilityInputNamespace
     declared_probability_inputs: tuple[ModelFeatureId, ...]
+    declared_specialized_probability_inputs: tuple[str, ...]
     declared_pricing_inputs: tuple[str, ...]
     legacy_missing_input_policy: MissingInputPolicy
     reviewed_missing_input_policy: str
@@ -407,6 +443,8 @@ class ProbabilityMarketReadiness:
             self.probability_method is None
         ):
             raise _error("ACTIVE/EXPERIMENTAL readiness requires probability_method")
+        if not isinstance(self.probability_input_namespace, ProbabilityInputNamespace):
+            raise _error("probability input namespace must remain typed")
         if type(self.declared_probability_inputs) is not tuple or any(
             not isinstance(item, ModelFeatureId)
             for item in self.declared_probability_inputs
@@ -416,6 +454,10 @@ class ProbabilityMarketReadiness:
             self.declared_probability_inputs
         ):
             raise _error("declared probability inputs must not contain duplicates")
+        specialized_inputs = _validate_string_tuple(
+            self.declared_specialized_probability_inputs,
+            "declared specialized probability inputs",
+        )
         pricing = _validate_string_tuple(
             self.declared_pricing_inputs,
             "declared pricing inputs",
@@ -428,13 +470,24 @@ class ProbabilityMarketReadiness:
             registry_definition = get_model_status(self.market_id)
         except (KeyError, TypeError, ValueError) as exc:
             raise _error("market readiness cannot resolve canonical registry entry") from exc
-        expected_inputs = tuple(
-            ModelFeatureId(item) for item in registry_definition.probability_inputs
-        )
+        if (
+            registry_definition.probability_input_namespace
+            is ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
+        ):
+            expected_inputs = tuple(
+                ModelFeatureId(item) for item in registry_definition.probability_inputs
+            )
+            expected_specialized_inputs: tuple[str, ...] = ()
+        else:
+            expected_inputs = ()
+            expected_specialized_inputs = registry_definition.probability_inputs
         if (
             self.model_status is not registry_definition.status
             or self.probability_method != registry_definition.probability_method
+            or self.probability_input_namespace
+            is not registry_definition.probability_input_namespace
             or self.declared_probability_inputs != expected_inputs
+            or specialized_inputs != expected_specialized_inputs
             or self.declared_pricing_inputs != registry_definition.pricing_inputs
             or self.legacy_missing_input_policy
             is not registry_definition.missing_input_policy
@@ -469,6 +522,7 @@ class ProbabilityMarketReadiness:
         expected_declared, expected_readiness, expected_reasons = _expected_readiness(
             self.model_status,
             unavailable,
+            self.probability_input_namespace,
         )
         if self.declared_input_status is not expected_declared:
             raise _error("declared input status differs from exact feature audits")
@@ -477,6 +531,11 @@ class ProbabilityMarketReadiness:
         if self.readiness_reasons != expected_reasons:
             raise _error("probability readiness reasons differ from reviewed rules")
         object.__setattr__(self, "declared_pricing_inputs", pricing)
+        object.__setattr__(
+            self,
+            "declared_specialized_probability_inputs",
+            specialized_inputs,
+        )
         object.__setattr__(self, "required_feature_records", rebuilt_audits)
 
     def to_dict(self) -> dict[str, Any]:
@@ -484,9 +543,13 @@ class ProbabilityMarketReadiness:
             "market_id": self.market_id.value,
             "model_status": self.model_status.value,
             "probability_method": self.probability_method,
+            "probability_input_namespace": self.probability_input_namespace.value,
             "declared_probability_inputs": [
                 item.value for item in self.declared_probability_inputs
             ],
+            "declared_specialized_probability_inputs": list(
+                self.declared_specialized_probability_inputs
+            ),
             "declared_pricing_inputs": list(self.declared_pricing_inputs),
             "legacy_missing_input_policy": self.legacy_missing_input_policy.value,
             "reviewed_missing_input_policy": self.reviewed_missing_input_policy,
@@ -622,7 +685,17 @@ def _build_market_readiness(
     for record in records:
         market_id = MarketId(record["market_id"])
         model_status = ModelStatus(record["model_status"])
-        declared = tuple(ModelFeatureId(item) for item in record["probability_inputs"])
+        input_namespace = ProbabilityInputNamespace(
+            record["probability_input_namespace"]
+        )
+        if input_namespace is ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES:
+            declared = tuple(
+                ModelFeatureId(item) for item in record["probability_inputs"]
+            )
+            specialized_declared: tuple[str, ...] = ()
+        else:
+            declared = ()
+            specialized_declared = tuple(record["probability_inputs"])
         audits = tuple(
             ProbabilityFeatureAudit.from_resolution(feature_by_id[item])
             for item in declared
@@ -640,13 +713,16 @@ def _build_market_readiness(
         declared_status, readiness_status, reasons = _expected_readiness(
             model_status,
             unavailable,
+            input_namespace,
         )
         results.append(
             ProbabilityMarketReadiness(
                 market_id=market_id,
                 model_status=model_status,
                 probability_method=record["probability_method"],
+                probability_input_namespace=input_namespace,
                 declared_probability_inputs=declared,
+                declared_specialized_probability_inputs=specialized_declared,
                 declared_pricing_inputs=tuple(record["pricing_inputs"]),
                 legacy_missing_input_policy=MissingInputPolicy(
                     record["missing_input_policy"]

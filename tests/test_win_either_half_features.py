@@ -21,7 +21,11 @@ from domain.win_either_half_features import (
     FEATURE_SCHEMA,
     FeatureRole,
     HistoricalLabelMatch,
+    PRE_MATCH_FEATURE_NAMES,
+    ProspectiveWinEitherHalfFixture,
+    QualifiedCompletedWinEitherHalfFixture,
     build_pre_match_feature_dataset,
+    build_prospective_win_either_half_features,
 )
 from domain.win_either_half_research import build_win_either_half_labels
 from scripts.audit_half_time_coverage import load_observations_from_database
@@ -376,6 +380,103 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
         self.assertEqual(second_row["home_team_overall_w10_observation_count"], 1)
         self.assertEqual(second_row["home_team_overall_w10_goals_for_per_match"], 2.0)
 
+    @staticmethod
+    def _qualified(match):
+        return QualifiedCompletedWinEitherHalfFixture(
+            fixture_identity=match.fixture_identity,
+            kickoff_utc=match.kickoff_utc,
+            home_team=match.home_team,
+            away_team=match.away_team,
+            full_time_home_goals=match.full_time_home_goals,
+            full_time_away_goals=match.full_time_away_goals,
+            half_time_home_goals=match.half_time_home_goals,
+            half_time_away_goals=match.half_time_away_goals,
+        )
+
+    def test_prospective_builder_has_exact_research_feature_parity(self):
+        history = (
+            self._match("h1", 0, "Alpha", "Beta", full_time=(2, 1), half_time=(1, 0)),
+            self._match("h2", 1, "Gamma", "Alpha", full_time=(0, 2), half_time=(0, 0)),
+            self._match("h3", 2, "Beta", "Delta", full_time=(3, 2), half_time=(1, 2)),
+        )
+        target = self._match("target", 3, "Alpha", "Beta")
+        research = self._row(
+            build_pre_match_feature_dataset((*history, target)),
+            "target",
+        )
+        prospective = build_prospective_win_either_half_features(
+            ProspectiveWinEitherHalfFixture(
+                fixture_identity="target",
+                kickoff_utc=target.kickoff_utc,
+                home_team="Alpha",
+                away_team="Beta",
+            ),
+            tuple(self._qualified(item) for item in history),
+        )
+        self.assertEqual(prospective.feature_names, PRE_MATCH_FEATURE_NAMES)
+        self.assertEqual(len(prospective.feature_values), 74)
+        self.assertEqual(
+            prospective.to_feature_mapping(),
+            {name: research[name] for name in PRE_MATCH_FEATURE_NAMES},
+        )
+
+    def test_prospective_builder_excludes_same_kickoff_and_future_history(self):
+        target_kickoff = self.BASE_KICKOFF + timedelta(days=2)
+        earlier = self._match("earlier", 0, "Alpha", "Beta")
+        same = self._match(
+            "same",
+            2,
+            "Alpha",
+            "Gamma",
+            kickoff=target_kickoff,
+            full_time=(9, 0),
+            half_time=(4, 0),
+        )
+        future = self._match("future", 3, "Alpha", "Delta")
+        row = build_prospective_win_either_half_features(
+            ProspectiveWinEitherHalfFixture(
+                fixture_identity="target",
+                kickoff_utc=target_kickoff,
+                home_team="Alpha",
+                away_team="Beta",
+            ),
+            tuple(self._qualified(item) for item in (future, same, earlier)),
+        ).to_feature_mapping()
+        self.assertEqual(row["home_team_prior_overall_matches"], 1)
+        self.assertEqual(row["home_team_overall_w5_goals_for_per_match"], 2.0)
+
+    def test_prospective_no_history_and_venue_context_remain_exact(self):
+        no_history = build_prospective_win_either_half_features(
+            ProspectiveWinEitherHalfFixture(
+                fixture_identity="empty",
+                kickoff_utc=self.BASE_KICKOFF,
+                home_team="Alpha",
+                away_team="Beta",
+            ),
+            (),
+        ).to_feature_mapping()
+        self.assertEqual(no_history["home_team_no_prior_history"], 1)
+        self.assertEqual(no_history["home_team_days_since_previous_missing"], 1)
+        self.assertIsNone(no_history["home_team_days_since_previous_fixture"])
+        self.assertIsNone(no_history["home_team_home_w5_goals_for_per_match"])
+
+        past_home = self._match("past-home", 0, "Alpha", "Beta")
+        past_away = self._match("past-away", 1, "Gamma", "Alpha")
+        row = build_prospective_win_either_half_features(
+            ProspectiveWinEitherHalfFixture(
+                fixture_identity="target",
+                kickoff_utc=self.BASE_KICKOFF + timedelta(days=2),
+                home_team="Alpha",
+                away_team="Beta",
+            ),
+            (self._qualified(past_home), self._qualified(past_away)),
+        ).to_feature_mapping()
+        self.assertEqual(row["home_team_prior_overall_matches"], 2)
+        self.assertEqual(row["home_team_prior_relevant_venue_matches"], 1)
+        self.assertEqual(row["home_team_home_w5_observation_count"], 1)
+        self.assertEqual(row["home_team_home_w5_goals_for_per_match"], 2.0)
+        self.assertEqual(row["home_team_overall_w5_goals_for_per_match"], 1.5)
+
     def test_feature_roles_prohibit_target_and_result_leakage(self):
         roles = {column.name: column.role for column in FEATURE_SCHEMA}
         for target in (
@@ -719,14 +820,20 @@ class WinEitherHalfFeatureTests(unittest.TestCase):
                 self.assertIn("--labels-input", result.stdout)
                 self.assertIn("--expect-rows", result.stdout)
 
-    def test_both_markets_disabled_and_no_row_level_outputs_tracked(self):
+    def test_both_markets_analytical_unselectable_and_no_rows_tracked(self):
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
         tracked = subprocess.run(
             ["git", "ls-files"],

@@ -373,15 +373,12 @@ class AccumulatorCapabilityGateTests(unittest.TestCase):
             (MarketId.MATCH_RESULT_1UP, OutcomeId.HOME, "one-up"),
             (MarketId.MATCH_RESULT_2UP, OutcomeId.AWAY, "two-up"),
         )
-        tested_markets = {
-            market_id for market_id, _, _ in disabled_selections
-        }
-        registry_disabled = {
-            market_id
-            for market_id, definition in MODEL_STATUS_REGISTRY.items()
-            if definition.status == ModelStatus.DISABLED
-        }
-        self.assertEqual(tested_markets, registry_disabled)
+        self.assertTrue(
+            all(
+                not MODEL_STATUS_REGISTRY[market_id].selectable
+                for market_id, _, _ in disabled_selections
+            )
+        )
 
         for market_id, outcome_id, fixture_id in disabled_selections:
             with self.subTest(

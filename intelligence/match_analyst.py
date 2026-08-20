@@ -259,6 +259,9 @@ def build_market_evaluations(
                 ),
                 pricing_authority=model_definition.pricing_authority,
                 selection_authority=model_definition.selection_authority,
+                probability_input_namespace=(
+                    model_definition.probability_input_namespace
+                ),
                 probability=probability,
                 probability_method=(
                     candidate.get("probability_method")
@@ -303,6 +306,9 @@ def build_market_evaluations(
                 ),
                 pricing_authority=model_definition.pricing_authority,
                 selection_authority=model_definition.selection_authority,
+                probability_input_namespace=(
+                    model_definition.probability_input_namespace
+                ),
                 probability=None,
                 probability_method=model_definition.probability_method,
                 probability_inputs=model_definition.probability_inputs,

@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
-from typing import Iterable, Optional, Tuple
+from typing import Iterable, Mapping, Optional, Tuple
 
 
 ROLLING_WINDOWS = (5, 10)
@@ -123,6 +123,93 @@ class HistoricalLabelMatch:
         ):
             if getattr(self, field_name) not in (0, 1):
                 raise FeatureBuildError(f"{field_name} must be 0 or 1")
+
+
+@dataclass(frozen=True)
+class QualifiedCompletedWinEitherHalfFixture:
+    """One upstream-qualified completed fixture available before inference."""
+
+    fixture_identity: str
+    kickoff_utc: datetime
+    home_team: str
+    away_team: str
+    full_time_home_goals: int
+    full_time_away_goals: int
+    half_time_home_goals: int
+    half_time_away_goals: int
+
+    def __post_init__(self) -> None:
+        if not str(self.fixture_identity or "").strip():
+            raise FeatureBuildError("fixture identity is required")
+        if not str(self.home_team or "").strip() or not str(
+            self.away_team or ""
+        ).strip():
+            raise FeatureBuildError("home and away team identity is required")
+        if self.home_team == self.away_team:
+            raise FeatureBuildError("home and away team identity must differ")
+        kickoff = self.kickoff_utc
+        if not isinstance(kickoff, datetime) or kickoff.tzinfo is None:
+            raise FeatureBuildError("kickoff_utc must be timezone-aware")
+        object.__setattr__(self, "kickoff_utc", kickoff.astimezone(timezone.utc))
+        scores = (
+            self.full_time_home_goals,
+            self.full_time_away_goals,
+            self.half_time_home_goals,
+            self.half_time_away_goals,
+        )
+        if any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < 0
+            for value in scores
+        ):
+            raise FeatureBuildError("FT and HT scores must be non-negative integers")
+        if (
+            self.half_time_home_goals > self.full_time_home_goals
+            or self.half_time_away_goals > self.full_time_away_goals
+        ):
+            raise FeatureBuildError("HT scores cannot exceed FT scores")
+
+
+@dataclass(frozen=True)
+class ProspectiveWinEitherHalfFixture:
+    fixture_identity: str
+    kickoff_utc: datetime
+    home_team: str
+    away_team: str
+
+    def __post_init__(self) -> None:
+        if not str(self.fixture_identity or "").strip():
+            raise FeatureBuildError("target fixture identity is required")
+        if not str(self.home_team or "").strip() or not str(
+            self.away_team or ""
+        ).strip():
+            raise FeatureBuildError("target home and away team identity is required")
+        if self.home_team == self.away_team:
+            raise FeatureBuildError("target home and away team identity must differ")
+        kickoff = self.kickoff_utc
+        if not isinstance(kickoff, datetime) or kickoff.tzinfo is None:
+            raise FeatureBuildError("target kickoff_utc must be timezone-aware")
+        object.__setattr__(self, "kickoff_utc", kickoff.astimezone(timezone.utc))
+
+
+@dataclass(frozen=True)
+class ProspectiveWinEitherHalfFeatureRow:
+    fixture_identity: str
+    kickoff_utc: datetime
+    home_team: str
+    away_team: str
+    feature_names: Tuple[str, ...]
+    feature_values: Tuple[Optional[float], ...]
+
+    def __post_init__(self) -> None:
+        if self.feature_names != PRE_MATCH_FEATURE_NAMES:
+            raise FeatureBuildError("prospective feature order differs from frozen order")
+        if len(self.feature_values) != len(self.feature_names):
+            raise FeatureBuildError("prospective feature value count differs")
+
+    def to_feature_mapping(self) -> Mapping[str, Optional[float]]:
+        return dict(zip(self.feature_names, self.feature_values))
 
 
 @dataclass(frozen=True)
@@ -241,43 +328,86 @@ def _add_team_features(
                 ] = value
 
 
+def _append_score_evidence(
+    histories: dict,
+    *,
+    kickoff_utc: datetime,
+    split: str,
+    home_team: str,
+    away_team: str,
+    full_time_home_goals: int,
+    full_time_away_goals: int,
+    half_time_home_goals: int,
+    half_time_away_goals: int,
+    home_win_either_half_yes: Optional[int] = None,
+    away_win_either_half_yes: Optional[int] = None,
+) -> None:
+    second_home = full_time_home_goals - half_time_home_goals
+    second_away = full_time_away_goals - half_time_away_goals
+    histories.setdefault(home_team, []).append(
+        _TeamMatchEvidence(
+            kickoff_utc=kickoff_utc,
+            split=split,
+            venue="home",
+            goals_for=full_time_home_goals,
+            goals_against=full_time_away_goals,
+            first_half_goals_for=half_time_home_goals,
+            first_half_goals_against=half_time_away_goals,
+            first_half_win=int(
+                half_time_home_goals > half_time_away_goals
+            ),
+            second_half_win=int(second_home > second_away),
+            win_either_half_yes=(
+                int(
+                    half_time_home_goals > half_time_away_goals
+                    or second_home > second_away
+                )
+                if home_win_either_half_yes is None
+                else home_win_either_half_yes
+            ),
+        )
+    )
+    histories.setdefault(away_team, []).append(
+        _TeamMatchEvidence(
+            kickoff_utc=kickoff_utc,
+            split=split,
+            venue="away",
+            goals_for=full_time_away_goals,
+            goals_against=full_time_home_goals,
+            first_half_goals_for=half_time_away_goals,
+            first_half_goals_against=half_time_home_goals,
+            first_half_win=int(
+                half_time_away_goals > half_time_home_goals
+            ),
+            second_half_win=int(second_away > second_home),
+            win_either_half_yes=(
+                int(
+                    half_time_away_goals > half_time_home_goals
+                    or second_away > second_home
+                )
+                if away_win_either_half_yes is None
+                else away_win_either_half_yes
+            ),
+        )
+    )
+
+
 def _append_completed_match(
     histories: dict,
     match: HistoricalLabelMatch,
 ) -> None:
-    second_home = match.full_time_home_goals - match.half_time_home_goals
-    second_away = match.full_time_away_goals - match.half_time_away_goals
-    histories.setdefault(match.home_team, []).append(
-        _TeamMatchEvidence(
-            kickoff_utc=match.kickoff_utc,
-            split=match.split,
-            venue="home",
-            goals_for=match.full_time_home_goals,
-            goals_against=match.full_time_away_goals,
-            first_half_goals_for=match.half_time_home_goals,
-            first_half_goals_against=match.half_time_away_goals,
-            first_half_win=int(
-                match.half_time_home_goals > match.half_time_away_goals
-            ),
-            second_half_win=int(second_home > second_away),
-            win_either_half_yes=match.home_win_either_half_yes,
-        )
-    )
-    histories.setdefault(match.away_team, []).append(
-        _TeamMatchEvidence(
-            kickoff_utc=match.kickoff_utc,
-            split=match.split,
-            venue="away",
-            goals_for=match.full_time_away_goals,
-            goals_against=match.full_time_home_goals,
-            first_half_goals_for=match.half_time_away_goals,
-            first_half_goals_against=match.half_time_home_goals,
-            first_half_win=int(
-                match.half_time_away_goals > match.half_time_home_goals
-            ),
-            second_half_win=int(second_away > second_home),
-            win_either_half_yes=match.away_win_either_half_yes,
-        )
+    _append_score_evidence(
+        histories,
+        kickoff_utc=match.kickoff_utc,
+        split=match.split,
+        home_team=match.home_team,
+        away_team=match.away_team,
+        full_time_home_goals=match.full_time_home_goals,
+        full_time_away_goals=match.full_time_away_goals,
+        half_time_home_goals=match.half_time_home_goals,
+        half_time_away_goals=match.half_time_away_goals,
+        home_win_either_half_yes=match.home_win_either_half_yes,
+        away_win_either_half_yes=match.away_win_either_half_yes,
     )
 
 
@@ -372,6 +502,88 @@ def _schema() -> Tuple[FeatureColumn, ...]:
 
 FEATURE_SCHEMA = _schema()
 FEATURE_COLUMNS = tuple(column.name for column in FEATURE_SCHEMA)
+PRE_MATCH_FEATURE_NAMES = tuple(
+    column.name
+    for column in FEATURE_SCHEMA
+    if column.role is FeatureRole.PRE_MATCH_FEATURE
+)
+
+
+def build_prospective_win_either_half_features(
+    target: ProspectiveWinEitherHalfFixture,
+    completed_history: Iterable[QualifiedCompletedWinEitherHalfFixture],
+) -> ProspectiveWinEitherHalfFeatureRow:
+    """Build the frozen 74 predictors from strictly earlier completed history."""
+
+    if not isinstance(target, ProspectiveWinEitherHalfFixture):
+        raise FeatureBuildError("target must be a prospective fixture")
+    history = tuple(completed_history)
+    if any(
+        not isinstance(item, QualifiedCompletedWinEitherHalfFixture)
+        for item in history
+    ):
+        raise FeatureBuildError("history must contain qualified completed fixtures")
+    identities = tuple(item.fixture_identity for item in history)
+    if len(set(identities)) != len(identities):
+        raise FeatureBuildError("history fixture identities must be unique")
+    if target.fixture_identity in set(identities):
+        raise FeatureBuildError("target fixture must not appear in completed history")
+
+    eligible = tuple(
+        sorted(
+            (item for item in history if item.kickoff_utc < target.kickoff_utc),
+            key=lambda item: (item.kickoff_utc, item.fixture_identity),
+        )
+    )
+    seen_team_kickoffs = set()
+    histories: dict[str, list[_TeamMatchEvidence]] = {}
+    for item in eligible:
+        for team in (item.home_team, item.away_team):
+            key = (team, item.kickoff_utc)
+            if key in seen_team_kickoffs:
+                raise FeatureBuildError(
+                    "qualified history contains a same-team same-kickoff collision"
+                )
+            seen_team_kickoffs.add(key)
+        _append_score_evidence(
+            histories,
+            kickoff_utc=item.kickoff_utc,
+            split="TEST",
+            home_team=item.home_team,
+            away_team=item.away_team,
+            full_time_home_goals=item.full_time_home_goals,
+            full_time_away_goals=item.full_time_away_goals,
+            half_time_home_goals=item.half_time_home_goals,
+            half_time_away_goals=item.half_time_away_goals,
+        )
+
+    row: dict[str, Optional[float]] = {}
+    _add_team_features(
+        row,
+        prefix="home_team",
+        history=histories.get(target.home_team, []),
+        target_split="TEST",
+        target_kickoff=target.kickoff_utc,
+        relevant_venue="home",
+    )
+    _add_team_features(
+        row,
+        prefix="away_team",
+        history=histories.get(target.away_team, []),
+        target_split="TEST",
+        target_kickoff=target.kickoff_utc,
+        relevant_venue="away",
+    )
+    if tuple(row) != PRE_MATCH_FEATURE_NAMES:
+        raise FeatureBuildError("prospective feature construction order drifted")
+    return ProspectiveWinEitherHalfFeatureRow(
+        fixture_identity=target.fixture_identity,
+        kickoff_utc=target.kickoff_utc,
+        home_team=target.home_team,
+        away_team=target.away_team,
+        feature_names=PRE_MATCH_FEATURE_NAMES,
+        feature_values=tuple(row[name] for name in PRE_MATCH_FEATURE_NAMES),
+    )
 
 
 def build_pre_match_feature_dataset(
@@ -452,8 +664,13 @@ __all__ = [
     "FeatureColumn",
     "FeatureRole",
     "HistoricalLabelMatch",
+    "PRE_MATCH_FEATURE_NAMES",
     "PreMatchFeatureDataset",
+    "ProspectiveWinEitherHalfFeatureRow",
+    "ProspectiveWinEitherHalfFixture",
+    "QualifiedCompletedWinEitherHalfFixture",
     "ROLLING_METRICS",
     "ROLLING_WINDOWS",
     "build_pre_match_feature_dataset",
+    "build_prospective_win_either_half_features",
 ]

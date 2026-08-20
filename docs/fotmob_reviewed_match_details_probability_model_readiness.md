@@ -57,6 +57,12 @@ Declared input satisfaction and reviewed execution readiness are distinct.
 
 There is deliberately no production-ready state in V1.
 
+This boundary owns only the six `GENERIC_FIXTURE_MODEL_FEATURES`. A registry
+market declaring a specialized namespace is reported as
+`BLOCKED_INPUT_NAMESPACE_NOT_OWNED`, with no manufactured PR31 feature audits.
+In particular, the 74 frozen Win Either Half predictors are evaluated only by
+their dedicated prospective boundary.
+
 All six PR #31 features being `AVAILABLE` still does not prove that normalized
 Poisson execution is ready. The existing score matrix consumes reviewed
 `home_expected_goals` and `away_expected_goals`, while PR #52 through PR #67

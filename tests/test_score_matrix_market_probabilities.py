@@ -12,6 +12,7 @@ from domain.model_status import (
     FreshConfirmationStatus,
     MODEL_STATUS_REGISTRY,
     PricingAuthority,
+    ProbabilityInputNamespace,
     SelectionAuthority,
     SettlementCapability,
 )
@@ -81,8 +82,6 @@ class ScoreMatrixMarketProbabilityTests(unittest.TestCase):
         self.assertEqual(
             set(MarketId) - available,
             {
-                MarketId.HOME_WIN_EITHER_HALF,
-                MarketId.AWAY_WIN_EITHER_HALF,
                 MarketId.MATCH_RESULT_1UP,
                 MarketId.MATCH_RESULT_2UP,
             },
@@ -99,10 +98,19 @@ class ScoreMatrixMarketProbabilityTests(unittest.TestCase):
     def test_calibration_and_fresh_confirmation_remain_unapproved(self):
         for status in MODEL_STATUS_REGISTRY.values():
             if status.analytically_available:
-                self.assertIs(
-                    status.calibration_status,
-                    CalibrationStatus.MIXED_OR_WEAK_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED,
-                )
+                if (
+                    status.probability_input_namespace
+                    is ProbabilityInputNamespace.SPECIALIZED_WEH_PRE_MATCH_FEATURES
+                ):
+                    self.assertIs(
+                        status.calibration_status,
+                        CalibrationStatus.FROZEN_STAGE_4B_CALIBRATION_RESEARCH_EVIDENCE,
+                    )
+                else:
+                    self.assertIs(
+                        status.calibration_status,
+                        CalibrationStatus.MIXED_OR_WEAK_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED,
+                    )
                 self.assertIs(
                     status.fresh_confirmation_status,
                     FreshConfirmationStatus.ZERO_COMMITTED_OBSERVATIONS,
@@ -223,14 +231,14 @@ class ScoreMatrixMarketProbabilityTests(unittest.TestCase):
                         self.matrix, MarketId.ASIAN_HANDICAP, line=invalid
                     )
 
-    def test_blocked_markets_receive_no_full_time_proxy(self):
-        blocked = (
+    def test_non_score_matrix_markets_receive_no_full_time_proxy(self):
+        unsupported_by_this_projector = (
             MarketId.HOME_WIN_EITHER_HALF,
             MarketId.AWAY_WIN_EITHER_HALF,
             MarketId.MATCH_RESULT_1UP,
             MarketId.MATCH_RESULT_2UP,
         )
-        for market in blocked:
+        for market in unsupported_by_this_projector:
             with self.subTest(market=market):
                 with self.assertRaises(AnalyticalProjectionError):
                     project_score_matrix_market(self.matrix, market)
@@ -248,6 +256,8 @@ class ScoreMatrixMarketProbabilityTests(unittest.TestCase):
                 market
                 for market, status in MODEL_STATUS_REGISTRY.items()
                 if status.analytically_available
+                and status.probability_input_namespace
+                is ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
             },
         )
 

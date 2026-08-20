@@ -731,13 +731,15 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
 
     # 31. All 15 canonical market registrations remain present
     # 32. Every pre-existing model status remains unchanged
-    # 33. HOME_WIN_EITHER_HALF remains DISABLED
-    # 34. AWAY_WIN_EITHER_HALF remains DISABLED
+    # 33. HOME_WIN_EITHER_HALF remains unselectable
+    # 34. AWAY_WIN_EITHER_HALF remains unselectable
     def test_canonical_market_and_model_registries(self) -> None:
         snapshot = canonical_market_registry_snapshot()
         self.assertEqual(len(snapshot), 15)
-        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
-        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable)
 
     # 35. selected_offset_seconds remains null
     # 36. selection_authorized remains false
@@ -1168,8 +1170,10 @@ class TestWinEitherHalfProspectiveReplay(unittest.TestCase):
             self.assertEqual(semantics["SOURCE_UNAVAILABLE"]["fixture_mapping"], "MAY_EXIST_FROM_ANOTHER_OFFSET")
             self.assertTrue(proto["provider_mapping_contract"]["mapping_presence_is_not_temporal_availability_evidence"])
 
-        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
-        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable)
         self.assertIsNone(proto_dict["output_contract"]["selected_offset_seconds"])
         self.assertFalse(proto_dict["output_contract"]["selection_authorized"])
 

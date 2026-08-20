@@ -650,7 +650,7 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
         )
         self.assertIn("pricing-source-qualification-v1.json", ignored.stdout)
 
-    def test_all_market_registrations_and_statuses_are_unchanged(self):
+    def test_all_market_registrations_preserve_unselectable_weh_capability(self):
         self.assertEqual(set(MARKET_REGISTRY), set(MarketId))
         self.assertEqual(set(MODEL_STATUS_REGISTRY), set(MarketId))
         expected = {
@@ -660,8 +660,8 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             "DRAW_OR_OVER_2_5": "EXPERIMENTAL",
             "AWAY_OR_OVER_2_5": "EXPERIMENTAL",
             "HOME_OR_OVER_2_5": "EXPERIMENTAL",
-            "HOME_WIN_EITHER_HALF": "DISABLED",
-            "AWAY_WIN_EITHER_HALF": "DISABLED",
+            "HOME_WIN_EITHER_HALF": "EXPERIMENTAL",
+            "AWAY_WIN_EITHER_HALF": "EXPERIMENTAL",
             "DOUBLE_CHANCE": "ACTIVE",
             "BTTS": "EXPERIMENTAL",
             "DRAW_NO_BET": "EXPERIMENTAL",
@@ -674,8 +674,10 @@ class WinEitherHalfPricingSourceQualificationTests(unittest.TestCase):
             {market.value: status.status.value for market, status in MODEL_STATUS_REGISTRY.items()},
             expected,
         )
-        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
-        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.DISABLED)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
+        self.assertEqual(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status, ModelStatus.EXPERIMENTAL)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable)
+        self.assertFalse(MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable)
         self.assertEqual(len(MarketId), 15)
 
     def test_mandatory_gate_sets_cover_distinct_roles(self):
