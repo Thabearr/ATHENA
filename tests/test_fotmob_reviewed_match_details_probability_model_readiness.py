@@ -198,7 +198,6 @@ def test_every_market_is_evaluated_once_and_sorted() -> None:
     assert tuple(item.market_id for item in readiness.market_readiness) == expected
     assert len(readiness.market_readiness) == len(MarketId)
 
-
 def test_default_one_available_feature_blocks_declared_six_input_markets() -> None:
     readiness, _, _ = _build()
     record = _market(readiness, MarketId.MATCH_RESULT)
@@ -349,7 +348,11 @@ def test_malformed_registry_fails_closed(monkeypatch, mutation) -> None:
                 probability_inputs=("home_form", "home_form"),
             )
         else:
-            replacement = dataclasses.replace(base, probability_method=None)
+            # MarketModelStatus now rejects this contradiction during normal
+            # construction. Forge it only to keep exercising the downstream
+            # canonical-registry fail-closed boundary independently.
+            replacement = dataclasses.replace(base)
+            object.__setattr__(replacement, "probability_method", None)
         registry[MarketId.MATCH_RESULT] = replacement
     monkeypatch.setattr(module, "MODEL_STATUS_REGISTRY", registry)
     monkeypatch.setattr(module, "get_model_status", lambda market_id: registry[market_id])
@@ -707,10 +710,10 @@ def test_no_probability_or_selection_values_exist_in_artifact() -> None:
     readiness, _, _ = _build()
     payload = json.dumps(readiness.to_dict(), sort_keys=True)
 
-    assert '"probability":' not in payload
-    assert '"odds":' not in payload
-    assert '"selection":' not in payload
-    assert '"edge":' not in payload
+    assert '\"probability\":' not in payload
+    assert '\"odds\":' not in payload
+    assert '\"selection\":' not in payload
+    assert '\"edge\":' not in payload
 
 
 def test_wrong_schema_or_bool_schema_is_rejected() -> None:
