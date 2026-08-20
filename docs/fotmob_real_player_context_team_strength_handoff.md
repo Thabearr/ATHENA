@@ -1,10 +1,10 @@
-# Real FotMob player-context team-strength handoff
+# Real FotMob player-context team-strength candidate handoff
 
 ## Boundary
 
 PR #194 takes the exact real player-context semantic admission established by PR #193 and carries only the semantics actually supported by that exact observation into the PR #190 team-strength candidate schema.
 
-The boundary is intentionally narrow. It is a feature-handoff proof, not an expected-goals adjustment and not a claim that the Thursday observation remains current for Saturday.
+The boundary is intentionally narrow. It is a **candidate-mapping proof**, not team-strength feature authority, not an expected-goals adjustment, and not a claim that the Thursday observation remains current for Saturday.
 
 ## Exact source ancestry
 
@@ -18,6 +18,8 @@ The public builder does not accept a caller-constructed PR #193 wrapper. It acce
 
 PR #193 therefore replays PR52/PR53 and re-establishes the exact `FOTMOB:5795367` semantic admission before any team-strength candidate is built.
 
+PR #194 also freezes the canonical PR #193 admission identity and the exact reconstructed PR #190 candidate identity. A different source admission or a different candidate cannot pass the handoff invariants merely by supplying syntactically valid hashes.
+
 The dedicated hosted proof downloads the exact successful PR #192 artifact:
 
 - run `32410775191`;
@@ -27,23 +29,33 @@ The dedicated hosted proof downloads the exact successful PR #192 artifact:
 
 No new FotMob request occurs in this PR.
 
-## What becomes a legal team-strength feature
+## Exact candidate result
 
-Only the exact current unavailable-player completeness admitted by PR #193 crosses the boundary.
+Only the exact current unavailable-player completeness admitted by PR #193 is eligible to become AVAILABLE inside this frozen PR #190 **candidate**.
 
 For the frozen observation:
 
 - Nottingham Forest unavailable-player count = `1`;
 - Leeds United unavailable-player count = `5`.
 
-These become the only two PR #190 `AVAILABLE` feature resolutions:
+These are the only two PR #190 candidate `AVAILABLE` feature resolutions:
 
 - `home_unavailable_player_count`;
 - `away_unavailable_player_count`.
 
-The authoritative PR #194 wrapper sets `team_strength_feature_authorized = true` only for this exact replayed observation and exact candidate.
+PR #194 verifies this exact source-replayed candidate mapping but keeps:
 
-The nested PR #190 candidate itself remains all-false, as designed.
+`team_strength_feature_authorized = false`
+
+The nested PR #190 candidate also remains all-false, as designed.
+
+## Why this does not bypass PR #191
+
+PR #191 established ATHENA's authoritative team-strength adapter as a full-replay boundary over reviewed array evidence **plus** the admitted PR65 Fixture Intelligence snapshot and PR66 model-feature handoff.
+
+The real PR #192 artifact contains the fixture/bootstrap evidence and the PR52/PR53 match-details evidence used by PR #193, but it does not contain the required PR65/PR66 artifacts for this exact observation.
+
+PR #194 therefore must not create a parallel feature-authority path. It proves the exact mapping only. A later narrow boundary must establish/replay the missing admitted Fixture Intelligence/model-feature lineage and then use the PR #191 authority discipline before current player context can carry team-strength feature authority.
 
 ## Why the predicted starting XI does not make aggregate lineup state available
 
@@ -100,16 +112,19 @@ The wrapper sets:
 
 `prospective_reuse_after_source_freshness_authorized = false`
 
-This means the Thursday observation proves the legal evidence-to-feature mapping, but it is not automatically reusable as current player context for a later Saturday decision. A later prospective pipeline must obtain a newer reviewed observation rather than silently carrying the old lineup/injury state forward.
+This means the Thursday observation proves the evidence-to-candidate mapping, but it is not automatically reusable as current player context for a later Saturday decision. A later prospective pipeline must obtain a newer reviewed observation rather than silently carrying the old lineup/injury state forward.
 
 ## Authority
 
-True only at this boundary:
+Verified at this boundary:
 
-- `team_strength_feature_authorized` for the exact replayed PR #194 handoff.
+- exact source replay through PR #193;
+- exact canonical PR190 candidate reconstruction;
+- only the two unavailable-player count resolutions are AVAILABLE in that candidate.
 
 Explicitly false/not used:
 
+- team-strength feature authority;
 - bench semantics;
 - position semantics;
 - historical player evidence;
