@@ -412,6 +412,6 @@ def test_workflow_uses_no_cookies_xmas_or_browser_impersonation() -> None:
     assert "cookie" not in workflow
     assert "x-mas" not in workflow
     assert "browser" not in workflow
-    assert "fixture_review_disposition" in workflow
-    assert "catalog_admission_disposition" in workflow
+    assert "fixture-review-disposition: approved" in workflow
+    assert "catalog-admission-disposition: admitted" in workflow
     assert "fotmob-prospective-player-context-evidence" in workflow
