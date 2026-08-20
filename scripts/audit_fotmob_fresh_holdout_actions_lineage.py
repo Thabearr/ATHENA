@@ -20,6 +20,7 @@ from typing import Any
 
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as activation
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control as control
+import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as failure_lineage
 import scripts.mirror_fotmob_fresh_holdout_release_receipt as mirror
 
 
@@ -32,8 +33,14 @@ FIRST_SLOT_UTC = "2026-08-19T00:07:00Z"
 RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
 MIRROR_BLOB_SHA = "ddabb6ae83cbe6c81c9264119a121a54715df960"
 WORKFLOW_BLOB_SHA = "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
+FAILURE_LINEAGE_BLOB_SHA = "2ae03405f63c0951eb61c4be0db1ba9dff318f21"
 RUNNER_PATH = "domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py"
 MIRROR_PATH = "scripts/mirror_fotmob_fresh_holdout_release_receipt.py"
+FAILURE_LINEAGE_PATH = (
+    "domain/fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage.py"
+)
+CAMPAIGN_ORIGIN_RECOVERY_OPEN = "OPEN_GENESIS_PREFIX"
+CAMPAIGN_ORIGIN_RECOVERY_CLOSED = "CLOSED_BY_COMPLETED_CAMPAIGN_EVIDENCE"
 SHA40_RE = re.compile(r"^[0-9a-f]{40}$")
 ARTIFACT_RE = re.compile(r"^(success|failure)-(\d{8}T\d{6}Z)-run-(\d+)\.tar\.gz$")
 ALLOWED_CONTROL_EVENTS = frozenset(
@@ -138,6 +145,11 @@ def verify_reviewed_dependencies(repository_root: Path | None = None) -> None:
         (RUNNER_PATH, RUNNER_BLOB_SHA, "PR151 activation runner"),
         (MIRROR_PATH, MIRROR_BLOB_SHA, "PR168 receipt mirror"),
         (WORKFLOW_PATH, WORKFLOW_BLOB_SHA, "scheduled collection workflow"),
+        (
+            FAILURE_LINEAGE_PATH,
+            FAILURE_LINEAGE_BLOB_SHA,
+            "PR178 pre-acquisition failure lineage",
+        ),
     ):
         path = repo / relative
         if not path.is_file() or path.is_symlink():
@@ -401,6 +413,16 @@ def _candidate_artifact(
     return values[0]
 
 
+def _is_exact_zero_artifact_payload(artifacts_payload: Mapping[str, Any]) -> bool:
+    """Return true only for the exact transport shape admitted by PR178 proof."""
+
+    return (
+        type(artifacts_payload) is dict
+        and type(artifacts_payload.get("artifacts")) is list
+        and not artifacts_payload["artifacts"]
+    )
+
+
 def _normal_run_record(run: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "run_id": run.get("id"),
@@ -414,6 +436,8 @@ def _normal_run_record(run: Mapping[str, Any]) -> dict[str, Any]:
         "archive_sha256": None,
         "release_state": "NOT_CHECKED",
         "verification_error": None,
+        "campaign_origin_recovery_state_before": None,
+        "campaign_origin_recovery_state_after": None,
     }
 
 
@@ -447,6 +471,7 @@ def audit_actions_lineage(
     download_artifact_zip: Callable[[int], bytes],
     get_release: Callable[[str], Mapping[str, Any]],
     download_release_asset: Callable[[int], bytes],
+    get_run_jobs: Callable[[int], Mapping[str, Any]] | None = None,
     verify_dependencies: bool = True,
     repository_root: Path | None = None,
 ) -> dict[str, Any]:
@@ -522,23 +547,86 @@ def audit_actions_lineage(
     unverified_completed = 0
     incomplete_runs = 0
     verified_failures = 0
+    verified_preacquisition_control_failures = 0
     release_partial = False
+    campaign_origin_recovery_state = CAMPAIGN_ORIGIN_RECOVERY_OPEN
 
     for run in candidates:
         record = _normal_run_record(run)
+        record["campaign_origin_recovery_state_before"] = (
+            campaign_origin_recovery_state
+        )
         run_id = run["id"]
         if run.get("status") != "completed":
             incomplete_runs += 1
             record["evidence_state"] = "INCOMPLETE_NOT_EVIDENCE"
+            record["campaign_origin_recovery_state_after"] = (
+                campaign_origin_recovery_state
+            )
             records.append(record)
             continue
         try:
             head_sha = run.get("head_sha")
             if type(head_sha) is not str or SHA40_RE.fullmatch(head_sha) is None:
+                campaign_origin_recovery_state = CAMPAIGN_ORIGIN_RECOVERY_CLOSED
                 raise UnverifiedRunEvidenceError(
                     "completed campaign run head_sha is not exact lowercase 40-hex"
                 )
-            artifact = _candidate_artifact(get_run_artifacts(run_id), run_id)
+            recovery_was_open = (
+                campaign_origin_recovery_state == CAMPAIGN_ORIGIN_RECOVERY_OPEN
+            )
+            # Pessimistically close before any completed-run transport read.
+            # The same run may retain the open prefix only after exact PR178
+            # zero-artifact proof succeeds; no exception may accidentally leave
+            # later Genesis recovery open.
+            campaign_origin_recovery_state = CAMPAIGN_ORIGIN_RECOVERY_CLOSED
+            artifacts_payload = get_run_artifacts(run_id)
+            zero_artifact_payload = _is_exact_zero_artifact_payload(
+                artifacts_payload
+            )
+            if zero_artifact_payload:
+                if not recovery_was_open:
+                    raise _error(
+                        "campaign-origin pre-acquisition recovery cannot classify "
+                        f"run {run_id} after its chronological prefix closed"
+                    )
+                if get_run_jobs is None:
+                    raise UnverifiedRunEvidenceError(
+                        "zero-artifact pre-acquisition proof requires GitHub jobs metadata"
+                    )
+                try:
+                    proved_preacquisition = (
+                        failure_lineage._prove_preacquisition_control_failure(
+                            run,
+                            artifacts_payload,
+                            get_run_jobs,
+                        )
+                    )
+                except failure_lineage.FreshHoldoutFailureLineageError as exc:
+                    raise _error(
+                        "pre-acquisition control-failure proof failed for run "
+                        f"{run_id}: {exc}"
+                    ) from exc
+                if not proved_preacquisition:
+                    raise UnverifiedRunEvidenceError(
+                        "zero-artifact run does not match exact reviewed "
+                        "pre-acquisition failure shape"
+                    )
+                verified_preacquisition_control_failures += 1
+                record["evidence_state"] = (
+                    "VERIFIED_PREACQUISITION_CONTROL_FAILURE"
+                )
+                campaign_origin_recovery_state = CAMPAIGN_ORIGIN_RECOVERY_OPEN
+                record["verification_error"] = None
+                record["campaign_origin_recovery_state_after"] = (
+                    campaign_origin_recovery_state
+                )
+                records.append(record)
+                continue
+
+            # Any other completed in-campaign run closes the Genesis prefix,
+            # whether its canonical evidence later verifies or fails closed.
+            artifact = _candidate_artifact(artifacts_payload, run_id)
             zip_bytes = download_artifact_zip(artifact["id"])
             zip_sha = mirror.verify_actions_artifact_zip_digest(
                 zip_bytes, artifact.get("digest")
@@ -599,9 +687,9 @@ def audit_actions_lineage(
             )
             committed, missing = validate_control_lineage(rows)
             unresolved_prior = set(range(slot_index)) - committed - missing
-            if unresolved_prior:
+            if unresolved_prior and kind == "success":
                 raise _error(
-                    "verified cumulative state leaves earlier nominal slots unresolved"
+                    "verified success cumulative state leaves earlier nominal slots unresolved"
                 )
 
             if kind == "success":
@@ -642,7 +730,11 @@ def audit_actions_lineage(
                 release_partial = True
             record.update(
                 {
-                    "evidence_state": "VERIFIED_ACTIONS_LINEAGE",
+                    "evidence_state": (
+                        "VERIFIED_ACTIONS_LINEAGE"
+                        if kind == "success"
+                        else "VERIFIED_UNCOMMITTED_ATTEMPT"
+                    ),
                     "nominal_slot_utc": _utc_text(nominal),
                     "tick_committed": tick_committed,
                     "archive_name": artifact["name"],
@@ -662,6 +754,9 @@ def audit_actions_lineage(
         except Exception as exc:
             unverified_completed += 1
             record["verification_error"] = f"{type(exc).__name__}: {str(exc)[:300]}"
+        record["campaign_origin_recovery_state_after"] = (
+            campaign_origin_recovery_state
+        )
         records.append(record)
 
     ordered_slots = sorted(journals_by_slot)
@@ -719,10 +814,24 @@ def audit_actions_lineage(
     else:
         first_status = "FIRST_SLOT_UNRESOLVED"
 
+    unresolved_slots = sum(
+        1 for row in slot_rows if row["state"] == "UNRESOLVED"
+    )
     verified_completed = len(verified_by_slot)
-    if verified_completed == 0 and unverified_completed == 0 and incomplete_runs == 0:
+    if (
+        verified_completed == 0
+        and verified_preacquisition_control_failures == 0
+        and unverified_completed == 0
+        and incomplete_runs == 0
+    ):
         audit_state = "NO_COMPLETED_CAMPAIGN_EVIDENCE"
-    elif unverified_completed or incomplete_runs or release_partial:
+    elif (
+        unverified_completed
+        or incomplete_runs
+        or release_partial
+        or unresolved_slots
+        or verified_completed == 0
+    ):
         audit_state = "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
     else:
         audit_state = "VERIFIED_COMPLETE_TO_LATEST_OBSERVED_RUN"
@@ -750,14 +859,16 @@ def audit_actions_lineage(
             None if latest_slot < 0 else verified_by_slot[latest_slot]["run_id"]
         ),
         "verified_completed_run_count": verified_completed,
+        "verified_preacquisition_control_failure_count": (
+            verified_preacquisition_control_failures
+        ),
         "unverified_completed_run_count": unverified_completed,
         "incomplete_run_count": incomplete_runs,
         "verified_failure_count": verified_failures,
         "committed_slot_count": len(committed),
         "durably_recorded_missing_slot_count": len(missing),
-        "unresolved_slot_count": sum(
-            1 for row in slot_rows if row["state"] == "UNRESOLVED"
-        ),
+        "unresolved_slot_count": unresolved_slots,
+        "campaign_origin_recovery_state": campaign_origin_recovery_state,
         "runs": records,
         "slots": slot_rows,
         "safety": {key: False for key in SAFETY_KEYS},
@@ -799,6 +910,11 @@ def _cli_audit(repository: str, expected_main_sha: str) -> dict[str, Any]:
     def get_run_artifacts(run_id: int) -> Mapping[str, Any]:
         return _gh_json(f"/repos/{repository}/actions/runs/{run_id}/artifacts")
 
+    def get_run_jobs(run_id: int) -> Mapping[str, Any]:
+        return _gh_json(
+            f"/repos/{repository}/actions/runs/{run_id}/jobs?filter=latest&per_page=100"
+        )
+
     def download_artifact_zip(artifact_id: int) -> bytes:
         return _gh_download(f"/repos/{repository}/actions/artifacts/{artifact_id}/zip")
 
@@ -817,6 +933,7 @@ def _cli_audit(repository: str, expected_main_sha: str) -> dict[str, Any]:
         download_artifact_zip=download_artifact_zip,
         get_release=get_release,
         download_release_asset=download_release_asset,
+        get_run_jobs=get_run_jobs,
     )
 
 

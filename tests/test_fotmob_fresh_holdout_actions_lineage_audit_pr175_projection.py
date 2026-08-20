@@ -16,6 +16,7 @@ COLLECTION_WORKFLOW = Path(
 PROJECTION_SCRIPT = Path(
     "scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py"
 )
+AUDIT_SCRIPT = Path("scripts/audit_fotmob_fresh_holdout_actions_lineage.py")
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -43,16 +44,17 @@ def test_control_workflow_verifies_current_collection_and_projection_blobs():
     parsed = yaml.safe_load(text)
     assert isinstance(parsed, dict)
     assert "1ff52e32ade3422ca1605bc4546dc8d0813ec316" in text
-    assert _git_blob_sha(PROJECTION_SCRIPT) == (
-        "a6e7f0be41d5582b9d0ad77d5579033eb8309141"
-    )
-    assert "a6e7f0be41d5582b9d0ad77d5579033eb8309141" in text
-    assert "aaf8dbe8534dfc10b707d34511fd4327dc81850e" in text
+    assert _git_blob_sha(PROJECTION_SCRIPT) in text
+    assert _git_blob_sha(AUDIT_SCRIPT) in text
+    assert "2ae03405f63c0951eb61c4be0db1ba9dff318f21" in text
     assert "audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py" in text
 
 
-def test_projection_keeps_reviewed_engine_and_adds_only_compatible_binary_transport():
+def test_projection_delegates_to_current_engine_with_compatible_binary_transport():
     text = PROJECTION_SCRIPT.read_text(encoding="utf-8")
+    assert "current reviewed engine" in text
+    assert "unchanged audit engine" not in text
+    assert "byte-for-byte pinned" not in text
     assert "audit.WORKFLOW_BLOB_SHA = POST_PR175_WORKFLOW_BLOB_SHA" in text
     assert "audit._gh_download = _gh_download_compatible" in text
     assert "audit.main(argv)" in text
