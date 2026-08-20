@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from config.league_priority import (
+    PRIORITY_BASIS,
     PRIORITY_POLICY_VERSION,
     UNPRIORITIZED_RANK,
     UNPRIORITIZED_TIER,
@@ -13,6 +14,7 @@ from domain.accumulator_priority import (
     build_accumulator_priority_plan,
     prioritize_accumulator_candidates,
 )
+from intelligence.acca_filter import AccaFilter
 
 
 def _candidate(
@@ -40,8 +42,37 @@ def _candidate(
     }
 
 
+def _filter_candidate(
+    fixture_id: str,
+    *,
+    risk=20.0,
+    freshness=1.0,
+):
+    return {
+        **_candidate(
+            fixture_id,
+            "Premier League",
+            probability=0.75,
+            risk=risk if isinstance(risk, (int, float)) else 20.0,
+            freshness=freshness if isinstance(freshness, (int, float)) else 1.0,
+        ),
+        "decision_status": "BET",
+        "edge": 0.10,
+        "risk_score": risk,
+        "freshness": freshness,
+        "accumulator_eligible_selection": {
+            "verdict": "HOME_WIN",
+            "prob": 0.75,
+            "edge": 0.10,
+            "edge_pp": 5.0,
+            "edge_is_bookmaker_value": True,
+        },
+    }
+
+
 def test_default_hierarchy_is_exact_and_versioned() -> None:
     assert PRIORITY_POLICY_VERSION == "athena-league-priority-v2"
+    assert PRIORITY_BASIS == "BOOTSTRAP_REVIEWED_COVERAGE_NOT_MODEL_RELIABILITY"
     assert ACCUMULATOR_PRIORITY_POLICY_VERSION == "athena-acca-priority-v1"
     assert get_league_priority_rank("Premier League") == 1
     assert get_league_priority_rank("La Liga") == 2
@@ -173,3 +204,23 @@ def test_priority_metadata_is_auditable() -> None:
     assert item["fixture_priority_risk_score"] == 20.0
     assert item["fixture_priority_freshness"] == 1.0
     assert item["fixture_priority_edge_pp"] == 4.0
+
+
+def test_acca_filter_has_no_ad_hoc_nlp_context_dependency() -> None:
+    filter_engine = AccaFilter()
+    assert not hasattr(filter_engine, "nlp_engine")
+
+
+def test_acca_filter_fails_closed_on_missing_or_invalid_reviewed_quality_inputs() -> None:
+    filter_engine = AccaFilter()
+    candidates = [
+        _filter_candidate("valid"),
+        _filter_candidate("missing-risk", risk=None),
+        _filter_candidate("negative-risk", risk=-1.0),
+        _filter_candidate("missing-freshness", freshness=None),
+        _filter_candidate("invalid-freshness", freshness=1.1),
+        _filter_candidate("stale", freshness=0.39),
+    ]
+
+    ordered = filter_engine.filter_and_rank_legs(candidates)
+    assert [item["fixture_id"] for item in ordered] == ["valid"]
