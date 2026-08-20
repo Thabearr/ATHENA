@@ -2,17 +2,13 @@
 
 This module answers only *which already-eligible fixtures are considered first*.
 It does not make a fixture eligible, grant model/selection/pricing authority, or
-force a requested fold size.  The caller must supply candidates that have
+force a requested fold size. The caller must supply candidates that have
 already passed the relevant reviewed decision gates.
 
-Default policy is strict league exhaustion:
-
-1. consider every eligible fixture from priority league rank 1;
-2. then every eligible fixture from rank 2;
-3. continue down the configured hierarchy;
-4. unprioritized leagues are excluded unless the caller explicitly opts in;
-5. if the requested fold cannot be filled, return the shortfall instead of
-   padding with blocked/unsupported fixtures.
+League exhaustion now resolves through the evidence-gated model-specific
+reliability boundary. When reviewed held-out league evidence does not exist for
+the candidate's model family, the versioned bootstrap league hierarchy remains
+the explicit fallback. Caller-provided reliability ranks are ignored.
 
 Within one league, fixture ordering is lexicographic rather than a hidden
 weighted score: higher estimated leg probability, lower risk, fresher evidence,
@@ -30,13 +26,15 @@ from config.league_priority import (
     PRIORITY_POLICY_VERSION,
     UNPRIORITIZED_RANK,
     UNPRIORITIZED_TIER,
-    get_league_priority_rank,
-    get_league_tier,
     resolve_league_priority,
+)
+from domain.model_league_reliability import (
+    MODEL_LEAGUE_RELIABILITY_POLICY_VERSION,
+    resolve_candidate_model_league_priority,
 )
 
 
-ACCUMULATOR_PRIORITY_POLICY_VERSION = "athena-acca-priority-v1"
+ACCUMULATOR_PRIORITY_POLICY_VERSION = "athena-acca-priority-v2"
 
 
 @dataclass(frozen=True)
@@ -50,6 +48,7 @@ class PriorityExclusion:
 class AccumulatorPriorityPlan:
     policy_version: str
     league_policy_version: str
+    model_league_policy_version: str
     requested_fold_size: int
     ordered_candidates: tuple[dict[str, Any], ...]
     selected_candidates: tuple[dict[str, Any], ...]
@@ -139,10 +138,9 @@ def fixture_priority_sort_key(
     *,
     input_index: int = 0,
 ) -> tuple[Any, ...]:
-    """Return the transparent strict-league + fixture priority key."""
+    """Return the transparent model-league + fixture priority key."""
 
-    league = str(match.get("league") or "")
-    rank = get_league_priority_rank(league)
+    league_resolution = resolve_candidate_model_league_priority(match)
     probability = _probability(match)
     risk = _risk(match)
     freshness = _freshness(match)
@@ -150,7 +148,7 @@ def fixture_priority_sort_key(
 
     # Missing quality signals sort behind present signals within the same league.
     return (
-        rank,
+        league_resolution.effective_rank,
         1 if probability is None else 0,
         -(probability if probability is not None else 0.0),
         risk,
@@ -171,17 +169,33 @@ def _annotate(
 ) -> dict[str, Any]:
     league = str(match.get("league") or "")
     entry = resolve_league_priority(league)
+    league_resolution = resolve_candidate_model_league_priority(match)
     annotated = dict(match)
     annotated["priority_policy_version"] = ACCUMULATOR_PRIORITY_POLICY_VERSION
     annotated["league_priority_policy_version"] = PRIORITY_POLICY_VERSION
+    annotated["model_league_reliability_policy_version"] = (
+        MODEL_LEAGUE_RELIABILITY_POLICY_VERSION
+    )
     annotated["league_priority_tier"] = (
         entry.tier if entry is not None else UNPRIORITIZED_TIER
     )
+    # Compatibility field: this remains the bootstrap registry rank. The actual
+    # consideration rank is model_league_priority_rank below.
     annotated["league_priority_rank"] = (
         entry.rank if entry is not None else UNPRIORITIZED_RANK
     )
     annotated["league_priority_name"] = (
         entry.canonical_name if entry is not None else None
+    )
+    annotated["model_league_family"] = (
+        league_resolution.family.value if league_resolution.family is not None else None
+    )
+    annotated["model_league_priority_rank"] = league_resolution.effective_rank
+    annotated["model_league_priority_basis"] = league_resolution.basis.value
+    annotated["model_league_ranking_authorized"] = league_resolution.ranking_authorized
+    annotated["model_league_reliability_reason"] = league_resolution.reason
+    annotated["model_league_reliability_evidence"] = list(
+        league_resolution.evidence_references
     )
     annotated["fixture_priority_probability"] = _probability(match)
     annotated["fixture_priority_risk_score"] = (
@@ -198,10 +212,10 @@ def prioritize_accumulator_candidates(
     *,
     allow_unprioritized: bool = False,
 ) -> tuple[tuple[dict[str, Any], ...], tuple[PriorityExclusion, ...]]:
-    """Order candidates by strict league exhaustion then fixture priority.
+    """Order candidates by model-aware league exhaustion then fixture priority.
 
-    Unknown leagues are not silently admitted.  They are returned as exclusions
-    unless ``allow_unprioritized`` is explicitly true.  Even when opted in they
+    Unknown leagues are not silently admitted. They are returned as exclusions
+    unless ``allow_unprioritized`` is explicitly true. Even when opted in they
     sort after every configured league.
     """
 
@@ -268,6 +282,7 @@ def build_accumulator_priority_plan(
     return AccumulatorPriorityPlan(
         policy_version=ACCUMULATOR_PRIORITY_POLICY_VERSION,
         league_policy_version=PRIORITY_POLICY_VERSION,
+        model_league_policy_version=MODEL_LEAGUE_RELIABILITY_POLICY_VERSION,
         requested_fold_size=target_size,
         ordered_candidates=ordered,
         selected_candidates=selected,
