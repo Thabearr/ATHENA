@@ -248,12 +248,16 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
         reason="The home-or-over event and its complement are exact matrix sums.",
     ),
     MarketId.HOME_WIN_EITHER_HALF: _blocked(
-        "Blocked until ATHENA has a defensible half-by-half probability model; "
-        "full-time win probability is not a proxy."
+        "A reviewed Home Win Either Half research model and independent final-test "
+        "calibration evidence already exist, but prospective runtime inference is "
+        "not yet integrated into this canonical analytical path; full-time win "
+        "probability is not a proxy."
     ),
     MarketId.AWAY_WIN_EITHER_HALF: _blocked(
-        "Blocked until ATHENA has a defensible half-by-half probability model; "
-        "full-time win probability is not a proxy."
+        "A reviewed Away Win Either Half research model and independent final-test "
+        "calibration evidence already exist, but prospective runtime inference is "
+        "not yet integrated into this canonical analytical path; full-time win "
+        "probability is not a proxy."
     ),
     MarketId.DOUBLE_CHANCE: _available(
         status=ModelStatus.ACTIVE,
