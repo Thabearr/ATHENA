@@ -36,10 +36,10 @@ from scripts.audit_half_time_coverage import (  # noqa: E402
 )
 from scripts.freeze_evidence_baseline import (  # noqa: E402
     BaselineError,
-    build_evidence_baseline,
     compare_baselines,
     get_code_state,
     load_baseline,
+    rebuild_evidence_baseline_for_verification,
     validate_ready_baseline,
     verify_revision_relationship,
 )
@@ -178,7 +178,8 @@ def verify_stage_2_evidence(
     repository_root: Path = REPOSITORY_ROOT,
 ) -> dict:
     """Verify every non-code Stage 2 evidence field through its contract."""
-    current = build_evidence_baseline(
+    current = rebuild_evidence_baseline_for_verification(
+        baseline,
         database_path=database_path,
         cache_directory=cache_directory,
         baseline_name=baseline.get("baseline_name", ""),
@@ -387,16 +388,22 @@ def validate_expectations(
 
 def validate_market_safety(manifest: dict) -> None:
     market_safety = manifest.get("market_safety", {})
-    failures = [
-        key
-        for key in ("home_win_either_half", "away_win_either_half")
-        if market_safety.get(key) != "DISABLED"
-    ]
+    failures = []
+    for key in ("home_win_either_half", "away_win_either_half"):
+        state = market_safety.get(key)
+        legacy_safe = state == "DISABLED"
+        current_safe = state == {
+            "model_status": "EXPERIMENTAL",
+            "pricing_authority": "NOT_AUTHORIZED",
+            "selection_authority": "NOT_AUTHORIZED",
+        }
+        if not legacy_safe and not current_safe:
+            failures.append(key)
     if failures:
         raise ResearchExportError(
             "Win Either Half market safety gate failed: "
             + ", ".join(failures)
-            + " must remain DISABLED"
+            + " must match exact v1 or v2 safety semantics"
         )
 
 

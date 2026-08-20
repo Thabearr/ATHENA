@@ -29,13 +29,17 @@ from domain.markets import MarketId  # noqa: E402
 from domain.model_status import (  # noqa: E402
     MODEL_STATUS_REGISTRY,
     ModelStatus,
+    PricingAuthority,
+    SelectionAuthority,
 )
 from scripts.audit_half_time_coverage import (  # noqa: E402
     load_observations_from_database,
 )
 
 
-SCHEMA_VERSION = 1
+LEGACY_SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_SCHEMA_VERSIONS = (LEGACY_SCHEMA_VERSION, SCHEMA_VERSION)
 DEFAULT_BASELINE_NAME = "half-time-ready-for-research"
 _CACHE_NAME_PATTERN = re.compile(
     r"^(?P<start>\d{2})(?P<end>\d{2})_(?P<league>[A-Z0-9]{1,8})\.csv$",
@@ -461,14 +465,55 @@ def _source_summary(audit: dict) -> dict:
     return sources
 
 
+def _assert_weh_authority_disabled() -> None:
+    for market in (
+        MarketId.AWAY_WIN_EITHER_HALF,
+        MarketId.HOME_WIN_EITHER_HALF,
+    ):
+        definition = MODEL_STATUS_REGISTRY[market]
+        if (
+            definition.pricing_authority is not PricingAuthority.NOT_AUTHORIZED
+            or definition.selection_authority
+            is not SelectionAuthority.NOT_AUTHORIZED
+        ):
+            raise BaselineError(
+                f"{market.value} has forbidden pricing/selection authority"
+            )
+
+
 def _market_safety() -> dict:
+    """Return the truthful current registry state for new schema-v2 baselines."""
+
+    _assert_weh_authority_disabled()
     return {
-        "away_win_either_half": MODEL_STATUS_REGISTRY[
-            MarketId.AWAY_WIN_EITHER_HALF
-        ].status.value,
-        "home_win_either_half": MODEL_STATUS_REGISTRY[
-            MarketId.HOME_WIN_EITHER_HALF
-        ].status.value,
+        key: {
+            "model_status": MODEL_STATUS_REGISTRY[market].status.value,
+            "pricing_authority": MODEL_STATUS_REGISTRY[
+                market
+            ].pricing_authority.value,
+            "selection_authority": MODEL_STATUS_REGISTRY[
+                market
+            ].selection_authority.value,
+        }
+        for key, market in (
+            ("away_win_either_half", MarketId.AWAY_WIN_EITHER_HALF),
+            ("home_win_either_half", MarketId.HOME_WIN_EITHER_HALF),
+        )
+    }
+
+
+def _legacy_market_safety_v1_for_verification() -> dict:
+    """Reconstruct only the exact historical v1 receipt projection.
+
+    V1 predated independent authority fields and recorded the then-current
+    maturity label as its safety gate.  This projection is intentionally
+    private to legacy receipt verification; new baselines always use v2.
+    """
+
+    _assert_weh_authority_disabled()
+    return {
+        "away_win_either_half": ModelStatus.DISABLED.value,
+        "home_win_either_half": ModelStatus.DISABLED.value,
     }
 
 
@@ -486,6 +531,29 @@ def build_evidence_baseline(
     code_state: Optional[dict] = None,
     generated_at_utc: Optional[str] = None,
     repository_root: Path = REPOSITORY_ROOT,
+) -> dict:
+    return _build_evidence_baseline(
+        database_path=database_path,
+        cache_directory=cache_directory,
+        baseline_name=baseline_name,
+        code_state=code_state,
+        generated_at_utc=generated_at_utc,
+        repository_root=repository_root,
+        schema_version=SCHEMA_VERSION,
+        market_safety=_market_safety(),
+    )
+
+
+def _build_evidence_baseline(
+    *,
+    database_path: Path,
+    cache_directory: Path,
+    baseline_name: str,
+    code_state: Optional[dict],
+    generated_at_utc: Optional[str],
+    repository_root: Path,
+    schema_version: int,
+    market_safety: dict,
 ) -> dict:
     observations = tuple(
         load_observations_from_database(str(database_path))
@@ -507,10 +575,43 @@ def build_evidence_baseline(
         },
         "football_data_uk_cache": build_cache_manifest(cache_directory),
         "generated_at_utc": generated_at_utc or _generated_at_utc(),
-        "market_safety": _market_safety(),
-        "schema_version": SCHEMA_VERSION,
+        "market_safety": market_safety,
+        "schema_version": schema_version,
         "sources": _source_summary(audit),
     }
+
+
+def rebuild_evidence_baseline_for_verification(
+    stored: dict,
+    *,
+    database_path: Path,
+    cache_directory: Path,
+    baseline_name: str,
+    code_state: Optional[dict] = None,
+    generated_at_utc: Optional[str] = None,
+    repository_root: Path = REPOSITORY_ROOT,
+) -> dict:
+    """Rebuild a stored baseline in its exact versioned hash domain."""
+
+    schema_version = stored.get("schema_version")
+    if schema_version == LEGACY_SCHEMA_VERSION:
+        market_safety = _legacy_market_safety_v1_for_verification()
+    elif schema_version == SCHEMA_VERSION:
+        market_safety = _market_safety()
+    else:
+        raise BaselineError(
+            f"Unsupported baseline schema_version: {schema_version!r}"
+        )
+    return _build_evidence_baseline(
+        database_path=database_path,
+        cache_directory=cache_directory,
+        baseline_name=baseline_name,
+        code_state=code_state,
+        generated_at_utc=generated_at_utc,
+        repository_root=repository_root,
+        schema_version=schema_version,
+        market_safety=market_safety,
+    )
 
 
 def validate_expectations(
@@ -564,9 +665,24 @@ def validate_ready_baseline(artifact: dict) -> None:
         failures.append("fixtures with unknown league metadata are present")
     if not artifact["code"]["tracked_worktree_clean"]:
         failures.append("tracked worktree is dirty")
+    schema_version = artifact.get("schema_version")
     for key in ("home_win_either_half", "away_win_either_half"):
-        if market_safety.get(key) != ModelStatus.DISABLED.value:
-            failures.append(f"{key} is not DISABLED")
+        state = market_safety.get(key)
+        if schema_version == LEGACY_SCHEMA_VERSION:
+            if state != ModelStatus.DISABLED.value:
+                failures.append(f"{key} v1 maturity is not DISABLED")
+        elif schema_version == SCHEMA_VERSION:
+            if not isinstance(state, dict):
+                failures.append(f"{key} v2 state is not an object")
+            elif state != {
+                "model_status": ModelStatus.EXPERIMENTAL.value,
+                "pricing_authority": PricingAuthority.NOT_AUTHORIZED.value,
+                "selection_authority": SelectionAuthority.NOT_AUTHORIZED.value,
+            }:
+                failures.append(f"{key} v2 status/authority differs")
+        else:
+            failures.append("baseline schema version is unsupported")
+            break
     if failures:
         raise BaselineError("Baseline safety gate failed: " + "; ".join(failures))
 
@@ -619,7 +735,7 @@ def load_baseline(path: Path) -> dict:
         raise BaselineError(f"Baseline could not be read: {path}") from error
     if not isinstance(artifact, dict):
         raise BaselineError("Baseline root must be a JSON object")
-    if artifact.get("schema_version") != SCHEMA_VERSION:
+    if artifact.get("schema_version") not in SUPPORTED_SCHEMA_VERSIONS:
         raise BaselineError(
             "Unsupported baseline schema_version: "
             f"{artifact.get('schema_version')!r}"
@@ -742,11 +858,21 @@ def main(
                 else args.output.stem
             )
         )
-        artifact = build_evidence_baseline(
-            database_path=args.database,
-            cache_directory=args.cache_directory,
-            baseline_name=baseline_name,
-            repository_root=repository_root,
+        artifact = (
+            rebuild_evidence_baseline_for_verification(
+                stored,
+                database_path=args.database,
+                cache_directory=args.cache_directory,
+                baseline_name=baseline_name,
+                repository_root=repository_root,
+            )
+            if stored is not None
+            else build_evidence_baseline(
+                database_path=args.database,
+                cache_directory=args.cache_directory,
+                baseline_name=baseline_name,
+                repository_root=repository_root,
+            )
         )
         validate_expectations(
             artifact,

@@ -1163,7 +1163,7 @@ class FootballDataUkImporterTests(unittest.TestCase):
                 1,
             )
 
-    def test_win_either_half_markets_remain_disabled(self):
+    def test_win_either_half_markets_remain_selection_unauthorized(self):
         capabilities = SOURCE_CAPABILITY_REGISTRY[SOURCE]
         self.assertEqual(
             capabilities.full_time_score,
@@ -1181,13 +1181,19 @@ class FootballDataUkImporterTests(unittest.TestCase):
             MODEL_STATUS_REGISTRY[
                 MarketId.HOME_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[
                 MarketId.AWAY_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
 
 

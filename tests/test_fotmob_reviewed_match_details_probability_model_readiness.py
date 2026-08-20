@@ -47,7 +47,9 @@ from domain.model_status import (
     MarketModelStatus,
     MissingInputPolicy,
     ModelStatus,
+    ProbabilityInputNamespace,
 )
+from domain.win_either_half_features import PRE_MATCH_FEATURE_NAMES
 
 
 UTC = datetime.timezone.utc
@@ -257,16 +259,25 @@ def test_legacy_default_policy_is_audited_but_never_substitutes() -> None:
     assert "default_value" not in json.dumps(payload, sort_keys=True)
 
 
-def test_disabled_market_remains_model_status_blocked() -> None:
+def test_specialized_weh_namespace_remains_outside_six_feature_readiness() -> None:
     readiness, _, _ = _build()
     record = _market(readiness, MarketId.HOME_WIN_EITHER_HALF)
 
-    assert record.model_status is ModelStatus.DISABLED
+    assert record.model_status is ModelStatus.EXPERIMENTAL
+    assert (
+        record.probability_input_namespace
+        is ProbabilityInputNamespace.SPECIALIZED_WEH_PRE_MATCH_FEATURES
+    )
     assert record.declared_probability_inputs == ()
-    assert record.declared_input_status is DeclaredInputStatus.SATISFIED
-    assert record.readiness_status is ProbabilityReadinessStatus.BLOCKED_MODEL_STATUS
+    assert record.declared_specialized_probability_inputs == PRE_MATCH_FEATURE_NAMES
+    assert record.required_feature_records == ()
+    assert record.declared_input_status is DeclaredInputStatus.BLOCKED
+    assert (
+        record.readiness_status
+        is ProbabilityReadinessStatus.BLOCKED_INPUT_NAMESPACE_NOT_OWNED
+    )
     assert record.readiness_reasons == (
-        ProbabilityReadinessReason.MODEL_STATUS_DISABLED,
+        ProbabilityReadinessReason.SPECIALIZED_INPUT_NAMESPACE_NOT_OWNED,
     )
 
 
@@ -355,6 +366,18 @@ def test_malformed_registry_fails_closed(monkeypatch, mutation) -> None:
             replacement = dataclasses.replace(base)
             object.__setattr__(replacement, "probability_method", None)
         registry[MarketId.MATCH_RESULT] = replacement
+    monkeypatch.setattr(module, "MODEL_STATUS_REGISTRY", registry)
+    monkeypatch.setattr(module, "get_model_status", lambda market_id: registry[market_id])
+
+    with pytest.raises(FotMobReviewedMatchDetailsProbabilityModelReadinessError):
+        canonical_model_status_registry_view_bytes()
+
+
+def test_mutated_specialized_registry_namespace_fails_closed(monkeypatch) -> None:
+    registry = dict(MODEL_STATUS_REGISTRY)
+    forged = dataclasses.replace(registry[MarketId.HOME_WIN_EITHER_HALF])
+    object.__setattr__(forged, "probability_inputs", ("home_form",))
+    registry[MarketId.HOME_WIN_EITHER_HALF] = forged
     monkeypatch.setattr(module, "MODEL_STATUS_REGISTRY", registry)
     monkeypatch.setattr(module, "get_model_status", lambda market_id: registry[market_id])
 

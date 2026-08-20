@@ -477,14 +477,20 @@ class TestWinEitherHalfCampaignCommitment(unittest.TestCase):
             )
             self.assertIsNotNone(bundle)
 
-    def test_both_markets_must_remain_disabled(self) -> None:
+    def test_both_markets_must_remain_unselectable(self) -> None:
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
 
     def test_selected_offset_must_remain_null(self) -> None:

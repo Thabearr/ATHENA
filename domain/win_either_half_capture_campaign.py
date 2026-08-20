@@ -17,7 +17,11 @@ import re
 from typing import Any, Iterable, Mapping, Sequence
 
 from domain.markets import MARKET_REGISTRY, MarketId
-from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus
+from domain.model_status import (
+    MODEL_STATUS_REGISTRY,
+    PricingAuthority,
+    SelectionAuthority,
+)
 from domain.win_either_half_prospective_replay import (
     validate_protocol_contract as validate_stage_5b2_protocol_contract,
 )
@@ -745,8 +749,15 @@ def assert_market_safety() -> None:
             f"Expected 15 canonical markets, found {len(MARKET_REGISTRY)}"
         )
     for market in PERMITTED_MARKETS:
-        if MODEL_STATUS_REGISTRY[market].status != ModelStatus.DISABLED:
-            raise CaptureCampaignError(f"{market.value} must remain DISABLED")
+        definition = MODEL_STATUS_REGISTRY[market]
+        if (
+            definition.pricing_authority is not PricingAuthority.NOT_AUTHORIZED
+            or definition.selection_authority
+            is not SelectionAuthority.NOT_AUTHORIZED
+        ):
+            raise CaptureCampaignError(
+                f"{market.value} must remain pricing/selection unauthorized"
+            )
 
 
 def build_expected_protocol_contract() -> dict[str, Any]:

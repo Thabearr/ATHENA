@@ -13,6 +13,7 @@ from domain.model_status import (
     FreshConfirmationStatus,
     ModelStatus,
     PricingAuthority,
+    ProbabilityInputNamespace,
     SelectionAuthority,
     SettlementCapability,
 )
@@ -94,6 +95,7 @@ class MarketEvaluation:
     fresh_confirmation_status: FreshConfirmationStatus
     pricing_authority: PricingAuthority
     selection_authority: SelectionAuthority
+    probability_input_namespace: ProbabilityInputNamespace
     probability: Optional[float]
     probability_method: Optional[str]
     probability_inputs: Sequence[str]
@@ -120,6 +122,7 @@ class MarketEvaluation:
             "fresh_confirmation_status": self.fresh_confirmation_status.value,
             "pricing_authority": self.pricing_authority.value,
             "selection_authority": self.selection_authority.value,
+            "probability_input_namespace": self.probability_input_namespace.value,
             "probability": self.probability,
             "probability_method": self.probability_method,
             "probability_inputs": list(self.probability_inputs),

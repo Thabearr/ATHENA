@@ -21,7 +21,11 @@ if str(REPOSITORY_ROOT) not in sys.path:
     sys.path.insert(0, str(REPOSITORY_ROOT))
 
 from domain.markets import MarketId  # noqa: E402
-from domain.model_status import MODEL_STATUS_REGISTRY, ModelStatus  # noqa: E402
+from domain.model_status import (  # noqa: E402
+    MODEL_STATUS_REGISTRY,
+    PricingAuthority,
+    SelectionAuthority,
+)
 from domain.win_either_half_pricing_evidence import (  # noqa: E402
     BOOKMAKER_FAIR_PROBABILITY_BANDS,
     CANONICAL_DECIMAL_PLACES,
@@ -259,8 +263,15 @@ def verify_stage_4b_manifest_contract(manifest: Mapping) -> dict:
     if manifest.get("market_safety") != expected_safety:
         raise PricingExportError("Stage 4B market safety drifted")
     for market in PERMITTED_MARKETS:
-        if MODEL_STATUS_REGISTRY[market].status is not ModelStatus.DISABLED:
-            raise PricingExportError("Win Either Half market safety is not disabled")
+        definition = MODEL_STATUS_REGISTRY[market]
+        if (
+            definition.pricing_authority is not PricingAuthority.NOT_AUTHORIZED
+            or definition.selection_authority
+            is not SelectionAuthority.NOT_AUTHORIZED
+        ):
+            raise PricingExportError(
+                "Win Either Half pricing/selection authority is not disabled"
+            )
     return {
         "dataset_name": manifest["dataset_name"],
         "generator_git_head_sha": manifest["generator"]["generator_git_head_sha"],

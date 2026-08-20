@@ -35,7 +35,7 @@ from domain.fixture_model_features import (
     model_feature_snapshot_to_dict,
     sha256_model_feature_snapshot,
 )
-from domain.model_status import MODEL_STATUS_REGISTRY
+from domain.model_status import MODEL_STATUS_REGISTRY, ProbabilityInputNamespace
 
 
 UTC = dt.timezone.utc
@@ -205,12 +205,14 @@ def test_exact_feature_registry_and_bindings():
     } == EXPECTED_BINDINGS
 
 
-def test_model_status_probability_inputs_match_feature_registry_exactly():
+def test_generic_model_status_probability_inputs_match_feature_registry_exactly():
     probability_inputs = {
         item
         for definition in MODEL_STATUS_REGISTRY.values()
         for item in definition.probability_inputs
         if item
+        and definition.probability_input_namespace
+        is ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
     }
     assert probability_inputs == EXPECTED_FEATURES
     assert probability_inputs == {feature.value for feature in ModelFeatureId}

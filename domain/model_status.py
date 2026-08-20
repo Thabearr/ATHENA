@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Dict, Optional, Tuple
 
 from domain.markets import MarketId
+from domain.win_either_half_features import PRE_MATCH_FEATURE_NAMES
 
 
 class ModelStatus(str, Enum):
@@ -37,12 +38,20 @@ class SettlementCapability(str, Enum):
     BLOCKED = "BLOCKED"
 
 
+class ProbabilityInputNamespace(str, Enum):
+    GENERIC_FIXTURE_MODEL_FEATURES = "GENERIC_FIXTURE_MODEL_FEATURES"
+    SPECIALIZED_WEH_PRE_MATCH_FEATURES = "SPECIALIZED_WEH_PRE_MATCH_FEATURES"
+
+
 class CalibrationStatus(str, Enum):
     MIXED_OR_WEAK_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED = (
         "MIXED_OR_WEAK_FOTMOB_UTC_NATIVE_SUCCESSOR_SIGNAL_REVIEW_REQUIRED"
     )
     NOT_APPLICABLE_ANALYTICAL_CAPABILITY_BLOCKED = (
         "NOT_APPLICABLE_ANALYTICAL_CAPABILITY_BLOCKED"
+    )
+    FROZEN_STAGE_4B_CALIBRATION_RESEARCH_EVIDENCE = (
+        "FROZEN_STAGE_4B_CALIBRATION_RESEARCH_EVIDENCE"
     )
 
 
@@ -68,6 +77,7 @@ class MarketModelStatus:
     status: ModelStatus
     probability_method: Optional[str]
     reason: str
+    probability_input_namespace: ProbabilityInputNamespace
     probability_inputs: Tuple[str, ...]
     pricing_inputs: Tuple[str, ...]
     missing_input_policy: MissingInputPolicy
@@ -87,6 +97,11 @@ class MarketModelStatus:
                 "analytical capability",
             ),
             (self.settlement_capability, SettlementCapability, "settlement capability"),
+            (
+                self.probability_input_namespace,
+                ProbabilityInputNamespace,
+                "probability input namespace",
+            ),
             (self.calibration_status, CalibrationStatus, "calibration status"),
             (
                 self.fresh_confirmation_status,
@@ -106,6 +121,12 @@ class MarketModelStatus:
             raise TypeError("pricing_inputs must be an exact tuple")
         if not isinstance(self.reason, str) or not self.reason.strip():
             raise ValueError("reason must be non-empty")
+        if (
+            self.probability_input_namespace
+            is ProbabilityInputNamespace.SPECIALIZED_WEH_PRE_MATCH_FEATURES
+            and self.probability_inputs != PRE_MATCH_FEATURE_NAMES
+        ):
+            raise ValueError("specialized WEH input order differs from frozen contract")
 
         available = (
             self.analytical_probability_capability
@@ -165,17 +186,24 @@ def _available(
     probability_method: str,
     reason: str,
     settlement: SettlementCapability = SettlementCapability.ORDINARY_EVENT_PROBABILITY,
+    probability_input_namespace: ProbabilityInputNamespace = (
+        ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
+    ),
+    probability_inputs: Tuple[str, ...] = _PROBABILITY_INPUTS,
+    missing_input_policy: MissingInputPolicy = MissingInputPolicy.DEFAULT_AND_DISCLOSE,
+    calibration_status: CalibrationStatus = _REVIEW_REQUIRED,
 ) -> MarketModelStatus:
     return MarketModelStatus(
         status=status,
         probability_method=probability_method,
         reason=reason,
-        probability_inputs=_PROBABILITY_INPUTS,
+        probability_input_namespace=probability_input_namespace,
+        probability_inputs=probability_inputs,
         pricing_inputs=_PRICING_INPUTS,
-        missing_input_policy=MissingInputPolicy.DEFAULT_AND_DISCLOSE,
+        missing_input_policy=missing_input_policy,
         analytical_probability_capability=AnalyticalProbabilityCapability.AVAILABLE,
         settlement_capability=settlement,
-        calibration_status=_REVIEW_REQUIRED,
+        calibration_status=calibration_status,
         fresh_confirmation_status=_ZERO_CONFIRMATION,
         pricing_authority=_NO_PRICING,
         selection_authority=_NO_SELECTION,
@@ -187,6 +215,9 @@ def _blocked(reason: str) -> MarketModelStatus:
         status=ModelStatus.DISABLED,
         probability_method=None,
         reason=reason,
+        probability_input_namespace=(
+            ProbabilityInputNamespace.GENERIC_FIXTURE_MODEL_FEATURES
+        ),
         probability_inputs=(),
         pricing_inputs=(),
         missing_input_policy=MissingInputPolicy.REJECT_MARKET,
@@ -247,17 +278,40 @@ MODEL_STATUS_REGISTRY: Dict[MarketId, MarketModelStatus] = {
         probability_method="normalized_score_matrix_union_probability",
         reason="The home-or-over event and its complement are exact matrix sums.",
     ),
-    MarketId.HOME_WIN_EITHER_HALF: _blocked(
-        "A reviewed Home Win Either Half research model and independent final-test "
-        "calibration evidence already exist, but prospective runtime inference is "
-        "not yet integrated into this canonical analytical path; full-time win "
-        "probability is not a proxy."
+    MarketId.HOME_WIN_EITHER_HALF: _available(
+        status=ModelStatus.EXPERIMENTAL,
+        probability_method="frozen_weh_stage4a4b_analytical_inference_v1",
+        probability_input_namespace=(
+            ProbabilityInputNamespace.SPECIALIZED_WEH_PRE_MATCH_FEATURES
+        ),
+        probability_inputs=PRE_MATCH_FEATURE_NAMES,
+        missing_input_policy=MissingInputPolicy.REJECT_MARKET,
+        calibration_status=(
+            CalibrationStatus.FROZEN_STAGE_4B_CALIBRATION_RESEARCH_EVIDENCE
+        ),
+        reason=(
+            "The frozen TRAIN-fitted Home WEH logistic model and reviewed "
+            "isotonic calibration are prospectively callable from the exact "
+            "specialized 74-feature namespace; pricing and selection remain "
+            "unauthorized."
+        ),
     ),
-    MarketId.AWAY_WIN_EITHER_HALF: _blocked(
-        "A reviewed Away Win Either Half research model and independent final-test "
-        "calibration evidence already exist, but prospective runtime inference is "
-        "not yet integrated into this canonical analytical path; full-time win "
-        "probability is not a proxy."
+    MarketId.AWAY_WIN_EITHER_HALF: _available(
+        status=ModelStatus.EXPERIMENTAL,
+        probability_method="frozen_weh_stage4a4b_analytical_inference_v1",
+        probability_input_namespace=(
+            ProbabilityInputNamespace.SPECIALIZED_WEH_PRE_MATCH_FEATURES
+        ),
+        probability_inputs=PRE_MATCH_FEATURE_NAMES,
+        missing_input_policy=MissingInputPolicy.REJECT_MARKET,
+        calibration_status=(
+            CalibrationStatus.FROZEN_STAGE_4B_CALIBRATION_RESEARCH_EVIDENCE
+        ),
+        reason=(
+            "The frozen TRAIN-fitted Away WEH logistic model and reviewed identity "
+            "calibration are prospectively callable from the exact specialized "
+            "74-feature namespace; pricing and selection remain unauthorized."
+        ),
     ),
     MarketId.DOUBLE_CHANCE: _available(
         status=ModelStatus.ACTIVE,
@@ -343,6 +397,7 @@ __all__ = [
     "MissingInputPolicy",
     "ModelStatus",
     "PricingAuthority",
+    "ProbabilityInputNamespace",
     "SelectionAuthority",
     "SettlementCapability",
     "get_model_status",

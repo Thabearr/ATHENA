@@ -450,7 +450,7 @@ class HalfTimeCoverageTests(unittest.TestCase):
             {"source_a", "source_b"},
         )
 
-    def test_win_either_half_remains_disabled_when_research_ready(self):
+    def test_win_either_half_research_readiness_does_not_grant_selection(self):
         report = audit_half_time_coverage(
             (self._observation("fixture-1"),),
             ReadinessThresholds(
@@ -469,13 +469,19 @@ class HalfTimeCoverageTests(unittest.TestCase):
             MODEL_STATUS_REGISTRY[
                 MarketId.HOME_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[
                 MarketId.AWAY_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
 
     def test_default_thresholds_allow_ready_with_known_league_metadata(self):
@@ -505,13 +511,19 @@ class HalfTimeCoverageTests(unittest.TestCase):
             MODEL_STATUS_REGISTRY[
                 MarketId.HOME_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[
                 MarketId.AWAY_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
 
 

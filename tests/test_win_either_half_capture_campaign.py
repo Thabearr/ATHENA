@@ -1047,13 +1047,13 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
         ):
             self.assertEqual(len(identity["sha256"]), 64)
 
-    def test_manifest_records_all_15_markets_and_both_disabled(self) -> None:
+    def test_manifest_records_all_15_markets_and_analytical_maturity(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             bundle = self._build_bundle(Path(tmp))
         self.assertEqual(len(bundle.manifest["market_registry"]), 15)
         statuses = bundle.manifest["model_status_registry"]
-        self.assertEqual(statuses["HOME_WIN_EITHER_HALF"], "DISABLED")
-        self.assertEqual(statuses["AWAY_WIN_EITHER_HALF"], "DISABLED")
+        self.assertEqual(statuses["HOME_WIN_EITHER_HALF"], "EXPERIMENTAL")
+        self.assertEqual(statuses["AWAY_WIN_EITHER_HALF"], "EXPERIMENTAL")
         self.assertEqual(len(MARKET_REGISTRY), 15)
 
     def test_dirty_worktree_fails_closed(self) -> None:
@@ -1229,14 +1229,20 @@ class TestWinEitherHalfCaptureCampaign(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn("Stage 5B3", result.stdout)
 
-    def test_markets_remain_disabled(self) -> None:
+    def test_markets_remain_unselectable(self) -> None:
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.AWAY_WIN_EITHER_HALF].selectable
         )
 
 

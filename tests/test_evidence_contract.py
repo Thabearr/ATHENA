@@ -155,7 +155,10 @@ class EvidenceContractTests(unittest.TestCase):
             MODEL_STATUS_REGISTRY[
                 MarketId.HOME_WIN_EITHER_HALF
             ].status,
-            ModelStatus.DISABLED,
+            ModelStatus.EXPERIMENTAL,
+        )
+        self.assertFalse(
+            MODEL_STATUS_REGISTRY[MarketId.HOME_WIN_EITHER_HALF].selectable
         )
         self.assertEqual(
             MODEL_STATUS_REGISTRY[MarketId.MATCH_RESULT_1UP].status,
@@ -591,8 +594,6 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertEqual(
             {evaluation["market_id"] for evaluation in disabled},
             {
-                MarketId.HOME_WIN_EITHER_HALF.value,
-                MarketId.AWAY_WIN_EITHER_HALF.value,
                 MarketId.MATCH_RESULT_1UP.value,
                 MarketId.MATCH_RESULT_2UP.value,
             },
@@ -600,6 +601,27 @@ class EvidenceContractTests(unittest.TestCase):
         self.assertTrue(all(not evaluation["selected"] for evaluation in disabled))
         self.assertTrue(
             all(evaluation["rejection_reasons"] for evaluation in disabled)
+        )
+        weh = [
+            evaluation
+            for evaluation in evaluations
+            if evaluation["market_id"]
+            in {
+                MarketId.HOME_WIN_EITHER_HALF.value,
+                MarketId.AWAY_WIN_EITHER_HALF.value,
+            }
+        ]
+        self.assertEqual(len(weh), 2)
+        self.assertTrue(
+            all(evaluation["model_status"] == ModelStatus.EXPERIMENTAL.value for evaluation in weh)
+        )
+        self.assertTrue(all(not evaluation["selected"] for evaluation in weh))
+        self.assertTrue(
+            all(
+                evaluation["probability_input_namespace"]
+                == "SPECIALIZED_WEH_PRE_MATCH_FEATURES"
+                for evaluation in weh
+            )
         )
         self.assertEqual(
             build_viable_market_candidates(
