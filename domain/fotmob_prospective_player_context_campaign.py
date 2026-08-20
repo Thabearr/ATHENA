@@ -260,8 +260,8 @@ def resolve_exact_target_candidate(
         for item in candidates
         if type(item) is FotMobFixtureCandidate
         and item.source_request_date == request_date
-        and item.home_name == expected_home_team
-        and item.away_name == expected_away_team
+        and item.home_long_name == expected_home_team
+        and item.away_long_name == expected_away_team
         and item.kickoff_utc == kickoff
     )
     if len(matches) != 1:
@@ -855,8 +855,8 @@ def candidate_identity(candidate: FotMobFixtureCandidate) -> dict[str, Any]:
     return {
         "fixture_identifier": f"FOTMOB:{candidate.source_match_id}",
         "source_match_id": str(candidate.source_match_id),
-        "home_team": candidate.home_name,
-        "away_team": candidate.away_name,
+        "home_team": candidate.home_long_name,
+        "away_team": candidate.away_long_name,
         "kickoff": candidate.kickoff_utc,
         "candidate_sha256": sha256_fotmob_fixture_candidate(candidate),
     }

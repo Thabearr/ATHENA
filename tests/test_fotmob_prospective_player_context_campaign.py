@@ -26,6 +26,7 @@ from domain.fotmob_prospective_player_context_campaign import (
     FotMobProspectivePlayerContextCampaignReceipt,
     build_player_context_review_candidate_report,
     campaign_receipt_from_bytes,
+    candidate_identity,
     canonical_campaign_receipt_bytes,
     canonical_json_bytes,
     evidence_file,
@@ -162,6 +163,24 @@ def test_exact_target_resolution_has_no_fuzzy_name_matching() -> None:
     assert resolve_exact_target_candidate((exact,)) is exact
     with pytest.raises(FotMobProspectivePlayerContextCampaignError):
         resolve_exact_target_candidate((_candidate(home="nottingham forest"),))
+
+
+def test_exact_target_resolution_uses_reviewed_long_names_not_display_abbreviations() -> None:
+    real_source_shape = dataclasses.replace(
+        _candidate(match_id=5795367),
+        home_name="Nottm Forest",
+        away_name="Leeds",
+    )
+    assert resolve_exact_target_candidate((real_source_shape,)) is real_source_shape
+    identity = candidate_identity(real_source_shape)
+    assert identity["home_team"] == EXPECTED_HOME_TEAM
+    assert identity["away_team"] == EXPECTED_AWAY_TEAM
+
+    wrong_long_name = dataclasses.replace(
+        real_source_shape, home_long_name="Nottingham Forest FC"
+    )
+    with pytest.raises(FotMobProspectivePlayerContextCampaignError):
+        resolve_exact_target_candidate((wrong_long_name,))
 
 
 def test_wrong_request_date_and_kickoff_fail_exact_resolution() -> None:
