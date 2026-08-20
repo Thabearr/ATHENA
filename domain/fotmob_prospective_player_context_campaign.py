@@ -328,6 +328,7 @@ def build_player_context_review_candidate_report(
 class FotMobProspectivePlayerContextCampaignReceipt:
     repository: str
     base_sha: str
+    repository_head_sha: str
     workflow_name: str
     workflow_run_id: int
     workflow_run_attempt: int
@@ -344,6 +345,14 @@ class FotMobProspectivePlayerContextCampaignReceipt:
     fixture_raw_sha256: str | None
     fixture_raw_size: int | None
     fixture_manifest_sha256: str | None
+    fixture_schema_assessment_sha256: str | None
+    fixture_candidate_bundle_sha256: str | None
+    fixture_review_ledger_sha256: str | None
+    fixture_catalog_sha256: str | None
+    fixture_catalog_manifest_sha256: str | None
+    fixture_admission_sha256: str | None
+    fixture_bootstrap_sha256: str | None
+    fixture_bootstrap_receipt_sha256: str | None
     match_details_raw_sha256: str | None
     match_details_raw_size: int | None
     match_details_manifest_sha256: str | None
@@ -358,6 +367,13 @@ class FotMobProspectivePlayerContextCampaignReceipt:
             raise FotMobProspectivePlayerContextCampaignError("repository mismatch")
         if type(self.base_sha) is not str or _GIT_SHA_RE.fullmatch(self.base_sha) is None:
             raise FotMobProspectivePlayerContextCampaignError("base_sha invalid")
+        if (
+            type(self.repository_head_sha) is not str
+            or _GIT_SHA_RE.fullmatch(self.repository_head_sha) is None
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "repository_head_sha invalid"
+            )
         _exact_string(self.workflow_name, "workflow_name")
         _exact_string(self.github_actor, "github_actor")
         if type(self.workflow_run_id) is not int or self.workflow_run_id <= 0:
@@ -384,6 +400,14 @@ class FotMobProspectivePlayerContextCampaignReceipt:
             "fixture_candidate_sha256",
             "fixture_raw_sha256",
             "fixture_manifest_sha256",
+            "fixture_schema_assessment_sha256",
+            "fixture_candidate_bundle_sha256",
+            "fixture_review_ledger_sha256",
+            "fixture_catalog_sha256",
+            "fixture_catalog_manifest_sha256",
+            "fixture_admission_sha256",
+            "fixture_bootstrap_sha256",
+            "fixture_bootstrap_receipt_sha256",
             "match_details_raw_sha256",
             "match_details_manifest_sha256",
             "persisted_evidence_receipt_sha256",
@@ -404,6 +428,186 @@ class FotMobProspectivePlayerContextCampaignReceipt:
         object.__setattr__(self, "started_at", started)
         object.__setattr__(self, "completed_at", completed)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
+        self._validate_stage_invariants()
+
+    def _validate_stage_invariants(self) -> None:
+        fixture_capture = (
+            self.fixture_raw_sha256,
+            self.fixture_raw_size,
+            self.fixture_manifest_sha256,
+        )
+        if any(item is not None for item in fixture_capture) and not all(
+            item is not None for item in fixture_capture
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "fixture capture identity must be complete or absent"
+            )
+        resolved = (
+            self.resolved_fixture_identifier,
+            self.resolved_source_match_id,
+            self.resolved_home_team,
+            self.resolved_away_team,
+            self.resolved_kickoff,
+            self.fixture_candidate_sha256,
+        )
+        if any(item is not None for item in resolved) and not all(
+            item is not None for item in resolved
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "resolved fixture identity must be complete or absent"
+            )
+        match_capture = (
+            self.match_details_raw_sha256,
+            self.match_details_raw_size,
+            self.match_details_manifest_sha256,
+        )
+        if any(item is not None for item in match_capture) and not all(
+            item is not None for item in match_capture
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "match-details capture identity must be complete or absent"
+            )
+        file_map = {item.relative_path: item for item in self.files}
+
+        def require_file(path: str, sha: str | None, size: int | None = None) -> None:
+            if sha is None:
+                if path in file_map:
+                    raise FotMobProspectivePlayerContextCampaignError(
+                        f"completed evidence file lacks receipt identity: {path}"
+                    )
+                return
+            record = file_map.get(path)
+            if record is None or record.sha256 != sha:
+                raise FotMobProspectivePlayerContextCampaignError(
+                    f"receipt identity does not match evidence file: {path}"
+                )
+            if size is not None and record.byte_size != size:
+                raise FotMobProspectivePlayerContextCampaignError(
+                    f"receipt size does not match evidence file: {path}"
+                )
+
+        require_file("fixture/response.json", self.fixture_raw_sha256, self.fixture_raw_size)
+        require_file("fixture/manifest.json", self.fixture_manifest_sha256)
+        require_file(
+            "fixture/schema-assessment.json", self.fixture_schema_assessment_sha256
+        )
+        require_file(
+            "fixture/fixture-candidates.json", self.fixture_candidate_bundle_sha256
+        )
+        require_file(
+            "fixture/review-decision-ledger.json", self.fixture_review_ledger_sha256
+        )
+        require_file("fixture/catalog.json", self.fixture_catalog_sha256)
+        require_file(
+            "fixture/catalog-manifest.json", self.fixture_catalog_manifest_sha256
+        )
+        require_file("fixture/admission.json", self.fixture_admission_sha256)
+        require_file("fixture/bootstrap.json", self.fixture_bootstrap_sha256)
+        require_file(
+            "fixture/bootstrap-verification-receipt.json",
+            self.fixture_bootstrap_receipt_sha256,
+        )
+        require_file(
+            "match-details/response.json",
+            self.match_details_raw_sha256,
+            self.match_details_raw_size,
+        )
+        require_file(
+            "match-details/manifest.json", self.match_details_manifest_sha256
+        )
+        require_file(
+            "match-details/persisted-evidence-receipt.json",
+            self.persisted_evidence_receipt_sha256,
+        )
+        require_file(
+            "match-details/structure-assessment.json",
+            self.structure_assessment_sha256,
+        )
+        require_file(
+            "player-context-review-candidates.json",
+            self.player_context_report_sha256,
+        )
+
+        fixture_derived = (
+            self.fixture_schema_assessment_sha256,
+            self.fixture_candidate_bundle_sha256,
+        )
+        if any(item is not None for item in fixture_derived) and not all(
+            item is not None for item in fixture_capture
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "derived fixture evidence requires exact fixture capture"
+            )
+        review_chain = (
+            self.fixture_review_ledger_sha256,
+            self.fixture_catalog_sha256,
+            self.fixture_catalog_manifest_sha256,
+            self.fixture_admission_sha256,
+            self.fixture_bootstrap_sha256,
+            self.fixture_bootstrap_receipt_sha256,
+        )
+        ledger, catalog, catalog_manifest, admission, bootstrap, bootstrap_receipt = review_chain
+        if (catalog is None) != (catalog_manifest is None):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "catalog and catalog manifest identities must appear together"
+            )
+        ordered_review_stages = (
+            ledger is not None,
+            catalog is not None and catalog_manifest is not None,
+            admission is not None,
+            bootstrap is not None,
+            bootstrap_receipt is not None,
+        )
+        seen_missing = False
+        for present in ordered_review_stages:
+            if not present:
+                seen_missing = True
+            elif seen_missing:
+                raise FotMobProspectivePlayerContextCampaignError(
+                    "fixture review/bootstrap stage identity has a gap"
+                )
+        if any(item is not None for item in match_capture) and not all(
+            item is not None for item in review_chain
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "match-details capture requires exact reviewed fixture bootstrap"
+            )
+        if self.persisted_evidence_receipt_sha256 is not None and not all(
+            item is not None for item in match_capture
+        ):
+            raise FotMobProspectivePlayerContextCampaignError(
+                "PR52 evidence requires exact match-details capture"
+            )
+        if self.structure_assessment_sha256 is not None and self.persisted_evidence_receipt_sha256 is None:
+            raise FotMobProspectivePlayerContextCampaignError(
+                "PR53 evidence requires exact PR52 receipt"
+            )
+        if self.player_context_report_sha256 is not None and self.structure_assessment_sha256 is None:
+            raise FotMobProspectivePlayerContextCampaignError(
+                "player-context report requires exact PR53 assessment"
+            )
+        if self.campaign_result in {
+            CampaignResult.SUCCESS_PROSPECTIVE_PLAYER_CONTEXT_EVIDENCE_CAPTURED,
+            CampaignResult.NO_PLAYER_CONTEXT_CANDIDATE_STRUCTURE_OBSERVED,
+        }:
+            required = resolved + fixture_capture + fixture_derived + review_chain + match_capture + (
+                self.persisted_evidence_receipt_sha256,
+                self.structure_assessment_sha256,
+                self.player_context_report_sha256,
+            )
+            if not all(item is not None for item in required):
+                raise FotMobProspectivePlayerContextCampaignError(
+                    "terminal structural result requires the complete evidence chain"
+                )
+        if self.campaign_result is CampaignResult.FIXTURE_REVIEW_NOT_GRANTED:
+            if not all(item is not None for item in resolved + fixture_capture + fixture_derived):
+                raise FotMobProspectivePlayerContextCampaignError(
+                    "review-not-granted result must retain exact candidate evidence"
+                )
+            if any(item is not None for item in review_chain + match_capture):
+                raise FotMobProspectivePlayerContextCampaignError(
+                    "review-not-granted result cannot contain downstream evidence"
+                )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -412,6 +616,7 @@ class FotMobProspectivePlayerContextCampaignReceipt:
             "campaign_scope": CAMPAIGN_SCOPE,
             "repository": self.repository,
             "base_sha": self.base_sha,
+            "repository_head_sha": self.repository_head_sha,
             "workflow_name": self.workflow_name,
             "workflow_run_id": self.workflow_run_id,
             "workflow_run_attempt": self.workflow_run_attempt,
@@ -435,6 +640,14 @@ class FotMobProspectivePlayerContextCampaignReceipt:
             "fixture_raw_sha256": self.fixture_raw_sha256,
             "fixture_raw_size": self.fixture_raw_size,
             "fixture_manifest_sha256": self.fixture_manifest_sha256,
+            "fixture_schema_assessment_sha256": self.fixture_schema_assessment_sha256,
+            "fixture_candidate_bundle_sha256": self.fixture_candidate_bundle_sha256,
+            "fixture_review_ledger_sha256": self.fixture_review_ledger_sha256,
+            "fixture_catalog_sha256": self.fixture_catalog_sha256,
+            "fixture_catalog_manifest_sha256": self.fixture_catalog_manifest_sha256,
+            "fixture_admission_sha256": self.fixture_admission_sha256,
+            "fixture_bootstrap_sha256": self.fixture_bootstrap_sha256,
+            "fixture_bootstrap_receipt_sha256": self.fixture_bootstrap_receipt_sha256,
             "match_details_raw_sha256": self.match_details_raw_sha256,
             "match_details_raw_size": self.match_details_raw_size,
             "match_details_manifest_sha256": self.match_details_manifest_sha256,
@@ -455,6 +668,136 @@ def canonical_campaign_receipt_bytes(
             "value must be exact campaign receipt"
         )
     return canonical_json_bytes(dataclasses.replace(value).to_dict())
+
+
+def campaign_receipt_from_bytes(raw: Any) -> FotMobProspectivePlayerContextCampaignReceipt:
+    """Strictly reconstruct one exact canonical campaign receipt."""
+
+    if type(raw) is not bytes or not raw:
+        raise FotMobProspectivePlayerContextCampaignError(
+            "campaign receipt must be non-empty exact bytes"
+        )
+
+    def pairs(items: list[tuple[Any, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in items:
+            if type(key) is not str or key in result:
+                raise FotMobProspectivePlayerContextCampaignError(
+                    "campaign receipt contains duplicate or invalid JSON key"
+                )
+            result[key] = value
+        return result
+
+    try:
+        payload = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=pairs,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                FotMobProspectivePlayerContextCampaignError(
+                    f"non-finite JSON constant forbidden: {value}"
+                )
+            ),
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FotMobProspectivePlayerContextCampaignError(
+            "campaign receipt is not strict UTF-8 JSON"
+        ) from exc
+    expected_keys = {
+        "schema_version", "dataset_name", "campaign_scope", "repository",
+        "base_sha", "repository_head_sha", "workflow_name", "workflow_run_id",
+        "workflow_run_attempt", "github_actor", "started_at", "completed_at",
+        "target_request_date", "expected_home_team", "expected_away_team",
+        "expected_kickoff", "resolved_fixture_identifier", "resolved_source_match_id",
+        "resolved_home_team", "resolved_away_team", "resolved_kickoff",
+        "fixture_candidate_sha256", "fixture_raw_sha256", "fixture_raw_size",
+        "fixture_manifest_sha256", "fixture_schema_assessment_sha256",
+        "fixture_candidate_bundle_sha256", "fixture_review_ledger_sha256",
+        "fixture_catalog_sha256", "fixture_catalog_manifest_sha256",
+        "fixture_admission_sha256", "fixture_bootstrap_sha256",
+        "fixture_bootstrap_receipt_sha256", "match_details_raw_sha256",
+        "match_details_raw_size", "match_details_manifest_sha256",
+        "persisted_evidence_receipt_sha256", "structure_assessment_sha256",
+        "player_context_report_sha256", "campaign_result", "files", "safety",
+    }
+    if type(payload) is not dict or set(payload) != expected_keys:
+        raise FotMobProspectivePlayerContextCampaignError(
+            "campaign receipt keys do not match the exact contract"
+        )
+    frozen = {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_name": DATASET_NAME,
+        "campaign_scope": CAMPAIGN_SCOPE,
+        "target_request_date": TARGET_REQUEST_DATE,
+        "expected_home_team": EXPECTED_HOME_TEAM,
+        "expected_away_team": EXPECTED_AWAY_TEAM,
+        "expected_kickoff": EXPECTED_KICKOFF,
+    }
+    if any(payload[key] != value for key, value in frozen.items()):
+        raise FotMobProspectivePlayerContextCampaignError(
+            "campaign receipt frozen identity mismatch"
+        )
+    raw_files = payload["files"]
+    if type(raw_files) is not list:
+        raise FotMobProspectivePlayerContextCampaignError("receipt files must be list")
+    files: list[EvidenceFile] = []
+    for item in raw_files:
+        if type(item) is not dict or set(item) != {"relative_path", "sha256", "byte_size"}:
+            raise FotMobProspectivePlayerContextCampaignError(
+                "receipt evidence file keys mismatch"
+            )
+        files.append(EvidenceFile(**item))
+    kickoff = payload["resolved_kickoff"]
+    try:
+        result = FotMobProspectivePlayerContextCampaignReceipt(
+            repository=payload["repository"],
+            base_sha=payload["base_sha"],
+            repository_head_sha=payload["repository_head_sha"],
+            workflow_name=payload["workflow_name"],
+            workflow_run_id=payload["workflow_run_id"],
+            workflow_run_attempt=payload["workflow_run_attempt"],
+            github_actor=payload["github_actor"],
+            started_at=parse_utc(payload["started_at"], "started_at"),
+            completed_at=parse_utc(payload["completed_at"], "completed_at"),
+            campaign_result=CampaignResult(payload["campaign_result"]),
+            resolved_fixture_identifier=payload["resolved_fixture_identifier"],
+            resolved_source_match_id=payload["resolved_source_match_id"],
+            resolved_home_team=payload["resolved_home_team"],
+            resolved_away_team=payload["resolved_away_team"],
+            resolved_kickoff=(
+                parse_utc(kickoff, "resolved_kickoff") if kickoff is not None else None
+            ),
+            fixture_candidate_sha256=payload["fixture_candidate_sha256"],
+            fixture_raw_sha256=payload["fixture_raw_sha256"],
+            fixture_raw_size=payload["fixture_raw_size"],
+            fixture_manifest_sha256=payload["fixture_manifest_sha256"],
+            fixture_schema_assessment_sha256=payload["fixture_schema_assessment_sha256"],
+            fixture_candidate_bundle_sha256=payload["fixture_candidate_bundle_sha256"],
+            fixture_review_ledger_sha256=payload["fixture_review_ledger_sha256"],
+            fixture_catalog_sha256=payload["fixture_catalog_sha256"],
+            fixture_catalog_manifest_sha256=payload["fixture_catalog_manifest_sha256"],
+            fixture_admission_sha256=payload["fixture_admission_sha256"],
+            fixture_bootstrap_sha256=payload["fixture_bootstrap_sha256"],
+            fixture_bootstrap_receipt_sha256=payload["fixture_bootstrap_receipt_sha256"],
+            match_details_raw_sha256=payload["match_details_raw_sha256"],
+            match_details_raw_size=payload["match_details_raw_size"],
+            match_details_manifest_sha256=payload["match_details_manifest_sha256"],
+            persisted_evidence_receipt_sha256=payload["persisted_evidence_receipt_sha256"],
+            structure_assessment_sha256=payload["structure_assessment_sha256"],
+            player_context_report_sha256=payload["player_context_report_sha256"],
+            files=tuple(files),
+            safety=payload["safety"],
+        )
+    except (ValueError, TypeError) as exc:
+        if isinstance(exc, FotMobProspectivePlayerContextCampaignError):
+            raise
+        raise FotMobProspectivePlayerContextCampaignError(
+            "campaign receipt values are invalid"
+        ) from exc
+    if canonical_campaign_receipt_bytes(result) != raw:
+        raise FotMobProspectivePlayerContextCampaignError(
+            "campaign receipt bytes are not exact canonical bytes"
+        )
+    return result
 
 
 def sha256_campaign_receipt(
@@ -535,6 +878,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "TARGET_REQUEST_DATE",
     "build_player_context_review_candidate_report",
+    "campaign_receipt_from_bytes",
     "candidate_identity",
     "canonical_campaign_receipt_bytes",
     "canonical_json_bytes",

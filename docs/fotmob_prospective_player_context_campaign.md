@@ -44,22 +44,55 @@ input. Zero or multiple exact candidates fail closed.
 
 ## Explicit review continuation
 
-The workflow defaults both review gates to `NOT_GRANTED`. Its first safe run
-therefore preserves the real dataMatches response, manifest, PR39 assessment,
-and PR40 candidates, then returns `FIXTURE_REVIEW_NOT_GRANTED`.
+The workflow is triggered before merge by an owner-authored `pull_request:
+edited` control block on draft PR #192. This avoids GitHub's rule that a
+`workflow_dispatch` file must already exist on the default branch. The control
+block is exact-head, same-repository, branch, PR-number, base-SHA, and actor
+bound.
 
-A continuation can reach match details only when an operator dispatches the
-same reviewed workflow with all of:
+`CAPTURE_FIXTURE` accepts no review fields. It preserves the real dataMatches
+response, manifest, PR39 assessment, and PR40 candidates, then returns
+`FIXTURE_REVIEW_NOT_GRANTED`.
+
+A `CONTINUE_EXACT_FIXTURE_ARTIFACT` run can reach match details only when the
+owner supplies all of:
 
 1. the exact canonical PR40 candidate SHA printed in the first receipt;
 2. `fixture_review_disposition=APPROVED`;
-3. `catalog_admission_disposition=ADMITTED`.
+3. `catalog_admission_disposition=ADMITTED`;
+4. the exact first-run workflow run ID and artifact ID, size, and SHA-256
+   digest.
+
+GitHub metadata must prove that artifact came from a successful run of this
+exact campaign at the same exact PR head. The continuation downloads it,
+strictly reconstructs the canonical campaign receipt, verifies every listed
+file SHA/size, replays the exact PR38 manifest/raw bytes through PR39 and PR40,
+and requires byte equality with the preserved derived files. It then
+materializes that same source evidence under the reviewed capture root for
+PR41. It performs no second dataMatches request. Thus the reviewed candidate
+SHA names the same exact source observation that crosses PR41 through PR48.
 
 The GitHub actor and run identity become audit evidence. There is no
 `APPROVE_WHATEVER_WAS_RETURNED` mode and no arbitrary match-ID input. The
 runner reconstructs PR41 through PR48 before the match-details capture API can
 build its request plan. If the target is no longer prospective, the request is
 not sent.
+
+Initial PR-body control block:
+
+```text
+<!-- ATHENA_FOTMOB_PLAYER_CONTEXT_CAMPAIGN_V1 -->
+campaign-mode: CAPTURE_FIXTURE
+repository-head-sha: <exact PR head>
+confirm: CAPTURE_EXACT_FOTMOB_FIXTURE_CATALOG
+<!-- /ATHENA_FOTMOB_PLAYER_CONTEXT_CAMPAIGN_V1 -->
+```
+
+Continuation uses the same delimiters with the exact fields frozen by the
+workflow: `campaign-mode`, `repository-head-sha`, `source-run-id`,
+`source-artifact-id`, `source-artifact-size`, `source-artifact-digest`,
+`fixture-candidate-sha256`, both explicit dispositions, and the exact
+`REPLAY_EXACT_ARTIFACT_AND_CAPTURE_MATCH_DETAILS` confirmation.
 
 ## Transparent acquisition
 
@@ -116,8 +149,14 @@ player-context-review-candidates.json
 ```
 
 Every evidence file is listed by normalized relative path, exact byte size,
-and SHA-256 in the canonical receipt. Canonical JSON is sorted-key, compact,
-UTF-8, `allow_nan=False`, with exactly one final LF.
+and SHA-256 in the canonical receipt. The receipt also records the exact
+repository head SHA and independent hashes for every completed fixture,
+review/bootstrap, match-details, PR52, PR53, and discovery-report stage.
+Completed files cannot exist without their corresponding receipt identity.
+A terminal success requires the complete fixture → bootstrap → match-details
+→ PR52 → PR53 → report chain; a later-stage failure retains every earlier
+completed identity. Canonical JSON is sorted-key, compact, UTF-8,
+`allow_nan=False`, with exactly one final LF.
 
 ## Failure is evidence
 

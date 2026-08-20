@@ -24,8 +24,11 @@ from domain.fixture_catalog import sha256_bytes
 from domain.fotmob_data_matches_capture import (
     MANIFEST_FILENAME as FIXTURE_MANIFEST_FILENAME,
     RAW_FILENAME as FIXTURE_RAW_FILENAME,
+    CapturedFotMobDataMatchesResponse,
     canonical_data_matches_capture_manifest_bytes,
+    manifest_from_mapping,
     sha256_data_matches_capture_manifest,
+    strict_manifest_json_loads,
 )
 from domain.fotmob_data_matches_schema import (
     assess_fotmob_data_matches_schema,
@@ -53,12 +56,14 @@ from domain.fotmob_prospective_player_context_campaign import (
     REQUEST_TIMEZONE,
     TARGET_REQUEST_DATE,
     build_player_context_review_candidate_report,
+    campaign_receipt_from_bytes,
     candidate_identity,
     canonical_campaign_receipt_bytes,
     canonical_json_bytes,
     evidence_file,
     resolve_exact_target_candidate,
     safety_flags,
+    verify_evidence_files,
 )
 from domain.fotmob_reviewed_match_details_persisted_evidence import (
     canonical_persisted_match_details_evidence_receipt_bytes,
@@ -186,6 +191,7 @@ def _build_verified_bootstrap(
     reviewed_at: datetime.datetime,
     output_root: Path,
     head_sha: str,
+    anchors: dict[str, Any],
 ) -> tuple[Any, bytes]:
     work = repository / ".cache/athena-research/fotmob-prospective-player-context-campaign"
     work.mkdir(parents=True, exist_ok=True)
@@ -194,6 +200,8 @@ def _build_verified_bootstrap(
         raise CampaignExecutionError("explicit review ledger already exists; replay forbidden")
     ledger_bytes = _review_ledger_bytes(bundle, candidate, actor=actor, at=reviewed_at)
     _write_once(ledger, ledger_bytes)
+    _write_once(output_root / "fixture/review-decision-ledger.json", ledger_bytes)
+    anchors["fixture_review_ledger_sha256"] = hashlib.sha256(ledger_bytes).hexdigest()
     catalog_path = work / f"catalog-{candidate.source_match_id}.json"
     manifest_path = work / f"catalog-manifest-{candidate.source_match_id}.json"
     workflow = run_catalog_workflow(
@@ -208,6 +216,12 @@ def _build_verified_bootstrap(
     )
     handoff = workflow.handoff
     result = workflow.fixture_catalog_result
+    _write_once(output_root / "fixture/catalog.json", result.catalog_bytes)
+    _write_once(output_root / "fixture/catalog-manifest.json", result.manifest_bytes)
+    anchors["fixture_catalog_sha256"] = hashlib.sha256(result.catalog_bytes).hexdigest()
+    anchors["fixture_catalog_manifest_sha256"] = hashlib.sha256(
+        result.manifest_bytes
+    ).hexdigest()
     decision = ReviewedFixtureCatalogAdmissionDecision(
         candidate_bundle_sha256=handoff.candidate_bundle_sha256,
         review_bundle_sha256=handoff.review_bundle_sha256,
@@ -223,6 +237,8 @@ def _build_verified_bootstrap(
     )
     admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
     admission_bytes = canonical_reviewed_fixture_catalog_admission_bytes(admission)
+    _write_once(output_root / "fixture/admission.json", admission_bytes)
+    anchors["fixture_admission_sha256"] = hashlib.sha256(admission_bytes).hexdigest()
     verified_admission = verify_reviewed_fixture_catalog_admission_artifact(
         admission,
         admission_bytes,
@@ -236,25 +252,97 @@ def _build_verified_bootstrap(
         admission_receipt,
     )
     bootstrap_bytes = canonical_reviewed_fixture_intelligence_bootstrap_bytes(bootstrap)
+    _write_once(output_root / "fixture/bootstrap.json", bootstrap_bytes)
+    anchors["fixture_bootstrap_sha256"] = hashlib.sha256(bootstrap_bytes).hexdigest()
     verified = verify_reviewed_fixture_intelligence_bootstrap_artifact(
         bootstrap,
         bootstrap_bytes,
         verified_at=reviewed_at,
     )
     receipt = canonical_verified_bootstrap_artifact_receipt_bytes(verified)
-    _write_once(output_root / "fixture/review-decision-ledger.json", ledger_bytes)
-    _write_once(output_root / "fixture/catalog.json", result.catalog_bytes)
-    _write_once(output_root / "fixture/catalog-manifest.json", result.manifest_bytes)
-    _write_once(output_root / "fixture/admission.json", admission_bytes)
-    _write_once(output_root / "fixture/bootstrap.json", bootstrap_bytes)
     _write_once(output_root / "fixture/bootstrap-verification-receipt.json", receipt)
+    anchors["fixture_bootstrap_receipt_sha256"] = hashlib.sha256(receipt).hexdigest()
     return verified, receipt
+
+
+def _replay_source_fixture_artifact(
+    *,
+    repository: Path,
+    source_root: Path,
+    expected_source_head_sha: str,
+    output_root: Path,
+) -> tuple[Path, bytes, Any, Any, dict[str, Any]]:
+    """Rebuild PR38-40 from the exact first-run artifact without network."""
+
+    source = source_root.resolve(strict=True)
+    receipt_bytes = (source / "campaign-receipt.json").read_bytes()
+    receipt = campaign_receipt_from_bytes(receipt_bytes)
+    if receipt.campaign_result is not CampaignResult.FIXTURE_REVIEW_NOT_GRANTED:
+        raise CampaignExecutionError(
+            "continuation source must be an exact FIXTURE_REVIEW_NOT_GRANTED receipt"
+        )
+    if receipt.repository_head_sha != expected_source_head_sha:
+        raise CampaignExecutionError("continuation source repository head mismatch")
+    contents: dict[str, bytes] = {}
+    for item in receipt.files:
+        path = source / Path(item.relative_path)
+        resolved = path.resolve(strict=True)
+        try:
+            resolved.relative_to(source)
+        except ValueError as exc:
+            raise CampaignExecutionError("source artifact file escaped its root") from exc
+        contents[item.relative_path] = resolved.read_bytes()
+    verify_evidence_files(receipt.files, contents)
+    fixture_raw = contents["fixture/response.json"]
+    fixture_manifest_bytes = contents["fixture/manifest.json"]
+    manifest = manifest_from_mapping(strict_manifest_json_loads(fixture_manifest_bytes))
+    if canonical_data_matches_capture_manifest_bytes(manifest) != fixture_manifest_bytes:
+        raise CampaignExecutionError("source fixture manifest is not exact canonical bytes")
+    response = CapturedFotMobDataMatchesResponse(
+        status=manifest.status,
+        content_type=manifest.content_type,
+        content_length=manifest.content_length,
+        body=fixture_raw,
+        observed_at=manifest.observed_at,
+        network_acquisition_performed=manifest.network_acquisition_performed,
+    )
+    capture_directory, rebuilt_manifest = write_data_matches_capture_directory(
+        response,
+        request_date=manifest.request_date,
+        timezone=manifest.timezone,
+        ccode3=manifest.ccode3,
+        repository_root=repository,
+    )
+    if canonical_data_matches_capture_manifest_bytes(rebuilt_manifest) != fixture_manifest_bytes:
+        raise CampaignExecutionError("replayed fixture manifest differs from source artifact")
+    assessment = assess_fotmob_data_matches_schema(fixture_raw, rebuilt_manifest)
+    assessment_bytes = canonical_data_matches_schema_assessment_bytes(assessment)
+    if assessment_bytes != contents["fixture/schema-assessment.json"]:
+        raise CampaignExecutionError("replayed PR39 assessment differs from source artifact")
+    bundle = build_fotmob_fixture_candidate_bundle(((fixture_raw, rebuilt_manifest),))
+    bundle_bytes = canonical_fotmob_fixture_candidate_bundle_bytes(bundle)
+    if bundle_bytes != contents["fixture/fixture-candidates.json"]:
+        raise CampaignExecutionError("replayed PR40 candidates differ from source artifact")
+    candidate = resolve_exact_target_candidate(bundle.candidates)
+    identity = candidate_identity(candidate)
+    if identity["candidate_sha256"] != receipt.fixture_candidate_sha256:
+        raise CampaignExecutionError("replayed candidate differs from source receipt")
+    for relative, raw in (
+        ("fixture/response.json", fixture_raw),
+        ("fixture/manifest.json", fixture_manifest_bytes),
+        ("fixture/schema-assessment.json", assessment_bytes),
+        ("fixture/fixture-candidates.json", bundle_bytes),
+        ("source-campaign-receipt.json", receipt_bytes),
+    ):
+        _write_once(output_root / relative, raw)
+    return capture_directory, fixture_raw, rebuilt_manifest, bundle, identity
 
 
 def _receipt(
     *,
     output_root: Path,
     base_sha: str,
+    repository_head_sha: str,
     started_at: datetime.datetime,
     result: CampaignResult,
     identity: dict[str, Any] | None,
@@ -265,10 +353,19 @@ def _receipt(
     persisted_sha: str | None = None,
     structure_sha: str | None = None,
     report_sha: str | None = None,
+    fixture_schema_assessment_sha256: str | None = None,
+    fixture_candidate_bundle_sha256: str | None = None,
+    fixture_review_ledger_sha256: str | None = None,
+    fixture_catalog_sha256: str | None = None,
+    fixture_catalog_manifest_sha256: str | None = None,
+    fixture_admission_sha256: str | None = None,
+    fixture_bootstrap_sha256: str | None = None,
+    fixture_bootstrap_receipt_sha256: str | None = None,
 ) -> FotMobProspectivePlayerContextCampaignReceipt:
     return FotMobProspectivePlayerContextCampaignReceipt(
         repository=os.environ.get("GITHUB_REPOSITORY", "Thabearr/ATHENA"),
         base_sha=base_sha,
+        repository_head_sha=repository_head_sha,
         workflow_name=WORKFLOW_NAME,
         workflow_run_id=int(os.environ.get("GITHUB_RUN_ID", "1")),
         workflow_run_attempt=int(os.environ.get("GITHUB_RUN_ATTEMPT", "1")),
@@ -289,6 +386,14 @@ def _receipt(
             if fixture_manifest
             else None
         ),
+        fixture_schema_assessment_sha256=fixture_schema_assessment_sha256,
+        fixture_candidate_bundle_sha256=fixture_candidate_bundle_sha256,
+        fixture_review_ledger_sha256=fixture_review_ledger_sha256,
+        fixture_catalog_sha256=fixture_catalog_sha256,
+        fixture_catalog_manifest_sha256=fixture_catalog_manifest_sha256,
+        fixture_admission_sha256=fixture_admission_sha256,
+        fixture_bootstrap_sha256=fixture_bootstrap_sha256,
+        fixture_bootstrap_receipt_sha256=fixture_bootstrap_receipt_sha256,
         match_details_raw_sha256=match_raw_sha,
         match_details_raw_size=match_raw_size,
         match_details_manifest_sha256=match_manifest_sha,
@@ -329,74 +434,145 @@ def execute(args: argparse.Namespace) -> CampaignResult:
     fixture_manifest = None
     identity = None
     final = CampaignResult.FIXTURE_CATALOG_ACQUISITION_FAILED
+    anchors: dict[str, Any] = {
+        "fixture_schema_assessment_sha256": None,
+        "fixture_candidate_bundle_sha256": None,
+        "fixture_review_ledger_sha256": None,
+        "fixture_catalog_sha256": None,
+        "fixture_catalog_manifest_sha256": None,
+        "fixture_admission_sha256": None,
+        "fixture_bootstrap_sha256": None,
+        "fixture_bootstrap_receipt_sha256": None,
+    }
+    match_manifest_sha = None
+    match_raw_sha = None
+    match_raw_size = None
+    persisted_sha = None
+    structure_sha = None
+    report_sha = None
+
+    def make_receipt(result: CampaignResult) -> FotMobProspectivePlayerContextCampaignReceipt:
+        return _receipt(
+            output_root=output_root,
+            base_sha=args.base_sha,
+            repository_head_sha=head_sha,
+            started_at=started_at,
+            result=result,
+            identity=identity,
+            fixture_manifest=fixture_manifest,
+            match_manifest_sha=match_manifest_sha,
+            match_raw_sha=match_raw_sha,
+            match_raw_size=match_raw_size,
+            persisted_sha=persisted_sha,
+            structure_sha=structure_sha,
+            report_sha=report_sha,
+            **anchors,
+        )
+
     try:
-        response = fetch_fotmob_data_matches(
-            request_date=TARGET_REQUEST_DATE,
-            timezone=REQUEST_TIMEZONE,
-            ccode3=REQUEST_CCODE3,
-        )
-        capture_directory, fixture_manifest = write_data_matches_capture_directory(
-            response,
-            request_date=TARGET_REQUEST_DATE,
-            timezone=REQUEST_TIMEZONE,
-            ccode3=REQUEST_CCODE3,
-            repository_root=repository,
-        )
-        fixture_raw = _copy_exact(
-            capture_directory / FIXTURE_RAW_FILENAME,
-            output_root / "fixture/response.json",
-        )
-        fixture_manifest_bytes = _copy_exact(
-            capture_directory / FIXTURE_MANIFEST_FILENAME,
-            output_root / "fixture/manifest.json",
-        )
-        if fixture_manifest_bytes != canonical_data_matches_capture_manifest_bytes(
-            fixture_manifest
-        ):
-            raise CampaignExecutionError("fixture manifest read-back mismatch")
-        try:
-            assessment = assess_fotmob_data_matches_schema(fixture_raw, fixture_manifest)
-        except Exception:
-            final = CampaignResult.FIXTURE_SCHEMA_ASSESSMENT_FAILED
-            raise
-        _write_once(
-            output_root / "fixture/schema-assessment.json",
-            canonical_data_matches_schema_assessment_bytes(assessment),
-        )
-        try:
-            bundle = build_fotmob_fixture_candidate_bundle(
-                ((fixture_raw, fixture_manifest),)
+        if args.campaign_mode == "CAPTURE_FIXTURE":
+            if (
+                args.source_campaign_artifact_directory is not None
+                or args.source_repository_head_sha
+                or args.fixture_review_candidate_sha
+                or args.fixture_review_disposition != "NOT_GRANTED"
+                or args.catalog_admission_disposition != "NOT_GRANTED"
+            ):
+                raise CampaignExecutionError(
+                    "capture mode cannot carry review or continuation authority"
+                )
+            response = fetch_fotmob_data_matches(
+                request_date=TARGET_REQUEST_DATE,
+                timezone=REQUEST_TIMEZONE,
+                ccode3=REQUEST_CCODE3,
             )
-        except Exception:
-            final = CampaignResult.FIXTURE_CANDIDATE_EXTRACTION_FAILED
-            raise
-        _write_once(
-            output_root / "fixture/fixture-candidates.json",
-            canonical_fotmob_fixture_candidate_bundle_bytes(bundle),
-        )
-        try:
-            candidate = resolve_exact_target_candidate(bundle.candidates)
-        except FotMobProspectivePlayerContextCampaignError:
-            final = CampaignResult.TARGET_FIXTURE_NOT_EXACTLY_RESOLVED
-            raise
-        identity = candidate_identity(candidate)
-        review_granted = (
-            args.fixture_review_disposition == "APPROVED"
-            and args.catalog_admission_disposition == "ADMITTED"
-            and args.fixture_review_candidate_sha == identity["candidate_sha256"]
-        )
-        if not review_granted:
+            capture_directory, fixture_manifest = write_data_matches_capture_directory(
+                response,
+                request_date=TARGET_REQUEST_DATE,
+                timezone=REQUEST_TIMEZONE,
+                ccode3=REQUEST_CCODE3,
+                repository_root=repository,
+            )
+            fixture_raw = _copy_exact(
+                capture_directory / FIXTURE_RAW_FILENAME,
+                output_root / "fixture/response.json",
+            )
+            fixture_manifest_bytes = _copy_exact(
+                capture_directory / FIXTURE_MANIFEST_FILENAME,
+                output_root / "fixture/manifest.json",
+            )
+            if fixture_manifest_bytes != canonical_data_matches_capture_manifest_bytes(
+                fixture_manifest
+            ):
+                raise CampaignExecutionError("fixture manifest read-back mismatch")
+            try:
+                assessment = assess_fotmob_data_matches_schema(fixture_raw, fixture_manifest)
+            except Exception:
+                final = CampaignResult.FIXTURE_SCHEMA_ASSESSMENT_FAILED
+                raise
+            assessment_bytes = canonical_data_matches_schema_assessment_bytes(assessment)
+            _write_once(output_root / "fixture/schema-assessment.json", assessment_bytes)
+            anchors["fixture_schema_assessment_sha256"] = hashlib.sha256(
+                assessment_bytes
+            ).hexdigest()
+            try:
+                bundle = build_fotmob_fixture_candidate_bundle(
+                    ((fixture_raw, fixture_manifest),)
+                )
+            except Exception:
+                final = CampaignResult.FIXTURE_CANDIDATE_EXTRACTION_FAILED
+                raise
+            bundle_bytes = canonical_fotmob_fixture_candidate_bundle_bytes(bundle)
+            _write_once(output_root / "fixture/fixture-candidates.json", bundle_bytes)
+            anchors["fixture_candidate_bundle_sha256"] = hashlib.sha256(
+                bundle_bytes
+            ).hexdigest()
+            try:
+                candidate = resolve_exact_target_candidate(bundle.candidates)
+            except FotMobProspectivePlayerContextCampaignError:
+                final = CampaignResult.TARGET_FIXTURE_NOT_EXACTLY_RESOLVED
+                raise
+            identity = candidate_identity(candidate)
             final = CampaignResult.FIXTURE_REVIEW_NOT_GRANTED
-            receipt = _receipt(
-                output_root=output_root,
-                base_sha=args.base_sha,
-                started_at=started_at,
-                result=final,
-                identity=identity,
-                fixture_manifest=fixture_manifest,
-            )
+            receipt = make_receipt(final)
             _write_once(output_root / "campaign-receipt.json", canonical_campaign_receipt_bytes(receipt))
             return final
+
+        if args.campaign_mode != "CONTINUE_EXACT_FIXTURE_ARTIFACT":
+            raise CampaignExecutionError("unknown campaign mode")
+        if (
+            args.source_campaign_artifact_directory is None
+            or not args.source_repository_head_sha
+            or args.fixture_review_disposition != "APPROVED"
+            or args.catalog_admission_disposition != "ADMITTED"
+            or not args.fixture_review_candidate_sha
+        ):
+            raise CampaignExecutionError(
+                "continuation requires exact source artifact and both explicit review gates"
+            )
+        (
+            capture_directory,
+            fixture_raw,
+            fixture_manifest,
+            bundle,
+            identity,
+        ) = _replay_source_fixture_artifact(
+            repository=repository,
+            source_root=args.source_campaign_artifact_directory,
+            expected_source_head_sha=args.source_repository_head_sha,
+            output_root=output_root,
+        )
+        anchors["fixture_schema_assessment_sha256"] = hashlib.sha256(
+            (output_root / "fixture/schema-assessment.json").read_bytes()
+        ).hexdigest()
+        anchors["fixture_candidate_bundle_sha256"] = hashlib.sha256(
+            (output_root / "fixture/fixture-candidates.json").read_bytes()
+        ).hexdigest()
+        candidate = resolve_exact_target_candidate(bundle.candidates)
+        if args.fixture_review_candidate_sha != identity["candidate_sha256"]:
+            raise CampaignExecutionError(
+                "explicit review SHA differs from exact replayed PR40 candidate"
+            )
         kickoff = identity["kickoff"]
         if _utc_now() >= kickoff:
             final = CampaignResult.TARGET_NO_LONGER_PROSPECTIVE
@@ -411,6 +587,7 @@ def execute(args: argparse.Namespace) -> CampaignResult:
             reviewed_at=reviewed_at,
             output_root=output_root,
             head_sha=head_sha,
+            anchors=anchors,
         )
         try:
             execution = capture_fotmob_reviewed_match_details(
@@ -426,6 +603,9 @@ def execute(args: argparse.Namespace) -> CampaignResult:
         match_capture = execution.capture_directory
         match_raw = _copy_exact(match_capture / "response.json", output_root / "match-details/response.json")
         match_manifest = _copy_exact(match_capture / "manifest.json", output_root / "match-details/manifest.json")
+        match_raw_sha = hashlib.sha256(match_raw).hexdigest()
+        match_raw_size = len(match_raw)
+        match_manifest_sha = hashlib.sha256(match_manifest).hexdigest()
         try:
             parsed_match_details = json.loads(match_raw)
             if type(parsed_match_details) is not dict:
@@ -443,6 +623,7 @@ def execute(args: argparse.Namespace) -> CampaignResult:
             final = CampaignResult.PERSISTED_EVIDENCE_VERIFICATION_FAILED
             raise
         _write_once(output_root / "match-details/persisted-evidence-receipt.json", persisted_bytes)
+        persisted_sha = hashlib.sha256(persisted_bytes).hexdigest()
         try:
             structure = assess_reviewed_match_details_structure(
                 evidence=persisted,
@@ -455,45 +636,27 @@ def execute(args: argparse.Namespace) -> CampaignResult:
             final = CampaignResult.STRUCTURE_ASSESSMENT_FAILED
             raise
         _write_once(output_root / "match-details/structure-assessment.json", structure_bytes)
+        structure_sha = sha256_reviewed_match_details_structure(structure)
         report = build_player_context_review_candidate_report(
             structure,
             observed_at=persisted.observed_at,
         )
         report_bytes = canonical_json_bytes(report)
         _write_once(output_root / "player-context-review-candidates.json", report_bytes)
+        report_sha = hashlib.sha256(report_bytes).hexdigest()
         final = (
             CampaignResult.SUCCESS_PROSPECTIVE_PLAYER_CONTEXT_EVIDENCE_CAPTURED
             if report["candidate_count"] > 0
             else CampaignResult.NO_PLAYER_CONTEXT_CANDIDATE_STRUCTURE_OBSERVED
         )
-        receipt = _receipt(
-            output_root=output_root,
-            base_sha=args.base_sha,
-            started_at=started_at,
-            result=final,
-            identity=identity,
-            fixture_manifest=fixture_manifest,
-            match_manifest_sha=hashlib.sha256(match_manifest).hexdigest(),
-            match_raw_sha=hashlib.sha256(match_raw).hexdigest(),
-            match_raw_size=len(match_raw),
-            persisted_sha=hashlib.sha256(persisted_bytes).hexdigest(),
-            structure_sha=sha256_reviewed_match_details_structure(structure),
-            report_sha=hashlib.sha256(report_bytes).hexdigest(),
-        )
+        receipt = make_receipt(final)
         _write_once(output_root / "campaign-receipt.json", canonical_campaign_receipt_bytes(receipt))
         return final
     except Exception as exc:
         # Preserve every successfully committed stage. Expected fail-closed
         # campaign states are evidence and still receive a canonical receipt.
         if not (output_root / "campaign-receipt.json").exists():
-            receipt = _receipt(
-                output_root=output_root,
-                base_sha=args.base_sha,
-                started_at=started_at,
-                result=final,
-                identity=identity,
-                fixture_manifest=fixture_manifest,
-            )
+            receipt = make_receipt(final)
             _write_once(output_root / "campaign-receipt.json", canonical_campaign_receipt_bytes(receipt))
         print(f"campaign failed closed at {final.value}: {type(exc).__name__}: {exc}", file=os.sys.stderr)
         return final
@@ -503,6 +666,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base-sha", required=True)
     parser.add_argument("--repository-head-sha", required=True)
+    parser.add_argument(
+        "--campaign-mode",
+        choices=("CAPTURE_FIXTURE", "CONTINUE_EXACT_FIXTURE_ARTIFACT"),
+        required=True,
+    )
+    parser.add_argument("--source-campaign-artifact-directory", type=Path)
+    parser.add_argument("--source-repository-head-sha", default="")
     parser.add_argument("--output-directory", default=str(DEFAULT_OUTPUT))
     parser.add_argument("--target-request-date", default="2026-08-22")
     parser.add_argument("--expected-home-team", default=EXPECTED_HOME_TEAM)

@@ -1,49 +1,8 @@
 name: Execute FotMob Prospective Player-Context Campaign
 
 on:
-  workflow_dispatch:
-    inputs:
-      target_request_date:
-        description: Exact frozen request date
-        required: true
-        default: '2026-08-22'
-        type: string
-      expected_home_team:
-        description: Exact expected source home-team text
-        required: true
-        default: Nottingham Forest
-        type: string
-      expected_away_team:
-        description: Exact expected source away-team text
-        required: true
-        default: Leeds United
-        type: string
-      expected_kickoff_utc:
-        description: Exact expected source kickoff
-        required: true
-        default: '2026-08-22T14:00:00Z'
-        type: string
-      fixture_review_candidate_sha:
-        description: Exact PR40 candidate SHA; blank preserves evidence and stops before review
-        required: false
-        default: ''
-        type: string
-      fixture_review_disposition:
-        description: Explicit PR41 disposition; never defaults to approval
-        required: true
-        default: NOT_GRANTED
-        type: choice
-        options:
-          - NOT_GRANTED
-          - APPROVED
-      catalog_admission_disposition:
-        description: Explicit PR45 disposition; never defaults to admission
-        required: true
-        default: NOT_GRANTED
-        type: choice
-        options:
-          - NOT_GRANTED
-          - ADMITTED
+  pull_request:
+    types: [edited]
 
 concurrency:
   group: athena-fotmob-prospective-player-context-campaign-v1
@@ -52,29 +11,136 @@ concurrency:
 jobs:
   capture:
     if: >-
+      github.event.pull_request.number == 192 &&
       github.actor == 'Thabearr' &&
-      github.ref_name == 'evidence/fotmob-prospective-player-context-campaign'
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/fotmob-prospective-player-context-campaign' &&
+      contains(github.event.pull_request.body, '<!-- ATHENA_FOTMOB_PLAYER_CONTEXT_CAMPAIGN_V1 -->')
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
+      pull-requests: read
 
     steps:
-      - name: Check out exact dispatched head
+      - name: Validate exact owner control block and source artifact
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const marker = '<!-- ATHENA_FOTMOB_PLAYER_CONTEXT_CAMPAIGN_V1 -->';
+            const end = '<!-- /ATHENA_FOTMOB_PLAYER_CONTEXT_CAMPAIGN_V1 -->';
+            const pr = context.payload.pull_request;
+            if (!pr || pr.number !== 192 || !pr.draft) {
+              core.setFailed('Campaign is bound only to draft PR #192.');
+              return;
+            }
+            if (context.actor !== 'Thabearr') {
+              core.setFailed('Only the repository owner may execute this campaign.');
+              return;
+            }
+            if (pr.base.sha !== '74cec8bc649bc8d2181ca2806a460a84664f7f2e') {
+              core.setFailed(`PR base ${pr.base.sha} differs from the frozen base.`);
+              return;
+            }
+            if (
+              pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo ||
+              pr.head.ref !== 'evidence/fotmob-prospective-player-context-campaign'
+            ) {
+              core.setFailed('Campaign head repository/branch mismatch.');
+              return;
+            }
+            const body = String(pr.body || '').replace(/\r\n/g, '\n');
+            if (body.split(marker).length !== 2 || body.split(end).length !== 2) {
+              core.setFailed('PR body must contain exactly one complete campaign control block.');
+              return;
+            }
+            const block = body.split(marker)[1].split(end)[0]
+              .split('\n').map((line) => line.trim()).filter(Boolean);
+            const modeLine = /^campaign-mode: ([A-Z_]+)$/.exec(block[0] || '');
+            const headLine = /^repository-head-sha: ([0-9a-f]{40})$/.exec(block[1] || '');
+            if (!modeLine || !headLine || headLine[1] !== pr.head.sha) {
+              core.setFailed('Control block mode/head is invalid or stale.');
+              return;
+            }
+            const mode = modeLine[1];
+            core.setOutput('mode', mode);
+            core.setOutput('head_sha', pr.head.sha);
+            if (mode === 'CAPTURE_FIXTURE') {
+              if (block.length !== 3 || block[2] !== 'confirm: CAPTURE_EXACT_FOTMOB_FIXTURE_CATALOG') {
+                core.setFailed('Initial capture control block is not exact.');
+                return;
+              }
+              core.setOutput('source_artifact_id', '');
+              core.setOutput('source_head_sha', '');
+              core.setOutput('candidate_sha', '');
+              return;
+            }
+            if (mode !== 'CONTINUE_EXACT_FIXTURE_ARTIFACT' || block.length !== 10) {
+              core.setFailed('Continuation control block is not exact.');
+              return;
+            }
+            const sourceRun = /^source-run-id: ([1-9][0-9]*)$/.exec(block[2] || '');
+            const artifactId = /^source-artifact-id: ([1-9][0-9]*)$/.exec(block[3] || '');
+            const artifactSize = /^source-artifact-size: ([1-9][0-9]*)$/.exec(block[4] || '');
+            const artifactDigest = /^source-artifact-digest: (sha256:[0-9a-f]{64})$/.exec(block[5] || '');
+            const candidate = /^fixture-candidate-sha256: ([0-9a-f]{64})$/.exec(block[6] || '');
+            if (
+              !sourceRun || !artifactId || !artifactSize || !artifactDigest || !candidate ||
+              block[7] !== 'fixture-review-disposition: APPROVED' ||
+              block[8] !== 'catalog-admission-disposition: ADMITTED' ||
+              block[9] !== 'confirm: REPLAY_EXACT_ARTIFACT_AND_CAPTURE_MATCH_DETAILS'
+            ) {
+              core.setFailed('Continuation evidence/review fields are invalid.');
+              return;
+            }
+            const { data: artifact } = await github.rest.actions.getArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: Number(artifactId[1]),
+            });
+            if (
+              artifact.id !== Number(artifactId[1]) ||
+              artifact.name !== 'fotmob-prospective-player-context-evidence' ||
+              artifact.expired || artifact.size_in_bytes !== Number(artifactSize[1]) ||
+              artifact.digest !== artifactDigest[1] || !artifact.workflow_run ||
+              artifact.workflow_run.id !== Number(sourceRun[1]) ||
+              artifact.workflow_run.head_sha !== pr.head.sha
+            ) {
+              core.setFailed('Source artifact identity/provenance mismatch.');
+              return;
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: Number(sourceRun[1]),
+            });
+            if (
+              run.status !== 'completed' || run.conclusion !== 'success' ||
+              run.event !== 'pull_request' || run.head_sha !== pr.head.sha ||
+              run.name !== 'Execute FotMob Prospective Player-Context Campaign'
+            ) {
+              core.setFailed('Source run is not the exact successful PR192 campaign run.');
+              return;
+            }
+            core.setOutput('source_artifact_id', artifactId[1]);
+            core.setOutput('source_head_sha', artifact.workflow_run.head_sha);
+            core.setOutput('candidate_sha', candidate[1]);
+
+      - name: Check out exact reviewed PR head
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ steps.guard.outputs.head_sha }}
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify owner, branch, and exact dispatched checkout
+      - name: Verify frozen base ancestry and exact checkout
         shell: bash
         run: |
           set -euo pipefail
-          test "${GITHUB_ACTOR}" = "Thabearr"
-          test "${GITHUB_REF_NAME}" = "evidence/fotmob-prospective-player-context-campaign"
-          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
-          git merge-base --is-ancestor 74cec8bc649bc8d2181ca2806a460a84664f7f2e "${GITHUB_SHA}"
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.head_sha }}"
+          git merge-base --is-ancestor 74cec8bc649bc8d2181ca2806a460a84664f7f2e HEAD
           test -z "$(git status --short --untracked-files=no)"
 
       - name: Set up Python 3.12
@@ -91,25 +157,48 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Execute transparent prospective campaign
+      - name: Download exact first-run fixture artifact for continuation
+        if: steps.guard.outputs.mode == 'CONTINUE_EXACT_FIXTURE_ARTIFACT'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: ${{ steps.guard.outputs.source_artifact_id }}
+          path: source-campaign-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+
+      - name: Execute transparent prospective campaign stage
         id: campaign
         env:
           PYTHONPATH: ${{ github.workspace }}
+          CAMPAIGN_MODE: ${{ steps.guard.outputs.mode }}
+          EXACT_HEAD_SHA: ${{ steps.guard.outputs.head_sha }}
+          SOURCE_HEAD_SHA: ${{ steps.guard.outputs.source_head_sha }}
+          CANDIDATE_SHA: ${{ steps.guard.outputs.candidate_sha }}
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/run_fotmob_prospective_player_context_campaign.py \
-            --base-sha "74cec8bc649bc8d2181ca2806a460a84664f7f2e" \
-            --repository-head-sha "${GITHUB_SHA}" \
-            --output-directory campaign-artifact \
-            --target-request-date '${{ inputs.target_request_date }}' \
-            --expected-home-team '${{ inputs.expected_home_team }}' \
-            --expected-away-team '${{ inputs.expected_away_team }}' \
-            --expected-kickoff-utc '${{ inputs.expected_kickoff_utc }}' \
-            --fixture-review-candidate-sha '${{ inputs.fixture_review_candidate_sha }}' \
-            --fixture-review-disposition '${{ inputs.fixture_review_disposition }}' \
-            --catalog-admission-disposition '${{ inputs.catalog_admission_disposition }}' \
-            --execute-live-network | tee campaign-result.txt
+          args=(
+            --base-sha 74cec8bc649bc8d2181ca2806a460a84664f7f2e
+            --repository-head-sha "${EXACT_HEAD_SHA}"
+            --campaign-mode "${CAMPAIGN_MODE}"
+            --output-directory campaign-artifact
+            --target-request-date 2026-08-22
+            --expected-home-team 'Nottingham Forest'
+            --expected-away-team 'Leeds United'
+            --expected-kickoff-utc 2026-08-22T14:00:00Z
+            --execute-live-network
+          )
+          if [ "${CAMPAIGN_MODE}" = 'CONTINUE_EXACT_FIXTURE_ARTIFACT' ]; then
+            args+=(
+              --source-campaign-artifact-directory source-campaign-artifact
+              --source-repository-head-sha "${SOURCE_HEAD_SHA}"
+              --fixture-review-candidate-sha "${CANDIDATE_SHA}"
+              --fixture-review-disposition APPROVED
+              --catalog-admission-disposition ADMITTED
+            )
+          fi
+          python scripts/run_fotmob_prospective_player_context_campaign.py "${args[@]}" \
+            | tee campaign-result.txt
           result="$(tail -n 1 campaign-result.txt)"
           echo "result=${result}" >> "${GITHUB_OUTPUT}"
 
@@ -119,9 +208,7 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: fotmob-prospective-player-context-evidence
-          path: |
-            campaign-artifact/
-            campaign-result.txt
+          path: campaign-artifact/
           if-no-files-found: error
           retention-days: 30
           compression-level: 0
@@ -131,16 +218,18 @@ jobs:
         shell: bash
         env:
           CAMPAIGN_RESULT: ${{ steps.campaign.outputs.result }}
+          CAMPAIGN_MODE: ${{ steps.guard.outputs.mode }}
           UPLOAD_OUTCOME: ${{ steps.upload.outcome }}
         run: |
           set -euo pipefail
           {
             echo '## FotMob prospective player-context evidence campaign'
             echo
-            echo "- head: ${GITHUB_SHA}"
+            echo "- exact PR head: ${{ steps.guard.outputs.head_sha }}"
             echo "- run: ${GITHUB_RUN_ID}"
+            echo "- mode: ${CAMPAIGN_MODE}"
             echo "- campaign result: ${CAMPAIGN_RESULT:-RUNNER_DID_NOT_RETURN_RESULT}"
-            echo "- artifact: fotmob-prospective-player-context-evidence"
+            echo '- artifact: fotmob-prospective-player-context-evidence'
             echo "- upload: ${UPLOAD_OUTCOME}"
             echo '- semantic array authorization: false'
             echo '- team-strength feature authorization: false'

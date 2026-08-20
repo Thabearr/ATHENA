@@ -25,6 +25,7 @@ from domain.fotmob_prospective_player_context_campaign import (
     FotMobProspectivePlayerContextCampaignError,
     FotMobProspectivePlayerContextCampaignReceipt,
     build_player_context_review_candidate_report,
+    campaign_receipt_from_bytes,
     canonical_campaign_receipt_bytes,
     canonical_json_bytes,
     evidence_file,
@@ -103,10 +104,24 @@ def _assessment() -> FotMobReviewedMatchDetailsStructureAssessment:
     )
 
 
-def _receipt(files=()):
+def _receipt(files=None):
+    if files is None:
+        files = tuple(
+            sorted(
+                (
+                    evidence_file("fixture/response.json", b"r" * 100),
+                    evidence_file("fixture/manifest.json", b"manifest"),
+                    evidence_file("fixture/schema-assessment.json", b"schema"),
+                    evidence_file("fixture/fixture-candidates.json", b"candidates"),
+                ),
+                key=lambda item: item.relative_path,
+            )
+        )
+    file_map = {item.relative_path: item for item in files}
     return FotMobProspectivePlayerContextCampaignReceipt(
         repository="Thabearr/ATHENA",
         base_sha="a" * 40,
+        repository_head_sha="b" * 40,
         workflow_name="Execute FotMob Prospective Player-Context Campaign",
         workflow_run_id=100,
         workflow_run_attempt=1,
@@ -120,9 +135,17 @@ def _receipt(files=()):
         resolved_away_team=EXPECTED_AWAY_TEAM,
         resolved_kickoff=KICKOFF,
         fixture_candidate_sha256="6" * 64,
-        fixture_raw_sha256="7" * 64,
+        fixture_raw_sha256=file_map["fixture/response.json"].sha256,
         fixture_raw_size=100,
-        fixture_manifest_sha256="8" * 64,
+        fixture_manifest_sha256=file_map["fixture/manifest.json"].sha256,
+        fixture_schema_assessment_sha256=file_map["fixture/schema-assessment.json"].sha256,
+        fixture_candidate_bundle_sha256=file_map["fixture/fixture-candidates.json"].sha256,
+        fixture_review_ledger_sha256=None,
+        fixture_catalog_sha256=None,
+        fixture_catalog_manifest_sha256=None,
+        fixture_admission_sha256=None,
+        fixture_bootstrap_sha256=None,
+        fixture_bootstrap_receipt_sha256=None,
         match_details_raw_sha256=None,
         match_details_raw_size=None,
         match_details_manifest_sha256=None,
@@ -223,12 +246,14 @@ def test_missing_player_context_structure_remains_explicit_zero_not_success() ->
 
 
 def test_receipt_is_deterministic_canonical_json_and_all_authorities_false() -> None:
-    first = canonical_campaign_receipt_bytes(_receipt())
-    second = canonical_campaign_receipt_bytes(_receipt())
+    receipt = _receipt()
+    first = canonical_campaign_receipt_bytes(receipt)
+    second = canonical_campaign_receipt_bytes(receipt)
     assert first == second
     assert first.endswith(b"\n") and not first.endswith(b"\n\n")
     assert hashlib.sha256(first).hexdigest() == hashlib.sha256(second).hexdigest()
-    assert all(value is False for value in _receipt().safety.values())
+    assert all(value is False for value in receipt.safety.values())
+    assert campaign_receipt_from_bytes(first) == receipt
 
 
 def test_evidence_receipt_detects_mutation_missing_and_extra_files() -> None:
@@ -249,14 +274,56 @@ def test_non_false_authority_is_rejected() -> None:
         dataclasses.replace(_receipt(), safety=changed)
 
 
+def test_success_receipt_requires_complete_pr38_through_pr53_chain() -> None:
+    with pytest.raises(FotMobProspectivePlayerContextCampaignError, match="complete evidence chain"):
+        dataclasses.replace(
+            _receipt(),
+            campaign_result=CampaignResult.SUCCESS_PROSPECTIVE_PLAYER_CONTEXT_EVIDENCE_CAPTURED,
+        )
+
+
+def test_receipt_requires_exact_repository_head_sha() -> None:
+    with pytest.raises(FotMobProspectivePlayerContextCampaignError, match="repository_head_sha"):
+        dataclasses.replace(_receipt(), repository_head_sha="short")
+
+
+def test_completed_file_without_stage_hash_fails_closed() -> None:
+    extra = evidence_file("match-details/response.json", b"captured")
+    files = tuple(sorted(_receipt().files + (extra,), key=lambda item: item.relative_path))
+    with pytest.raises(FotMobProspectivePlayerContextCampaignError, match="lacks receipt identity"):
+        dataclasses.replace(_receipt(), files=files)
+
+
+def test_noncanonical_or_mutated_receipt_bytes_fail_replay() -> None:
+    receipt = _receipt()
+    raw = canonical_campaign_receipt_bytes(receipt)
+    with pytest.raises(FotMobProspectivePlayerContextCampaignError):
+        campaign_receipt_from_bytes(raw + b"\n")
+
+
 def test_runner_has_no_arbitrary_source_match_id_input_and_review_defaults_closed() -> None:
     source = Path("scripts/run_fotmob_prospective_player_context_campaign.py").read_text(
         encoding="utf-8"
     )
     assert 'add_argument("--source-match-id"' not in source
     assert 'default="NOT_GRANTED"' in source
-    assert "fixture_review_candidate_sha == identity" in source
+    assert 'args.campaign_mode == "CAPTURE_FIXTURE"' in source
+    assert '"CONTINUE_EXACT_FIXTURE_ARTIFACT"' in source
+    assert "_replay_source_fixture_artifact(" in source
     assert "capture_fotmob_reviewed_match_details(" in source
+
+
+def test_continuation_replays_before_review_and_never_recaptures_fixture() -> None:
+    source = Path("scripts/run_fotmob_prospective_player_context_campaign.py").read_text(
+        encoding="utf-8"
+    )
+    continuation = source.index('if args.campaign_mode != "CONTINUE_EXACT_FIXTURE_ARTIFACT"')
+    replay = source.index("_replay_source_fixture_artifact(", continuation)
+    review_sha = source.index("args.fixture_review_candidate_sha != identity", replay)
+    details = source.index("execution = capture_fotmob_reviewed_match_details(", review_sha)
+    assert continuation < replay < review_sha < details
+    continuation_source = source[continuation:details]
+    assert "fetch_fotmob_data_matches(" not in continuation_source
 
 
 def test_runner_reuses_exact_pr38_through_pr53_boundaries() -> None:
@@ -303,7 +370,11 @@ def test_workflow_is_owner_only_branch_bound_and_uploads_on_failure() -> None:
         ".github/workflows/execute-fotmob-prospective-player-context-campaign.yml"
     ).read_text(encoding="utf-8")
     assert "github.actor == 'Thabearr'" in workflow
-    assert "github.ref_name == 'evidence/fotmob-prospective-player-context-campaign'" in workflow
+    assert "github.event.pull_request.head.ref == 'evidence/fotmob-prospective-player-context-campaign'" in workflow
+    assert "types: [edited]" in workflow
+    assert "workflow_dispatch" not in workflow
+    assert "CONTINUE_EXACT_FIXTURE_ARTIFACT" in workflow
+    assert "actions/download-artifact@" in workflow
     assert "if: always()" in workflow
     assert "persist-credentials: false" in workflow
 
