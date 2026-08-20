@@ -76,10 +76,19 @@ An empty tuple or plain `EvidenceAnchor` never proves completeness.
 - record count and source evidence set;
 - disposition `CANDIDATE_ONLY_UNREVIEWED`.
 
-Counts and identities must reconcile with the supplied candidate records. The
-typed receipt exposes what was claimed but does not make the claim reviewed.
-A future reviewed completeness receipt must be source-bound and full-replayed
-before absence or sparse history may create an authorized zero/count.
+Counts and identities must reconcile with the supplied candidate records.
+Calculations consume only the exact fixture identities and time range covered
+by the corresponding receipt. Rows outside that range remain in source
+ancestry but cannot affect player or schedule values. A 7/14/28-day schedule
+count is missing unless the receipt covers that complete interval through the
+candidate `as_of`; it is never calculated from a narrower range. Count-based
+player windows use only covered fixtures and expose their contributing count
+and fractional 5/10-window coverage.
+
+The typed receipt exposes what was claimed but does not make the claim
+reviewed. A future reviewed completeness receipt must be source-bound and
+full-replayed before absence or sparse history may create an authorized
+zero/count.
 
 ## Timing and coverage
 
@@ -105,6 +114,13 @@ Missing ratings remain missing, not zero. Missing context cannot be labelled
 `SUPPORTED_CONTEXT_NOT_YET_MODEL_FEATURE`; supported context requires a
 non-null immutable scalar and `SUPPORTED` evidence status.
 
+Input array order is not semantic. Records are identity/time sorted before
+arithmetic, and upstream blockers use one frozen precedence:
+availability-specific conflict, generic conflict, stale, unverified, then
+lineup/missing-sample blockers. Generic conflicted Elo, fixture, appearance, or
+record evidence is `CONFLICTED_EVIDENCE`; only an explicit current availability
+contradiction is `CONFLICTED_AVAILABILITY_EVIDENCE`.
+
 ## Authority
 
 Every authority flag is false:
@@ -119,3 +135,8 @@ Every authority flag is false:
 The calculations do not establish that injuries, ratings, continuity, depth or
 schedule improve prediction. They remain candidate explanatory variables until
 reviewed lineage exists and a later frozen competition evaluates them.
+
+This PR does not complete the team-strength integration needed by the expected-
+goals champion/challenger competition. The next required boundary is fully
+revalidated FotMob lineup/injury array lineage plus an authoritative adapter
+that alone may construct the real snapshot.

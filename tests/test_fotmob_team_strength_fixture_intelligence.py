@@ -80,15 +80,15 @@ def build(**overrides):
         player_key = f"{side}_player_history_completeness"
         team_fixtures = tuple(x for x in fixtures if team in x.team_ids)
         fixture_ids = tuple(x.fixture_identifier for x in team_fixtures)
-        start = min((x.kickoff for x in team_fixtures), default=AS_OF)
+        player_start = min((x.kickoff for x in team_fixtures), default=AS_OF)
         if availability_key not in overrides:
             unavailable_count = sum(x.team_id == team and x.kind is PlayerRecordKind.UNAVAILABLE for x in values["player_records"])
             values[availability_key] = completeness(CompletenessScope.CURRENT_AVAILABILITY, team, ("target",), unavailable_count, seed)
         if schedule_key not in overrides:
-            values[schedule_key] = completeness(CompletenessScope.SCHEDULE_HISTORY, team, fixture_ids, len(team_fixtures), str(int(seed) + 2), start=start, end=AS_OF)
+            values[schedule_key] = completeness(CompletenessScope.SCHEDULE_HISTORY, team, fixture_ids, len(team_fixtures), str(int(seed) + 2), start=KICKOFF - dt.timedelta(days=28), end=AS_OF)
         if player_key not in overrides:
             player_count = sum(x.team_id == team and x.fixture_identifier in set(fixture_ids) for x in appearances)
-            values[player_key] = completeness(CompletenessScope.PLAYER_HISTORY, team, fixture_ids, player_count, str(int(seed) + 4), start=start, end=AS_OF)
+            values[player_key] = completeness(CompletenessScope.PLAYER_HISTORY, team, fixture_ids, player_count, str(int(seed) + 4), start=player_start, end=AS_OF)
     return build_team_strength_context_candidate(**values)
 
 
@@ -293,6 +293,7 @@ def test_contradictory_availability_blocks_affected_features():
     snapshot = build(player_records=(conflicted, player("A", "a1", PlayerRecordKind.STARTER, seed="d")))
     result = features(snapshot)
     assert result["home_unavailable_player_count"].status is FeatureStatus.BLOCKED
+    assert result["home_unavailable_player_count"].blockers == (FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE,)
     assert result["home_xi_recent_rating_mean"].status is FeatureStatus.BLOCKED
     home = next(item for item in snapshot.player_components if item.team_id == "H")
     assert home.status is FeatureStatus.BLOCKED
@@ -312,6 +313,96 @@ def test_array_order_is_not_identity_and_full_source_ancestry_is_preserved():
     second = build(player_records=tuple(reversed(expected_players())))
     assert canonical_team_strength_context_candidate_bytes(first) == canonical_team_strength_context_candidate_bytes(second)
     assert first.source_evidence_sha256s == tuple(item.evidence_sha256 for item in first.source_evidence)
+
+
+def test_receipt_ranges_are_the_only_history_consumed_by_features():
+    recent_fixture = HistoricalTeamFixture("recent", KICKOFF - dt.timedelta(days=3), True, ("H", "X"), anchor("g"), EvidenceStatus.SUPPORTED)
+    outside_fixture = HistoricalTeamFixture("outside", KICKOFF - dt.timedelta(days=20), True, ("H", "X"), anchor("h"), EvidenceStatus.SUPPORTED)
+    away_fixture = HistoricalTeamFixture("away", KICKOFF - dt.timedelta(days=5), True, ("Y", "A"), anchor("f"), EvidenceStatus.SUPPORTED)
+    recent_appearance = appearance("recent", 3, "H", "h1", rating=6.0, seed="g")
+    outside_appearance = appearance("outside", 20, "H", "h1", rating=10.0, seed="h")
+    away_appearance = appearance("away", 5, "A", "a1", seed="f")
+    home_schedule = completeness(
+        CompletenessScope.SCHEDULE_HISTORY,
+        "H",
+        ("recent",),
+        1,
+        "i",
+        start=KICKOFF - dt.timedelta(days=7),
+        end=AS_OF,
+    )
+    home_player_history = completeness(
+        CompletenessScope.PLAYER_HISTORY,
+        "H",
+        ("recent",),
+        1,
+        "j",
+        start=KICKOFF - dt.timedelta(days=7),
+        end=AS_OF,
+    )
+    candidate = build(
+        historical_fixtures=(recent_fixture, outside_fixture, away_fixture),
+        historical_appearances=(recent_appearance, outside_appearance, away_appearance),
+        home_schedule_history_completeness=home_schedule,
+        home_player_history_completeness=home_player_history,
+    )
+    result = features(candidate)
+    home = next(item for item in candidate.player_components if item.team_id == "H")
+    assert home.recent_minutes_weighted_rating == 6.0
+    assert home.contributing_fixture_count_10 == 1
+    assert result["home_rest_days"].value == 3.0
+    assert result["home_matches_previous_7_days"].value == 1.0
+    assert result["home_matches_previous_14_days"].status is FeatureStatus.MISSING
+    assert result["home_matches_previous_28_days"].status is FeatureStatus.MISSING
+
+
+def test_mixed_current_and_history_status_blockers_are_permutation_invariant():
+    stale = dataclasses.replace(player("H", "h1", PlayerRecordKind.STARTER, seed="g"), evidence_status=EvidenceStatus.STALE)
+    unverified = dataclasses.replace(player("H", "h2", PlayerRecordKind.STARTER, seed="h"), evidence_status=EvidenceStatus.UNVERIFIED)
+    away = player("A", "a1", PlayerRecordKind.STARTER, seed="d")
+    first = build(player_records=(stale, unverified, away))
+    second = build(player_records=(unverified, stale, away))
+    assert canonical_team_strength_context_candidate_bytes(first) == canonical_team_strength_context_candidate_bytes(second)
+    assert features(first)["home_xi_recent_rating_mean"].blockers == (FeatureBlocker.STALE_EVIDENCE,)
+
+    stale_appearance = dataclasses.replace(appearance("p1", 4, "H", "h1", seed="g"), evidence_status=EvidenceStatus.STALE)
+    unverified_appearance = dataclasses.replace(appearance("p3", 6, "H", "h1", seed="h"), evidence_status=EvidenceStatus.UNVERIFIED)
+    stale_fixture = HistoricalTeamFixture("p1", stale_appearance.kickoff, True, ("H", "X"), anchor("g"), EvidenceStatus.STALE)
+    unverified_fixture = HistoricalTeamFixture("p3", unverified_appearance.kickoff, True, ("H", "Z"), anchor("h"), EvidenceStatus.UNVERIFIED)
+    away_appearance = appearance("p2", 5, "A", "a1", seed="f")
+    away_fixture = HistoricalTeamFixture("p2", away_appearance.kickoff, True, ("Y", "A"), anchor("f"), EvidenceStatus.SUPPORTED)
+    third = build(
+        historical_appearances=(stale_appearance, unverified_appearance, away_appearance),
+        historical_fixtures=(stale_fixture, unverified_fixture, away_fixture),
+    )
+    fourth = build(
+        historical_appearances=(away_appearance, unverified_appearance, stale_appearance),
+        historical_fixtures=(away_fixture, unverified_fixture, stale_fixture),
+    )
+    assert canonical_team_strength_context_candidate_bytes(third) == canonical_team_strength_context_candidate_bytes(fourth)
+    home_component = next(item for item in third.player_components if item.team_id == "H")
+    assert home_component.blockers == (FeatureBlocker.STALE_EVIDENCE,)
+
+
+def test_generic_conflicts_are_distinct_from_explicit_availability_conflicts():
+    conflicted_base = BaseStrengthComponent("H", BaseStrengthComponentId.ELO, 1540.0, anchor("g"), EvidenceStatus.CONFLICTED)
+    base_candidate = build(base_components=(conflicted_base,))
+    assert features(base_candidate)["home_base_elo"].blockers == (FeatureBlocker.CONFLICTED_EVIDENCE,)
+
+    conflicted_current = dataclasses.replace(
+        player("H", "h1", PlayerRecordKind.STARTER, seed="g"),
+        evidence_status=EvidenceStatus.CONFLICTED,
+    )
+    current_candidate = build(player_records=(conflicted_current, player("A", "a1", PlayerRecordKind.STARTER, seed="d")))
+    assert features(current_candidate)["home_xi_recent_rating_mean"].blockers == (FeatureBlocker.CONFLICTED_EVIDENCE,)
+
+    conflicted_appearance = dataclasses.replace(appearance("p1", 4, "H", "h1", seed="g"), evidence_status=EvidenceStatus.CONFLICTED)
+    conflicted_fixture = HistoricalTeamFixture("p1", conflicted_appearance.kickoff, True, ("H", "X"), anchor("g"), EvidenceStatus.CONFLICTED)
+    historical_candidate = build(
+        historical_appearances=(conflicted_appearance, appearance("p2", 5, "A", "a1", seed="f")),
+        historical_fixtures=(conflicted_fixture, HistoricalTeamFixture("p2", KICKOFF - dt.timedelta(days=5), True, ("Y", "A"), anchor("f"), EvidenceStatus.SUPPORTED)),
+    )
+    assert features(historical_candidate)["home_xi_recent_rating_mean"].blockers == (FeatureBlocker.CONFLICTED_EVIDENCE,)
 
 
 def test_builder_accepts_no_odds_or_probability_adjustment_and_safety_stays_closed():

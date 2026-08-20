@@ -80,6 +80,7 @@ class FeatureBlocker(str, enum.Enum):
     MISSING_RATING_SAMPLE = "MISSING_RATING_SAMPLE"
     MISSING_POSITION_EVIDENCE = "MISSING_POSITION_EVIDENCE"
     CONFLICTED_AVAILABILITY_EVIDENCE = "CONFLICTED_AVAILABILITY_EVIDENCE"
+    CONFLICTED_EVIDENCE = "CONFLICTED_EVIDENCE"
     STALE_EVIDENCE = "STALE_EVIDENCE"
     UNVERIFIED_EVIDENCE = "UNVERIFIED_EVIDENCE"
 
@@ -417,7 +418,7 @@ class PlayerHistoricalComponent:
         else:
             if not self.blockers: raise TeamStrengthContextError("non-available player component requires blocker")
             if any(getattr(self, name) is not None for name in numeric_names) or self.recent_minutes_weighted_rating is not None: raise TeamStrengthContextError("non-available player component must not contain values")
-        if self.status is FeatureStatus.BLOCKED and not set(self.blockers).intersection({FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE, FeatureBlocker.STALE_EVIDENCE, FeatureBlocker.UNVERIFIED_EVIDENCE}): raise TeamStrengthContextError("blocked player component requires upstream evidence blocker")
+        if self.status is FeatureStatus.BLOCKED and not set(self.blockers).intersection(_UPSTREAM_BLOCKERS): raise TeamStrengthContextError("blocked player component requires upstream evidence blocker")
         if type(self.evidence_sha256s) is not tuple or self.evidence_sha256s != tuple(sorted(set(self.evidence_sha256s))) or any(_SHA.fullmatch(x) is None for x in self.evidence_sha256s): raise TeamStrengthContextError("player component evidence drift")
 
     def to_dict(self) -> dict[str, Any]:
@@ -503,15 +504,50 @@ class TeamStrengthContextCandidate:
     def away_player_history_complete(self) -> bool: return self.away_player_history_completeness is not None
 
 
+_BLOCKER_PRECEDENCE = (
+    FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE,
+    FeatureBlocker.CONFLICTED_EVIDENCE,
+    FeatureBlocker.STALE_EVIDENCE,
+    FeatureBlocker.UNVERIFIED_EVIDENCE,
+    FeatureBlocker.UNVERIFIED_LINEUP_STATE,
+    FeatureBlocker.MISSING_AVAILABILITY_EVIDENCE,
+    FeatureBlocker.MISSING_LINEUP,
+    FeatureBlocker.MISSING_BASE_EVIDENCE,
+    FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY,
+    FeatureBlocker.MISSING_RATING_SAMPLE,
+    FeatureBlocker.MISSING_POSITION_EVIDENCE,
+)
+_BLOCKER_RANK = {blocker: rank for rank, blocker in enumerate(_BLOCKER_PRECEDENCE)}
+_UPSTREAM_BLOCKERS = frozenset(
+    {
+        FeatureBlocker.UNVERIFIED_LINEUP_STATE,
+        FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE,
+        FeatureBlocker.CONFLICTED_EVIDENCE,
+        FeatureBlocker.STALE_EVIDENCE,
+        FeatureBlocker.UNVERIFIED_EVIDENCE,
+    }
+)
+
+
+def _ordered_blockers(blockers: Iterable[FeatureBlocker | None]) -> tuple[FeatureBlocker, ...]:
+    exact = {blocker for blocker in blockers if blocker is not None}
+    return tuple(sorted(exact, key=lambda blocker: _BLOCKER_RANK[blocker]))
+
+
+def _first_blocker(blockers: Iterable[FeatureBlocker | None]) -> FeatureBlocker | None:
+    ordered = _ordered_blockers(blockers)
+    return ordered[0] if ordered else None
+
+
 def _resolution(feature_id: str, value: float | None, blocker: FeatureBlocker | None, shas: Iterable[str]) -> TeamStrengthFeatureResolution:
-    status = FeatureStatus.AVAILABLE if blocker is None else FeatureStatus.BLOCKED if blocker in (FeatureBlocker.UNVERIFIED_LINEUP_STATE, FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE, FeatureBlocker.STALE_EVIDENCE, FeatureBlocker.UNVERIFIED_EVIDENCE) else FeatureStatus.MISSING
+    status = FeatureStatus.AVAILABLE if blocker is None else FeatureStatus.BLOCKED if blocker in _UPSTREAM_BLOCKERS else FeatureStatus.MISSING
     return TeamStrengthFeatureResolution(TeamStrengthFeatureId(feature_id), status, value if blocker is None else None, () if blocker is None else (blocker,), tuple(sorted(set(shas))))
 
 
 def _evidence_blocker(status: EvidenceStatus) -> FeatureBlocker | None:
     if status is EvidenceStatus.SUPPORTED: return None
     if status is EvidenceStatus.STALE: return FeatureBlocker.STALE_EVIDENCE
-    if status is EvidenceStatus.CONFLICTED: return FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE
+    if status is EvidenceStatus.CONFLICTED: return FeatureBlocker.CONFLICTED_EVIDENCE
     return FeatureBlocker.UNVERIFIED_EVIDENCE
 
 
@@ -563,8 +599,17 @@ def build_team_strength_context_candidate(*, fixture_identifier: str, home_team_
         raise TeamStrengthContextError("player record lineup state conflicts with fixture lineup state")
     if any(state is LineupState.NOT_AVAILABLE and any(x.team_id == team_id and x.kind in (PlayerRecordKind.STARTER, PlayerRecordKind.BENCH) for x in player_records) for team_id, state in expected_states.items()):
         raise TeamStrengthContextError("unavailable lineup cannot contain starter or bench records")
-    appearances = tuple(x for x in historical_appearances if x.kickoff < kickoff)
-    fixtures = tuple(x for x in historical_fixtures if x.kickoff < kickoff)
+    player_records = tuple(sorted(player_records, key=lambda x: (x.team_id, x.player_id)))
+    appearances = tuple(sorted(
+        (x for x in historical_appearances if x.kickoff < kickoff),
+        key=lambda x: (x.kickoff, x.fixture_identifier, x.team_id, x.player_id),
+    ))
+    fixtures = tuple(sorted(
+        (x for x in historical_fixtures if x.kickoff < kickoff),
+        key=lambda x: (x.kickoff, x.fixture_identifier),
+    ))
+    base_components = tuple(sorted(base_components, key=lambda x: (x.team_id, x.component_id.value)))
+    supported_context = tuple(sorted(supported_context, key=lambda x: x.context_id))
     expected_receipts = ((home_availability_completeness, CompletenessScope.CURRENT_AVAILABILITY, home_team_id), (away_availability_completeness, CompletenessScope.CURRENT_AVAILABILITY, away_team_id), (home_schedule_history_completeness, CompletenessScope.SCHEDULE_HISTORY, home_team_id), (away_schedule_history_completeness, CompletenessScope.SCHEDULE_HISTORY, away_team_id), (home_player_history_completeness, CompletenessScope.PLAYER_HISTORY, home_team_id), (away_player_history_completeness, CompletenessScope.PLAYER_HISTORY, away_team_id))
     if any(receipt is not None and (receipt.scope is not scope or receipt.fixture_identifier != fixture_identifier or receipt.team_id != team_id or receipt.as_of != as_of) for receipt, scope, team_id in expected_receipts): raise TeamStrengthContextError("completeness receipt does not bind exact target scope")
     fixture_index = {x.fixture_identifier: x for x in fixtures}
@@ -581,7 +626,6 @@ def build_team_strength_context_candidate(*, fixture_identifier: str, home_team_
     if len(base_index) != len(base_components): raise TeamStrengthContextError("duplicate base component")
     for side, team_id, lineup_state, availability_receipt, schedule_receipt, player_history_receipt in (("home", home_team_id, home_lineup_state, home_availability_completeness, home_schedule_history_completeness, home_player_history_completeness), ("away", away_team_id, away_lineup_state, away_availability_completeness, away_schedule_history_completeness, away_player_history_completeness)):
         availability_present = availability_receipt is not None
-        schedule_complete = schedule_receipt is not None
         for component_id in BaseStrengthComponentId:
             item = base_index.get((team_id, component_id))
             base_blocker = FeatureBlocker.MISSING_BASE_EVIDENCE if item is None or item.value is None else _evidence_blocker(item.evidence_status)
@@ -592,20 +636,22 @@ def build_team_strength_context_candidate(*, fixture_identifier: str, home_team_
         unavailable = tuple(x for x in current if x.kind is PlayerRecordKind.UNAVAILABLE)
         if availability_receipt is not None and (availability_receipt.fixture_ids != (fixture_identifier,) or availability_receipt.record_count != len(unavailable)):
             raise TeamStrengthContextError("availability completeness receipt does not bind exact target record set")
-        current_status_blockers = tuple(_evidence_blocker(x.evidence_status) for x in current if _evidence_blocker(x.evidence_status) is not None)
-        if any(x.valid_through is None or x.valid_through < as_of for x in current): current_status_blockers += (FeatureBlocker.STALE_EVIDENCE,)
+        current_status_blockers = _ordered_blockers(
+            tuple(_evidence_blocker(x.evidence_status) for x in current)
+            + ((FeatureBlocker.STALE_EVIDENCE,) if any(x.valid_through is None or x.valid_through < as_of for x in current) else ())
+        )
         availability_conflicted = any(x.availability_conflicted for x in current)
         if availability_conflicted:
             lineup_blocker = FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE
         elif current_status_blockers:
-            lineup_blocker = current_status_blockers[0]
+            lineup_blocker = _first_blocker(current_status_blockers)
         elif lineup_state is LineupState.UNVERIFIED_LINEUP_STATE:
             lineup_blocker = FeatureBlocker.UNVERIFIED_LINEUP_STATE
         elif lineup_state is LineupState.NOT_AVAILABLE or not starters:
             lineup_blocker = FeatureBlocker.MISSING_LINEUP
         else:
             lineup_blocker = None
-        availability_blocker = FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE if availability_conflicted else current_status_blockers[0] if current_status_blockers else None if availability_present else FeatureBlocker.MISSING_AVAILABILITY_EVIDENCE
+        availability_blocker = FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE if availability_conflicted else _first_blocker(current_status_blockers) if current_status_blockers else None if availability_present else FeatureBlocker.MISSING_AVAILABILITY_EVIDENCE
         team_fixtures_in_range = tuple(x for x in fixtures if team_id in x.team_ids and (schedule_receipt is None or schedule_receipt.range_start <= x.kickoff < schedule_receipt.range_end))
         if schedule_receipt is not None and (schedule_receipt.fixture_ids != tuple(sorted(x.fixture_identifier for x in team_fixtures_in_range)) or schedule_receipt.record_count != len(team_fixtures_in_range)):
             raise TeamStrengthContextError("schedule completeness receipt does not bind exact fixture range")
@@ -613,10 +659,12 @@ def build_team_strength_context_candidate(*, fixture_identifier: str, home_team_
         player_rows_in_range = tuple(x for x in appearances if x.team_id == team_id and x.fixture_identifier in {f.fixture_identifier for f in player_fixtures_in_range})
         if player_history_receipt is not None and (player_history_receipt.fixture_ids != tuple(sorted(x.fixture_identifier for x in player_fixtures_in_range)) or player_history_receipt.record_count != len(player_rows_in_range)):
             raise TeamStrengthContextError("player-history completeness receipt does not bind exact fixture/evidence range")
-        history_status_blockers = tuple(_evidence_blocker(x.evidence_status) for x in player_rows_in_range + team_fixtures_in_range if _evidence_blocker(x.evidence_status) is not None)
-        player_history_blocker = history_status_blockers[0] if history_status_blockers else None if player_history_receipt is not None and schedule_complete else FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY
-        fixture_window5 = _fixture_window(fixtures, team_id, 5); fixture_window10 = _fixture_window(fixtures, team_id, 10)
-        window5 = _appearance_window(appearances, fixture_window5); window10 = _appearance_window(appearances, fixture_window10)
+        history_status_blockers = _ordered_blockers(_evidence_blocker(x.evidence_status) for x in player_rows_in_range + player_fixtures_in_range)
+        player_history_current = player_history_receipt is not None and player_history_receipt.range_end == as_of
+        schedule_current = schedule_receipt is not None and schedule_receipt.range_end == as_of
+        player_history_blocker = _first_blocker(history_status_blockers) if history_status_blockers else None if player_history_current and schedule_current else FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY
+        fixture_window5 = _fixture_window(player_fixtures_in_range, team_id, 5); fixture_window10 = _fixture_window(player_fixtures_in_range, team_id, 10)
+        window5 = _appearance_window(player_rows_in_range, fixture_window5); window10 = _appearance_window(player_rows_in_range, fixture_window10)
         availability_shas = () if availability_receipt is None else tuple(x.evidence_sha256 for x in availability_receipt.evidence)
         sha_current = tuple(x.evidence.evidence_sha256 for x in current) + availability_shas
         sha_window5 = tuple(x.evidence.evidence_sha256 for x in window5)
@@ -637,7 +685,7 @@ def build_team_strength_context_candidate(*, fixture_identifier: str, home_team_
             rating_minutes = math.fsum(x.minutes for x in rated)
             rating_value = math.fsum(x.rating * x.minutes for x in rated) / rating_minutes if rating_minutes else (math.fsum(x.rating for x in rated) / len(rated) if rated else None)
             component_blocker = FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE if record.availability_conflicted else _evidence_blocker(record.evidence_status) or (FeatureBlocker.STALE_EVIDENCE if record.valid_through is None or record.valid_through < as_of else None) or player_history_blocker or (FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY if not fixture_window10 else None)
-            component_status = FeatureStatus.BLOCKED if component_blocker in (FeatureBlocker.CONFLICTED_AVAILABILITY_EVIDENCE, FeatureBlocker.STALE_EVIDENCE, FeatureBlocker.UNVERIFIED_EVIDENCE) else FeatureStatus.MISSING if component_blocker else FeatureStatus.AVAILABLE
+            component_status = FeatureStatus.BLOCKED if component_blocker in _UPSTREAM_BLOCKERS else FeatureStatus.MISSING if component_blocker else FeatureStatus.AVAILABLE
             values = None if component_blocker else (
                 sum(x.started for x in player5),
                 sum(x.started for x in player10),
@@ -699,12 +747,16 @@ def build_team_strength_context_candidate(*, fixture_identifier: str, home_team_
             _resolution(f"{side}_bench_recent_rating_mean", bench_mean, lineup_blocker or player_history_blocker or (FeatureBlocker.MISSING_RATING_SAMPLE if not bench_count else None), sha_current + player_history_sha + bench_shas),
             _resolution(f"{side}_bench_rating_coverage", len(rated_bench_players) / len(bench) if bench else None, lineup_blocker or player_history_blocker or (FeatureBlocker.MISSING_LINEUP if not bench else None), sha_current + player_history_sha + bench_shas),
         ]
-        team_fixtures = sorted((x for x in fixtures if team_id in x.team_ids), key=lambda x: (x.kickoff, x.fixture_identifier), reverse=True)
+        team_fixtures = sorted(team_fixtures_in_range, key=lambda x: (x.kickoff, x.fixture_identifier), reverse=True)
         fixture_shas = tuple(x.evidence.evidence_sha256 for x in team_fixtures) + (() if schedule_receipt is None else tuple(x.evidence_sha256 for x in schedule_receipt.evidence))
-        feature_rows.append(_resolution(f"{side}_rest_days", (kickoff - team_fixtures[0].kickoff).total_seconds() / 86400.0 if team_fixtures and schedule_complete else None, FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY if not team_fixtures or not schedule_complete else None, fixture_shas))
+        schedule_status_blocker = _first_blocker(_evidence_blocker(x.evidence_status) for x in team_fixtures_in_range)
+        rest_blocker = schedule_status_blocker or (FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY if not team_fixtures or not schedule_current else None)
+        feature_rows.append(_resolution(f"{side}_rest_days", (kickoff - team_fixtures[0].kickoff).total_seconds() / 86400.0 if rest_blocker is None else None, rest_blocker, fixture_shas))
         for days in (7, 14, 28):
             count_days = sum(1 for x in team_fixtures if kickoff - dt.timedelta(days=days) <= x.kickoff < kickoff)
-            feature_rows.append(_resolution(f"{side}_matches_previous_{days}_days", float(count_days) if schedule_complete else None, None if schedule_complete else FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY, fixture_shas))
+            range_complete = schedule_current and schedule_receipt.range_start <= kickoff - dt.timedelta(days=days)
+            schedule_window_blocker = schedule_status_blocker or (None if range_complete else FeatureBlocker.INSUFFICIENT_PRIOR_HISTORY)
+            feature_rows.append(_resolution(f"{side}_matches_previous_{days}_days", float(count_days) if schedule_window_blocker is None else None, schedule_window_blocker, fixture_shas))
     material_source_anchors = tuple([x.evidence for x in player_records] + [x.evidence for x in appearances] + [x.evidence for x in fixtures] + [x.evidence for x in base_components if x.evidence] + [x.evidence for x in supported_context]) + completeness_anchors
     material_anchors_by_sha: dict[str, EvidenceAnchor] = {}
     for anchor in material_source_anchors:
