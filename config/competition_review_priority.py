@@ -48,11 +48,13 @@ class CompetitionReviewPriorityEntry:
 
 
 # This is a review-search order, not a prediction-quality table. The top-five
-# domestic leagues remain first. DFB-Pokal is deliberately elevated above the
-# secondary domestic-league band because the Saturday execution goal benefits
-# from inspecting strong cup ties before automatically exhausting Belgium,
-# Scotland, Turkey or Greece. Fixture-level/model evidence still decides what,
-# if anything, can later survive as a selection.
+# domestic leagues remain first. Primeira Liga, Super Lig and Eredivisie are
+# reviewed before the major domestic-cup band. The primary domestic cups of the
+# top-five countries then share one review rank, ahead of Belgium, Scotland and
+# Greece. Sharing a cup rank is deliberate: once the review band is reached,
+# exact fixture/model quality breaks ties rather than an arbitrary prestige
+# ordering between FA Cup, Copa del Rey, Coppa Italia, DFB-Pokal and Coupe de
+# France. Fixture-level/model evidence still decides what, if anything, survives.
 DEFAULT_COMPETITION_REVIEW_PRIORITY: tuple[CompetitionReviewPriorityEntry, ...] = (
     CompetitionReviewPriorityEntry(
         "Premier League",
@@ -98,82 +100,125 @@ DEFAULT_COMPETITION_REVIEW_PRIORITY: tuple[CompetitionReviewPriorityEntry, ...] 
         "Top-five domestic league review band; not a model-reliability claim.",
     ),
     CompetitionReviewPriorityEntry(
-        "DFB-Pokal",
-        CompetitionKind.DOMESTIC_CUP,
+        "Primeira Liga",
+        CompetitionKind.DOMESTIC_LEAGUE,
         2,
         6,
         (
-            SourceCompetitionIdentity("GER", "DFB Pokal"),
-            SourceCompetitionIdentity("GER", "DFB-Pokal"),
+            SourceCompetitionIdentity("POR", "Liga Portugal"),
+            SourceCompetitionIdentity("POR", "Primeira Liga"),
         ),
+        "Upper secondary domestic-league review band; above major cup review.",
+    ),
+    CompetitionReviewPriorityEntry(
+        "Süper Lig",
+        CompetitionKind.DOMESTIC_LEAGUE,
+        2,
+        7,
         (
-            "Strong domestic cup review band. Inspect before the secondary "
-            "domestic-league band, while preserving separate lineup/rotation, "
-            "team-level and model/market gates for each tie."
+            SourceCompetitionIdentity("TUR", "Super Lig"),
+            SourceCompetitionIdentity("TUR", "Süper Lig"),
         ),
+        "Upper secondary domestic-league review band; above major cup review.",
     ),
     CompetitionReviewPriorityEntry(
         "Eredivisie",
         CompetitionKind.DOMESTIC_LEAGUE,
         2,
-        7,
+        8,
         (SourceCompetitionIdentity("NED", "Eredivisie"),),
-        "Secondary domestic-league review band; not a model-reliability claim.",
+        "Upper secondary domestic-league review band; above major cup review.",
     ),
     CompetitionReviewPriorityEntry(
-        "Primeira Liga",
-        CompetitionKind.DOMESTIC_LEAGUE,
-        2,
-        8,
+        "FA Cup",
+        CompetitionKind.DOMESTIC_CUP,
+        3,
+        9,
+        (SourceCompetitionIdentity("ENG", "FA Cup"),),
         (
-            SourceCompetitionIdentity("POR", "Liga Portugal"),
-            SourceCompetitionIdentity("POR", "Primeira Liga"),
+            "Major domestic-cup review band. Fixture-level lineup/rotation, team "
+            "strength and model/market evidence still decide whether a tie survives."
         ),
-        "Secondary domestic-league review band; not a model-reliability claim.",
+    ),
+    CompetitionReviewPriorityEntry(
+        "Copa del Rey",
+        CompetitionKind.DOMESTIC_CUP,
+        3,
+        9,
+        (SourceCompetitionIdentity("ESP", "Copa del Rey"),),
+        (
+            "Major domestic-cup review band. Fixture-level lineup/rotation, team "
+            "strength and model/market evidence still decide whether a tie survives."
+        ),
+    ),
+    CompetitionReviewPriorityEntry(
+        "Coppa Italia",
+        CompetitionKind.DOMESTIC_CUP,
+        3,
+        9,
+        (SourceCompetitionIdentity("ITA", "Coppa Italia"),),
+        (
+            "Major domestic-cup review band. Fixture-level lineup/rotation, team "
+            "strength and model/market evidence still decide whether a tie survives."
+        ),
+    ),
+    CompetitionReviewPriorityEntry(
+        "DFB-Pokal",
+        CompetitionKind.DOMESTIC_CUP,
+        3,
+        9,
+        (
+            SourceCompetitionIdentity("GER", "DFB Pokal"),
+            SourceCompetitionIdentity("GER", "DFB-Pokal"),
+        ),
+        (
+            "Major domestic-cup review band. Fixture-level lineup/rotation, team "
+            "strength and model/market evidence still decide whether a tie survives."
+        ),
+    ),
+    CompetitionReviewPriorityEntry(
+        "Coupe de France",
+        CompetitionKind.DOMESTIC_CUP,
+        3,
+        9,
+        (SourceCompetitionIdentity("FRA", "Coupe de France"),),
+        (
+            "Major domestic-cup review band. Fixture-level lineup/rotation, team "
+            "strength and model/market evidence still decide whether a tie survives."
+        ),
     ),
     CompetitionReviewPriorityEntry(
         "Belgian Pro League",
         CompetitionKind.DOMESTIC_LEAGUE,
-        3,
-        9,
+        4,
+        10,
         (
             SourceCompetitionIdentity("BEL", "Belgian Pro League"),
             SourceCompetitionIdentity("BEL", "First Division A"),
         ),
-        "Later domestic-league review band; not a model-reliability claim.",
+        "Later domestic-league review band; below the major domestic-cup band.",
     ),
     CompetitionReviewPriorityEntry(
         "Scottish Premiership",
         CompetitionKind.DOMESTIC_LEAGUE,
-        3,
-        10,
+        4,
+        11,
         (
             SourceCompetitionIdentity("SCO", "Premiership"),
             SourceCompetitionIdentity("SCO", "Scottish Premiership"),
         ),
-        "Later domestic-league review band; not a model-reliability claim.",
-    ),
-    CompetitionReviewPriorityEntry(
-        "Süper Lig",
-        CompetitionKind.DOMESTIC_LEAGUE,
-        3,
-        11,
-        (
-            SourceCompetitionIdentity("TUR", "Super Lig"),
-            SourceCompetitionIdentity("TUR", "Süper Lig"),
-        ),
-        "Later domestic-league review band; not a model-reliability claim.",
+        "Later domestic-league review band; below the major domestic-cup band.",
     ),
     CompetitionReviewPriorityEntry(
         "Greek Super League",
         CompetitionKind.DOMESTIC_LEAGUE,
-        3,
+        4,
         12,
         (
             SourceCompetitionIdentity("GRE", "Super League"),
             SourceCompetitionIdentity("GRE", "Greek Super League"),
         ),
-        "Later domestic-league review band; not a model-reliability claim.",
+        "Later domestic-league review band; below the major domestic-cup band.",
     ),
 )
 
