@@ -15,6 +15,7 @@ from domain.saturday_2026_08_22_fixture_universe import (
     DATASET_NAME,
     REQUEST_CCODE3,
     REQUEST_TIMEZONE,
+    SOURCE_PRIORITY_IDENTITY_POLICY_VERSION,
     TARGET_FOLD_SIZE,
     TARGET_REQUEST_DATE,
     SaturdayFixtureUniverseError,
@@ -34,8 +35,16 @@ def _epoch_ms(value: str) -> int:
     return delta.days * 86_400_000 + delta.seconds * 1000
 
 
-def _match(match_id: int, league_id: int, home: str, away: str, hour: int) -> dict:
-    utc_time = f"2026-08-22T{hour:02d}:00:00.000Z"
+def _match(
+    match_id: int,
+    league_id: int,
+    home: str,
+    away: str,
+    hour: int,
+    *,
+    date: str = "20260822",
+) -> dict:
+    utc_time = f"{date[:4]}-{date[4:6]}-{date[6:]}T{hour:02d}:00:00.000Z"
     return {
         "away": {"id": match_id + 2000, "score": 0, "name": away, "longName": away},
         "eliminatedTeamId": None,
@@ -51,15 +60,22 @@ def _match(match_id: int, league_id: int, home: str, away: str, hour: int) -> di
             "finished": False,
         },
         "statusId": 1,
-        "time": f"22.08.2026 {hour:02d}:00",
+        "time": f"{date[6:]}.{date[4:6]}.{date[:4]} {hour:02d}:00",
         "timeTS": _epoch_ms(utc_time),
         "tournamentStage": "",
     }
 
 
-def _league(league_id: int, primary_id: int, name: str, match: dict) -> dict:
+def _league(
+    league_id: int,
+    primary_id: int,
+    name: str,
+    match: dict,
+    *,
+    ccode: str,
+) -> dict:
     return {
-        "ccode": "ENG",
+        "ccode": ccode,
         "id": league_id,
         "internalRank": 1,
         "matches": [match],
@@ -69,14 +85,25 @@ def _league(league_id: int, primary_id: int, name: str, match: dict) -> dict:
     }
 
 
-def _bundle(*, date: str = "20260822"):
-    payload = {
-        "date": date,
-        "leagues": [
-            _league(10, 10, "Premier League", _match(1001, 10, "Arsenal", "Leeds United", 14)),
-            _league(20, 20, "Unknown Saturday League", _match(1002, 20, "Alpha", "Beta", 16)),
-        ],
-    }
+def _bundle(*, date: str = "20260822", leagues: list[dict] | None = None):
+    if leagues is None:
+        leagues = [
+            _league(
+                10,
+                10,
+                "Premier League",
+                _match(1001, 10, "Arsenal", "Leeds United", 14, date=date),
+                ccode="ENG",
+            ),
+            _league(
+                20,
+                20,
+                "Unknown Saturday League",
+                _match(1002, 20, "Alpha", "Beta", 16, date=date),
+                ccode="ENG",
+            ),
+        ]
+    payload = {"date": date, "leagues": leagues}
     raw = json.dumps(payload, separators=(",", ":")).encode("utf-8")
     response = CapturedFotMobDataMatchesResponse(
         status=200,
@@ -97,6 +124,9 @@ def _bundle(*, date: str = "20260822"):
 
 def test_frozen_contract_and_downstream_authority_all_false():
     assert DATASET_NAME == "athena-saturday-2026-08-22-fixture-universe-v1"
+    assert SOURCE_PRIORITY_IDENTITY_POLICY_VERSION == (
+        "athena-saturday-fotmob-competition-priority-identity-v1"
+    )
     assert TARGET_REQUEST_DATE == "20260822"
     assert REQUEST_TIMEZONE == "UTC"
     assert REQUEST_CCODE3 == "NGA"
@@ -105,22 +135,100 @@ def test_frozen_contract_and_downstream_authority_all_false():
     assert not any(safety_flags().values())
 
 
-def test_builds_exact_literal_priority_inventory_without_inference():
+def test_builds_exact_source_identity_priority_inventory_without_inference():
     report = build_saturday_fixture_universe(_bundle())
     assert report["candidate_count"] == 2
-    assert report["bootstrap_exact_name_match_count"] == 1
-    assert report["unprioritized_literal_competition_count"] == 1
+    assert report["bootstrap_source_identity_match_count"] == 1
+    assert report["unprioritized_source_competition_count"] == 1
     assert report["enough_source_fixtures_for_requested_fold"] is False
     assert report["candidates"][0]["source_competition_name"] == "Premier League"
+    assert report["candidates"][0]["source_competition_ccode"] == "ENG"
     assert report["candidates"][0]["bootstrap_league_rank"] == 1
+    assert report["candidates"][0]["bootstrap_source_identity_match"] is True
     unknown = next(
         item
         for item in report["candidates"]
         if item["source_competition_name"] == "Unknown Saturday League"
     )
-    assert unknown["bootstrap_exact_name_match"] is False
+    assert unknown["bootstrap_source_identity_match"] is False
     assert unknown["bootstrap_league_name"] is None
     assert not any(report["safety"].values())
+
+
+def test_generic_same_name_foreign_competitions_do_not_borrow_priority():
+    leagues = [
+        _league(
+            10,
+            263,
+            "Premier League",
+            _match(1101, 10, "Belshina", "Gomel", 11),
+            ccode="BLR",
+        ),
+        _league(
+            20,
+            246,
+            "Serie A",
+            _match(1102, 20, "Cuenca", "Manta", 13),
+            ccode="ECU",
+        ),
+        _league(
+            30,
+            38,
+            "Bundesliga",
+            _match(1103, 30, "Altach", "Hartberg", 15),
+            ccode="AUT",
+        ),
+    ]
+    report = build_saturday_fixture_universe(_bundle(leagues=leagues))
+    assert report["bootstrap_source_identity_match_count"] == 0
+    assert report["unprioritized_source_competition_count"] == 3
+    assert all(
+        candidate["bootstrap_league_rank"] == 999
+        and candidate["bootstrap_source_identity_match"] is False
+        for candidate in report["candidates"]
+    )
+
+
+def test_reviewed_fotmob_source_labels_resolve_only_with_expected_country():
+    leagues = [
+        _league(
+            10,
+            87,
+            "LaLiga",
+            _match(1201, 10, "Athletic Club", "Sevilla", 11),
+            ccode="ESP",
+        ),
+        _league(
+            20,
+            64,
+            "Premiership",
+            _match(1202, 20, "Rangers", "St. Mirren", 14),
+            ccode="SCO",
+        ),
+        _league(
+            30,
+            135,
+            "Super League",
+            _match(1203, 30, "AEK Athens", "Iraklis", 17),
+            ccode="GRE",
+        ),
+        _league(
+            40,
+            129,
+            "Premiership",
+            _match(1204, 40, "Larne", "Bangor", 18),
+            ccode="NIR",
+        ),
+    ]
+    report = build_saturday_fixture_universe(_bundle(leagues=leagues))
+    by_ccode = {item["source_competition_ccode"]: item for item in report["candidates"]}
+    assert by_ccode["ESP"]["bootstrap_league_name"] == "La Liga"
+    assert by_ccode["ESP"]["bootstrap_league_rank"] == 2
+    assert by_ccode["SCO"]["bootstrap_league_name"] == "Scottish Premiership"
+    assert by_ccode["SCO"]["bootstrap_league_rank"] == 9
+    assert by_ccode["GRE"]["bootstrap_league_name"] == "Greek Super League"
+    assert by_ccode["GRE"]["bootstrap_league_rank"] == 11
+    assert by_ccode["NIR"]["bootstrap_source_identity_match"] is False
 
 
 def test_canonical_bytes_are_stable_and_lf_terminated():
