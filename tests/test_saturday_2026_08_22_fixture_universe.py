@@ -160,7 +160,7 @@ def test_builds_exact_source_identity_priority_inventory_without_inference():
     assert not any(report["safety"].values())
 
 
-def test_dfb_pokal_is_elevated_above_secondary_and_later_leagues():
+def test_major_cup_sits_below_portugal_turkey_eredivisie_and_above_belgium_scotland():
     leagues = [
         _league(
             10,
@@ -178,28 +178,52 @@ def test_dfb_pokal_is_elevated_above_secondary_and_later_leagues():
         ),
         _league(
             30,
-            40,
-            "Belgian Pro League",
-            _match(1303, 30, "Genk", "Gent", 13),
-            ccode="BEL",
+            61,
+            "Liga Portugal",
+            _match(1303, 30, "Benfica", "Braga", 13),
+            ccode="POR",
         ),
         _league(
             40,
+            71,
+            "Super Lig",
+            _match(1304, 40, "Galatasaray", "Trabzonspor", 14),
+            ccode="TUR",
+        ),
+        _league(
+            50,
+            40,
+            "Belgian Pro League",
+            _match(1305, 50, "Genk", "Gent", 15),
+            ccode="BEL",
+        ),
+        _league(
+            60,
             64,
             "Premiership",
-            _match(1304, 40, "Rangers", "St. Mirren", 14),
+            _match(1306, 60, "Rangers", "St. Mirren", 16),
             ccode="SCO",
         ),
     ]
     report = build_saturday_fixture_universe(_bundle(leagues=leagues))
     assert [item["competition_review_name"] for item in report["candidates"]] == [
-        "DFB-Pokal",
+        "Primeira Liga",
+        "Süper Lig",
         "Eredivisie",
+        "DFB-Pokal",
         "Belgian Pro League",
         "Scottish Premiership",
     ]
-    assert [item["competition_review_rank"] for item in report["candidates"]] == [6, 7, 9, 10]
-    assert report["candidates"][0]["competition_review_kind"] == CompetitionKind.DOMESTIC_CUP.value
+    assert [item["competition_review_rank"] for item in report["candidates"]] == [
+        6,
+        7,
+        8,
+        9,
+        10,
+        11,
+    ]
+    cup = next(item for item in report["candidates"] if item["competition_review_name"] == "DFB-Pokal")
+    assert cup["competition_review_kind"] == CompetitionKind.DOMESTIC_CUP.value
 
 
 def test_unreviewed_cup_is_not_promoted_because_it_is_a_cup():
