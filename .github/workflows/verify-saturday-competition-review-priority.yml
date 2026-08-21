@@ -3,7 +3,7 @@ name: Verify Saturday Competition Review Priority
 on:
   pull_request:
     branches:
-      - evidence/saturday-2026-08-22-fixture-universe-capture
+      - main
 
 jobs:
   verify:
@@ -30,10 +30,10 @@ jobs:
               return;
             }
             if (
-              pr.base.ref !== 'evidence/saturday-2026-08-22-fixture-universe-capture' ||
-              pr.base.sha !== 'b879b2140d0bc3fb64fa8fec4c73c735240a3b41'
+              pr.base.ref !== 'main' ||
+              pr.base.sha !== '19b5574ddc610cb7f231c51143580d38f89ea35f'
             ) {
-              core.setFailed(`PR base ${pr.base.ref}@${pr.base.sha} differs from frozen PR199 head.`);
+              core.setFailed(`PR base ${pr.base.ref}@${pr.base.sha} differs from frozen post-PR199 main.`);
               return;
             }
             if (
@@ -83,12 +83,12 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact checkout and frozen base ancestry
+      - name: Verify exact checkout and frozen post-PR199 main ancestry
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.head_sha }}"
-          git merge-base --is-ancestor b879b2140d0bc3fb64fa8fec4c73c735240a3b41 HEAD
+          git merge-base --is-ancestor 19b5574ddc610cb7f231c51143580d38f89ea35f HEAD
           test -z "$(git status --short --untracked-files=no)"
 
       - name: Set up Python 3.12
