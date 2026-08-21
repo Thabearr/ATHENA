@@ -43,7 +43,15 @@ The shared review policy is versioned as:
 
 `athena-competition-review-priority-v1`
 
-This policy now includes the exact observed Saturday identity `GER + DFB Pokal` and maps it to canonical `DFB-Pokal` at review rank `6`.
+The policy recognizes the primary domestic cups of the top-five countries as one shared major-cup review band:
+
+- `ENG + FA Cup` -> FA Cup;
+- `ESP + Copa del Rey` -> Copa del Rey;
+- `ITA + Coppa Italia` -> Coppa Italia;
+- `GER + DFB Pokal` -> DFB-Pokal;
+- `FRA + Coupe de France` -> Coupe de France.
+
+All five use review rank `9` / tier `3`. Primeira Liga, Süper Lig and Eredivisie are reviewed before that cup band; Belgian Pro League, Scottish Premiership and Greek Super League are reviewed after it. Unreviewed secondary cups and Super Cups do not inherit the tier merely because they are cups.
 
 ## Exact Saturday evidence
 
@@ -67,21 +75,23 @@ Replaying those exact same PR38→PR40 bytes through `athena-competition-review-
 | 3 | Serie A | 4 |
 | 4 | Bundesliga | 0 |
 | 5 | Ligue 1 | 5 |
-| 6 | **DFB-Pokal** | **11** |
-| 7 | Eredivisie | 4 |
-| 8 | Primeira Liga | 3 |
-| 9 | Belgian Pro League | 3 |
-| 10 | Scottish Premiership | 6 |
-| 11 | Süper Lig | 3 |
+| 6 | Primeira Liga | 3 |
+| 7 | Süper Lig | 3 |
+| 8 | Eredivisie | 4 |
+| 9 | **DFB-Pokal** | **11** |
+| 10 | Belgian Pro League | 3 |
+| 11 | Scottish Premiership | 6 |
 | 12 | Greek Super League | 3 |
 
-That is `50` prioritized fixtures and `620` still-unprioritized fixtures. The count is a review-pool fact only; it is not a prediction, selection or BET claim.
+There are no FA Cup, Copa del Rey, Coppa Italia or Coupe de France fixtures in this exact Saturday capture, so those entries change the reusable policy but do not change this snapshot's count. The current snapshot therefore remains `50` prioritized fixtures and `620` still-unprioritized fixtures.
 
-## Why DFB-Pokal is elevated
+That count is a review-pool fact only; it is not a prediction, selection or BET claim.
 
-DFB-Pokal is intentionally reviewed before Eredivisie/Primeira Liga and ahead of Belgium, Scotland, Turkey and Greece. This means ATHENA should inspect the cup ties earlier rather than silently burying them at rank 999 merely because the old bootstrap table was league-centric.
+## Why the major-cup band exists
 
-It does **not** mean every Pokal tie is equally attractive. Each tie still has to survive its own team-level, rotation, lineup, motivation, model, market, freshness, price and correlation gates. An unreviewed cup competition does not receive the same treatment merely because its label contains `Cup` or `Super Cup`.
+The old policy was league-centric and would leave primary domestic cup ties at rank 999. The corrected policy says ATHENA should not bury major national cup fixtures below Belgium/Scotland/Greece simply because they are not league fixtures.
+
+It also does **not** mean every cup tie is equally attractive. Each tie still has to survive its own team-level, rotation, lineup, motivation, model, market, freshness, price and correlation gates. The five major cups share one review rank so exact fixture quality, not an arbitrary FA-vs-Copa-vs-DFB prestige ordering, decides which tie is inspected first inside that band.
 
 ## Priority inventory
 
