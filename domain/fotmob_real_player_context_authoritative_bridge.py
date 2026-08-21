@@ -145,7 +145,7 @@ _AUTHORITY = tuple(
             "production_approval_authorized": False,
             "prospective_reuse_after_source_freshness_authorized": False,
             "selection_authorized": False,
-            "team_strength_feature_authorized": True,
+            "team_strength_feature_authorized": False,
         }.items()
     )
 )
