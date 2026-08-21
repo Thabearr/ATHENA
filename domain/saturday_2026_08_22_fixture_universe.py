@@ -155,6 +155,10 @@ def _candidate_record(candidate: Any) -> dict[str, Any]:
     }
 
 
+def _increment(mapping: dict[str, int], key: str) -> None:
+    mapping[key] = mapping.get(key, 0) + 1
+
+
 def build_saturday_fixture_universe(bundle: FotMobFixtureCandidateBundle) -> dict[str, Any]:
     """Build a deterministic neutral inventory from one exact Saturday bundle."""
 
@@ -193,14 +197,23 @@ def build_saturday_fixture_universe(bundle: FotMobFixtureCandidateBundle) -> dic
         )
     )
 
-    league_counts: dict[str, int] = {}
+    source_competition_counts: dict[str, int] = {}
+    prioritized_bootstrap_league_counts: dict[str, int] = {}
+    unprioritized_source_competition_counts: dict[str, int] = {}
     for item in records:
-        key = item["bootstrap_league_name"] or item["source_competition_name"]
-        league_counts[key] = league_counts.get(key, 0) + 1
+        source_key = (
+            f"{item['source_competition_ccode']}|{item['source_competition_name']}"
+        )
+        _increment(source_competition_counts, source_key)
+        if item["bootstrap_source_identity_match"]:
+            _increment(
+                prioritized_bootstrap_league_counts,
+                item["bootstrap_league_name"],
+            )
+        else:
+            _increment(unprioritized_source_competition_counts, source_key)
 
-    prioritized_count = sum(
-        1 for item in records if item["bootstrap_source_identity_match"]
-    )
+    prioritized_count = sum(prioritized_bootstrap_league_counts.values())
     return {
         "schema_version": SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
@@ -221,7 +234,13 @@ def build_saturday_fixture_universe(bundle: FotMobFixtureCandidateBundle) -> dic
         "bootstrap_source_identity_match_count": prioritized_count,
         "unprioritized_source_competition_count": len(records) - prioritized_count,
         "enough_source_fixtures_for_requested_fold": len(records) >= TARGET_FOLD_SIZE,
-        "league_counts": dict(sorted(league_counts.items())),
+        "source_competition_counts": dict(sorted(source_competition_counts.items())),
+        "prioritized_bootstrap_league_counts": dict(
+            sorted(prioritized_bootstrap_league_counts.items())
+        ),
+        "unprioritized_source_competition_counts": dict(
+            sorted(unprioritized_source_competition_counts.items())
+        ),
         "candidates": records,
         "safety": safety_flags(),
     }
