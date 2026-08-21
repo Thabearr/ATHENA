@@ -175,9 +175,11 @@ def execute(*, repository_head_sha: str, execute_live_network: bool) -> dict[str
         "fixture_candidate_bundle_sha256": sha256_fotmob_fixture_candidate_bundle(bundle),
         "saturday_fixture_universe_sha256": sha256_saturday_fixture_universe(universe),
         "candidate_count": universe["candidate_count"],
-        "bootstrap_exact_name_match_count": universe["bootstrap_exact_name_match_count"],
-        "unprioritized_literal_competition_count": universe[
-            "unprioritized_literal_competition_count"
+        "bootstrap_source_identity_match_count": universe[
+            "bootstrap_source_identity_match_count"
+        ],
+        "unprioritized_source_competition_count": universe[
+            "unprioritized_source_competition_count"
         ],
         "enough_source_fixtures_for_requested_fold": universe[
             "enough_source_fixtures_for_requested_fold"
@@ -191,9 +193,11 @@ def execute(*, repository_head_sha: str, execute_live_network: bool) -> dict[str
         "result": "SATURDAY_FIXTURE_UNIVERSE_CAPTURED_UNREVIEWED",
         "repository_head_sha": head,
         "candidate_count": universe["candidate_count"],
-        "bootstrap_exact_name_match_count": universe["bootstrap_exact_name_match_count"],
-        "unprioritized_literal_competition_count": universe[
-            "unprioritized_literal_competition_count"
+        "bootstrap_source_identity_match_count": universe[
+            "bootstrap_source_identity_match_count"
+        ],
+        "unprioritized_source_competition_count": universe[
+            "unprioritized_source_competition_count"
         ],
         "source_raw_sha256": manifest.raw_sha256,
         "source_manifest_sha256": sha256_data_matches_capture_manifest(manifest),
