@@ -2,15 +2,16 @@
 
 This module answers only *which already-eligible fixtures are considered first*.
 It does not make a fixture eligible, grant model/selection/pricing authority, or
-force a requested fold size. The caller must supply candidates that have
-already passed the relevant reviewed decision gates.
+force a requested fold size.
 
-League exhaustion now resolves through the evidence-gated model-specific
-reliability boundary. When reviewed held-out league evidence does not exist for
-the candidate's model family, the versioned bootstrap league hierarchy remains
-the explicit fallback. Caller-provided reliability ranks are ignored.
+When exact source competition identity is preserved, review ordering is taken
+from the source-qualified competition-review registry. This allows reviewed cup
+competitions such as DFB-Pokal to sit ahead of lower review-priority leagues
+without pretending that cup status is model-reliability evidence. If source
+identity is absent, the pre-existing evidence-gated model-league boundary remains
+the compatibility fallback.
 
-Within one league, fixture ordering is lexicographic rather than a hidden
+Within one competition, fixture ordering is lexicographic rather than a hidden
 weighted score: higher estimated leg probability, lower risk, fresher evidence,
 higher validated bookmaker edge, earlier kickoff, then stable fixture identity.
 """
@@ -22,6 +23,12 @@ from datetime import datetime, timezone
 import math
 from typing import Any, Iterable, Mapping
 
+from config.competition_review_priority import (
+    COMPETITION_REVIEW_PRIORITY_POLICY_VERSION,
+    UNPRIORITIZED_COMPETITION_RANK,
+    UNPRIORITIZED_COMPETITION_TIER,
+    resolve_source_competition_review_priority,
+)
 from config.league_priority import (
     PRIORITY_POLICY_VERSION,
     UNPRIORITIZED_RANK,
@@ -34,7 +41,7 @@ from domain.model_league_reliability import (
 )
 
 
-ACCUMULATOR_PRIORITY_POLICY_VERSION = "athena-acca-priority-v2"
+ACCUMULATOR_PRIORITY_POLICY_VERSION = "athena-acca-priority-v3"
 
 
 @dataclass(frozen=True)
@@ -47,6 +54,7 @@ class PriorityExclusion:
 @dataclass(frozen=True)
 class AccumulatorPriorityPlan:
     policy_version: str
+    competition_review_policy_version: str
     league_policy_version: str
     model_league_policy_version: str
     requested_fold_size: int
@@ -133,22 +141,43 @@ def _fixture_identity(match: Mapping[str, Any], input_index: int) -> str:
     return f"__input_index__:{input_index:09d}"
 
 
+def _source_competition_identity_present(match: Mapping[str, Any]) -> bool:
+    return (
+        "source_competition_ccode" in match
+        or "source_competition_name" in match
+    )
+
+
+def _competition_review_entry(match: Mapping[str, Any]):
+    if not _source_competition_identity_present(match):
+        return None
+    return resolve_source_competition_review_priority(
+        match.get("source_competition_ccode"),
+        match.get("source_competition_name"),
+    )
+
+
+def _effective_review_rank(match: Mapping[str, Any]) -> int:
+    if _source_competition_identity_present(match):
+        entry = _competition_review_entry(match)
+        return entry.rank if entry is not None else UNPRIORITIZED_COMPETITION_RANK
+    return resolve_candidate_model_league_priority(match).effective_rank
+
+
 def fixture_priority_sort_key(
     match: Mapping[str, Any],
     *,
     input_index: int = 0,
 ) -> tuple[Any, ...]:
-    """Return the transparent model-league + fixture priority key."""
+    """Return transparent competition-review + fixture-quality priority key."""
 
-    league_resolution = resolve_candidate_model_league_priority(match)
     probability = _probability(match)
     risk = _risk(match)
     freshness = _freshness(match)
     edge_pp = _edge_pp(match)
 
-    # Missing quality signals sort behind present signals within the same league.
     return (
-        league_resolution.effective_rank,
+        _effective_review_rank(match),
         1 if probability is None else 0,
         -(probability if probability is not None else 0.0),
         risk,
@@ -168,24 +197,58 @@ def _annotate(
     input_index: int,
 ) -> dict[str, Any]:
     league = str(match.get("league") or "")
-    entry = resolve_league_priority(league)
+    league_entry = resolve_league_priority(league)
     league_resolution = resolve_candidate_model_league_priority(match)
+    source_identity_present = _source_competition_identity_present(match)
+    competition_entry = _competition_review_entry(match)
+
+    if source_identity_present:
+        review_rank = (
+            competition_entry.rank
+            if competition_entry is not None
+            else UNPRIORITIZED_COMPETITION_RANK
+        )
+        review_tier = (
+            competition_entry.tier
+            if competition_entry is not None
+            else UNPRIORITIZED_COMPETITION_TIER
+        )
+        review_name = competition_entry.canonical_name if competition_entry else None
+        review_kind = competition_entry.kind.value if competition_entry else None
+        review_basis = (
+            "SOURCE_QUALIFIED_COMPETITION_REVIEW_PRIORITY"
+            if competition_entry is not None
+            else "UNRESOLVED_SOURCE_COMPETITION_IDENTITY"
+        )
+    else:
+        review_rank = league_resolution.effective_rank
+        review_tier = league_entry.tier if league_entry else UNPRIORITIZED_TIER
+        review_name = league_resolution.canonical_league
+        review_kind = "LEGACY_LEAGUE_FALLBACK" if league_entry else None
+        review_basis = "MODEL_LEAGUE_OR_BOOTSTRAP_FALLBACK"
+
     annotated = dict(match)
     annotated["priority_policy_version"] = ACCUMULATOR_PRIORITY_POLICY_VERSION
+    annotated["competition_review_priority_policy_version"] = (
+        COMPETITION_REVIEW_PRIORITY_POLICY_VERSION
+    )
+    annotated["competition_review_priority_rank"] = review_rank
+    annotated["competition_review_priority_tier"] = review_tier
+    annotated["competition_review_priority_name"] = review_name
+    annotated["competition_review_priority_kind"] = review_kind
+    annotated["competition_review_priority_basis"] = review_basis
     annotated["league_priority_policy_version"] = PRIORITY_POLICY_VERSION
     annotated["model_league_reliability_policy_version"] = (
         MODEL_LEAGUE_RELIABILITY_POLICY_VERSION
     )
     annotated["league_priority_tier"] = (
-        entry.tier if entry is not None else UNPRIORITIZED_TIER
+        league_entry.tier if league_entry is not None else UNPRIORITIZED_TIER
     )
-    # Compatibility field: this remains the bootstrap registry rank. The actual
-    # consideration rank is model_league_priority_rank below.
     annotated["league_priority_rank"] = (
-        entry.rank if entry is not None else UNPRIORITIZED_RANK
+        league_entry.rank if league_entry is not None else UNPRIORITIZED_RANK
     )
     annotated["league_priority_name"] = (
-        entry.canonical_name if entry is not None else None
+        league_entry.canonical_name if league_entry is not None else None
     )
     annotated["model_league_family"] = (
         league_resolution.family.value if league_resolution.family is not None else None
@@ -212,11 +275,12 @@ def prioritize_accumulator_candidates(
     *,
     allow_unprioritized: bool = False,
 ) -> tuple[tuple[dict[str, Any], ...], tuple[PriorityExclusion, ...]]:
-    """Order candidates by model-aware league exhaustion then fixture priority.
+    """Order candidates by review priority then fixture quality.
 
-    Unknown leagues are not silently admitted. They are returned as exclusions
-    unless ``allow_unprioritized`` is explicitly true. Even when opted in they
-    sort after every configured league.
+    Exact source competition identity, when present, is authoritative for review
+    ordering and prevents a same-name foreign competition from falling back to a
+    bare league label. Without source identity, the previous model-league
+    compatibility path remains in force.
     """
 
     decorated: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
@@ -234,20 +298,37 @@ def prioritize_accumulator_candidates(
             continue
 
         league = str(candidate.get("league") or "")
-        entry = resolve_league_priority(league)
         fixture_id = _fixture_identity(candidate, input_index)
-        if entry is None and not allow_unprioritized:
-            exclusions.append(
-                PriorityExclusion(
-                    fixture_id=fixture_id,
-                    league=league,
-                    reason=(
-                        "league is not in the default ATHENA priority registry; "
-                        "explicit expansion opt-in is required"
-                    ),
+        source_identity_present = _source_competition_identity_present(candidate)
+        competition_entry = _competition_review_entry(candidate)
+
+        if source_identity_present:
+            if competition_entry is None and not allow_unprioritized:
+                exclusions.append(
+                    PriorityExclusion(
+                        fixture_id=fixture_id,
+                        league=league,
+                        reason=(
+                            "source competition identity is not in the reviewed ATHENA "
+                            "competition-review registry; explicit expansion opt-in is required"
+                        ),
+                    )
                 )
-            )
-            continue
+                continue
+        else:
+            league_entry = resolve_league_priority(league)
+            if league_entry is None and not allow_unprioritized:
+                exclusions.append(
+                    PriorityExclusion(
+                        fixture_id=fixture_id,
+                        league=league,
+                        reason=(
+                            "league is not in the default ATHENA priority registry; "
+                            "explicit expansion opt-in is required"
+                        ),
+                    )
+                )
+                continue
 
         decorated.append(
             (
@@ -281,6 +362,9 @@ def build_accumulator_priority_plan(
     reserve = ordered[target_size:]
     return AccumulatorPriorityPlan(
         policy_version=ACCUMULATOR_PRIORITY_POLICY_VERSION,
+        competition_review_policy_version=(
+            COMPETITION_REVIEW_PRIORITY_POLICY_VERSION
+        ),
         league_policy_version=PRIORITY_POLICY_VERSION,
         model_league_policy_version=MODEL_LEAGUE_RELIABILITY_POLICY_VERSION,
         requested_fold_size=target_size,

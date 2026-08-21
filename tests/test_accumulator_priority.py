@@ -89,7 +89,7 @@ def _filter_candidate(
 def test_default_hierarchy_is_exact_and_versioned() -> None:
     assert PRIORITY_POLICY_VERSION == "athena-league-priority-v2"
     assert PRIORITY_BASIS == "BOOTSTRAP_REVIEWED_COVERAGE_NOT_MODEL_RELIABILITY"
-    assert ACCUMULATOR_PRIORITY_POLICY_VERSION == "athena-acca-priority-v2"
+    assert ACCUMULATOR_PRIORITY_POLICY_VERSION == "athena-acca-priority-v3"
     assert MODEL_LEAGUE_RELIABILITY_POLICY_VERSION == "athena-model-league-reliability-v1"
     assert get_league_priority_rank("Premier League") == 1
     assert get_league_priority_rank("La Liga") == 2

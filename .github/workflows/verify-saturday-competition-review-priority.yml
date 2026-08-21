@@ -1,0 +1,237 @@
+name: Verify Saturday Competition Review Priority
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  verify:
+    if: >-
+      github.event.pull_request.number == 200 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'policy/competition-fixture-review-priority'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Validate exact PR and frozen source artifact
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr || pr.number !== 200) {
+              core.setFailed('Verification is bound only to PR #200.');
+              return;
+            }
+            if (
+              pr.base.ref !== 'main' ||
+              pr.base.sha !== '19b5574ddc610cb7f231c51143580d38f89ea35f'
+            ) {
+              core.setFailed(`PR base ${pr.base.ref}@${pr.base.sha} differs from frozen post-PR199 main.`);
+              return;
+            }
+            if (
+              pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo ||
+              pr.head.ref !== 'policy/competition-fixture-review-priority'
+            ) {
+              core.setFailed('PR head repository/branch mismatch.');
+              return;
+            }
+            const { data: artifact } = await github.rest.actions.getArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: 9437181220,
+            });
+            if (
+              artifact.id !== 9437181220 ||
+              artifact.name !== 'saturday-2026-08-22-fixture-universe-evidence' ||
+              artifact.expired ||
+              artifact.digest !== 'sha256:360aac588f049fe6b0437c43e060b317edd12aaf4672db93ebe2fca42de00589' ||
+              !artifact.workflow_run ||
+              artifact.workflow_run.id !== 32455713912 ||
+              artifact.workflow_run.head_sha !== 'b879b2140d0bc3fb64fa8fec4c73c735240a3b41'
+            ) {
+              core.setFailed('Frozen PR199 source artifact identity/provenance mismatch.');
+              return;
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: 32455713912,
+            });
+            if (
+              run.status !== 'completed' || run.conclusion !== 'success' ||
+              run.event !== 'pull_request' ||
+              run.head_sha !== 'b879b2140d0bc3fb64fa8fec4c73c735240a3b41' ||
+              run.name !== 'Capture Saturday 2026-08-22 FotMob Fixture Universe'
+            ) {
+              core.setFailed('Frozen PR199 capture run is not exact successful evidence.');
+              return;
+            }
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Check out exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.guard.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact checkout and frozen post-PR199 main ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.head_sha }}"
+          git merge-base --is-ancestor 19b5574ddc610cb7f231c51143580d38f89ea35f HEAD
+          test -z "$(git status --short --untracked-files=no)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download exact PR199 Saturday source artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: 9437181220
+          path: source-artifact
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 32455713912
+
+      - name: Replay exact source through competition review policy
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+
+          from domain.fotmob_data_matches_capture import (
+              canonical_data_matches_capture_manifest_bytes,
+              manifest_from_mapping,
+              strict_manifest_json_loads,
+          )
+          from domain.fotmob_fixture_candidates import (
+              build_fotmob_fixture_candidate_bundle,
+              canonical_fotmob_fixture_candidate_bundle_bytes,
+          )
+          from domain.saturday_2026_08_22_fixture_universe import (
+              build_saturday_fixture_universe,
+              canonical_saturday_fixture_universe_bytes,
+          )
+
+          root = Path('source-artifact')
+          raw = (root / 'fixture/response.json').read_bytes()
+          manifest_bytes = (root / 'fixture/manifest.json').read_bytes()
+          source_bundle_bytes = (root / 'fixture/fixture-candidates.json').read_bytes()
+
+          manifest = manifest_from_mapping(strict_manifest_json_loads(manifest_bytes))
+          assert canonical_data_matches_capture_manifest_bytes(manifest) == manifest_bytes
+          assert hashlib.sha256(raw).hexdigest() == manifest.raw_sha256
+          assert len(raw) == manifest.raw_size
+
+          bundle = build_fotmob_fixture_candidate_bundle(((raw, manifest),))
+          assert canonical_fotmob_fixture_candidate_bundle_bytes(bundle) == source_bundle_bytes
+
+          report = build_saturday_fixture_universe(bundle)
+          assert report['candidate_count'] == 670
+          assert report['competition_review_source_identity_match_count'] == 50
+          assert report['unprioritized_source_competition_count'] == 620
+          assert report['source_competition_counts']['GER|DFB Pokal'] == 11
+          assert report['prioritized_competition_counts'] == {
+              'Belgian Pro League': 3,
+              'DFB-Pokal': 11,
+              'Eredivisie': 4,
+              'Greek Super League': 3,
+              'La Liga': 3,
+              'Ligue 1': 5,
+              'Premier League': 5,
+              'Primeira Liga': 3,
+              'Scottish Premiership': 6,
+              'Serie A': 4,
+              'Süper Lig': 3,
+          }
+          assert report['safety']
+          assert not any(report['safety'].values())
+
+          dfb = [
+              item for item in report['candidates']
+              if item['competition_review_name'] == 'DFB-Pokal'
+          ]
+          assert len(dfb) == 11
+          assert all(item['competition_review_rank'] == 9 for item in dfb)
+          assert all(item['competition_review_tier'] == 3 for item in dfb)
+          assert all(item['competition_review_kind'] == 'DOMESTIC_CUP' for item in dfb)
+          assert all(item['source_competition_ccode'] == 'GER' for item in dfb)
+          assert all(item['source_competition_name'] == 'DFB Pokal' for item in dfb)
+
+          foreign_false_friends = [
+              item for item in report['candidates']
+              if (
+                  (item['source_competition_ccode'], item['source_competition_name'])
+                  in {
+                      ('BLR', 'Premier League'),
+                      ('ECU', 'Serie A'),
+                      ('AUT', 'Bundesliga'),
+                      ('NIR', 'Premiership'),
+                  }
+              )
+          ]
+          assert foreign_false_friends
+          assert all(
+              item['competition_review_source_identity_match'] is False
+              and item['competition_review_rank'] == 999
+              for item in foreign_false_friends
+          )
+
+          output = canonical_saturday_fixture_universe_bytes(report)
+          Path('verified-saturday-competition-review.json').write_bytes(output)
+          print(json.dumps({
+              'candidate_count': report['candidate_count'],
+              'competition_review_count': report['competition_review_source_identity_match_count'],
+              'dfb_pokal_count': len(dfb),
+              'report_sha256': hashlib.sha256(output).hexdigest(),
+          }, sort_keys=True))
+          PY
+
+      - name: Verify authority remains fail-closed
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('verified-saturday-competition-review.json').read_text())
+          assert value['requested_fold_size'] == 20
+          assert value['safety']
+          assert not any(value['safety'].values())
+          PY
+
+      - name: Upload replayed competition-review report
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: saturday-competition-review-priority-verification
+          path: verified-saturday-competition-review.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
