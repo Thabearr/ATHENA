@@ -1,4 +1,4 @@
-"""Build and full-revalidate PR197's exact real player-context authority proof."""
+"""Build and full-revalidate PR197 through ATHENA's existing PR191 authority type."""
 
 from __future__ import annotations
 
@@ -20,7 +20,14 @@ from domain.fotmob_real_player_context_authoritative_bridge import (
     canonical_reviewed_real_fotmob_authoritative_team_strength_bridge_bytes,
     revalidate_reviewed_real_fotmob_authoritative_team_strength_bridge,
 )
-from domain.fixture_model_features import ModelFeatureStatus
+from domain.fotmob_real_player_context_pr191_authoritative_adapter import (
+    build_reviewed_real_fotmob_pr191_team_strength_context,
+    revalidate_reviewed_real_fotmob_pr191_team_strength_context,
+)
+from domain.fotmob_reviewed_team_strength_context_adapter import (
+    ReviewedFotMobTeamStrengthContext,
+    canonical_reviewed_fotmob_team_strength_context_bytes,
+)
 
 
 def _sha(raw: bytes) -> str:
@@ -75,83 +82,101 @@ def run(*, source_root: Path, output_root: Path, repository_head_sha: str) -> No
             source_root, "match-details/structure-assessment.json"
         ),
     }
-    bridge = build_reviewed_real_fotmob_authoritative_team_strength_bridge(**source)
-    bridge_bytes = canonical_reviewed_real_fotmob_authoritative_team_strength_bridge_bytes(
-        bridge
-    )
-    rebuilt = revalidate_reviewed_real_fotmob_authoritative_team_strength_bridge(
-        **source,
-        bridge=bridge,
-        bridge_bytes=bridge_bytes,
-    )
-    rebuilt_bytes = canonical_reviewed_real_fotmob_authoritative_team_strength_bridge_bytes(
-        rebuilt
-    )
-    if rebuilt_bytes != bridge_bytes:
-        raise SystemExit("full authoritative bridge replay was not byte-identical")
 
-    bridge_path = output_root / "reviewed-real-player-context-authoritative-bridge.json"
-    bridge_path.write_bytes(bridge_bytes)
+    prerequisite = build_reviewed_real_fotmob_authoritative_team_strength_bridge(**source)
+    prerequisite_bytes = canonical_reviewed_real_fotmob_authoritative_team_strength_bridge_bytes(
+        prerequisite
+    )
+    rebuilt_prerequisite = revalidate_reviewed_real_fotmob_authoritative_team_strength_bridge(
+        **source,
+        bridge=prerequisite,
+        bridge_bytes=prerequisite_bytes,
+    )
+    if (
+        canonical_reviewed_real_fotmob_authoritative_team_strength_bridge_bytes(
+            rebuilt_prerequisite
+        )
+        != prerequisite_bytes
+    ):
+        raise SystemExit("same-raw PR52→PR66 prerequisite replay was not byte-identical")
+    if any(dict(prerequisite.authority).values()):
+        raise SystemExit("prerequisite bridge illegally grants authority")
+
+    context = build_reviewed_real_fotmob_pr191_team_strength_context(**source)
+    if type(context) is not ReviewedFotMobTeamStrengthContext:
+        raise SystemExit("real source did not resolve to the existing PR191 authority type")
+    context_bytes = canonical_reviewed_fotmob_team_strength_context_bytes(context)
+    rebuilt_context = revalidate_reviewed_real_fotmob_pr191_team_strength_context(
+        **source,
+        context=context,
+        context_bytes=context_bytes,
+    )
+    if canonical_reviewed_fotmob_team_strength_context_bytes(rebuilt_context) != context_bytes:
+        raise SystemExit("existing PR191 authority replay was not byte-identical")
+
+    (output_root / "same-raw-pr65-pr66-prerequisite.json").write_bytes(prerequisite_bytes)
+    (output_root / "reviewed-pr191-team-strength-context.json").write_bytes(context_bytes)
 
     candidate_available = {
         item.feature_id.value: item.value
-        for item in bridge.candidate.features
+        for item in context.candidate.features
         if item.status.value == "AVAILABLE"
     }
-    generic_available = sum(
-        item.status is ModelFeatureStatus.AVAILABLE
-        for item in ()
-    )
-    # PR197's wrapper records only the PR66 model-feature snapshot SHA, because the
-    # full PR66 object is deliberately not exported as a second authority object.
-    # The domain builder itself enforces that every sentinel PR31 resolution is MISSING.
-    assert generic_available == 0
+    context_safety = dict(context.safety)
+    if context_safety.get("team_strength_feature_authorized") is not True:
+        raise SystemExit("existing PR191 context did not grant team-strength feature authority")
+    if any(
+        context_safety[key]
+        for key in context_safety
+        if key != "team_strength_feature_authorized"
+    ):
+        raise SystemExit("existing PR191 context granted downstream authority")
 
     proof = {
-        "schema_version": 1,
-        "dataset_name": "athena-fotmob-real-player-context-authoritative-bridge-proof-v1",
+        "schema_version": 2,
+        "dataset_name": "athena-fotmob-real-player-context-pr191-authority-proof-v2",
         "repository_head_sha": repository_head_sha,
-        "fixture_identifier": bridge.fixture_identifier,
-        "source_match_id": bridge.source_match_id,
-        "source_raw_sha256": bridge.source_raw_sha256,
-        "source_structure_sha256": bridge.source_structure_sha256,
-        "source_pr193_admission_sha256": bridge.source_pr193_admission_sha256,
-        "source_pr194_handoff_sha256": bridge.source_pr194_handoff_sha256,
-        "lineage_scalar_pointer": bridge.lineage_scalar_pointer,
-        "lineage_scalar_field": bridge.lineage_scalar_field,
-        "lineage_scalar_value": bridge.lineage_scalar_value,
-        "source_materialization_sha256": bridge.source_materialization_sha256,
-        "source_candidate_set_sha256": bridge.source_candidate_set_sha256,
-        "source_candidate_admission_sha256": bridge.source_candidate_admission_sha256,
-        "source_pr65_artifact_sha256": bridge.source_pr65_artifact_sha256,
-        "source_pr66_handoff_sha256": bridge.source_pr66_handoff_sha256,
-        "source_fixture_intelligence_snapshot_sha256": bridge.source_fixture_intelligence_snapshot_sha256,
-        "source_model_feature_snapshot_sha256": bridge.source_model_feature_snapshot_sha256,
-        "candidate_sha256": bridge.candidate_sha256,
-        "candidate_size": bridge.candidate_size,
+        "fixture_identifier": context.fixture_identifier,
+        "source_match_id": context.source_match_id,
+        "source_raw_sha256": context.source_raw_sha256,
+        "source_pr193_array_admission_sha256": context.source_array_artifact_sha256,
+        "source_pr194_candidate_sha256": context.candidate_sha256,
+        "source_pr65_artifact_sha256": context.source_pr65_artifact_sha256,
+        "source_pr66_handoff_sha256": context.source_pr66_handoff_sha256,
+        "source_fixture_intelligence_snapshot_sha256": (
+            context.source_fixture_intelligence_snapshot_sha256
+        ),
+        "source_model_feature_snapshot_sha256": context.source_model_feature_snapshot_sha256,
         "candidate_available_features": candidate_available,
-        "bridge_sha256": _sha(bridge_bytes),
-        "bridge_size": len(bridge_bytes),
-        "source_state_fresh_until": bridge.source_state_fresh_until.isoformat().replace(
+        "prerequisite_bridge_sha256": _sha(prerequisite_bytes),
+        "prerequisite_bridge_size": len(prerequisite_bytes),
+        "pr191_context_sha256": _sha(context_bytes),
+        "pr191_context_size": len(context_bytes),
+        "source_state_fresh_until": prerequisite.source_state_fresh_until.isoformat().replace(
             "+00:00", "Z"
         ),
         "exact_full_revalidation_verified": True,
+        "same_raw_pr53_pr65_pr66_verified": True,
         "sentinel_pr31_available_feature_count": 0,
-        "authority": dict(bridge.authority),
+        "prerequisite_authority": dict(prerequisite.authority),
+        "pr191_context_safety": context_safety,
     }
     (output_root / "proof-receipt.json").write_bytes(_canonical(proof))
 
-    print(f"fixture={bridge.fixture_identifier}")
-    print(f"bridge_sha256={_sha(bridge_bytes)}")
-    print(f"candidate_sha256={bridge.candidate_sha256}")
-    print(f"pr65_sha256={bridge.source_pr65_artifact_sha256}")
-    print(f"pr66_sha256={bridge.source_pr66_handoff_sha256}")
+    print(f"fixture={context.fixture_identifier}")
+    print(f"prerequisite_bridge_sha256={_sha(prerequisite_bytes)}")
+    print(f"pr191_context_sha256={_sha(context_bytes)}")
+    print(f"candidate_sha256={context.candidate_sha256}")
+    print(f"pr65_sha256={context.source_pr65_artifact_sha256}")
+    print(f"pr66_sha256={context.source_pr66_handoff_sha256}")
     print("sentinel_pr65_fact_count=1")
     print("sentinel_pr31_available_feature_count=0")
     for key in sorted(candidate_available):
         print(f"{key}={candidate_available[key]}")
     print("exact_pr192_pr193_pr194_replay_verified=true")
     print("exact_same_raw_pr53_pr65_pr66_lineage_verified=true")
+    print("existing_pr191_authority_type_verified=true")
+    print("prerequisite_bridge_authority_all_false=true")
     print("team_strength_feature_authorized=true")
     print("prospective_reuse_after_source_freshness_authorized=false")
     print("probability_pricing_selection_bet_authorized=false")
