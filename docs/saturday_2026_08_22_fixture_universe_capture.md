@@ -1,0 +1,103 @@
+# Saturday 2026-08-22 fixture-universe capture
+
+## Purpose
+
+This boundary starts the live evidence phase for ATHENA's Saturday 2026-08-22 20-fold target. It captures one exact transparent FotMob `/api/data/matches` response for `20260822`, replays the existing PR38→PR40 source path, and produces a deterministic neutral inventory of every source fixture returned for that UTC date.
+
+It does **not** select a bet. The output is the candidate universe that later reviewed fixture-intelligence, model, SportyBet reconciliation, fresh-price, value, selection, correlation and accumulator gates must consume.
+
+## Frozen request
+
+The request is fixed to:
+
+- request date: `20260822`;
+- timezone: `UTC`;
+- ccode3: `NGA`;
+- target fold size: `20`.
+
+The runner reuses the existing transparent FotMob capture implementation and therefore performs exactly one bounded GET to the reviewed `/api/data/matches` route. It does not use the legacy advanced scraper, cookies, a session, browser impersonation, X-Mas headers, proxies or bypass logic.
+
+## Exact source chain
+
+The hosted lane executes:
+
+```text
+transparent PR38 dataMatches capture
+→ PR39 structural assessment
+→ PR40 UNREVIEWED fixture-candidate bundle
+→ exact Saturday UTC-date check
+→ exact FotMob country-code + whole competition-name identity match
+→ reviewed bootstrap priority registry
+→ canonical Saturday fixture-universe artifact
+```
+
+The source candidate bundle stays `UNREVIEWED`. This boundary does not mass-approve the fixtures or convert the capture into a reviewed fixture catalog.
+
+## Source-identity disambiguation
+
+The first real hosted capture exposed an important ambiguity that a name-only resolver cannot safely handle. FotMob returned many unrelated competitions with generic names shared by target leagues, including examples such as `Premier League` in Belarus and other countries, `Serie A` in Ecuador, `Bundesliga` in Austria, and `Premiership` in both Scotland and Northern Ireland.
+
+Accordingly, this Saturday boundary does **not** feed raw `source_competition_name` directly into the generic name-only bootstrap resolver. A source fixture receives bootstrap priority only when its exact FotMob country code and normalized whole competition name match an explicitly reviewed source pair. A same-name competition from another country remains unprioritized.
+
+The policy is versioned as:
+
+`athena-saturday-fotmob-competition-priority-identity-v1`
+
+The Saturday source labels covered by this exact pair contract include the observed forms needed for the reviewed domestic hierarchy, such as `ENG + Premier League`, `ESP + LaLiga`, `ITA + Serie A`, `FRA + Ligue 1`, `NED + Eredivisie`, `POR + Liga Portugal`, `BEL + Belgian Pro League`, `SCO + Premiership`, `TUR + Super Lig`, and `GRE + Super League`. Alternate listed forms are accepted only with the same reviewed country identity. No fuzzy, substring or country-free fallback exists.
+
+This does not silently repair the generic accumulator resolver for callers that possess only a bare league label. The Saturday execution path must preserve this source-qualified identity metadata into the later priority boundary rather than discarding it back to an ambiguous name.
+
+## Priority inventory
+
+The report records, per source fixture:
+
+- `FOTMOB:<source_match_id>` identity candidate;
+- source competition IDs/name/country code;
+- source home/away team IDs and names;
+- exact UTC kickoff;
+- PR40 review status;
+- bootstrap league name/rank/tier only after the exact source-identity pair resolves;
+- the explicit source-identity match/basis state.
+
+Summary counts are deliberately separated so same-name foreign competitions cannot be merged into a prioritized total:
+
+- `source_competition_counts` keys every observed source competition as `CCODE|literal-name`;
+- `prioritized_bootstrap_league_counts` contains only exact source-identity matches and groups them by canonical bootstrap league;
+- `unprioritized_source_competition_counts` keeps rejected source identities visible as `CCODE|literal-name`.
+
+The report also records total source fixture count, source-identity priority match count, unprioritized fixture count, and whether the raw source universe even contains at least 20 fixtures. That last field is only a source-coverage fact; it is never an accumulator authorization.
+
+## Hosted execution
+
+The draft PR is owner-triggered through an exact `pull_request: edited` control block so the live evidence can be captured and reviewed before merge. The workflow is bound to the exact PR number, same-repository branch, frozen base SHA, exact current PR head SHA and repository owner actor. Checkout credentials are disabled and the job has read-only repository/PR permissions.
+
+The artifact is named:
+
+`saturday-2026-08-22-fixture-universe-evidence`
+
+and contains:
+
+```text
+capture-receipt.json
+saturday-fixture-universe.json
+fixture/response.json
+fixture/manifest.json
+fixture/schema-assessment.json
+fixture/fixture-candidates.json
+```
+
+## Authority
+
+Every downstream authority flag remains false:
+
+- candidate review;
+- fixture catalog admission;
+- fixture intelligence;
+- model features and probability;
+- SportyBet reconciliation and canonical market mapping;
+- fresh bookmaker price and pricing;
+- selection;
+- accumulator authorization;
+- BET.
+
+This is deliberate. The immediate next step after a successful real capture is to review the actual Saturday candidate universe and promote only the fixtures needed by the priority/exhaustion path. Fresh player context and exact SportyBet evidence must then be collected close enough to kickoff to satisfy their own freshness rules.
