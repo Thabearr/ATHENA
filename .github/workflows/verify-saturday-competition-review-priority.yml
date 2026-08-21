@@ -179,7 +179,8 @@ jobs:
               if item['competition_review_name'] == 'DFB-Pokal'
           ]
           assert len(dfb) == 11
-          assert all(item['competition_review_rank'] == 6 for item in dfb)
+          assert all(item['competition_review_rank'] == 9 for item in dfb)
+          assert all(item['competition_review_tier'] == 3 for item in dfb)
           assert all(item['competition_review_kind'] == 'DOMESTIC_CUP' for item in dfb)
           assert all(item['source_competition_ccode'] == 'GER' for item in dfb)
           assert all(item['source_competition_name'] == 'DFB Pokal' for item in dfb)
