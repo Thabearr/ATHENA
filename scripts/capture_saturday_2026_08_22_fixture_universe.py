@@ -154,8 +154,8 @@ def execute(*, repository_head_sha: str, execute_live_network: bool) -> dict[str
 
     completed_at = _utc_now()
     receipt = {
-        "schema_version": 1,
-        "dataset_name": "athena-saturday-2026-08-22-fixture-universe-capture-receipt-v1",
+        "schema_version": 2,
+        "dataset_name": "athena-saturday-2026-08-22-fixture-universe-capture-receipt-v2",
         "repository": os.environ.get("GITHUB_REPOSITORY", "Thabearr/ATHENA"),
         "repository_head_sha": head,
         "workflow_name": WORKFLOW_NAME,
@@ -175,8 +175,8 @@ def execute(*, repository_head_sha: str, execute_live_network: bool) -> dict[str
         "fixture_candidate_bundle_sha256": sha256_fotmob_fixture_candidate_bundle(bundle),
         "saturday_fixture_universe_sha256": sha256_saturday_fixture_universe(universe),
         "candidate_count": universe["candidate_count"],
-        "bootstrap_source_identity_match_count": universe[
-            "bootstrap_source_identity_match_count"
+        "competition_review_source_identity_match_count": universe[
+            "competition_review_source_identity_match_count"
         ],
         "unprioritized_source_competition_count": universe[
             "unprioritized_source_competition_count"
@@ -193,8 +193,8 @@ def execute(*, repository_head_sha: str, execute_live_network: bool) -> dict[str
         "result": "SATURDAY_FIXTURE_UNIVERSE_CAPTURED_UNREVIEWED",
         "repository_head_sha": head,
         "candidate_count": universe["candidate_count"],
-        "bootstrap_source_identity_match_count": universe[
-            "bootstrap_source_identity_match_count"
+        "competition_review_source_identity_match_count": universe[
+            "competition_review_source_identity_match_count"
         ],
         "unprioritized_source_competition_count": universe[
             "unprioritized_source_competition_count"
