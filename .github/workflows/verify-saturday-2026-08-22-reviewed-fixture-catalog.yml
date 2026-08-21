@@ -1,0 +1,400 @@
+name: Verify Saturday 2026-08-22 Reviewed Fixture Catalog
+
+on:
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  verify-pr:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.number == 202 &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.head.ref == 'evidence/saturday-2026-08-22-reviewed-fixture-catalog'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      pull-requests: read
+
+    steps:
+      - name: Validate exact PR and frozen source evidence
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const pr = context.payload.pull_request;
+            if (!pr || pr.number !== 202) {
+              core.setFailed('Verification is bound only to PR #202.');
+              return;
+            }
+            if (pr.base.ref !== 'main' || pr.base.sha !== '08d54c11a4e5fb11ff7d7d886bda95c1efb01f05') {
+              core.setFailed(`PR base ${pr.base.ref}@${pr.base.sha} differs from frozen post-PR201 main.`);
+              return;
+            }
+            if (
+              pr.head.repo.full_name !== context.repo.owner + '/' + context.repo.repo ||
+              pr.head.ref !== 'evidence/saturday-2026-08-22-reviewed-fixture-catalog'
+            ) {
+              core.setFailed('PR head repository/branch mismatch.');
+              return;
+            }
+            const { data: artifact } = await github.rest.actions.getArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: 9437181220,
+            });
+            if (
+              artifact.id !== 9437181220 ||
+              artifact.name !== 'saturday-2026-08-22-fixture-universe-evidence' ||
+              artifact.expired ||
+              artifact.digest !== 'sha256:360aac588f049fe6b0437c43e060b317edd12aaf4672db93ebe2fca42de00589' ||
+              !artifact.workflow_run ||
+              artifact.workflow_run.id !== 32455713912 ||
+              artifact.workflow_run.head_sha !== 'b879b2140d0bc3fb64fa8fec4c73c735240a3b41'
+            ) {
+              core.setFailed('Frozen PR199 source artifact identity/provenance mismatch.');
+              return;
+            }
+            const { data: run } = await github.rest.actions.getWorkflowRun({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              run_id: 32455713912,
+            });
+            if (
+              run.status !== 'completed' || run.conclusion !== 'success' ||
+              run.event !== 'pull_request' ||
+              run.head_sha !== 'b879b2140d0bc3fb64fa8fec4c73c735240a3b41'
+            ) {
+              core.setFailed('Frozen PR199 source run is not exact successful evidence.');
+              return;
+            }
+            core.setOutput('head_sha', pr.head.sha);
+
+      - name: Check out exact PR head
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.guard.outputs.head_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact checkout and frozen base ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.head_sha }}"
+          git merge-base --is-ancestor 08d54c11a4e5fb11ff7d7d886bda95c1efb01f05 HEAD
+          test -z "$(git status --short --untracked-files=no)"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run focused reviewed-catalog tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest -q tests/test_saturday_2026_08_22_reviewed_fixture_catalog.py
+
+      - name: Download exact PR199 Saturday source artifact
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: 9437181220
+          path: source-artifact
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 32455713912
+
+      - name: Replay exact reviewed catalog and prepare admission decision candidate
+        id: prepare
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=.cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog
+          python scripts/prepare_saturday_2026_08_22_reviewed_fixture_catalog.py \
+            --source-artifact-directory source-artifact \
+            --fixture-review-decision-ledger evidence/saturday_2026_08_22_fixture_identity_review_decisions.json \
+            --output-directory "$output" \
+            | tee reviewed-catalog-result.txt
+          result="$(tail -n 1 reviewed-catalog-result.txt)"
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('.cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog/reviewed-fixture-catalog-prepare-receipt.json').read_text())
+          assert receipt['repository_head_sha'] == '${{ steps.guard.outputs.head_sha }}'
+          assert receipt['candidate_count'] == 670
+          assert receipt['approved_fixture_count'] == 50
+          assert receipt['unreviewed_fixture_count'] == 620
+          assert receipt['compiled_fixture_count'] == 50
+          assert receipt['catalog_admission_stored'] is False
+          assert receipt['fixture_intelligence_performed'] is False
+          assert receipt['model_probability_performed'] is False
+          assert receipt['sportybet_reconciliation_performed'] is False
+          assert receipt['fresh_price_performed'] is False
+          assert receipt['selection_performed'] is False
+          assert receipt['bet_decision_performed'] is False
+          PY
+          echo "result=${result}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload exact PR-head reviewed catalog proof
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: saturday-2026-08-22-reviewed-fixture-catalog-pr202
+          path: .cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Publish PR-head summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo '## Saturday 2026-08-22 reviewed Fixture Catalog'
+            echo
+            echo "- exact PR head: ${{ steps.guard.outputs.head_sha }}"
+            echo '- source candidates: 670'
+            echo '- explicit reviewed identities: 50'
+            echo '- compiled catalog fixtures: 50'
+            echo '- catalog admission stored: false'
+            echo '- exact admission decision candidate uploaded for separate review'
+            echo '- Fixture Intelligence/model/pricing/selection/BET: false'
+          } >> "${GITHUB_STEP_SUMMARY}"
+
+  admit-on-merged-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: read
+      contents: read
+      issues: read
+      pull-requests: read
+
+    steps:
+      - name: Bind this push to the exact PR202 merge commit
+        id: guard
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: 202,
+            });
+            if (!pr.merged || pr.merge_commit_sha !== context.sha) {
+              core.setOutput('eligible', 'false');
+              return;
+            }
+            const { data: commit } = await github.rest.repos.getCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: context.sha,
+            });
+            const parents = commit.parents.map(item => item.sha);
+            if (parents.length !== 2 || parents[1] !== pr.head.sha) {
+              core.setFailed('PR202 merge commit does not contain the exact reviewed PR head as second parent.');
+              return;
+            }
+            const { data: artifact } = await github.rest.actions.getArtifact({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              artifact_id: 9437181220,
+            });
+            if (
+              artifact.expired ||
+              artifact.digest !== 'sha256:360aac588f049fe6b0437c43e060b317edd12aaf4672db93ebe2fca42de00589' ||
+              !artifact.workflow_run ||
+              artifact.workflow_run.id !== 32455713912 ||
+              artifact.workflow_run.head_sha !== 'b879b2140d0bc3fb64fa8fec4c73c735240a3b41'
+            ) {
+              core.setFailed('Frozen PR199 source artifact no longer matches exact provenance.');
+              return;
+            }
+            core.setOutput('eligible', 'true');
+            core.setOutput('merge_sha', context.sha);
+
+      - name: Stop unrelated main pushes cleanly
+        if: steps.guard.outputs.eligible != 'true'
+        shell: bash
+        run: echo 'This main push is not the exact PR202 merge commit; no Saturday catalog admission action is applicable.'
+
+      - name: Check out exact PR202 merge commit
+        if: steps.guard.outputs.eligible == 'true'
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ steps.guard.outputs.merge_sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify exact clean merged checkout
+        if: steps.guard.outputs.eligible == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.merge_sha }}"
+          test -z "$(git status --short --untracked-files=no)"
+
+      - name: Set up Python 3.12 for exact merged admission replay
+        if: steps.guard.outputs.eligible == 'true'
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install frozen repository dependencies for merged replay
+        if: steps.guard.outputs.eligible == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Download exact PR199 source artifact for merged replay
+        if: steps.guard.outputs.eligible == 'true'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          artifact-ids: 9437181220
+          path: source-artifact
+          merge-multiple: true
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 32455713912
+
+      - name: Prepare exact merge-commit catalog admission decision
+        if: steps.guard.outputs.eligible == 'true'
+        id: prepare-main
+        shell: bash
+        run: |
+          set -euo pipefail
+          output=.cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog
+          python scripts/prepare_saturday_2026_08_22_reviewed_fixture_catalog.py \
+            --source-artifact-directory source-artifact \
+            --fixture-review-decision-ledger evidence/saturday_2026_08_22_fixture_identity_review_decisions.json \
+            --output-directory "$output" \
+            > reviewed-catalog-result.txt
+          candidate_sha="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog/reviewed-fixture-catalog-prepare-receipt.json').read_text())
+          assert value['repository_head_sha'] == '${{ steps.guard.outputs.merge_sha }}'
+          assert value['compiled_fixture_count'] == 50
+          assert value['catalog_admission_stored'] is False
+          print(value['catalog_admission_decision_candidate_sha256'])
+          PY
+          )"
+          echo "candidate_sha=${candidate_sha}" >> "${GITHUB_OUTPUT}"
+
+      - name: Check exact-byte admission approval comment
+        if: steps.guard.outputs.eligible == 'true'
+        id: approval
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        env:
+          CANDIDATE_SHA: ${{ steps.prepare-main.outputs.candidate_sha }}
+        with:
+          script: |
+            const expected = `ATHENA_CATALOG_ADMISSION_APPROVED_SHA256=${process.env.CANDIDATE_SHA}`;
+            const comments = await github.paginate(github.rest.issues.listComments, {
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 202,
+              per_page: 100,
+            });
+            const matches = comments.filter(item => item.body === expected && item.user && item.user.login === 'Thabearr');
+            core.setOutput('approved', matches.length === 1 ? 'true' : 'false');
+            core.setOutput('expected_comment', expected);
+
+      - name: Upload merge-commit admission decision candidate before gate
+        if: steps.guard.outputs.eligible == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: saturday-2026-08-22-reviewed-fixture-catalog-main-candidate
+          path: .cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog/
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+      - name: Require separate exact-byte admission review
+        if: steps.guard.outputs.eligible == 'true' && steps.approval.outputs.approved != 'true'
+        shell: bash
+        env:
+          EXPECTED_COMMENT: ${{ steps.approval.outputs.expected_comment }}
+        run: |
+          echo 'Exact merge-commit catalog decision candidate has been uploaded.' >&2
+          echo "After reviewing those exact bytes, add this exact PR #202 conversation comment and rerun this failed job:" >&2
+          echo "$EXPECTED_COMMENT" >&2
+          exit 1
+
+      - name: Store source-replayed exact catalog admission
+        if: steps.guard.outputs.eligible == 'true' && steps.approval.outputs.approved == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          root=.cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog
+          capture="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          value = json.loads(Path('.cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog/reviewed-fixture-catalog-prepare-receipt.json').read_text())
+          print(value['capture_directory'])
+          PY
+          )"
+          python scripts/replay_reviewed_fixture_catalog_admission.py store \
+            --capture-directory "$capture" \
+            --fixture-review-decision-ledger evidence/saturday_2026_08_22_fixture_identity_review_decisions.json \
+            --check-catalog "$root/reviewed-fixture-catalog.json" \
+            --check-manifest "$root/reviewed-fixture-catalog.manifest.json" \
+            --admission-decision "$root/catalog-admission-decision-candidate.json" \
+            > catalog-admission-store-receipt.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          receipt = json.loads(Path('catalog-admission-store-receipt.json').read_text())
+          assert receipt['disposition'] == 'ADMITTED'
+          assert receipt['admitted_fixture_count'] == 50
+          assert receipt['candidate_bundle_sha256'] == '53b48ae1beabc10b638ad20f21e4807f78f0a3879ff8a21fd19a2da538a1ba3d'
+          assert receipt['athena_network_acquisition_performed'] is False
+          assert receipt['automatic_review_performed'] is False
+          assert receipt['bookmaker_equivalence_authorized'] is False
+          assert receipt['canonical_market_mapping_authorized'] is False
+          assert receipt['fresh_price_authorized'] is False
+          assert receipt['pricing_authorized'] is False
+          assert receipt['selection_authorized'] is False
+          assert receipt['slip_construction_authorized'] is False
+          assert receipt['booking_code_authorized'] is False
+          assert receipt['sportybet_execution_authorized'] is False
+          assert receipt['bet_authorized'] is False
+          PY
+
+      - name: Upload exact admitted merge-commit proof
+        if: steps.guard.outputs.eligible == 'true' && steps.approval.outputs.approved == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: saturday-2026-08-22-reviewed-fixture-catalog-main-admitted
+          path: |
+            .cache/athena-research/saturday-2026-08-22-reviewed-fixture-catalog/
+            .cache/athena-research/reviewed-fixture-catalog-admission-source-replay/
+            catalog-admission-store-receipt.json
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
