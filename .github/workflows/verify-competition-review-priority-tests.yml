@@ -3,7 +3,7 @@ name: Verify Competition Review Priority Tests
 on:
   pull_request:
     branches:
-      - evidence/saturday-2026-08-22-fixture-universe-capture
+      - main
 
 permissions:
   contents: read
@@ -25,13 +25,13 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
-      - name: Verify exact checkout and frozen stacked base ancestry
+      - name: Verify exact checkout and frozen post-PR199 main ancestry
         shell: bash
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha }}"
-          test "${{ github.event.pull_request.base.sha }}" = "b879b2140d0bc3fb64fa8fec4c73c735240a3b41"
-          git merge-base --is-ancestor b879b2140d0bc3fb64fa8fec4c73c735240a3b41 HEAD
+          test "${{ github.event.pull_request.base.sha }}" = "19b5574ddc610cb7f231c51143580d38f89ea35f"
+          git merge-base --is-ancestor 19b5574ddc610cb7f231c51143580d38f89ea35f HEAD
           test -z "$(git status --short --untracked-files=no)"
 
       - name: Set up Python 3.12
