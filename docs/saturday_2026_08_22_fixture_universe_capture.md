@@ -59,7 +59,13 @@ The report records, per source fixture:
 - bootstrap league name/rank/tier only after the exact source-identity pair resolves;
 - the explicit source-identity match/basis state.
 
-It also records total source fixture count, source-identity priority match count, unprioritized count, per-league counts, and whether the raw source universe even contains at least 20 fixtures. That last field is only a source-coverage fact; it is never an accumulator authorization.
+Summary counts are deliberately separated so same-name foreign competitions cannot be merged into a prioritized total:
+
+- `source_competition_counts` keys every observed source competition as `CCODE|literal-name`;
+- `prioritized_bootstrap_league_counts` contains only exact source-identity matches and groups them by canonical bootstrap league;
+- `unprioritized_source_competition_counts` keeps rejected source identities visible as `CCODE|literal-name`.
+
+The report also records total source fixture count, source-identity priority match count, unprioritized fixture count, and whether the raw source universe even contains at least 20 fixtures. That last field is only a source-coverage fact; it is never an accumulator authorization.
 
 ## Hosted execution
 
