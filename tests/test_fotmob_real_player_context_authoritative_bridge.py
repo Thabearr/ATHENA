@@ -17,6 +17,9 @@ from domain.fotmob_real_player_context_authoritative_bridge import (
     build_reviewed_real_fotmob_authoritative_team_strength_bridge,
 )
 from domain.fotmob_real_player_context_array_admission import CLASSIFIED_AT, KICKOFF
+from domain.fotmob_real_player_context_pr191_authoritative_adapter import (
+    build_reviewed_real_fotmob_pr191_team_strength_context,
+)
 from domain.fotmob_real_player_context_team_strength_handoff import EXPECTED_CANDIDATE_SHA256
 
 
@@ -51,11 +54,20 @@ def test_source_freshness_is_not_projected_to_saturday() -> None:
     assert "classified_at=PR193_CLASSIFIED_AT" in source
 
 
-def test_only_team_strength_feature_authority_is_added() -> None:
-    source = Path("domain/fotmob_real_player_context_authoritative_bridge.py").read_text(
-        encoding="utf-8"
-    )
-    assert '"team_strength_feature_authorized": True' in source
+def test_prerequisite_bridge_stays_all_false_and_only_existing_pr191_wrapper_authorizes() -> None:
+    bridge_source = Path(
+        "domain/fotmob_real_player_context_authoritative_bridge.py"
+    ).read_text(encoding="utf-8")
+    adapter_source = Path(
+        "domain/fotmob_real_player_context_pr191_authoritative_adapter.py"
+    ).read_text(encoding="utf-8")
+
+    assert '"team_strength_feature_authorized": False' in bridge_source
+    assert '"team_strength_feature_authorized": True' not in bridge_source
+    assert '"team_strength_feature_authorized": True' in adapter_source
+    assert "ReviewedFotMobTeamStrengthContext" in adapter_source
+    assert "PR197 prerequisite bridge must keep every authority flag false" in adapter_source
+
     for token in (
         '"lineage_scalar_model_feature_authorized": False',
         '"prospective_reuse_after_source_freshness_authorized": False',
@@ -68,7 +80,7 @@ def test_only_team_strength_feature_authority_is_added() -> None:
         '"selection_authorized": False',
         '"bet_authorized": False',
     ):
-        assert token in source
+        assert token in bridge_source
 
 
 def test_exact_candidate_available_features_remain_only_unavailable_counts() -> None:
@@ -93,19 +105,25 @@ def test_lineage_sentinel_cannot_create_a_generic_pr31_feature() -> None:
     assert "pr65.member_count != 1" in source
 
 
-def test_builder_accepts_only_exact_pr192_source_bytes_not_model_or_bookmaker_inputs() -> None:
-    parameters = set(
-        inspect.signature(
-            build_reviewed_real_fotmob_authoritative_team_strength_bridge
-        ).parameters
-    )
-    assert parameters == {
+def test_builders_accept_only_exact_pr192_source_bytes_not_model_or_bookmaker_inputs() -> None:
+    expected = {
         "campaign_receipt_bytes",
         "manifest_bytes",
         "raw_bytes",
         "persisted_receipt_bytes",
         "structure_assessment_bytes",
     }
+    assert set(
+        inspect.signature(
+            build_reviewed_real_fotmob_authoritative_team_strength_bridge
+        ).parameters
+    ) == expected
+    assert set(
+        inspect.signature(
+            build_reviewed_real_fotmob_pr191_team_strength_context
+        ).parameters
+    ) == expected
+
     forbidden = {
         "candidate",
         "historical_appearances",
@@ -118,7 +136,7 @@ def test_builder_accepts_only_exact_pr192_source_bytes_not_model_or_bookmaker_in
         "coefficient",
         "sportybet",
     }
-    assert not (parameters & forbidden)
+    assert not (expected & forbidden)
 
 
 def _imports(path: str) -> list[str]:
@@ -132,8 +150,9 @@ def _imports(path: str) -> list[str]:
     return names
 
 
-def test_domain_and_verifier_import_no_network_bookmaker_probability_or_old_runtime() -> None:
+def test_domain_adapter_and_verifier_import_no_network_bookmaker_probability_or_old_runtime() -> None:
     imports = _imports("domain/fotmob_real_player_context_authoritative_bridge.py")
+    imports += _imports("domain/fotmob_real_player_context_pr191_authoritative_adapter.py")
     imports += _imports("scripts/verify_fotmob_real_player_context_authoritative_bridge.py")
     forbidden = (
         "requests",
@@ -150,7 +169,7 @@ def test_domain_and_verifier_import_no_network_bookmaker_probability_or_old_runt
     assert not any(token in name for name in imports for token in forbidden)
 
 
-def test_hosted_proof_is_exact_pr192_artifact_bound_and_offline() -> None:
+def test_hosted_proof_is_exact_pr192_artifact_bound_offline_and_single_authority() -> None:
     workflow = Path(
         ".github/workflows/verify-fotmob-real-player-context-authoritative-bridge.yml"
     ).read_text(encoding="utf-8")
@@ -169,3 +188,14 @@ def test_hosted_proof_is_exact_pr192_artifact_bound_and_offline() -> None:
     assert "curl " not in workflow
     assert "capture_fotmob" not in workflow
     assert "sportybet" not in workflow.casefold()
+
+    verifier = Path(
+        "scripts/verify_fotmob_real_player_context_authoritative_bridge.py"
+    ).read_text(encoding="utf-8")
+    assert "prerequisite bridge illegally grants authority" in verifier
+    assert "existing_pr191_authority_type_verified=true" in verifier
+    assert "prerequisite_bridge_authority_all_false=true" in verifier
+
+
+def test_temporary_self_modifying_pr_workflow_is_not_part_of_the_reviewed_boundary() -> None:
+    assert not Path(".github/workflows/pr197-authority-path-self-fix.yml").exists()
