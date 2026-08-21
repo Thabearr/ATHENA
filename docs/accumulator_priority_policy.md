@@ -8,13 +8,13 @@ It does not make a fixture bettable. A fixture must still pass the reviewed fixt
 
 ## Three different questions
 
-ATHENA now keeps three concepts separate:
+ATHENA keeps three concepts separate:
 
 1. **competition review priority** — where ATHENA should look first in a real fixture universe;
 2. **model reliability** — where reviewed held-out evidence says a particular probability model is more or less reliable;
 3. **fixture/selection quality** — which exact already-eligible fixture/market is preferable after probability, risk, freshness and bookmaker value are known.
 
-A competition may be high in review priority without having evidence-ranked model reliability. That distinction is deliberate.
+A competition may be high in review priority without having evidence-ranked model reliability.
 
 ## Source-qualified competition review priority
 
@@ -35,16 +35,22 @@ For the current Saturday execution boundary the reviewed order is:
 | 3 | Serie A | domestic league | 1 |
 | 4 | Bundesliga | domestic league | 1 |
 | 5 | Ligue 1 | domestic league | 1 |
-| 6 | **DFB-Pokal** | **domestic cup** | 2 |
-| 7 | Eredivisie | domestic league | 2 |
-| 8 | Primeira Liga | domestic league | 2 |
-| 9 | Belgian Pro League | domestic league | 3 |
-| 10 | Scottish Premiership | domestic league | 3 |
-| 11 | Süper Lig | domestic league | 3 |
-| 12 | Greek Super League | domestic league | 3 |
+| 6 | Primeira Liga | domestic league | 2 |
+| 7 | Süper Lig | domestic league | 2 |
+| 8 | Eredivisie | domestic league | 2 |
+| 9 | **FA Cup** | **domestic cup** | 3 |
+| 9 | **Copa del Rey** | **domestic cup** | 3 |
+| 9 | **Coppa Italia** | **domestic cup** | 3 |
+| 9 | **DFB-Pokal** | **domestic cup** | 3 |
+| 9 | **Coupe de France** | **domestic cup** | 3 |
+| 10 | Belgian Pro League | domestic league | 4 |
+| 11 | Scottish Premiership | domestic league | 4 |
+| 12 | Greek Super League | domestic league | 4 |
 | 999 | unreviewed competition identity | fallback only | 99 |
 
-DFB-Pokal is intentionally inspected before Eredivisie/Primeira Liga and ahead of Belgium, Scotland, Turkey and Greece. This is a **review-search decision**, not a claim that ATHENA's model is statistically more accurate in DFB-Pokal.
+The major domestic cups of the top-five countries deliberately share one review rank. They sit **below Primeira Liga, Süper Lig and Eredivisie, but above Belgian Pro League, Scottish Premiership and Greek Super League**.
+
+The shared cup rank is intentional. ATHENA does not arbitrarily say FA Cup is more valuable than Copa del Rey or DFB-Pokal. Once the cup band is reached, exact fixture quality breaks the tie using reviewed probability, risk, freshness, bookmaker value, kickoff and stable identity.
 
 The registry is source-qualified. A FotMob candidate with source metadata is resolved from exact country code plus normalized whole competition name. Generic labels do not borrow identity across countries. Examples:
 
@@ -54,17 +60,21 @@ The registry is source-qualified. A FotMob candidate with source metadata is res
 - `ECU + Serie A` does not;
 - `GER + Bundesliga` resolves to German Bundesliga;
 - `AUT + Bundesliga` does not;
-- `GER + DFB Pokal` resolves to DFB-Pokal.
+- `ENG + FA Cup` resolves to FA Cup;
+- `ESP + Copa del Rey` resolves to Copa del Rey;
+- `ITA + Coppa Italia` resolves to Coppa Italia;
+- `GER + DFB Pokal` resolves to DFB-Pokal;
+- `FRA + Coupe de France` resolves to Coupe de France.
 
-When source identity is present, ATHENA never falls back to an ambiguous bare league label. An unreviewed cup such as a generic `GER + Super Cup` remains rank 999 until its own source identity is explicitly reviewed; cup status alone never creates priority.
+When source identity is present, ATHENA never falls back to an ambiguous bare competition label. An unreviewed competition such as a generic `GER + Super Cup` remains rank 999 until its exact source identity is explicitly reviewed; the word `Cup` never creates priority by itself.
 
-## Why DFB-Pokal is not one homogeneous signal
+## Cup fixtures are still fixture-specific
 
-Competition priority only decides **where to inspect first**. It does not say every DFB-Pokal tie is equally attractive.
+Competition priority decides **where to inspect first**. It does not say every major-cup tie is equally attractive.
 
-A tie such as a strong top-flight side away to a lower-level opponent can have a very different uncertainty profile from a near-peer cup tie. Rotation, lineup certainty, team-level gap, manager incentives, home advantage and market robustness still belong to reviewed fixture intelligence/model layers.
+A strong top-flight side away to a lower-level opponent can have a very different uncertainty profile from a near-peer cup tie. Rotation, lineup certainty, team-level gap, manager incentives, home advantage and market robustness still belong to reviewed fixture-intelligence/model layers.
 
-ATHENA therefore does not encode a hidden 'cup favourite = bet' heuristic. Once reviewed fixture/model signals exist, ordering inside one competition remains lexicographic:
+ATHENA therefore does not encode a hidden `cup favourite = bet` heuristic. Within one review rank the fixture-quality ordering remains lexicographic:
 
 1. higher estimated probability for the **exact priced selection**;
 2. lower reviewed fixture/model risk;
@@ -73,7 +83,7 @@ ATHENA therefore does not encode a hidden 'cup favourite = bet' heuristic. Once 
 5. earlier kickoff;
 6. stable fixture identity/input order as deterministic tie-breakers.
 
-This lets a DFB-Pokal fixture enter the serious review pool early while still allowing ATHENA to reject it later for rotation, stale context, weak model support, bad price, correlation or any other gate.
+A cup fixture may enter the serious review pool before Belgium/Scotland/Greece and still be rejected later for rotation, stale context, weak model support, bad price, correlation or any other gate.
 
 ## Compatibility league hierarchy
 
@@ -94,7 +104,7 @@ All 15 canonical markets map to a probability-model reliability family:
 - Away Win Either Half -> `WIN_EITHER_HALF_AWAY`;
 - 1UP/2UP -> `EARLY_PAYOUT_LEAD_PATH`.
 
-At this boundary no model family has sufficiently replayable league-level held-out evidence to create an evidence-ranked override. The current model reliability states therefore remain explicit fallbacks with machine-readable blockers. Elevating DFB-Pokal in review order does not alter those blockers.
+At this boundary no model family has sufficiently replayable league-level held-out evidence to create an evidence-ranked override. The current model reliability states remain explicit fallbacks with machine-readable blockers. Review priority does not alter those blockers.
 
 ## Strict exhaustion algorithm
 
@@ -104,8 +114,8 @@ For a target size `N`:
 2. if exact source competition identity is preserved, resolve the source-qualified competition review rank;
 3. if source identity is present but unreviewed, fail closed unless explicit expansion is permitted;
 4. if source identity is absent, retain the model-league/league bootstrap compatibility path;
-5. exhaust the higher review-priority competition before moving to the next one;
-6. within one competition, use the transparent fixture-quality key above;
+5. exhaust the higher review-priority rank before moving to the next one;
+6. where multiple competitions share a rank, order their fixtures by the transparent fixture-quality key rather than arbitrary competition prestige;
 7. a rejected candidate never blocks progress through remaining candidates;
 8. continue until `N` accepted legs exist or every permitted candidate is exhausted;
 9. if fewer than `N` survive, return the smaller fold/shortfall; never manufacture legs.
@@ -116,7 +126,7 @@ Caller-provided model reliability ranks are ignored. Source-qualified competitio
 
 For Saturday 2026-08-22, the operational target remains a **20-leg accumulator** built only from fixtures/selections that survive all reviewed gates.
 
-The real FotMob Saturday capture contains DFB-Pokal fixtures that were previously left in the generic rank-999 bucket because the first policy was league-centric. The new review policy deliberately brings exact `GER + DFB Pokal` fixtures into the serious first-pass pool without promoting unrelated cups or same-name foreign competitions.
+The exact Saturday FotMob capture currently contains 11 DFB-Pokal fixtures. They enter the rank-9 major-cup band. The same architecture is now ready for exact FA Cup, Copa del Rey, Coppa Italia and Coupe de France source identities when those competitions are present in a fixture universe; they do not need a future DFB-specific exception.
 
 The final Saturday run must still preserve, per leg, exact FotMob fixture identity/kickoff, source-qualified competition review basis/version/rank, model-family reliability basis, exact market/model/calibration identity, reviewed fixture-intelligence freshness, exact SportyBet reconciliation and fresh same-snapshot price, value/authority state and deterministic fixture-priority reasons.
 
