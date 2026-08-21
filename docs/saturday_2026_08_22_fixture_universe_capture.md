@@ -26,15 +26,28 @@ transparent PR38 dataMatches capture
 → PR39 structural assessment
 → PR40 UNREVIEWED fixture-candidate bundle
 → exact Saturday UTC-date check
-→ literal competition-name intersection with the reviewed priority registry
+→ exact FotMob country-code + whole competition-name identity match
+→ reviewed bootstrap priority registry
 → canonical Saturday fixture-universe artifact
 ```
 
 The source candidate bundle stays `UNREVIEWED`. This boundary does not mass-approve the fixtures or convert the capture into a reviewed fixture catalog.
 
-## Priority inventory
+## Source-identity disambiguation
 
-The report compares `source_competition_name` to ATHENA's existing league-priority registry using the registry's exact normalized whole-name resolver. No fuzzy or substring inference is introduced. A literal competition that cannot be resolved remains unprioritized and visible in the report.
+The first real hosted capture exposed an important ambiguity that a name-only resolver cannot safely handle. FotMob returned many unrelated competitions with generic names shared by target leagues, including examples such as `Premier League` in Belarus and other countries, `Serie A` in Ecuador, `Bundesliga` in Austria, and `Premiership` in both Scotland and Northern Ireland.
+
+Accordingly, this Saturday boundary does **not** feed raw `source_competition_name` directly into the generic name-only bootstrap resolver. A source fixture receives bootstrap priority only when its exact FotMob country code and normalized whole competition name match an explicitly reviewed source pair. A same-name competition from another country remains unprioritized.
+
+The policy is versioned as:
+
+`athena-saturday-fotmob-competition-priority-identity-v1`
+
+The Saturday source labels covered by this exact pair contract include the observed forms needed for the reviewed domestic hierarchy, such as `ENG + Premier League`, `ESP + LaLiga`, `ITA + Serie A`, `FRA + Ligue 1`, `NED + Eredivisie`, `POR + Liga Portugal`, `BEL + Belgian Pro League`, `SCO + Premiership`, `TUR + Super Lig`, and `GRE + Super League`. Alternate listed forms are accepted only with the same reviewed country identity. No fuzzy, substring or country-free fallback exists.
+
+This does not silently repair the generic accumulator resolver for callers that possess only a bare league label. The Saturday execution path must preserve this source-qualified identity metadata into the later priority boundary rather than discarding it back to an ambiguous name.
+
+## Priority inventory
 
 The report records, per source fixture:
 
@@ -43,9 +56,10 @@ The report records, per source fixture:
 - source home/away team IDs and names;
 - exact UTC kickoff;
 - PR40 review status;
-- bootstrap league name/rank/tier when exactly resolved.
+- bootstrap league name/rank/tier only after the exact source-identity pair resolves;
+- the explicit source-identity match/basis state.
 
-It also records total source fixture count, priority-registry match count, unprioritized count, per-league counts, and whether the raw source universe even contains at least 20 fixtures. That last field is only a source-coverage fact; it is never an accumulator authorization.
+It also records total source fixture count, source-identity priority match count, unprioritized count, per-league counts, and whether the raw source universe even contains at least 20 fixtures. That last field is only a source-coverage fact; it is never an accumulator authorization.
 
 ## Hosted execution
 
