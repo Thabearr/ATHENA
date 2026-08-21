@@ -117,6 +117,24 @@ def _git_head(repository: Path) -> str:
     return head
 
 
+def _resolve_output_directory(value: Path, *, repository: Path) -> Path:
+    supplied = Path(value)
+    if ".." in supplied.parts:
+        raise SaturdayReviewedFixtureCatalogPreparationError(
+            "output directory must not contain traversal"
+        )
+    candidate = supplied if supplied.is_absolute() else repository / supplied
+    candidate = candidate.resolve(strict=False)
+    allowed_root = (repository / ".cache/athena-research").resolve(strict=False)
+    try:
+        candidate.relative_to(allowed_root)
+    except ValueError as exc:
+        raise SaturdayReviewedFixtureCatalogPreparationError(
+            "output directory must remain beneath .cache/athena-research"
+        ) from exc
+    return candidate
+
+
 def _materialize_exact_source_capture(
     *,
     source_artifact_directory: Path,
@@ -186,7 +204,7 @@ def execute(
 ) -> dict[str, object]:
     repository = Path(__file__).resolve().parents[1]
     head = _git_head(repository)
-    output = Path(output_directory)
+    output = _resolve_output_directory(output_directory, repository=repository)
     if output.exists():
         raise SaturdayReviewedFixtureCatalogPreparationError(
             "output directory already exists"
