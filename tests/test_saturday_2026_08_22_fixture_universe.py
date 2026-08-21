@@ -141,6 +141,14 @@ def test_builds_exact_source_identity_priority_inventory_without_inference():
     assert report["bootstrap_source_identity_match_count"] == 1
     assert report["unprioritized_source_competition_count"] == 1
     assert report["enough_source_fixtures_for_requested_fold"] is False
+    assert report["source_competition_counts"] == {
+        "ENG|Premier League": 1,
+        "ENG|Unknown Saturday League": 1,
+    }
+    assert report["prioritized_bootstrap_league_counts"] == {"Premier League": 1}
+    assert report["unprioritized_source_competition_counts"] == {
+        "ENG|Unknown Saturday League": 1
+    }
     assert report["candidates"][0]["source_competition_name"] == "Premier League"
     assert report["candidates"][0]["source_competition_ccode"] == "ENG"
     assert report["candidates"][0]["bootstrap_league_rank"] == 1
@@ -155,7 +163,7 @@ def test_builds_exact_source_identity_priority_inventory_without_inference():
     assert not any(report["safety"].values())
 
 
-def test_generic_same_name_foreign_competitions_do_not_borrow_priority():
+def test_generic_same_name_foreign_competitions_do_not_borrow_priority_or_counts():
     leagues = [
         _league(
             10,
@@ -178,14 +186,34 @@ def test_generic_same_name_foreign_competitions_do_not_borrow_priority():
             _match(1103, 30, "Altach", "Hartberg", 15),
             ccode="AUT",
         ),
+        _league(
+            40,
+            47,
+            "Premier League",
+            _match(1104, 40, "Everton", "Palace", 16),
+            ccode="ENG",
+        ),
     ]
     report = build_saturday_fixture_universe(_bundle(leagues=leagues))
-    assert report["bootstrap_source_identity_match_count"] == 0
+    assert report["bootstrap_source_identity_match_count"] == 1
     assert report["unprioritized_source_competition_count"] == 3
+    assert report["prioritized_bootstrap_league_counts"] == {"Premier League": 1}
+    assert report["source_competition_counts"]["BLR|Premier League"] == 1
+    assert report["source_competition_counts"]["ENG|Premier League"] == 1
+    assert report["unprioritized_source_competition_counts"] == {
+        "AUT|Bundesliga": 1,
+        "BLR|Premier League": 1,
+        "ECU|Serie A": 1,
+    }
+    foreign = [
+        candidate
+        for candidate in report["candidates"]
+        if candidate["source_competition_ccode"] != "ENG"
+    ]
     assert all(
         candidate["bootstrap_league_rank"] == 999
         and candidate["bootstrap_source_identity_match"] is False
-        for candidate in report["candidates"]
+        for candidate in foreign
     )
 
 
