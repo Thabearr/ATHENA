@@ -122,8 +122,8 @@ jobs:
           repository: ${{ github.repository }}
           run-id: ${{ steps.guard.outputs.run_id }}
 
-      - name: Full-replay PR192 through PR66 and build authoritative bridge
-        id: bridge
+      - name: Full-replay PR192 through PR66 and build existing PR191 authority
+        id: authority
         env:
           PYTHONPATH: ${{ github.workspace }}
           EXACT_HEAD_SHA: ${{ steps.guard.outputs.head_sha }}
@@ -135,10 +135,16 @@ jobs:
             --output-root authoritative-bridge-proof \
             --repository-head-sha "${EXACT_HEAD_SHA}" \
             | tee authoritative-bridge-summary.txt
-          bridge_sha="$(awk -F= '/^bridge_sha256=/{print $2}' authoritative-bridge-summary.txt)"
-          test "${#bridge_sha}" -eq 64
+
+          prerequisite_sha="$(awk -F= '/^prerequisite_bridge_sha256=/{print $2}' authoritative-bridge-summary.txt)"
+          context_sha="$(awk -F= '/^pr191_context_sha256=/{print $2}' authoritative-bridge-summary.txt)"
+          test "${#prerequisite_sha}" -eq 64
+          test "${#context_sha}" -eq 64
+
           grep -Fx 'exact_pr192_pr193_pr194_replay_verified=true' authoritative-bridge-summary.txt
           grep -Fx 'exact_same_raw_pr53_pr65_pr66_lineage_verified=true' authoritative-bridge-summary.txt
+          grep -Fx 'existing_pr191_authority_type_verified=true' authoritative-bridge-summary.txt
+          grep -Fx 'prerequisite_bridge_authority_all_false=true' authoritative-bridge-summary.txt
           grep -Fx 'sentinel_pr65_fact_count=1' authoritative-bridge-summary.txt
           grep -Fx 'sentinel_pr31_available_feature_count=0' authoritative-bridge-summary.txt
           grep -Fx 'home_unavailable_player_count=1.0' authoritative-bridge-summary.txt
@@ -146,7 +152,9 @@ jobs:
           grep -Fx 'team_strength_feature_authorized=true' authoritative-bridge-summary.txt
           grep -Fx 'prospective_reuse_after_source_freshness_authorized=false' authoritative-bridge-summary.txt
           grep -Fx 'probability_pricing_selection_bet_authorized=false' authoritative-bridge-summary.txt
-          echo "bridge_sha=${bridge_sha}" >> "${GITHUB_OUTPUT}"
+
+          echo "prerequisite_sha=${prerequisite_sha}" >> "${GITHUB_OUTPUT}"
+          echo "context_sha=${context_sha}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload exact authoritative bridge proof
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
@@ -167,12 +175,15 @@ jobs:
             echo "- exact PR head: ${{ steps.guard.outputs.head_sha }}"
             echo "- source PR192 run: ${{ steps.guard.outputs.run_id }}"
             echo "- source artifact id: ${{ steps.guard.outputs.artifact_id }}"
-            echo "- bridge SHA-256: ${{ steps.bridge.outputs.bridge_sha }}"
+            echo "- all-false PR65/PR66 prerequisite SHA-256: ${{ steps.authority.outputs.prerequisite_sha }}"
+            echo "- existing PR191 authority-context SHA-256: ${{ steps.authority.outputs.context_sha }}"
             echo '- exact PR192 -> PR193 -> PR194 replay: VERIFIED'
             echo '- exact same raw/PR53 observation admitted through PR65/PR66: VERIFIED'
+            echo '- existing PR191 authority type: VERIFIED'
+            echo '- prerequisite bridge authority: ALL FALSE'
             echo '- lineage sentinel PR65 fact count: 1'
             echo '- lineage sentinel PR31 AVAILABLE feature count: 0'
-            echo '- team-strength feature authority: TRUE for exact PR193 classification instant only'
+            echo '- team-strength feature authority: TRUE only in the existing PR191 wrapper, for the exact PR193 classification instant'
             echo '- candidate AVAILABLE resolutions: home/away unavailable-player count only'
             echo '- aggregate lineup state: UNVERIFIED because bench root is missing'
             echo '- position semantics: NOT USED'
