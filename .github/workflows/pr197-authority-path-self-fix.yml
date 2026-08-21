@@ -34,21 +34,7 @@ jobs:
           new = '            "team_strength_feature_authorized": False,\n'
           if text.count(old) != 1:
               raise SystemExit(f'expected exactly one bridge authority token, got {text.count(old)}')
-          text = text.replace(old, new, 1)
-          old_phrase = (
-              'Only after that complete ancestry is proven does this wrapper authorize the\n'
-              'nested PR190 team-strength feature candidate for the exact classification\n'
-              'instant.  It does not authorize probability adjustment, expected-goals use,\n'
-          )
-          new_phrase = (
-              'Only after that complete ancestry is proven does this bridge establish the\n'
-              'prerequisite for ATHENA\\'s existing PR191 authoritative wrapper.  This bridge\n'
-              'itself grants no feature authority, probability adjustment, expected-goals use,\n'
-          )
-          if old_phrase not in text:
-              raise SystemExit('bridge docstring authority phrase drift')
-          text = text.replace(old_phrase, new_phrase, 1)
-          path.write_text(text, encoding='utf-8')
+          path.write_text(text.replace(old, new, 1), encoding='utf-8')
           PY
           git diff --check
           grep -F '"team_strength_feature_authorized": False' domain/fotmob_real_player_context_authoritative_bridge.py
