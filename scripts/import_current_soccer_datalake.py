@@ -153,6 +153,12 @@ def safe_float(value: Any) -> float | None:
         return None
 
 
+def safe_bool(value: Any) -> int | None:
+    if value is None or pd.isna(value):
+        return None
+    return int(bool(value))
+
+
 def classify_league(row: dict[str, Any]) -> str | None:
     fd_code = safe_text(row.get("fd_code"))
     if fd_code and fd_code.upper() in FOOTBALL_DATA_CODES:
@@ -594,7 +600,9 @@ def import_deep_players(
             event_batch.clear()
         warehouse.conn.commit()
 
-    for row in merged.to_dict(orient="records"):
+    merged_columns = list(merged.columns)
+    for values in merged.itertuples(index=False, name=None):
+        row = dict(zip(merged_columns, values))
         fixture_id = safe_int(row.get("fixture_id"))
         if fixture_id is None:
             continue
@@ -619,8 +627,8 @@ def import_deep_players(
                 player_id,
                 safe_int(row.get("number")),
                 safe_text(row.get("position")),
-                int(bool(row.get("is_starter"))) if row.get("is_starter") is not None else None,
-                int(bool(row.get("captain"))) if row.get("captain") is not None else None,
+                safe_bool(row.get("is_starter")),
+                safe_bool(row.get("captain")),
                 safe_int(row.get("minutes")),
                 json.dumps({"rating": safe_float(row.get("rating"))}, ensure_ascii=False),
             )
