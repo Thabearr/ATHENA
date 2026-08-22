@@ -14,6 +14,7 @@ import json
 import re
 import sqlite3
 import sys
+import unicodedata
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Iterable, Iterator
@@ -45,6 +46,7 @@ MATCH_FIELDS = (
     "away_corners", "home_fouls", "away_fouls", "home_yellows", "away_yellows", "home_reds",
     "away_reds", "extra_json",
 )
+TEAM_DESIGNATORS = {"fc", "afc", "cf", "sc", "ac", "as"}
 
 
 def now() -> str:
@@ -91,11 +93,11 @@ def outcome(home: int | None, away: int | None) -> str | None:
 
 
 def norm_team(name: str) -> str:
-    text = " ".join(str(name).casefold().replace("&", "and").split())
-    for suffix in (" fc", " afc", " cf"):
-        if text.endswith(suffix):
-            text = text[:-len(suffix)]
-    return text
+    """Return a conservative cross-source team identity for canonical match keys."""
+    text = unicodedata.normalize("NFKD", str(name or ""))
+    text = text.encode("ascii", "ignore").decode("ascii").casefold().replace("&", " and ")
+    tokens = re.sub(r"[^a-z0-9]+", " ", text).split()
+    return " ".join(token for token in tokens if token not in TEAM_DESIGNATORS)
 
 
 def digest(*parts: Any, size: int = 32) -> str:
@@ -138,15 +140,29 @@ class Downloader:
 
 
 class Warehouse:
-    def __init__(self, path: Path):
+    def __init__(self, path: Path, *, commit_every: int = 1000):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys=ON")
+        self.conn.execute("PRAGMA journal_mode=WAL")
+        self.conn.execute("PRAGMA synchronous=NORMAL")
+        self._commit_every = max(1, int(commit_every))
+        self._pending_match_writes = 0
+
+    def flush(self) -> None:
+        self.conn.commit()
+        self._pending_match_writes = 0
 
     def close(self) -> None:
-        self.conn.commit(); self.conn.close()
+        self.flush()
+        self.conn.close()
+
+    def _record_match_write(self) -> None:
+        self._pending_match_writes += 1
+        if self._pending_match_writes >= self._commit_every:
+            self.flush()
 
     def initialize(self) -> None:
         self.conn.executescript(SCHEMA.read_text(encoding="utf-8"))
@@ -171,7 +187,7 @@ class Warehouse:
                  comp.rank, comp.tier, json.dumps(comp.aliases, ensure_ascii=False)),
             )
         self.conn.execute("INSERT OR REPLACE INTO warehouse_meta(key,value) VALUES('schema_version','1')")
-        self.conn.commit()
+        self.flush()
 
     def priority(self, source: str) -> int:
         row = self.conn.execute("SELECT source_priority FROM warehouse_sources WHERE source_key=?", (source,)).fetchone()
@@ -187,6 +203,35 @@ class Warehouse:
             (source, str(source_id)),
         ).fetchone()
         return row[0] if row else None
+
+    def _merge_field(self, key: str, field: str, incoming: Any, source: str) -> None:
+        if incoming in (None, ""):
+            return
+        existing = self.conn.execute(
+            f"SELECT {field} FROM warehouse_matches WHERE match_key=?", (key,)
+        ).fetchone()
+        if not existing:
+            return
+        current = existing[field]
+        prov = self.conn.execute(
+            "SELECT source_key,source_priority FROM warehouse_field_provenance WHERE match_key=? AND field_name=?",
+            (key, field),
+        ).fetchone()
+        incoming_priority = self.priority(source)
+        current_priority = int(prov["source_priority"]) if prov else 999
+        if current in (None, "") or incoming_priority < current_priority:
+            if current not in (None, "") and str(current) != str(incoming):
+                self._conflict(key, field, current, incoming, prov["source_key"] if prov else None, source)
+            self.conn.execute(
+                f"UPDATE warehouse_matches SET {field}=?,updated_at=? WHERE match_key=?",
+                (incoming, now(), key),
+            )
+            self.conn.execute(
+                "INSERT OR REPLACE INTO warehouse_field_provenance(match_key,field_name,source_key,source_priority) VALUES(?,?,?,?)",
+                (key, field, source, incoming_priority),
+            )
+        elif str(current) != str(incoming):
+            self._conflict(key, field, current, incoming, prov["source_key"] if prov else None, source)
 
     def upsert_match(self, row: dict[str, Any], *, source: str | None = None, source_id: str | None = None,
                      source_url: str | None = None, coverage: dict[str, int] | None = None,
@@ -242,7 +287,7 @@ class Warehouse:
              cov.get("has_events",0), cov.get("has_cards",0), cov.get("has_lineups",0), cov.get("has_coaches",0),
              cov.get("has_officials",0), cov.get("has_advanced_stats",0)),
         )
-        self.conn.commit()
+        self._record_match_write()
         return key
 
     def _conflict(self, key: str, field: str, old: Any, new: Any, old_source: str | None, new_source: str) -> None:
@@ -273,14 +318,14 @@ class Warehouse:
         if match:
             field = "home_coach" if norm_team(team)==norm_team(match["home_team"]) else "away_coach" if norm_team(team)==norm_team(match["away_team"]) else None
             if field:
-                self.conn.execute(f"UPDATE warehouse_matches SET {field}=COALESCE({field},?) WHERE match_key=?",(name,key))
+                self._merge_field(key, field, name, source)
 
     def official(self, key: str, source: str, name: str, official_id: str | None = None, nationality: str | None = None) -> None:
         self.conn.execute(
             "INSERT OR REPLACE INTO warehouse_officials(official_key,match_key,source_key,official_name,official_id,nationality) VALUES(?,?,?,?,?,?)",
             ("o_"+digest(source,key,name),key,source,name,official_id,nationality),
         )
-        self.conn.execute("UPDATE warehouse_matches SET referee=COALESCE(referee,?) WHERE match_key=?",(name,key))
+        self._merge_field(key, "referee", name, source)
 
     def refresh_quality(self) -> None:
         for row in self.conn.execute("SELECT match_key,home_score_ft,away_score_ft,home_score_ht,away_score_ht,referee,home_coach,away_coach FROM warehouse_matches"):
@@ -290,7 +335,7 @@ class Warehouse:
             rich = ft and ht and events and row["referee"] and row["home_coach"] and row["away_coach"]
             quality = "RICH" if rich else "STANDARD" if ft and (ht or events) else "BASIC" if ft else "PARTIAL"
             self.conn.execute("UPDATE warehouse_matches SET data_quality=? WHERE match_key=?",(quality,row["match_key"]))
-        self.conn.commit()
+        self.flush()
 
     def export(self, directory: Path) -> None:
         directory.mkdir(parents=True, exist_ok=True)
@@ -361,7 +406,7 @@ def import_martj42(wh: Warehouse, dl: Downloader) -> None:
         if key:
             wh.conn.execute("INSERT OR REPLACE INTO warehouse_penalty_shootouts(shootout_key,match_key,source_key,winner,first_shooter,details_json) VALUES(?,?,?,?,?,?)",
                             ("p_"+digest(key,"martj42"),key,"martj42_international",clean(r.get("winner")),clean(r.get("first_shooter")),json.dumps(r)))
-    wh.conn.commit()
+    wh.flush()
 
 
 def import_worldcup(wh: Warehouse, dl: Downloader) -> None:
@@ -417,7 +462,7 @@ def import_worldcup(wh: Warehouse, dl: Downloader) -> None:
     for r in csv_rows(dl.text(referee_url,"fjelstul/referee_appearances.csv")):
         key=match_ids.get(r.get("match_id","")); name=player_name(r)
         if key and name: wh.official(key,"fjelstul_worldcup",name,r.get("referee_id"),clean(r.get("country_name")))
-    wh.conn.commit()
+    wh.flush()
 
 
 FD_DATE_FORMATS=("%d/%m/%Y","%d/%m/%y","%Y-%m-%d")
@@ -454,6 +499,7 @@ def import_football_data(wh:Warehouse, dl:Downloader, start:int, end:int, codes:
                 row["extra_json"]=json.dumps({k:v for k,v in r.items() if k not in known and v not in (None,"")},ensure_ascii=False)
                 wh.upsert_match(row,source="football_data_uk",source_id=digest(code,date,r["HomeTeam"],r["AwayTeam"]),source_url=url,
                                 coverage={"has_ft":1,"has_ht":int(row["home_score_ht"] is not None),"has_cards":int(row["home_yellows"] is not None),"has_officials":int(bool(row["referee"])),"has_advanced_stats":int(row["home_shots"] is not None)})
+    wh.flush()
 
 
 OF_REPOS=("champions-league","england","espana","italy","deutschland","france","europe")
@@ -508,6 +554,7 @@ def import_openfootball(wh:Warehouse, dl:Downloader) -> None:
                 for row in parse_openfootball_text(text,name):
                     wh.upsert_match(row,source="openfootball",source_id=digest(name,row["match_date"],row["home_team"],row["away_team"]),source_url=url,
                                     coverage={"has_ft":1,"has_ht":int(row["home_score_ht"] is not None)})
+    wh.flush()
 
 
 def arguments() -> argparse.Namespace:
