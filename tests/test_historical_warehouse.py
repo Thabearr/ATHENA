@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from config.competition_review_priority import DEFAULT_COMPETITION_REVIEW_PRIORITY
 from domain.historical_competitions import competition_by_key, resolve_competition
 from scripts.audit_historical_hierarchy_coverage import (
     REQUIRED_HIERARCHY_KEYS,
@@ -26,6 +27,16 @@ from scripts.normalize_historical_score_periods import normalize_martj42
 def test_international_qualification_not_misclassified():
     assert resolve_competition("FIFA World Cup qualification", "international").key == "intl_world_cup_qual"
     assert resolve_competition("FIFA World Cup", "international").key == "intl_world_cup"
+
+
+def test_historical_registry_contains_every_live_review_priority_competition():
+    missing = []
+    for entry in DEFAULT_COMPETITION_REVIEW_PRIORITY:
+        resolved = resolve_competition(entry.canonical_name, "club")
+        if resolved.key == "other_club_competition":
+            missing.append(entry.canonical_name)
+    assert missing == []
+    assert resolve_competition("Scottish Premiership", "club").key == "sco_premiership"
 
 
 def test_openfootball_parser_reads_ht_and_round():
@@ -76,6 +87,7 @@ def test_openfootball_calendar_year_mls_does_not_roll_back():
 def test_global_backbone_maps_priority_leagues():
     assert classify({"competition": "Saudi Arabia", "level": "national", "continent": "Asia"}) == ("club", "sau_proleague")
     assert classify({"competition": "USA", "level": "national", "continent": "North America"}) == ("club", "usa_mls")
+    assert classify({"competition": "Scotland", "level": "national", "continent": "Europe"}) == ("club", "sco_premiership")
     assert classify({"competition": "Austria", "level": "national", "continent": "Europe"}) == ("club", "other_euro_topflight")
     assert classify({"competition": "Brazil", "level": "national", "continent": "South America"}) is None
 
@@ -97,6 +109,9 @@ def test_current_datalake_classifies_hierarchy_leagues_and_cups():
         {"name": "Major League Soccer", "country": "USA", "fd_code": None}
     ) == "usa_mls"
     assert classify_datalake_league(
+        {"name": "Premiership", "country": "Scotland", "fd_code": "SC0"}
+    ) == "sco_premiership"
+    assert classify_datalake_league(
         {"name": "FA Cup", "country": "England", "fd_code": None}
     ) == "eng_fa_cup"
     assert classify_datalake_league(
@@ -111,6 +126,7 @@ def test_schochastics_goal_event_registry_is_unambiguous():
     assert GOAL_EVENT_FILES["bundesliga.csv"] == "ger_bundesliga"
     assert "aut-bundesliga.csv" not in GOAL_EVENT_FILES
     assert GOAL_EVENT_FILES["eng-premier-league.csv"] == "eng_premier"
+    assert GOAL_EVENT_FILES["sco-premiership.csv"] == "sco_premiership"
     assert GOAL_EVENT_FILES["champions-league.csv"] == "uefa_ucl"
     assert parse_game("Leicester City vs. Sunderland 5:2") == (
         "Leicester City",
