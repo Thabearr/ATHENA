@@ -302,3 +302,24 @@ SELECT
     m.data_quality
 FROM warehouse_matches m
 LEFT JOIN warehouse_competitions c ON c.competition_key = m.competition_key;
+
+-- Raw warehouse_events deliberately keeps every source's evidence. This view is
+-- the safe aggregation/model-facing surface: for each match + event type, only
+-- the strongest available source contributes incidents. Complementary event
+-- types from weaker sources are still retained when no stronger source provides
+-- that same event type.
+CREATE VIEW IF NOT EXISTS warehouse_events_preferred AS
+SELECT e.*
+FROM warehouse_events e
+JOIN warehouse_sources s ON s.source_key = e.source_key
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM warehouse_events e2
+    JOIN warehouse_sources s2 ON s2.source_key = e2.source_key
+    WHERE e2.match_key = e.match_key
+      AND e2.event_type = e.event_type
+      AND (
+          s2.source_priority < s.source_priority
+          OR (s2.source_priority = s.source_priority AND e2.source_key < e.source_key)
+      )
+);
