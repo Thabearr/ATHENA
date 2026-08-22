@@ -149,3 +149,27 @@ def test_fast_upsert_preserves_source_priority_and_conflicts(tmp_path: Path):
         (key,),
     ).fetchone()[0] == 3
     warehouse.close()
+
+
+def test_source_match_identity_lookup_is_indexed(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+
+    indexes = {
+        row["name"]
+        for row in warehouse.conn.execute("PRAGMA index_list('warehouse_match_sources')")
+    }
+    assert "idx_wh_sources_source_id" in indexes
+
+    plan = " ".join(
+        str(part)
+        for row in warehouse.conn.execute(
+            """EXPLAIN QUERY PLAN
+               SELECT match_key FROM warehouse_match_sources
+               WHERE source_key=? AND source_match_id=? LIMIT 1""",
+            ("martj42_international", "example-source-id"),
+        )
+        for part in row
+    )
+    assert "idx_wh_sources_source_id" in plan
+    warehouse.close()
