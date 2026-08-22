@@ -5,6 +5,7 @@ import pytest
 from scripts.sportybet_direct_share_bridge import (
     CREATE_PATH,
     LOAD_PREFIX,
+    SPORTYBET_COUNTRY_PREFIX,
     SPORTYBET_OPER_ID,
     SportyBetDirectShareError,
     extract_share_code,
@@ -12,10 +13,11 @@ from scripts.sportybet_direct_share_bridge import (
 )
 
 
-def test_contract_constants_match_preserved_client_contract():
+def test_contract_constants_match_preserved_client_network_contract():
+    assert SPORTYBET_COUNTRY_PREFIX == "ng"
     assert SPORTYBET_OPER_ID == "2"
-    assert CREATE_PATH == "/orders/share?throwInvalidEvent=true"
-    assert LOAD_PREFIX == "/orders/share/"
+    assert CREATE_PATH == "/api/ng/orders/share?throwInvalidEvent=true"
+    assert LOAD_PREFIX == "/api/ng/orders/share/"
 
 
 def test_validate_one_provider_native_selection():
