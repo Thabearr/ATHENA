@@ -53,6 +53,7 @@ CLUB_COMPETITIONS: tuple[Competition, ...] = (
     Competition("por_primeira", "Primeira Liga", "club", "Portugal", "UEFA", "league", 110, "B2", ("Liga Portugal", "P1")),
     Competition("tur_superlig", "Süper Lig", "club", "Turkey", "UEFA", "league", 120, "B2", ("Super Lig", "T1")),
     Competition("bel_proleague", "Belgian Pro League", "club", "Belgium", "UEFA", "league", 130, "B2", ("First Division A", "Jupiler Pro League", "B1")),
+    Competition("sco_premiership", "Scottish Premiership", "club", "Scotland", "UEFA", "league", 135, "B3", ("Premiership", "Scottish Premier League", "SC0")),
     Competition("nor_eliteserien", "Eliteserien", "club", "Norway", "UEFA", "league", 140, "B3", ("Tippeligaen",)),
     Competition("den_superliga", "Danish Superliga", "club", "Denmark", "UEFA", "league", 150, "B3", ("Superligaen", "Danish Super League")),
     Competition("swe_allsvenskan", "Allsvenskan", "club", "Sweden", "UEFA", "league", 160, "B3"),
@@ -139,7 +140,7 @@ SOURCES: tuple[HistoricalSource, ...] = (
         "schochastics/football-data",
         True,
         35,
-        "Scorer/minute files plus selected cards, substitutions and metadata for major competitions.",
+        "Scorer identities and goal-minute history for selected major leagues and cups.",
     ),
     HistoricalSource(
         "openfootball",
@@ -218,6 +219,7 @@ FOOTBALL_DATA_CODES = {
     "T1": "tur_superlig",
     "B1": "bel_proleague",
     "G1": "gre_superleague",
+    "SC0": "sco_premiership",
 }
 
 
