@@ -1,5 +1,8 @@
+import sys
 from pathlib import Path
 
+import scripts.build_historical_warehouse as build_historical_warehouse
+import scripts.run_with_fast_history_quality as fast_runner
 from scripts.build_historical_warehouse import Warehouse
 from scripts.run_with_fast_history_quality import fast_upsert_match
 
@@ -122,3 +125,28 @@ def test_fast_upsert_keeps_cross_source_club_home_away_distinct(tmp_path: Path):
     assert reverse_key != first_key
     assert wh.conn.execute("SELECT COUNT(*) FROM warehouse_matches").fetchone()[0] == 2
     wh.close()
+
+
+def test_runner_invokes_imported_build_module_instead_of_reexecuting_it(monkeypatch):
+    calls: list[str] = []
+    target = Path(build_historical_warehouse.__file__).resolve()
+
+    monkeypatch.setattr(sys, "argv", [str(fast_runner.__file__), str(target), "--audit"])
+    monkeypatch.setattr(
+        fast_runner,
+        "install_fast_warehouse_helpers",
+        lambda: calls.append("install"),
+    )
+    monkeypatch.setattr(
+        build_historical_warehouse,
+        "main",
+        lambda: calls.append("build-main") or 0,
+    )
+
+    def should_not_reexecute(*args, **kwargs):
+        raise AssertionError("build_historical_warehouse.py must not be re-executed via runpy")
+
+    monkeypatch.setattr(fast_runner.runpy, "run_path", should_not_reexecute)
+
+    assert fast_runner.main() == 0
+    assert calls == ["install", "build-main"]
