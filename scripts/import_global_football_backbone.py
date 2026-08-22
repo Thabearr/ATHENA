@@ -36,10 +36,11 @@ SOURCE_KEY = "schochastics_global"
 COUNTRY_KEYS = {
     "england": "eng_premier", "spain": "esp_laliga", "italy": "ita_serie_a", "germany": "ger_bundesliga",
     "france": "fra_ligue1", "netherlands": "ned_eredivisie", "holland": "ned_eredivisie", "portugal": "por_primeira",
-    "turkey": "tur_superlig", "belgium": "bel_proleague", "norway": "nor_eliteserien", "denmark": "den_superliga",
-    "sweden": "swe_allsvenskan", "switzerland": "sui_superleague", "greece": "gre_superleague",
-    "saudi arabia": "sau_proleague", "saudi-arabia": "sau_proleague", "usa": "usa_mls",
-    "united states": "usa_mls", "united states of america": "usa_mls",
+    "turkey": "tur_superlig", "belgium": "bel_proleague", "scotland": "sco_premiership",
+    "norway": "nor_eliteserien", "denmark": "den_superliga", "sweden": "swe_allsvenskan",
+    "switzerland": "sui_superleague", "greece": "gre_superleague", "saudi arabia": "sau_proleague",
+    "saudi-arabia": "sau_proleague", "usa": "usa_mls", "united states": "usa_mls",
+    "united states of america": "usa_mls",
 }
 
 UEFA_NAMES = {
