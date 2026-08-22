@@ -1,9 +1,10 @@
 from pathlib import Path
 
 from domain.historical_competitions import resolve_competition
-from scripts.build_historical_warehouse import Warehouse, parse_openfootball_text
+from scripts.build_historical_warehouse import Warehouse
 from scripts.enrich_statsbomb_history import goal_side
-from scripts.import_global_football_backbone import classify
+from scripts.import_global_football_backbone import classify, season_for
+from scripts.import_openfootball_history import parse_openfootball_text
 
 
 def test_international_qualification_not_misclassified():
@@ -30,11 +31,30 @@ def test_openfootball_parser_reads_ht_and_round():
     assert rows[0]["stage"] == "League, Matchday 1"
 
 
+def test_openfootball_january_rolls_into_second_season_year():
+    text = """= UEFA Champions League 2025/26
+
+▪ League, Matchday 7
+  Wed Jan 21
+    21:00  Example FC (ENG) v Sample CF (ESP)  2-1 (1-0)
+"""
+    row = next(parse_openfootball_text(text, "2025-26/cl.txt"))
+    assert row["season"] == "2025-26"
+    assert row["match_date"] == "2026-01-21"
+
+
 def test_global_backbone_maps_priority_leagues():
     assert classify({"competition": "Saudi Arabia", "level": "national", "continent": "Asia"}) == ("club", "sau_proleague")
     assert classify({"competition": "USA", "level": "national", "continent": "North America"}) == ("club", "usa_mls")
     assert classify({"competition": "Austria", "level": "national", "continent": "Europe"}) == ("club", "other_euro_topflight")
     assert classify({"competition": "Brazil", "level": "national", "continent": "South America"}) is None
+
+
+def test_calendar_year_leagues_keep_calendar_season_labels():
+    assert season_for("2025-05-10", "club", "usa_mls") == "2025"
+    assert season_for("2025-05-10", "club", "nor_eliteserien") == "2025"
+    assert season_for("2025-05-10", "club", "swe_allsvenskan") == "2025"
+    assert season_for("2025-05-10", "club", "eng_premier") == "2024-25"
 
 
 def test_statsbomb_goal_side_handles_own_goal():
