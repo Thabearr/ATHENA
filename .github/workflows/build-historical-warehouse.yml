@@ -1,0 +1,207 @@
+name: Build Historical Football Warehouse
+
+on:
+  workflow_dispatch:
+    inputs:
+      include_statsbomb:
+        description: "Enrich supported matches with StatsBomb events and lineups"
+        required: true
+        default: true
+        type: boolean
+      start_year:
+        description: "Football-Data.co.uk first season start year"
+        required: true
+        default: "1993"
+        type: string
+      end_year:
+        description: "Football-Data.co.uk last season start year"
+        required: true
+        default: "2026"
+        type: string
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-historical-warehouse.yml"
+      - "database/historical_warehouse_schema.sql"
+      - "domain/historical_competitions.py"
+      - "scripts/audit_historical_data_integrity.py"
+      - "scripts/audit_historical_hierarchy_coverage.py"
+      - "scripts/build_historical_warehouse.py"
+      - "scripts/historical_quality.py"
+      - "scripts/run_with_fast_history_quality.py"
+      - "scripts/import_current_soccer_datalake.py"
+      - "scripts/register_datalake_team_aliases.py"
+      - "scripts/import_football_data_history.py"
+      - "scripts/import_global_football_backbone.py"
+      - "scripts/import_openfootball_history.py"
+      - "scripts/enrich_schochastics_goal_events.py"
+      - "scripts/enrich_statsbomb_history.py"
+      - "scripts/normalize_historical_score_periods.py"
+      - "tests/test_historical_data_integrity.py"
+      - "tests/test_historical_warehouse.py"
+      - "tests/test_historical_hierarchy_freshness.py"
+      - "tests/test_global_backbone_retention.py"
+      - "tests/test_historical_quality_refresh.py"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-historical-warehouse.yml"
+      - "database/historical_warehouse_schema.sql"
+      - "domain/historical_competitions.py"
+      - "scripts/audit_historical_data_integrity.py"
+      - "scripts/audit_historical_hierarchy_coverage.py"
+      - "scripts/build_historical_warehouse.py"
+      - "scripts/historical_quality.py"
+      - "scripts/run_with_fast_history_quality.py"
+      - "scripts/import_current_soccer_datalake.py"
+      - "scripts/register_datalake_team_aliases.py"
+      - "scripts/import_football_data_history.py"
+      - "scripts/import_global_football_backbone.py"
+      - "scripts/import_openfootball_history.py"
+      - "scripts/enrich_schochastics_goal_events.py"
+      - "scripts/enrich_statsbomb_history.py"
+      - "scripts/normalize_historical_score_periods.py"
+      - "tests/test_historical_data_integrity.py"
+      - "tests/test_historical_warehouse.py"
+      - "tests/test_historical_hierarchy_freshness.py"
+      - "tests/test_global_backbone_retention.py"
+      - "tests/test_historical_quality_refresh.py"
+
+concurrency:
+  group: historical-warehouse-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build-history:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: Checkout Athena
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install historical-data dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install requests pandas pyarrow pytest
+
+      - name: Resolve build inputs
+        shell: bash
+        run: |
+          echo "START_YEAR=${{ github.event.inputs.start_year || '1993' }}" >> "$GITHUB_ENV"
+          echo "END_YEAR=${{ github.event.inputs.end_year || '2026' }}" >> "$GITHUB_ENV"
+
+      - name: Run warehouse tests
+        env:
+          PYTHONPATH: .
+        run: >-
+          pytest -q
+          tests/test_historical_warehouse.py
+          tests/test_historical_hierarchy_freshness.py
+          tests/test_global_backbone_retention.py
+          tests/test_historical_quality_refresh.py
+          tests/test_historical_data_integrity.py
+
+      - name: Import current hierarchy fixtures, stats, coaches and players
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/import_current_soccer_datalake.py
+          --deep-players
+
+      - name: Register deterministic Football-Data team aliases
+        run: python scripts/register_datalake_team_aliases.py
+
+      - name: Import 1.2M-match global historical backbone
+        run: python scripts/import_global_football_backbone.py
+
+      - name: Import senior internationals and World Cup enrichment
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/build_historical_warehouse.py
+          --martj42
+          --worldcup
+          --audit
+
+      - name: Import Football-Data history through team crosswalk
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/import_football_data_history.py
+          --start-year "$START_YEAR"
+          --end-year "$END_YEAR"
+
+      - name: Import OpenFootball league, cup, UEFA and international history
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/import_openfootball_history.py
+
+      - name: Enrich major competitions with scorer and goal-minute history
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/enrich_schochastics_goal_events.py
+
+      - name: Enrich StatsBomb open-data matches
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.include_statsbomb }}
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/enrich_statsbomb_history.py
+
+      - name: Normalize regulation, extra-time and shootout scores
+        run: python scripts/normalize_historical_score_periods.py
+
+      - name: Export CSV tables and final audit
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/build_historical_warehouse.py
+          --export-csv data/history_exports
+          --audit
+
+      - name: Enforce Athena hierarchy coverage
+        run: >-
+          python scripts/audit_historical_hierarchy_coverage.py
+          --strict
+          --recent-since 2024-01-01
+          --output data/history_exports/hierarchy_coverage.json
+
+      - name: Enforce cross-source data integrity
+        run: >-
+          python scripts/audit_historical_data_integrity.py
+          --strict
+          --output data/history_exports/data_integrity.json
+
+      - name: SQLite integrity check
+        run: |
+          python - <<'PY'
+          import sqlite3
+          db = sqlite3.connect('database/athena_history.db')
+          result = db.execute('PRAGMA integrity_check').fetchone()[0]
+          print('SQLite integrity_check:', result)
+          if result != 'ok':
+              raise SystemExit(1)
+          PY
+
+      - name: Package CSV exports
+        run: tar -czf athena-history-csv.tar.gz data/history_exports
+
+      - name: Upload SQLite warehouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-history-sqlite
+          path: database/athena_history.db
+          compression-level: 6
+          retention-days: 30
+
+      - name: Upload CSV warehouse
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-history-csv
+          path: athena-history-csv.tar.gz
+          compression-level: 0
+          retention-days: 30

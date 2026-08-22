@@ -2,6 +2,7 @@ requests
 httpx
 aiohttp
 pandas
+pyarrow
 numpy
 scipy
 scikit-learn
