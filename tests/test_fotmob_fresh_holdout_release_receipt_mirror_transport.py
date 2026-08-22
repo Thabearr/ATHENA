@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
@@ -73,11 +75,33 @@ def test_transport_install_is_idempotent_and_refuses_unknown_hook(
         transport._install_reviewed_actions_artifact_transport()
 
 
+def test_transport_module_entrypoint_imports_from_repo_root() -> None:
+    repository_root = Path(__file__).resolve().parents[1]
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
+            "--help",
+        ],
+        cwd=repository_root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--repository" in result.stdout
+    assert "--run-id" in result.stdout
+
+
 def test_workflow_pins_and_invokes_reviewed_transport() -> None:
     workflow = Path(
         ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
     ).read_text(encoding="utf-8")
     assert "ddabb6ae83cbe6c81c9264119a121a54715df960" in workflow
     assert "a9e6414288e98e9788b987aa9dd10ac35cc2d4cc" in workflow
-    assert "python scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py" in workflow
+    assert (
+        "python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror" in workflow
+    )
+    assert "python scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py" not in workflow
     assert "Accept: application/octet-stream" not in workflow
