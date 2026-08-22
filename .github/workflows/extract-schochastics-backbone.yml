@@ -105,3 +105,5 @@ jobs:
             backbone-summary.txt
           compression-level: 0
           retention-days: 30
+
+# Observable extraction trigger for delivery handoff.
