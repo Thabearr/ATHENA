@@ -149,14 +149,28 @@ def _request_json(
     return parsed, raw, status
 
 
-def extract_share_code(payload: dict[str, Any]) -> str:
+def _success_data(payload: dict[str, Any], label: str) -> dict[str, Any]:
     if payload.get("bizCode") != 10000:
         raise SportyBetDirectShareError(
-            f"SportyBet bizCode was not SUCCESS: {payload.get('bizCode')!r}"
+            f"{label} bizCode was not SUCCESS: {payload.get('bizCode')!r}"
         )
     data = payload.get("data")
     if type(data) is not dict:
-        raise SportyBetDirectShareError("SportyBet success response omitted data object")
+        raise SportyBetDirectShareError(f"{label} success response omitted data object")
+    unavailable = data.get("unavailableOutcomes")
+    if type(unavailable) is not list:
+        raise SportyBetDirectShareError(
+            f"{label} unavailableOutcomes must be an array"
+        )
+    if unavailable:
+        raise SportyBetDirectShareError(
+            f"{label} contains {len(unavailable)} unavailable outcomes"
+        )
+    return data
+
+
+def extract_share_code(payload: dict[str, Any]) -> str:
+    data = _success_data(payload, "create")
     for key in ("shareCode", "bookingCode", "code"):
         value = data.get(key)
         if type(value) is str and _CODE_RE.fullmatch(value):
@@ -164,6 +178,84 @@ def extract_share_code(payload: dict[str, Any]) -> str:
     raise SportyBetDirectShareError(
         "SportyBet success response omitted recognized share-code field"
     )
+
+
+def _identity(row: dict[str, Any]) -> tuple[str, str, str, str | None]:
+    return (
+        str(row.get("eventId")),
+        str(row.get("marketId")),
+        str(row.get("outcomeId")),
+        None if row.get("specifier") is None else str(row.get("specifier")),
+    )
+
+
+def _validate_exact_roundtrip(
+    *,
+    requested: tuple[dict[str, str], ...],
+    create_payload: dict[str, Any],
+    load_payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    create_data = _success_data(create_payload, "create")
+    load_data = _success_data(load_payload, "load")
+
+    create_outcomes = create_data.get("outcomes")
+    load_outcomes = load_data.get("outcomes")
+    if type(create_outcomes) is not list or len(create_outcomes) != len(requested):
+        raise SportyBetDirectShareError(
+            "create accepted-outcome count does not equal requested selection count"
+        )
+    if type(load_outcomes) is not list or len(load_outcomes) != len(requested):
+        raise SportyBetDirectShareError(
+            "load accepted-outcome count does not equal requested selection count"
+        )
+
+    ticket = load_data.get("ticket")
+    if type(ticket) is not dict or type(ticket.get("selections")) is not list:
+        raise SportyBetDirectShareError("load response omitted ticket selections")
+    loaded_rows = ticket["selections"]
+    if len(loaded_rows) != len(requested):
+        raise SportyBetDirectShareError(
+            "round-trip ticket selection count does not equal requested selection count"
+        )
+    if any(type(row) is not dict for row in loaded_rows):
+        raise SportyBetDirectShareError("round-trip ticket selection must be object")
+
+    requested_ids = sorted(_identity(row) for row in requested)
+    loaded_ids = sorted(_identity(row) for row in loaded_rows)
+    if requested_ids != loaded_ids:
+        raise SportyBetDirectShareError(
+            "round-trip provider-native selection identities do not equal request"
+        )
+    return create_data, load_data
+
+
+def _combined_odds(outcomes: list[Any]) -> float:
+    product = 1.0
+    for event in outcomes:
+        if type(event) is not dict:
+            raise SportyBetDirectShareError("accepted outcome entry must be object")
+        markets = event.get("markets")
+        if type(markets) is not list or len(markets) != 1 or type(markets[0]) is not dict:
+            raise SportyBetDirectShareError(
+                "accepted event must contain exactly one market"
+            )
+        selections = markets[0].get("outcomes")
+        if (
+            type(selections) is not list
+            or len(selections) != 1
+            or type(selections[0]) is not dict
+        ):
+            raise SportyBetDirectShareError(
+                "accepted market must contain exactly one outcome"
+            )
+        try:
+            odds = float(selections[0]["odds"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SportyBetDirectShareError("accepted outcome has invalid odds") from exc
+        if odds <= 1.0:
+            raise SportyBetDirectShareError("accepted outcome odds must exceed 1.0")
+        product *= odds
+    return product
 
 
 def create_and_roundtrip(
@@ -178,19 +270,29 @@ def create_and_roundtrip(
         path=CREATE_PATH, method="POST", payload=request_payload
     )
     (output_dir / "create-response.raw.json").write_bytes(create_raw)
+    if create_status != 200:
+        raise SportyBetDirectShareError(f"create returned HTTP {create_status}")
     code = extract_share_code(create_payload)
 
     load_payload, load_raw, load_status = _request_json(
         path=LOAD_PREFIX + code, method="GET"
     )
     (output_dir / "load-response.raw.json").write_bytes(load_raw)
-    if load_payload.get("bizCode") != 10000:
-        raise SportyBetDirectShareError(
-            f"round-trip load failed with bizCode {load_payload.get('bizCode')!r}"
-        )
+    if load_status != 200:
+        raise SportyBetDirectShareError(f"load returned HTTP {load_status}")
+
+    create_data, load_data = _validate_exact_roundtrip(
+        requested=selections,
+        create_payload=create_payload,
+        load_payload=load_payload,
+    )
+    combined_odds = _combined_odds(load_data["outcomes"])
+    share_url = load_data.get("shareURL") or create_data.get("shareURL")
+    if type(share_url) is not str or not share_url.startswith("http"):
+        raise SportyBetDirectShareError("SportyBet response omitted shareURL")
 
     receipt = {
-        "schema": "athena-sportybet-direct-share-proof-v1",
+        "schema": "athena-sportybet-direct-share-proof-v2",
         "observed_at": _utc_now(),
         "provider": "SportyBet Nigeria",
         "provider_origin": SPORTYBET_ORIGIN,
@@ -205,6 +307,11 @@ def create_and_roundtrip(
         "load_http_status": load_status,
         "load_response_sha256": _sha256(load_raw),
         "shareCode": code,
+        "shareURL": share_url,
+        "combined_odds": format(combined_odds, ".12g"),
+        "exact_roundtrip_selection_identity_verified": True,
+        "create_unavailable_outcomes": 0,
+        "load_unavailable_outcomes": 0,
         "sportybet_login_used": False,
         "sportybet_cookie_used": False,
         "sportybet_wallet_used": False,
@@ -233,7 +340,10 @@ def main(argv: list[str] | None = None) -> int:
         json.dumps(
             {
                 "shareCode": receipt["shareCode"],
+                "shareURL": receipt["shareURL"],
                 "selection_count": receipt["selection_count"],
+                "combined_odds": receipt["combined_odds"],
+                "exact_roundtrip_selection_identity_verified": True,
                 "wager_placed": False,
             },
             sort_keys=True,
