@@ -8,7 +8,8 @@ will replace/augment its fields where they overlap.
 Athena's named hierarchy competitions keep dedicated competition keys. Other
 European and global top-flight leagues are retained in catch-all buckets rather
 than discarded, preserving the breadth of the 1.2M-match source while keeping
-hierarchy coverage auditable.
+hierarchy coverage auditable. Catch-all fixture identity includes the original
+source competition so same-named clubs in different countries cannot collide.
 """
 from __future__ import annotations
 
@@ -32,6 +33,7 @@ from scripts.build_historical_warehouse import (  # noqa: E402
     clean,
     digest,
     match_key,
+    norm_team,
     outcome,
 )
 
@@ -61,7 +63,8 @@ INTERNATIONAL_NAMES = {
 }
 
 CALENDAR_YEAR_KEYS = {"usa_mls", "nor_eliteserien", "swe_allsvenskan"}
-CATCH_ALL_KEYS = {"other_euro_topflight", "other_global_topflight"}
+DOMESTIC_CATCH_ALL_KEYS = {"other_euro_topflight", "other_global_topflight"}
+CATCH_ALL_KEYS = {*DOMESTIC_CATCH_ALL_KEYS, "intl_other"}
 
 
 def normalized(value: Any) -> str:
@@ -124,6 +127,27 @@ def season_for(date_value: Any, scope: str, competition_key: str | None = None) 
     return f"{start}-{str((start + 1) % 100).zfill(2)}"
 
 
+def season_for_import(date_value: Any, scope: str, competition_key: str) -> str | None:
+    """Avoid inventing a season convention for catch-all domestic leagues."""
+    if competition_key in DOMESTIC_CATCH_ALL_KEYS:
+        return None
+    return season_for(date_value, scope, competition_key)
+
+
+def backbone_match_key(match: dict[str, Any], source_competition: Any) -> str:
+    """Keep raw competition identity in catch-all fixture keys to avoid collisions."""
+    if match.get("competition_key") not in CATCH_ALL_KEYS:
+        return match_key(match)
+    return "m_" + digest(
+        match.get("scope"),
+        match.get("competition_key"),
+        normalized(source_competition),
+        match.get("match_date"),
+        norm_team(match.get("home_team") or ""),
+        norm_team(match.get("away_team") or ""),
+    )
+
+
 def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> dict[str, int]:
     """Insert the lowest-priority result backbone in batches without overwriting richer rows."""
     frame = pd.read_parquet(parquet)
@@ -163,7 +187,7 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
         final_home, final_away = int(raw["gh"]), int(raw["ga"]); finish = normalized(raw.get("full_time")).upper()
         match = {
             "competition_key": competition_key, "competition_name": competition_name, "scope": scope,
-            "season": season_for(raw["date"], scope, competition_key), "match_date": date, "home_team": home, "away_team": away,
+            "season": season_for_import(raw["date"], scope, competition_key), "match_date": date, "home_team": home, "away_team": away,
             "extra_json": json.dumps({"schochastics_full_time_code": raw.get("full_time"),
                 "source_competition": raw.get("competition"), "source_continent": raw.get("continent"), "source_level": raw.get("level"),
                 "home_ident": raw.get("home_ident"), "away_ident": raw.get("away_ident"),
@@ -176,7 +200,7 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
         elif finish == "P": match["home_score_pen"], match["away_score_pen"] = final_home, final_away
         else:
             match["home_score_ft"], match["away_score_ft"] = final_home, final_away; match["result"] = outcome(final_home, final_away)
-        key = match_key(match)
+        key = backbone_match_key(match, source_competition)
         match_batch.append((key, competition_key, competition_name, scope, match["season"], date, home, away,
             match.get("home_score_ft"), match.get("away_score_ft"), match.get("home_score_et"), match.get("away_score_et"),
             match.get("home_score_pen"), match.get("away_score_pen"), match.get("result"), match["extra_json"],
