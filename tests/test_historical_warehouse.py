@@ -5,6 +5,7 @@ from scripts.build_historical_warehouse import Warehouse
 from scripts.enrich_statsbomb_history import goal_side
 from scripts.import_global_football_backbone import classify, season_for
 from scripts.import_openfootball_history import parse_openfootball_text
+from scripts.normalize_historical_score_periods import normalize_martj42
 
 
 def test_international_qualification_not_misclassified():
@@ -63,6 +64,38 @@ def test_statsbomb_goal_side_handles_own_goal():
     own_goal = {"type": {"name": "Own Goal Against"}, "team": {"name": "Arsenal"}}
     assert goal_side(normal, home, away) == "home"
     assert goal_side(own_goal, home, away) == "away"
+
+
+def test_martj42_extra_time_score_is_not_left_as_regulation_ft(tmp_path: Path):
+    db = tmp_path / "history.db"
+    wh = Warehouse(db)
+    wh.initialize()
+    match = {
+        "competition_key": "intl_euro",
+        "competition_name": "UEFA European Championship",
+        "scope": "international",
+        "season": "2024",
+        "match_date": "2024-07-01",
+        "home_team": "Home",
+        "away_team": "Away",
+        "home_score_ft": 2,
+        "away_score_ft": 1,
+        "result": "H",
+    }
+    key = wh.upsert_match(match, source_key="martj42_international", source_match_id="et-test")
+    wh.event(key, "martj42_international", "g1", "goal", team="Home", player="A", minute=10)
+    wh.event(key, "martj42_international", "g2", "goal", team="Away", player="B", minute=70)
+    wh.event(key, "martj42_international", "g3", "goal", team="Home", player="C", minute=105)
+    report = normalize_martj42(wh)
+    row = wh.conn.execute(
+        "SELECT home_score_ft,away_score_ft,home_score_et,away_score_et,result FROM warehouse_matches WHERE match_key=?",
+        (key,),
+    ).fetchone()
+    assert report["corrected"] == 1
+    assert (row["home_score_ft"], row["away_score_ft"]) == (1, 1)
+    assert (row["home_score_et"], row["away_score_et"]) == (2, 1)
+    assert row["result"] == "D"
+    wh.close()
 
 
 def test_stronger_source_wins_conflicting_field(tmp_path: Path):
