@@ -3,13 +3,18 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 from pathlib import Path
 import sys
 
-import domain.fotmob_fresh_holdout_capture_qualification_adapter as capture_qualification
+import domain.fotmob_fresh_holdout_capture_qualification_adapter as live_capture_adapter
 import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
+
+
+LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "b6bbbda19b13a81c17ff5386e402f0a585249cb7"
+ACTIVATION_RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
 
 
 def _parse_utc(text: str) -> dt.datetime:
@@ -35,27 +40,49 @@ def _canonical(value: dict) -> bytes:
     ).encode("utf-8")
 
 
-def _reviewed_qualify(evidence: runner.CaptureEvidence):
-    return capture_qualification.qualify_capture_fixtures(
-        evidence.raw_json,
-        evidence.manifest,
-    )
+def _git_blob_sha(path: Path) -> str:
+    raw = path.read_bytes()
+    return hashlib.sha1(
+        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+    ).hexdigest()
 
 
-def _install_reviewed_capture_qualifier() -> None:
-    """Bridge only the scheduled CLI onto the reviewed PR89 structural chain."""
-    current = runner._qualify
-    if current is _reviewed_qualify:
-        return
+def _execute_collection_tick_with_reviewed_adapter(**kwargs):
+    """Scope the reviewed compatibility adapter to exactly one CLI tick."""
+    try:
+        if (
+            _git_blob_sha(Path(live_capture_adapter.__file__))
+            != LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA
+        ):
+            raise runner.FreshHoldoutActivationError(
+                "reviewed live-capture identity adapter blob changed"
+            )
+        if _git_blob_sha(Path(runner.__file__)) != ACTIVATION_RUNNER_BLOB_SHA:
+            raise runner.FreshHoldoutActivationError(
+                "reviewed activation runner blob changed"
+            )
+        live_capture_adapter.verify_reviewed_dependencies()
+    except OSError as exc:
+        raise runner.FreshHoldoutActivationError(
+            "could not verify reviewed live-capture adapter installation"
+        ) from exc
+
+    original = fresh.qualify_capture_fixtures
     if (
-        getattr(current, "__module__", None) != runner.__name__
-        or getattr(current, "__name__", None) != "_qualify"
+        getattr(original, "__module__", None) != fresh.__name__
+        or getattr(original, "__name__", None) != "qualify_capture_fixtures"
     ):
         raise runner.FreshHoldoutActivationError(
-            "fresh-holdout qualifier hook changed before reviewed adapter installation"
+            "fresh-holdout capture qualifier runtime identity changed"
         )
-    capture_qualification.verify_reviewed_dependencies()
-    runner._qualify = _reviewed_qualify
+    try:
+        # Runner._qualify and fresh settlement both resolve this module global at
+        # call time, so the same reviewed adapter covers prediction capture and
+        # settlement identity capture without modifying either frozen module.
+        fresh.qualify_capture_fixtures = live_capture_adapter.qualify_capture_fixtures
+        return runner.execute_collection_tick(**kwargs)
+    finally:
+        fresh.qualify_capture_fixtures = original
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -91,7 +118,6 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     bootstrap_path = args.bootstrap_projection
     try:
-        _install_reviewed_capture_qualifier()
         if bootstrap_path.is_symlink() or not bootstrap_path.is_file():
             raise runner.FreshHoldoutActivationError(
                 "bootstrap projection must be a regular non-symlink file"
@@ -101,7 +127,7 @@ def main(argv: list[str] | None = None) -> int:
                 "bootstrap projection size changed"
             )
         bootstrap_raw = bootstrap_path.read_bytes()
-        receipt = runner.execute_collection_tick(
+        receipt = _execute_collection_tick_with_reviewed_adapter(
             scheduled_for=args.scheduled_for,
             bootstrap_projection_raw=bootstrap_raw,
             durable_release_tag=args.durable_release_tag,
