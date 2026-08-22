@@ -2,6 +2,8 @@ from pathlib import Path
 
 from domain.historical_competitions import resolve_competition
 from scripts.build_historical_warehouse import Warehouse, parse_openfootball_text
+from scripts.enrich_statsbomb_history import goal_side
+from scripts.import_global_football_backbone import classify
 
 
 def test_international_qualification_not_misclassified():
@@ -26,6 +28,21 @@ def test_openfootball_parser_reads_ht_and_round():
     assert rows[0]["home_score_ht"] == 0
     assert rows[0]["away_score_ft"] == 2
     assert rows[0]["stage"] == "League, Matchday 1"
+
+
+def test_global_backbone_maps_priority_leagues():
+    assert classify({"competition": "Saudi Arabia", "level": "national", "continent": "Asia"}) == ("club", "sau_proleague")
+    assert classify({"competition": "USA", "level": "national", "continent": "North America"}) == ("club", "usa_mls")
+    assert classify({"competition": "Austria", "level": "national", "continent": "Europe"}) == ("club", "other_euro_topflight")
+    assert classify({"competition": "Brazil", "level": "national", "continent": "South America"}) is None
+
+
+def test_statsbomb_goal_side_handles_own_goal():
+    home, away = "Arsenal", "Chelsea"
+    normal = {"type": {"name": "Shot"}, "team": {"name": "Arsenal"}, "shot": {"outcome": {"name": "Goal"}}}
+    own_goal = {"type": {"name": "Own Goal Against"}, "team": {"name": "Arsenal"}}
+    assert goal_side(normal, home, away) == "home"
+    assert goal_side(own_goal, home, away) == "away"
 
 
 def test_stronger_source_wins_conflicting_field(tmp_path: Path):
