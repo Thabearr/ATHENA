@@ -65,6 +65,11 @@ INTERNATIONAL_NAMES = {
 CALENDAR_YEAR_KEYS = {"usa_mls", "nor_eliteserien", "swe_allsvenskan"}
 DOMESTIC_CATCH_ALL_KEYS = {"other_euro_topflight", "other_global_topflight"}
 CATCH_ALL_KEYS = {*DOMESTIC_CATCH_ALL_KEYS, "intl_other"}
+PARQUET_COLUMNS = (
+    "home", "away", "date", "gh", "ga", "full_time", "competition",
+    "home_ident", "away_ident", "home_country", "away_country", "home_code",
+    "away_code", "continent", "level",
+)
 
 
 def normalized(value: Any) -> str:
@@ -150,7 +155,8 @@ def backbone_match_key(match: dict[str, Any], source_competition: Any) -> str:
 
 def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> dict[str, int]:
     """Insert the lowest-priority result backbone in batches without overwriting richer rows."""
-    frame = pd.read_parquet(parquet)
+    frame = pd.read_parquet(parquet, columns=list(PARQUET_COLUMNS))
+    columns = list(frame.columns)
     seen = imported = skipped = 0
     match_batch: list[tuple[Any, ...]] = []; source_batch: list[tuple[Any, ...]] = []
     match_sql = """INSERT OR IGNORE INTO warehouse_matches(
@@ -169,7 +175,8 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
         wh.conn.executemany(source_sql, source_batch)
         wh.conn.commit(); match_batch.clear(); source_batch.clear()
 
-    for raw in frame.to_dict(orient="records"):
+    for values in frame.itertuples(index=False, name=None):
+        raw = dict(zip(columns, values))
         seen += 1
         classified = classify_for_import(raw)
         if not classified:
