@@ -2,6 +2,7 @@ from pathlib import Path
 
 from scripts.audit_historical_data_integrity import audit_integrity
 from scripts.build_historical_warehouse import Warehouse, norm_team
+from scripts.enrich_statsbomb_history import canonical_event_type
 from scripts.import_football_data_history import resolve_team_alias
 
 
@@ -17,6 +18,35 @@ def _match(home: str, away: str) -> dict[str, object]:
         "home_score_ft": 2,
         "away_score_ft": 1,
     }
+
+
+def _insert_legacy_match(
+    warehouse: Warehouse,
+    *,
+    match_key: str,
+    home: str,
+    away: str,
+    home_score: int,
+    away_score: int,
+) -> None:
+    warehouse.conn.execute(
+        """INSERT INTO warehouse_matches(
+           match_key,competition_key,competition_name,scope,season,match_date,
+           home_team,away_team,home_score_ft,away_score_ft
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (
+            match_key,
+            "eng_premier",
+            "Premier League",
+            "club",
+            "2025-26",
+            "2025-08-30",
+            home,
+            away,
+            home_score,
+            away_score,
+        ),
+    )
 
 
 def test_canonical_match_key_merges_prefix_suffix_club_designators(tmp_path: Path):
@@ -68,42 +98,98 @@ def test_football_data_alias_resolves_explicit_crosswalk_without_fuzzy_guessing(
 def test_integrity_audit_detects_reversed_preexisting_fixture_duplicates(tmp_path: Path):
     warehouse = Warehouse(tmp_path / "history.db")
     warehouse.initialize()
-    warehouse.conn.execute(
-        """INSERT INTO warehouse_matches(
-           match_key,competition_key,competition_name,scope,season,match_date,
-           home_team,away_team,home_score_ft,away_score_ft
-        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
-        (
-            "legacy-a",
-            "eng_premier",
-            "Premier League",
-            "club",
-            "2025-26",
-            "2025-08-30",
-            "AFC Bournemouth",
-            "Fulham FC",
-            2,
-            1,
-        ),
+    _insert_legacy_match(
+        warehouse,
+        match_key="legacy-a",
+        home="AFC Bournemouth",
+        away="Fulham FC",
+        home_score=2,
+        away_score=1,
     )
-    warehouse.conn.execute(
-        """INSERT INTO warehouse_matches(
-           match_key,competition_key,competition_name,scope,season,match_date,
-           home_team,away_team,home_score_ft,away_score_ft
-        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
-        (
-            "legacy-b",
-            "eng_premier",
-            "Premier League",
-            "club",
-            "2025-26",
-            "2025-08-30",
-            "FC Fulham",
-            "Bournemouth AFC",
-            1,
-            2,
-        ),
+    _insert_legacy_match(
+        warehouse,
+        match_key="legacy-b",
+        home="FC Fulham",
+        away="Bournemouth AFC",
+        home_score=1,
+        away_score=2,
     )
+
+    report = audit_integrity(warehouse)
+
+    assert report["logical_duplicate_fixtures"]["duplicate_groups"] == 1
+    assert report["complete"] is False
+    warehouse.close()
+
+
+def test_integrity_audit_reports_same_source_date_ambiguity_without_failing(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    _insert_legacy_match(
+        warehouse,
+        match_key="source-a",
+        home="AFC Bournemouth",
+        away="Fulham FC",
+        home_score=2,
+        away_score=1,
+    )
+    _insert_legacy_match(
+        warehouse,
+        match_key="source-b",
+        home="FC Fulham",
+        away="Bournemouth AFC",
+        home_score=0,
+        away_score=3,
+    )
+    warehouse.conn.executemany(
+        """INSERT INTO warehouse_match_sources(
+           match_key,source_key,source_match_id,source_url,has_ft
+        ) VALUES(?,?,?,?,1)""",
+        [
+            ("source-a", "schochastics_global", "historical-leg-a", None),
+            ("source-b", "schochastics_global", "historical-leg-b", None),
+        ],
+    )
+    warehouse.conn.commit()
+
+    report = audit_integrity(warehouse)
+    duplicates = report["logical_duplicate_fixtures"]
+
+    assert duplicates["duplicate_groups"] == 0
+    assert duplicates["same_source_ambiguous_groups"] == 1
+    assert report["complete"] is True
+    warehouse.close()
+
+
+def test_integrity_audit_detects_cross_source_reversed_fixture_duplicates(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    _insert_legacy_match(
+        warehouse,
+        match_key="provider-a",
+        home="AFC Bournemouth",
+        away="Fulham FC",
+        home_score=2,
+        away_score=1,
+    )
+    _insert_legacy_match(
+        warehouse,
+        match_key="provider-b",
+        home="FC Fulham",
+        away="Bournemouth AFC",
+        home_score=1,
+        away_score=2,
+    )
+    warehouse.conn.executemany(
+        """INSERT INTO warehouse_match_sources(
+           match_key,source_key,source_match_id,source_url,has_ft
+        ) VALUES(?,?,?,?,1)""",
+        [
+            ("provider-a", "soccer_datalake", "provider-a", None),
+            ("provider-b", "openfootball", "provider-b", None),
+        ],
+    )
+    warehouse.conn.commit()
 
     report = audit_integrity(warehouse)
 
@@ -184,6 +270,21 @@ def test_integrity_audit_accepts_canonical_goal_and_card_incidents(tmp_path: Pat
     assert report["noncanonical_goal_outcome_events"] == 0
     assert report["complete"] is True
     warehouse.close()
+
+
+def test_statsbomb_provider_declared_goals_are_canonical_without_side_resolution():
+    shot_goal = {
+        "type": {"name": "Shot"},
+        "team": {"name": "Unmatched Provider Team"},
+        "shot": {"outcome": {"name": "Goal"}},
+    }
+    own_goal = {
+        "type": {"name": "Own Goal Against"},
+        "team": {"name": "Unmatched Provider Team"},
+    }
+
+    assert canonical_event_type(shot_goal, "Arsenal", "Chelsea") == "goal"
+    assert canonical_event_type(own_goal, "Arsenal", "Chelsea") == "goal"
 
 
 def test_preferred_event_view_uses_strongest_source_per_event_type(tmp_path: Path):
