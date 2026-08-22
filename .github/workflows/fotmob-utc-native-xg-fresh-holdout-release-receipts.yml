@@ -56,6 +56,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py \
+          python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror \
             --repository "${GITHUB_REPOSITORY}" \
             --run-id "${SOURCE_RUN_ID}"
