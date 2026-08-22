@@ -1,7 +1,8 @@
 from pathlib import Path
 
 from scripts.audit_historical_data_integrity import audit_integrity
-from scripts.build_historical_warehouse import Warehouse
+from scripts.build_historical_warehouse import Warehouse, norm_team
+from scripts.import_football_data_history import resolve_team_alias
 
 
 def _match(home: str, away: str) -> dict[str, object]:
@@ -37,6 +38,30 @@ def test_canonical_match_key_merges_prefix_suffix_club_designators(tmp_path: Pat
     assert first == second
     assert warehouse.conn.execute("SELECT COUNT(*) FROM warehouse_matches").fetchone()[0] == 1
     assert report["logical_duplicate_fixtures"]["duplicate_groups"] == 0
+    warehouse.close()
+
+
+def test_football_data_alias_resolves_explicit_crosswalk_without_fuzzy_guessing(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    warehouse.conn.execute(
+        """INSERT INTO warehouse_team_aliases(
+           competition_key,source_key,alias,alias_norm,canonical_team,source_team_id
+        ) VALUES(?,?,?,?,?,?)""",
+        (
+            "eng_premier",
+            "football_data_uk",
+            "Man United",
+            norm_team("Man United"),
+            "Manchester United",
+            "33",
+        ),
+    )
+    warehouse.conn.commit()
+
+    assert resolve_team_alias(warehouse, "eng_premier", "Man United") == "Manchester United"
+    assert resolve_team_alias(warehouse, "eng_premier", "Man Utd") == "Man Utd"
+    assert resolve_team_alias(warehouse, "eng_championship", "Man United") == "Man United"
     warehouse.close()
 
 
