@@ -3,7 +3,10 @@
 
 Strict mode fails when any named hierarchy competition has zero historical
 matches. When ``--recent-since`` is supplied, strict mode also fails when a
-required competition has history but no fixture on or after that date.
+competition expected to have played in that window has no fixture on or after
+the requested date. Cyclical competitions whose normal calendar does not imply
+recent fixtures (for example the FIFA World Cup between editions) remain
+mandatory for historical coverage but are exempt from the freshness gate.
 Catch-all buckets are reported but are not required.
 """
 from __future__ import annotations
@@ -22,6 +25,9 @@ from domain.historical_competitions import ALL_COMPETITIONS  # noqa: E402
 from scripts.build_historical_warehouse import DEFAULT_DB, Warehouse  # noqa: E402
 
 CATCH_ALL_KEYS = {"other_euro_topflight", "other_global_topflight", "intl_other"}
+# Historical presence is mandatory for these competitions, but a fixed recent
+# cutoff must not make a valid warehouse fail between tournament editions.
+RECENT_EXEMPT_KEYS = {"intl_world_cup"}
 REQUIRED_HIERARCHY_KEYS = tuple(
     competition.key
     for competition in ALL_COMPETITIONS
@@ -68,6 +74,7 @@ def competition_coverage(
         "hierarchy_rank": comp["hierarchy_rank"],
         "hierarchy_tier": comp["hierarchy_tier"],
         "required": competition_key in REQUIRED_HIERARCHY_KEYS,
+        "freshness_required": competition_key not in RECENT_EXEMPT_KEYS,
         "matches": int(summary["matches"] or 0),
         "oldest_match": summary["oldest_match"],
         "newest_match": summary["newest_match"],
@@ -154,7 +161,12 @@ def audit_hierarchy(
         stale = [
             row["competition_key"]
             for row in rows
-            if row["required"] and row["matches"] > 0 and row.get("recent_matches", 0) == 0
+            if (
+                row["required"]
+                and row["freshness_required"]
+                and row["matches"] > 0
+                and row.get("recent_matches", 0) == 0
+            )
         ]
 
     historical_complete = not missing
@@ -162,6 +174,7 @@ def audit_hierarchy(
     return {
         "required_competitions": len(REQUIRED_HIERARCHY_KEYS),
         "covered_required_competitions": len(REQUIRED_HIERARCHY_KEYS) - len(missing),
+        "freshness_exempt_competitions": sorted(RECENT_EXEMPT_KEYS),
         "missing_required_competitions": missing,
         "stale_required_competitions": stale,
         "complete": historical_complete,
@@ -177,7 +190,7 @@ def arguments() -> argparse.Namespace:
     parser.add_argument("--strict", action="store_true")
     parser.add_argument(
         "--recent-since",
-        help="Also report hierarchy competitions with no matches on/after YYYY-MM-DD.",
+        help="Also report freshness-required hierarchy competitions with no matches on/after YYYY-MM-DD.",
     )
     parser.add_argument("--output", type=Path)
     return parser.parse_args()
