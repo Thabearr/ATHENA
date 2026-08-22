@@ -30,6 +30,8 @@ on:
       - "scripts/historical_quality.py"
       - "scripts/run_with_fast_history_quality.py"
       - "scripts/import_current_soccer_datalake.py"
+      - "scripts/register_datalake_team_aliases.py"
+      - "scripts/import_football_data_history.py"
       - "scripts/import_global_football_backbone.py"
       - "scripts/import_openfootball_history.py"
       - "scripts/enrich_schochastics_goal_events.py"
@@ -52,6 +54,8 @@ on:
       - "scripts/historical_quality.py"
       - "scripts/run_with_fast_history_quality.py"
       - "scripts/import_current_soccer_datalake.py"
+      - "scripts/register_datalake_team_aliases.py"
+      - "scripts/import_football_data_history.py"
       - "scripts/import_global_football_backbone.py"
       - "scripts/import_openfootball_history.py"
       - "scripts/enrich_schochastics_goal_events.py"
@@ -108,19 +112,26 @@ jobs:
           scripts/import_current_soccer_datalake.py
           --deep-players
 
+      - name: Register deterministic Football-Data team aliases
+        run: python scripts/register_datalake_team_aliases.py
+
       - name: Import 1.2M-match global historical backbone
         run: python scripts/import_global_football_backbone.py
 
-      - name: Import internationals, World Cup and Football-Data
+      - name: Import senior internationals and World Cup enrichment
         run: >-
           python scripts/run_with_fast_history_quality.py
           scripts/build_historical_warehouse.py
           --martj42
           --worldcup
-          --football-data
+          --audit
+
+      - name: Import Football-Data history through team crosswalk
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/import_football_data_history.py
           --start-year "$START_YEAR"
           --end-year "$END_YEAR"
-          --audit
 
       - name: Import OpenFootball league, cup, UEFA and international history
         run: >-
