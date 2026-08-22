@@ -59,6 +59,9 @@ jobs:
           --end-year ${{ inputs.end_year }}
           --audit
 
+      - name: Normalize regulation, extra-time and shootout scores
+        run: python scripts/normalize_historical_score_periods.py
+
       - name: Import OpenFootball league, cup and UEFA history
         run: python scripts/import_openfootball_history.py
 
