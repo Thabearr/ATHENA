@@ -2,7 +2,9 @@
 """Audit Athena's historical warehouse against the configured competition hierarchy.
 
 Strict mode fails when any named hierarchy competition has zero historical
-matches. Catch-all buckets are reported but are not required.
+matches. When ``--recent-since`` is supplied, strict mode also fails when a
+required competition has history but no fixture on or after that date.
+Catch-all buckets are reported but are not required.
 """
 from __future__ import annotations
 
@@ -155,12 +157,16 @@ def audit_hierarchy(
             if row["required"] and row["matches"] > 0 and row.get("recent_matches", 0) == 0
         ]
 
+    historical_complete = not missing
+    fresh_complete = historical_complete and (not recent_since or not stale)
     return {
         "required_competitions": len(REQUIRED_HIERARCHY_KEYS),
         "covered_required_competitions": len(REQUIRED_HIERARCHY_KEYS) - len(missing),
         "missing_required_competitions": missing,
         "stale_required_competitions": stale,
-        "complete": not missing,
+        "complete": historical_complete,
+        "fresh_complete": fresh_complete,
+        "recent_since": recent_since,
         "competitions": rows,
     }
 
@@ -188,7 +194,7 @@ def main() -> int:
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
             args.output.write_text(rendered + "\n", encoding="utf-8")
-        if args.strict and not report["complete"]:
+        if args.strict and not report["fresh_complete"]:
             return 2
         return 0
     finally:
