@@ -30,6 +30,20 @@ CREATE TABLE IF NOT EXISTS warehouse_competitions (
     aliases_json TEXT NOT NULL DEFAULT '[]'
 );
 
+CREATE TABLE IF NOT EXISTS warehouse_team_aliases (
+    competition_key TEXT NOT NULL,
+    source_key TEXT NOT NULL,
+    alias TEXT NOT NULL,
+    alias_norm TEXT NOT NULL,
+    canonical_team TEXT NOT NULL,
+    source_team_id TEXT,
+    created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (competition_key, source_key, alias_norm),
+    FOREIGN KEY (competition_key) REFERENCES warehouse_competitions(competition_key),
+    FOREIGN KEY (source_key) REFERENCES warehouse_sources(source_key)
+);
+
 CREATE TABLE IF NOT EXISTS warehouse_matches (
     match_key TEXT PRIMARY KEY,
     competition_key TEXT,
@@ -229,6 +243,7 @@ CREATE TABLE IF NOT EXISTS warehouse_conflicts (
 CREATE INDEX IF NOT EXISTS idx_wh_matches_date ON warehouse_matches(match_date);
 CREATE INDEX IF NOT EXISTS idx_wh_matches_competition ON warehouse_matches(competition_key, season, match_date);
 CREATE INDEX IF NOT EXISTS idx_wh_matches_teams ON warehouse_matches(home_team, away_team, match_date);
+CREATE INDEX IF NOT EXISTS idx_wh_team_aliases_lookup ON warehouse_team_aliases(competition_key, source_key, alias_norm);
 CREATE INDEX IF NOT EXISTS idx_wh_events_match ON warehouse_events(match_key, minute);
 CREATE INDEX IF NOT EXISTS idx_wh_events_player ON warehouse_events(player, event_type);
 CREATE INDEX IF NOT EXISTS idx_wh_sources_match ON warehouse_match_sources(match_key);
