@@ -40,7 +40,7 @@ def test_canonical_match_key_merges_prefix_suffix_club_designators(tmp_path: Pat
     warehouse.close()
 
 
-def test_integrity_audit_detects_preexisting_logical_fixture_duplicates(tmp_path: Path):
+def test_integrity_audit_detects_reversed_preexisting_fixture_duplicates(tmp_path: Path):
     warehouse = Warehouse(tmp_path / "history.db")
     warehouse.initialize()
     warehouse.conn.execute(
@@ -73,10 +73,10 @@ def test_integrity_audit_detects_preexisting_logical_fixture_duplicates(tmp_path
             "club",
             "2025-26",
             "2025-08-30",
-            "Bournemouth AFC",
             "FC Fulham",
-            2,
+            "Bournemouth AFC",
             1,
+            2,
         ),
     )
 
