@@ -8,6 +8,7 @@ from scripts.sportybet_direct_share_bridge import (
     SPORTYBET_COUNTRY_PREFIX,
     SPORTYBET_OPER_ID,
     SportyBetDirectShareError,
+    _validate_exact_roundtrip,
     extract_share_code,
     validate_selections,
 )
@@ -72,5 +73,46 @@ def test_extract_share_code_requires_success():
 
 def test_extract_share_code_accepts_explicit_share_code():
     assert extract_share_code(
-        {"bizCode": 10000, "data": {"shareCode": "ABC123"}}
+        {
+            "bizCode": 10000,
+            "data": {"shareCode": "ABC123", "unavailableOutcomes": []},
+        }
     ) == "ABC123"
+
+
+def test_exact_roundtrip_rejects_changed_provider_identity():
+    requested = (
+        {
+            "eventId": "sr:match:1",
+            "marketId": "18",
+            "outcomeId": "12",
+            "specifier": "total=1.5",
+        },
+    )
+    create_payload = {
+        "bizCode": 10000,
+        "data": {"outcomes": [{}], "unavailableOutcomes": []},
+    }
+    load_payload = {
+        "bizCode": 10000,
+        "data": {
+            "outcomes": [{}],
+            "unavailableOutcomes": [],
+            "ticket": {
+                "selections": [
+                    {
+                        "eventId": "sr:match:1",
+                        "marketId": "18",
+                        "outcomeId": "13",
+                        "specifier": "total=1.5",
+                    }
+                ]
+            },
+        },
+    }
+    with pytest.raises(SportyBetDirectShareError, match="identities"):
+        _validate_exact_roundtrip(
+            requested=requested,
+            create_payload=create_payload,
+            load_payload=load_payload,
+        )
