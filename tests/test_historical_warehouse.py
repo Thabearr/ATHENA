@@ -7,7 +7,12 @@ from scripts.audit_historical_hierarchy_coverage import (
 )
 from scripts.build_historical_warehouse import Warehouse
 from scripts.enrich_schochastics_goal_events import FILES as GOAL_EVENT_FILES
-from scripts.enrich_schochastics_goal_events import parse_game, parse_minute
+from scripts.enrich_schochastics_goal_events import (
+    parse_game,
+    parse_minute,
+    resolve_match as resolve_goal_event_match,
+    team_identity,
+)
 from scripts.enrich_statsbomb_history import goal_side
 from scripts.import_current_soccer_datalake import (
     classify_league as classify_datalake_league,
@@ -114,6 +119,47 @@ def test_schochastics_goal_event_registry_is_unambiguous():
         2,
     )
     assert parse_minute("45+2'") == (45, 2)
+
+
+def test_schochastics_event_matching_normalizes_designators_without_fuzzy_guessing(tmp_path: Path):
+    assert team_identity("AFC Bournemouth") == team_identity("Bournemouth AFC") == "bournemouth"
+    assert team_identity("FC Fulham") == team_identity("Fulham FC") == "fulham"
+    assert team_identity("Paris Saint-Germain FC") == "paris saint germain"
+
+    wh = Warehouse(tmp_path / "history.db")
+    wh.initialize()
+    key = wh.upsert_match(
+        {
+            "competition_key": "eng_premier",
+            "competition_name": "Premier League",
+            "scope": "club",
+            "season": "2025-26",
+            "match_date": "2025-08-30",
+            "home_team": "AFC Bournemouth",
+            "away_team": "Fulham FC",
+            "home_score_ft": 2,
+            "away_score_ft": 1,
+        },
+        source_key="openfootball",
+        source_match_id="identity-test",
+    )
+    assert resolve_goal_event_match(
+        wh,
+        "eng_premier",
+        "2025-08-30",
+        "Bournemouth AFC",
+        "FC Fulham",
+        None,
+    ) == key
+    assert resolve_goal_event_match(
+        wh,
+        "eng_premier",
+        "2025-08-30",
+        "Bournemoth",
+        "Fulham",
+        None,
+    ) is None
+    wh.close()
 
 
 def test_hierarchy_audit_requires_every_named_competition(tmp_path: Path):
