@@ -55,6 +55,7 @@ FILES = {
     "por-primeira-liga.csv": "por_primeira",
     "tur-sueperlig.csv": "tur_superlig",
     "bel-pro-league.csv": "bel_proleague",
+    "sco-premiership.csv": "sco_premiership",
     "nor-eliteserien.csv": "nor_eliteserien",
     "sui-super-league.csv": "sui_superleague",
     "gre-super-league.csv": "gre_superleague",
