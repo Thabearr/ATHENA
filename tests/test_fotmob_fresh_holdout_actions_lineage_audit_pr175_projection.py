@@ -35,7 +35,7 @@ def test_projection_pins_exact_pre_and_post_pr175_collection_workflow_blobs():
         "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
     )
     assert projection.POST_PR175_WORKFLOW_BLOB_SHA == (
-        "1ff52e32ade3422ca1605bc4546dc8d0813ec316"
+        "d48b1ff823277445e3b496876caca6b01480ece9"
     )
 
 
@@ -43,7 +43,7 @@ def test_control_workflow_verifies_current_collection_and_projection_blobs():
     text = WORKFLOW.read_text(encoding="utf-8")
     parsed = yaml.safe_load(text)
     assert isinstance(parsed, dict)
-    assert "1ff52e32ade3422ca1605bc4546dc8d0813ec316" in text
+    assert "d48b1ff823277445e3b496876caca6b01480ece9" in text
     assert _git_blob_sha(PROJECTION_SCRIPT) in text
     assert _git_blob_sha(AUDIT_SCRIPT) in text
     assert "2ae03405f63c0951eb61c4be0db1ba9dff318f21" in text
