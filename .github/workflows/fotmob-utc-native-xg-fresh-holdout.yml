@@ -61,15 +61,22 @@ jobs:
           try:
               runs_out = subprocess.check_output(
                   [
-                      "gh", "api",
+                      "gh", "api", "--paginate", "--slurp",
                       f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?per_page=100",
                   ],
                   text=True,
               )
-              runs_data = json.loads(runs_out)
-              if type(runs_data) is not dict or type(runs_data.get("workflow_runs")) is not list:
-                  raise RuntimeError("malformed workflow_runs response")
-              prior_runs = runs_data["workflow_runs"]
+              runs_pages = json.loads(runs_out)
+              if type(runs_pages) is not list or not runs_pages:
+                  raise RuntimeError("malformed paginated workflow_runs response")
+              prior_runs = []
+              for runs_data in runs_pages:
+                  if (
+                      type(runs_data) is not dict
+                      or type(runs_data.get("workflow_runs")) is not list
+                  ):
+                      raise RuntimeError("malformed workflow_runs response page")
+                  prior_runs.extend(runs_data["workflow_runs"])
           except Exception as exc:
               raise SystemExit(f"FATAL: failed to query workflow runs: {exc}")
 
