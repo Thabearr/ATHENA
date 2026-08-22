@@ -517,6 +517,7 @@ def import_deep_players(
     fixture_to_match: dict[int, str],
     team_names: dict[int, str],
     refresh: bool = False,
+    batch_size: int = 20000,
 ) -> dict[str, int]:
     paths = {name: download(cache, name, refresh) for name in DEEP_FILES}
     selected_ids = set(fixture_to_match)
@@ -562,11 +563,36 @@ def import_deep_players(
         right_on="fixture_player_id",
         suffixes=("", "_stat"),
     )
+    del appearances, player_stats
 
-    lineup_rows: list[tuple[Any, ...]] = []
-    event_rows: list[tuple[Any, ...]] = []
+    lineup_sql = """INSERT OR REPLACE INTO warehouse_lineups(
+       lineup_key,match_key,source_key,team,player,player_id,shirt_number,
+       position,starter,captain,minutes_played,details_json
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"""
+    event_sql = """INSERT OR REPLACE INTO warehouse_events(
+       event_key,match_key,source_key,source_event_id,event_type,event_subtype,
+       team,player,assist,minute,stoppage_minute,second,period,outcome,card_type,
+       is_penalty,is_own_goal,xg,details_json,source_url
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"""
+
+    lineup_batch: list[tuple[Any, ...]] = []
+    event_batch: list[tuple[Any, ...]] = []
+    matches_with_lineups: set[str] = set()
     matches_with_events: set[str] = set()
     matches_with_cards: set[str] = set()
+    lineup_count = event_count = 0
+
+    def flush() -> None:
+        nonlocal lineup_count, event_count
+        if lineup_batch:
+            warehouse.conn.executemany(lineup_sql, lineup_batch)
+            lineup_count += len(lineup_batch)
+            lineup_batch.clear()
+        if event_batch:
+            warehouse.conn.executemany(event_sql, event_batch)
+            event_count += len(event_batch)
+            event_batch.clear()
+        warehouse.conn.commit()
 
     for row in merged.to_dict(orient="records"):
         fixture_id = safe_int(row.get("fixture_id"))
@@ -583,7 +609,7 @@ def import_deep_players(
 
         player_id = safe_text(row.get("player_id"))
         lineup_key = "l_" + digest(SOURCE_KEY, key, team_id, player_id or player)
-        lineup_rows.append(
+        lineup_batch.append(
             (
                 lineup_key,
                 key,
@@ -599,6 +625,7 @@ def import_deep_players(
                 json.dumps({"rating": safe_float(row.get("rating"))}, ensure_ascii=False),
             )
         )
+        matches_with_lineups.add(key)
 
         goals = safe_int(row.get("goals_total")) or 0
         penalties = min(safe_int(row.get("penalty_scored")) or 0, goals)
@@ -608,7 +635,7 @@ def import_deep_players(
 
         for sequence in range(goals):
             event_id = f"{row.get('id')}:goal:{sequence + 1}"
-            event_rows.append(
+            event_batch.append(
                 (
                     "e_" + digest(SOURCE_KEY, event_id, key),
                     key,
@@ -640,7 +667,7 @@ def import_deep_players(
         for card_type, count in (("yellow", yellows), ("red", reds)):
             for sequence in range(count):
                 event_id = f"{row.get('id')}:card:{card_type}:{sequence + 1}"
-                event_rows.append(
+                event_batch.append(
                     (
                         "e_" + digest(SOURCE_KEY, event_id, key),
                         key,
@@ -667,26 +694,15 @@ def import_deep_players(
                 matches_with_events.add(key)
                 matches_with_cards.add(key)
 
-    warehouse.conn.executemany(
-        """INSERT OR REPLACE INTO warehouse_lineups(
-           lineup_key,match_key,source_key,team,player,player_id,shirt_number,
-           position,starter,captain,minutes_played,details_json
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-        lineup_rows,
-    )
-    warehouse.conn.executemany(
-        """INSERT OR REPLACE INTO warehouse_events(
-           event_key,match_key,source_key,source_event_id,event_type,event_subtype,
-           team,player,assist,minute,stoppage_minute,second,period,outcome,card_type,
-           is_penalty,is_own_goal,xg,details_json,source_url
-        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
-        event_rows,
-    )
+        if len(lineup_batch) >= batch_size or len(event_batch) >= batch_size:
+            flush()
+    flush()
+
     warehouse.conn.executemany(
         """UPDATE warehouse_match_sources
            SET has_lineups=1
-           WHERE source_key=? AND source_match_id=?""",
-        [(SOURCE_KEY, str(fixture_id)) for fixture_id in selected_ids],
+           WHERE match_key=? AND source_key=?""",
+        [(key, SOURCE_KEY) for key in matches_with_lineups],
     )
     warehouse.conn.executemany(
         """UPDATE warehouse_match_sources
@@ -702,8 +718,9 @@ def import_deep_players(
     )
     warehouse.conn.commit()
     return {
-        "lineups": len(lineup_rows),
-        "events": len(event_rows),
+        "lineups": lineup_count,
+        "events": event_count,
+        "matches_with_lineups": len(matches_with_lineups),
         "matches_with_events": len(matches_with_events),
         "matches_with_cards": len(matches_with_cards),
     }
