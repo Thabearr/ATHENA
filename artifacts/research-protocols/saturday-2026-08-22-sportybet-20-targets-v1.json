@@ -1,0 +1,235 @@
+[
+  {
+    "away_names": [
+      "Man United",
+      "Manchester United"
+    ],
+    "desired_selection": "AWAY_1UP",
+    "home_names": [
+      "Hull",
+      "Hull City"
+    ],
+    "target_id": "01-hull-man-united"
+  },
+  {
+    "away_names": [
+      "Crystal Palace"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Everton"
+    ],
+    "target_id": "02-everton-crystal-palace"
+  },
+  {
+    "away_names": [
+      "Sunderland"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Ipswich",
+      "Ipswich Town"
+    ],
+    "target_id": "03-ipswich-sunderland"
+  },
+  {
+    "away_names": [
+      "Leeds",
+      "Leeds United"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Nottm Forest",
+      "Nottingham Forest"
+    ],
+    "target_id": "04-nottm-forest-leeds"
+  },
+  {
+    "away_names": [
+      "Tottenham",
+      "Tottenham Hotspur"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Brentford"
+    ],
+    "target_id": "05-brentford-tottenham"
+  },
+  {
+    "away_names": [
+      "Sevilla",
+      "Sevilla FC"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Athletic Club",
+      "Athletic Bilbao"
+    ],
+    "target_id": "06-athletic-sevilla"
+  },
+  {
+    "away_names": [
+      "Celta Vigo",
+      "Celta de Vigo"
+    ],
+    "desired_selection": "HOME_TEAM_TOTAL_OVER_0_5",
+    "home_names": [
+      "Valencia",
+      "Valencia CF"
+    ],
+    "target_id": "07-valencia-celta"
+  },
+  {
+    "away_names": [
+      "Real Madrid"
+    ],
+    "desired_selection": "AWAY_1UP",
+    "home_names": [
+      "Espanyol",
+      "RCD Espanyol"
+    ],
+    "target_id": "08-espanyol-real-madrid"
+  },
+  {
+    "away_names": [
+      "Monza",
+      "AC Monza"
+    ],
+    "desired_selection": "HOME_1UP",
+    "home_names": [
+      "Inter",
+      "Inter Milan",
+      "Internazionale"
+    ],
+    "target_id": "09-inter-monza"
+  },
+  {
+    "away_names": [
+      "Como",
+      "Como 1907"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Udinese",
+      "Udinese Calcio"
+    ],
+    "target_id": "10-udinese-como"
+  },
+  {
+    "away_names": [
+      "Napoli",
+      "SSC Napoli"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Genoa"
+    ],
+    "target_id": "11-genoa-napoli"
+  },
+  {
+    "away_names": [
+      "Auxerre",
+      "AJ Auxerre"
+    ],
+    "desired_selection": "HOME_1UP",
+    "home_names": [
+      "Lens",
+      "RC Lens"
+    ],
+    "target_id": "12-lens-auxerre"
+  },
+  {
+    "away_names": [
+      "Lorient",
+      "FC Lorient"
+    ],
+    "desired_selection": "HOME_TEAM_TOTAL_OVER_0_5",
+    "home_names": [
+      "Nice",
+      "OGC Nice"
+    ],
+    "target_id": "13-nice-lorient"
+  },
+  {
+    "away_names": [
+      "Lyon",
+      "Olympique Lyonnais"
+    ],
+    "desired_selection": "TOTAL_GOALS_OVER_1_5",
+    "home_names": [
+      "Toulouse",
+      "Toulouse FC"
+    ],
+    "target_id": "14-toulouse-lyon"
+  },
+  {
+    "away_names": [
+      "Paris FC"
+    ],
+    "desired_selection": "AWAY_TEAM_TOTAL_OVER_0_5",
+    "home_names": [
+      "Troyes",
+      "ESTAC Troyes"
+    ],
+    "target_id": "15-troyes-paris-fc"
+  },
+  {
+    "away_names": [
+      "Alverca",
+      "FC Alverca"
+    ],
+    "desired_selection": "HOME_2UP",
+    "home_names": [
+      "Sporting CP",
+      "Sporting Lisbon",
+      "Sporting"
+    ],
+    "target_id": "16-sporting-alverca"
+  },
+  {
+    "away_names": [
+      "Konyaspor"
+    ],
+    "desired_selection": "HOME_WIN",
+    "home_names": [
+      "Fenerbahce",
+      "Fenerbahçe"
+    ],
+    "target_id": "17-fenerbahce-konyaspor"
+  },
+  {
+    "away_names": [
+      "AZ Alkmaar",
+      "AZ"
+    ],
+    "desired_selection": "AWAY_WIN",
+    "home_names": [
+      "Fortuna Sittard"
+    ],
+    "target_id": "18-fortuna-az"
+  },
+  {
+    "away_names": [
+      "Leverkusen",
+      "Bayer Leverkusen",
+      "Bayer 04 Leverkusen"
+    ],
+    "desired_selection": "AWAY_WIN",
+    "home_names": [
+      "Wehen Wiesbaden",
+      "SV Wehen Wiesbaden"
+    ],
+    "target_id": "19-wehen-leverkusen"
+  },
+  {
+    "away_names": [
+      "RB Leipzig"
+    ],
+    "desired_selection": "AWAY_WIN",
+    "home_names": [
+      "Eintracht Trier",
+      "SV Eintracht Trier"
+    ],
+    "target_id": "20-trier-leipzig"
+  }
+]
