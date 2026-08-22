@@ -13,6 +13,9 @@ WORKFLOW = Path(
 COLLECTION_WORKFLOW = Path(
     ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
 )
+FAILURE_LINEAGE = Path(
+    "domain/fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage.py"
+)
 PROJECTION_SCRIPT = Path(
     "scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py"
 )
@@ -39,6 +42,22 @@ def test_projection_pins_exact_pre_and_post_pr175_collection_workflow_blobs():
     )
 
 
+def test_projection_pins_repaired_failure_lineage_without_changing_audit_engine():
+    assert (
+        projection.PRE_PREACQUISITION_FALLBACK_BLOB_SHA
+        == audit.FAILURE_LINEAGE_BLOB_SHA
+    )
+    assert projection.POST_PREACQUISITION_FALLBACK_BLOB_SHA == _git_blob_sha(
+        FAILURE_LINEAGE
+    )
+    assert projection.PRE_PREACQUISITION_FALLBACK_BLOB_SHA == (
+        "2ae03405f63c0951eb61c4be0db1ba9dff318f21"
+    )
+    assert projection.POST_PREACQUISITION_FALLBACK_BLOB_SHA == (
+        "692e3fe778e43ae4157e10882158f5dae08cb096"
+    )
+
+
 def test_control_workflow_verifies_current_collection_and_projection_blobs():
     text = WORKFLOW.read_text(encoding="utf-8")
     parsed = yaml.safe_load(text)
@@ -46,16 +65,19 @@ def test_control_workflow_verifies_current_collection_and_projection_blobs():
     assert "d48b1ff823277445e3b496876caca6b01480ece9" in text
     assert _git_blob_sha(PROJECTION_SCRIPT) in text
     assert _git_blob_sha(AUDIT_SCRIPT) in text
-    assert "2ae03405f63c0951eb61c4be0db1ba9dff318f21" in text
+    assert _git_blob_sha(FAILURE_LINEAGE) in text
     assert "audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py" in text
 
 
-def test_projection_delegates_to_current_engine_with_compatible_binary_transport():
+def test_projection_delegates_to_unchanged_engine_with_compatible_binary_transport():
     text = PROJECTION_SCRIPT.read_text(encoding="utf-8")
-    assert "current reviewed engine" in text
-    assert "unchanged audit engine" not in text
+    assert "unchanged audit engine" in text
     assert "byte-for-byte pinned" not in text
     assert "audit.WORKFLOW_BLOB_SHA = POST_PR175_WORKFLOW_BLOB_SHA" in text
+    assert (
+        "audit.FAILURE_LINEAGE_BLOB_SHA = POST_PREACQUISITION_FALLBACK_BLOB_SHA"
+        in text
+    )
     assert "audit._gh_download = _gh_download_compatible" in text
     assert "audit.main(argv)" in text
     assert "application/vnd.github+json" in text

@@ -1211,17 +1211,22 @@ def test_every_output_safety_authority_is_false():
     assert not any(result["safety"].values())
 
 
-def test_pr178_failure_lineage_dependency_is_exactly_pinned(monkeypatch):
+def test_pr178_failure_lineage_dependency_projection_is_exactly_pinned(monkeypatch):
     dependency = Path(audit.FAILURE_LINEAGE_PATH)
     assert audit.FAILURE_LINEAGE_BLOB_SHA == (
         "2ae03405f63c0951eb61c4be0db1ba9dff318f21"
     )
-    assert audit._blob_sha(dependency) == audit.FAILURE_LINEAGE_BLOB_SHA
+    current_dependency_blob = audit._blob_sha(dependency)
+    assert current_dependency_blob == (
+        "692e3fe778e43ae4157e10882158f5dae08cb096"
+    )
     monkeypatch.setattr(
         audit,
         "WORKFLOW_BLOB_SHA",
         audit._blob_sha(Path(audit.WORKFLOW_PATH)),
     )
+    monkeypatch.setattr(audit, "FAILURE_LINEAGE_BLOB_SHA", current_dependency_blob)
+    audit.verify_reviewed_dependencies(Path.cwd())
     monkeypatch.setattr(audit, "FAILURE_LINEAGE_BLOB_SHA", "0" * 40)
     with pytest.raises(
         audit.FreshHoldoutActionsLineageAuditError,
@@ -1260,7 +1265,7 @@ def test_workflow_is_owner_only_read_only_exact_and_immutable_pinned():
         "901ab137d6601a3485eac30da7e6bad7eeefa397",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd",
-        "2ae03405f63c0951eb61c4be0db1ba9dff318f21",
+        "692e3fe778e43ae4157e10882158f5dae08cb096",
         audit._blob_sha(
             Path("scripts/audit_fotmob_fresh_holdout_actions_lineage.py")
         ),
