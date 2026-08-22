@@ -1,7 +1,12 @@
 from __future__ import annotations
 
 import datetime as dt
+import hashlib
+import io
+import json
 from pathlib import Path
+import tarfile
+import zipfile
 
 import pytest
 
@@ -82,6 +87,47 @@ def _restore(
         download_artifact_zip=lambda _artifact_id: b"unused",
         get_run_jobs=lambda _run_id: jobs,
         repository_root=_repo(tmp_path),
+    )
+
+
+def _empty_canonical_artifact(
+    *,
+    run_id: int,
+    nominal: dt.datetime,
+) -> tuple[dict[str, object], bytes]:
+    asset_name = f"success-{nominal.strftime('%Y%m%dT%H%M%SZ')}-run-{run_id}.tar.gz"
+    tar_buffer = io.BytesIO()
+    with tarfile.open(fileobj=tar_buffer, mode="w:gz") as archive:
+        root = tarfile.TarInfo(control.CONTROL_ROOT_RELATIVE)
+        root.type = tarfile.DIRTYPE
+        root.mode = 0o700
+        archive.addfile(root)
+    tar_bytes = tar_buffer.getvalue()
+    receipt = {
+        "schema_version": 1,
+        "workflow_run_id": run_id,
+        "nominal_scheduled_for_utc": runner._utc_text(nominal),
+        "durable_release_tag": "athena-fresh-holdout-evidence-2026-W34",
+        "durable_asset_name": asset_name,
+        "durable_asset_sha256": hashlib.sha256(tar_bytes).hexdigest(),
+        "durable_asset_size_bytes": len(tar_bytes),
+    }
+    zip_buffer = io.BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w") as archive:
+        archive.writestr(asset_name, tar_bytes)
+        archive.writestr(
+            "fresh-holdout-tick-receipt.json",
+            json.dumps(receipt, sort_keys=True, separators=(",", ":")) + "\n",
+        )
+    zip_bytes = zip_buffer.getvalue()
+    return (
+        {
+            "id": 1000 + run_id,
+            "name": asset_name,
+            "digest": f"sha256:{hashlib.sha256(zip_bytes).hexdigest()}",
+            "expired": False,
+        },
+        zip_bytes,
     )
 
 
@@ -191,30 +237,49 @@ def test_any_unexpected_artifact_blocks_preacquisition_skip(tmp_path: Path) -> N
         )
 
 
-def test_recovery_never_falls_back_across_skipped_failure_to_older_campaign_artifact(
+def test_proven_preacquisition_failures_restore_nearest_older_canonical_artifact(
     tmp_path: Path,
 ) -> None:
+    nominal = dt.datetime(2026, 8, 19, 0, 7, tzinfo=UTC)
+    artifact, zip_bytes = _empty_canonical_artifact(run_id=11, nominal=nominal)
     prior = [
-        _run(12, "2026-08-19T01:48:27Z"),
-        _run(11, "2026-08-19T01:18:27Z", conclusion="success"),
+        _run(13, "2026-08-19T01:08:27Z"),
+        _run(12, "2026-08-19T00:38:27Z"),
+        _run(11, "2026-08-19T00:08:27Z", conclusion="success"),
+        _run(10, "2026-08-18T23:55:00Z"),
     ]
     artifacts = {
+        13: {"artifacts": []},
         12: {"artifacts": []},
-        11: {
-            "artifacts": [
-                {
-                    "id": 101,
-                    "name": "success-20260819T010700Z-run-11.tar.gz",
-                    "expired": False,
-                }
-            ]
-        },
+        11: {"artifacts": [artifact]},
     }
-    with pytest.raises(
-        lineage.FreshHoldoutFailureLineageError,
-        match="cannot fall back across",
-    ):
-        _restore(tmp_path, prior, artifacts)
+    restored = lineage.restore_latest_lineage_state(
+        prior_runs=prior,
+        current_run_id=999,
+        get_run_artifacts=lambda run_id: artifacts[run_id],
+        download_artifact_zip=lambda artifact_id: (
+            zip_bytes
+            if artifact_id == artifact["id"]
+            else (_ for _ in ()).throw(AssertionError("unexpected artifact id"))
+        ),
+        get_run_jobs=lambda _run_id: _preacquisition_jobs(),
+        repository_root=_repo(tmp_path),
+    )
+    assert restored.predecessor_run_id == 11
+    assert restored.predecessor_conclusion == "success"
+    assert restored.predecessor_asset_name == artifact["name"]
+    assert restored.last_attempted_utc == nominal
+    assert restored.skipped_preacquisition_failure_run_ids == (13, 12)
+
+    current, current_text, _tag, _success, _failure = (
+        lineage.resolve_nominal_schedule_slot_from_lineage(
+            "7 * * * *",
+            dt.datetime(2026, 8, 19, 8, 10, tzinfo=UTC),
+            restored,
+        )
+    )
+    assert current == dt.datetime(2026, 8, 19, 8, 7, tzinfo=UTC)
+    assert current_text == "2026-08-19T08:07:00.000000Z"
 
 
 def test_job_proof_is_exact_not_name_contains_or_duplicate(tmp_path: Path) -> None:
