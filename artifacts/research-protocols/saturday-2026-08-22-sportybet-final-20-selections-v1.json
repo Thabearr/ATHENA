@@ -1,0 +1,113 @@
+[
+  {
+    "eventId": "sr:match:72221156",
+    "marketId": "60200",
+    "outcomeId": "3"
+  },
+  {
+    "eventId": "sr:match:72221158",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72221160",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72221162",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72221164",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72478486",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72478504",
+    "marketId": "19",
+    "outcomeId": "12",
+    "specifier": "total=0.5"
+  },
+  {
+    "eventId": "sr:match:72478494",
+    "marketId": "60200",
+    "outcomeId": "3"
+  },
+  {
+    "eventId": "sr:match:71944898",
+    "marketId": "60200",
+    "outcomeId": "1"
+  },
+  {
+    "eventId": "sr:match:71944906",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:71944896",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72036116",
+    "marketId": "60200",
+    "outcomeId": "1"
+  },
+  {
+    "eventId": "sr:match:72036120",
+    "marketId": "19",
+    "outcomeId": "12",
+    "specifier": "total=0.5"
+  },
+  {
+    "eventId": "sr:match:72036124",
+    "marketId": "18",
+    "outcomeId": "12",
+    "specifier": "total=1.5"
+  },
+  {
+    "eventId": "sr:match:72036126",
+    "marketId": "20",
+    "outcomeId": "12",
+    "specifier": "total=0.5"
+  },
+  {
+    "eventId": "sr:match:72530870",
+    "marketId": "60100",
+    "outcomeId": "1"
+  },
+  {
+    "eventId": "sr:match:72723154",
+    "marketId": "1",
+    "outcomeId": "1"
+  },
+  {
+    "eventId": "sr:match:72041068",
+    "marketId": "1",
+    "outcomeId": "3"
+  },
+  {
+    "eventId": "sr:match:71960096",
+    "marketId": "1",
+    "outcomeId": "3"
+  },
+  {
+    "eventId": "sr:match:71960108",
+    "marketId": "1",
+    "outcomeId": "3"
+  }
+]
