@@ -96,6 +96,15 @@ def set_score_provenance(warehouse: Warehouse, match_key: str, field: str, sourc
     )
 
 
+def global_period_code(match) -> str | None:
+    try:
+        details = json.loads(match["extra_json"] or "{}")
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return None
+    code = details.get("schochastics_full_time_code")
+    return str(code).strip().upper() if code is not None else None
+
+
 def normalize_world_cup(warehouse: Warehouse) -> dict[str, int]:
     corrected = unresolved = 0
     for match in source_matches(warehouse, "fjelstul_worldcup"):
@@ -143,7 +152,8 @@ def normalize_martj42(warehouse: Warehouse) -> dict[str, int]:
             (match["match_key"],),
         ).fetchall()
         has_late_goal = any(e["minute"] is not None and int(e["minute"]) > 90 for e in events)
-        known_et = has_late_goal or match["match_key"] in shootout_keys
+        cross_source_code = global_period_code(match)
+        known_et = has_late_goal or match["match_key"] in shootout_keys or cross_source_code in {"E", "P"}
         if not known_et:
             continue
         final_home, final_away = match["home_score_ft"], match["away_score_ft"]
@@ -171,6 +181,22 @@ def normalize_martj42(warehouse: Warehouse) -> dict[str, int]:
     return {"corrected": corrected, "unresolved": unresolved}
 
 
+def refresh_source_coverage(warehouse: Warehouse) -> None:
+    warehouse.conn.execute(
+        """UPDATE warehouse_match_sources
+           SET has_events=CASE WHEN EXISTS(
+                 SELECT 1 FROM warehouse_events e
+                 WHERE e.match_key=warehouse_match_sources.match_key
+                   AND e.source_key=warehouse_match_sources.source_key
+               ) THEN 1 ELSE has_events END,
+               has_ht=CASE WHEN EXISTS(
+                 SELECT 1 FROM warehouse_matches m
+                 WHERE m.match_key=warehouse_match_sources.match_key
+                   AND m.home_score_ht IS NOT NULL AND m.away_score_ht IS NOT NULL
+               ) THEN 1 ELSE has_ht END"""
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -182,6 +208,7 @@ def main() -> int:
             "fjelstul_worldcup": normalize_world_cup(warehouse),
             "martj42_international": normalize_martj42(warehouse),
         }
+        refresh_source_coverage(warehouse)
         warehouse.refresh_quality()
         warehouse.conn.commit()
         print(json.dumps({"database": str(args.db), "score_period_normalization": report, "audit": warehouse.audit()}, indent=2, sort_keys=True))
