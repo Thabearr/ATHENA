@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import scripts.build_historical_warehouse as build_historical_warehouse  # noqa: E402
 from scripts.build_historical_warehouse import (  # noqa: E402
     MATCH_FIELDS,
     Warehouse,
@@ -26,6 +27,52 @@ from scripts.build_historical_warehouse import (  # noqa: E402
     now,
 )
 from scripts.historical_quality import refresh_quality_set_based  # noqa: E402
+
+
+def reverse_home_away(row: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy with every canonical home/away field transposed."""
+    reversed_row = dict(row)
+    for home_field in MATCH_FIELDS:
+        if not home_field.startswith("home_"):
+            continue
+        away_field = f"away_{home_field[5:]}"
+        if away_field not in MATCH_FIELDS:
+            continue
+        reversed_row[home_field] = row.get(away_field)
+        reversed_row[away_field] = row.get(home_field)
+    if row.get("result") == "H":
+        reversed_row["result"] = "A"
+    elif row.get("result") == "A":
+        reversed_row["result"] = "H"
+    return reversed_row
+
+
+def cross_source_reverse_international_match(
+    warehouse: Warehouse,
+    row: dict[str, Any],
+    source: str,
+) -> tuple[str, dict[str, Any]] | None:
+    """Resolve provider-only home/away flips for one international fixture.
+
+    Neutral-site international providers can assign opposite home/away labels
+    to the same dated fixture. We only reuse the reverse identity when it is
+    already backed by a *different* source. Same-source historical ambiguity is
+    deliberately retained for audit rather than collapsed.
+    """
+    if row.get("scope") != "international":
+        return None
+    reversed_row = reverse_home_away(row)
+    reverse_key = match_key(reversed_row)
+    sources = {
+        item["source_key"]
+        for item in warehouse.conn.execute(
+            "SELECT source_key FROM warehouse_match_sources WHERE match_key=?",
+            (reverse_key,),
+        )
+    }
+    if not sources or not any(existing_source != source for existing_source in sources):
+        return None
+    return reverse_key, reversed_row
 
 
 def fast_upsert_match(
@@ -45,14 +92,30 @@ def fast_upsert_match(
     if not source:
         raise ValueError("source/source_key is required")
 
-    key = warehouse.source_match(source, source_id) or match_key(row)
+    working_row = row
+    key = warehouse.source_match(source, source_id)
+    existing = None
+    if key:
+        existing = warehouse.conn.execute(
+            "SELECT * FROM warehouse_matches WHERE match_key=?", (key,)
+        ).fetchone()
+    else:
+        key = match_key(row)
+        existing = warehouse.conn.execute(
+            "SELECT * FROM warehouse_matches WHERE match_key=?", (key,)
+        ).fetchone()
+        if not existing:
+            reverse_match = cross_source_reverse_international_match(warehouse, row, source)
+            if reverse_match:
+                key, working_row = reverse_match
+                existing = warehouse.conn.execute(
+                    "SELECT * FROM warehouse_matches WHERE match_key=?", (key,)
+                ).fetchone()
+
     incoming_priority = warehouse.priority(source)
-    existing = warehouse.conn.execute(
-        "SELECT * FROM warehouse_matches WHERE match_key=?", (key,)
-    ).fetchone()
 
     if not existing:
-        values = {field: row.get(field) for field in MATCH_FIELDS}
+        values = {field: working_row.get(field) for field in MATCH_FIELDS}
         values["extra_json"] = values.get("extra_json") or "{}"
         cols = ["match_key", *MATCH_FIELDS]
         warehouse.conn.execute(
@@ -82,7 +145,7 @@ def fast_upsert_match(
         updates: dict[str, Any] = {}
         provenance_rows: list[tuple[str, str, str, int]] = []
         for field in MATCH_FIELDS:
-            incoming = row.get(field)
+            incoming = working_row.get(field)
             if incoming in (None, ""):
                 continue
             current = existing[field]
@@ -176,6 +239,14 @@ def main() -> int:
 
     install_fast_warehouse_helpers()
     sys.argv = [str(target), *sys.argv[2:]]
+
+    # build_historical_warehouse.py defines Warehouse itself. Re-executing that
+    # file with runpy would create a second, unpatched class and silently bypass
+    # the fast/reconciliation helpers above. Invoke the already-imported module
+    # directly so its CLI uses the patched Warehouse class.
+    if target == Path(build_historical_warehouse.__file__).resolve():
+        return int(build_historical_warehouse.main())
+
     runpy.run_path(str(target), run_name="__main__")
     return 0
 
