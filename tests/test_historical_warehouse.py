@@ -14,7 +14,7 @@ from scripts.enrich_schochastics_goal_events import (
     resolve_match as resolve_goal_event_match,
     team_identity,
 )
-from scripts.enrich_statsbomb_history import goal_side
+from scripts.enrich_statsbomb_history import canonical_event_type, goal_side
 from scripts.import_current_soccer_datalake import (
     classify_league as classify_datalake_league,
 )
@@ -216,6 +216,34 @@ def test_statsbomb_goal_side_handles_own_goal():
     own_goal = {"type": {"name": "Own Goal Against"}, "team": {"name": "Arsenal"}}
     assert goal_side(normal, home, away) == "home"
     assert goal_side(own_goal, home, away) == "away"
+
+
+def test_statsbomb_events_use_cross_source_canonical_incident_types():
+    home, away = "Arsenal", "Chelsea"
+    goal = {
+        "type": {"name": "Shot"},
+        "team": {"name": "Arsenal"},
+        "shot": {"outcome": {"name": "Goal"}},
+    }
+    own_goal = {
+        "type": {"name": "Own Goal Against"},
+        "team": {"name": "Arsenal"},
+    }
+    card = {
+        "type": {"name": "Bad Behaviour"},
+        "team": {"name": "Chelsea"},
+        "bad_behaviour": {"card": {"name": "Yellow Card"}},
+    }
+    non_goal_shot = {
+        "type": {"name": "Shot"},
+        "team": {"name": "Arsenal"},
+        "shot": {"outcome": {"name": "Saved"}},
+    }
+
+    assert canonical_event_type(goal, home, away) == "goal"
+    assert canonical_event_type(own_goal, home, away) == "goal"
+    assert canonical_event_type(card, home, away) == "card"
+    assert canonical_event_type(non_goal_shot, home, away) == "shot"
 
 
 def test_martj42_extra_time_score_is_not_left_as_regulation_ft(tmp_path: Path):
