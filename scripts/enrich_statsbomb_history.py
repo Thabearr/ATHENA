@@ -70,12 +70,19 @@ def canonical_event_type(event: dict[str, Any], home: str, away: str) -> str:
     cross-source event queries expect those incidents under ``goal`` and
     ``card`` respectively, while non-incident provider event types remain
     available in their normalized raw form and in ``details_json``.
+
+    Goal classification follows the provider-declared incident, not whether we
+    can also resolve the scoring side. Side resolution is a separate concern
+    used for score reconstruction and must not make a known goal noncanonical.
     """
-    if goal_side(event, home, away) is not None:
+    event_type = get(event, "type", "name", default="")
+    if event_type in {"Own Goal Against", "Own Goal For"}:
+        return "goal"
+    if event_type == "Shot" and get(event, "shot", "outcome", "name") == "Goal":
         return "goal"
     if event_card(event):
         return "card"
-    return get(event, "type", "name", default="Unknown").casefold().replace(" ", "_")
+    return event_type.casefold().replace(" ", "_") or "unknown"
 
 
 def import_lineups(wh: Warehouse, dl: Downloader, match_key: str, match_id: int) -> int:
