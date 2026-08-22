@@ -62,6 +62,22 @@ def event_card(event: dict[str, Any]) -> str | None:
     return clean(name)
 
 
+def canonical_event_type(event: dict[str, Any], home: str, away: str) -> str:
+    """Map provider event names onto Athena's canonical incident types.
+
+    StatsBomb represents a goal as a successful ``Shot`` (or an own-goal event)
+    and cards as attributes of ``Bad Behaviour``/``Foul Committed``. Athena's
+    cross-source event queries expect those incidents under ``goal`` and
+    ``card`` respectively, while non-incident provider event types remain
+    available in their normalized raw form and in ``details_json``.
+    """
+    if goal_side(event, home, away) is not None:
+        return "goal"
+    if event_card(event):
+        return "card"
+    return get(event, "type", "name", default="Unknown").casefold().replace(" ", "_")
+
+
 def import_lineups(wh: Warehouse, dl: Downloader, match_key: str, match_id: int) -> int:
     url = f"{BASE}/lineups/{match_id}.json"
     try:
@@ -127,7 +143,7 @@ def import_match_events(wh: Warehouse, dl: Downloader, match_key: str, match: di
             "replacement": substitution,
         }
         wh.event(
-            match_key, "statsbomb_open", str(event.get("id")), event_type.casefold().replace(" ", "_"),
+            match_key, "statsbomb_open", str(event.get("id")), canonical_event_type(event, home or "", away or ""),
             event_subtype=get(event, "shot", "type", "name") or get(event, "pass", "type", "name"),
             team=team, player=player, minute=event.get("minute"), second=event.get("second"), period=str(period),
             outcome=get(event, "shot", "outcome", "name") or get(event, "pass", "outcome", "name"), card_type=card,
