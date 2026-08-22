@@ -19,7 +19,7 @@ on:
         default: "2026"
         type: string
   push:
-    branches: [main]
+    branches: [main, feature/historical-football-warehouse]
     paths:
       - ".github/workflows/build-historical-warehouse.yml"
       - "database/historical_warehouse_schema.sql"
