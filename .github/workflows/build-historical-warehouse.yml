@@ -26,6 +26,8 @@ on:
       - "domain/historical_competitions.py"
       - "scripts/audit_historical_hierarchy_coverage.py"
       - "scripts/build_historical_warehouse.py"
+      - "scripts/historical_quality.py"
+      - "scripts/run_with_fast_history_quality.py"
       - "scripts/import_current_soccer_datalake.py"
       - "scripts/import_global_football_backbone.py"
       - "scripts/import_openfootball_history.py"
@@ -33,6 +35,9 @@ on:
       - "scripts/enrich_statsbomb_history.py"
       - "scripts/normalize_historical_score_periods.py"
       - "tests/test_historical_warehouse.py"
+      - "tests/test_historical_hierarchy_freshness.py"
+      - "tests/test_global_backbone_retention.py"
+      - "tests/test_historical_quality_refresh.py"
   pull_request:
     branches: [main]
     paths:
@@ -41,6 +46,8 @@ on:
       - "domain/historical_competitions.py"
       - "scripts/audit_historical_hierarchy_coverage.py"
       - "scripts/build_historical_warehouse.py"
+      - "scripts/historical_quality.py"
+      - "scripts/run_with_fast_history_quality.py"
       - "scripts/import_current_soccer_datalake.py"
       - "scripts/import_global_football_backbone.py"
       - "scripts/import_openfootball_history.py"
@@ -48,6 +55,9 @@ on:
       - "scripts/enrich_statsbomb_history.py"
       - "scripts/normalize_historical_score_periods.py"
       - "tests/test_historical_warehouse.py"
+      - "tests/test_historical_hierarchy_freshness.py"
+      - "tests/test_global_backbone_retention.py"
+      - "tests/test_historical_quality_refresh.py"
 
 permissions:
   contents: read
@@ -80,17 +90,26 @@ jobs:
       - name: Run warehouse tests
         env:
           PYTHONPATH: .
-        run: pytest -q tests/test_historical_warehouse.py
+        run: >-
+          pytest -q
+          tests/test_historical_warehouse.py
+          tests/test_historical_hierarchy_freshness.py
+          tests/test_global_backbone_retention.py
+          tests/test_historical_quality_refresh.py
 
       - name: Import current hierarchy fixtures, stats, coaches and players
-        run: python scripts/import_current_soccer_datalake.py --deep-players
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/import_current_soccer_datalake.py
+          --deep-players
 
       - name: Import 1.2M-match global historical backbone
         run: python scripts/import_global_football_backbone.py
 
       - name: Import internationals, World Cup and Football-Data
         run: >-
-          python scripts/build_historical_warehouse.py
+          python scripts/run_with_fast_history_quality.py
+          scripts/build_historical_warehouse.py
           --martj42
           --worldcup
           --football-data
@@ -99,21 +118,28 @@ jobs:
           --audit
 
       - name: Import OpenFootball league, cup, UEFA and international history
-        run: python scripts/import_openfootball_history.py
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/import_openfootball_history.py
 
       - name: Enrich major competitions with scorer and goal-minute history
-        run: python scripts/enrich_schochastics_goal_events.py
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/enrich_schochastics_goal_events.py
 
       - name: Enrich StatsBomb open-data matches
         if: ${{ github.event_name != 'workflow_dispatch' || inputs.include_statsbomb }}
-        run: python scripts/enrich_statsbomb_history.py
+        run: >-
+          python scripts/run_with_fast_history_quality.py
+          scripts/enrich_statsbomb_history.py
 
       - name: Normalize regulation, extra-time and shootout scores
         run: python scripts/normalize_historical_score_periods.py
 
       - name: Export CSV tables and final audit
         run: >-
-          python scripts/build_historical_warehouse.py
+          python scripts/run_with_fast_history_quality.py
+          scripts/build_historical_warehouse.py
           --export-csv data/history_exports
           --audit
 
