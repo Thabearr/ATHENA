@@ -385,14 +385,14 @@ def restore_latest_lineage_state(
     get_run_jobs: Callable[[int], Mapping[str, Any]] | None = None,
     repository_root: Path | None = None,
 ) -> RestoredFailureLineage:
-    """Restore the newest completed scheduled run, including a failed tick.
+    """Restore the nearest canonical predecessor without discarding source evidence.
 
     A canonical failure artifact is never skipped: it may contain real staged source
-    observations. The only exception is campaign-origin recovery when every completed
-    in-campaign run has zero artifacts and GitHub job metadata proves its reviewed
-    acquisition and reconciliation steps were never entered. That recovery may only
-    establish Genesis; it may not fall back across such a failure to an older campaign
-    artifact.
+    observations. A newer completed run may be stepped across only when it has zero
+    artifacts and GitHub job metadata proves the exact reviewed failure happened before
+    acquisition and reconciliation. Those mechanically evidence-free runs remain listed
+    in ``skipped_preacquisition_failure_run_ids``. If no canonical predecessor exists,
+    the same proof may establish campaign Genesis; no missed observation is reconstructed.
     """
     runner.verify_reviewed_activation_dependencies()
     if type(current_run_id) is not int or current_run_id < 1:
@@ -436,11 +436,6 @@ def restore_latest_lineage_state(
                 candidate_canonical.append(artifact)
 
         if len(candidate_canonical) == 1:
-            if skipped_preacquisition:
-                raise _error(
-                    "campaign-origin pre-acquisition recovery cannot fall back across "
-                    f"runs {skipped_preacquisition} to older canonical run {run_id}"
-                )
             newest = candidate
             canonical = candidate_canonical
             artifact_data = candidate_artifacts
@@ -589,6 +584,7 @@ def restore_latest_lineage_state(
         predecessor_asset_name=artifact_name,
         last_committed_utc=last_committed,
         last_attempted_utc=last_attempted,
+        skipped_preacquisition_failure_run_ids=tuple(skipped_preacquisition),
     )
 
 
@@ -597,9 +593,20 @@ def resolve_nominal_schedule_slot_from_lineage(
     created_at: dt.datetime,
     lineage: RestoredFailureLineage,
 ) -> tuple[dt.datetime, str, str, str, str]:
-    """Resolve the next cron occurrence from the newest proven attempt lineage."""
+    """Resolve the current cron occurrence from the nearest proven durable lineage."""
     if type(lineage) is not RestoredFailureLineage:
         raise _error("lineage must be RestoredFailureLineage")
+    if lineage.skipped_preacquisition_failure_run_ids:
+        # Every skipped run was mechanically proven to have zero artifacts and to
+        # stop before acquisition/reconciliation. They are elapsed schedule
+        # opportunities, not source observations. Resolve only the current trigger;
+        # the activation runner will durably record intervening slots as missing with
+        # backfill_authorized=False before it commits the current tick.
+        return runner.resolve_nominal_schedule_slot(
+            schedule_expr,
+            created_at,
+            last_committed_utc=None,
+        )
     anchor = lineage.last_attempted_utc
     if anchor is None:
         anchor = lineage.last_committed_utc
