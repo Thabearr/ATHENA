@@ -1,0 +1,87 @@
+name: Verify FotMob Fresh-Holdout History Pagination
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+      - ".github/workflows/verify-fotmob-fresh-holdout-history-pagination.yml"
+      - "tests/test_fotmob_fresh_holdout_workflow_history_pagination.py"
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  verify:
+    name: prove history reaches pre-campaign boundary
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Query complete workflow history and prove pre-campaign boundary
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import subprocess
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          holdout_start = dt.datetime(2026, 8, 19, 0, 0, tzinfo=dt.timezone.utc)
+          output = subprocess.check_output(
+              [
+                  "gh",
+                  "api",
+                  "--paginate",
+                  "--slurp",
+                  f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?per_page=100",
+              ],
+              text=True,
+          )
+          pages = json.loads(output)
+          if type(pages) is not list or not pages:
+              raise SystemExit("paginated workflow history returned no pages")
+
+          runs = []
+          for page in pages:
+              if type(page) is not dict or type(page.get("workflow_runs")) is not list:
+                  raise SystemExit("paginated workflow history returned malformed page")
+              runs.extend(page["workflow_runs"])
+
+          completed_pre_campaign = []
+          for run in runs:
+              if type(run) is not dict or run.get("status") != "completed":
+                  continue
+              created_at = run.get("created_at")
+              if type(created_at) is not str:
+                  continue
+              observed = dt.datetime.fromisoformat(
+                  created_at.replace("Z", "+00:00")
+              ).astimezone(dt.timezone.utc)
+              if observed < holdout_start:
+                  completed_pre_campaign.append(run)
+
+          if not completed_pre_campaign:
+              raise SystemExit(
+                  "full paginated history did not reach a completed pre-campaign run"
+              )
+
+          newest_boundary = max(
+              completed_pre_campaign,
+              key=lambda run: run["created_at"],
+          )
+          print(
+              "pagination proof: "
+              f"pages={len(pages)} runs={len(runs)} "
+              f"pre_campaign_completed={len(completed_pre_campaign)} "
+              f"boundary_run={newest_boundary.get('id')} "
+              f"boundary_created_at={newest_boundary.get('created_at')}"
+          )
+          PY
