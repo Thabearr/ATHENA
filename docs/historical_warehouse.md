@@ -48,6 +48,12 @@ One row per known event. Supports goals, cards, substitutions and richer StatsBo
 
 No single public source contains every historical match in every requested competition with every scorer, card, coach, lineup and advanced statistic. Athena therefore leaves unavailable historical fields as `NULL` instead of inventing them. Richer sources augment or replace weaker evidence field-by-field, and disagreements are retained in `warehouse_conflicts`.
 
+## Score-period semantics
+
+For Athena, `home_score_ft` / `away_score_ft` mean the **90-minute regulation score**, not the score after extra time. `home_score_et` / `away_score_et` mean the score after extra time, and `*_score_pen` stores the shootout score.
+
+Some historical sources publish a final score that includes extra time. `scripts/normalize_historical_score_periods.py` uses complete goal-event ledgers and shootout evidence to separate regulation from extra time. If the regulation score cannot be reconstructed confidently, Athena leaves FT missing rather than training on an incorrectly labelled ET result.
+
 ## Recommended full build
 
 Run the broad backbone first, then richer sources in increasing detail:
@@ -55,6 +61,7 @@ Run the broad backbone first, then richer sources in increasing detail:
 ```bash
 python scripts/import_global_football_backbone.py
 python scripts/build_historical_warehouse.py --martj42 --worldcup --football-data --start-year 1993 --end-year 2026 --audit
+python scripts/normalize_historical_score_periods.py
 python scripts/import_openfootball_history.py
 python scripts/enrich_statsbomb_history.py
 python scripts/build_historical_warehouse.py --export-csv data/history_exports --audit
@@ -69,11 +76,12 @@ The workflow `.github/workflows/build-historical-warehouse.yml` provides a manua
 1. runs the historical warehouse tests;
 2. imports the 1.2M-match global backbone;
 3. imports internationals, World Cup enrichment and Football-Data league history;
-4. imports OpenFootball league/cup/UEFA history;
-5. optionally enriches supported matches with StatsBomb events/lineups;
-6. exports CSV tables;
-7. runs `PRAGMA integrity_check`;
-8. uploads `athena-history-sqlite` and `athena-history-csv` artifacts.
+4. normalizes regulation, extra-time and shootout score semantics;
+5. imports OpenFootball league/cup/UEFA history;
+6. optionally enriches supported matches with StatsBomb events/lineups;
+7. exports CSV tables;
+8. runs `PRAGMA integrity_check`;
+9. uploads `athena-history-sqlite` and `athena-history-csv` artifacts.
 
 ## CSV exports
 
