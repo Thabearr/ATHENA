@@ -39,7 +39,7 @@ def test_detects_missing_internal_season(tmp_path: Path):
 def test_detects_underfilled_mature_season_but_ignores_newest(tmp_path: Path):
     warehouse = Warehouse(tmp_path / "history.db")
     warehouse.initialize()
-    for year, count in ((2020, 10), (2021, 3), (2022, 10), (2023, 2)):
+    for year, count in ((2020, 10), (2021, 2), (2022, 10), (2023, 2)):
         for i in range(count):
             _insert(warehouse, f"{year}-{str(year + 1)[-2:]}", f"{year}-09-{i + 1:02d}", i)
 
