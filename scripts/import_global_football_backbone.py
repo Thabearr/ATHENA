@@ -157,6 +157,12 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
     """Insert the lowest-priority result backbone in batches without overwriting richer rows."""
     frame = pd.read_parquet(parquet, columns=list(PARQUET_COLUMNS))
     columns = list(frame.columns)
+    competition_names = {
+        row["competition_key"]: row["display_name"]
+        for row in wh.conn.execute(
+            "SELECT competition_key,display_name FROM warehouse_competitions"
+        )
+    }
     seen = imported = skipped = 0
     match_batch: list[tuple[Any, ...]] = []; source_batch: list[tuple[Any, ...]] = []
     match_sql = """INSERT OR IGNORE INTO warehouse_matches(
@@ -183,11 +189,11 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
             skipped += 1; continue
         scope, competition_key = classified
         source_competition = clean(raw.get("competition")) or competition_key
-        if competition_key in CATCH_ALL_KEYS:
-            competition_name = source_competition
-        else:
-            competition_row = wh.conn.execute("SELECT display_name FROM warehouse_competitions WHERE competition_key=?", (competition_key,)).fetchone()
-            competition_name = competition_row[0] if competition_row else source_competition
+        competition_name = (
+            source_competition
+            if competition_key in CATCH_ALL_KEYS
+            else competition_names.get(competition_key, source_competition)
+        )
         date = pd.Timestamp(raw["date"]).date().isoformat(); home, away = clean(raw.get("home")), clean(raw.get("away"))
         if not home or not away or pd.isna(raw.get("gh")) or pd.isna(raw.get("ga")):
             skipped += 1; continue
@@ -221,7 +227,7 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
 
 def args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB); parser.add_argument("--cache", type=Path, default=DEFAULT_CACHE)
+    parser.add_argument("--db", type=Path,default=DEFAULT_DB); parser.add_argument("--cache", type=Path,default=DEFAULT_CACHE)
     parser.add_argument("--refresh", action="store_true"); parser.add_argument("--export-csv", type=Path)
     return parser.parse_args()
 
