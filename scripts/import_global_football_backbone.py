@@ -54,6 +54,8 @@ INTERNATIONAL_NAMES = {
     "african cup of nations": "intl_afcon", "asian cup": "intl_asian_cup", "gold cup": "intl_gold_cup",
 }
 
+CALENDAR_YEAR_KEYS = {"usa_mls", "nor_eliteserien", "swe_allsvenskan"}
+
 
 def normalized(value: Any) -> str:
     return " ".join(str(value or "").strip().casefold().replace("_", " ").split())
@@ -96,9 +98,10 @@ def classify(row: dict[str, Any]) -> tuple[str, str] | None:
     return None
 
 
-def season_for(date_value: Any, scope: str) -> str:
+def season_for(date_value: Any, scope: str, competition_key: str | None = None) -> str:
     date = pd.Timestamp(date_value)
-    if scope == "international": return str(date.year)
+    if scope == "international" or competition_key in CALENDAR_YEAR_KEYS:
+        return str(date.year)
     start = date.year if date.month >= 7 else date.year - 1
     return f"{start}-{str((start + 1) % 100).zfill(2)}"
 
@@ -138,7 +141,7 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
         final_home, final_away = int(raw["gh"]), int(raw["ga"]); finish = normalized(raw.get("full_time")).upper()
         match = {
             "competition_key": competition_key, "competition_name": competition_name, "scope": scope,
-            "season": season_for(raw["date"], scope), "match_date": date, "home_team": home, "away_team": away,
+            "season": season_for(raw["date"], scope, competition_key), "match_date": date, "home_team": home, "away_team": away,
             "extra_json": json.dumps({"schochastics_full_time_code": raw.get("full_time"),
                 "home_ident": raw.get("home_ident"), "away_ident": raw.get("away_ident"),
                 "home_country": raw.get("home_country"), "away_country": raw.get("away_country"),
