@@ -128,6 +128,13 @@ def norm(value: Any) -> str:
     return " ".join(text.split())
 
 
+def safe_text(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
 def safe_int(value: Any) -> int | None:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
@@ -147,7 +154,7 @@ def safe_float(value: Any) -> float | None:
 
 
 def classify_league(row: dict[str, Any]) -> str | None:
-    fd_code = clean(row.get("fd_code"))
+    fd_code = safe_text(row.get("fd_code"))
     if fd_code and fd_code.upper() in FOOTBALL_DATA_CODES:
         return FOOTBALL_DATA_CODES[fd_code.upper()]
 
@@ -249,7 +256,7 @@ def import_core(
     team_names = {
         int(row["id"]): str(row["name"])
         for row in teams.to_dict(orient="records")
-        if safe_int(row.get("id")) is not None and clean(row.get("name"))
+        if safe_int(row.get("id")) is not None and safe_text(row.get("name"))
     }
 
     stats = _stats_dict(pd.read_parquet(paths["match_stats.parquet"]))
@@ -343,9 +350,9 @@ def import_core(
             "away_team": away,
             "home_score_ht": safe_int(stat.get("home_goals_ht")),
             "away_score_ht": safe_int(stat.get("away_goals_ht")),
-            "referee": clean(fixture.get("referee_name")),
-            "home_coach": clean(home_lineup.get("coach_name")),
-            "away_coach": clean(away_lineup.get("coach_name")),
+            "referee": safe_text(fixture.get("referee_name")),
+            "home_coach": safe_text(home_lineup.get("coach_name")),
+            "away_coach": safe_text(away_lineup.get("coach_name")),
             "home_xg": safe_float(stat.get("home_xg")),
             "away_xg": safe_float(stat.get("away_xg")),
             "home_possession": safe_float(stat.get("home_possession")),
@@ -367,8 +374,8 @@ def import_core(
                     "soccer_datalake_fixture_id": fixture_id,
                     "api_football_id": safe_int(fixture.get("api_football_id")),
                     "status_norm": status,
-                    "home_formation": clean(home_lineup.get("formation")),
-                    "away_formation": clean(away_lineup.get("formation")),
+                    "home_formation": safe_text(home_lineup.get("formation")),
+                    "away_formation": safe_text(away_lineup.get("formation")),
                     "xg_note": "coarse provider estimate; not per-shot xG",
                 },
                 ensure_ascii=False,
@@ -450,7 +457,7 @@ def import_core(
         lineup = team_lineups.get(fixture_id, {})
         for team_id in (home_id, away_id):
             info = lineup.get(team_id, {})
-            coach = clean(info.get("coach_name"))
+            coach = safe_text(info.get("coach_name"))
             team_name = team_names.get(team_id)
             if coach and team_name:
                 coach_rows.append(
@@ -460,12 +467,12 @@ def import_core(
                         SOURCE_KEY,
                         team_name,
                         coach,
-                        clean(info.get("coach_api_id")),
+                        safe_text(info.get("coach_api_id")),
                         "head_coach",
                         None,
                     )
                 )
-        referee = clean(fixture.get("referee_name"))
+        referee = safe_text(fixture.get("referee_name"))
         if referee:
             official_rows.append(
                 (
@@ -473,7 +480,7 @@ def import_core(
                     key,
                     SOURCE_KEY,
                     referee,
-                    clean(fixture.get("referee_api_id")),
+                    safe_text(fixture.get("referee_api_id")),
                     "referee",
                     None,
                 )
@@ -570,11 +577,11 @@ def import_deep_players(
             continue
         team_id = safe_int(row.get("team_id"))
         team = team_names.get(team_id) if team_id is not None else None
-        player = clean(row.get("player_name"))
+        player = safe_text(row.get("player_name"))
         if not team or not player:
             continue
 
-        player_id = clean(row.get("player_id"))
+        player_id = safe_text(row.get("player_id"))
         lineup_key = "l_" + digest(SOURCE_KEY, key, team_id, player_id or player)
         lineup_rows.append(
             (
@@ -585,7 +592,7 @@ def import_deep_players(
                 player,
                 player_id,
                 safe_int(row.get("number")),
-                clean(row.get("position")),
+                safe_text(row.get("position")),
                 int(bool(row.get("is_starter"))) if row.get("is_starter") is not None else None,
                 int(bool(row.get("captain"))) if row.get("captain") is not None else None,
                 safe_int(row.get("minutes")),
