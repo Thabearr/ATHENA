@@ -9,8 +9,11 @@ unchanged through ``runpy``.
 """
 from __future__ import annotations
 
+import csv
+import gzip
 import json
 import runpy
+import sqlite3
 import sys
 from pathlib import Path
 from typing import Any
@@ -223,11 +226,49 @@ def install_fast_warehouse_helpers() -> None:
     Warehouse.upsert_match = fast_upsert_match  # type: ignore[method-assign]
 
 
+def prepare_schochastics_delivery_export(directory: Path) -> None:
+    """Replace bulky table CSVs with the exact Schochastics-attributable match subset."""
+    directory.mkdir(parents=True, exist_ok=True)
+    db_path = build_historical_warehouse.DEFAULT_DB
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.execute(
+            """
+            SELECT m.*
+            FROM warehouse_matches AS m
+            WHERE EXISTS (
+                SELECT 1
+                FROM warehouse_match_sources AS s
+                WHERE s.match_key = m.match_key
+                  AND s.source_key = 'schochastics_global'
+            )
+            ORDER BY m.match_date, m.match_key
+            """
+        )
+        output = directory / "athena-schochastics-global-backbone.csv.gz"
+        count = 0
+        with gzip.open(output, "wt", newline="", encoding="utf-8", compresslevel=6) as fh:
+            writer = csv.writer(fh)
+            writer.writerow([item[0] for item in cur.description])
+            for row in cur:
+                writer.writerow(row)
+                count += 1
+        (directory / "athena-schochastics-global-backbone.count.txt").write_text(
+            f"{count}\n", encoding="utf-8"
+        )
+    finally:
+        conn.close()
+
+    for csv_path in directory.glob("*.csv"):
+        csv_path.unlink()
+
+
 def main() -> int:
     if len(sys.argv) < 2:
         raise SystemExit("usage: run_with_fast_history_quality.py <script> [args ...]")
 
     target = Path(sys.argv[1])
+    passthrough_args = list(sys.argv[2:])
     if not target.is_absolute():
         target = ROOT / target
     target = target.resolve()
@@ -238,14 +279,19 @@ def main() -> int:
         raise SystemExit("runner cannot invoke itself")
 
     install_fast_warehouse_helpers()
-    sys.argv = [str(target), *sys.argv[2:]]
+    sys.argv = [str(target), *passthrough_args]
 
     # build_historical_warehouse.py defines Warehouse itself. Re-executing that
     # file with runpy would create a second, unpatched class and silently bypass
     # the fast/reconciliation helpers above. Invoke the already-imported module
     # directly so its CLI uses the patched Warehouse class.
     if target == Path(build_historical_warehouse.__file__).resolve():
-        return int(build_historical_warehouse.main())
+        result = int(build_historical_warehouse.main())
+        if result == 0 and "--export-csv" in passthrough_args:
+            index = passthrough_args.index("--export-csv")
+            if index + 1 < len(passthrough_args):
+                prepare_schochastics_delivery_export(Path(passthrough_args[index + 1]))
+        return result
 
     runpy.run_path(str(target), run_name="__main__")
     return 0
