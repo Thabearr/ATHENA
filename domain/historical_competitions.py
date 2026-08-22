@@ -60,8 +60,8 @@ CLUB_COMPETITIONS: tuple[Competition, ...] = (
     Competition("sui_superleague", "Swiss Super League", "club", "Switzerland", "UEFA", "league", 170, "B3", ("Swiss Superleague",)),
     Competition("gre_superleague", "Super League Greece", "club", "Greece", "UEFA", "league", 180, "B3", ("Greek Super League", "G1")),
     Competition("eng_championship", "EFL Championship", "club", "England", "UEFA", "league", 190, "C1", ("Championship", "E1")),
-    Competition("sau_proleague", "Saudi Pro League", "club", "Saudi Arabia", "AFC", "league", 200, "C2", ("Saudi League", "Roshn Saudi League")),
-    Competition("usa_mls", "Major League Soccer", "club", "United States", "CONCACAF", "league", 210, "C2", ("MLS",)),
+    Competition("usa_mls", "Major League Soccer", "club", "United States", "CONCACAF", "league", 200, "C2", ("MLS",)),
+    Competition("sau_proleague", "Saudi Pro League", "club", "Saudi Arabia", "AFC", "league", 210, "C2", ("Saudi League", "Roshn Saudi League")),
     Competition("other_euro_topflight", "Other European Top Flights", "club", None, "UEFA", "league", 220, "C3"),
     Competition("other_global_topflight", "Other Global Top Flights", "club", None, None, "league", 230, "C4"),
 )
