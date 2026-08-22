@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Run a historical warehouse script with the million-row-safe quality refresh.
+"""Run a historical warehouse script with million-row-safe helpers.
 
 This is a narrow compatibility shim: target scripts keep their existing CLI and
-logic, but any call to ``Warehouse.refresh_quality`` uses the set-based
-implementation for the duration of that process.
+logic, but quality refresh becomes set-based and immutable source priorities are
+memoized for the lifetime of the import process. Import failures still propagate
+unchanged through ``runpy``.
 """
 from __future__ import annotations
 
@@ -17,6 +18,22 @@ if str(ROOT) not in sys.path:
 
 from scripts.build_historical_warehouse import Warehouse  # noqa: E402
 from scripts.historical_quality import refresh_quality_set_based  # noqa: E402
+
+
+def install_fast_warehouse_helpers() -> None:
+    """Install process-local read optimizations without changing merge rules."""
+    Warehouse.refresh_quality = refresh_quality_set_based  # type: ignore[method-assign]
+
+    original_priority = Warehouse.priority
+    priority_cache: dict[tuple[int, str], int] = {}
+
+    def cached_priority(warehouse: Warehouse, source: str) -> int:
+        key = (id(warehouse), source)
+        if key not in priority_cache:
+            priority_cache[key] = original_priority(warehouse, source)
+        return priority_cache[key]
+
+    Warehouse.priority = cached_priority  # type: ignore[method-assign]
 
 
 def main() -> int:
@@ -33,7 +50,7 @@ def main() -> int:
     if target == Path(__file__).resolve():
         raise SystemExit("runner cannot invoke itself")
 
-    Warehouse.refresh_quality = refresh_quality_set_based  # type: ignore[method-assign]
+    install_fast_warehouse_helpers()
     sys.argv = [str(target), *sys.argv[2:]]
     runpy.run_path(str(target), run_name="__main__")
     return 0
