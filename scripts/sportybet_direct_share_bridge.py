@@ -1,8 +1,13 @@
 """Direct SportyBet Nigeria share-code proof.
 
 This module reproduces the public anonymous booking/share operation exposed by
-SportyBet's own web client.  It never logs in, submits a stake, touches a wallet,
+SportyBet's own web client. It never logs in, submits a stake, touches a wallet,
 or places a wager.
+
+The preserved SportyBet WAP client wraps `fetch()` and rewrites root-relative
+requests beneath `/api/<country>/`. Therefore the browser call
+`fetch('/orders/share?...')` is transmitted to `/api/ng/orders/share?...` in the
+Nigeria environment. This module targets that actual network path directly.
 """
 from __future__ import annotations
 
@@ -18,8 +23,9 @@ from urllib.request import Request, urlopen
 
 SPORTYBET_ORIGIN = "https://www.sportybet.com"
 SPORTYBET_OPER_ID = "2"
-CREATE_PATH = "/orders/share?throwInvalidEvent=true"
-LOAD_PREFIX = "/orders/share/"
+SPORTYBET_COUNTRY_PREFIX = "ng"
+CREATE_PATH = "/api/ng/orders/share?throwInvalidEvent=true"
+LOAD_PREFIX = "/api/ng/orders/share/"
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 _EVENT_RE = re.compile(r"^sr:match:[1-9][0-9]*$", re.ASCII)
 _SAFE_ID_RE = re.compile(r"^[A-Za-z0-9_.:+/=-]{1,160}$", re.ASCII)
@@ -106,6 +112,7 @@ def _request_json(
     body = None if payload is None else _canonical_json_bytes(payload)
     headers = {
         "Accept": "application/json",
+        "Accept-Language": "en-NG,en;q=0.9",
         "User-Agent": "ATHENA/1.0 direct-sportybet-share-proof",
         "OperId": SPORTYBET_OPER_ID,
     }
@@ -164,6 +171,9 @@ def create_and_roundtrip(
 ) -> dict[str, Any]:
     output_dir.mkdir(parents=True, exist_ok=True)
     request_payload = {"selections": list(selections)}
+    (output_dir / "create-request.json").write_bytes(
+        _canonical_json_bytes(request_payload)
+    )
     create_payload, create_raw, create_status = _request_json(
         path=CREATE_PATH, method="POST", payload=request_payload
     )
@@ -184,6 +194,7 @@ def create_and_roundtrip(
         "observed_at": _utc_now(),
         "provider": "SportyBet Nigeria",
         "provider_origin": SPORTYBET_ORIGIN,
+        "country_prefix": SPORTYBET_COUNTRY_PREFIX,
         "oper_id": SPORTYBET_OPER_ID,
         "create_path": CREATE_PATH,
         "load_path": LOAD_PREFIX + code,
