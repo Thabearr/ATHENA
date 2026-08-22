@@ -4,6 +4,11 @@
 The broad schochastics parquet supplies the 1.2M-match result backbone. These
 competition CSVs add scorer identities and goal times for many of Athena's
 highest-priority leagues and cups.
+
+Fixture attachment is intentionally conservative. Historical events are only
+attached when normalized team identities identify exactly one fixture on the
+same competition/date. A missed enrichment is safer than poisoning Athena's
+truth layer with a plausible-but-wrong fuzzy match.
 """
 from __future__ import annotations
 
@@ -13,7 +18,7 @@ import io
 import json
 import re
 import sys
-from difflib import SequenceMatcher
+import unicodedata
 from pathlib import Path
 from typing import Any
 
@@ -59,6 +64,7 @@ GAME_RE = re.compile(
     re.IGNORECASE,
 )
 MINUTE_RE = re.compile(r"^\s*(\d+)(?:\s*\+\s*(\d+))?")
+TEAM_DESIGNATORS = {"fc", "afc", "cf", "sc", "ac", "as"}
 
 
 def download(cache: Path, filename: str, refresh: bool) -> str:
@@ -99,11 +105,19 @@ def parse_game(value: Any) -> tuple[str, str, int, int] | None:
     )
 
 
-def similarity(left: str, right: str) -> float:
-    a, b = norm_team(left), norm_team(right)
-    if a == b:
-        return 1.0
-    return SequenceMatcher(None, a, b).ratio()
+def team_identity(value: Any) -> str:
+    """Return a conservative cross-source club identity.
+
+    Source naming often moves legal designators from prefix to suffix
+    (``AFC Bournemouth`` vs ``Bournemouth AFC``) or changes punctuation and
+    accents. We normalize only those mechanical differences; there is no fuzzy
+    similarity fallback.
+    """
+    text = norm_team(str(value or ""))
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode("ascii")
+    text = text.casefold().replace("&", " and ")
+    tokens = re.sub(r"[^a-z0-9]+", " ", text).split()
+    return " ".join(token for token in tokens if token not in TEAM_DESIGNATORS)
 
 
 def resolve_match(
@@ -123,33 +137,31 @@ def resolve_match(
         return None
 
     if home and away:
-        for row in rows:
-            if norm_team(row["home_team"]) == norm_team(home) and norm_team(row["away_team"]) == norm_team(away):
-                return row["match_key"]
-        ranked = sorted(
-            (
-                (
-                    (similarity(row["home_team"], home) + similarity(row["away_team"], away)) / 2,
-                    row["match_key"],
-                )
-                for row in rows
-            ),
-            reverse=True,
-        )
-        if ranked and ranked[0][0] >= 0.82:
-            return ranked[0][1]
+        wanted_home = team_identity(home)
+        wanted_away = team_identity(away)
+        exact = [
+            row["match_key"]
+            for row in rows
+            if team_identity(row["home_team"]) == wanted_home
+            and team_identity(row["away_team"]) == wanted_away
+        ]
+        if len(exact) == 1:
+            return exact[0]
+        # Ambiguous duplicates are deliberately not guessed.
+        if exact:
+            return None
 
     if scoring_team:
-        ranked = []
-        for row in rows:
-            score = max(
-                similarity(row["home_team"], scoring_team),
-                similarity(row["away_team"], scoring_team),
-            )
-            ranked.append((score, row["match_key"]))
-        ranked.sort(reverse=True)
-        if ranked and ranked[0][0] >= 0.9:
-            return ranked[0][1]
+        wanted_team = team_identity(scoring_team)
+        candidates = [
+            row["match_key"]
+            for row in rows
+            if wanted_team
+            and wanted_team
+            in {team_identity(row["home_team"]), team_identity(row["away_team"])}
+        ]
+        if len(candidates) == 1:
+            return candidates[0]
     return None
 
 
@@ -177,13 +189,16 @@ def maybe_fill_half_time(warehouse: Warehouse, match_key: str) -> bool:
         return False
 
     home_ht = away_ht = 0
+    home_identity = team_identity(match["home_team"])
+    away_identity = team_identity(match["away_team"])
     for event in events:
         minute = int(event["minute"])
         if minute > 45:
             continue
-        if norm_team(event["team"] or "") == norm_team(match["home_team"]):
+        event_identity = team_identity(event["team"] or "")
+        if event_identity == home_identity:
             home_ht += 1
-        elif norm_team(event["team"] or "") == norm_team(match["away_team"]):
+        elif event_identity == away_identity:
             away_ht += 1
         else:
             return False
