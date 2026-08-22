@@ -45,6 +45,7 @@ jobs:
         id: direct
         continue-on-error: true
         run: |
+          mkdir -p .cache/athena-research
           python scripts/sportybet_direct_share_bridge.py \
             --selections artifacts/research-protocols/saturday-2026-08-22-sportybet-direct-one-leg-proof-v1.json \
             --output-dir "${OUTPUT_DIR}" | tee "${OUTPUT_DIR}.summary.json"
