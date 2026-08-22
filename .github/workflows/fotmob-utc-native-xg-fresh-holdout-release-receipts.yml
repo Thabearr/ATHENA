@@ -31,14 +31,20 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Verify reviewed mirror implementation blob
+      - name: Verify reviewed mirror implementation blobs
         shell: bash
         run: |
           set -euo pipefail
-          actual="$(git hash-object scripts/mirror_fotmob_fresh_holdout_release_receipt.py)"
-          expected="ddabb6ae83cbe6c81c9264119a121a54715df960"
-          test "${actual}" = "${expected}" || {
+          mirror_actual="$(git hash-object scripts/mirror_fotmob_fresh_holdout_release_receipt.py)"
+          mirror_expected="ddabb6ae83cbe6c81c9264119a121a54715df960"
+          test "${mirror_actual}" = "${mirror_expected}" || {
             echo "FATAL: release-receipt mirror implementation blob changed"
+            exit 1
+          }
+          transport_actual="$(git hash-object scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)"
+          transport_expected="a9e6414288e98e9788b987aa9dd10ac35cc2d4cc"
+          test "${transport_actual}" = "${transport_expected}" || {
+            echo "FATAL: release-receipt Actions artifact transport blob changed"
             exit 1
           }
 
@@ -50,6 +56,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/mirror_fotmob_fresh_holdout_release_receipt.py \
+          python scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py \
             --repository "${GITHUB_REPOSITORY}" \
             --run-id "${SOURCE_RUN_ID}"
