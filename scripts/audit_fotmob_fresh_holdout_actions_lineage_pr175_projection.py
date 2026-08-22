@@ -18,7 +18,7 @@ import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 
 
 PRE_PR175_WORKFLOW_BLOB_SHA = "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
-POST_PR175_WORKFLOW_BLOB_SHA = "1ff52e32ade3422ca1605bc4546dc8d0813ec316"
+POST_PR175_WORKFLOW_BLOB_SHA = "d48b1ff823277445e3b496876caca6b01480ece9"
 _ACTIONS_ARTIFACT_RE = re.compile(
     r"^/repos/[^/]+/[^/]+/actions/artifacts/[1-9][0-9]*/zip$",
     re.ASCII,
