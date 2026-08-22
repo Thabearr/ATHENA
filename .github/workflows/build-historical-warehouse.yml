@@ -49,13 +49,18 @@ jobs:
       - name: Import global top-flight and international backbone
         run: python scripts/import_global_football_backbone.py
 
-      - name: Import internationals, World Cup, Football-Data and OpenFootball
+      - name: Import internationals, World Cup and Football-Data
         run: >-
           python scripts/build_historical_warehouse.py
-          --all
+          --martj42
+          --worldcup
+          --football-data
           --start-year ${{ inputs.start_year }}
           --end-year ${{ inputs.end_year }}
           --audit
+
+      - name: Import OpenFootball league, cup and UEFA history
+        run: python scripts/import_openfootball_history.py
 
       - name: Enrich StatsBomb open-data matches
         if: ${{ inputs.include_statsbomb }}
