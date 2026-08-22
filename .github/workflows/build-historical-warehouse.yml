@@ -67,6 +67,10 @@ on:
       - "tests/test_global_backbone_retention.py"
       - "tests/test_historical_quality_refresh.py"
 
+concurrency:
+  group: historical-warehouse-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
