@@ -184,3 +184,65 @@ def test_integrity_audit_accepts_canonical_goal_and_card_incidents(tmp_path: Pat
     assert report["noncanonical_goal_outcome_events"] == 0
     assert report["complete"] is True
     warehouse.close()
+
+
+def test_preferred_event_view_uses_strongest_source_per_event_type(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    key = warehouse.upsert_match(
+        _match("Arsenal", "Chelsea"),
+        source_key="soccer_datalake",
+        source_match_id="preferred-events",
+    )
+
+    warehouse.event(
+        key,
+        "soccer_datalake",
+        "weak-goal",
+        "goal",
+        team="Arsenal",
+        player="Data Lake Scorer",
+        minute=20,
+        outcome="Goal",
+    )
+    warehouse.event(
+        key,
+        "statsbomb_open",
+        "strong-goal",
+        "goal",
+        team="Arsenal",
+        player="StatsBomb Scorer",
+        minute=20,
+        outcome="Goal",
+    )
+    warehouse.event(
+        key,
+        "soccer_datalake",
+        "only-card",
+        "card",
+        team="Chelsea",
+        player="Booked Player",
+        minute=50,
+        card_type="Yellow Card",
+    )
+    warehouse.flush()
+
+    raw = warehouse.conn.execute(
+        "SELECT source_key,event_type FROM warehouse_events WHERE match_key=? ORDER BY event_type,source_key",
+        (key,),
+    ).fetchall()
+    preferred = warehouse.conn.execute(
+        "SELECT source_key,event_type FROM warehouse_events_preferred WHERE match_key=? ORDER BY event_type,source_key",
+        (key,),
+    ).fetchall()
+
+    assert [(row["source_key"], row["event_type"]) for row in raw] == [
+        ("soccer_datalake", "card"),
+        ("soccer_datalake", "goal"),
+        ("statsbomb_open", "goal"),
+    ]
+    assert [(row["source_key"], row["event_type"]) for row in preferred] == [
+        ("soccer_datalake", "card"),
+        ("statsbomb_open", "goal"),
+    ]
+    warehouse.close()
