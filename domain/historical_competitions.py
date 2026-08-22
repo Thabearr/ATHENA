@@ -3,7 +3,6 @@
 Ranks are intentionally independent between club and international scopes.
 Lower rank = higher priority inside that scope.
 """
-
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -54,10 +53,10 @@ CLUB_COMPETITIONS: tuple[Competition, ...] = (
     Competition("por_primeira", "Primeira Liga", "club", "Portugal", "UEFA", "league", 110, "B2", ("Liga Portugal", "P1")),
     Competition("tur_superlig", "Süper Lig", "club", "Turkey", "UEFA", "league", 120, "B2", ("Super Lig", "T1")),
     Competition("bel_proleague", "Belgian Pro League", "club", "Belgium", "UEFA", "league", 130, "B2", ("First Division A", "Jupiler Pro League", "B1")),
-    Competition("nor_eliteserien", "Eliteserien", "club", "Norway", "UEFA", "league", 140, "B3"),
-    Competition("den_superliga", "Danish Superliga", "club", "Denmark", "UEFA", "league", 150, "B3"),
+    Competition("nor_eliteserien", "Eliteserien", "club", "Norway", "UEFA", "league", 140, "B3", ("Tippeligaen",)),
+    Competition("den_superliga", "Danish Superliga", "club", "Denmark", "UEFA", "league", 150, "B3", ("Superligaen", "Danish Super League")),
     Competition("swe_allsvenskan", "Allsvenskan", "club", "Sweden", "UEFA", "league", 160, "B3"),
-    Competition("sui_superleague", "Swiss Super League", "club", "Switzerland", "UEFA", "league", 170, "B3"),
+    Competition("sui_superleague", "Swiss Super League", "club", "Switzerland", "UEFA", "league", 170, "B3", ("Swiss Superleague",)),
     Competition("gre_superleague", "Super League Greece", "club", "Greece", "UEFA", "league", 180, "B3", ("Greek Super League", "G1")),
     Competition("eng_championship", "EFL Championship", "club", "England", "UEFA", "league", 190, "C1", ("Championship", "E1")),
     Competition("sau_proleague", "Saudi Pro League", "club", "Saudi Arabia", "AFC", "league", 200, "C2", ("Saudi League", "Roshn Saudi League")),
@@ -83,14 +82,14 @@ INTERNATIONAL_COMPETITIONS: tuple[Competition, ...] = (
 
 SOURCES: tuple[HistoricalSource, ...] = (
     HistoricalSource(
-        "martj42_international",
-        "martj42 international_results",
-        "https://github.com/martj42/international_results",
-        "CC0-1.0",
-        "martj42/international_results",
-        True,
-        20,
-        "Senior international results from 1872 plus goalscorers and shootouts; no complete card/coach coverage.",
+        "statsbomb_open",
+        "StatsBomb Open Data",
+        "https://github.com/hudl/open-data",
+        "StatsBomb Open Data terms",
+        "StatsBomb",
+        False,
+        5,
+        "Selected competitions/seasons only; rich events, lineups, xG and tactics.",
     ),
     HistoricalSource(
         "fjelstul_worldcup",
@@ -100,7 +99,27 @@ SOURCES: tuple[HistoricalSource, ...] = (
         "Joshua C. Fjelstul, The Fjelstul World Cup Database",
         True,
         10,
-        "World Cup-specific enrichment: goals, bookings, managers, players, substitutions, referees and venues.",
+        "World Cup enrichment: goals, bookings, managers, players, substitutions, referees and venues.",
+    ),
+    HistoricalSource(
+        "martj42_international",
+        "martj42 international_results",
+        "https://github.com/martj42/international_results",
+        "CC0-1.0",
+        "martj42/international_results",
+        True,
+        20,
+        "Senior international results from 1872 plus goalscorers and shootouts.",
+    ),
+    HistoricalSource(
+        "soccer_datalake",
+        "Global Football Data Lake",
+        "https://huggingface.co/datasets/eatpizzanot/soccer-dataset",
+        "CC BY 4.0",
+        "eatpizzanot/soccer-dataset",
+        True,
+        25,
+        "Current cross-league fixture/stat/coach/lineup layer compiled from API-Football and Football-Data.co.uk.",
     ),
     HistoricalSource(
         "football_data_uk",
@@ -113,14 +132,14 @@ SOURCES: tuple[HistoricalSource, ...] = (
         "Local-cache only. Strong league coverage since 1993/94 with HT/FT, cards, shots, corners, referees and odds where available.",
     ),
     HistoricalSource(
-        "statsbomb_open",
-        "StatsBomb Open Data",
-        "https://github.com/hudl/open-data",
-        "StatsBomb Open Data terms",
-        "StatsBomb",
-        False,
-        5,
-        "Selected competitions/seasons only; event and lineup detail is extremely rich. Attribution required.",
+        "schochastics_events",
+        "schochastics football-data event files",
+        "https://github.com/schochastics/football-data",
+        "Open Data Commons Attribution License (ODC-By)",
+        "schochastics/football-data",
+        True,
+        35,
+        "Scorer/minute files plus selected cards, substitutions and metadata for major competitions.",
     ),
     HistoricalSource(
         "openfootball",
@@ -130,7 +149,17 @@ SOURCES: tuple[HistoricalSource, ...] = (
         "OpenFootball / football.db",
         True,
         40,
-        "Public-domain league/cup/UEFA result backfill; detail varies by season and competition.",
+        "Public-domain league/cup/UEFA/international result backfill; detail varies by season and competition.",
+    ),
+    HistoricalSource(
+        "schochastics_global",
+        "schochastics football-data",
+        "https://github.com/schochastics/football-data",
+        "Open Data Commons Attribution License (ODC-By)",
+        "schochastics/football-data",
+        True,
+        60,
+        "Broad result backbone: 1,237,935 games in 207 top-tier leagues and 20 international tournaments, 1888-2023.",
     ),
 )
 
