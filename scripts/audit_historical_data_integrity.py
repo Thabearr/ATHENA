@@ -2,8 +2,8 @@
 """Audit cross-source integrity invariants in Athena's historical warehouse.
 
 This is intentionally stricter than SQLite foreign-key integrity. It detects
-logical duplicate fixtures caused by source naming differences and verifies
-that incident-bearing events use Athena's canonical goal/card event types.
+logical duplicate fixtures caused by source naming/orientation differences and
+verifies that incident-bearing events use Athena's canonical goal/card types.
 """
 from __future__ import annotations
 
@@ -44,11 +44,13 @@ def logical_duplicate_fixtures(warehouse: Warehouse, *, sample_limit: int = 25) 
         away = team_identity(row["away_team"])
         if not home or not away:
             continue
-        identity = (row["competition_key"], row["match_date"], home, away)
+        first_team, second_team = sorted((home, away))
+        identity = (row["competition_key"], row["match_date"], first_team, second_team)
         record = {
             "match_key": row["match_key"],
             "home_team": row["home_team"],
             "away_team": row["away_team"],
+            "orientation": f"{home} -> {away}",
         }
         prior = first_seen.get(identity)
         if prior is None:
@@ -60,13 +62,12 @@ def logical_duplicate_fixtures(warehouse: Warehouse, *, sample_limit: int = 25) 
 
     examples = []
     for identity, matches in list(duplicate_groups.items())[:sample_limit]:
-        competition_key, match_date, home_identity, away_identity = identity
+        competition_key, match_date, first_team, second_team = identity
         examples.append(
             {
                 "competition_key": competition_key,
                 "match_date": match_date,
-                "home_identity": home_identity,
-                "away_identity": away_identity,
+                "team_pair": [first_team, second_team],
                 "matches": matches,
             }
         )
