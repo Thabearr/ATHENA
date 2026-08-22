@@ -18,6 +18,21 @@ on:
         required: true
         default: "2026"
         type: string
+  push:
+    branches: [main]
+    paths:
+      - ".github/workflows/build-historical-warehouse.yml"
+      - "database/historical_warehouse_schema.sql"
+      - "domain/historical_competitions.py"
+      - "scripts/audit_historical_hierarchy_coverage.py"
+      - "scripts/build_historical_warehouse.py"
+      - "scripts/import_current_soccer_datalake.py"
+      - "scripts/import_global_football_backbone.py"
+      - "scripts/import_openfootball_history.py"
+      - "scripts/enrich_schochastics_goal_events.py"
+      - "scripts/enrich_statsbomb_history.py"
+      - "scripts/normalize_historical_score_periods.py"
+      - "tests/test_historical_warehouse.py"
 
 permissions:
   contents: read
@@ -26,6 +41,9 @@ jobs:
   build-history:
     runs-on: ubuntu-latest
     timeout-minutes: 360
+    env:
+      START_YEAR: ${{ inputs.start_year || '1993' }}
+      END_YEAR: ${{ inputs.end_year || '2026' }}
     steps:
       - name: Checkout Athena
         uses: actions/checkout@v4
@@ -46,7 +64,10 @@ jobs:
           PYTHONPATH: .
         run: pytest -q tests/test_historical_warehouse.py
 
-      - name: Import global top-flight and international backbone
+      - name: Import current hierarchy fixtures, stats, coaches and players
+        run: python scripts/import_current_soccer_datalake.py --deep-players
+
+      - name: Import 1.2M-match global historical backbone
         run: python scripts/import_global_football_backbone.py
 
       - name: Import internationals, World Cup and Football-Data
@@ -55,25 +76,35 @@ jobs:
           --martj42
           --worldcup
           --football-data
-          --start-year ${{ inputs.start_year }}
-          --end-year ${{ inputs.end_year }}
+          --start-year "$START_YEAR"
+          --end-year "$END_YEAR"
           --audit
+
+      - name: Import OpenFootball league, cup, UEFA and international history
+        run: python scripts/import_openfootball_history.py
+
+      - name: Enrich major competitions with scorer and goal-minute history
+        run: python scripts/enrich_schochastics_goal_events.py
+
+      - name: Enrich StatsBomb open-data matches
+        if: ${{ github.event_name != 'workflow_dispatch' || inputs.include_statsbomb }}
+        run: python scripts/enrich_statsbomb_history.py
 
       - name: Normalize regulation, extra-time and shootout scores
         run: python scripts/normalize_historical_score_periods.py
-
-      - name: Import OpenFootball league, cup and UEFA history
-        run: python scripts/import_openfootball_history.py
-
-      - name: Enrich StatsBomb open-data matches
-        if: ${{ inputs.include_statsbomb }}
-        run: python scripts/enrich_statsbomb_history.py
 
       - name: Export CSV tables and final audit
         run: >-
           python scripts/build_historical_warehouse.py
           --export-csv data/history_exports
           --audit
+
+      - name: Enforce Athena hierarchy coverage
+        run: >-
+          python scripts/audit_historical_hierarchy_coverage.py
+          --strict
+          --recent-since 2024-01-01
+          --output data/history_exports/hierarchy_coverage.json
 
       - name: SQLite integrity check
         run: |
