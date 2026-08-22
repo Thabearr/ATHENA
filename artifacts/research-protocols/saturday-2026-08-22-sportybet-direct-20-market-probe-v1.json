@@ -1,0 +1,22 @@
+[
+  {"target_id":"01-hull-man-united","eventId":"sr:match:72221156","desired_selection":"AWAY_1UP"},
+  {"target_id":"02-everton-crystal-palace","eventId":"sr:match:72221158","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"03-ipswich-sunderland","eventId":"sr:match:72221160","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"04-nottm-forest-leeds","eventId":"sr:match:72221162","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"05-brentford-tottenham","eventId":"sr:match:72221164","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"06-athletic-sevilla","eventId":"sr:match:72478486","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"07-valencia-celta","eventId":"sr:match:72478504","desired_selection":"HOME_TEAM_TOTAL_OVER_0_5"},
+  {"target_id":"08-espanyol-real-madrid","eventId":"sr:match:72478494","desired_selection":"AWAY_1UP"},
+  {"target_id":"09-inter-monza","eventId":"sr:match:71944898","desired_selection":"HOME_1UP"},
+  {"target_id":"10-udinese-como","eventId":"sr:match:71944906","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"11-genoa-napoli","eventId":"sr:match:71944896","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"12-lens-auxerre","eventId":"sr:match:72036116","desired_selection":"HOME_1UP"},
+  {"target_id":"13-nice-lorient","eventId":"sr:match:72036120","desired_selection":"HOME_TEAM_TOTAL_OVER_0_5"},
+  {"target_id":"14-toulouse-lyon","eventId":"sr:match:72036124","desired_selection":"TOTAL_GOALS_OVER_1_5"},
+  {"target_id":"15-troyes-paris-fc","eventId":"sr:match:72036126","desired_selection":"AWAY_TEAM_TOTAL_OVER_0_5"},
+  {"target_id":"16-sporting-alverca","eventId":"sr:match:72530870","desired_selection":"HOME_2UP"},
+  {"target_id":"17-fenerbahce-konyaspor","eventId":"sr:match:72723154","desired_selection":"HOME_WIN"},
+  {"target_id":"18-fortuna-az","eventId":"sr:match:72041068","desired_selection":"AWAY_WIN"},
+  {"target_id":"19-wehen-leverkusen","eventId":"sr:match:71960096","desired_selection":"AWAY_WIN"},
+  {"target_id":"20-trier-leipzig","eventId":"sr:match:71960108","desired_selection":"AWAY_WIN"}
+]
