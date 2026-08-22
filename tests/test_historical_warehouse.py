@@ -1,8 +1,18 @@
 from pathlib import Path
 
-from domain.historical_competitions import resolve_competition
+from domain.historical_competitions import competition_by_key, resolve_competition
+from scripts.audit_historical_hierarchy_coverage import (
+    REQUIRED_HIERARCHY_KEYS,
+    audit_hierarchy,
+)
 from scripts.build_historical_warehouse import Warehouse
+from scripts.enrich_schochastics_goal_events import FILES as GOAL_EVENT_FILES
+from scripts.enrich_schochastics_goal_events import parse_game, parse_minute
 from scripts.enrich_statsbomb_history import goal_side
+from scripts.import_current_soccer_datalake import (
+    classify_league as classify_datalake_league,
+)
+from scripts.import_current_soccer_datalake import season_for as datalake_season_for
 from scripts.import_global_football_backbone import classify, season_for
 from scripts.import_openfootball_history import parse_openfootball_text
 from scripts.normalize_historical_score_periods import normalize_martj42
@@ -44,6 +54,20 @@ def test_openfootball_january_rolls_into_second_season_year():
     assert row["match_date"] == "2026-01-21"
 
 
+def test_openfootball_calendar_year_mls_does_not_roll_back():
+    text = """= Major League Soccer 2025
+
+▪ Regular Season
+  Sat May 10
+    Inter Miami v New York Red Bulls  2-1 (1-0)
+"""
+    row = next(parse_openfootball_text(text, "world-master/2025/mls.txt"))
+    assert row["competition_key"] == "usa_mls"
+    assert row["scope"] == "club"
+    assert row["season"] == "2025"
+    assert row["match_date"] == "2025-05-10"
+
+
 def test_global_backbone_maps_priority_leagues():
     assert classify({"competition": "Saudi Arabia", "level": "national", "continent": "Asia"}) == ("club", "sau_proleague")
     assert classify({"competition": "USA", "level": "national", "continent": "North America"}) == ("club", "usa_mls")
@@ -56,6 +80,72 @@ def test_calendar_year_leagues_keep_calendar_season_labels():
     assert season_for("2025-05-10", "club", "nor_eliteserien") == "2025"
     assert season_for("2025-05-10", "club", "swe_allsvenskan") == "2025"
     assert season_for("2025-05-10", "club", "eng_premier") == "2024-25"
+    assert datalake_season_for("2025-05-10", "usa_mls") == "2025"
+    assert datalake_season_for("2025-05-10", "eng_premier") == "2024-25"
+
+
+def test_current_datalake_classifies_hierarchy_leagues_and_cups():
+    assert classify_datalake_league(
+        {"name": "Pro League", "country": "Saudi-Arabia", "fd_code": None}
+    ) == "sau_proleague"
+    assert classify_datalake_league(
+        {"name": "Major League Soccer", "country": "USA", "fd_code": None}
+    ) == "usa_mls"
+    assert classify_datalake_league(
+        {"name": "FA Cup", "country": "England", "fd_code": None}
+    ) == "eng_fa_cup"
+    assert classify_datalake_league(
+        {"name": "UEFA Champions League", "country": "World", "fd_code": None}
+    ) == "uefa_ucl"
+    assert classify_datalake_league(
+        {"name": "Africa Cup of Nations", "country": "World", "fd_code": "INT-AFCON"}
+    ) == "intl_afcon"
+
+
+def test_schochastics_goal_event_registry_is_unambiguous():
+    assert GOAL_EVENT_FILES["bundesliga.csv"] == "ger_bundesliga"
+    assert "aut-bundesliga.csv" not in GOAL_EVENT_FILES
+    assert GOAL_EVENT_FILES["eng-premier-league.csv"] == "eng_premier"
+    assert GOAL_EVENT_FILES["champions-league.csv"] == "uefa_ucl"
+    assert parse_game("Leicester City vs. Sunderland 5:2") == (
+        "Leicester City",
+        "Sunderland",
+        5,
+        2,
+    )
+    assert parse_minute("45+2'") == (45, 2)
+
+
+def test_hierarchy_audit_requires_every_named_competition(tmp_path: Path):
+    wh = Warehouse(tmp_path / "history.db")
+    wh.initialize()
+    empty = audit_hierarchy(wh)
+    assert not empty["complete"]
+    assert set(empty["missing_required_competitions"]) == set(REQUIRED_HIERARCHY_KEYS)
+
+    for index, key in enumerate(REQUIRED_HIERARCHY_KEYS):
+        comp = competition_by_key(key)
+        assert comp is not None
+        wh.upsert_match(
+            {
+                "competition_key": key,
+                "competition_name": comp.name,
+                "scope": comp.scope,
+                "season": "2025",
+                "match_date": f"2025-01-{(index % 28) + 1:02d}",
+                "home_team": f"{key} Home",
+                "away_team": f"{key} Away",
+                "home_score_ft": 1,
+                "away_score_ft": 0,
+            },
+            source_key="openfootball",
+            source_match_id=f"audit-{key}",
+        )
+
+    full = audit_hierarchy(wh)
+    assert full["complete"]
+    assert full["missing_required_competitions"] == []
+    wh.close()
 
 
 def test_statsbomb_goal_side_handles_own_goal():
