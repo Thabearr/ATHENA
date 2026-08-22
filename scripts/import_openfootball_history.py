@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Import OpenFootball league/cup/UEFA results into Athena history.
+"""Import OpenFootball league/cup/UEFA/international results into Athena history.
 
-This importer is deliberately separate from the main source builder so season
-rollover is explicit: for a 2025/26 season, Jan-Jun dates belong to 2026.
+The parser keeps European split-year seasons and calendar-year competitions
+separate so dates are not shifted into the wrong season.
 """
 from __future__ import annotations
 
@@ -38,7 +38,11 @@ REPOSITORIES = (
     "deutschland",
     "france",
     "europe",
+    "world",
+    "euro",
+    "worldcup",
 )
+CALENDAR_YEAR_KEYS = {"usa_mls", "nor_eliteserien", "swe_allsvenskan"}
 MATCH_RE = re.compile(
     r"^(?:(\d{1,2}:\d{2})\s+)?(.+?)\s+v\s+(.+?)\s+(\d+)-(\d+)"
     r"(?:\s+\((\d+)-(\d+)\))?\s*$"
@@ -46,42 +50,84 @@ MATCH_RE = re.compile(
 DATE_RE = re.compile(
     r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)\s+([A-Z][a-z]{2})\s+(\d{1,2})(?:\s+(\d{4}))?$"
 )
-SEASON_RE = re.compile(r"(\d{4})[/\-](\d{2,4})")
+SPLIT_SEASON_RE = re.compile(r"(\d{4})[/\-](\d{2,4})")
+SINGLE_YEAR_RE = re.compile(r"\b(18\d{2}|19\d{2}|20\d{2})\b")
 COUNTRY_SUFFIX_RE = re.compile(r"\s+\([A-Z]{3}\)$")
 
 
 def competition_from_title(title: str):
     lowered = title.casefold()
+
     if "champions league" in lowered or "european cup" in lowered:
         return competition_by_key("uefa_ucl")
     if "europa league" in lowered or "uefa cup" in lowered:
         return competition_by_key("uefa_uel")
     if "conference league" in lowered:
         return competition_by_key("uefa_uecl")
+
+    if "world cup qualification" in lowered or "world cup qualifier" in lowered:
+        return competition_by_key("intl_world_cup_qual")
+    if (
+        "euro qualification" in lowered
+        or "european championship qualification" in lowered
+        or "africa cup of nations qualification" in lowered
+        or "asian cup qualification" in lowered
+    ):
+        return competition_by_key("intl_continental_qual")
+    if "world cup" in lowered:
+        return competition_by_key("intl_world_cup")
+    if "european championship" in lowered or re.search(r"\buefa euro\b", lowered):
+        return competition_by_key("intl_euro")
+    if "copa america" in lowered or "copa américa" in lowered:
+        return competition_by_key("intl_copa_america")
+    if "africa cup of nations" in lowered or "african cup of nations" in lowered:
+        return competition_by_key("intl_afcon")
+    if "asian cup" in lowered:
+        return competition_by_key("intl_asian_cup")
+    if "gold cup" in lowered:
+        return competition_by_key("intl_gold_cup")
+    if "nations league" in lowered:
+        return competition_by_key("intl_nations_league")
+    if "friendly" in lowered:
+        return competition_by_key("intl_friendly")
+
     for comp in ALL_COMPETITIONS:
-        if comp.scope != "club":
-            continue
         for name in (comp.name, *comp.aliases):
-            if len(name) > 5 and name.casefold() in lowered:
+            if len(name) > 4 and name.casefold() in lowered:
                 return comp
     return None
 
 
-def season_parts(title: str) -> tuple[str | None, int | None]:
-    found = SEASON_RE.search(title)
-    if not found:
-        return None, None
-    start = int(found.group(1))
-    return f"{start}-{found.group(2)[-2:]}", start
+def season_parts(title: str, competition_key: str | None = None) -> tuple[str | None, int | None]:
+    found = SPLIT_SEASON_RE.search(title)
+    if found:
+        start = int(found.group(1))
+        return f"{start}-{found.group(2)[-2:]}", start
+
+    single = SINGLE_YEAR_RE.search(title)
+    if single:
+        year = int(single.group(1))
+        return str(year), year
+
+    return None, None
 
 
-def resolve_date(month_name: str, day: str, explicit_year: str | None, start_year: int | None) -> str | None:
+def resolve_date(
+    month_name: str,
+    day: str,
+    explicit_year: str | None,
+    start_year: int | None,
+    *,
+    calendar_year: bool = False,
+) -> str | None:
     month = datetime.strptime(month_name, "%b").month
     if explicit_year:
         year = int(explicit_year)
     elif start_year is not None:
-        # Standard European season: Jul-Dec in start year, Jan-Jun in next year.
-        year = start_year if month >= 7 else start_year + 1
+        if calendar_year:
+            year = start_year
+        else:
+            year = start_year if month >= 7 else start_year + 1
     else:
         return None
     return datetime(year, month, int(day)).date().isoformat()
@@ -101,7 +147,9 @@ def parse_openfootball_text(text: str, source_path: str) -> Iterator[dict[str, A
         if line.startswith("="):
             title = line.lstrip("= ")
             competition = competition_from_title(title)
-            season, start_year = season_parts(title)
+            key = competition.key if competition else None
+            season, start_year = season_parts(title, key)
+            current_date = None
             continue
         if line.startswith("▪"):
             stage = line.lstrip("▪ ")
@@ -109,8 +157,20 @@ def parse_openfootball_text(text: str, source_path: str) -> Iterator[dict[str, A
 
         date_match = DATE_RE.match(line)
         if date_match:
+            calendar_year = bool(
+                competition
+                and (
+                    competition.key in CALENDAR_YEAR_KEYS
+                    or competition.scope == "international"
+                    or (season and "-" not in season)
+                )
+            )
             current_date = resolve_date(
-                date_match.group(1), date_match.group(2), date_match.group(3), start_year
+                date_match.group(1),
+                date_match.group(2),
+                date_match.group(3),
+                start_year,
+                calendar_year=calendar_year,
             )
             continue
 
@@ -123,7 +183,7 @@ def parse_openfootball_text(text: str, source_path: str) -> Iterator[dict[str, A
         row = {
             "competition_key": competition.key,
             "competition_name": competition.name,
-            "scope": "club",
+            "scope": competition.scope,
             "season": season,
             "stage": stage,
             "match_date": current_date,
@@ -140,8 +200,10 @@ def parse_openfootball_text(text: str, source_path: str) -> Iterator[dict[str, A
         yield row
 
 
-def import_openfootball(warehouse: Warehouse, downloader: Downloader) -> dict[str, int]:
+def import_openfootball(warehouse: Warehouse, downloader: Downloader) -> dict[str, Any]:
     files_seen = matches = 0
+    per_competition: dict[str, int] = {}
+
     for repo in REPOSITORIES:
         url = f"https://github.com/openfootball/{repo}/archive/refs/heads/master.zip"
         archive = downloader.cache / "openfootball" / f"{repo}.zip"
@@ -164,7 +226,12 @@ def import_openfootball(warehouse: Warehouse, downloader: Downloader) -> dict[st
                     warehouse.upsert_match(
                         row,
                         source="openfootball",
-                        source_id=digest(name, row["match_date"], row["home_team"], row["away_team"]),
+                        source_id=digest(
+                            name,
+                            row["match_date"],
+                            row["home_team"],
+                            row["away_team"],
+                        ),
                         source_url=url,
                         coverage={
                             "has_ft": 1,
@@ -172,8 +239,15 @@ def import_openfootball(warehouse: Warehouse, downloader: Downloader) -> dict[st
                         },
                     )
                     matches += 1
+                    key = row["competition_key"]
+                    per_competition[key] = per_competition.get(key, 0) + 1
+
     warehouse.refresh_quality()
-    return {"files_seen": files_seen, "matches_processed": matches}
+    return {
+        "files_seen": files_seen,
+        "matches_processed": matches,
+        "per_competition": dict(sorted(per_competition.items())),
+    }
 
 
 def arguments() -> argparse.Namespace:
@@ -194,7 +268,13 @@ def main() -> int:
         report = import_openfootball(warehouse, downloader)
         if args.export_csv:
             warehouse.export(args.export_csv)
-        print(json.dumps({"database": str(args.db), "openfootball": report, "audit": warehouse.audit()}, indent=2, sort_keys=True))
+        print(
+            json.dumps(
+                {"database": str(args.db), "openfootball": report, "audit": warehouse.audit()},
+                indent=2,
+                sort_keys=True,
+            )
+        )
         return 0
     finally:
         warehouse.close()
