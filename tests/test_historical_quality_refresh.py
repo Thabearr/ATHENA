@@ -2,6 +2,7 @@ from pathlib import Path
 
 from scripts.build_historical_warehouse import Warehouse
 from scripts.historical_quality import refresh_quality_set_based
+from scripts.run_with_fast_history_quality import fast_upsert_match
 
 
 def _match(name: str, *, ft=True, ht=False, referee=None, home_coach=None, away_coach=None):
@@ -74,4 +75,77 @@ def test_set_based_quality_refresh_matches_existing_quality_rules(tmp_path: Path
     assert rows[standard_ht] == "STANDARD"
     assert rows[standard_event] == "STANDARD"
     assert rows[rich] == "RICH"
+    warehouse.close()
+
+
+def test_fast_upsert_preserves_source_priority_and_conflicts(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    base = {
+        "competition_key": "eng_premier",
+        "competition_name": "Premier League",
+        "scope": "club",
+        "season": "2025-26",
+        "match_date": "2025-08-16",
+        "home_team": "Example FC",
+        "away_team": "Other FC",
+        "home_score_ft": 1,
+        "away_score_ft": 0,
+    }
+
+    key = fast_upsert_match(
+        warehouse,
+        base,
+        source_key="openfootball",
+        source_match_id="weak",
+    )
+    stronger = fast_upsert_match(
+        warehouse,
+        {
+            **base,
+            "home_score_ft": 2,
+            "home_score_ht": 1,
+            "away_score_ht": 0,
+            "referee": "Strong Ref",
+        },
+        source_key="football_data_uk",
+        source_match_id="strong",
+    )
+    weaker_again = fast_upsert_match(
+        warehouse,
+        {**base, "home_score_ft": 9, "referee": "Weak Ref"},
+        source_key="openfootball",
+        source_match_id="weak-later",
+    )
+    warehouse.flush()
+
+    assert key == stronger == weaker_again
+    row = warehouse.conn.execute(
+        """SELECT home_score_ft,away_score_ft,home_score_ht,away_score_ht,referee
+           FROM warehouse_matches WHERE match_key=?""",
+        (key,),
+    ).fetchone()
+    assert tuple(row) == (2, 0, 1, 0, "Strong Ref")
+
+    provenance = {
+        item["field_name"]: item["source_key"]
+        for item in warehouse.conn.execute(
+            """SELECT field_name,source_key FROM warehouse_field_provenance
+               WHERE match_key=? AND field_name IN ('home_score_ft','home_score_ht','referee')""",
+            (key,),
+        )
+    }
+    assert provenance == {
+        "home_score_ft": "football_data_uk",
+        "home_score_ht": "football_data_uk",
+        "referee": "football_data_uk",
+    }
+    assert warehouse.conn.execute(
+        "SELECT COUNT(*) FROM warehouse_conflicts WHERE match_key=?",
+        (key,),
+    ).fetchone()[0] >= 2
+    assert warehouse.conn.execute(
+        "SELECT COUNT(*) FROM warehouse_match_sources WHERE match_key=?",
+        (key,),
+    ).fetchone()[0] == 3
     warehouse.close()
