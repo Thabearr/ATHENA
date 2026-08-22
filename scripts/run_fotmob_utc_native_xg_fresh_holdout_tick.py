@@ -8,12 +8,15 @@ import json
 from pathlib import Path
 import sys
 
+import domain.fotmob_data_matches_ordinary_ft_finished_score_adapter as score_adapter
 import domain.fotmob_fresh_holdout_capture_qualification_adapter as live_capture_adapter
+import domain.fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter as settlement_schema_adapter
 import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 
 
 LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "b6bbbda19b13a81c17ff5386e402f0a585249cb7"
+SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "986376b892e01cc739f65fca6d38c3ceec26b418"
 ACTIVATION_RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
 
 
@@ -48,7 +51,7 @@ def _git_blob_sha(path: Path) -> str:
 
 
 def _execute_collection_tick_with_reviewed_adapter(**kwargs):
-    """Scope the reviewed compatibility adapter to exactly one CLI tick."""
+    """Scope both reviewed compatibility adapters to exactly one CLI tick."""
     try:
         if (
             _git_blob_sha(Path(live_capture_adapter.__file__))
@@ -57,32 +60,63 @@ def _execute_collection_tick_with_reviewed_adapter(**kwargs):
             raise runner.FreshHoldoutActivationError(
                 "reviewed live-capture identity adapter blob changed"
             )
+        if (
+            _git_blob_sha(Path(settlement_schema_adapter.__file__))
+            != SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA
+        ):
+            raise runner.FreshHoldoutActivationError(
+                "reviewed settlement schema adapter blob changed"
+            )
         if _git_blob_sha(Path(runner.__file__)) != ACTIVATION_RUNNER_BLOB_SHA:
             raise runner.FreshHoldoutActivationError(
                 "reviewed activation runner blob changed"
             )
         live_capture_adapter.verify_reviewed_dependencies()
+        settlement_schema_adapter.verify_reviewed_dependencies()
     except OSError as exc:
         raise runner.FreshHoldoutActivationError(
-            "could not verify reviewed live-capture adapter installation"
+            "could not verify reviewed fresh-holdout adapter installation"
         ) from exc
 
-    original = fresh.qualify_capture_fixtures
+    original_qualifier = fresh.qualify_capture_fixtures
     if (
-        getattr(original, "__module__", None) != fresh.__name__
-        or getattr(original, "__name__", None) != "qualify_capture_fixtures"
+        getattr(original_qualifier, "__module__", None) != fresh.__name__
+        or getattr(original_qualifier, "__name__", None) != "qualify_capture_fixtures"
     ):
         raise runner.FreshHoldoutActivationError(
             "fresh-holdout capture qualifier runtime identity changed"
         )
+
+    original_score_pr89 = score_adapter.pr89
+    if (
+        getattr(original_score_pr89, "__name__", None)
+        != "domain.fotmob_data_matches_eliminated_team_id_value_domain_extension"
+        or getattr(
+            original_score_pr89,
+            "assess_fotmob_data_matches_eliminated_team_id_value_domain",
+            None,
+        )
+        is None
+    ):
+        raise runner.FreshHoldoutActivationError(
+            "ordinary-FT adapter PR89 runtime dependency changed"
+        )
+    settlement_proxy = (
+        settlement_schema_adapter.build_pr89_settlement_compatibility_proxy()
+    )
     try:
         # Runner._qualify and fresh settlement both resolve this module global at
-        # call time, so the same reviewed adapter covers prediction capture and
-        # settlement identity capture without modifying either frozen module.
+        # call time, so the PR208 adapter covers prediction and settlement identity.
         fresh.qualify_capture_fixtures = live_capture_adapter.qualify_capture_fixtures
+
+        # The frozen ordinary-FT adapter keeps parsing score/reason semantics from
+        # original network bytes. Only its internal PR89 structural assessment is
+        # delegated through the reviewed extra-halfs compatibility projection.
+        score_adapter.pr89 = settlement_proxy
         return runner.execute_collection_tick(**kwargs)
     finally:
-        fresh.qualify_capture_fixtures = original
+        score_adapter.pr89 = original_score_pr89
+        fresh.qualify_capture_fixtures = original_qualifier
 
 
 def build_parser() -> argparse.ArgumentParser:
