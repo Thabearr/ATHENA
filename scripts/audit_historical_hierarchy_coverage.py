@@ -21,7 +21,7 @@ if str(ROOT) not in sys.path:
 from domain.historical_competitions import ALL_COMPETITIONS  # noqa: E402
 from scripts.build_historical_warehouse import DEFAULT_DB, Warehouse  # noqa: E402
 
-CATCH_ALL_KEYS = {"other_euro_topflight", "intl_other"}
+CATCH_ALL_KEYS = {"other_euro_topflight", "other_global_topflight", "intl_other"}
 REQUIRED_HIERARCHY_KEYS = tuple(
     competition.key
     for competition in ALL_COMPETITIONS
