@@ -13,3 +13,5 @@ database/athena.db
 backtest_output.txt
 .cache/football-data-uk/
 .cache/athena-research/
+.cache/athena-history/
+data/history_exports/
