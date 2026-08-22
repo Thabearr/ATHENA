@@ -4,6 +4,11 @@
 This source is a broad result backbone (1888-2023), not an event authority.
 Richer sources in build_historical_warehouse.py have higher source priority and
 will replace/augment its fields where they overlap.
+
+Athena's named hierarchy competitions keep dedicated competition keys. Other
+European and global top-flight leagues are retained in catch-all buckets rather
+than discarded, preserving the breadth of the 1.2M-match source while keeping
+hierarchy coverage auditable.
 """
 from __future__ import annotations
 
@@ -56,6 +61,7 @@ INTERNATIONAL_NAMES = {
 }
 
 CALENDAR_YEAR_KEYS = {"usa_mls", "nor_eliteserien", "swe_allsvenskan"}
+CATCH_ALL_KEYS = {"other_euro_topflight", "other_global_topflight"}
 
 
 def normalized(value: Any) -> str:
@@ -88,6 +94,7 @@ def download(cache: Path, refresh: bool) -> Path:
 
 
 def classify(row: dict[str, Any]) -> tuple[str, str] | None:
+    """Resolve named Athena hierarchy competitions without catch-all expansion."""
     competition = normalized(row.get("competition")); level = normalized(row.get("level")); continent = normalized(row.get("continent"))
     if competition in UEFA_NAMES: return "club", UEFA_NAMES[competition]
     if level == "national":
@@ -96,6 +103,16 @@ def classify(row: dict[str, Any]) -> tuple[str, str] | None:
         return None
     if competition in INTERNATIONAL_NAMES: return "international", INTERNATIONAL_NAMES[competition]
     if level == "international": return "international", "intl_other"
+    return None
+
+
+def classify_for_import(row: dict[str, Any]) -> tuple[str, str] | None:
+    """Classify every usable top-flight/international row for warehouse retention."""
+    classified = classify(row)
+    if classified:
+        return classified
+    if normalized(row.get("level")) == "national":
+        return "club", "other_global_topflight"
     return None
 
 
@@ -130,12 +147,16 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
 
     for raw in frame.to_dict(orient="records"):
         seen += 1
-        classified = classify(raw)
+        classified = classify_for_import(raw)
         if not classified:
             skipped += 1; continue
         scope, competition_key = classified
-        competition_row = wh.conn.execute("SELECT display_name FROM warehouse_competitions WHERE competition_key=?", (competition_key,)).fetchone()
-        competition_name = competition_row[0] if competition_row else str(raw.get("competition") or competition_key)
+        source_competition = clean(raw.get("competition")) or competition_key
+        if competition_key in CATCH_ALL_KEYS:
+            competition_name = source_competition
+        else:
+            competition_row = wh.conn.execute("SELECT display_name FROM warehouse_competitions WHERE competition_key=?", (competition_key,)).fetchone()
+            competition_name = competition_row[0] if competition_row else source_competition
         date = pd.Timestamp(raw["date"]).date().isoformat(); home, away = clean(raw.get("home")), clean(raw.get("away"))
         if not home or not away or pd.isna(raw.get("gh")) or pd.isna(raw.get("ga")):
             skipped += 1; continue
@@ -144,6 +165,7 @@ def import_backbone(wh: Warehouse, parquet: Path, batch_size: int = 10000) -> di
             "competition_key": competition_key, "competition_name": competition_name, "scope": scope,
             "season": season_for(raw["date"], scope, competition_key), "match_date": date, "home_team": home, "away_team": away,
             "extra_json": json.dumps({"schochastics_full_time_code": raw.get("full_time"),
+                "source_competition": raw.get("competition"), "source_continent": raw.get("continent"), "source_level": raw.get("level"),
                 "home_ident": raw.get("home_ident"), "away_ident": raw.get("away_ident"),
                 "home_country": raw.get("home_country"), "away_country": raw.get("away_country"),
                 "home_code": raw.get("home_code"), "away_code": raw.get("away_code")}, ensure_ascii=False, default=str),
