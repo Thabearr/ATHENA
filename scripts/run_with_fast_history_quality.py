@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+import scripts.build_historical_warehouse as build_historical_warehouse  # noqa: E402
 from scripts.build_historical_warehouse import (  # noqa: E402
     MATCH_FIELDS,
     Warehouse,
@@ -238,6 +239,14 @@ def main() -> int:
 
     install_fast_warehouse_helpers()
     sys.argv = [str(target), *sys.argv[2:]]
+
+    # build_historical_warehouse.py defines Warehouse itself. Re-executing that
+    # file with runpy would create a second, unpatched class and silently bypass
+    # the fast/reconciliation helpers above. Invoke the already-imported module
+    # directly so its CLI uses the patched Warehouse class.
+    if target == Path(build_historical_warehouse.__file__).resolve():
+        return int(build_historical_warehouse.main())
+
     runpy.run_path(str(target), run_name="__main__")
     return 0
 
