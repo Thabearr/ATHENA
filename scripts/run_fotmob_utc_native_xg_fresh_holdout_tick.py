@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import sys
 
+import domain.fotmob_fresh_holdout_capture_qualification_adapter as capture_qualification
 import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 
@@ -32,6 +33,29 @@ def _canonical(value: dict) -> bytes:
         )
         + "\n"
     ).encode("utf-8")
+
+
+def _reviewed_qualify(evidence: runner.CaptureEvidence):
+    return capture_qualification.qualify_capture_fixtures(
+        evidence.raw_json,
+        evidence.manifest,
+    )
+
+
+def _install_reviewed_capture_qualifier() -> None:
+    """Bridge only the scheduled CLI onto the reviewed PR89 structural chain."""
+    current = runner._qualify
+    if current is _reviewed_qualify:
+        return
+    if (
+        getattr(current, "__module__", None) != runner.__name__
+        or getattr(current, "__name__", None) != "_qualify"
+    ):
+        raise runner.FreshHoldoutActivationError(
+            "fresh-holdout qualifier hook changed before reviewed adapter installation"
+        )
+    capture_qualification.verify_reviewed_dependencies()
+    runner._qualify = _reviewed_qualify
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -67,6 +91,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     bootstrap_path = args.bootstrap_projection
     try:
+        _install_reviewed_capture_qualifier()
         if bootstrap_path.is_symlink() or not bootstrap_path.is_file():
             raise runner.FreshHoldoutActivationError(
                 "bootstrap projection must be a regular non-symlink file"
