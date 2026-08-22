@@ -18,15 +18,15 @@ def _match(home: str, away: str) -> dict[str, object]:
     }
 
 
-def test_integrity_audit_detects_cross_source_logical_fixture_duplicates(tmp_path: Path):
+def test_canonical_match_key_merges_prefix_suffix_club_designators(tmp_path: Path):
     warehouse = Warehouse(tmp_path / "history.db")
     warehouse.initialize()
-    warehouse.upsert_match(
+    first = warehouse.upsert_match(
         _match("AFC Bournemouth", "Fulham FC"),
         source_key="soccer_datalake",
         source_match_id="provider-a",
     )
-    warehouse.upsert_match(
+    second = warehouse.upsert_match(
         _match("Bournemouth AFC", "FC Fulham"),
         source_key="openfootball",
         source_match_id="provider-b",
@@ -34,8 +34,95 @@ def test_integrity_audit_detects_cross_source_logical_fixture_duplicates(tmp_pat
 
     report = audit_integrity(warehouse)
 
+    assert first == second
+    assert warehouse.conn.execute("SELECT COUNT(*) FROM warehouse_matches").fetchone()[0] == 1
+    assert report["logical_duplicate_fixtures"]["duplicate_groups"] == 0
+    warehouse.close()
+
+
+def test_integrity_audit_detects_preexisting_logical_fixture_duplicates(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    warehouse.conn.execute(
+        """INSERT INTO warehouse_matches(
+           match_key,competition_key,competition_name,scope,season,match_date,
+           home_team,away_team,home_score_ft,away_score_ft
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "legacy-a",
+            "eng_premier",
+            "Premier League",
+            "club",
+            "2025-26",
+            "2025-08-30",
+            "AFC Bournemouth",
+            "Fulham FC",
+            2,
+            1,
+        ),
+    )
+    warehouse.conn.execute(
+        """INSERT INTO warehouse_matches(
+           match_key,competition_key,competition_name,scope,season,match_date,
+           home_team,away_team,home_score_ft,away_score_ft
+        ) VALUES(?,?,?,?,?,?,?,?,?,?)""",
+        (
+            "legacy-b",
+            "eng_premier",
+            "Premier League",
+            "club",
+            "2025-26",
+            "2025-08-30",
+            "Bournemouth AFC",
+            "FC Fulham",
+            2,
+            1,
+        ),
+    )
+
+    report = audit_integrity(warehouse)
+
     assert report["logical_duplicate_fixtures"]["duplicate_groups"] == 1
     assert report["complete"] is False
+    warehouse.close()
+
+
+def test_linked_coach_and_referee_respect_source_priority(tmp_path: Path):
+    warehouse = Warehouse(tmp_path / "history.db")
+    warehouse.initialize()
+    base = {
+        **_match("Arsenal", "Chelsea"),
+        "home_coach": "Weaker Coach",
+        "referee": "Weaker Referee",
+    }
+    key = warehouse.upsert_match(
+        base,
+        source_key="soccer_datalake",
+        source_match_id="provider-match",
+    )
+
+    warehouse.coach(key, "statsbomb_open", "Arsenal FC", "Stronger Coach")
+    warehouse.official(key, "statsbomb_open", "Stronger Referee")
+
+    row = warehouse.conn.execute(
+        "SELECT home_coach,referee FROM warehouse_matches WHERE match_key=?",
+        (key,),
+    ).fetchone()
+    provenance = {
+        item["field_name"]: item["source_key"]
+        for item in warehouse.conn.execute(
+            """SELECT field_name,source_key FROM warehouse_field_provenance
+               WHERE match_key=? AND field_name IN ('home_coach','referee')""",
+            (key,),
+        )
+    }
+
+    assert row["home_coach"] == "Stronger Coach"
+    assert row["referee"] == "Stronger Referee"
+    assert provenance == {
+        "home_coach": "statsbomb_open",
+        "referee": "statsbomb_open",
+    }
     warehouse.close()
 
 
