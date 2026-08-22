@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -130,7 +131,7 @@ def test_adapter_fails_closed_on_field_outside_reviewed_terminal_extension() -> 
 
 def test_adapter_requires_original_live_network_lineage() -> None:
     raw, manifest = _live_capture()
-    projected = capture_contract.dataclasses.replace(
+    projected = dataclasses.replace(
         manifest,
         network_acquisition_performed=False,
     )
