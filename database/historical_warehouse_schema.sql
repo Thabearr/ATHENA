@@ -247,6 +247,7 @@ CREATE INDEX IF NOT EXISTS idx_wh_team_aliases_lookup ON warehouse_team_aliases(
 CREATE INDEX IF NOT EXISTS idx_wh_events_match ON warehouse_events(match_key, minute);
 CREATE INDEX IF NOT EXISTS idx_wh_events_player ON warehouse_events(player, event_type);
 CREATE INDEX IF NOT EXISTS idx_wh_sources_match ON warehouse_match_sources(match_key);
+CREATE INDEX IF NOT EXISTS idx_wh_sources_source_id ON warehouse_match_sources(source_key, source_match_id);
 CREATE INDEX IF NOT EXISTS idx_wh_lineups_match ON warehouse_lineups(match_key, team);
 CREATE INDEX IF NOT EXISTS idx_wh_coaches_match ON warehouse_coaches(match_key, team);
 CREATE INDEX IF NOT EXISTS idx_wh_officials_match ON warehouse_officials(match_key);
