@@ -200,10 +200,18 @@ def _projected_manifest(
     content_length = (
         None if source_manifest.content_length is None else len(projected_raw)
     )
+    projected_request_date = (
+        source_manifest.request_date if request_date is None else request_date
+    )
     try:
         return dataclasses.replace(
             source_manifest,
-            request_date=(source_manifest.request_date if request_date is None else request_date),
+            request_date=projected_request_date,
+            request_target=capture_contract._target(
+                projected_request_date,
+                source_manifest.timezone,
+                source_manifest.ccode3,
+            ),
             content_length=content_length,
             network_acquisition_performed=False,
             raw_sha256=hashlib.sha256(projected_raw).hexdigest(),
