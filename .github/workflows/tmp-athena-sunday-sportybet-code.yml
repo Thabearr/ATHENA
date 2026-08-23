@@ -20,43 +20,84 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Inspect current SportyBet share codes and event metadata
+      - name: Scan remaining Sunday SportyBet pre-match candidates
         run: |
           python - <<'PY'
+          import concurrent.futures as cf
           import json
+          from datetime import datetime, timezone
           from urllib.parse import urlencode
           from urllib.request import Request, urlopen
 
-          headers={"Accept":"application/json","Accept-Language":"en-NG,en;q=0.9","OperId":"2","User-Agent":"ATHENA/1.0 direct-sportybet-share-inspection"}
-          codes = ["23MDR7", "W1PM6Q"]
-          ids=[]
-          for code in codes:
-              req=Request(f"https://www.sportybet.com/api/ng/orders/share/{code}",headers=headers)
-              with urlopen(req,timeout=45) as r: payload=json.load(r)
-              rows=((payload.get("data") or {}).get("ticket") or {}).get("selections") or []
-              print(f"=== SHARE {code} bizCode={payload.get('bizCode')} count={len(rows)} ===")
-              for row in rows:
-                  eid=row.get("eventId")
-                  if isinstance(eid,str) and eid not in ids: ids.append(eid)
-          for eid in ["sr:match:72221166","sr:match:72221168","sr:match:72221170"]:
-              if eid not in ids: ids.append(eid)
+          HEADERS={"Accept":"application/json","Accept-Language":"en-NG,en;q=0.9","OperId":"2","User-Agent":"ATHENA/1.0 direct-sportybet-sunday-scan"}
+          START=int(datetime(2026,8,23,13,10,tzinfo=timezone.utc).timestamp()*1000)
+          END=int(datetime(2026,8,23,23,59,59,tzinfo=timezone.utc).timestamp()*1000)
+          ranges=[
+              range(72221154,72221182,2),
+              range(72478480,72478522,2),
+              range(71944888,71944922,2),
+              range(72036110,72036142,2),
+              range(72041060,72041092,2),
+              range(72530860,72530902,2),
+              range(72723140,72723202,2),
+              range(71960050,71960122,2),
+          ]
+          ids=[f"sr:match:{n}" for r in ranges for n in r]
 
-          def walk(v):
-              if isinstance(v,dict):
-                  yield v
-                  for x in v.values(): yield from walk(x)
-              elif isinstance(v,list):
-                  for x in v: yield from walk(x)
-
-          for eid in ids:
+          def fetch(eid):
               url="https://www.sportybet.com/api/ng/factsCenter/event?"+urlencode({"productId":3,"eventId":eid})
               try:
-                  req=Request(url,headers=headers)
-                  with urlopen(req,timeout=45) as r: p=json.load(r)
-              except Exception as exc:
-                  print("EVENT_ERROR",eid,repr(exc)); continue
-              matches=[o for o in walk(p) if o.get("eventId")==eid]
-              print(f"=== EVENT {eid} bizCode={p.get('bizCode')} matches={len(matches)} ===")
-              for o in matches[:2]:
-                  print(json.dumps(o,ensure_ascii=False,sort_keys=True)[:6000])
+                  req=Request(url,headers=HEADERS)
+                  with urlopen(req,timeout=20) as resp: p=json.load(resp)
+              except Exception:
+                  return None
+              if p.get("bizCode")!=10000: return None
+              def walk(v):
+                  if isinstance(v,dict):
+                      yield v
+                      for x in v.values(): yield from walk(x)
+                  elif isinstance(v,list):
+                      for x in v: yield from walk(x)
+              ev=next((x for x in walk(p) if x.get("eventId")==eid),None)
+              if not isinstance(ev,dict): return None
+              ts=ev.get("estimateStartTime")
+              if not isinstance(ts,(int,float)) or not (START <= ts <= END): return None
+              if ev.get("status") not in (0,None) or ev.get("matchStatus") not in (None,"Not started","NS"):
+                  return None
+              if ev.get("bookingStatus")=="Unavailable": return None
+              markets=ev.get("markets")
+              if not isinstance(markets,list) or not markets: return None
+              opts=[]
+              for m in markets:
+                  if not isinstance(m,dict) or m.get("status") not in (0,None): continue
+                  mid=str(m.get("id"))
+                  spec=m.get("specifier")
+                  if mid not in {"1","60200","60100","18","19","20"}: continue
+                  if mid=="18" and spec!="total=1.5": continue
+                  if mid in {"19","20"} and spec!="total=0.5": continue
+                  if mid in {"1","60200","60100"} and spec not in (None,""): continue
+                  for o in m.get("outcomes") or []:
+                      if not isinstance(o,dict) or o.get("isActive") not in (1,True,"1"): continue
+                      oid=str(o.get("id"))
+                      if mid in {"1","60200","60100"} and oid not in {"1","3"}: continue
+                      if mid in {"18","19","20"} and oid!="12": continue
+                      try: odds=float(o.get("odds")); prob=float(o.get("probability"))
+                      except (TypeError,ValueError): continue
+                      if odds < 1.08 or odds > 1.65: continue
+                      opts.append({"marketId":mid,"outcomeId":oid,"specifier":spec,"odds":odds,"probability":prob,"market":m.get("desc") or m.get("name"),"outcome":o.get("desc")})
+              if not opts: return None
+              # Prefer robust goal/team-goal or 1UP markets over raw 1X2 at similar probability.
+              bonus={"19":0.035,"20":0.035,"18":0.030,"60200":0.025,"60100":0.015,"1":0.0}
+              opts.sort(key=lambda x:(x["probability"]+bonus[x["marketId"]],-abs(x["odds"]-1.20)), reverse=True)
+              sport=ev.get("sport") or {}; cat=sport.get("category") or {}; tour=cat.get("tournament") or {}
+              return {"eventId":eid,"home":ev.get("homeTeamName"),"away":ev.get("awayTeamName"),"kickoff":datetime.fromtimestamp(ts/1000,timezone.utc).isoformat(),"country":cat.get("name"),"competition":tour.get("name"),"best":opts[0],"alternatives":opts[:5]}
+
+          found=[]
+          with cf.ThreadPoolExecutor(max_workers=8) as ex:
+              for row in ex.map(fetch,ids):
+                  if row: found.append(row)
+          found.sort(key=lambda r:(r["kickoff"],r["eventId"]))
+          print("FOUND",len(found))
+          for row in found:
+              print(json.dumps(row,ensure_ascii=False,sort_keys=True))
           PY
