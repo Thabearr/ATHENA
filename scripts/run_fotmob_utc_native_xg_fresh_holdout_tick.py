@@ -9,14 +9,14 @@ from pathlib import Path
 import sys
 
 import domain.fotmob_data_matches_ordinary_ft_finished_score_adapter as score_adapter
-import domain.fotmob_fresh_holdout_capture_qualification_adapter as live_capture_adapter
-import domain.fotmob_fresh_holdout_ordinary_ft_settlement_schema_adapter as settlement_schema_adapter
+import domain.fotmob_fresh_holdout_request_date_spillover_adapter as live_capture_adapter
+import domain.fotmob_fresh_holdout_request_date_spillover_settlement_adapter as settlement_schema_adapter
 import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 
 
-LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "b6bbbda19b13a81c17ff5386e402f0a585249cb7"
-SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "986376b892e01cc739f65fca6d38c3ceec26b418"
+LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "e4df727f192dfb1c0e7c3076d0c0b1124b8b10b2"
+SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "2e7194c630ea01d4c45ed1deb615631affcb2dad"
 ACTIVATION_RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
 
 
@@ -105,13 +105,14 @@ def _execute_collection_tick_with_reviewed_adapter(**kwargs):
         settlement_schema_adapter.build_pr89_settlement_compatibility_proxy()
     )
     try:
-        # Runner._qualify and fresh settlement both resolve this module global at
-        # call time, so the PR208 adapter covers prediction and settlement identity.
+        # Runner._qualify and fresh settlement resolve this module global at call
+        # time. The reviewed adapter validates every request-bucket UTC partition
+        # and exposes only exact request-UTC-date fixtures to the fresh candidate path.
         fresh.qualify_capture_fixtures = live_capture_adapter.qualify_capture_fixtures
 
-        # The frozen ordinary-FT adapter keeps parsing score/reason semantics from
+        # The frozen ordinary-FT adapter still parses score/reason semantics from
         # original network bytes. Only its internal PR89 structural assessment is
-        # delegated through the reviewed extra-halfs compatibility projection.
+        # delegated through the reviewed partition-aware compatibility bridge.
         score_adapter.pr89 = settlement_proxy
         return runner.execute_collection_tick(**kwargs)
     finally:
