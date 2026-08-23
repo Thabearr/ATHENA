@@ -72,28 +72,31 @@ jobs:
           DB_BYTES="$(stat -c '%s' "$DB_PATH")"
           DB_SHA="$(cut -d ' ' -f1 drive-transfer/ATHENA_CANONICAL_SHA256.txt)"
 
-          cat > drive-transfer/README.txt <<EOF
-          ATHENA canonical historical database transfer
-          Source workflow run: $SOURCE_RUN_ID
-          Canonical file: athena_history.db
-          Canonical bytes: $DB_BYTES
-          Canonical SHA-256: $DB_SHA
-          Number of parts: $PART_COUNT
+          printf '%s\n' \
+            'ATHENA canonical historical database transfer' \
+            "Source workflow run: $SOURCE_RUN_ID" \
+            'Canonical file: athena_history.db' \
+            "Canonical bytes: $DB_BYTES" \
+            "Canonical SHA-256: $DB_SHA" \
+            "Number of parts: $PART_COUNT" \
+            '' \
+            'Extract every athena-canonical-part-NNN.zip so all *.part files are together.' \
+            '' \
+            'Linux/macOS:' \
+            '  cat athena_history.db.part*.part > athena_history.db' \
+            '  sha256sum athena_history.db' \
+            '' > drive-transfer/README.txt
 
-          Extract every athena-canonical-part-NNN.zip so all *.part files are together.
-
-          Linux/macOS:
-            cat athena_history.db.part*.part > athena_history.db
-            sha256sum athena_history.db
-
+          cat >> drive-transfer/README.txt <<'EOF'
           Windows PowerShell:
-            \$parts = Get-ChildItem athena_history.db.part*.part | Sort-Object Name
-            \$out = [System.IO.File]::Create('athena_history.db')
-            foreach (\$p in \$parts) {
-              \$bytes = [System.IO.File]::ReadAllBytes(\$p.FullName)
-              \$out.Write(\$bytes, 0, \$bytes.Length)
+            $parts = Get-ChildItem athena_history.db.part*.part | Sort-Object Name
+            $out = [System.IO.File]::Create('athena_history.db')
+            foreach ($p in $parts) {
+              $input = [System.IO.File]::OpenRead($p.FullName)
+              $input.CopyTo($out)
+              $input.Dispose()
             }
-            \$out.Close()
+            $out.Dispose()
             Get-FileHash athena_history.db -Algorithm SHA256
 
           The final SHA-256 must equal the canonical SHA-256 above.
