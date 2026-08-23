@@ -1,0 +1,43 @@
+name: Temporary Athena Sunday SportyBet code build
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/tmp-athena-sunday-sportybet-code.yml"
+      - "artifacts/research-protocols/sunday-2026-08-23-sportybet-final-20-selections-v1.json"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+      - name: Inspect current SportyBet public share codes
+        run: |
+          python - <<'PY'
+          import json
+          from urllib.request import Request, urlopen
+          codes = ["639579C", "23MDR7", "W1PM6Q"]
+          for code in codes:
+              url = f"https://www.sportybet.com/api/ng/orders/share/{code}"
+              req = Request(url, headers={"Accept":"application/json","Accept-Language":"en-NG,en;q=0.9","OperId":"2","User-Agent":"ATHENA/1.0 direct-sportybet-share-inspection"})
+              with urlopen(req, timeout=45) as r:
+                  payload = json.load(r)
+              print(f"=== SHARE {code} bizCode={payload.get('bizCode')} ===")
+              data = payload.get("data") or {}
+              ticket = data.get("ticket") or {}
+              rows = ticket.get("selections") or []
+              print(f"count={len(rows)}")
+              for i,row in enumerate(rows,1):
+                  keys = ["eventId","marketId","outcomeId","specifier","odds","eventName","homeTeamName","awayTeamName","marketName","outcomeName","kickoffTime","startTime"]
+                  slim = {k: row.get(k) for k in keys if row.get(k) is not None}
+                  print(i, json.dumps(slim, ensure_ascii=False, sort_keys=True))
+          PY
