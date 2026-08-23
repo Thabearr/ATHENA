@@ -1,19 +1,12 @@
-"""Versioned default league hierarchy for ATHENA accumulator planning.
+"""Versioned ATHENA club-competition fallback hierarchy for accumulator planning.
 
-League priority is an ordering policy, not model or betting authority. A league
-being high in this registry never makes a fixture eligible by itself. Actual
-accumulator inclusion still requires the fixture/market/evidence/pricing gates
-owned by the reviewed decision pipeline.
+This registry is consideration order only. It does not make a fixture eligible,
+prove model reliability, create value, or grant selection/BET authority.
 
-The ordering in this module is deliberately a *bootstrap coverage hierarchy*.
-It is not a claim that one league's model is more accurate than another. A later
-reviewed model-reliability boundary may override this bootstrap order with
-market/model-specific held-out evidence. Until then the registry provides a
-stable deterministic fallback for large accumulator requests.
-
-The old implementation used substring matching, which could incorrectly treat
-competitions such as the Austrian Bundesliga as the German Bundesliga. This
-module uses normalized *whole-name aliases* only.
+The order mirrors *Athena Football Competition Hierarchy v1.0*. It is the
+compatibility fallback for callers that do not preserve a source-qualified
+competition identity. Exact whole-name aliases are used; substring/fuzzy
+matching is forbidden.
 """
 
 from __future__ import annotations
@@ -23,8 +16,8 @@ import re
 import unicodedata
 
 
-PRIORITY_POLICY_VERSION = "athena-league-priority-v2"
-PRIORITY_BASIS = "BOOTSTRAP_REVIEWED_COVERAGE_NOT_MODEL_RELIABILITY"
+PRIORITY_POLICY_VERSION = "athena-league-priority-v3"
+PRIORITY_BASIS = "ATHENA_FOOTBALL_COMPETITION_HIERARCHY_V1_CONSIDERATION_ORDER"
 UNPRIORITIZED_TIER = 99
 UNPRIORITIZED_RANK = 999
 
@@ -39,11 +32,7 @@ class LeaguePriorityEntry:
 
 
 def normalize_league_name(value: str) -> str:
-    """Normalize a league label for exact alias matching.
-
-    Normalization is intentionally conservative: case, accents and punctuation
-    are normalized, but substring/fuzzy matching is never performed.
-    """
+    """Normalize a label for exact alias matching, never fuzzy matching."""
 
     if not isinstance(value, str):
         return ""
@@ -54,91 +43,137 @@ def normalize_league_name(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", without_marks.casefold()).strip()
 
 
-# The first eleven competitions mirror ATHENA's reviewed domestic historical
-# source coverage (E0, SP1, I1, D1, F1, N1, P1, B1, SC0, T1, G1). That makes
-# them legitimate bootstrap candidates; it does NOT establish comparative
-# model accuracy between them. The UEFA club competitions are an explicit
-# later expansion band and still require independent model support.
+# Numeric tiers mirror the PDF bands for compatibility:
+# 1=S, 2=A, 3=B, 4=C1, 5=C2, 6=D, 7=E, 8=F, 9=G.
+# Domestic cups live in the source-qualified competition registry rather than
+# this legacy league-name fallback. Tier G contains only explicitly approved
+# long-tail leagues; an arbitrary unknown league never enters Tier G by name.
 DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
     LeaguePriorityEntry(
+        "UEFA Champions League",
+        1,
+        1,
+        ("UEFA Champions League", "Champions League"),
+        "Tier S: first club competition reviewed under hierarchy v1.0.",
+    ),
+    LeaguePriorityEntry(
+        "UEFA Europa League",
+        1,
+        2,
+        ("UEFA Europa League", "Europa League"),
+        "Tier S: reviewed after Champions League and before domestic football.",
+    ),
+    LeaguePriorityEntry(
+        "UEFA Conference League",
+        1,
+        3,
+        (
+            "UEFA Conference League",
+            "UEFA Europa Conference League",
+            "Conference League",
+        ),
+        "Tier S: reviewed after Europa League and before domestic football.",
+    ),
+    LeaguePriorityEntry(
         "Premier League",
-        1,
-        1,
+        2,
+        10,
         ("Premier League", "English Premier League", "England Premier League"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier A: first Big Five domestic league.",
     ),
     LeaguePriorityEntry(
         "La Liga",
-        1,
         2,
-        ("La Liga", "Primera Division", "Spain La Liga"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        11,
+        ("La Liga", "LaLiga", "Primera Division", "Spain La Liga"),
+        "Tier A: second Big Five domestic league.",
     ),
     LeaguePriorityEntry(
         "Serie A",
-        1,
-        3,
+        2,
+        12,
         ("Serie A", "Italy Serie A", "Italian Serie A"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier A: third Big Five domestic league.",
     ),
     LeaguePriorityEntry(
         "Bundesliga",
-        1,
-        4,
+        2,
+        13,
         ("Bundesliga", "German Bundesliga", "Germany Bundesliga"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier A: fourth Big Five domestic league.",
     ),
     LeaguePriorityEntry(
         "Ligue 1",
-        1,
-        5,
+        2,
+        14,
         ("Ligue 1", "France Ligue 1", "French Ligue 1"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier A: fifth Big Five domestic league.",
     ),
     LeaguePriorityEntry(
         "Eredivisie",
-        2,
-        6,
+        4,
+        30,
         ("Eredivisie", "Netherlands Eredivisie", "Dutch Eredivisie"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier C1: first secondary European top flight.",
     ),
     LeaguePriorityEntry(
         "Primeira Liga",
-        2,
-        7,
+        4,
+        31,
         ("Primeira Liga", "Liga Portugal", "Portugal Primeira Liga"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier C1: second secondary European top flight.",
+    ),
+    LeaguePriorityEntry(
+        "Süper Lig",
+        4,
+        32,
+        ("Süper Lig", "Super Lig", "Turkey Super Lig", "Turkish Super Lig"),
+        "Tier C1: third secondary European top flight.",
     ),
     LeaguePriorityEntry(
         "Belgian Pro League",
-        2,
-        8,
+        4,
+        33,
         (
             "Belgian Pro League",
             "First Division A",
             "Jupiler Pro League",
             "Belgium First Division A",
         ),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier C1: fourth secondary European top flight.",
     ),
     LeaguePriorityEntry(
-        "Scottish Premiership",
-        2,
-        9,
-        ("Scottish Premiership", "Scotland Premiership"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Eliteserien",
+        5,
+        40,
+        ("Eliteserien", "Norway Eliteserien", "Tippeligaen"),
+        "Tier C2: first preferred European top flight.",
     ),
     LeaguePriorityEntry(
-        "Süper Lig",
-        2,
-        10,
-        ("Süper Lig", "Super Lig", "Turkey Super Lig", "Turkish Super Lig"),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Danish Superliga",
+        5,
+        41,
+        ("Danish Superliga", "Superligaen", "Danish Super League"),
+        "Tier C2: second preferred European top flight.",
+    ),
+    LeaguePriorityEntry(
+        "Allsvenskan",
+        5,
+        42,
+        ("Allsvenskan", "Swedish Allsvenskan", "Sweden Allsvenskan"),
+        "Tier C2: third preferred European top flight.",
+    ),
+    LeaguePriorityEntry(
+        "Swiss Super League",
+        5,
+        43,
+        ("Swiss Super League", "Swiss Superleague", "Switzerland Super League"),
+        "Tier C2: fourth preferred European top flight.",
     ),
     LeaguePriorityEntry(
         "Greek Super League",
-        2,
-        11,
+        5,
+        44,
         (
             "Greek Super League",
             "Super League Greece",
@@ -146,32 +181,44 @@ DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
             "Greece Super League 1",
             "Super League 1",
         ),
-        "Bootstrap order from reviewed domestic-history coverage; not a model-accuracy claim.",
+        "Tier C2: fifth preferred European top flight.",
     ),
     LeaguePriorityEntry(
-        "UEFA Champions League",
-        3,
-        12,
-        ("UEFA Champions League", "Champions League"),
-        "Continental bootstrap expansion only; explicit model support still required.",
-    ),
-    LeaguePriorityEntry(
-        "UEFA Europa League",
-        3,
-        13,
-        ("UEFA Europa League", "Europa League"),
-        "Continental bootstrap expansion only; explicit model support still required.",
-    ),
-    LeaguePriorityEntry(
-        "UEFA Conference League",
-        3,
-        14,
+        "EFL Championship",
+        6,
+        50,
         (
-            "UEFA Conference League",
-            "UEFA Europa Conference League",
-            "Conference League",
+            "EFL Championship",
+            "Championship",
+            "English Championship",
+            "England Championship",
         ),
-        "Continental bootstrap expansion only; explicit model support still required.",
+        "Tier D: first non-top-flight league in the default hierarchy.",
+    ),
+    LeaguePriorityEntry(
+        "Major League Soccer",
+        7,
+        60,
+        ("Major League Soccer", "MLS", "USA MLS", "United States MLS"),
+        "Tier E: reviewed after the Championship.",
+    ),
+    LeaguePriorityEntry(
+        "Saudi Pro League",
+        8,
+        70,
+        ("Saudi Pro League", "Saudi League", "Roshn Saudi League"),
+        "Tier F: reviewed after MLS.",
+    ),
+    LeaguePriorityEntry(
+        "Scottish Premiership",
+        9,
+        80,
+        (
+            "Scottish Premiership",
+            "Scotland Premiership",
+            "Scottish Premier League",
+        ),
+        "Tier G: explicitly approved historical long-tail European top flight.",
     ),
 )
 
@@ -203,20 +250,14 @@ TIER_3_LEAGUES = [
 
 
 def resolve_league_priority(league_name: str) -> LeaguePriorityEntry | None:
-    """Resolve an exact normalized alias to its priority entry."""
-
     return _ALIAS_TO_ENTRY.get(normalize_league_name(league_name))
 
 
 def get_league_tier(league_name: str) -> int:
-    """Return the configured bootstrap tier; unknown leagues fail to tier 99."""
-
     entry = resolve_league_priority(league_name)
     return entry.tier if entry is not None else UNPRIORITIZED_TIER
 
 
 def get_league_priority_rank(league_name: str) -> int:
-    """Return strict bootstrap league rank; unknown leagues sort last."""
-
     entry = resolve_league_priority(league_name)
     return entry.rank if entry is not None else UNPRIORITIZED_RANK
