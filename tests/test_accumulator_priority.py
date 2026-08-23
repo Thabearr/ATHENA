@@ -87,17 +87,23 @@ def _filter_candidate(
 
 
 def test_default_hierarchy_is_exact_and_versioned() -> None:
-    assert PRIORITY_POLICY_VERSION == "athena-league-priority-v2"
-    assert PRIORITY_BASIS == "BOOTSTRAP_REVIEWED_COVERAGE_NOT_MODEL_RELIABILITY"
-    assert ACCUMULATOR_PRIORITY_POLICY_VERSION == "athena-acca-priority-v3"
+    assert PRIORITY_POLICY_VERSION == "athena-league-priority-v3"
+    assert PRIORITY_BASIS == "ATHENA_FOOTBALL_COMPETITION_HIERARCHY_V1_CONSIDERATION_ORDER"
+    assert ACCUMULATOR_PRIORITY_POLICY_VERSION == "athena-acca-priority-v4"
     assert MODEL_LEAGUE_RELIABILITY_POLICY_VERSION == "athena-model-league-reliability-v1"
-    assert get_league_priority_rank("Premier League") == 1
-    assert get_league_priority_rank("La Liga") == 2
-    assert get_league_priority_rank("Serie A") == 3
-    assert get_league_priority_rank("Bundesliga") == 4
-    assert get_league_priority_rank("Ligue 1") == 5
-    assert get_league_priority_rank("Eredivisie") == 6
-    assert get_league_priority_rank("UEFA Champions League") == 12
+    assert get_league_priority_rank("UEFA Champions League") == 1
+    assert get_league_priority_rank("UEFA Europa League") == 2
+    assert get_league_priority_rank("UEFA Conference League") == 3
+    assert get_league_priority_rank("Premier League") == 10
+    assert get_league_priority_rank("La Liga") == 11
+    assert get_league_priority_rank("Serie A") == 12
+    assert get_league_priority_rank("Bundesliga") == 13
+    assert get_league_priority_rank("Ligue 1") == 14
+    assert get_league_priority_rank("Eredivisie") == 30
+    assert get_league_priority_rank("EFL Championship") == 50
+    assert get_league_priority_rank("Major League Soccer") == 60
+    assert get_league_priority_rank("Saudi Pro League") == 70
+    assert get_league_priority_rank("Scottish Premiership") == 80
 
 
 def test_all_fifteen_markets_map_to_explicit_model_league_family() -> None:
@@ -129,7 +135,7 @@ def test_current_model_families_cannot_claim_evidence_ranked_order() -> None:
     xg = resolve_model_league_priority("Premier League", market_id="MATCH_RESULT")
     assert xg.family == ModelLeagueFamily.SCORE_MATRIX_XG
     assert xg.basis == LeagueReliabilityBasis.BOOTSTRAP_FALLBACK
-    assert xg.effective_rank == 1
+    assert xg.effective_rank == 10
     assert "COMPETITION_IDENTITY_ABSENT" in xg.reason
 
     home_weh = resolve_model_league_priority(
@@ -137,7 +143,7 @@ def test_current_model_families_cannot_claim_evidence_ranked_order() -> None:
     )
     assert home_weh.family == ModelLeagueFamily.WIN_EITHER_HALF_HOME
     assert home_weh.basis == LeagueReliabilityBasis.BOOTSTRAP_FALLBACK
-    assert home_weh.effective_rank == 3
+    assert home_weh.effective_rank == 12
     assert "EXACT_LEAGUE_METRIC_BYTES_NOT_COMMITTED" in home_weh.reason
 
 
@@ -164,7 +170,7 @@ def test_caller_cannot_forge_model_reliability_rank() -> None:
     ordered, exclusions = prioritize_accumulator_candidates([forged, epl])
     assert not exclusions
     assert [item["fixture_id"] for item in ordered] == ["epl", "laliga"]
-    assert ordered[1]["model_league_priority_rank"] == 2
+    assert ordered[1]["model_league_priority_rank"] == 11
     assert ordered[1]["model_league_ranking_authorized"] is False
 
 
@@ -181,11 +187,11 @@ def test_accents_and_punctuation_normalize_without_fuzzy_matching() -> None:
     assert resolve_league_priority("random super lig reserve") is None
 
 
-def test_strict_league_exhaustion_precedes_fixture_strength() -> None:
+def test_pdf_club_band_exhaustion_precedes_fixture_strength() -> None:
     candidates = [
-        _candidate("laliga-strong", "La Liga", probability=0.91),
-        _candidate("epl-weaker", "Premier League", probability=0.61),
-        _candidate("epl-strong", "Premier League", probability=0.88),
+        _candidate("epl-strong", "Premier League", probability=0.91),
+        _candidate("ucl-weaker", "UEFA Champions League", probability=0.61),
+        _candidate("conference-strong", "UEFA Conference League", probability=0.88),
     ]
     ordered, exclusions = prioritize_accumulator_candidates(
         candidates,
@@ -194,13 +200,13 @@ def test_strict_league_exhaustion_precedes_fixture_strength() -> None:
 
     assert not exclusions
     assert [item["fixture_id"] for item in ordered] == [
+        "ucl-weaker",
+        "conference-strong",
         "epl-strong",
-        "epl-weaker",
-        "laliga-strong",
     ]
 
 
-def test_fixture_priority_within_one_league_is_lexicographic() -> None:
+def test_fixture_priority_within_one_competition_is_lexicographic() -> None:
     candidates = [
         _candidate("lower-prob", "Premier League", probability=0.70, risk=5),
         _candidate("higher-prob-high-risk", "Premier League", probability=0.80, risk=40),
@@ -235,17 +241,18 @@ def test_fixture_priority_within_one_league_is_lexicographic() -> None:
     ]
 
 
-def test_unprioritized_league_is_after_configured_hierarchy_when_opted_in() -> None:
+def test_unprioritized_league_is_after_explicit_tier_g_when_opted_in() -> None:
     candidates = [
         _candidate("unknown", "Example League", probability=0.99),
-        _candidate("conference", "UEFA Conference League", probability=0.55),
+        _candidate("scotland", "Scottish Premiership", probability=0.55),
     ]
     ordered, exclusions = prioritize_accumulator_candidates(
         candidates,
         allow_unprioritized=True,
     )
     assert not exclusions
-    assert [item["fixture_id"] for item in ordered] == ["conference", "unknown"]
+    assert [item["fixture_id"] for item in ordered] == ["scotland", "unknown"]
+    assert ordered[0]["league_priority_tier"] == 9
     assert ordered[-1]["league_priority_rank"] == UNPRIORITIZED_RANK
     assert ordered[-1]["league_priority_name"] is None
     assert ordered[-1]["model_league_priority_rank"] == UNPRIORITIZED_RANK
@@ -285,11 +292,11 @@ def test_priority_metadata_is_auditable() -> None:
     assert item["priority_policy_version"] == ACCUMULATOR_PRIORITY_POLICY_VERSION
     assert item["league_priority_policy_version"] == PRIORITY_POLICY_VERSION
     assert item["model_league_reliability_policy_version"] == MODEL_LEAGUE_RELIABILITY_POLICY_VERSION
-    assert item["league_priority_tier"] == 1
-    assert item["league_priority_rank"] == 1
+    assert item["league_priority_tier"] == 2
+    assert item["league_priority_rank"] == 10
     assert item["league_priority_name"] == "Premier League"
     assert item["model_league_family"] == ModelLeagueFamily.SCORE_MATRIX_XG.value
-    assert item["model_league_priority_rank"] == 1
+    assert item["model_league_priority_rank"] == 10
     assert item["model_league_priority_basis"] == LeagueReliabilityBasis.BOOTSTRAP_FALLBACK.value
     assert item["model_league_ranking_authorized"] is False
     assert item["fixture_priority_probability"] == 0.8
@@ -308,7 +315,7 @@ def test_missing_market_identity_does_not_invent_model_reliability() -> None:
         LeagueReliabilityBasis.MARKET_MODEL_FAMILY_UNRESOLVED.value
     )
     assert item["model_league_ranking_authorized"] is False
-    assert item["model_league_priority_rank"] == 1
+    assert item["model_league_priority_rank"] == 10
 
 
 def test_acca_filter_has_no_ad_hoc_nlp_context_dependency() -> None:
