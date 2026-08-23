@@ -1,1 +1,0 @@
-Only immediately previous UTC-date spillover with provider display date equal to the exact request date is admitted. Every UTC-date partition must independently pass PR89 -> PR87 -> PR39. Anything else fails closed.
