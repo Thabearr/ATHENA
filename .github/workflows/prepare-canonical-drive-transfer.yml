@@ -8,6 +8,11 @@ on:
         required: true
         default: "32628985683"
         type: string
+      source_artifact_id:
+        description: "GitHub artifact ID for athena-history-sqlite"
+        required: true
+        default: "9491418446"
+        type: string
   push:
     branches: [main]
     paths:
@@ -15,7 +20,7 @@ on:
 
 permissions:
   actions: read
-  contents: read
+  contents: write
 
 jobs:
   prepare-drive-transfer:
@@ -23,91 +28,93 @@ jobs:
     timeout-minutes: 120
     env:
       SOURCE_RUN_ID: ${{ github.event.inputs.source_run_id || '32628985683' }}
-    steps:
-      - name: Download canonical SQLite artifact
-        uses: actions/download-artifact@v4
-        with:
-          name: athena-history-sqlite
-          path: source-artifact
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          repository: ${{ github.repository }}
-          run-id: ${{ env.SOURCE_RUN_ID }}
+      SOURCE_ARTIFACT_ID: ${{ github.event.inputs.source_artifact_id || '9491418446' }}
+      EXPECTED_ARCHIVE_BYTES: "2149256220"
+      EXPECTED_ARCHIVE_SHA256: "a783886d0906e357e26851fcb3eb182bb06bdcc184d21f2b6578bb3d1fa61511"
+      ARCHIVE_NAME: athena-history-canonical.zip
+      POINTER_BRANCH: automation/canonical-drive-transfer-pointer
 
-      - name: Locate and verify canonical database
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Download canonical artifact archive exactly as stored by GitHub
         shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
-          DB_PATH="$(find source-artifact -type f -name 'athena_history.db' -print -quit)"
-          if [ -z "$DB_PATH" ]; then
-            echo "athena_history.db was not found in source run $SOURCE_RUN_ID" >&2
-            find source-artifact -maxdepth 4 -type f -print >&2 || true
-            exit 1
-          fi
-          echo "DB_PATH=$DB_PATH" >> "$GITHUB_ENV"
-          python - "$DB_PATH" <<'PY'
-          import sqlite3
-          import sys
-          path = sys.argv[1]
-          db = sqlite3.connect(path)
-          result = db.execute('PRAGMA integrity_check').fetchone()[0]
-          db.close()
-          print('SQLite integrity_check:', result)
-          if result != 'ok':
-              raise SystemExit(1)
-          PY
+          mkdir -p source-artifact
+          ARCHIVE_PATH="source-artifact/${ARCHIVE_NAME}"
+          curl --fail --show-error --silent --location --retry 5 --retry-delay 2 \
+            -H "Authorization: Bearer ${GH_TOKEN}" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            "https://api.github.com/repos/${GITHUB_REPOSITORY}/actions/artifacts/${SOURCE_ARTIFACT_ID}/zip" \
+            -o "${ARCHIVE_PATH}"
 
-      - name: Split database into connector-safe parts
+          actual_bytes="$(stat -c '%s' "${ARCHIVE_PATH}")"
+          actual_sha="$(sha256sum "${ARCHIVE_PATH}" | awk '{print $1}')"
+          echo "Downloaded ${ARCHIVE_PATH}: ${actual_bytes} bytes"
+          echo "SHA-256: ${actual_sha}"
+
+          test "${actual_bytes}" = "${EXPECTED_ARCHIVE_BYTES}"
+          test "${actual_sha}" = "${EXPECTED_ARCHIVE_SHA256}"
+
+      - name: Split archive into Drive-safe parts and build manifest
         shell: bash
         run: |
           set -euo pipefail
           mkdir -p drive-transfer
-          split -b 400M -d -a 3 --additional-suffix=.part \
-            "$DB_PATH" drive-transfer/athena_history.db.part
+          ARCHIVE_PATH="source-artifact/${ARCHIVE_NAME}"
 
-          PART_COUNT="$(find drive-transfer -maxdepth 1 -type f -name 'athena_history.db.part*.part' | wc -l | tr -d ' ')"
-          if [ "$PART_COUNT" -lt 1 ]; then
-            echo "No transfer parts were produced" >&2
-            exit 1
-          fi
-          if [ "$PART_COUNT" -gt 20 ]; then
-            echo "Database produced $PART_COUNT parts; workflow currently supports at most 20" >&2
+          split -b 90M -d -a 3 --additional-suffix=.part \
+            "${ARCHIVE_PATH}" "drive-transfer/${ARCHIVE_NAME}.part"
+
+          PART_COUNT="$(find drive-transfer -maxdepth 1 -type f -name '${ARCHIVE_NAME}.part*.part' | wc -l | tr -d ' ')"
+          if [ "${PART_COUNT}" != "23" ]; then
+            echo "Expected exactly 23 parts, got ${PART_COUNT}" >&2
             exit 1
           fi
 
-          sha256sum "$DB_PATH" > drive-transfer/ATHENA_CANONICAL_SHA256.txt
-          sha256sum drive-transfer/athena_history.db.part*.part > drive-transfer/ATHENA_PART_SHA256.txt
-          DB_BYTES="$(stat -c '%s' "$DB_PATH")"
-          DB_SHA="$(cut -d ' ' -f1 drive-transfer/ATHENA_CANONICAL_SHA256.txt)"
+          sha256sum "${ARCHIVE_PATH}" > drive-transfer/ATHENA_CANONICAL_ARCHIVE_SHA256.txt
+          sha256sum drive-transfer/${ARCHIVE_NAME}.part*.part > drive-transfer/ATHENA_PART_SHA256.txt
 
           cat > drive-transfer/README.txt <<EOF
           ATHENA canonical historical database transfer
-          Source workflow run: $SOURCE_RUN_ID
-          Canonical file: athena_history.db
-          Canonical bytes: $DB_BYTES
-          Canonical SHA-256: $DB_SHA
-          Number of parts: $PART_COUNT
+          Source historical warehouse run: ${SOURCE_RUN_ID}
+          Source artifact ID: ${SOURCE_ARTIFACT_ID}
+          Canonical archive: ${ARCHIVE_NAME}
+          Canonical archive bytes: ${EXPECTED_ARCHIVE_BYTES}
+          Canonical archive SHA-256: ${EXPECTED_ARCHIVE_SHA256}
+          Number of parts: ${PART_COUNT}
 
-          Each GitHub artifact named athena-canonical-part-NNN contains one binary part.
-          Extract every artifact ZIP so all *.part files are in one directory, then reconstruct:
+          Download and extract every athena-canonical-part-NNN.zip. Put all resulting *.part files in one directory.
 
           Linux/macOS:
-            cat athena_history.db.part*.part > athena_history.db
-            sha256sum athena_history.db
+            cat ${ARCHIVE_NAME}.part*.part > ${ARCHIVE_NAME}
+            sha256sum ${ARCHIVE_NAME}
+            unzip ${ARCHIVE_NAME}
 
           Windows PowerShell:
-            \$parts = Get-ChildItem athena_history.db.part*.part | Sort-Object Name
-            \$out = [System.IO.File]::Create('athena_history.db')
+            \$parts = Get-ChildItem ${ARCHIVE_NAME}.part*.part | Sort-Object Name
+            \$out = [System.IO.File]::Create('${ARCHIVE_NAME}')
             foreach (\$p in \$parts) {
-              \$bytes = [System.IO.File]::ReadAllBytes(\$p.FullName)
-              \$out.Write(\$bytes, 0, \$bytes.Length)
+              \$input = [System.IO.File]::OpenRead(\$p.FullName)
+              \$input.CopyTo(\$out)
+              \$input.Dispose()
             }
-            \$out.Close()
-            Get-FileHash athena_history.db -Algorithm SHA256
+            \$out.Dispose()
+            Get-FileHash ${ARCHIVE_NAME} -Algorithm SHA256
+            Expand-Archive ${ARCHIVE_NAME} -DestinationPath .
 
-          The final SHA-256 must equal the canonical SHA-256 above.
+          The reconstructed ZIP SHA-256 must equal the canonical archive SHA-256 above.
+          The ZIP contains athena_history.db.
           EOF
 
-          echo "Prepared $PART_COUNT parts from $DB_BYTES bytes"
+          echo "Prepared ${PART_COUNT} parts"
           ls -lh drive-transfer
 
       - name: Upload transfer manifest
@@ -116,187 +123,192 @@ jobs:
           name: athena-canonical-manifest
           path: |
             drive-transfer/README.txt
-            drive-transfer/ATHENA_CANONICAL_SHA256.txt
+            drive-transfer/ATHENA_CANONICAL_ARCHIVE_SHA256.txt
             drive-transfer/ATHENA_PART_SHA256.txt
           compression-level: 0
           retention-days: 30
 
       - name: Upload canonical part 000
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part000.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-000
-          path: drive-transfer/athena_history.db.part000.part
+          path: drive-transfer/athena-history-canonical.zip.part000.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 001
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part001.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-001
-          path: drive-transfer/athena_history.db.part001.part
+          path: drive-transfer/athena-history-canonical.zip.part001.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 002
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part002.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-002
-          path: drive-transfer/athena_history.db.part002.part
+          path: drive-transfer/athena-history-canonical.zip.part002.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 003
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part003.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-003
-          path: drive-transfer/athena_history.db.part003.part
+          path: drive-transfer/athena-history-canonical.zip.part003.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 004
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part004.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-004
-          path: drive-transfer/athena_history.db.part004.part
+          path: drive-transfer/athena-history-canonical.zip.part004.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 005
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part005.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-005
-          path: drive-transfer/athena_history.db.part005.part
+          path: drive-transfer/athena-history-canonical.zip.part005.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 006
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part006.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-006
-          path: drive-transfer/athena_history.db.part006.part
+          path: drive-transfer/athena-history-canonical.zip.part006.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 007
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part007.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-007
-          path: drive-transfer/athena_history.db.part007.part
+          path: drive-transfer/athena-history-canonical.zip.part007.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 008
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part008.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-008
-          path: drive-transfer/athena_history.db.part008.part
+          path: drive-transfer/athena-history-canonical.zip.part008.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 009
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part009.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-009
-          path: drive-transfer/athena_history.db.part009.part
+          path: drive-transfer/athena-history-canonical.zip.part009.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 010
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part010.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-010
-          path: drive-transfer/athena_history.db.part010.part
+          path: drive-transfer/athena-history-canonical.zip.part010.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 011
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part011.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-011
-          path: drive-transfer/athena_history.db.part011.part
+          path: drive-transfer/athena-history-canonical.zip.part011.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 012
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part012.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-012
-          path: drive-transfer/athena_history.db.part012.part
+          path: drive-transfer/athena-history-canonical.zip.part012.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 013
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part013.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-013
-          path: drive-transfer/athena_history.db.part013.part
+          path: drive-transfer/athena-history-canonical.zip.part013.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 014
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part014.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-014
-          path: drive-transfer/athena_history.db.part014.part
+          path: drive-transfer/athena-history-canonical.zip.part014.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 015
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part015.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-015
-          path: drive-transfer/athena_history.db.part015.part
+          path: drive-transfer/athena-history-canonical.zip.part015.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 016
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part016.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-016
-          path: drive-transfer/athena_history.db.part016.part
+          path: drive-transfer/athena-history-canonical.zip.part016.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 017
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part017.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-017
-          path: drive-transfer/athena_history.db.part017.part
+          path: drive-transfer/athena-history-canonical.zip.part017.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 018
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part018.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-018
-          path: drive-transfer/athena_history.db.part018.part
+          path: drive-transfer/athena-history-canonical.zip.part018.part
           compression-level: 0
           retention-days: 30
-
       - name: Upload canonical part 019
-        if: ${{ hashFiles('drive-transfer/athena_history.db.part019.part') != '' }}
         uses: actions/upload-artifact@v4
         with:
           name: athena-canonical-part-019
-          path: drive-transfer/athena_history.db.part019.part
+          path: drive-transfer/athena-history-canonical.zip.part019.part
           compression-level: 0
           retention-days: 30
+      - name: Upload canonical part 020
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-canonical-part-020
+          path: drive-transfer/athena-history-canonical.zip.part020.part
+          compression-level: 0
+          retention-days: 30
+      - name: Upload canonical part 021
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-canonical-part-021
+          path: drive-transfer/athena-history-canonical.zip.part021.part
+          compression-level: 0
+          retention-days: 30
+      - name: Upload canonical part 022
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-canonical-part-022
+          path: drive-transfer/athena-history-canonical.zip.part022.part
+          compression-level: 0
+          retention-days: 30
+
+      - name: Publish run pointer on automation branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${POINTER_BRANCH}"
+          mkdir -p ops
+          cat > ops/last_canonical_drive_transfer_run.json <<EOF
+          {
+            "run_id": ${GITHUB_RUN_ID},
+            "run_attempt": ${GITHUB_RUN_ATTEMPT},
+            "source_run_id": ${SOURCE_RUN_ID},
+            "source_artifact_id": ${SOURCE_ARTIFACT_ID},
+            "source_archive_sha256": "${EXPECTED_ARCHIVE_SHA256}",
+            "part_count": 23,
+            "head_sha": "${GITHUB_SHA}"
+          }
+          EOF
+          git add ops/last_canonical_drive_transfer_run.json
+          git commit -m "Record canonical Drive transfer run ${GITHUB_RUN_ID}"
+          git push --force origin "HEAD:refs/heads/${POINTER_BRANCH}"
