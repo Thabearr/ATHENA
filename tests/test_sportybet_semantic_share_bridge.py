@@ -102,7 +102,7 @@ def test_resolve_intent_rejects_wrong_market_or_outcome_semantics():
         semantic.resolve_intent(
             event=_event(),
             intent=semantic.validate_intents([
-                _intent(outcomeName="Away")
+                _intent(outcomeName="Home or Draw")
             ])[0],
             minimum_lead_seconds=0,
         )
