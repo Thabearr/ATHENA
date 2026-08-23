@@ -46,7 +46,8 @@ def normalize_league_name(value: str) -> str:
 # Numeric tiers mirror the PDF bands for compatibility:
 # 1=S, 2=A, 3=B, 4=C1, 5=C2, 6=D, 7=E, 8=F, 9=G.
 # Domestic cups live in the source-qualified competition registry rather than
-# this legacy league-name fallback.
+# this legacy league-name fallback. Tier G contains only explicitly approved
+# long-tail leagues; an arbitrary unknown league never enters Tier G by name.
 DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
     LeaguePriorityEntry(
         "UEFA Champions League",
@@ -66,7 +67,11 @@ DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
         "UEFA Conference League",
         1,
         3,
-        ("UEFA Conference League", "UEFA Europa Conference League", "Conference League"),
+        (
+            "UEFA Conference League",
+            "UEFA Europa Conference League",
+            "Conference League",
+        ),
         "Tier S: reviewed after Europa League and before domestic football.",
     ),
     LeaguePriorityEntry(
@@ -129,7 +134,12 @@ DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
         "Belgian Pro League",
         4,
         33,
-        ("Belgian Pro League", "First Division A", "Jupiler Pro League", "Belgium First Division A"),
+        (
+            "Belgian Pro League",
+            "First Division A",
+            "Jupiler Pro League",
+            "Belgium First Division A",
+        ),
         "Tier C1: fourth secondary European top flight.",
     ),
     LeaguePriorityEntry(
@@ -164,14 +174,25 @@ DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
         "Greek Super League",
         5,
         44,
-        ("Greek Super League", "Super League Greece", "Super League (Greece)", "Greece Super League 1", "Super League 1"),
+        (
+            "Greek Super League",
+            "Super League Greece",
+            "Super League (Greece)",
+            "Greece Super League 1",
+            "Super League 1",
+        ),
         "Tier C2: fifth preferred European top flight.",
     ),
     LeaguePriorityEntry(
         "EFL Championship",
         6,
         50,
-        ("EFL Championship", "Championship", "English Championship", "England Championship"),
+        (
+            "EFL Championship",
+            "Championship",
+            "English Championship",
+            "England Championship",
+        ),
         "Tier D: first non-top-flight league in the default hierarchy.",
     ),
     LeaguePriorityEntry(
@@ -187,6 +208,17 @@ DEFAULT_LEAGUE_PRIORITY: tuple[LeaguePriorityEntry, ...] = (
         70,
         ("Saudi Pro League", "Saudi League", "Roshn Saudi League"),
         "Tier F: reviewed after MLS.",
+    ),
+    LeaguePriorityEntry(
+        "Scottish Premiership",
+        9,
+        80,
+        (
+            "Scottish Premiership",
+            "Scotland Premiership",
+            "Scottish Premier League",
+        ),
+        "Tier G: explicitly approved historical long-tail European top flight.",
     ),
 )
 
@@ -206,9 +238,15 @@ for _entry in DEFAULT_LEAGUE_PRIORITY:
         _ALIAS_TO_ENTRY[_normalized] = _entry
 
 
-TIER_1_LEAGUES = [entry.canonical_name for entry in DEFAULT_LEAGUE_PRIORITY if entry.tier == 1]
-TIER_2_LEAGUES = [entry.canonical_name for entry in DEFAULT_LEAGUE_PRIORITY if entry.tier == 2]
-TIER_3_LEAGUES = [entry.canonical_name for entry in DEFAULT_LEAGUE_PRIORITY if entry.tier == 3]
+TIER_1_LEAGUES = [
+    entry.canonical_name for entry in DEFAULT_LEAGUE_PRIORITY if entry.tier == 1
+]
+TIER_2_LEAGUES = [
+    entry.canonical_name for entry in DEFAULT_LEAGUE_PRIORITY if entry.tier == 2
+]
+TIER_3_LEAGUES = [
+    entry.canonical_name for entry in DEFAULT_LEAGUE_PRIORITY if entry.tier == 3
+]
 
 
 def resolve_league_priority(league_name: str) -> LeaguePriorityEntry | None:
