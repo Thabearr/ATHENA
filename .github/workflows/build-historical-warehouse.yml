@@ -26,6 +26,7 @@ on:
       - "domain/historical_competitions.py"
       - "scripts/audit_historical_data_integrity.py"
       - "scripts/audit_historical_hierarchy_coverage.py"
+      - "scripts/audit_historical_season_completeness.py"
       - "scripts/build_historical_warehouse.py"
       - "scripts/historical_quality.py"
       - "scripts/run_with_fast_history_quality.py"
@@ -40,6 +41,7 @@ on:
       - "tests/test_historical_data_integrity.py"
       - "tests/test_historical_warehouse.py"
       - "tests/test_historical_hierarchy_freshness.py"
+      - "tests/test_historical_season_completeness.py"
       - "tests/test_global_backbone_retention.py"
       - "tests/test_historical_quality_refresh.py"
   pull_request:
@@ -50,6 +52,7 @@ on:
       - "domain/historical_competitions.py"
       - "scripts/audit_historical_data_integrity.py"
       - "scripts/audit_historical_hierarchy_coverage.py"
+      - "scripts/audit_historical_season_completeness.py"
       - "scripts/build_historical_warehouse.py"
       - "scripts/historical_quality.py"
       - "scripts/run_with_fast_history_quality.py"
@@ -64,6 +67,7 @@ on:
       - "tests/test_historical_data_integrity.py"
       - "tests/test_historical_warehouse.py"
       - "tests/test_historical_hierarchy_freshness.py"
+      - "tests/test_historical_season_completeness.py"
       - "tests/test_global_backbone_retention.py"
       - "tests/test_historical_quality_refresh.py"
 
@@ -106,6 +110,7 @@ jobs:
           pytest -q
           tests/test_historical_warehouse.py
           tests/test_historical_hierarchy_freshness.py
+          tests/test_historical_season_completeness.py
           tests/test_global_backbone_retention.py
           tests/test_historical_quality_refresh.py
           tests/test_historical_data_integrity.py
@@ -169,6 +174,21 @@ jobs:
           --strict
           --recent-since 2024-01-01
           --output data/history_exports/hierarchy_coverage.json
+
+      - name: Enforce season-by-season completeness
+        run: >-
+          python scripts/audit_historical_season_completeness.py
+          --strict
+          --output data/history_exports/season_completeness.json
+
+      - name: Upload season completeness diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-history-season-completeness
+          path: data/history_exports/season_completeness.json
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Enforce cross-source data integrity
         run: >-
