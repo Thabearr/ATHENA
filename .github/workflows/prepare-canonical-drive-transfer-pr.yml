@@ -87,13 +87,13 @@ jobs:
             sha256sum athena_history.db
 
           Windows PowerShell:
-            $parts = Get-ChildItem athena_history.db.part*.part | Sort-Object Name
-            $out = [System.IO.File]::Create('athena_history.db')
-            foreach ($p in $parts) {
-              $bytes = [System.IO.File]::ReadAllBytes($p.FullName)
-              $out.Write($bytes, 0, $bytes.Length)
+            \$parts = Get-ChildItem athena_history.db.part*.part | Sort-Object Name
+            \$out = [System.IO.File]::Create('athena_history.db')
+            foreach (\$p in \$parts) {
+              \$bytes = [System.IO.File]::ReadAllBytes(\$p.FullName)
+              \$out.Write(\$bytes, 0, \$bytes.Length)
             }
-            $out.Close()
+            \$out.Close()
             Get-FileHash athena_history.db -Algorithm SHA256
 
           The final SHA-256 must equal the canonical SHA-256 above.
