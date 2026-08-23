@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import json
 
@@ -16,6 +17,8 @@ REQUEST_DATE = "20260822"
 KICKOFF = "2026-08-22T18:00:00.000Z"
 KICKOFF_MS = 1787421600000
 OBSERVED = dt.datetime(2026, 8, 22, 15, 55, 11, tzinfo=UTC)
+SPILLOVER_KICKOFF = "2026-08-21T23:30:00.000Z"
+SPILLOVER_KICKOFF_MS = 1787355000000
 
 
 def _raw(value) -> bytes:
@@ -131,6 +134,21 @@ def _payload(
     }
 
 
+def _add_previous_utc_day_spillover(payload: dict) -> dict:
+    value = copy.deepcopy(payload)
+    source = copy.deepcopy(value["leagues"][0]["matches"][0])
+    source["id"] = 1002
+    source["status"]["utcTime"] = SPILLOVER_KICKOFF
+    source["timeTS"] = SPILLOVER_KICKOFF_MS
+    source["time"] = "22.08.2026 01:30"
+    source["status"]["finished"] = False
+    source["status"]["ongoing"] = True
+    source["status"]["scoreStr"] = "1 - 0"
+    source["statusId"] = 2
+    value["leagues"][0]["matches"].append(source)
+    return value
+
+
 def test_adapter_receipt_binds_observed_failure_evidence_and_grants_no_authority() -> None:
     receipt = adapter.adapter_receipt()
     assert receipt["source_workflow_run_id"] == 32583079461
@@ -142,6 +160,17 @@ def test_adapter_receipt_binds_observed_failure_evidence_and_grants_no_authority
         "firstExtraHalfStarted",
         "secondExtraHalfStarted",
     ]
+    assert receipt["spillover_source_workflow_run_id"] == 32612280129
+    assert receipt["spillover_source_actions_artifact_id"] == 9485854548
+    assert receipt["spillover_source_manifest_sha256"] == (
+        "7b763b0e55126529f1fd4879a2fe0170215ee3f467a28caad538ef77c8b561a8"
+    )
+    assert receipt["spillover_source_raw_sha256"] == (
+        "445bc09a013fabf3bd953e2980ee54bee6e1fb8ab50f4686ab2de67bea02c023"
+    )
+    assert receipt["spillover_source_fixture_ids"] == [1000008693, 1000014538]
+    assert receipt["spillover_rows_excluded_from_fresh_candidate_population"] is True
+    assert receipt["spillover_rows_structurally_revalidated_separately"] is True
     assert receipt["compatibility_projection_is_not_source_evidence"] is True
     assert receipt["original_network_capture_lineage_preserved_in_returned_fixtures"] is True
     assert receipt["network_acquisition_performed"] is False
@@ -152,7 +181,6 @@ def test_current_terminal_shape_qualifies_without_rewriting_original_lineage() -
     raw = _raw(_payload())
     manifest = _manifest(raw)
 
-    # The frozen PR39 candidate path cannot consume this exact source shape.
     with pytest.raises(fresh.FotMobFreshHoldoutError):
         fresh.qualify_capture_fixtures(raw, manifest)
 
@@ -171,6 +199,98 @@ def test_current_terminal_shape_qualifies_without_rewriting_original_lineage() -
         capture_contract.sha256_data_matches_capture_manifest(manifest)
     )
     assert row.capture_observed_at == manifest.observed_at
+
+
+def test_reviewed_previous_utc_day_spillover_is_structurally_checked_and_excluded() -> None:
+    raw = _raw(_add_previous_utc_day_spillover(_payload()))
+    manifest = _manifest(raw)
+
+    with pytest.raises(fresh.FotMobFreshHoldoutError):
+        fresh.qualify_capture_fixtures(raw, manifest)
+
+    rows = adapter.qualify_capture_fixtures(raw, manifest)
+    assert [row.fixture_id for row in rows] == [1001]
+    assert rows[0].capture_raw_sha256 == manifest.raw_sha256
+    assert rows[0].capture_manifest_sha256 == (
+        capture_contract.sha256_data_matches_capture_manifest(manifest)
+    )
+
+    payload = adapter._strict_json(raw)
+    primary, spillover, spillover_ids = adapter.partition_reviewed_request_bucket_spillover(
+        payload,
+        REQUEST_DATE,
+    )
+    assert spillover_ids == (1002,)
+    assert [match["id"] for match in primary["leagues"][0]["matches"]] == [1001]
+    assert spillover is not None
+    assert spillover["date"] == "20260821"
+    assert [match["id"] for match in spillover["leagues"][0]["matches"]] == [1002]
+
+
+def test_previous_day_spillover_requires_exact_timets_and_request_date_display() -> None:
+    payload = _add_previous_utc_day_spillover(_payload())
+    payload["leagues"][0]["matches"][1]["timeTS"] += 1000
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="timeTS must exactly match previous-day status.utcTime",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw))
+
+    payload = _add_previous_utc_day_spillover(_payload())
+    payload["leagues"][0]["matches"][1]["time"] = "21.08.2026 23:30"
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="exact request-date display text",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw))
+
+
+def test_spillover_cannot_hide_unreviewed_structure() -> None:
+    payload = _add_previous_utc_day_spillover(_payload())
+    payload["leagues"][0]["matches"][1]["status"]["futureUnreviewedField"] = True
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="reviewed PR89->PR87->PR39 structural chain failed for reviewed previous-UTC-day spillover population",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw))
+
+
+def test_only_immediately_previous_utc_date_is_eligible_for_spillover_exclusion() -> None:
+    payload = _add_previous_utc_day_spillover(_payload())
+    match = payload["leagues"][0]["matches"][1]
+    match["status"]["utcTime"] = "2026-08-20T23:30:00.000Z"
+    match["timeTS"] = 1787268600000
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="structural chain failed for requested-date candidate population",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw))
+
+    payload = _add_previous_utc_day_spillover(_payload())
+    match = payload["leagues"][0]["matches"][1]
+    match["status"]["utcTime"] = "2026-08-23T00:30:00.000Z"
+    match["timeTS"] = 1787445000000
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="structural chain failed for requested-date candidate population",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw))
+
+
+def test_duplicate_fixture_across_primary_and_spillover_still_fails_closed() -> None:
+    payload = _add_previous_utc_day_spillover(_payload())
+    payload["leagues"][0]["matches"][1]["id"] = 1001
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="fixture id duplicated in original request bucket",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw))
 
 
 def test_reviewed_extra_half_keys_are_structural_strings_only() -> None:

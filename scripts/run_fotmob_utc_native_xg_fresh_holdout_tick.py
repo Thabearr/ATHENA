@@ -15,8 +15,8 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 
 
-LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "b6bbbda19b13a81c17ff5386e402f0a585249cb7"
-SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "986376b892e01cc739f65fca6d38c3ceec26b418"
+LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "3bd68df98f8406a35a0184ef41c17ee35f9e6c9c"
+SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "b19adfea9b1f1a75d5d6c4b8c2adff2e09c4adee"
 ACTIVATION_RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
 
 
@@ -105,13 +105,13 @@ def _execute_collection_tick_with_reviewed_adapter(**kwargs):
         settlement_schema_adapter.build_pr89_settlement_compatibility_proxy()
     )
     try:
-        # Runner._qualify and fresh settlement both resolve this module global at
-        # call time, so the PR208 adapter covers prediction and settlement identity.
+        # Runner._qualify and fresh settlement resolve this module global at call
+        # time, so the reviewed adapter covers prediction and settlement identity.
         fresh.qualify_capture_fixtures = live_capture_adapter.qualify_capture_fixtures
 
         # The frozen ordinary-FT adapter keeps parsing score/reason semantics from
         # original network bytes. Only its internal PR89 structural assessment is
-        # delegated through the reviewed extra-halfs compatibility projection.
+        # delegated through the reviewed compatibility projection.
         score_adapter.pr89 = settlement_proxy
         return runner.execute_collection_tick(**kwargs)
     finally:

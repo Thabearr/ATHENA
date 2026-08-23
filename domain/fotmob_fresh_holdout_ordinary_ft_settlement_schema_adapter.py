@@ -1,15 +1,18 @@
 """Reviewed settlement-schema compatibility for the FotMob fresh holdout.
 
 The frozen ordinary-FT score adapter re-runs the frozen PR89 structural chain
-against each settlement capture. Live captures now contain the two opaque
-``status.halfs`` keys already reviewed by the fresh-holdout capture adapter in
-PR208. This module admits only those exact-string keys, projects only those keys
-away for PR89 structural revalidation, and leaves the frozen ordinary-FT adapter
-to parse scores/reasons from the original network bytes.
+against each settlement capture. Live captures can contain the two opaque
+``status.halfs`` keys reviewed by the fresh-holdout capture adapter, and a
+provider request bucket can contain separately reviewed previous-UTC-day
+spillover fixtures that are not fresh candidates. This module projects only
+those reviewed compatibility shapes away before PR89 settlement revalidation,
+while leaving the frozen ordinary-FT adapter to parse scores/reasons from the
+original network bytes.
 
 The compatibility projection is validation-only. It does not replace source
-evidence, infer extra-time semantics, alter score/reason semantics, or authorize
-model, pricing, selection, production, or betting use.
+evidence, infer request-bucket, timezone, extra-time, or football semantics,
+alter score/reason semantics, or authorize model, pricing, selection,
+production, or betting use.
 """
 from __future__ import annotations
 
@@ -30,7 +33,7 @@ SCHEMA_VERSION = 1
 ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_ORDINARY_FT_SETTLEMENT_SCHEMA_ADAPTER_V1"
 ADAPTER_STATE = "REVIEWED_STRUCTURAL_COMPATIBILITY_ONLY_FROZEN_SCORE_SEMANTICS_UNCHANGED"
 
-LIVE_CAPTURE_ADAPTER_BLOB_SHA = "b6bbbda19b13a81c17ff5386e402f0a585249cb7"
+LIVE_CAPTURE_ADAPTER_BLOB_SHA = "3bd68df98f8406a35a0184ef41c17ee35f9e6c9c"
 ORDINARY_FT_ADAPTER_BLOB_SHA = "868563206e09010fce74b4ba7954028930baad54"
 PR89_IMPLEMENTATION_BLOB_SHA = "f33dd31aedcd92b5691a3503914ed184d601b493"
 CAPTURE_CONTRACT_BLOB_SHA = "ca2149395de868104666620173b55a880b10c729"
@@ -62,6 +65,8 @@ SAFETY_KEYS = (
     "football_semantics_promoted",
     "final_result_semantics_promoted",
     "extra_time_semantics_promoted",
+    "request_bucket_semantics_promoted",
+    "timezone_semantics_promoted",
     "ordinary_ft_score_semantics_changed",
     "source_capability_changed",
     "model_feature_authorized",
@@ -89,7 +94,7 @@ def _git_blob_sha(path: Path) -> str:
 
 def verify_reviewed_dependencies() -> None:
     pins = (
-        (Path(live_capture_adapter.__file__), LIVE_CAPTURE_ADAPTER_BLOB_SHA, "PR208 live-capture adapter"),
+        (Path(live_capture_adapter.__file__), LIVE_CAPTURE_ADAPTER_BLOB_SHA, "reviewed live-capture adapter"),
         (Path(score_adapter.__file__), ORDINARY_FT_ADAPTER_BLOB_SHA, "frozen ordinary-FT adapter"),
         (Path(pr89.__file__), PR89_IMPLEMENTATION_BLOB_SHA, "PR89 structural implementation"),
         (Path(capture_contract.__file__), CAPTURE_CONTRACT_BLOB_SHA, "capture contract"),
@@ -101,9 +106,11 @@ def verify_reviewed_dependencies() -> None:
     except OSError as exc:
         raise _error("could not verify reviewed settlement adapter dependencies") from exc
     if tuple(live_capture_adapter.EXTRA_HALFS_KEYS) != EXTRA_HALFS_KEYS:
-        raise _error("PR208 reviewed extra-halfs key set changed")
+        raise _error("reviewed extra-halfs key set changed")
     if live_capture_adapter.EXTRA_HALFS_RULE != EXTRA_HALFS_RULE:
-        raise _error("PR208 reviewed extra-halfs rule changed")
+        raise _error("reviewed extra-halfs rule changed")
+    if not isinstance(live_capture_adapter.REQUEST_BUCKET_SPILLOVER_RULE, str):
+        raise _error("reviewed request-bucket spillover rule changed")
 
 
 def _strict_json(raw: bytes) -> dict[str, Any]:
@@ -205,7 +212,7 @@ def assess_eliminated_team_id_value_domain_for_settlement(
     raw_json: bytes,
     manifest: capture_contract.FotMobDataMatchesCaptureManifest,
 ):
-    """Run frozen PR89 structurally on a validation-only PR208-compatible projection."""
+    """Run frozen PR89 on the reviewed requested-date settlement projection."""
     verify_reviewed_dependencies()
     if not isinstance(manifest, capture_contract.FotMobDataMatchesCaptureManifest):
         raise _error("manifest must be the reviewed FotMob capture manifest type")
@@ -218,16 +225,22 @@ def assess_eliminated_team_id_value_domain_for_settlement(
     if hashlib.sha256(raw_json).hexdigest() != manifest.raw_sha256:
         raise _error("raw capture SHA-256 does not match original manifest")
 
-    # First prove the original bytes pass the already-reviewed PR208 live-capture
-    # compatibility path. That preserves strict JSON, original lineage, and the
-    # exact no-new-keys boundary before the score adapter receives any projection.
     try:
         live_capture_adapter.qualify_capture_fixtures(raw_json, manifest)
     except Exception as exc:
         raise _error("reviewed fresh-capture compatibility qualification failed") from exc
 
     payload = _strict_json(raw_json)
-    projected_payload = _remove_reviewed_extra_halfs(payload)
+    try:
+        requested_payload, _spillover_payload, _spillover_ids = (
+            live_capture_adapter.partition_reviewed_request_bucket_spillover(
+                payload,
+                manifest.request_date,
+            )
+        )
+    except Exception as exc:
+        raise _error("reviewed request-bucket settlement partition failed") from exc
+    projected_payload = _remove_reviewed_extra_halfs(requested_payload)
     projected_raw = _canonical(projected_payload)
     projected_manifest = _projected_manifest(manifest, projected_raw)
     try:
@@ -276,6 +289,7 @@ def adapter_receipt() -> dict[str, Any]:
         "adapter_state": ADAPTER_STATE,
         "reviewed_extra_halfs_keys": list(EXTRA_HALFS_KEYS),
         "reviewed_extra_halfs_rule": EXTRA_HALFS_RULE,
+        "reviewed_request_bucket_spillover_rule": live_capture_adapter.REQUEST_BUCKET_SPILLOVER_RULE,
         "source_workflow_run_id": SOURCE_WORKFLOW_RUN_ID,
         "source_actions_artifact_id": SOURCE_ACTIONS_ARTIFACT_ID,
         "source_actions_artifact_name": SOURCE_ACTIONS_ARTIFACT_NAME,
@@ -284,6 +298,7 @@ def adapter_receipt() -> dict[str, Any]:
         "source_capture_lineages": [dict(item) for item in SOURCE_CAPTURE_LINEAGES],
         "compatibility_projection_is_validation_only": True,
         "ordinary_ft_adapter_consumes_original_network_bytes": True,
+        "request_bucket_spillover_excluded_only_from_structural_projection": True,
         "network_acquisition_performed": False,
         "safety": {key: False for key in SAFETY_KEYS},
     }
