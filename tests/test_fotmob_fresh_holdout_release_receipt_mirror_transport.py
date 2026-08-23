@@ -94,7 +94,7 @@ def test_transport_module_entrypoint_imports_from_repo_root() -> None:
     assert "--run-id" in result.stdout
 
 
-def test_workflow_pins_and_invokes_reviewed_transport() -> None:
+def test_workflow_pins_and_invokes_reviewed_transport_only_after_success() -> None:
     workflow = Path(
         ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
     ).read_text(encoding="utf-8")
@@ -105,3 +105,7 @@ def test_workflow_pins_and_invokes_reviewed_transport() -> None:
     )
     assert "python scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py" not in workflow
     assert "Accept: application/octet-stream" not in workflow
+    assert (
+        "github.event.workflow_run.event == 'schedule' && "
+        "github.event.workflow_run.conclusion == 'success'"
+    ) in workflow
