@@ -181,6 +181,15 @@ jobs:
           --strict
           --output data/history_exports/season_completeness.json
 
+      - name: Upload season completeness diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-history-season-completeness
+          path: data/history_exports/season_completeness.json
+          if-no-files-found: warn
+          retention-days: 30
+
       - name: Enforce cross-source data integrity
         run: >-
           python scripts/audit_historical_data_integrity.py
