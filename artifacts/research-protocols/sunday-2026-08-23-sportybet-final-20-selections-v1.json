@@ -1,1 +1,22 @@
-[]
+[
+  {"eventId":"sr:match:72530872","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72041080","marketId":"18","outcomeId":"12","specifier":"total=1.5"},
+  {"eventId":"sr:match:72478488","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72036112","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72221170","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:71960056","marketId":"60100","outcomeId":"3"},
+  {"eventId":"sr:match:71960102","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:71960104","marketId":"18","outcomeId":"12","specifier":"total=1.5"},
+  {"eventId":"sr:match:72723144","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72723146","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:71944894","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:71944908","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72530868","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72478496","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72723148","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72723152","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:71944890","marketId":"19","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:71944904","marketId":"20","outcomeId":"12","specifier":"total=0.5"},
+  {"eventId":"sr:match:72478492","marketId":"18","outcomeId":"12","specifier":"total=1.5"},
+  {"eventId":"sr:match:72530866","marketId":"19","outcomeId":"12","specifier":"total=0.5"}
+]
