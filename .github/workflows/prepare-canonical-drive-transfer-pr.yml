@@ -54,7 +54,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p drive-transfer
-          split -b 400M -d -a 3 --additional-suffix=.part \
+          split -b 500M -d -a 3 --additional-suffix=.part \
             "$DB_PATH" drive-transfer/athena_history.db.part
 
           PART_COUNT="$(find drive-transfer -maxdepth 1 -type f -name 'athena_history.db.part*.part' | wc -l | tr -d ' ')"
