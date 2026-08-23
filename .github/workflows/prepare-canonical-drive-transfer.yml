@@ -40,6 +40,30 @@ jobs:
         with:
           fetch-depth: 1
 
+      - name: Publish run pointer
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "${POINTER_BRANCH}"
+          mkdir -p ops
+          cat > ops/last_canonical_drive_transfer_run.json <<EOF
+          {
+            "status": "started",
+            "run_id": ${GITHUB_RUN_ID},
+            "run_attempt": ${GITHUB_RUN_ATTEMPT},
+            "source_run_id": ${SOURCE_RUN_ID},
+            "source_artifact_id": ${SOURCE_ARTIFACT_ID},
+            "source_archive_sha256": "${EXPECTED_ARCHIVE_SHA256}",
+            "part_count": 23,
+            "head_sha": "${GITHUB_SHA}"
+          }
+          EOF
+          git add ops/last_canonical_drive_transfer_run.json
+          git commit -m "Record canonical Drive transfer run ${GITHUB_RUN_ID}"
+          git push --force origin "HEAD:refs/heads/${POINTER_BRANCH}"
+
       - name: Download canonical artifact archive exactly as stored by GitHub
         shell: bash
         env:
@@ -73,7 +97,7 @@ jobs:
           split -b 90M -d -a 3 --additional-suffix=.part \
             "${ARCHIVE_PATH}" "drive-transfer/${ARCHIVE_NAME}.part"
 
-          PART_COUNT="$(find drive-transfer -maxdepth 1 -type f -name '${ARCHIVE_NAME}.part*.part' | wc -l | tr -d ' ')"
+          PART_COUNT="$(find drive-transfer -maxdepth 1 -type f -name "${ARCHIVE_NAME}.part*.part" | wc -l | tr -d ' ')"
           if [ "${PART_COUNT}" != "23" ]; then
             echo "Expected exactly 23 parts, got ${PART_COUNT}" >&2
             exit 1
@@ -290,25 +314,18 @@ jobs:
           compression-level: 0
           retention-days: 30
 
-      - name: Publish run pointer on automation branch
+      - name: Mark run pointer completed
         shell: bash
         run: |
           set -euo pipefail
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git checkout -B "${POINTER_BRANCH}"
-          mkdir -p ops
-          cat > ops/last_canonical_drive_transfer_run.json <<EOF
-          {
-            "run_id": ${GITHUB_RUN_ID},
-            "run_attempt": ${GITHUB_RUN_ATTEMPT},
-            "source_run_id": ${SOURCE_RUN_ID},
-            "source_artifact_id": ${SOURCE_ARTIFACT_ID},
-            "source_archive_sha256": "${EXPECTED_ARCHIVE_SHA256}",
-            "part_count": 23,
-            "head_sha": "${GITHUB_SHA}"
-          }
-          EOF
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          p = Path('ops/last_canonical_drive_transfer_run.json')
+          data = json.loads(p.read_text())
+          data['status'] = 'completed'
+          p.write_text(json.dumps(data, indent=2) + '\n')
+          PY
           git add ops/last_canonical_drive_transfer_run.json
-          git commit -m "Record canonical Drive transfer run ${GITHUB_RUN_ID}"
+          git commit -m "Mark canonical Drive transfer ${GITHUB_RUN_ID} completed"
           git push --force origin "HEAD:refs/heads/${POINTER_BRANCH}"
