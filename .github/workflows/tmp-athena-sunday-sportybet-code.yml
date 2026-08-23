@@ -5,7 +5,6 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/tmp-athena-sunday-sportybet-code.yml"
-      - "artifacts/research-protocols/sunday-2026-08-23-sportybet-final-20-selections-v1.json"
   workflow_dispatch:
 
 permissions:
@@ -20,10 +19,210 @@ jobs:
       - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
         with:
           python-version: "3.12"
-      - name: Create and exact-roundtrip Sunday 20-fold SportyBet code
+      - name: Resolve exact ATHENA semantics and mint verified code
         run: |
-          mkdir -p .cache/athena-research/sunday-2026-08-23-sportybet-final-20
-          python scripts/sportybet_direct_share_bridge.py \
-            --selections artifacts/research-protocols/sunday-2026-08-23-sportybet-final-20-selections-v1.json \
-            --output-dir .cache/athena-research/sunday-2026-08-23-sportybet-final-20 \
-            | tee .cache/athena-research/sunday-2026-08-23-sportybet-final-20.summary.json
+          mkdir -p .cache/athena-research/sunday-2026-08-23-athena-exact-20
+          python - <<'PY'
+          import html.parser
+          import json
+          import re
+          import subprocess
+          import sys
+          import time
+          from pathlib import Path
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          HEADERS = {
+              "Accept": "application/json",
+              "Accept-Language": "en-NG,en;q=0.9",
+              "OperId": "2",
+              "User-Agent": "ATHENA/1.0 exact-sunday-20-semantic-gate",
+          }
+
+          TARGETS = [
+              ("sr:match:72221170", "Newcastle", "Liverpool", "OVER_1_5"),
+              ("sr:match:72478488", "Atletico Madrid", "Villarreal", "HOME_OR_DRAW"),
+              ("sr:match:72478496", "Getafe", "Racing Santander", "OVER_1_5"),
+              ("sr:match:72478492", "Elche", "Barcelona", "AWAY_WIN"),
+              ("sr:match:72036112", "Le Havre", "Monaco", "DRAW_OR_AWAY"),
+              ("sr:match:72036520", "Rennes", "PSG", "OVER_1_5"),
+              ("sr:match:72041080", "Cambuur", "Feyenoord", "AWAY_WIN"),
+              ("sr:match:72203000", "Club Brugge", "Cercle Brugge", "HOME_WIN"),
+              ("sr:match:71944894", "Frosinone", "Juventus", "DRAW_OR_AWAY"),
+              ("sr:match:71944908", "Venezia", "Lecce", "OVER_1_5"),
+              ("sr:match:71944890", "Atalanta", "Sassuolo", "OVER_1_5"),
+              ("sr:match:71944904", "Torino", "Milan", "OVER_1_5"),
+              ("sr:match:72530872", "Vitoria", "Nacional", "HOME_OR_DRAW"),
+              ("sr:match:72530868", "Santa Clara", "Famalicao", "UNDER_3_5"),
+              ("sr:match:72530866", "Porto", "Arouca", "HOME_WIN"),
+              ("sr:match:72723144", "Trabzonspor", "Istanbul", "HOME_OR_DRAW"),
+              ("sr:match:72723148", "Alanyaspor", "Besiktas", "DRAW_OR_AWAY"),
+              ("sr:match:72723152", "Goztepe", "Genclerbirligi", "HOME_OR_DRAW"),
+              (None, "Hammarby", "GAIS", "HOME_WIN"),
+              (None, "Viborg", "Copenhagen", "OVER_1_5"),
+          ]
+
+          def norm(value):
+              return re.sub(r"[^a-z0-9]+", "", str(value).lower())
+
+          class LinkParser(html.parser.HTMLParser):
+              def __init__(self):
+                  super().__init__()
+                  self.href = None
+                  self.parts = []
+                  self.links = []
+              def handle_starttag(self, tag, attrs):
+                  if tag == "a":
+                      self.href = dict(attrs).get("href")
+                      self.parts = []
+              def handle_data(self, data):
+                  if self.href is not None:
+                      self.parts.append(data)
+              def handle_endtag(self, tag):
+                  if tag == "a" and self.href is not None:
+                      self.links.append((self.href, " ".join(self.parts).strip()))
+                      self.href = None
+                      self.parts = []
+
+          def discover_event(tournament_id, home, away):
+              url = "https://www.sportybet.com/ng/lite/events?" + urlencode({
+                  "sportId": "sr:sport:1", "tournamentId": tournament_id
+              })
+              req = Request(url, headers={"User-Agent": HEADERS["User-Agent"], "Accept-Language": HEADERS["Accept-Language"]})
+              with urlopen(req, timeout=45) as resp:
+                  raw = resp.read().decode("utf-8", errors="replace")
+              parser = LinkParser(); parser.feed(raw)
+              hn, an = norm(home), norm(away)
+              candidates = []
+              for href, text in parser.links:
+                  nt = norm(text)
+                  if hn in nt and an in nt and "eventId=" in href:
+                      m = re.search(r"eventId=(sr(?::|%3A)match(?::|%3A)[0-9]+)", href, re.I)
+                      if m:
+                          eid = re.sub(r"%3A", ":", m.group(1), flags=re.I)
+                          candidates.append((eid, text, href))
+              unique = sorted({x[0] for x in candidates})
+              if len(unique) != 1:
+                  print("DISCOVERY_LINKS", tournament_id, [(t, h) for h, t in parser.links if hn in norm(t) or an in norm(t)][:20])
+                  raise RuntimeError(f"could not uniquely discover {home} vs {away}: {unique}")
+              print("DISCOVERED", home, "vs", away, unique[0])
+              return unique[0]
+
+          def walk(value):
+              if isinstance(value, dict):
+                  yield value
+                  for nested in value.values():
+                      yield from walk(nested)
+              elif isinstance(value, list):
+                  for nested in value:
+                      yield from walk(nested)
+
+          def fetch_event(eid):
+              url = "https://www.sportybet.com/api/ng/factsCenter/event?" + urlencode({"productId": 3, "eventId": eid})
+              with urlopen(Request(url, headers=HEADERS), timeout=45) as resp:
+                  payload = json.load(resp)
+              if payload.get("bizCode") != 10000:
+                  raise RuntimeError(f"{eid} bizCode={payload.get('bizCode')!r}")
+              ev = next((o for o in walk(payload) if o.get("eventId") == eid and isinstance(o.get("markets"), list)), None)
+              if ev is None:
+                  raise RuntimeError(f"{eid} event object with markets not found")
+              return ev
+
+          def outcome_text(o):
+              return str(o.get("desc") or o.get("description") or o.get("name") or "").strip()
+
+          def market_text(m):
+              return str(m.get("desc") or m.get("description") or m.get("name") or "").strip()
+
+          def choose(ev, semantic):
+              specs = {
+                  "OVER_1_5": ("Over/Under", "total=1.5", "Over 1.5"),
+                  "UNDER_3_5": ("Over/Under", "total=3.5", "Under 3.5"),
+                  "HOME_WIN": ("1X2", None, "Home"),
+                  "AWAY_WIN": ("1X2", None, "Away"),
+                  "HOME_OR_DRAW": ("Double Chance", None, "Home or Draw"),
+                  "DRAW_OR_AWAY": ("Double Chance", None, "Draw or Away"),
+              }
+              want_market, want_spec, want_outcome = specs[semantic]
+              matches = []
+              for m in ev.get("markets") or []:
+                  if not isinstance(m, dict):
+                      continue
+                  if market_text(m).casefold() != want_market.casefold():
+                      continue
+                  spec = m.get("specifier")
+                  if spec != want_spec:
+                      continue
+                  for o in m.get("outcomes") or []:
+                      if not isinstance(o, dict):
+                          continue
+                      if outcome_text(o).casefold() != want_outcome.casefold():
+                          continue
+                      if o.get("isActive") not in (None, 1, True, "1"):
+                          continue
+                      matches.append((m, o))
+              if len(matches) != 1:
+                  available = []
+                  for m in ev.get("markets") or []:
+                      if isinstance(m, dict) and market_text(m).casefold() in {"1x2", "double chance", "over/under"}:
+                          available.append((m.get("id"), market_text(m), m.get("specifier"), [(o.get("id"), outcome_text(o)) for o in m.get("outcomes") or [] if isinstance(o, dict)]))
+                  raise RuntimeError(f"{ev.get('eventId')} {semantic} expected one exact semantic match, found {len(matches)}; available={available[:30]}")
+              m, o = matches[0]
+              row = {
+                  "eventId": str(ev["eventId"]),
+                  "marketId": str(m["id"]),
+                  "outcomeId": str(o["id"]),
+              }
+              if want_spec is not None:
+                  row["specifier"] = want_spec
+              return row, market_text(m), outcome_text(o), str(o.get("odds"))
+
+          # Resolve the two event IDs not already frozen from today's direct scans.
+          resolved = list(TARGETS)
+          resolved[18] = (discover_event("sr:tournament:40", "Hammarby", "GAIS"), "Hammarby", "GAIS", "HOME_WIN")
+          resolved[19] = (discover_event("sr:tournament:39", "Viborg", "Copenhagen"), "Viborg", "Copenhagen", "OVER_1_5")
+
+          rows = []
+          audit = []
+          now_ms = int(time.time() * 1000)
+          for idx, (eid, home, away, semantic) in enumerate(resolved, start=1):
+              ev = fetch_event(eid)
+              actual_home = str(ev.get("homeTeamName") or "")
+              actual_away = str(ev.get("awayTeamName") or "")
+              if norm(home) not in norm(actual_home) or norm(away) not in norm(actual_away):
+                  raise RuntimeError(f"#{idx} fixture mismatch: expected {home} vs {away}, got {actual_home} vs {actual_away}")
+              kickoff = ev.get("estimateStartTime")
+              if not isinstance(kickoff, (int, float)) or kickoff <= now_ms + 120_000:
+                  raise RuntimeError(f"#{idx} {actual_home} vs {actual_away} is not safely pre-match; kickoff={kickoff} now={now_ms}")
+              if ev.get("bookingStatus") == "Unavailable":
+                  raise RuntimeError(f"#{idx} booking unavailable")
+              if ev.get("status") not in (None, 0):
+                  raise RuntimeError(f"#{idx} event status is not prematch: {ev.get('status')!r}")
+              ms = str(ev.get("matchStatus") or "").lower()
+              if ms and "not start" not in ms and ms not in {"ns"}:
+                  raise RuntimeError(f"#{idx} matchStatus is not prematch: {ev.get('matchStatus')!r}")
+              row, mlabel, olabel, odds = choose(ev, semantic)
+              rows.append(row)
+              record = {
+                  "n": idx, "fixture": f"{actual_home} vs {actual_away}", "semantic": semantic,
+                  "market": mlabel, "outcome": olabel, "odds": odds, **row,
+              }
+              audit.append(record)
+              print("ATHENA_EXACT", json.dumps(record, ensure_ascii=False, sort_keys=True))
+
+          if len(rows) != 20 or len({r["eventId"] for r in rows}) != 20:
+              raise RuntimeError("exact ATHENA list did not resolve to 20 unique events")
+
+          out = Path(".cache/athena-research/sunday-2026-08-23-athena-exact-20")
+          selection_path = out / "selections.json"
+          audit_path = out / "semantic-audit.json"
+          selection_path.write_text(json.dumps(rows, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+          audit_path.write_text(json.dumps(audit, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+          subprocess.run([
+              sys.executable, "scripts/sportybet_direct_share_bridge.py",
+              "--selections", str(selection_path),
+              "--output-dir", str(out / "roundtrip"),
+          ], check=True)
+          PY
