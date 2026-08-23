@@ -44,6 +44,12 @@ A generated code is accepted only when all of the following hold:
 
 Raw create/load responses and canonical receipts are hashed and preserved as workflow artifacts.
 
+## Transport proof is not semantic proof
+
+A provider-native identity can be valid and round-trip perfectly while still representing a different market or outcome from the ATHENA selection intended for the user. The direct bridge therefore proves **transport identity only**. It must not be treated as proof that caller-supplied IDs correspond to a user-facing selection description.
+
+User-facing ATHENA booking-code creation must use `scripts/sportybet_semantic_share_bridge.py`. That gate first resolves exact fixture + provider market label + provider outcome label + optional line specifier to native IDs, invokes this lower-level bridge, and then re-resolves the same semantics after the round trip. See `docs/sportybet_semantic_share_gate.md`.
+
 ## Proven Saturday 2026-08-22 result
 
 PR #204 exact-head run `32560333323` on head `f65bbca0f400007c35b54948579069ceb206b627` proved a 20-selection direct create-and-load round trip against SportyBet Nigeria. SportyBet accepted all 20 selections with zero unavailable outcomes and reconstructed the exact requested provider-native identities. The workflow artifact was `9472590101`, digest `sha256:a737cf3bae4da783465720ba0cf3877c8987ac81b1a11682df5d00df64c39e70`.
