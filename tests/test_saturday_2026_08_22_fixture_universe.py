@@ -152,7 +152,8 @@ def test_builds_exact_source_identity_priority_inventory_without_inference():
     }
     premier = report["candidates"][0]
     assert premier["competition_review_name"] == "Premier League"
-    assert premier["competition_review_rank"] == 1
+    assert premier["competition_review_rank"] == 10
+    assert premier["competition_review_tier"] == 2
     assert premier["competition_review_kind"] == CompetitionKind.DOMESTIC_LEAGUE.value
     unknown = report["candidates"][1]
     assert unknown["competition_review_source_identity_match"] is False
@@ -160,8 +161,15 @@ def test_builds_exact_source_identity_priority_inventory_without_inference():
     assert not any(report["safety"].values())
 
 
-def test_major_cup_sits_below_portugal_turkey_eredivisie_and_above_belgium_scotland():
+def test_pdf_master_order_replaces_old_saturday_league_cup_order():
     leagues = [
+        _league(
+            5,
+            100,
+            "Champions League",
+            _match(1300, 5, "Club A", "Club B", 10),
+            ccode="INT",
+        ),
         _league(
             10,
             42,
@@ -207,22 +215,28 @@ def test_major_cup_sits_below_portugal_turkey_eredivisie_and_above_belgium_scotl
     ]
     report = build_saturday_fixture_universe(_bundle(leagues=leagues))
     assert [item["competition_review_name"] for item in report["candidates"]] == [
+        "UEFA Champions League",
+        "DFB-Pokal",
+        "Eredivisie",
         "Primeira Liga",
         "Süper Lig",
-        "Eredivisie",
-        "DFB-Pokal",
         "Belgian Pro League",
         "Scottish Premiership",
     ]
     assert [item["competition_review_rank"] for item in report["candidates"]] == [
-        6,
-        7,
-        8,
-        9,
-        10,
-        11,
+        1,
+        20,
+        30,
+        31,
+        32,
+        33,
+        80,
     ]
-    cup = next(item for item in report["candidates"] if item["competition_review_name"] == "DFB-Pokal")
+    cup = next(
+        item
+        for item in report["candidates"]
+        if item["competition_review_name"] == "DFB-Pokal"
+    )
     assert cup["competition_review_kind"] == CompetitionKind.DOMESTIC_CUP.value
 
 
@@ -245,17 +259,43 @@ def test_unreviewed_cup_is_not_promoted_because_it_is_a_cup():
 
 def test_generic_same_name_foreign_competitions_do_not_borrow_priority():
     leagues = [
-        _league(10, 263, "Premier League", _match(1101, 10, "Belshina", "Gomel", 11), ccode="BLR"),
-        _league(20, 246, "Serie A", _match(1102, 20, "Cuenca", "Manta", 13), ccode="ECU"),
-        _league(30, 38, "Bundesliga", _match(1103, 30, "Altach", "Hartberg", 15), ccode="AUT"),
-        _league(40, 47, "Premier League", _match(1104, 40, "Everton", "Palace", 16), ccode="ENG"),
+        _league(
+            10,
+            263,
+            "Premier League",
+            _match(1101, 10, "Belshina", "Gomel", 11),
+            ccode="BLR",
+        ),
+        _league(
+            20,
+            246,
+            "Serie A",
+            _match(1102, 20, "Cuenca", "Manta", 13),
+            ccode="ECU",
+        ),
+        _league(
+            30,
+            38,
+            "Bundesliga",
+            _match(1103, 30, "Altach", "Hartberg", 15),
+            ccode="AUT",
+        ),
+        _league(
+            40,
+            47,
+            "Premier League",
+            _match(1104, 40, "Everton", "Palace", 16),
+            ccode="ENG",
+        ),
     ]
     report = build_saturday_fixture_universe(_bundle(leagues=leagues))
     assert report["competition_review_source_identity_match_count"] == 1
     assert report["unprioritized_source_competition_count"] == 3
     assert report["prioritized_competition_counts"] == {"Premier League": 1}
     foreign = [
-        item for item in report["candidates"] if item["source_competition_ccode"] != "ENG"
+        item
+        for item in report["candidates"]
+        if item["source_competition_ccode"] != "ENG"
     ]
     assert all(item["competition_review_rank"] == 999 for item in foreign)
 
