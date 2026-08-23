@@ -1,0 +1,45 @@
+{
+  "authority": {
+    "bet_authorized": false,
+    "caller_supplied_market_outcome_ids_authorized": false,
+    "model_selection_authorized": false,
+    "semantic_booking_code_transport_authorized_after_gate": true,
+    "stake_authorized": false,
+    "wager_placement_authorized": false
+  },
+  "dataset_name": "athena-sportybet-semantic-share-gate-v1",
+  "failure_mode_closed": "PROVIDER_NATIVE_ROUNDTRIP_DOES_NOT_PROVE_INTENDED_SELECTION_SEMANTICS",
+  "input_contract": {
+    "allowed_fields": [
+      "eventId",
+      "homeTeamName",
+      "awayTeamName",
+      "marketName",
+      "outcomeName",
+      "specifier"
+    ],
+    "forbidden_caller_fields": [
+      "marketId",
+      "outcomeId",
+      "odds"
+    ],
+    "maximum_selections": 50,
+    "one_selection_per_event": true
+  },
+  "provider": "SportyBet Nigeria",
+  "required_chain": [
+    "EXACT_EVENT_ID_WITH_MARKETS",
+    "EXACT_NORMALIZED_HOME_AWAY_IDENTITY",
+    "SAFE_PREMATCH_BOOKABLE_STATE",
+    "UNIQUE_ACTIVE_MARKET_NAME_AND_EXACT_SPECIFIER",
+    "UNIQUE_ACTIVE_OUTCOME_LABEL",
+    "DERIVE_PROVIDER_NATIVE_IDS_FROM_LIVE_SEMANTICS",
+    "DIRECT_SPORTYBET_CREATE_SUCCESS",
+    "DIRECT_SPORTYBET_LOAD_SUCCESS",
+    "EXACT_PROVIDER_NATIVE_ROUNDTRIP",
+    "SEMANTIC_AND_TRANSPORT_COUNTS_EQUAL"
+  ],
+  "schema_version": 1,
+  "transport_boundary": "scripts/sportybet_direct_share_bridge.py",
+  "user_intent_boundary": "scripts/sportybet_semantic_share_bridge.py"
+}
