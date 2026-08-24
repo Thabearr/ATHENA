@@ -166,7 +166,7 @@ jobs:
             const result = JSON.parse(fs.readFileSync('fresh-holdout-actions-lineage-audit.json', 'utf8'));
             const firstRun = result.first_nominal_slot_run_id === null ? 'null' : String(result.first_nominal_slot_run_id);
             const firstHead = result.first_nominal_slot_head_sha === null ? 'null' : String(result.first_nominal_slot_head_sha);
-            lines = [
+            const lines = [
               'ATHENA FRESH-HOLDOUT LINEAGE AUDIT',
               '',
               `audit-state: ${result.audit_state}`,
