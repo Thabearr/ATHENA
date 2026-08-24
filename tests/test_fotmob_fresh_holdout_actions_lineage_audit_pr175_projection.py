@@ -5,6 +5,7 @@ import yaml
 
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as projection
+import scripts.audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection as recovery_projection
 
 
 WORKFLOW = Path(
@@ -16,8 +17,14 @@ COLLECTION_WORKFLOW = Path(
 FAILURE_LINEAGE = Path(
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage.py"
 )
+SCHEDULE_RECOVERY = Path(
+    "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
+)
 PROJECTION_SCRIPT = Path(
     "scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py"
+)
+RECOVERY_PROJECTION_SCRIPT = Path(
+    "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py"
 )
 AUDIT_SCRIPT = Path("scripts/audit_fotmob_fresh_holdout_actions_lineage.py")
 
@@ -31,14 +38,24 @@ def _git_blob_sha(path: Path) -> str:
     ).hexdigest()
 
 
-def test_projection_pins_exact_pre_and_post_pr175_collection_workflow_blobs():
+def test_projection_retains_historical_pr175_pin_and_recovery_owns_current_workflow():
     assert projection.PRE_PR175_WORKFLOW_BLOB_SHA == audit.WORKFLOW_BLOB_SHA
-    assert projection.POST_PR175_WORKFLOW_BLOB_SHA == _git_blob_sha(COLLECTION_WORKFLOW)
     assert projection.PRE_PR175_WORKFLOW_BLOB_SHA == (
         "2310d2253b00b8ddd995d7a28e0d67e6ea9381dd"
     )
     assert projection.POST_PR175_WORKFLOW_BLOB_SHA == (
         "d48b1ff823277445e3b496876caca6b01480ece9"
+    )
+    assert (
+        recovery_projection.PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
+        == projection.POST_PR175_WORKFLOW_BLOB_SHA
+    )
+    assert (
+        recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
+        == _git_blob_sha(COLLECTION_WORKFLOW)
+    )
+    assert recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA == (
+        "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
     )
 
 
@@ -56,17 +73,23 @@ def test_projection_pins_repaired_failure_lineage_without_changing_audit_engine(
     assert projection.POST_PREACQUISITION_FALLBACK_BLOB_SHA == (
         "692e3fe778e43ae4157e10882158f5dae08cb096"
     )
+    assert recovery_projection.SCHEDULE_RECOVERY_BLOB_SHA == _git_blob_sha(
+        SCHEDULE_RECOVERY
+    )
 
 
 def test_control_workflow_verifies_current_collection_and_projection_blobs():
     text = WORKFLOW.read_text(encoding="utf-8")
     parsed = yaml.safe_load(text)
     assert isinstance(parsed, dict)
+    assert "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb" in text
     assert "d48b1ff823277445e3b496876caca6b01480ece9" in text
     assert _git_blob_sha(PROJECTION_SCRIPT) in text
+    assert _git_blob_sha(RECOVERY_PROJECTION_SCRIPT) in text
     assert _git_blob_sha(AUDIT_SCRIPT) in text
     assert _git_blob_sha(FAILURE_LINEAGE) in text
-    assert "audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py" in text
+    assert _git_blob_sha(SCHEDULE_RECOVERY) in text
+    assert "audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py" in text
 
 
 def test_projection_delegates_to_unchanged_engine_with_compatible_binary_transport():
