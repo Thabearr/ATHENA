@@ -123,11 +123,14 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.main_sha }}"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py)" = "901ab137d6601a3485eac30da7e6bad7eeefa397"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage.py)" = "692e3fe778e43ae4157e10882158f5dae08cb096"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "73ed6ef7cdcc79b43373a78c60b5f2b6dd601095"
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           # Pre-PR175 collection workflow blob retained as provenance: 2310d2253b00b8ddd995d7a28e0d67e6ea9381dd
-          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "d48b1ff823277445e3b496876caca6b01480ece9"
+          # PR175/pre-ambiguity-recovery workflow blob retained as provenance: d48b1ff823277445e3b496876caca6b01480ece9
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "e3cdb18845403d92f94933f68c2bd06e55660de0"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "522b99260137fbeea1914495b3aaa368961ba455"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "c1650a2c9ff55fe119d86985cc183e07531853e6"
 
       - name: Execute read-only GitHub lineage audit
         id: lineage_audit
@@ -137,7 +140,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py \
+          python scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py \
             --repository "${GITHUB_REPOSITORY}" \
             --expected-main-sha "${{ steps.guard.outputs.main_sha }}" \
             --output fresh-holdout-actions-lineage-audit.json \
@@ -178,6 +181,7 @@ jobs:
               `durably-recorded-missing-slot-count: ${result.durably_recorded_missing_slot_count}`,
               `verified-failure-count: ${result.verified_failure_count}`,
               `verified-preacquisition-control-failure-count: ${result.verified_preacquisition_control_failure_count}`,
+              `verified-ambiguous-no-acquisition-count: ${result.verified_ambiguous_no_acquisition_count}`,
               `unverified-completed-run-count: ${result.unverified_completed_run_count}`,
               `incomplete-run-count: ${result.incomplete_run_count}`,
               `unresolved-slot-count: ${result.unresolved_slot_count}`,

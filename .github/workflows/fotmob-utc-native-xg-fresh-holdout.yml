@@ -45,7 +45,7 @@ jobs:
           import os
           import subprocess
           from pathlib import Path
-          import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as lineage
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as lineage
 
           event_name = os.environ.get("EVENT_NAME")
           if event_name != "schedule":
@@ -57,6 +57,7 @@ jobs:
 
           current_run_id = int(os.environ["GITHUB_RUN_ID"])
           repo = os.environ["GITHUB_REPOSITORY"]
+          output_path = os.environ.get("GITHUB_OUTPUT")
 
           try:
               runs_out = subprocess.check_output(
@@ -141,14 +142,24 @@ jobs:
                   )
               )
           except Exception as exc:
+              if lineage.is_ambiguous_schedule_occurrence_error(exc):
+                  if output_path:
+                      with open(output_path, "a", encoding="utf-8") as fh:
+                          fh.write("schedule_disposition=AMBIGUOUS_NO_ACQUISITION\n")
+                  print(f"AMBIGUOUS_NO_ACQUISITION: {exc}")
+                  print(
+                      "refusing to fabricate a nominal slot or backfill evidence; "
+                      "this run will perform no acquisition or persistence"
+                  )
+                  raise SystemExit(0)
               raise SystemExit(f"FATAL: schedule slot resolution failed: {exc}")
 
           success_asset = f"{success_prefix}{current_run_id}.tar.gz"
           failure_asset = f"{failure_prefix}{current_run_id}.tar.gz"
 
-          output_path = os.environ.get("GITHUB_OUTPUT")
           if output_path:
               with open(output_path, "a", encoding="utf-8") as fh:
+                  fh.write("schedule_disposition=RESOLVED\n")
                   fh.write(f"nominal_slot={nominal_iso}\n")
                   fh.write(f"nominal_compact={nominal.strftime('%Y%m%dT%H%M%SZ')}\n")
                   fh.write(f"release_tag={release_tag}\n")
@@ -163,8 +174,16 @@ jobs:
           print(f"failure asset: {failure_asset}")
           PY
 
+      - name: Acknowledge ambiguous schedule without acquisition
+        if: steps.state.outputs.schedule_disposition == 'AMBIGUOUS_NO_ACQUISITION'
+        shell: bash
+        run: |
+          echo "ATHENA proved schedule ambiguity before acquisition."
+          echo "No nominal slot was fabricated, no network request was made, and no backfill is authorized."
+
       - name: Restore or materialize PR119 bootstrap projection
         id: bootstrap
+        if: steps.state.outputs.schedule_disposition == 'RESOLVED'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
@@ -308,6 +327,7 @@ jobs:
 
       - name: Execute reviewed fresh-holdout collection tick
         id: execute_tick
+        if: steps.state.outputs.schedule_disposition == 'RESOLVED'
         env:
           NOMINAL_SLOT: ${{ steps.state.outputs.nominal_slot }}
           RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
@@ -329,7 +349,7 @@ jobs:
 
       - name: Reconcile any staged capture lineage
         id: reconcile
-        if: always() && steps.state.outcome == 'success' && steps.execute_tick.outcome == 'failure'
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED' && steps.execute_tick.outcome == 'failure'
         env:
           RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
           FAILURE_ASSET: ${{ steps.state.outputs.failure_asset }}
@@ -340,7 +360,7 @@ jobs:
           python - <<'PY'
           import os
           from pathlib import Path
-          import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as lineage
+          import domain.fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as lineage
 
           result = lineage.reconcile_staged_capture_lineage(
               durable_release_tag=os.environ["RELEASE_TAG"],
@@ -352,7 +372,7 @@ jobs:
 
       - name: Package durable state archive
         id: package
-        if: always()
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED'
         env:
           SUCCESS_ASSET: ${{ steps.state.outputs.success_asset }}
           FAILURE_ASSET: ${{ steps.state.outputs.failure_asset }}
@@ -430,7 +450,7 @@ jobs:
 
       - name: Upload authoritative 90-day Actions artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: always()
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED'
         with:
           name: ${{ steps.package.outputs.archive_name }}
           path: |
@@ -440,7 +460,7 @@ jobs:
 
       - name: Publish and verify long-lived evidence release asset
         id: publish_release
-        if: always()
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
