@@ -49,7 +49,7 @@ from scripts.import_prediction_field_trial import (
 
 
 SOURCE_ID = "preserved-source-1"
-EXECUTION_COMMIT_SHA = "1e8a21dbee833bb31fa2ce8344ab4d861470c33c"
+EXECUTION_COMMIT_SHA = "eecb82f83380422925d607454b0a0bb3b2d1d7ed"
 
 
 def _available(value, source_id: str = SOURCE_ID) -> EvidencedValue:
