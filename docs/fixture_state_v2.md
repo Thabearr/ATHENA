@@ -54,14 +54,14 @@ deterministic rendering of the canonical registry.
 | `away_tactical_identity` | tactical/regime | categorical string | `ATHENA_DERIVED` | none | `FUTURE_DERIVED` | Phase 3 Tactical Identity Engine |
 | `home_manager_regime_identity` | tactical/regime | categorical string | `ATHENA_DERIVED` | none | `FUTURE_DERIVED` | qualify manager evidence and regime segmentation |
 | `away_manager_regime_identity` | tactical/regime | categorical string | `ATHENA_DERIVED` | none | `FUTURE_DERIVED` | qualify manager evidence and regime segmentation |
-| `home_availability_state` | availability/lineup | structured record | `FOTMOB_PRIMARY` | exact reviewed FotMob player-context observations; FI mapping | `PARTIALLY_PROVEN` | prospective freshness, coverage, and corroboration policy |
-| `away_availability_state` | availability/lineup | structured record | `FOTMOB_PRIMARY` | exact reviewed FotMob player-context observations; FI mapping | `PARTIALLY_PROVEN` | prospective freshness, coverage, and corroboration policy |
-| `home_lineup_state` | availability/lineup | categorical string | `FOTMOB_PRIMARY` | exact reviewed predicted-lineup observation; FI mapping | `PARTIALLY_PROVEN` | prospective freshness and wider fixture coverage |
-| `away_lineup_state` | availability/lineup | categorical string | `FOTMOB_PRIMARY` | exact reviewed predicted-lineup observation; FI mapping | `PARTIALLY_PROVEN` | prospective freshness and wider fixture coverage |
-| `home_lineup_confirmed` | availability/lineup | boolean | `FOTMOB_PRIMARY` | reviewed player-context lineage does not prove confirmation | `PARTIALLY_PROVEN` | define predicted-versus-confirmed policy |
-| `away_lineup_confirmed` | availability/lineup | boolean | `FOTMOB_PRIMARY` | reviewed player-context lineage does not prove confirmation | `PARTIALLY_PROVEN` | define predicted-versus-confirmed policy |
-| `home_lineup_freshness` | availability/lineup | finite number | `FOTMOB_PRIMARY` | reviewed exact-observation timestamps; no general coverage | `PARTIALLY_PROVEN` | define prospective freshness computation |
-| `away_lineup_freshness` | availability/lineup | finite number | `FOTMOB_PRIMARY` | reviewed exact-observation timestamps; no general coverage | `PARTIALLY_PROVEN` | define prospective freshness computation |
+| `home_availability_state` | availability/lineup | structured record | `FOTMOB_PRIMARY` | exact unavailable count `1.0` exists in a separate handoff; no FI-to-v2 mapping | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | define reviewed aggregate-state adapter, freshness, and coverage |
+| `away_availability_state` | availability/lineup | structured record | `FOTMOB_PRIMARY` | exact unavailable count `5.0` exists in a separate handoff; no FI-to-v2 mapping | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | define reviewed aggregate-state adapter, freshness, and coverage |
+| `home_lineup_state` | availability/lineup | categorical string | `FOTMOB_PRIMARY` | PR197 preserves exact `LINEUP/source_lineup_type=predicted`; no FI-to-v2 mapping | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | define prospective predicted-lineup adapter and coverage |
+| `away_lineup_state` | availability/lineup | categorical string | `FOTMOB_PRIMARY` | PR197 preserves exact `LINEUP/source_lineup_type=predicted`; no FI-to-v2 mapping | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | define prospective predicted-lineup adapter and coverage |
+| `home_lineup_confirmed` | availability/lineup | boolean | `FOTMOB_PRIMARY` | confirmation is not proven | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | qualify confirmation semantics and adapter |
+| `away_lineup_confirmed` | availability/lineup | boolean | `FOTMOB_PRIMARY` | confirmation is not proven | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | qualify confirmation semantics and adapter |
+| `home_lineup_freshness` | availability/lineup | finite number | `FOTMOB_PRIMARY` | exact observation time exists; numeric freshness semantics are not proven | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | define and review freshness semantics and adapter |
+| `away_lineup_freshness` | availability/lineup | finite number | `FOTMOB_PRIMARY` | exact observation time exists; numeric freshness semantics are not proven | `PARTIALLY_PROVEN_PENDING_V2_ADAPTER` | define and review freshness semantics and adapter |
 | `venue` | context | categorical string | `FOTMOB_PRIMARY` | none currently approved for this v2 field | `FUTURE_SOURCE_REQUIRED` | qualify prospective FotMob venue mapping |
 | `home_travel_context` | context | structured record | `ATHENA_DERIVED` | none; FI projection slot only | `FUTURE_DERIVED` | derive from verified fixture and venue geography |
 | `away_travel_context` | context | structured record | `ATHENA_DERIVED` | none; FI projection slot only | `FUTURE_DERIVED` | derive from verified fixture and venue geography |
@@ -72,6 +72,20 @@ deterministic rendering of the canonical registry.
 
 Official corroboration is marked as potentially required for lineup,
 availability, manager-regime, referee, competition-stage, and motivation fields.
+Only the six legacy fields are currently mapped by the generic
+FixtureIntelligence-to-v2 builder. All eight lineup/availability fields remain
+`MISSING` until a reviewed v2 adapter exists.
+
+The retained FotMob knowledge is narrower. PR197's same-raw PR65 Fixture
+Intelligence lineage has exactly one `SUPPORTED` fact:
+`LINEUP/source_lineup_type = predicted`, with zero `AVAILABLE` generic PR31
+features. A separate real team-strength handoff proves
+`home_unavailable_player_count = 1.0` and
+`away_unavailable_player_count = 5.0` for that exact observation. Its aggregate
+home and away lineup states remain `UNVERIFIED_LINEUP_STATE`; confirmation and
+general numeric lineup-freshness semantics are not proven. None of those facts
+is silently promoted into a generic v2 field mapping.
+
 Fixture identity and kickoff remain SHA-bound snapshot-envelope facts rather
 than model-value slots. Their preferred future football-context backbone is
 qualified FotMob evidence. Official team news, if introduced as a later field,
@@ -110,6 +124,14 @@ it does not make every Fixture State consumer unusable.
 | `away_tactical_identity` | `ATHENA_DERIVED` | no Phase 3 engine exists | build time-stamped Tactical Identity Engine | requiring experts only |
 | `home_manager_regime_identity` | `ATHENA_DERIVED` | manager source and segmentation are unqualified | qualify evidence and regime boundaries | requiring experts only |
 | `away_manager_regime_identity` | `ATHENA_DERIVED` | manager source and segmentation are unqualified | qualify evidence and regime boundaries | requiring experts only |
+| `home_availability_state` | `FOTMOB_PRIMARY` | exact count does not define generic aggregate state | build reviewed v2 availability adapter | requiring experts only |
+| `away_availability_state` | `FOTMOB_PRIMARY` | exact count does not define generic aggregate state | build reviewed v2 availability adapter | requiring experts only |
+| `home_lineup_state` | `FOTMOB_PRIMARY` | exact predicted sentinel is not a generic team-side mapping | build reviewed v2 lineup adapter | requiring experts only |
+| `away_lineup_state` | `FOTMOB_PRIMARY` | exact predicted sentinel is not a generic team-side mapping | build reviewed v2 lineup adapter | requiring experts only |
+| `home_lineup_confirmed` | `FOTMOB_PRIMARY` | confirmation is not proven | qualify confirmation and build adapter | requiring experts only |
+| `away_lineup_confirmed` | `FOTMOB_PRIMARY` | confirmation is not proven | qualify confirmation and build adapter | requiring experts only |
+| `home_lineup_freshness` | `FOTMOB_PRIMARY` | numeric freshness semantics are not proven | define freshness and build adapter | requiring experts only |
+| `away_lineup_freshness` | `FOTMOB_PRIMARY` | numeric freshness semantics are not proven | define freshness and build adapter | requiring experts only |
 | `venue` | `FOTMOB_PRIMARY` | no approved prospective v2 mapping | qualify FotMob venue semantics and coverage | requiring experts only |
 | `home_travel_context` | `ATHENA_DERIVED` | venue geography derivation is absent | qualify geography and derive travel burden | requiring experts only |
 | `away_travel_context` | `ATHENA_DERIVED` | venue geography derivation is absent | qualify geography and derive travel burden | requiring experts only |
@@ -118,10 +140,9 @@ it does not make every Fixture State consumer unusable.
 | `competition_stage` | `FOTMOB_PRIMARY` | exact reviewed semantics are absent | review FotMob or official competition source | requiring experts only |
 | `motivation_match_context` | `ATHENA_DERIVED` | narrative claims are not objective state | define derivation from competition state | requiring experts only |
 
-Lineup and availability are excluded from this no-path backlog because exact
-reviewed FotMob player-context lineage exists, but they remain
-`PARTIALLY_PROVEN`: prospective freshness, broader coverage, and any official
-corroboration policy are still bounded follow-up work.
+Lineup and availability retain exact reviewed FotMob ancestry while remaining
+in this adapter backlog. Source semantics observed elsewhere in ATHENA are not
+the same thing as an approved FixtureIntelligence-to-v2 materialization.
 
 The registry contains no odds, bookmaker price, implied probability, expected
 value, market, or selection field.
@@ -140,8 +161,11 @@ V2 supports four checked value types:
 
 Every one of the 37 registered fields has exactly one resolution:
 
-- `AVAILABLE` requires at least one matching `SUPPORTED` evidence identity, a
-  valid non-conflicted value, and evidence observed no later than `as_of`.
+- `AVAILABLE` is constructible only for a registry field with a current reviewed
+  activation binding. Every retained evidence identity must match that binding's
+  exact intelligence category and field, at least one must be `SUPPORTED`, and
+  the value must be valid and non-conflicted. An unrelated supported identity
+  cannot authorize a field.
 - `MISSING` means there is no qualifying mapped evidence or the field is a
   future-derived slot. It has `null` value, no blocker, and no fabricated hash.
 - `BLOCKED` means matching evidence exists but is conflicted, stale, unverified,
@@ -158,9 +182,19 @@ Fixture State v2 is pre-match only: `as_of` must be strictly earlier than
 kickoff, and every retained evidence observation must be at or before `as_of`.
 The source fixture identity, kickoff, `as_of`, upstream fixture-intelligence
 dataset name, upstream schema version, and canonical upstream snapshot SHA-256
-are embedded in the state. The complete registry, resolutions, coverage,
-provenance, and safety mapping have deterministic canonical JSON and SHA-256.
-Changing the upstream snapshot changes the v2 source identity.
+are embedded in the state. Stable registry semantics—field ID, family, value
+type, exact activation binding, derivation slot, and availability
+expectation—join resolutions, coverage, provenance, and safety in the canonical
+SHA-256 identity. Changing the upstream snapshot or stable field semantics
+changes the state identity.
+
+Mutable source-acquisition progress is emitted separately as
+`source_coverage`, schema version `1`. Preferred-source planning,
+`currently_reviewed_path_exists`, implementation progress, and free-form future
+work are deterministic documentation but are not inputs to the football-state
+hash. Backlog wording or later sourcing progress therefore cannot rewrite an
+otherwise identical historical state identity. Any real activation binding or
+stable field-semantic change still changes the canonical identity.
 
 ## Legacy-six compatibility and requirement evaluation
 
