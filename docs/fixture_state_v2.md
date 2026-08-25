@@ -193,18 +193,23 @@ The source fixture identity, kickoff, `as_of`, upstream fixture-intelligence
 dataset name, upstream schema version, and canonical upstream snapshot SHA-256
 are embedded in the state. Stable registry semantics—field ID, family, value
 type, exact activation binding, derivation slot, and availability expectation—
-have their own deterministic registry identity. The current frozen identity is
-registry version `1`, SHA-256
+have their own deterministic registry identity. Each declared registry version
+must appear in an independently reviewed, literal version-to-SHA mapping. The
+current pinned identity is registry version `1`, SHA-256
 `330e81a3fd8dc88c8fee98544d7f63e9d429c43c5d32ca761da5227e34de588a`.
 Each snapshot stores that version and SHA alongside its resolutions, coverage,
 provenance, and safety mapping. Canonical bytes read the stored identity and
-never re-read the live registry, so later module mutation cannot retroactively
-change an existing snapshot.
+never re-read the live registry. Resolution values are normalized into an
+immutable, self-describing canonical representation at construction, and their
+serialization does not consult the live field-definition lookup. Later module
+mutation therefore cannot retroactively change or break an existing snapshot.
 
-The builder recomputes the live stable-registry SHA before every construction.
-A stable semantic change with the old version/SHA fails closed. A deliberate
-change must provide a new registry version and matching deterministic identity;
-only newly built snapshots receive it.
+At import and before every construction, ATHENA recomputes the live stable
+registry SHA and requires exact equality with the independently pinned SHA for
+the declared version. A missing pin or stable semantic change under version `1`
+fails closed, even if code can compute the changed registry's would-be SHA. A
+deliberate change must advance the registry version and add its separately
+reviewed exact SHA to the pin mapping; only newly built snapshots receive it.
 
 Mutable source-acquisition progress is emitted separately as
 `source_coverage`, schema version `1`. Preferred-source planning,

@@ -30,6 +30,7 @@ from domain.fixture_model_features import (
 )
 from domain.fixture_state_v2 import (
     DATASET_NAME,
+    EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION,
     FIXTURE_STATE_FIELD_REGISTRY,
     FIXTURE_STATE_FIELD_REGISTRY_SHA256,
     FIXTURE_STATE_FIELD_REGISTRY_VERSION,
@@ -836,11 +837,8 @@ def test_source_coverage_registry_is_deterministic_but_not_state_identity() -> N
         assert snapshot.to_dict()["source_coverage"] != before_coverage
 
 
-def test_live_stable_registry_mutation_cannot_rewrite_existing_snapshot() -> None:
-    snapshot = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
-    before_sha = snapshot.canonical_sha256
-    before_bytes = canonical_fixture_state_v2_bytes(snapshot)
-    changed_registry = tuple(
+def _registry_with_changed_home_form_family():
+    return tuple(
         dataclasses.replace(
             definition,
             family=FixtureStateFieldFamily.CONTEXT,
@@ -849,6 +847,13 @@ def test_live_stable_registry_mutation_cannot_rewrite_existing_snapshot() -> Non
         else definition
         for definition in FIXTURE_STATE_FIELD_REGISTRY
     )
+
+
+def test_live_stable_registry_mutation_cannot_rewrite_existing_snapshot() -> None:
+    snapshot = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
+    before_sha = snapshot.canonical_sha256
+    before_bytes = canonical_fixture_state_v2_bytes(snapshot)
+    changed_registry = _registry_with_changed_home_form_family()
 
     with patch.object(
         fixture_state_v2,
@@ -857,27 +862,56 @@ def test_live_stable_registry_mutation_cannot_rewrite_existing_snapshot() -> Non
     ):
         assert snapshot.canonical_sha256 == before_sha
         assert canonical_fixture_state_v2_bytes(snapshot) == before_bytes
-        with pytest.raises(FixtureStateV2Error, match="deliberate version/identity"):
+        with pytest.raises(FixtureStateV2Error, match="independently pinned"):
             _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
 
 
-def test_deliberate_stable_registry_change_requires_new_version_and_identity() -> None:
+def test_would_be_live_sha_cannot_bypass_independent_v1_pin() -> None:
+    changed_registry = _registry_with_changed_home_form_family()
+    would_be_sha256 = fixture_state_v2._field_registry_sha256(
+        changed_registry,
+        FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+    )
+
+    with patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY",
+        changed_registry,
+    ), patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY_SHA256",
+        would_be_sha256,
+    ):
+        with pytest.raises(FixtureStateV2Error, match="independently pinned"):
+            _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
+
+
+def test_unknown_registry_version_without_independent_pin_fails_closed() -> None:
+    with patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY_VERSION",
+        FIXTURE_STATE_FIELD_REGISTRY_VERSION + 1,
+    ):
+        with pytest.raises(FixtureStateV2Error, match="no independently pinned"):
+            _state()
+
+
+def test_deliberate_stable_registry_change_requires_new_version_and_pinned_identity() -> None:
     upstream_fact = _fact(IntelligenceCategory.FORM, "home_form", 0.7)
     original = _state(upstream_fact)
-    changed_registry = tuple(
-        dataclasses.replace(
-            definition,
-            family=FixtureStateFieldFamily.CONTEXT,
-        )
-        if definition.field_id is FixtureStateFieldId.HOME_FORM
-        else definition
-        for definition in FIXTURE_STATE_FIELD_REGISTRY
-    )
+    changed_registry = _registry_with_changed_home_form_family()
     next_version = FIXTURE_STATE_FIELD_REGISTRY_VERSION + 1
-    next_sha256 = fixture_state_v2._field_registry_sha256(
-        changed_registry,
-        next_version,
+    next_sha256 = (
+        "d2d01cfd42fa82bc053511e513122958d96fef772ebf3fd6e45ccb29e15f88d1"
     )
+    assert (
+        fixture_state_v2._field_registry_sha256(changed_registry, next_version)
+        == next_sha256
+    )
+    reviewed_pins = {
+        **EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION,
+        next_version: next_sha256,
+    }
 
     with patch.object(
         fixture_state_v2,
@@ -889,8 +923,8 @@ def test_deliberate_stable_registry_change_requires_new_version_and_identity() -
         next_version,
     ), patch.object(
         fixture_state_v2,
-        "FIXTURE_STATE_FIELD_REGISTRY_SHA256",
-        next_sha256,
+        "EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION",
+        reviewed_pins,
     ):
         changed = _state(upstream_fact)
 
@@ -909,6 +943,95 @@ def test_frozen_field_registry_identity_is_deterministic() -> None:
     first = _state()
     second = _state()
 
+    assert EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION == {
+        1: "330e81a3fd8dc88c8fee98544d7f63e9d429c43c5d32ca761da5227e34de588a"
+    }
     assert expected == FIXTURE_STATE_FIELD_REGISTRY_SHA256
     assert first.field_registry_version == second.field_registry_version == 1
     assert first.field_registry_sha256 == second.field_registry_sha256 == expected
+
+
+def test_existing_resolution_serialization_ignores_live_definition_lookup() -> None:
+    snapshot = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
+    home_form = _field(snapshot, FixtureStateFieldId.HOME_FORM)
+    before_resolution = home_form.to_dict()
+    before_bytes = canonical_fixture_state_v2_bytes(snapshot)
+    before_sha256 = snapshot.canonical_sha256
+    changed_lookup = dict(fixture_state_v2._DEFINITION_BY_ID)
+    changed_lookup[FixtureStateFieldId.HOME_FORM] = dataclasses.replace(
+        changed_lookup[FixtureStateFieldId.HOME_FORM],
+        value_type=FixtureStateValueType.STRUCTURED_RECORD,
+    )
+
+    with patch.object(fixture_state_v2, "_DEFINITION_BY_ID", changed_lookup):
+        assert home_form.to_dict() == before_resolution
+        assert canonical_fixture_state_v2_bytes(snapshot) == before_bytes
+        assert snapshot.canonical_sha256 == before_sha256
+
+
+def test_existing_structured_resolution_serialization_is_self_contained() -> None:
+    next_version = FIXTURE_STATE_FIELD_REGISTRY_VERSION + 1
+    changed_registry = tuple(
+        dataclasses.replace(
+            definition,
+            value_type=FixtureStateValueType.STRUCTURED_RECORD,
+        )
+        if definition.field_id is FixtureStateFieldId.HOME_FORM
+        else definition
+        for definition in FIXTURE_STATE_FIELD_REGISTRY
+    )
+    changed_lookup = {
+        definition.field_id: definition for definition in changed_registry
+    }
+    next_sha256 = (
+        "b3b1e6ac33661cc4ef82a9753c71647a30323c382d611e50186454f133e0dc31"
+    )
+    assert (
+        fixture_state_v2._field_registry_sha256(changed_registry, next_version)
+        == next_sha256
+    )
+    reviewed_pins = {
+        **EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION,
+        next_version: next_sha256,
+    }
+    structured_fact = _fact(
+        IntelligenceCategory.FORM,
+        "home_form",
+        {"form_id": "preserved-form", "sample_size": 5},
+    )
+
+    with patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY",
+        changed_registry,
+    ), patch.object(
+        fixture_state_v2,
+        "_DEFINITION_BY_ID",
+        changed_lookup,
+    ), patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY_VERSION",
+        next_version,
+    ), patch.object(
+        fixture_state_v2,
+        "EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION",
+        reviewed_pins,
+    ):
+        snapshot = _state(structured_fact)
+        before_resolution = _field(
+            snapshot,
+            FixtureStateFieldId.HOME_FORM,
+        ).to_dict()
+        before_bytes = canonical_fixture_state_v2_bytes(snapshot)
+        before_sha256 = snapshot.canonical_sha256
+
+    assert before_resolution["value"] == {
+        "form_id": "preserved-form",
+        "sample_size": 5.0,
+    }
+    assert (
+        _field(snapshot, FixtureStateFieldId.HOME_FORM).to_dict()
+        == before_resolution
+    )
+    assert canonical_fixture_state_v2_bytes(snapshot) == before_bytes
+    assert snapshot.canonical_sha256 == before_sha256

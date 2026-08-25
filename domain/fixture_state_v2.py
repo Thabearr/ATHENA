@@ -658,9 +658,45 @@ def _field_registry_sha256(
     ).hexdigest()
 
 
-FIXTURE_STATE_FIELD_REGISTRY_SHA256 = _field_registry_sha256(
+EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION: Mapping[int, str] = (
+    types.MappingProxyType(
+        {
+            1: "330e81a3fd8dc88c8fee98544d7f63e9d429c43c5d32ca761da5227e34de588a",
+        }
+    )
+)
+
+
+def _validated_field_registry_sha256(
+    registry: tuple[FixtureStateFieldDefinition, ...],
+    version: int,
+    expected_sha256_by_version: Mapping[int, str],
+) -> str:
+    computed_sha256 = _field_registry_sha256(registry, version)
+    expected_sha256 = expected_sha256_by_version.get(version)
+    if expected_sha256 is None:
+        raise FixtureStateV2Error(
+            "field registry version has no independently pinned reviewed SHA-256"
+        )
+    if (
+        type(expected_sha256) is not str
+        or re.fullmatch(r"[0-9a-f]{64}", expected_sha256, flags=re.ASCII) is None
+    ):
+        raise FixtureStateV2Error(
+            "pinned field registry SHA-256 must be exact lowercase SHA-256"
+        )
+    if computed_sha256 != expected_sha256:
+        raise FixtureStateV2Error(
+            "live stable field registry differs from its independently pinned "
+            "reviewed SHA-256"
+        )
+    return computed_sha256
+
+
+FIXTURE_STATE_FIELD_REGISTRY_SHA256 = _validated_field_registry_sha256(
     FIXTURE_STATE_FIELD_REGISTRY,
     FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+    EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION,
 )
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
@@ -769,10 +805,11 @@ def _normalize_value(value: Any, value_type: FixtureStateValueType) -> Any:
     raise FixtureStateV2Error("unsupported Fixture State value type")
 
 
-def _thaw_value(value: Any, value_type: FixtureStateValueType) -> Any:
+def _thaw_normalized_value(value: Any) -> Any:
+    """Serialize an already-normalized immutable value without registry lookup."""
     if value is None:
         return None
-    if value_type is FixtureStateValueType.STRUCTURED_RECORD:
+    if type(value) is tuple:
         return {key: child for key, child in value}
     return value
 
@@ -930,11 +967,10 @@ class FixtureStateFieldResolution:
         return tuple(sorted({item.evidence_sha256 for item in self.evidence}))
 
     def to_dict(self) -> dict[str, Any]:
-        definition = _DEFINITION_BY_ID[self.field_id]
         return {
             "field_id": self.field_id.value,
             "status": self.status.value,
-            "value": _thaw_value(self.value, definition.value_type),
+            "value": _thaw_normalized_value(self.value),
             "blockers": [item.value for item in self.blockers],
             "evidence": [item.to_dict() for item in self.evidence],
         }
@@ -1048,15 +1084,11 @@ class FixtureStateV2Snapshot:
         ):
             raise FixtureStateV2Error("evidence observed after as_of cannot enter state")
 
-        registry_sha256 = _field_registry_sha256(
+        registry_sha256 = _validated_field_registry_sha256(
             FIXTURE_STATE_FIELD_REGISTRY,
             FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+            EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION,
         )
-        if registry_sha256 != FIXTURE_STATE_FIELD_REGISTRY_SHA256:
-            raise FixtureStateV2Error(
-                "live stable field registry changed without a deliberate "
-                "version/identity update"
-            )
         fields = tuple(
             _resolution_for(intelligence_snapshot, definition)
             for definition in FIXTURE_STATE_FIELD_REGISTRY
@@ -1368,6 +1400,7 @@ __all__ = [
     "SOURCE_COVERAGE_SCHEMA_VERSION",
     "FIXTURE_STATE_FIELD_REGISTRY_VERSION",
     "FIXTURE_STATE_FIELD_REGISTRY_SHA256",
+    "EXPECTED_FIXTURE_STATE_FIELD_REGISTRY_SHA256_BY_VERSION",
     "FIXTURE_STATE_FIELD_REGISTRY",
     "FixtureStateAvailabilityExpectation",
     "FixtureStateBlocker",
