@@ -14,10 +14,12 @@ import itertools
 import json
 import math
 from pathlib import Path
+import sqlite3
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
 
 from domain.historical_asof_features import (
+    EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION,
     ReadOnlyHistoricalWarehouse,
     WAREHOUSE_SCHEMA_VERSION,
 )
@@ -32,13 +34,18 @@ LABEL_GENERATION_CONTRACT_VERSION = 1
 REGULATION_FT_POLICY_ID = "CANONICAL_REGULATION_FT_BOTH_SIDES_V1"
 HALF_TIME_POLICY_ID = "CANONICAL_REGULATION_HT_PAIR_V1"
 CONFLICT_POLICY_ID = "LABEL_LOCAL_UNRESOLVED_REQUIRED_FIELDS_BLOCK_V1"
-EXTRA_PERIOD_POLICY_ID = "REGULATION_ONLY_EXCLUDE_ET_SHOOTOUT_V1"
+EXTRA_PERIOD_POLICY_ID = (
+    "REGULATION_LABELS_EXCLUDE_ET_SHOOTOUT_AND_BLOCK_UNQUALIFIED_AGGREGATES_V1"
+)
 PREFERRED_EVENT_POLICY_ID = "WAREHOUSE_EVENTS_PREFERRED_ONLY_V1"
 GOAL_PATH_POLICY_ID = "COMPLETE_PREFERRED_REGULATION_GOAL_CHRONOLOGY_V1"
 SAME_TIMESTAMP_POLICY_ID = "BLOCK_MIXED_TEAM_ORDER_SENSITIVE_GOAL_TIES_V1"
 LINE_SETTLEMENT_POLICY_ID = "EXPLICIT_QUARTER_LINE_SCORE_KERNEL_V1"
 WIN_EITHER_HALF_POLICY_ID = "EXACT_FT_HT_HALF_DIFFERENCE_V1"
 EARLY_PAYOUT_POLICY_ID = "SPORTYBET_NG_1UP_2UP_OVERLAPPING_SELECTIONS_V1"
+EARLY_PAYOUT_SETTLEMENT_RECEIPT_SHA256 = (
+    "921db06634ba4d210f100591c0c9acda5ae44db49452936e2229095530c01f76"
+)
 OPTIONAL_JOIN_POLICY_ID = "EXACT_MATCH_KEY_AND_WAREHOUSE_SHA_V1"
 
 AUTHORITY_FLAGS = MappingProxyType({
@@ -220,6 +227,9 @@ def generation_contract_payload(*, registry_sha256: str, market_sha256: str) -> 
         "market_label_registry_sha256": registry_sha256,
         "canonical_market_semantics_sha256": market_sha256,
         "warehouse_schema_version": WAREHOUSE_SCHEMA_VERSION,
+        "warehouse_schema_sql_sha256": (
+            EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION[WAREHOUSE_SCHEMA_VERSION]
+        ),
         "regulation_ft_policy_id": REGULATION_FT_POLICY_ID,
         "half_time_policy_id": HALF_TIME_POLICY_ID,
         "conflict_policy_id": CONFLICT_POLICY_ID,
@@ -230,6 +240,9 @@ def generation_contract_payload(*, registry_sha256: str, market_sha256: str) -> 
         "line_settlement_policy_id": LINE_SETTLEMENT_POLICY_ID,
         "win_either_half_policy_id": WIN_EITHER_HALF_POLICY_ID,
         "early_payout_policy_id": EARLY_PAYOUT_POLICY_ID,
+        "early_payout_settlement_receipt_sha256": (
+            EARLY_PAYOUT_SETTLEMENT_RECEIPT_SHA256
+        ),
         "optional_join_policy_id": OPTIONAL_JOIN_POLICY_ID,
     }
 
@@ -243,22 +256,30 @@ def calculate_label_generation_contract_sha256(*, registry_sha256: str,
 
 
 EXPECTED_LABEL_GENERATION_CONTRACT_SHA256_BY_VERSION = {
-    1: "0102a007239120d91657ddf4224705417728f67c77862f1a2bd39c5dada78498"
+    1: "b60bbaaff1819d9eea09fae514d19c82af99878e7f9f799bb7efedbcc3149ee5"
 }
 
 
-def validate_contracts() -> tuple[str, str, str]:
-    registry = calculate_market_label_registry_sha256()
-    expected_registry = EXPECTED_MARKET_LABEL_REGISTRY_SHA256_BY_VERSION.get(MARKET_LABEL_REGISTRY_VERSION)
+def validate_contracts(
+    *,
+    registry_definitions: Sequence[MarketLabelDefinition] = MARKET_LABEL_REGISTRY,
+    registry_version: int = MARKET_LABEL_REGISTRY_VERSION,
+    expected_registry_by_version: Mapping[int, str] = EXPECTED_MARKET_LABEL_REGISTRY_SHA256_BY_VERSION,
+    market_registry: Mapping[MarketId, Any] = MARKET_REGISTRY,
+    expected_market_sha256: str = EXPECTED_CANONICAL_MARKET_SEMANTICS_SHA256,
+    generation_version: int = LABEL_GENERATION_CONTRACT_VERSION,
+    expected_generation_by_version: Mapping[int, str] = EXPECTED_LABEL_GENERATION_CONTRACT_SHA256_BY_VERSION,
+) -> tuple[str, str, str]:
+    registry = calculate_market_label_registry_sha256(registry_definitions, registry_version)
+    expected_registry = expected_registry_by_version.get(registry_version)
     if expected_registry is None or registry != expected_registry:
         raise HistoricalTrainingCoverageError("unreviewed market-label registry semantics")
-    market = calculate_canonical_market_semantics_sha256()
-    if market != EXPECTED_CANONICAL_MARKET_SEMANTICS_SHA256:
+    market = calculate_canonical_market_semantics_sha256(market_registry)
+    if market != expected_market_sha256:
         raise HistoricalTrainingCoverageError("canonical market semantics drift")
     generation = calculate_label_generation_contract_sha256(
-        registry_sha256=registry, market_sha256=market)
-    expected_generation = EXPECTED_LABEL_GENERATION_CONTRACT_SHA256_BY_VERSION.get(
-        LABEL_GENERATION_CONTRACT_VERSION)
+        registry_sha256=registry, market_sha256=market, version=generation_version)
+    expected_generation = expected_generation_by_version.get(generation_version)
     if expected_generation is None or generation != expected_generation:
         raise HistoricalTrainingCoverageError("unreviewed label generation semantics")
     return registry, market, generation
@@ -384,8 +405,15 @@ def _int_score(value: Any) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) and value >= 0 else None
 
 
+def _row_get(row: Mapping[str, Any], key: str, default: Any = None) -> Any:
+    try:
+        return row[key]
+    except KeyError:
+        return default
+
+
 def _conflicts(row: Mapping[str, Any]) -> frozenset[str]:
-    raw = row.get("conflict_fields")
+    raw = _row_get(row, "conflict_fields")
     return frozenset() if not raw else frozenset(str(raw).split(chr(30)))
 
 
@@ -397,7 +425,7 @@ def _score_resolution_state(row: Mapping[str, Any]) -> tuple[ResolutionStatus, s
     conflicts = _conflicts(row)
     if conflicts & set(_FT):
         return ResolutionStatus.BLOCKED, "UNRESOLVED_REQUIRED_FT_CONFLICT", None
-    home, away = _int_score(row.get("home_score_ft")), _int_score(row.get("away_score_ft"))
+    home, away = _int_score(_row_get(row, "home_score_ft")), _int_score(_row_get(row, "away_score_ft"))
     if home is None or away is None:
         return ResolutionStatus.MISSING, None, None
     return ResolutionStatus.AVAILABLE, None, (home, away)
@@ -406,7 +434,7 @@ def _score_resolution_state(row: Mapping[str, Any]) -> tuple[ResolutionStatus, s
 def _half_resolution_state(row: Mapping[str, Any], ft: tuple[int, int] | None) -> tuple[ResolutionStatus, str | None, tuple[int, int] | None]:
     if _conflicts(row) & set(_HT):
         return ResolutionStatus.BLOCKED, "UNRESOLVED_REQUIRED_HALF_CONFLICT", None
-    home, away = _int_score(row.get("home_score_ht")), _int_score(row.get("away_score_ht"))
+    home, away = _int_score(_row_get(row, "home_score_ht")), _int_score(_row_get(row, "away_score_ht"))
     if ft is None or home is None or away is None:
         return ResolutionStatus.MISSING, None, None
     if home > ft[0] or away > ft[1]:
@@ -416,9 +444,9 @@ def _half_resolution_state(row: Mapping[str, Any], ft: tuple[int, int] | None) -
 
 def _event_side(event: Mapping[str, Any], row: Mapping[str, Any]) -> str | None:
     team = event.get("team")
-    if team == row.get("home_team"):
+    if team == _row_get(row, "home_team"):
         side = "HOME"
-    elif team == row.get("away_team"):
+    elif team == _row_get(row, "away_team"):
         side = "AWAY"
     else:
         return None
@@ -456,13 +484,19 @@ def _event_timestamp(event: Mapping[str, Any], period: int) -> tuple[int, int, i
 
 def evaluate_goal_path(row: Mapping[str, Any], preferred_events: Sequence[Mapping[str, Any]],
                        has_approved_event_source: bool) -> tuple[Resolution, dict[str, bool] | None]:
-    warehouse_sha = str(row["source_warehouse_sha256"])
+    warehouse_sha = str(getattr(row, "source_warehouse_sha256", _row_get(row, "source_warehouse_sha256")))
     identity = _row_identity(row, warehouse_sha)
     ft_state, ft_blocker, ft = _score_resolution_state(row)
     if ft_state is ResolutionStatus.BLOCKED:
         return Resolution(ft_state, blocker=ft_blocker, evidence_identities=(identity,)), None
     if ft is None:
         return Resolution(ResolutionStatus.MISSING), None
+    path_conflicts = sorted(field for field in _conflicts(row)
+                            if "event" in field.lower() or "goal" in field.lower())
+    if path_conflicts:
+        return Resolution(ResolutionStatus.BLOCKED,
+                          blocker="UNRESOLVED_REQUIRED_GOAL_PATH_CONFLICT",
+                          evidence_identities=(identity,)), None
     goal_events = [event for event in preferred_events if str(event.get("event_type", "")).lower() == "goal"]
     if not goal_events and not has_approved_event_source:
         return Resolution(ResolutionStatus.MISSING), None
@@ -486,19 +520,35 @@ def evaluate_goal_path(row: Mapping[str, Any], preferred_events: Sequence[Mappin
         return Resolution(ResolutionStatus.BLOCKED, blocker="GOAL_PATH_DOES_NOT_RECONCILE_TO_REGULATION_FT",
                           evidence_identities=(identity,)), None
     chronology.sort(key=lambda item: item[0])
-    for _, group in itertools.groupby(chronology, key=lambda item: item[0]):
-        sides = {item[1] for item in group}
-        if len(sides) > 1:
-            return Resolution(ResolutionStatus.BLOCKED, blocker="ORDER_SENSITIVE_SAME_TIMESTAMP_GOALS",
+    # State is margin plus four irreversible lead-trigger flags.  For tied
+    # mixed-team goals, consider every distinct admissible side order.  No event
+    # key or source ID is allowed to break the tie.
+    states = {(0, False, False, False, False)}
+    for _, group_iter in itertools.groupby(chronology, key=lambda item: item[0]):
+        group = list(group_iter)
+        sides = tuple(item[1] for item in group)
+        if len(sides) > 8:
+            return Resolution(ResolutionStatus.BLOCKED,
+                              blocker="UNBOUNDED_SAME_TIMESTAMP_GOAL_AMBIGUITY",
                               evidence_identities=(identity,)), None
-    margin = 0
-    flags = {"1UP_HOME": False, "1UP_AWAY": False, "2UP_HOME": False, "2UP_AWAY": False}
-    for _, side, _ in chronology:
-        margin += 1 if side == "HOME" else -1
-        flags["1UP_HOME"] |= margin >= 1
-        flags["1UP_AWAY"] |= margin <= -1
-        flags["2UP_HOME"] |= margin >= 2
-        flags["2UP_AWAY"] |= margin <= -2
+        orders = {sides} if len(set(sides)) == 1 else set(itertools.permutations(sides))
+        next_states = set()
+        for state in states:
+            for order in orders:
+                margin, home1, away1, home2, away2 = state
+                for side in order:
+                    margin += 1 if side == "HOME" else -1
+                    home1 |= margin >= 1; away1 |= margin <= -1
+                    home2 |= margin >= 2; away2 |= margin <= -2
+                next_states.add((margin, home1, away1, home2, away2))
+        states = next_states
+    trigger_states = {(state[1], state[2], state[3], state[4]) for state in states}
+    if len(trigger_states) != 1:
+        return Resolution(ResolutionStatus.BLOCKED, blocker="ORDER_SENSITIVE_SAME_TIMESTAMP_GOALS",
+                          evidence_identities=(identity,)), None
+    home1, away1, home2, away2 = next(iter(trigger_states))
+    flags = {"1UP_HOME": home1, "1UP_AWAY": away1,
+             "2UP_HOME": home2, "2UP_AWAY": away2}
     flags["2UP_HOME"] |= ft[0] > ft[1]
     flags["2UP_AWAY"] |= ft[1] > ft[0]
     event_ids = tuple("PREFERRED_EVENT:" + str(event.get("event_key")) for event in goal_events)
@@ -526,15 +576,6 @@ class HistoricalTrainingCoverageRow:
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         raise HistoricalTrainingCoverageError("canonical coverage rows are source-builder issued only")
 
-    @classmethod
-    def _issue(cls, *, token: object, expected_token: object, **values: Any) -> "HistoricalTrainingCoverageRow":
-        if token is not expected_token:
-            raise HistoricalTrainingCoverageError("invalid canonical row issuance")
-        instance = object.__new__(cls)
-        for name, value in values.items():
-            object.__setattr__(instance, name, value)
-        return instance
-
     def to_dict(self) -> dict[str, Any]:
         return {
             "dataset": DATASET, "schema_version": SCHEMA_VERSION,
@@ -561,20 +602,22 @@ class HistoricalTrainingCoverageRow:
         return hashlib.sha256(self.canonical_bytes).hexdigest()
 
 
-_ISSUANCE_TOKEN = object()
-
-
 def _presence(count: int, identity: str) -> Resolution:
     return Resolution(ResolutionStatus.AVAILABLE, value=count,
                       evidence_identities=(identity,)) if count else Resolution(ResolutionStatus.MISSING)
 
 
 def _pair_capability(row: Mapping[str, Any], fields: tuple[str, ...], identity: str,
-                     *, nonnegative: bool = False, integer: bool = False) -> Resolution:
+                     *, nonnegative: bool = False, integer: bool = False,
+                     period_unsafe: bool = False) -> Resolution:
     if _conflicts(row) & set(fields):
         return Resolution(ResolutionStatus.BLOCKED, blocker="UNRESOLVED_REQUIRED_FIELD_CONFLICT",
                           evidence_identities=(identity,))
-    values = [row.get(field) for field in fields]
+    values = [_row_get(row, field) for field in fields]
+    if period_unsafe and any(value is not None for value in values):
+        return Resolution(ResolutionStatus.BLOCKED,
+                          blocker="UNQUALIFIED_AGGREGATE_ON_EXTRA_PERIOD_MATCH",
+                          evidence_identities=(identity,))
     if any(value is None for value in values):
         return Resolution(ResolutionStatus.MISSING)
     for value in values:
@@ -601,15 +644,26 @@ def build_coverage_row_from_bound_source(
 ) -> HistoricalTrainingCoverageRow:
     """Build one canonical row only from a live source-issued warehouse row."""
     source._require_bound_row(row)  # closure-owned issuance proof from Phase 2
-    if row["source_warehouse_sha256"] != source.sha256:
+    if getattr(row, "source_warehouse_sha256", None) != source.sha256:
         raise HistoricalTrainingCoverageError("warehouse row ancestry mismatch")
     registry_sha, market_sha, generation_sha = validate_contracts()
     identity = _row_identity(row, source.sha256)
+    unresolved = [item[0] for item in source.connection.execute(
+        "SELECT DISTINCT field_name FROM warehouse_conflicts "
+        "WHERE match_key=? AND resolved=0 ORDER BY field_name", (row["match_key"],))]
+    row_values = dict(row.row_items)
+    row_values["conflict_fields"] = chr(30).join(unresolved) if unresolved else None
+    row_values["source_warehouse_sha256"] = source.sha256
+    row = MappingProxyType(row_values)
     counts = counts or {}
     ft_status, ft_blocker, ft = _score_resolution_state(row)
     ht_status, ht_blocker, ht = _half_resolution_state(row, ft)
     approved_event_source = bool(counts.get("approved_event_sources"))
     path_resolution, path_flags = evaluate_goal_path(row, preferred_events, approved_event_source)
+    extra_period_evidence = any(_row_get(row, field) is not None for field in (
+        "home_score_et", "away_score_et", "home_score_pen", "away_score_pen")) or bool(
+            _row_get(row, "has_reviewed_extra_time_event")) or bool(
+            _row_get(row, "has_penalty_shootout_evidence"))
 
     capabilities: dict[str, Resolution] = {
         EvidenceCapabilityId.REGULATION_FT.value: Resolution(ft_status, value=list(ft) if ft else None,
@@ -618,11 +672,11 @@ def build_coverage_row_from_bound_source(
             blocker=ht_blocker, evidence_identities=(identity,) if ht_status is not ResolutionStatus.MISSING else ()),
         EvidenceCapabilityId.PREFERRED_EVENT_EVIDENCE.value: _presence(len(preferred_events), identity),
         EvidenceCapabilityId.COMPLETE_REGULATION_GOAL_PATH.value: path_resolution,
-        EvidenceCapabilityId.XG_PAIR.value: _pair_capability(row, ("home_xg", "away_xg"), identity, nonnegative=True),
-        EvidenceCapabilityId.SHOTS_PAIR.value: _pair_capability(row, ("home_shots", "away_shots"), identity, nonnegative=True, integer=True),
-        EvidenceCapabilityId.SHOTS_ON_TARGET_PAIR.value: _pair_capability(row, ("home_shots_on_target", "away_shots_on_target"), identity, nonnegative=True, integer=True),
-        EvidenceCapabilityId.POSSESSION_PAIR.value: _pair_capability(row, ("home_possession", "away_possession"), identity),
-        EvidenceCapabilityId.CARD_TOTALS.value: _pair_capability(row, ("home_yellows", "away_yellows", "home_reds", "away_reds"), identity, nonnegative=True, integer=True),
+        EvidenceCapabilityId.XG_PAIR.value: _pair_capability(row, ("home_xg", "away_xg"), identity, nonnegative=True, period_unsafe=extra_period_evidence),
+        EvidenceCapabilityId.SHOTS_PAIR.value: _pair_capability(row, ("home_shots", "away_shots"), identity, nonnegative=True, integer=True, period_unsafe=extra_period_evidence),
+        EvidenceCapabilityId.SHOTS_ON_TARGET_PAIR.value: _pair_capability(row, ("home_shots_on_target", "away_shots_on_target"), identity, nonnegative=True, integer=True, period_unsafe=extra_period_evidence),
+        EvidenceCapabilityId.POSSESSION_PAIR.value: _pair_capability(row, ("home_possession", "away_possession"), identity, period_unsafe=extra_period_evidence),
+        EvidenceCapabilityId.CARD_TOTALS.value: _pair_capability(row, ("home_yellows", "away_yellows", "home_reds", "away_reds"), identity, nonnegative=True, integer=True, period_unsafe=extra_period_evidence),
         EvidenceCapabilityId.HOME_LINEUP_EVIDENCE.value: _presence(counts.get("home_lineups", 0), identity),
         EvidenceCapabilityId.AWAY_LINEUP_EVIDENCE.value: _presence(counts.get("away_lineups", 0), identity),
         EvidenceCapabilityId.HOME_COACH_EVIDENCE.value: _presence(counts.get("home_coaches", 0), identity),
@@ -667,19 +721,27 @@ def build_coverage_row_from_bound_source(
                         blocker=path_resolution.blocker,
                         evidence_identities=path_resolution.evidence_identities)
 
-    return HistoricalTrainingCoverageRow._issue(
-        token=_ISSUANCE_TOKEN, expected_token=_ISSUANCE_TOKEN,
-        match_key=str(row["match_key"]), match_date=str(row["match_date"]),
-        scope=str(row["scope"]), competition_key=row["competition_key"], season=row["season"],
-        data_quality=str(row["data_quality"]), source_warehouse_sha256=source.sha256,
-        market_label_registry_version=MARKET_LABEL_REGISTRY_VERSION,
-        market_label_registry_sha256=registry_sha,
-        canonical_market_semantics_sha256=market_sha,
-        generation_contract_version=LABEL_GENERATION_CONTRACT_VERSION,
-        generation_contract_sha256=generation_sha,
-        capabilities=tuple(sorted(capabilities.items())), labels=tuple(sorted(labels.items())),
-        authority_flags=tuple(AUTHORITY_FLAGS.items()),
-    )
+    # Construction occurs only at the end of this source-replaying public
+    # builder.  There is no token-bearing or caller-parameterized issuance
+    # helper that can stamp arbitrary values with the warehouse ancestry.
+    result = object.__new__(HistoricalTrainingCoverageRow)
+    values = {
+        "match_key": str(row["match_key"]), "match_date": str(row["match_date"]),
+        "scope": str(row["scope"]), "competition_key": row["competition_key"],
+        "season": row["season"], "data_quality": str(row["data_quality"]),
+        "source_warehouse_sha256": source.sha256,
+        "market_label_registry_version": MARKET_LABEL_REGISTRY_VERSION,
+        "market_label_registry_sha256": registry_sha,
+        "canonical_market_semantics_sha256": market_sha,
+        "generation_contract_version": LABEL_GENERATION_CONTRACT_VERSION,
+        "generation_contract_sha256": generation_sha,
+        "capabilities": tuple(sorted(capabilities.items())),
+        "labels": tuple(sorted(labels.items())),
+        "authority_flags": tuple(AUTHORITY_FLAGS.items()),
+    }
+    for name, value in values.items():
+        object.__setattr__(result, name, value)
+    return result
 
 
 def preferred_events_for_match(source: ReadOnlyHistoricalWarehouse, match_key: str) -> tuple[Mapping[str, Any], ...]:
@@ -716,10 +778,100 @@ def build_historical_training_coverage_row(warehouse_path: Path, match_key: str)
         return result
 
 
+class ReadOnlyOptionalJoinCorpus:
+    """Exact-byte, query-only validator for a Phase 2 or Phase 3 corpus."""
+
+    _KINDS = {
+        "ASOF": ("athena_historical_asof_features", "historical_asof_snapshots"),
+        "TACTICAL": ("athena_tactical_identity", "tactical_identity_snapshots"),
+    }
+
+    def __init__(self, path: Path, kind: str, expected_warehouse_sha256: str) -> None:
+        from domain.historical_asof_features import file_sha256
+        self.kind = kind.upper()
+        if self.kind not in self._KINDS:
+            raise HistoricalTrainingCoverageError("unsupported optional corpus kind")
+        self.path = Path(path).resolve()
+        if not self.path.is_file():
+            raise HistoricalTrainingCoverageError("optional corpus does not exist")
+        self._assert_no_companions()
+        self._before = self.path.stat()
+        self.sha256 = file_sha256(self.path)
+        self._assert_no_companions()
+        self.connection = sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True)
+        self.connection.row_factory = sqlite3.Row
+        self.connection.execute("PRAGMA query_only=ON")
+        try:
+            expected_dataset, self.table = self._KINDS[self.kind]
+            objects = {row[0] for row in self.connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if not {"corpus_meta", self.table}.issubset(objects):
+                raise HistoricalTrainingCoverageError("optional corpus schema mismatch")
+            raw = dict(self.connection.execute("SELECT key,value FROM corpus_meta"))
+            self.meta = MappingProxyType({key: json.loads(value) for key, value in raw.items()})
+            if self.meta.get("dataset") != expected_dataset:
+                raise HistoricalTrainingCoverageError("optional corpus dataset mismatch")
+            if self.meta.get("source_warehouse_sha256") != expected_warehouse_sha256:
+                raise HistoricalTrainingCoverageError("optional corpus warehouse ancestry mismatch")
+            self._assert_no_companions()
+        except Exception:
+            self.close()
+            raise
+
+    def _assert_no_companions(self) -> None:
+        for suffix in ("-wal", "-journal"):
+            companion = Path(str(self.path) + suffix)
+            if companion.exists() and companion.stat().st_size:
+                raise HistoricalTrainingCoverageError("unsafe active optional-corpus companion")
+
+    def join_identity(self, match_key: str) -> str | None:
+        row = self.connection.execute(
+            f"SELECT canonical_sha256,payload_json FROM {self.table} WHERE match_key=?",
+            (match_key,),).fetchone()
+        if row is None:
+            return None
+        try:
+            payload = json.loads(row["payload_json"])
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise HistoricalTrainingCoverageError("invalid optional corpus payload") from exc
+        canonical = _canonical_bytes(payload)
+        if canonical != row["payload_json"].encode("utf-8"):
+            raise HistoricalTrainingCoverageError("optional corpus payload is not canonical")
+        actual = hashlib.sha256(canonical).hexdigest()
+        if actual != row["canonical_sha256"]:
+            raise HistoricalTrainingCoverageError("optional corpus row identity mismatch")
+        if payload.get("source_warehouse_sha256") != self.meta["source_warehouse_sha256"]:
+            raise HistoricalTrainingCoverageError("optional corpus row ancestry mismatch")
+        return actual
+
+    def assert_unchanged(self) -> None:
+        from domain.historical_asof_features import file_sha256
+        self._assert_no_companions()
+        after = self.path.stat()
+        if (after.st_size, after.st_mtime_ns) != (self._before.st_size, self._before.st_mtime_ns):
+            raise HistoricalTrainingCoverageError("optional corpus changed during audit")
+        if file_sha256(self.path) != self.sha256:
+            raise HistoricalTrainingCoverageError("optional corpus bytes changed during audit")
+        self._assert_no_companions()
+
+    def close(self) -> None:
+        connection = getattr(self, "connection", None)
+        if connection is not None:
+            connection.close()
+            self.connection = None
+
+    def __enter__(self) -> "ReadOnlyOptionalJoinCorpus":
+        return self
+
+    def __exit__(self, *_args: Any) -> None:
+        self.close()
+
+
 __all__ = [
     "AUTHORITY_FLAGS", "DATASET", "EvidenceCapabilityId", "HistoricalTrainingCoverageError",
     "HistoricalTrainingCoverageRow", "LABEL_GENERATION_CONTRACT_VERSION", "LabelKind",
     "MARKET_LABEL_REGISTRY", "MARKET_LABEL_REGISTRY_VERSION", "Resolution", "ResolutionStatus",
+    "ReadOnlyOptionalJoinCorpus",
     "SCHEMA_VERSION", "SettlementState", "build_historical_training_coverage_row",
     "build_coverage_row_from_bound_source", "calculate_canonical_market_semantics_sha256",
     "calculate_label_generation_contract_sha256", "calculate_market_label_registry_sha256",
