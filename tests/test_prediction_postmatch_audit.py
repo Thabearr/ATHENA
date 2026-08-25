@@ -6,6 +6,7 @@ import hashlib
 import json
 from pathlib import Path
 import socket
+import subprocess
 import urllib.request
 from unittest.mock import patch
 
@@ -327,6 +328,25 @@ def _write_source(repository: Path, payload: dict) -> Path:
     return path
 
 
+def _import_with_verified_provenance(
+    *,
+    source: Path,
+    output: Path,
+    repository_root: Path,
+    execution_commit_sha: str = EXECUTION_COMMIT_SHA,
+) -> dict:
+    with patch(
+        "scripts.import_prediction_field_trial._verify_execution_commit",
+        return_value=execution_commit_sha,
+    ):
+        return import_field_trial(
+            source=source,
+            output=output,
+            repository_root=repository_root,
+            execution_commit_sha=execution_commit_sha,
+        )
+
+
 def test_canonical_serialization_is_deterministic() -> None:
     first = _trial()
     second = dataclasses.replace(first)
@@ -513,14 +533,14 @@ def test_import_is_deterministic_and_idempotent(tmp_path: Path) -> None:
     source = _write_source(tmp_path, _summary_import_payload())
     output = tmp_path / "artifacts" / "prediction-field-trials" / "trial.json"
 
-    first = import_field_trial(
+    first = _import_with_verified_provenance(
         source=source,
         output=output,
         repository_root=tmp_path,
         execution_commit_sha=EXECUTION_COMMIT_SHA,
     )
     first_bytes = output.read_bytes()
-    second = import_field_trial(
+    second = _import_with_verified_provenance(
         source=source,
         output=output,
         repository_root=tmp_path,
@@ -537,7 +557,7 @@ def test_different_identity_cannot_overwrite_existing_artifact(tmp_path: Path) -
     payload = _summary_import_payload()
     source = _write_source(tmp_path, payload)
     output = tmp_path / "artifacts" / "prediction-field-trials" / "trial.json"
-    import_field_trial(
+    _import_with_verified_provenance(
         source=source,
         output=output,
         repository_root=tmp_path,
@@ -548,7 +568,7 @@ def test_different_identity_cannot_overwrite_existing_artifact(tmp_path: Path) -
     _write_source(tmp_path, payload)
 
     with pytest.raises(PredictionFieldTrialImportError, match="refusing to overwrite"):
-        import_field_trial(
+        _import_with_verified_provenance(
             source=source,
             output=output,
             repository_root=tmp_path,
@@ -611,7 +631,7 @@ def test_import_performs_no_network_calls(tmp_path: Path) -> None:
         "urlopen",
         side_effect=AssertionError("network"),
     ):
-        receipt = import_field_trial(
+        receipt = _import_with_verified_provenance(
             source=source,
             output=output,
             repository_root=tmp_path,
@@ -665,6 +685,67 @@ def test_import_provenance_separates_contract_origin_from_execution_commit() -> 
     assert first.canonical_sha256 != second.canonical_sha256
 
 
+def test_valid_looking_wrong_execution_sha_is_rejected() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    source = (
+        repository
+        / "evidence/prediction-field-trials/first-proper-20-leg-athena-field-trial-summary.json"
+    )
+    output = (
+        repository
+        / "artifacts/prediction-field-trials/first-proper-20-leg-athena-field-trial-v1.json"
+    )
+
+    with pytest.raises(
+        PredictionFieldTrialImportError,
+        match="does not equal git rev-parse HEAD",
+    ):
+        import_field_trial(
+            source=source,
+            output=output,
+            repository_root=repository,
+            execution_commit_sha="0" * 40,
+        )
+
+
+def test_dirty_tracked_execution_code_cannot_claim_clean_head() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    source = (
+        repository
+        / "evidence/prediction-field-trials/first-proper-20-leg-athena-field-trial-summary.json"
+    )
+    output = (
+        repository
+        / "artifacts/prediction-field-trials/first-proper-20-leg-athena-field-trial-v1.json"
+    )
+    head = subprocess.run(
+        ["git", "-C", str(repository), "rev-parse", "HEAD"],
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    git_results = (
+        subprocess.CompletedProcess([], 0, stdout=f"{repository}\n", stderr=""),
+        subprocess.CompletedProcess([], 0, stdout=f"{head}\n", stderr=""),
+        subprocess.CompletedProcess([], 0, stdout="tracked\n", stderr=""),
+        subprocess.CompletedProcess([], 1, stdout="", stderr=""),
+    )
+
+    with patch(
+        "scripts.import_prediction_field_trial._run_git",
+        side_effect=git_results,
+    ), pytest.raises(
+        PredictionFieldTrialImportError,
+        match="code differs from repository HEAD",
+    ):
+        import_field_trial(
+            source=source,
+            output=output,
+            repository_root=repository,
+            execution_commit_sha=head,
+        )
+
+
 def test_unsupported_directory_fsync_does_not_fail_completed_write(
     tmp_path: Path,
 ) -> None:
@@ -675,7 +756,7 @@ def test_unsupported_directory_fsync_does_not_fail_completed_write(
         "scripts.import_prediction_field_trial.os.open",
         side_effect=OSError(errno.EINVAL, "directory fsync unsupported"),
     ):
-        receipt = import_field_trial(
+        receipt = _import_with_verified_provenance(
             source=source,
             output=output,
             repository_root=tmp_path,

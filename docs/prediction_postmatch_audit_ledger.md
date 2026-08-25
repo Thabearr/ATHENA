@@ -65,10 +65,12 @@ different bytes cannot overwrite an existing artifact. The importer performs no
 network or provider/browser acquisition and changes no model or pricing state.
 Import provenance separately records the frozen contract-origin commit and the
 exact commit that executed the import. The execution commit is a required input,
-so future imports are not mislabeled with the Phase 0 base SHA. File data is
-flushed with `fsync`; directory synchronization is attempted where the platform
-supports it and safely skipped where directory handles or directory `fsync` are
-unsupported.
+must exactly equal the repository's resolved Git `HEAD`, and is accepted only
+when the executing importer, audit contract, and market registry are tracked and
+unchanged from that commit. Future imports therefore cannot claim an arbitrary
+40-hex execution identity or the Phase 0 base SHA. File data is flushed with
+`fsync`; directory synchronization is attempted where the platform supports it
+and safely skipped where directory handles or directory `fsync` are unsupported.
 
 The first proper 20-leg trial is currently `SUMMARY_ONLY`: the operator's
 planning declaration supports 20 total legs with an aggregate 17 won and 3

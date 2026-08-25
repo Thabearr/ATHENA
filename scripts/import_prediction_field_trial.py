@@ -16,10 +16,14 @@ import hashlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
+import subprocess
 import sys
 from typing import Any
 
+import domain.markets as market_contract
+import domain.prediction_postmatch_audit as audit_contract
 from domain.prediction_postmatch_audit import (
     PredictionPostMatchAuditError,
     build_prediction_field_trial_from_import,
@@ -29,6 +33,12 @@ from domain.prediction_postmatch_audit import (
 
 MAX_SOURCE_BYTES = 8 * 1024 * 1024
 ALLOWED_OUTPUT_RELATIVE = Path("artifacts/prediction-field-trials")
+EXECUTION_CODE_PATHS = (
+    Path("scripts/import_prediction_field_trial.py"),
+    Path("domain/prediction_postmatch_audit.py"),
+    Path("domain/markets.py"),
+)
+_GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", flags=re.ASCII)
 
 
 class PredictionFieldTrialImportError(ValueError):
@@ -37,6 +47,91 @@ class PredictionFieldTrialImportError(ValueError):
 
 def _error(message: str) -> PredictionFieldTrialImportError:
     return PredictionFieldTrialImportError(message)
+
+
+def _run_git(repository: Path, *arguments: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            ["git", "-C", str(repository), *arguments],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        raise _error("Git is required to verify importer execution provenance") from exc
+
+
+def _require_git_output(
+    result: subprocess.CompletedProcess[str],
+    label: str,
+) -> str:
+    if result.returncode != 0:
+        raise _error(f"could not resolve {label} for importer execution provenance")
+    output = result.stdout.strip()
+    if not output:
+        raise _error(f"Git returned an empty {label} for importer execution provenance")
+    return output
+
+
+def _assert_executing_repository(repository: Path) -> None:
+    expected_paths = tuple((repository / path).resolve(strict=True) for path in EXECUTION_CODE_PATHS)
+    actual_paths = (
+        Path(__file__).resolve(strict=True),
+        Path(audit_contract.__file__).resolve(strict=True),
+        Path(market_contract.__file__).resolve(strict=True),
+    )
+    if actual_paths != expected_paths:
+        raise _error(
+            "repository_root does not contain the importer/contract/market code being executed"
+        )
+
+
+def _assert_tracked_execution_code_clean(repository: Path) -> None:
+    path_arguments = tuple(path.as_posix() for path in EXECUTION_CODE_PATHS)
+    tracked = _run_git(
+        repository,
+        "ls-files",
+        "--error-unmatch",
+        "--",
+        *path_arguments,
+    )
+    if tracked.returncode != 0:
+        raise _error("importer/contract/market execution code must be tracked by Git")
+    clean = _run_git(repository, "diff", "--quiet", "HEAD", "--", *path_arguments)
+    if clean.returncode == 1:
+        raise _error(
+            "tracked importer/contract/market code differs from repository HEAD"
+        )
+    if clean.returncode != 0:
+        raise _error("could not verify tracked importer/contract/market code cleanliness")
+
+
+def _verify_execution_commit(repository_root: Path, claimed_sha: str) -> str:
+    if type(claimed_sha) is not str or _GIT_SHA_RE.fullmatch(claimed_sha) is None:
+        raise _error("execution_commit_sha must be 40 lowercase hexadecimal characters")
+    try:
+        repository = repository_root.resolve(strict=True)
+    except OSError as exc:
+        raise _error("repository_root could not be resolved") from exc
+    top_level = Path(
+        _require_git_output(
+            _run_git(repository, "rev-parse", "--show-toplevel"),
+            "repository top level",
+        )
+    ).resolve(strict=True)
+    if top_level != repository:
+        raise _error("repository_root must be the exact Git repository top level")
+    head = _require_git_output(
+        _run_git(repository, "rev-parse", "--verify", "HEAD"),
+        "repository HEAD",
+    )
+    if _GIT_SHA_RE.fullmatch(head) is None:
+        raise _error("repository HEAD is not an exact 40-character commit SHA")
+    if claimed_sha != head:
+        raise _error("execution_commit_sha does not equal git rev-parse HEAD")
+    _assert_executing_repository(repository)
+    _assert_tracked_execution_code_clean(repository)
+    return head
 
 
 def _reject_duplicate_keys(pairs: list[tuple[Any, Any]]) -> dict[str, Any]:
@@ -228,6 +323,10 @@ def import_field_trial(
 ) -> dict[str, Any]:
     """Import local JSON only; no provider or browser acquisition is performed."""
 
+    verified_execution_sha = _verify_execution_commit(
+        repository_root,
+        execution_commit_sha,
+    )
     raw, source_relative = _read_source(source, repository_root=repository_root)
     payload = strict_json_loads(raw)
     source_sha256 = hashlib.sha256(raw).hexdigest()
@@ -237,7 +336,7 @@ def import_field_trial(
             source_repository_path=source_relative,
             source_sha256=source_sha256,
             source_size=len(raw),
-            execution_commit_sha=execution_commit_sha,
+            execution_commit_sha=verified_execution_sha,
         )
         artifact = canonical_prediction_field_trial_bytes(trial)
     except PredictionPostMatchAuditError as exc:
@@ -314,6 +413,7 @@ if __name__ == "__main__":
 
 __all__ = [
     "ALLOWED_OUTPUT_RELATIVE",
+    "EXECUTION_CODE_PATHS",
     "MAX_SOURCE_BYTES",
     "PredictionFieldTrialImportError",
     "import_field_trial",
