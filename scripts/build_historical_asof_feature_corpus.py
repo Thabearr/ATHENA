@@ -165,6 +165,7 @@ def build_corpus(
                     "feature_registry_sha256": registry_sha,
                     "feature_registry_version": HISTORICAL_FEATURE_REGISTRY_VERSION,
                     "generation_schema_version": HISTORICAL_ASOF_SCHEMA_VERSION,
+                    "source_schema_sql_sha256": source.schema_sql_sha256,
                     "source_warehouse_schema_version": source.schema_version,
                     "source_warehouse_sha256": source.sha256,
                     "temporal_policy_id": TEMPORAL_POLICY_ID,

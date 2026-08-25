@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import hashlib
 import json
+import socket
 import sqlite3
 from pathlib import Path
 from types import MappingProxyType
@@ -318,6 +319,18 @@ def test_bulk_builder_is_date_batched_filter_safe_and_separate(tmp_path: Path):
     connection.close()
     with pytest.raises(HistoricalAsOfError, match="output must be separate"):
         build_corpus(db, db)
+
+
+def test_builders_perform_no_network_calls(tmp_path: Path, monkeypatch):
+    db, keys = _warehouse(tmp_path, [_match("2025-01-10", "Home", "Away", 1, 0, source_id="target")])
+
+    def reject_network(*_args, **_kwargs):
+        raise AssertionError("historical as-of construction attempted network access")
+
+    monkeypatch.setattr(socket.socket, "connect", reject_network)
+    snapshot = build_historical_asof_snapshot(db, keys[0])
+    assert snapshot.target_match_key == keys[0]
+    assert build_corpus(db, tmp_path / "features.db", limit=1) == 1
 
 
 def test_active_wal_sidecar_is_rejected(tmp_path: Path):
