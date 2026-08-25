@@ -72,7 +72,7 @@ def _rich_rows(low_name: str = "Low Signal") -> list[dict]:
             away_shots_on_target=6 if high else 2, home_possession=56.0,
             away_possession=44.0,
         ))
-    for index in range(5):
+    for index in range(10):
         day = f"2025-02-{index + 1:02d}"
         rows.append(_match(
             day, low_name, f"LowOpp{index}", 0 if index % 2 else 1, 0,
