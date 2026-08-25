@@ -83,11 +83,11 @@ def _rich_rows(low_name: str = "Low Signal") -> list[dict]:
             home_coach="Coach Low" if index > 1 else "Coach Old",
         ))
         rows.append(_match(
-            day, f"HighOpp{index}", "High Signal", 3, 7,
-            f"high-{index}", home_score_ht=1, away_score_ht=2,
-            home_xg=2.4, away_xg=5.5, home_shots=15, away_shots=28,
-            home_shots_on_target=6, away_shots_on_target=15,
-            home_possession=42.0, away_possession=58.0,
+            day, f"HighOpp{index}", "High Signal", 4, 12,
+            f"high-{index}", home_score_ht=2, away_score_ht=5,
+            home_xg=3.5, away_xg=10.0, home_shots=20, away_shots=45,
+            home_shots_on_target=8, away_shots_on_target=22,
+            home_possession=35.0, away_possession=65.0,
         ))
     rows.append(_match(
         "2025-03-01", low_name, "High Signal", 9, 8, "target",
@@ -420,7 +420,7 @@ def test_source_binding_rejects_unrelated_warehouse_or_forged_corpus(tmp_path: P
         (json.dumps("0" * 64),),
     )
     connection.commit(); connection.close()
-    with pytest.raises(ti.TacticalIdentityError, match="ancestry mismatch"):
+    with pytest.raises(ti.TacticalIdentityError, match="SHA mismatch"):
         ti.build_tactical_identity_snapshot(forged, db, keys[-1])
 
 
