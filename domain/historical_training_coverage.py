@@ -633,16 +633,16 @@ def _pair_capability(row: Mapping[str, Any], fields: tuple[str, ...], identity: 
     return Resolution(ResolutionStatus.AVAILABLE, value=list(values), evidence_identities=(identity,))
 
 
-def build_coverage_row_from_bound_source(
+def _assemble_coverage_row(
     source: ReadOnlyHistoricalWarehouse,
     row: Mapping[str, Any],
     *,
-    preferred_events: Sequence[Mapping[str, Any]] = (),
-    counts: Mapping[str, int] | None = None,
+    preferred_events: Sequence[Mapping[str, Any]],
+    counts: Mapping[str, int],
     asof_join_sha256: str | None = None,
     tactical_join_sha256: str | None = None,
 ) -> HistoricalTrainingCoverageRow:
-    """Build one canonical row only from a live source-issued warehouse row."""
+    """Assemble only after this module has replayed exact source evidence."""
     source._require_bound_row(row)  # closure-owned issuance proof from Phase 2
     if getattr(row, "source_warehouse_sha256", None) != source.sha256:
         raise HistoricalTrainingCoverageError("warehouse row ancestry mismatch")
@@ -655,7 +655,6 @@ def build_coverage_row_from_bound_source(
     row_values["conflict_fields"] = chr(30).join(unresolved) if unresolved else None
     row_values["source_warehouse_sha256"] = source.sha256
     row = MappingProxyType(row_values)
-    counts = counts or {}
     ft_status, ft_blocker, ft = _score_resolution_state(row)
     ht_status, ht_blocker, ht = _half_resolution_state(row, ft)
     approved_event_source = bool(counts.get("approved_event_sources"))
@@ -768,12 +767,31 @@ def evidence_counts_for_match(source: ReadOnlyHistoricalWarehouse, row: Mapping[
     return MappingProxyType(dict(result))
 
 
+def build_coverage_row_from_bound_source(
+    source: ReadOnlyHistoricalWarehouse,
+    row: Mapping[str, Any],
+    *,
+    asof_corpus: "ReadOnlyOptionalJoinCorpus | None" = None,
+    tactical_corpus: "ReadOnlyOptionalJoinCorpus | None" = None,
+) -> HistoricalTrainingCoverageRow:
+    """Replay one source-issued target; callers cannot inject evidence payloads."""
+    source._require_bound_row(row)
+    return _assemble_coverage_row(
+        source,
+        row,
+        preferred_events=preferred_events_for_match(source, str(row["match_key"])),
+        counts=evidence_counts_for_match(source, row),
+        asof_join_sha256=(None if asof_corpus is None
+                          else asof_corpus.join_identity(str(row["match_key"]))),
+        tactical_join_sha256=(None if tactical_corpus is None
+                              else tactical_corpus.join_identity(str(row["match_key"]))),
+    )
+
+
 def build_historical_training_coverage_row(warehouse_path: Path, match_key: str) -> HistoricalTrainingCoverageRow:
     with ReadOnlyHistoricalWarehouse(Path(warehouse_path)) as source:
         row = source.target_match(match_key)
-        result = build_coverage_row_from_bound_source(
-            source, row, preferred_events=preferred_events_for_match(source, match_key),
-            counts=evidence_counts_for_match(source, row))
+        result = build_coverage_row_from_bound_source(source, row)
         source.assert_unchanged()
         return result
 
