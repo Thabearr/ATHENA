@@ -33,6 +33,7 @@ from domain.fixture_intelligence import (
 
 DATASET_NAME = "athena-fixture-state-v2"
 SCHEMA_VERSION = 2
+SOURCE_COVERAGE_SCHEMA_VERSION = 1
 
 
 class FixtureStateV2Error(ValueError):
@@ -58,6 +59,7 @@ class FixtureStateDerivation(str, enum.Enum):
     RAW_EVIDENCE_DERIVED = "RAW_EVIDENCE_DERIVED"
     FUTURE_DERIVED_SLOT = "FUTURE_DERIVED_SLOT"
     FUTURE_SOURCE_REQUIRED_SLOT = "FUTURE_SOURCE_REQUIRED_SLOT"
+    PENDING_REVIEWED_ADAPTER_SLOT = "PENDING_REVIEWED_ADAPTER_SLOT"
 
 
 class FixtureStateAvailabilityExpectation(str, enum.Enum):
@@ -69,6 +71,9 @@ class FixtureStateAvailabilityExpectation(str, enum.Enum):
     )
     SCHEMA_SLOT_ONLY_PENDING_FUTURE_REVIEWED_SOURCE = (
         "SCHEMA_SLOT_ONLY_PENDING_FUTURE_REVIEWED_SOURCE"
+    )
+    SCHEMA_SLOT_ONLY_PENDING_REVIEWED_ADAPTER = (
+        "SCHEMA_SLOT_ONLY_PENDING_REVIEWED_ADAPTER"
     )
 
 
@@ -89,7 +94,9 @@ class FixtureStateObservationMode(str, enum.Enum):
 
 class FixtureStateImplementationState(str, enum.Enum):
     CURRENTLY_MAPPABLE = "CURRENTLY_MAPPABLE"
-    PARTIALLY_PROVEN = "PARTIALLY_PROVEN"
+    PARTIALLY_PROVEN_PENDING_V2_ADAPTER = (
+        "PARTIALLY_PROVEN_PENDING_V2_ADAPTER"
+    )
     FUTURE_DERIVED = "FUTURE_DERIVED"
     FUTURE_SOURCE_REQUIRED = "FUTURE_SOURCE_REQUIRED"
 
@@ -256,13 +263,21 @@ class FixtureStateFieldDefinition:
                 raise FixtureStateV2Error("mapped field requires an exact source field")
             if self.derivation is not FixtureStateDerivation.RAW_EVIDENCE_DERIVED:
                 raise FixtureStateV2Error("mapped field must be raw evidence-derived")
+            if (
+                self.source_plan.implementation_state
+                is not FixtureStateImplementationState.CURRENTLY_MAPPABLE
+            ):
+                raise FixtureStateV2Error(
+                    "mapped field must have CURRENTLY_MAPPABLE source coverage"
+                )
         elif self.derivation not in {
             FixtureStateDerivation.FUTURE_DERIVED_SLOT,
             FixtureStateDerivation.FUTURE_SOURCE_REQUIRED_SLOT,
+            FixtureStateDerivation.PENDING_REVIEWED_ADAPTER_SLOT,
         }:
             raise FixtureStateV2Error("unmapped field must be an explicit future slot")
 
-    def to_dict(self) -> dict[str, Any]:
+    def to_identity_dict(self) -> dict[str, Any]:
         return {
             "field_id": self.field_id.value,
             "family": self.family.value,
@@ -273,6 +288,11 @@ class FixtureStateFieldDefinition:
             "source_field": self.source_field,
             "derivation": self.derivation.value,
             "availability_expectation": self.availability_expectation.value,
+        }
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            **self.to_identity_dict(),
             "source_plan": self.source_plan.to_dict(),
         }
 
@@ -308,6 +328,10 @@ def _future(
         source_plan.implementation_state
         is FixtureStateImplementationState.FUTURE_SOURCE_REQUIRED
     )
+    pending_adapter = (
+        source_plan.implementation_state
+        is FixtureStateImplementationState.PARTIALLY_PROVEN_PENDING_V2_ADAPTER
+    )
     return FixtureStateFieldDefinition(
         field_id=field_id,
         family=family,
@@ -315,14 +339,22 @@ def _future(
         source_category=None,
         source_field=None,
         derivation=(
-            FixtureStateDerivation.FUTURE_SOURCE_REQUIRED_SLOT
-            if source_required
-            else FixtureStateDerivation.FUTURE_DERIVED_SLOT
+            FixtureStateDerivation.PENDING_REVIEWED_ADAPTER_SLOT
+            if pending_adapter
+            else (
+                FixtureStateDerivation.FUTURE_SOURCE_REQUIRED_SLOT
+                if source_required
+                else FixtureStateDerivation.FUTURE_DERIVED_SLOT
+            )
         ),
         availability_expectation=(
-            FixtureStateAvailabilityExpectation.SCHEMA_SLOT_ONLY_PENDING_FUTURE_REVIEWED_SOURCE
-            if source_required
-            else FixtureStateAvailabilityExpectation.SCHEMA_SLOT_ONLY_PENDING_FUTURE_REVIEWED_DERIVATION
+            FixtureStateAvailabilityExpectation.SCHEMA_SLOT_ONLY_PENDING_REVIEWED_ADAPTER
+            if pending_adapter
+            else (
+                FixtureStateAvailabilityExpectation.SCHEMA_SLOT_ONLY_PENDING_FUTURE_REVIEWED_SOURCE
+                if source_required
+                else FixtureStateAvailabilityExpectation.SCHEMA_SLOT_ONLY_PENDING_FUTURE_REVIEWED_DERIVATION
+            )
         ),
         source_plan=source_plan,
     )
@@ -430,15 +462,19 @@ def _source_plan(field_id: FixtureStateFieldId) -> FixtureStateSourcePlan:
         return FixtureStateSourcePlan(
             preferred_source_class=FixtureStateSourceClass.FOTMOB_PRIMARY,
             preferred_upstream_contract=(
-                "Reviewed FotMob player-context lineage for exact observations; "
-                "FixtureIntelligenceSnapshot field mapping"
+                "Exact reviewed FotMob ancestry: PR197 preserves LINEUP/"
+                "source_lineup_type=predicted; separate handoff preserves exact "
+                "unavailable-player counts but no generic v2 mapping"
             ),
             official_corroboration=may_official,
             observation_mode=FixtureStateObservationMode.DIRECTLY_OBSERVED,
-            currently_reviewed_path_exists=True,
-            implementation_state=FixtureStateImplementationState.PARTIALLY_PROVEN,
+            currently_reviewed_path_exists=False,
+            implementation_state=(
+                FixtureStateImplementationState.PARTIALLY_PROVEN_PENDING_V2_ADAPTER
+            ),
             future_work_required=(
-                "Add prospective freshness, broader fixture coverage, and confirmation policy."
+                "Add a reviewed FixtureIntelligence-to-v2 adapter, prospective "
+                "freshness, broader fixture coverage, and confirmation policy."
             ),
         )
     if field_id is FixtureStateFieldId.VENUE:
@@ -545,14 +581,14 @@ FIXTURE_STATE_FIELD_REGISTRY: Tuple[FixtureStateFieldDefinition, ...] = tuple(
             _future(FixtureStateFieldId.AWAY_TACTICAL_IDENTITY, _T, _S),
             _future(FixtureStateFieldId.HOME_MANAGER_REGIME_IDENTITY, _T, _S),
             _future(FixtureStateFieldId.AWAY_MANAGER_REGIME_IDENTITY, _T, _S),
-            _mapped(FixtureStateFieldId.HOME_AVAILABILITY_STATE, _A, _R, IntelligenceCategory.AVAILABILITY, "home_availability_state"),
-            _mapped(FixtureStateFieldId.AWAY_AVAILABILITY_STATE, _A, _R, IntelligenceCategory.AVAILABILITY, "away_availability_state"),
-            _mapped(FixtureStateFieldId.HOME_LINEUP_STATE, _A, _S, IntelligenceCategory.LINEUP, "home_lineup_state"),
-            _mapped(FixtureStateFieldId.AWAY_LINEUP_STATE, _A, _S, IntelligenceCategory.LINEUP, "away_lineup_state"),
-            _mapped(FixtureStateFieldId.HOME_LINEUP_CONFIRMED, _A, _B, IntelligenceCategory.LINEUP, "home_lineup_confirmed"),
-            _mapped(FixtureStateFieldId.AWAY_LINEUP_CONFIRMED, _A, _B, IntelligenceCategory.LINEUP, "away_lineup_confirmed"),
-            _mapped(FixtureStateFieldId.HOME_LINEUP_FRESHNESS, _A, _N, IntelligenceCategory.LINEUP, "home_lineup_freshness"),
-            _mapped(FixtureStateFieldId.AWAY_LINEUP_FRESHNESS, _A, _N, IntelligenceCategory.LINEUP, "away_lineup_freshness"),
+            _future(FixtureStateFieldId.HOME_AVAILABILITY_STATE, _A, _R),
+            _future(FixtureStateFieldId.AWAY_AVAILABILITY_STATE, _A, _R),
+            _future(FixtureStateFieldId.HOME_LINEUP_STATE, _A, _S),
+            _future(FixtureStateFieldId.AWAY_LINEUP_STATE, _A, _S),
+            _future(FixtureStateFieldId.HOME_LINEUP_CONFIRMED, _A, _B),
+            _future(FixtureStateFieldId.AWAY_LINEUP_CONFIRMED, _A, _B),
+            _future(FixtureStateFieldId.HOME_LINEUP_FRESHNESS, _A, _N),
+            _future(FixtureStateFieldId.AWAY_LINEUP_FRESHNESS, _A, _N),
             _future(FixtureStateFieldId.VENUE, _C, _S),
             _future(FixtureStateFieldId.HOME_TRAVEL_CONTEXT, _C, _R),
             _future(FixtureStateFieldId.AWAY_TRAVEL_CONTEXT, _C, _R),
@@ -799,8 +835,20 @@ class FixtureStateFieldResolution:
         if self.evidence != tuple(sorted(set(self.evidence), key=lambda item: item.sort_key)):
             raise FixtureStateV2Error("resolution evidence must be unique and sorted")
         definition = _DEFINITION_BY_ID[self.field_id]
+        if definition.source_category is not None and any(
+            item.category is not definition.source_category
+            or item.field != definition.source_field
+            for item in self.evidence
+        ):
+            raise FixtureStateV2Error(
+                "resolution evidence does not match registered source binding"
+            )
         if self.status is FixtureStateStatus.AVAILABLE:
             normalized = _normalize_value(self.value, definition.value_type)
+            if definition.source_category is None:
+                raise FixtureStateV2Error(
+                    "field has no currently approved AVAILABLE activation path"
+                )
             if self.blockers:
                 raise FixtureStateV2Error("AVAILABLE resolution cannot contain blockers")
             if not self.evidence or not any(
@@ -972,7 +1020,7 @@ class FixtureStateV2Snapshot:
     def field_index(self) -> Mapping[FixtureStateFieldId, FixtureStateFieldResolution]:
         return types.MappingProxyType({item.field_id: item for item in self.fields})
 
-    def _content_dict(self) -> dict[str, Any]:
+    def _identity_dict(self) -> dict[str, Any]:
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
@@ -982,15 +1030,35 @@ class FixtureStateV2Snapshot:
             "source_snapshot_dataset_name": self.source_snapshot_dataset_name,
             "source_snapshot_schema_version": self.source_snapshot_schema_version,
             "source_snapshot_sha256": self.source_snapshot_sha256,
-            "field_registry": [item.to_dict() for item in FIXTURE_STATE_FIELD_REGISTRY],
+            "field_registry": [
+                item.to_identity_dict() for item in FIXTURE_STATE_FIELD_REGISTRY
+            ],
             "fields": [item.to_dict() for item in self.fields],
             "coverage": self.coverage.to_dict(),
             "safety": dict(self.safety),
         }
 
+    def _source_coverage_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": SOURCE_COVERAGE_SCHEMA_VERSION,
+            "fields": [
+                {
+                    "field_id": item.field_id.value,
+                    **item.source_plan.to_dict(),
+                }
+                for item in FIXTURE_STATE_FIELD_REGISTRY
+            ],
+        }
+
+    def _content_dict(self) -> dict[str, Any]:
+        return {
+            **self._identity_dict(),
+            "source_coverage": self._source_coverage_dict(),
+        }
+
     @property
     def canonical_sha256(self) -> str:
-        return hashlib.sha256(_canonical_bytes(self._content_dict())).hexdigest()
+        return hashlib.sha256(_canonical_bytes(self._identity_dict())).hexdigest()
 
     def to_dict(self) -> dict[str, Any]:
         result = self._content_dict()
@@ -1207,7 +1275,7 @@ def evaluate_required_fields(
 def canonical_fixture_state_v2_bytes(snapshot: FixtureStateV2Snapshot) -> bytes:
     if type(snapshot) is not FixtureStateV2Snapshot:
         raise FixtureStateV2Error("snapshot must be exact FixtureStateV2Snapshot")
-    return _canonical_bytes(snapshot.to_dict())
+    return _canonical_bytes(snapshot._identity_dict())
 
 
 def sha256_fixture_state_v2(snapshot: FixtureStateV2Snapshot) -> str:
@@ -1219,6 +1287,7 @@ def sha256_fixture_state_v2(snapshot: FixtureStateV2Snapshot) -> str:
 __all__ = [
     "DATASET_NAME",
     "SCHEMA_VERSION",
+    "SOURCE_COVERAGE_SCHEMA_VERSION",
     "FIXTURE_STATE_FIELD_REGISTRY",
     "FixtureStateAvailabilityExpectation",
     "FixtureStateBlocker",
