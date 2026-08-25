@@ -9,6 +9,8 @@ from unittest.mock import patch
 
 import pytest
 
+import domain.fixture_state_v2 as fixture_state_v2
+
 from domain.fixture_intelligence import (
     DATASET_NAME as INTELLIGENCE_DATASET_NAME,
     SCHEMA_VERSION as INTELLIGENCE_SCHEMA_VERSION,
@@ -31,6 +33,7 @@ from domain.fixture_state_v2 import (
     SCHEMA_VERSION,
     FixtureStateBlocker,
     FixtureStateEvidenceIdentity,
+    FixtureStateFieldFamily,
     FixtureStateFieldId,
     FixtureStateFieldResolution,
     FixtureStateImplementationState,
@@ -138,23 +141,16 @@ def test_canonical_serialization_and_sha_are_deterministic() -> None:
 
 
 def test_mutable_caller_input_cannot_mutate_snapshot_identity() -> None:
-    availability = {"unavailable_count": 2, "scope": "REVIEWED_EXACT_OBSERVATION"}
-    fact = _fact(
-        IntelligenceCategory.AVAILABILITY,
-        "home_availability_state",
-        availability,
-    )
+    weather = {"temperature_c": 18.0, "condition": "RAIN"}
+    fact = _fact(IntelligenceCategory.WEATHER, "weather", weather)
     snapshot = _state(fact)
     before = snapshot.canonical_sha256
 
-    availability["unavailable_count"] = 99
-    availability["scope"] = "MUTATED"
+    weather["temperature_c"] = 99.0
+    weather["condition"] = "CLEAR"
 
     assert snapshot.canonical_sha256 == before
-    assert _field(snapshot, FixtureStateFieldId.HOME_AVAILABILITY_STATE).value == (
-        ("scope", "REVIEWED_EXACT_OBSERVATION"),
-        ("unavailable_count", 2.0),
-    )
+    assert _field(snapshot, FixtureStateFieldId.WEATHER).status is FixtureStateStatus.MISSING
 
 
 def test_future_source_fact_cannot_activate_unreviewed_field() -> None:
@@ -280,6 +276,66 @@ def test_available_resolution_requires_supported_evidence_identity() -> None:
             value=0.7,
             blockers=(),
             evidence=(),
+        )
+
+
+def test_future_tactical_field_rejects_manual_available_from_form_evidence() -> None:
+    with pytest.raises(FixtureStateV2Error, match="no currently approved"):
+        FixtureStateFieldResolution(
+            FixtureStateFieldId.HOME_TACTICAL_IDENTITY,
+            FixtureStateStatus.AVAILABLE,
+            "LOW_EVENT",
+            (),
+            (_evidence(),),
+        )
+
+
+def test_mapped_field_rejects_wrong_evidence_category() -> None:
+    with pytest.raises(FixtureStateV2Error, match="registered source binding"):
+        FixtureStateFieldResolution(
+            FixtureStateFieldId.HOME_FORM,
+            FixtureStateStatus.AVAILABLE,
+            0.7,
+            (),
+            (_evidence(category=IntelligenceCategory.LINEUP),),
+        )
+
+
+def test_mapped_field_rejects_wrong_evidence_field() -> None:
+    with pytest.raises(FixtureStateV2Error, match="registered source binding"):
+        FixtureStateFieldResolution(
+            FixtureStateFieldId.HOME_FORM,
+            FixtureStateStatus.AVAILABLE,
+            0.7,
+            (),
+            (_evidence(field="away_form"),),
+        )
+
+
+@pytest.mark.parametrize(
+    ("field_id", "value"),
+    (
+        (FixtureStateFieldId.HOME_ATTACK_STRENGTH, 1.1),
+        (FixtureStateFieldId.HOME_MANAGER_REGIME_IDENTITY, "regime-1"),
+        (FixtureStateFieldId.HOME_LINEUP_STATE, "predicted"),
+        (FixtureStateFieldId.HOME_TRAVEL_CONTEXT, {"distance_km": 100.0}),
+        (FixtureStateFieldId.WEATHER, {"condition": "RAIN"}),
+        (FixtureStateFieldId.VENUE, "venue-1"),
+        (FixtureStateFieldId.REFEREE, "referee-1"),
+        (FixtureStateFieldId.COMPETITION_STAGE, "ROUND_1"),
+    ),
+)
+def test_future_field_rejects_manual_available_even_with_supported_evidence(
+    field_id: FixtureStateFieldId,
+    value,
+) -> None:
+    with pytest.raises(FixtureStateV2Error, match="no currently approved"):
+        FixtureStateFieldResolution(
+            field_id,
+            FixtureStateStatus.AVAILABLE,
+            value,
+            (),
+            (_evidence(),),
         )
 
 
@@ -419,6 +475,74 @@ def test_tactical_slots_never_default_or_activate_from_team_names() -> None:
         resolution = _field(snapshot, field_id)
         assert resolution.status is FixtureStateStatus.MISSING
         assert resolution.value is None
+
+
+def test_pr197_lineup_sentinel_cannot_activate_v2_lineup_or_availability() -> None:
+    pr197_sentinel = _fact(
+        IntelligenceCategory.LINEUP,
+        "source_lineup_type",
+        "predicted",
+        marker="1",
+    )
+    snapshot = _state(pr197_sentinel)
+
+    for field_id in (
+        FixtureStateFieldId.HOME_AVAILABILITY_STATE,
+        FixtureStateFieldId.AWAY_AVAILABILITY_STATE,
+        FixtureStateFieldId.HOME_LINEUP_STATE,
+        FixtureStateFieldId.AWAY_LINEUP_STATE,
+        FixtureStateFieldId.HOME_LINEUP_CONFIRMED,
+        FixtureStateFieldId.AWAY_LINEUP_CONFIRMED,
+        FixtureStateFieldId.HOME_LINEUP_FRESHNESS,
+        FixtureStateFieldId.AWAY_LINEUP_FRESHNESS,
+    ):
+        resolution = _field(snapshot, field_id)
+        assert resolution.status is FixtureStateStatus.MISSING
+        assert resolution.value is None
+        assert resolution.evidence == ()
+
+
+def test_exact_unavailable_counts_do_not_manufacture_generic_v2_states() -> None:
+    snapshot = _state(
+        _fact(
+            IntelligenceCategory.AVAILABILITY,
+            "home_unavailable_player_count",
+            1.0,
+            marker="1",
+        ),
+        _fact(
+            IntelligenceCategory.AVAILABILITY,
+            "away_unavailable_player_count",
+            5.0,
+            marker="5",
+        ),
+        _fact(
+            IntelligenceCategory.LINEUP,
+            "home_lineup_state",
+            "UNVERIFIED_LINEUP_STATE",
+            status=IntelligenceFactStatus.UNVERIFIED,
+            marker="2",
+        ),
+        _fact(
+            IntelligenceCategory.LINEUP,
+            "away_lineup_state",
+            "UNVERIFIED_LINEUP_STATE",
+            status=IntelligenceFactStatus.UNVERIFIED,
+            marker="3",
+        ),
+    )
+
+    for field_id in (
+        FixtureStateFieldId.HOME_AVAILABILITY_STATE,
+        FixtureStateFieldId.AWAY_AVAILABILITY_STATE,
+        FixtureStateFieldId.HOME_LINEUP_STATE,
+        FixtureStateFieldId.AWAY_LINEUP_STATE,
+        FixtureStateFieldId.HOME_LINEUP_CONFIRMED,
+        FixtureStateFieldId.AWAY_LINEUP_CONFIRMED,
+        FixtureStateFieldId.HOME_LINEUP_FRESHNESS,
+        FixtureStateFieldId.AWAY_LINEUP_FRESHNESS,
+    ):
+        assert _field(snapshot, field_id).status is FixtureStateStatus.MISSING
 
 
 def test_required_field_evaluation_reports_missing_blocked_and_exact_success() -> None:
@@ -567,8 +691,23 @@ def test_source_strategy_is_explicit_and_does_not_claim_preference_as_coverage()
     assert by_id[FixtureStateFieldId.WEATHER].preferred_source_class is FixtureStateSourceClass.SPECIALIST_EXTERNAL
     assert by_id[FixtureStateFieldId.WEATHER].currently_reviewed_path_exists is False
     assert by_id[FixtureStateFieldId.WEATHER].implementation_state is FixtureStateImplementationState.FUTURE_SOURCE_REQUIRED
-    assert by_id[FixtureStateFieldId.HOME_LINEUP_STATE].implementation_state is FixtureStateImplementationState.PARTIALLY_PROVEN
+    assert by_id[FixtureStateFieldId.HOME_LINEUP_STATE].implementation_state is FixtureStateImplementationState.PARTIALLY_PROVEN_PENDING_V2_ADAPTER
+    assert by_id[FixtureStateFieldId.HOME_LINEUP_STATE].currently_reviewed_path_exists is False
     assert by_id[FixtureStateFieldId.HOME_LINEUP_STATE].official_corroboration is FixtureStateOfficialCorroboration.MAY_BE_REQUIRED_BY_FUTURE_POLICY
+
+    mapped_ids = {
+        item.field_id
+        for item in FIXTURE_STATE_FIELD_REGISTRY
+        if item.source_category is not None
+    }
+    assert mapped_ids == {
+        FixtureStateFieldId.HOME_FORM,
+        FixtureStateFieldId.AWAY_FORM,
+        FixtureStateFieldId.HOME_ELO,
+        FixtureStateFieldId.AWAY_ELO,
+        FixtureStateFieldId.FATIGUE,
+        FixtureStateFieldId.LIVE_DATA_FRESHNESS,
+    }
 
 
 def test_discovery_only_evidence_cannot_create_available_state() -> None:
@@ -593,8 +732,57 @@ def test_discovery_only_evidence_cannot_create_available_state() -> None:
     assert resolution.evidence[0].source_role is SourceRole.DISCOVERY_ONLY
 
 
-def test_source_plan_is_part_of_deterministic_registry_identity() -> None:
+def test_source_coverage_registry_is_deterministic_but_not_state_identity() -> None:
     first = [item.to_dict() for item in FIXTURE_STATE_FIELD_REGISTRY]
     second = [item.to_dict() for item in reversed(tuple(reversed(FIXTURE_STATE_FIELD_REGISTRY)))]
     assert first == second
     assert len(first) == len(FixtureStateFieldId) == 37
+
+    snapshot = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
+    before_sha = snapshot.canonical_sha256
+    before_identity_bytes = canonical_fixture_state_v2_bytes(snapshot)
+    before_coverage = snapshot.to_dict()["source_coverage"]
+    changed_registry = tuple(
+        dataclasses.replace(
+            definition,
+            source_plan=dataclasses.replace(
+                definition.source_plan,
+                currently_reviewed_path_exists=True,
+                implementation_state=FixtureStateImplementationState.FUTURE_SOURCE_REQUIRED,
+                future_work_required="Changed backlog wording outside state identity.",
+            ),
+        )
+        if definition.field_id is FixtureStateFieldId.HOME_LINEUP_STATE
+        else definition
+        for definition in FIXTURE_STATE_FIELD_REGISTRY
+    )
+
+    with patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY",
+        changed_registry,
+    ):
+        assert snapshot.canonical_sha256 == before_sha
+        assert canonical_fixture_state_v2_bytes(snapshot) == before_identity_bytes
+        assert snapshot.to_dict()["source_coverage"] != before_coverage
+
+
+def test_stable_registry_semantic_change_changes_state_identity() -> None:
+    snapshot = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
+    before_sha = snapshot.canonical_sha256
+    changed_registry = tuple(
+        dataclasses.replace(
+            definition,
+            family=FixtureStateFieldFamily.CONTEXT,
+        )
+        if definition.field_id is FixtureStateFieldId.HOME_FORM
+        else definition
+        for definition in FIXTURE_STATE_FIELD_REGISTRY
+    )
+
+    with patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY",
+        changed_registry,
+    ):
+        assert snapshot.canonical_sha256 != before_sha
