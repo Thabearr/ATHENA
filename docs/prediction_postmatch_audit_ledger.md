@@ -19,6 +19,8 @@ Each reconstructed leg contains three objects that are never merged:
    counterfactuals. Its canonical SHA-256 is also the leg identity.
 2. `post_match_settlement` holds regulation-score evidence and one settlement
    state: `WON`, `LOST`, `VOID`, `PARTIAL_WIN`, `PARTIAL_LOSS`, or `UNKNOWN`.
+   It also carries an explicit verification state. Definitive outcomes require
+   source references; a user-reported outcome remains visibly `UNVERIFIED`.
 3. `post_match_attribution` holds decision quality and the controlled primary
    taxonomy: `MODEL_ERROR`, `CONTEXT_ERROR`, `MARKET_CHOICE_ERROR`,
    `PRICE_VALUE_ERROR`, `DATA_ERROR`, `IRREDUCIBLE_VARIANCE`, or `UNKNOWN`.
@@ -38,6 +40,12 @@ source identities and conflicting output bytes fail closed instead of silently
 overwriting evidence. `USER_REPORTED` evidence cannot be marked `VERIFIED`, and
 a verified audit claim must reference verified source evidence.
 
+A leg counts as reconstructed only when preserved evidence identifies both its
+fixture and its selected canonical market/outcome candidate. A recorded shell
+that lacks either is explicitly `UNRESOLVED`, does not reduce the unresolved
+count, contributes nothing to the reconstructed settlement summary, and can
+never make a trial `COMPLETE`.
+
 ## Counterfactual rule
 
 Counterfactual candidate IDs may reference only other candidates inside the
@@ -55,6 +63,12 @@ unknown markets, and any true authority flag. Output is canonical sorted compact
 JSON with a final newline and a SHA-256 identity. An exact re-import is a no-op;
 different bytes cannot overwrite an existing artifact. The importer performs no
 network or provider/browser acquisition and changes no model or pricing state.
+Import provenance separately records the frozen contract-origin commit and the
+exact commit that executed the import. The execution commit is a required input,
+so future imports are not mislabeled with the Phase 0 base SHA. File data is
+flushed with `fsync`; directory synchronization is attempted where the platform
+supports it and safely skipped where directory handles or directory `fsync` are
+unsupported.
 
 The first proper 20-leg trial is currently `SUMMARY_ONLY`: the operator's
 planning declaration supports 20 total legs with an aggregate 17 won and 3
