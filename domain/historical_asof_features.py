@@ -145,23 +145,22 @@ def _definition(
     )
 
 
-_FT = ("goals_for", "goals_against")
 HISTORICAL_FEATURE_REGISTRY: tuple[HistoricalFeatureDefinition, ...] = (
-    *(_definition(fid, HistoricalFeatureFamily.FORM_RESULTS, _FT) for fid in (
+    *(_definition(fid, HistoricalFeatureFamily.FORM_RESULTS, ("goals_for", "goals_against")) for fid in (
         HistoricalFeatureId.POINTS_PER_MATCH, HistoricalFeatureId.WIN_RATE,
         HistoricalFeatureId.DRAW_RATE, HistoricalFeatureId.LOSS_RATE,
-        HistoricalFeatureId.GOALS_FOR_PER_MATCH,
-        HistoricalFeatureId.GOALS_AGAINST_PER_MATCH,
         HistoricalFeatureId.GOAL_DIFFERENCE_PER_MATCH,
     )),
-    *(_definition(fid, HistoricalFeatureFamily.EVENT_ENVIRONMENT, _FT) for fid in (
+    _definition(HistoricalFeatureId.GOALS_FOR_PER_MATCH, HistoricalFeatureFamily.FORM_RESULTS, ("goals_for",)),
+    _definition(HistoricalFeatureId.GOALS_AGAINST_PER_MATCH, HistoricalFeatureFamily.FORM_RESULTS, ("goals_against",)),
+    *(_definition(fid, HistoricalFeatureFamily.EVENT_ENVIRONMENT, ("goals_for", "goals_against")) for fid in (
         HistoricalFeatureId.TOTAL_GOALS_PER_MATCH,
-        HistoricalFeatureId.CLEAN_SHEET_RATE,
-        HistoricalFeatureId.FAILED_TO_SCORE_RATE,
         HistoricalFeatureId.BTTS_RATE,
         HistoricalFeatureId.OVER_1_5_RATE,
         HistoricalFeatureId.OVER_2_5_RATE,
     )),
+    _definition(HistoricalFeatureId.CLEAN_SHEET_RATE, HistoricalFeatureFamily.EVENT_ENVIRONMENT, ("goals_against",)),
+    _definition(HistoricalFeatureId.FAILED_TO_SCORE_RATE, HistoricalFeatureFamily.EVENT_ENVIRONMENT, ("goals_for",)),
     _definition(HistoricalFeatureId.FIRST_HALF_GOALS_FOR_PER_MATCH, HistoricalFeatureFamily.HALF_TIME, ("first_half_goals_for",)),
     _definition(HistoricalFeatureId.FIRST_HALF_GOALS_AGAINST_PER_MATCH, HistoricalFeatureFamily.HALF_TIME, ("first_half_goals_against",)),
     _definition(HistoricalFeatureId.FIRST_HALF_TOTAL_GOALS_PER_MATCH, HistoricalFeatureFamily.HALF_TIME, ("first_half_goals_for", "first_half_goals_against")),
@@ -202,7 +201,7 @@ def calculate_historical_feature_registry_sha256(
 
 # Independently reviewed pins. Never derive this mapping from the live registry.
 EXPECTED_HISTORICAL_FEATURE_REGISTRY_SHA256_BY_VERSION: Mapping[int, str] = MappingProxyType(
-    {1: "f8014761d168ade0fe95142c3e1358ba4b8d2e065880d37a2162887099269b51"}
+    {1: "2d1606e54463ee75f984973173af4ba4ba68fe0acc4d0be4e2525b08f5c863f8"}
 )
 
 
@@ -255,6 +254,7 @@ class TeamMatchProjection:
     yellows_against: int | None
     reds_for: int | None
     reds_against: int | None
+    blocked_primitives: tuple[str, ...]
     field_source_keys: tuple[tuple[str, str], ...]
     conflict_fields: tuple[str, ...]
     projection_sha256: str
@@ -473,21 +473,29 @@ class ReadOnlyHistoricalWarehouse:
         self.path = Path(path).resolve()
         if not self.path.is_file():
             raise HistoricalAsOfError(f"historical warehouse does not exist: {self.path}")
-        for suffix in ("-wal", "-journal"):
-            companion = Path(str(self.path) + suffix)
-            if companion.exists() and companion.stat().st_size:
-                raise HistoricalAsOfError(f"unsafe active SQLite companion file: {companion.name}")
+        self._assert_no_active_companions()
         self._before_stat = self.path.stat()
         self.sha256 = file_sha256(self.path)
+        self._assert_no_active_companions()
         self.connection = sqlite3.connect(f"{self.path.as_uri()}?mode=ro", uri=True)
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA query_only = ON")
-        self._validate_schema()
         try:
+            self.connection.row_factory = sqlite3.Row
+            self.connection.execute("PRAGMA query_only = ON")
+            self._assert_no_active_companions()
+            self._validate_schema()
             self.schema_sql_sha256 = validate_warehouse_schema_sql(self.schema_version)
+            self._assert_no_active_companions()
         except Exception:
             self.close()
             raise
+
+    def _assert_no_active_companions(self) -> None:
+        for suffix in ("-wal", "-journal"):
+            companion = Path(str(self.path) + suffix)
+            if companion.exists() and companion.stat().st_size:
+                raise HistoricalAsOfError(
+                    f"unsafe active SQLite companion file: {companion.name}"
+                )
 
     def _validate_schema(self) -> None:
         objects = {row[0] for row in self.connection.execute(
@@ -506,11 +514,13 @@ class ReadOnlyHistoricalWarehouse:
         self.schema_version = row[0]
 
     def assert_unchanged(self) -> None:
+        self._assert_no_active_companions()
         after = self.path.stat()
         if (after.st_size, after.st_mtime_ns) != (self._before_stat.st_size, self._before_stat.st_mtime_ns):
             raise HistoricalAsOfError("historical warehouse changed during construction")
         if file_sha256(self.path) != self.sha256:
             raise HistoricalAsOfError("historical warehouse bytes changed during construction")
+        self._assert_no_active_companions()
 
     def close(self) -> None:
         connection = getattr(self, "connection", None)
@@ -556,11 +566,63 @@ def _safe_number(value: Any, field_name: str) -> int | float | None:
     return value
 
 
+def qualifies_completed_prior_fixture(row: Mapping[str, Any] | sqlite3.Row) -> bool:
+    """Return true only for mechanically completed regulation-score rows."""
+    scores = (row["home_score_ft"], row["away_score_ft"])
+    if any(value is None for value in scores):
+        return False
+    for field_name, value in zip(("home_score_ft", "away_score_ft"), scores):
+        _safe_number(value, field_name)
+    return True
+
+
+_PERIOD_UNQUALIFIED_ADVANCED_PRIMITIVES = frozenset({
+    "xg_for", "xg_against", "shots_for", "shots_against",
+    "shots_on_target_for", "shots_on_target_against",
+    "possession_for", "possession_against", "corners_for", "corners_against",
+    "fouls_for", "fouls_against", "yellows_for", "yellows_against",
+    "reds_for", "reds_against",
+})
+
+
+def _has_extra_period_evidence(row: Mapping[str, Any] | sqlite3.Row) -> bool:
+    return any(
+        row[field_name] is not None
+        for field_name in (
+            "home_score_et", "away_score_et", "home_score_pen", "away_score_pen",
+        )
+    )
+
+
 def _projection(row: sqlite3.Row, team: str, provenance: Mapping[str, str], conflicts: Iterable[str]) -> TeamMatchProjection:
     home = team == row["home_team"]
     if not home and team != row["away_team"]:
         raise HistoricalAsOfError("team is not present in prior match")
     side, other = ("home", "away") if home else ("away", "home")
+    extra_period_evidence = _has_extra_period_evidence(row)
+    advanced_fields = {
+        "xg_for": f"{side}_xg", "xg_against": f"{other}_xg",
+        "shots_for": f"{side}_shots", "shots_against": f"{other}_shots",
+        "shots_on_target_for": f"{side}_shots_on_target",
+        "shots_on_target_against": f"{other}_shots_on_target",
+        "possession_for": f"{side}_possession", "possession_against": f"{other}_possession",
+        "corners_for": f"{side}_corners", "corners_against": f"{other}_corners",
+        "fouls_for": f"{side}_fouls", "fouls_against": f"{other}_fouls",
+        "yellows_for": f"{side}_yellows", "yellows_against": f"{other}_yellows",
+        "reds_for": f"{side}_reds", "reds_against": f"{other}_reds",
+    }
+    if frozenset(advanced_fields) != _PERIOD_UNQUALIFIED_ADVANCED_PRIMITIVES:
+        raise HistoricalAsOfError("advanced period-safety registry drift")
+    blocked_primitives = frozenset(
+        primitive for primitive, field_name in advanced_fields.items()
+        if extra_period_evidence and row[field_name] is not None
+    )
+
+    def advanced(primitive: str, field_name: str) -> int | float | None:
+        if primitive in blocked_primitives:
+            return None
+        return _safe_number(row[field_name], field_name)
+
     values: dict[str, Any] = {
         "match_key": row["match_key"], "match_date": row["match_date"],
         "competition_key": row["competition_key"], "scope": row["scope"], "season": row["season"],
@@ -569,22 +631,23 @@ def _projection(row: sqlite3.Row, team: str, provenance: Mapping[str, str], conf
         "goals_against": _safe_number(row[f"{other}_score_ft"], f"{other}_score_ft"),
         "first_half_goals_for": _safe_number(row[f"{side}_score_ht"], f"{side}_score_ht"),
         "first_half_goals_against": _safe_number(row[f"{other}_score_ht"], f"{other}_score_ht"),
-        "xg_for": _safe_number(row[f"{side}_xg"], f"{side}_xg"),
-        "xg_against": _safe_number(row[f"{other}_xg"], f"{other}_xg"),
-        "shots_for": _safe_number(row[f"{side}_shots"], f"{side}_shots"),
-        "shots_against": _safe_number(row[f"{other}_shots"], f"{other}_shots"),
-        "shots_on_target_for": _safe_number(row[f"{side}_shots_on_target"], f"{side}_shots_on_target"),
-        "shots_on_target_against": _safe_number(row[f"{other}_shots_on_target"], f"{other}_shots_on_target"),
-        "possession_for": _safe_number(row[f"{side}_possession"], f"{side}_possession"),
-        "possession_against": _safe_number(row[f"{other}_possession"], f"{other}_possession"),
-        "corners_for": _safe_number(row[f"{side}_corners"], f"{side}_corners"),
-        "corners_against": _safe_number(row[f"{other}_corners"], f"{other}_corners"),
-        "fouls_for": _safe_number(row[f"{side}_fouls"], f"{side}_fouls"),
-        "fouls_against": _safe_number(row[f"{other}_fouls"], f"{other}_fouls"),
-        "yellows_for": _safe_number(row[f"{side}_yellows"], f"{side}_yellows"),
-        "yellows_against": _safe_number(row[f"{other}_yellows"], f"{other}_yellows"),
-        "reds_for": _safe_number(row[f"{side}_reds"], f"{side}_reds"),
-        "reds_against": _safe_number(row[f"{other}_reds"], f"{other}_reds"),
+        "xg_for": advanced("xg_for", f"{side}_xg"),
+        "xg_against": advanced("xg_against", f"{other}_xg"),
+        "shots_for": advanced("shots_for", f"{side}_shots"),
+        "shots_against": advanced("shots_against", f"{other}_shots"),
+        "shots_on_target_for": advanced("shots_on_target_for", f"{side}_shots_on_target"),
+        "shots_on_target_against": advanced("shots_on_target_against", f"{other}_shots_on_target"),
+        "possession_for": advanced("possession_for", f"{side}_possession"),
+        "possession_against": advanced("possession_against", f"{other}_possession"),
+        "corners_for": advanced("corners_for", f"{side}_corners"),
+        "corners_against": advanced("corners_against", f"{other}_corners"),
+        "fouls_for": advanced("fouls_for", f"{side}_fouls"),
+        "fouls_against": advanced("fouls_against", f"{other}_fouls"),
+        "yellows_for": advanced("yellows_for", f"{side}_yellows"),
+        "yellows_against": advanced("yellows_against", f"{other}_yellows"),
+        "reds_for": advanced("reds_for", f"{side}_reds"),
+        "reds_against": advanced("reds_against", f"{other}_reds"),
+        "blocked_primitives": tuple(sorted(blocked_primitives)),
         "field_source_keys": tuple(sorted(provenance.items())),
         "conflict_fields": tuple(sorted(set(conflicts))),
     }
@@ -597,6 +660,7 @@ def _projection(row: sqlite3.Row, team: str, provenance: Mapping[str, str], conf
 
 _MATCH_COLUMNS = """m.match_key,m.competition_key,m.scope,m.season,m.match_date,
  m.home_team,m.away_team,m.home_score_ft,m.away_score_ft,m.home_score_ht,m.away_score_ht,
+ m.home_score_et,m.away_score_et,m.home_score_pen,m.away_score_pen,
  m.home_xg,m.away_xg,m.home_possession,m.away_possession,m.home_shots,m.away_shots,
  m.home_shots_on_target,m.away_shots_on_target,m.home_corners,m.away_corners,
  m.home_fouls,m.away_fouls,m.home_yellows,m.away_yellows,m.home_reds,m.away_reds"""
@@ -630,6 +694,7 @@ def _history(
         "ORDER BY m.match_date,m.match_key",
         (target_date, identity[0], identity[1], identity[2], identity[2]),
     ).fetchall()
+    rows = [row for row in rows if qualifies_completed_prior_fixture(row)]
     if not rows:
         return ()
     provenance_by_match: dict[str, dict[str, str]] = {}
@@ -747,10 +812,15 @@ def _resolution(
     requested = WINDOW_SIZES[window]
     selected = complete_boundary_window(history, requested) if requested else tuple(history)
     valid = [item for item in selected if all(getattr(item, name) is not None for name in definition.required_primitives)]
-    dates = [item.match_date for item in (valid or selected)]
-    provenance = _relevant_provenance(valid, definition.required_primitives)
+    blocked = [
+        item for item in selected
+        if any(primitive in item.blocked_primitives for primitive in definition.required_primitives)
+    ]
+    evidence_items = valid or blocked
+    dates = [item.match_date for item in (evidence_items or selected)]
+    provenance = _relevant_provenance(evidence_items, definition.required_primitives)
     conflict_count = 0
-    for item in valid:
+    for item in evidence_items:
         relevant_fields = {
             field_name
             for primitive in definition.required_primitives
@@ -766,12 +836,21 @@ def _resolution(
         oldest_included_date=min(dates) if dates else None,
         newest_included_date=max(dates) if dates else None,
         algorithm_id=definition.algorithm_id, required_primitives=definition.required_primitives,
-        contributing_match_keys=tuple(item.match_key for item in valid),
+        contributing_match_keys=tuple(item.match_key for item in evidence_items),
         source_keys=tuple(sorted({source for _, _, source in provenance})),
         source_field_provenance=provenance,
         conflict_count=conflict_count,
     )
     if not valid:
+        if blocked:
+            projection_sha = hashlib.sha256(
+                _canonical_bytes([item.projection_sha256 for item in blocked])
+            ).hexdigest()
+            return HistoricalFeatureResolution(
+                status=HistoricalFeatureStatus.BLOCKED, value=None,
+                blocker=HistoricalFeatureBlocker.UNSAFE_SOURCE_STATE,
+                contributing_projection_sha256=projection_sha, **common,
+            )
         return HistoricalFeatureResolution(
             status=HistoricalFeatureStatus.MISSING, value=None, blocker=None,
             contributing_projection_sha256=None, **common,
@@ -789,18 +868,27 @@ def _schedule_resolutions(history: Sequence[TeamMatchProjection], target_date: s
     target = _parse_date(target_date)
     definitions = {item.feature_id: item for item in HISTORICAL_FEATURE_REGISTRY}
     results = []
+    latest_date = max((item.match_date for item in history), default=None)
+    latest_bucket = tuple(sorted(
+        (item for item in history if item.match_date == latest_date),
+        key=lambda item: item.match_key,
+    )) if latest_date is not None else ()
     for feature_id, days in (
         (HistoricalFeatureId.DAYS_SINCE_LAST_MATCH, None),
         (HistoricalFeatureId.FIXTURES_LAST_7_DAYS, 7),
         (HistoricalFeatureId.FIXTURES_LAST_14_DAYS, 14),
         (HistoricalFeatureId.FIXTURES_LAST_28_DAYS, 28),
     ):
-        selected = tuple(history[-1:]) if days is None else tuple(
-            item for item in history if 0 < (target - _parse_date(item.match_date)).days <= days
-        )
+        selected = latest_bucket if days is None else tuple(sorted(
+            (
+                item for item in history
+                if 0 < (target - _parse_date(item.match_date)).days <= days
+            ),
+            key=lambda item: (item.match_date, item.match_key),
+        ))
         definition = definitions[feature_id]
         all_history_exists = bool(history)
-        evidence_items = selected or tuple(history[-1:])
+        evidence_items = selected or latest_bucket
         provenance = _relevant_provenance(evidence_items, definition.required_primitives) if all_history_exists else ()
         effective = len(selected)
         common = dict(
@@ -821,7 +909,7 @@ def _schedule_resolutions(history: Sequence[TeamMatchProjection], target_date: s
                 contributing_projection_sha256=None, **common,
             ))
             continue
-        value = (target - _parse_date(history[-1].match_date)).days if days is None else effective
+        value = (target - _parse_date(latest_date)).days if days is None else effective
         identities = [item.projection_sha256 for item in evidence_items]
         results.append(HistoricalFeatureResolution(
             status=HistoricalFeatureStatus.AVAILABLE, value=value, blocker=None,
@@ -897,8 +985,7 @@ def _assemble_snapshot(
         target["scope"], target["competition_key"], target["away_team"]
     )
     if home_identity is None or away_identity is None:
-        if home_history or away_history:
-            raise HistoricalAsOfError("unusable target team identity retained history")
+        raise HistoricalAsOfError("unusable target team identity")
     for expected, history in ((home_identity, home_history), (away_identity, away_history)):
         if expected is not None and any(
             historical_team_identity(item.scope, item.competition_key, item.team) != expected

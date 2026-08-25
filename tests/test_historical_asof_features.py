@@ -32,10 +32,11 @@ from domain.historical_asof_features import (
     file_sha256,
     find_resolution,
     historical_team_identity,
+    qualifies_completed_prior_fixture,
     validate_historical_feature_registry,
     validate_warehouse_schema_sql,
 )
-from scripts.build_historical_asof_feature_corpus import build_corpus
+from scripts.build_historical_asof_feature_corpus import TeamRollingHistory, build_corpus
 from scripts.build_historical_warehouse import Warehouse
 
 
@@ -89,7 +90,7 @@ def _feature_payload(snapshot) -> tuple:
 
 def test_registry_has_independent_reviewed_pin_and_rejects_drift():
     assert validate_historical_feature_registry() == EXPECTED_HISTORICAL_FEATURE_REGISTRY_SHA256_BY_VERSION[1]
-    assert EXPECTED_HISTORICAL_FEATURE_REGISTRY_SHA256_BY_VERSION[1] == "f8014761d168ade0fe95142c3e1358ba4b8d2e065880d37a2162887099269b51"
+    assert EXPECTED_HISTORICAL_FEATURE_REGISTRY_SHA256_BY_VERSION[1] == "2d1606e54463ee75f984973173af4ba4ba68fe0acc4d0be4e2525b08f5c863f8"
     changed = list(HISTORICAL_FEATURE_REGISTRY)
     changed[0] = dataclasses.replace(changed[0], algorithm_id="CHANGED_WITHOUT_VERSION")
     new_live_sha = calculate_historical_feature_registry_sha256(changed, 1)
@@ -169,7 +170,8 @@ def _projection_for(key: str, match_date: str) -> TeamMatchProjection:
         shots_for=None, shots_against=None, shots_on_target_for=None, shots_on_target_against=None,
         possession_for=None, possession_against=None, corners_for=None, corners_against=None,
         fouls_for=None, fouls_against=None, yellows_for=None, yellows_against=None,
-        reds_for=None, reds_against=None, field_source_keys=(), conflict_fields=(), projection_sha256="0" * 64,
+        reds_for=None, reds_against=None, blocked_primitives=(), field_source_keys=(),
+        conflict_fields=(), projection_sha256=hashlib.sha256(key.encode("utf-8")).hexdigest(),
     )
     return TeamMatchProjection(**values)
 
@@ -532,3 +534,248 @@ def test_possession_is_finite_without_inventing_an_unreviewed_range(tmp_path: Pa
     snapshot = build_historical_asof_snapshot(db, keys[-1])
     possession = _resolution(snapshot, "home", HistoricalFeatureId.POSSESSION_FOR_MEAN)
     assert possession.value == 150.0
+
+
+@pytest.mark.parametrize("home_ft,away_ft", [(None, None), (1, None), (None, 0)])
+def test_incomplete_prior_fixture_contributes_nothing_to_state_or_schedule(
+    tmp_path: Path, home_ft: int | None, away_ft: int | None,
+):
+    db, keys = _warehouse(tmp_path, [
+        _match(
+            "2025-01-05", "Home", "Unplayed", home_ft, away_ft,
+            source_id="unplayed", home_xg=4.0, away_xg=3.0,
+            home_shots=30, away_shots=20,
+        ),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    direct = build_historical_asof_snapshot(db, keys[-1])
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.GOALS_FOR_PER_MATCH
+    ).status is HistoricalFeatureStatus.MISSING
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.XG_FOR_PER_MATCH
+    ).status is HistoricalFeatureStatus.MISSING
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.DAYS_SINCE_LAST_MATCH,
+        window=HistoricalWindow.AS_OF,
+    ).status is HistoricalFeatureStatus.MISSING
+
+    output = tmp_path / f"incomplete-{home_ft}-{away_ft}.db"
+    build_corpus(db, output, start_date="2025-01-10", limit=1)
+    connection = sqlite3.connect(output)
+    payload = json.loads(connection.execute(
+        "SELECT payload_json FROM historical_asof_snapshots WHERE match_key=?", (keys[-1],)
+    ).fetchone()[0])
+    connection.close()
+    assert payload == direct.to_dict()
+
+
+def test_completed_prior_fixture_qualifies_for_performance_and_schedule(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-05", "Home", "Completed", 2, 1, source_id="completed"),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    assert _resolution(snapshot, "home", HistoricalFeatureId.GOALS_FOR_PER_MATCH).value == 2
+    assert _resolution(
+        snapshot, "home", HistoricalFeatureId.DAYS_SINCE_LAST_MATCH,
+        window=HistoricalWindow.AS_OF,
+    ).value == 5
+    assert qualifies_completed_prior_fixture({"home_score_ft": 2, "away_score_ft": 1})
+    assert not qualifies_completed_prior_fixture({"home_score_ft": None, "away_score_ft": 1})
+
+
+@pytest.mark.parametrize("suffix", ["-wal", "-journal"])
+def test_companion_created_after_open_fails_final_source_validation(tmp_path: Path, suffix: str):
+    db, _ = _warehouse(tmp_path, [_match("2025-01-10", "Home", "Away", 1, 0, source_id="target")])
+    with ReadOnlyHistoricalWarehouse(db) as source:
+        Path(str(db) + suffix).write_bytes(b"appeared-after-open")
+        with pytest.raises(HistoricalAsOfError, match="unsafe active"):
+            source.assert_unchanged()
+
+
+def test_schedule_cache_prunes_on_add_even_before_any_target_lookup():
+    rolling = TeamRollingHistory()
+    for year in range(1990, 2026):
+        projection = dataclasses.replace(
+            _projection_for(f"m{year}", f"{year}-01-01"), season=None,
+        )
+        rolling.add_date_bucket(projection.match_date, (projection,))
+        assert len(rolling.schedule_date_buckets) <= 1
+    assert rolling.schedule_date_buckets[0][0] == "2025-01-01"
+    assert sum(len(bucket) for _, bucket in rolling.recent_date_buckets) == 20
+
+
+def test_days_since_last_match_uses_complete_latest_date_bucket_deterministically():
+    older = _projection_for("older", "2025-01-01")
+    tied_a = _projection_for("latest-a", "2025-01-05")
+    tied_b = _projection_for("latest-b", "2025-01-05")
+    forward = haf._schedule_resolutions((older, tied_b, tied_a), "2025-01-10")
+    reverse = haf._schedule_resolutions((tied_a, older, tied_b), "2025-01-10")
+    days_forward = find_resolution(
+        forward, HistoricalFeatureId.DAYS_SINCE_LAST_MATCH,
+        HistoricalTeamScope.OVERALL, HistoricalWindow.AS_OF,
+    )
+    days_reverse = find_resolution(
+        reverse, HistoricalFeatureId.DAYS_SINCE_LAST_MATCH,
+        HistoricalTeamScope.OVERALL, HistoricalWindow.AS_OF,
+    )
+    assert days_forward == days_reverse
+    assert days_forward.value == 5
+    assert days_forward.effective_match_sample == 2
+    assert days_forward.contributing_match_keys == ("latest-a", "latest-b")
+
+    zero_forward = find_resolution(
+        forward, HistoricalFeatureId.FIXTURES_LAST_7_DAYS,
+        HistoricalTeamScope.OVERALL, HistoricalWindow.AS_OF,
+    )
+    far_forward = haf._schedule_resolutions((older, tied_b, tied_a), "2025-02-10")
+    far_reverse = haf._schedule_resolutions((tied_b, tied_a, older), "2025-02-10")
+    zero_forward_far = find_resolution(
+        far_forward, HistoricalFeatureId.FIXTURES_LAST_7_DAYS,
+        HistoricalTeamScope.OVERALL, HistoricalWindow.AS_OF,
+    )
+    zero_reverse = find_resolution(
+        far_reverse, HistoricalFeatureId.FIXTURES_LAST_7_DAYS,
+        HistoricalTeamScope.OVERALL, HistoricalWindow.AS_OF,
+    )
+    assert zero_reverse.value == 0
+    assert zero_forward_far == zero_reverse
+    assert zero_reverse.contributing_match_keys == ("latest-a", "latest-b")
+    assert zero_forward.contributing_match_keys == ("latest-a", "latest-b")
+
+
+def test_unusable_target_identity_fails_instead_of_emitting_missing(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-10", "Home", "Away", 1, 0, source_id="target", competition_key=None),
+    ])
+    with pytest.raises(HistoricalAsOfError, match="unusable target team identity"):
+        build_historical_asof_snapshot(db, keys[0])
+    with pytest.raises(HistoricalAsOfError, match="unusable target team identity"):
+        build_corpus(db, tmp_path / "invalid-identity.db", limit=1)
+
+    db2, keys2 = _warehouse(tmp_path / "blank-team", [
+        _match("2025-01-10", "Home", "Away", 1, 0, source_id="target"),
+    ])
+    connection = sqlite3.connect(db2)
+    connection.execute("UPDATE warehouse_matches SET home_team='' WHERE match_key=?", (keys2[0],))
+    connection.commit(); connection.close()
+    with pytest.raises(HistoricalAsOfError, match="unusable target team identity"):
+        build_historical_asof_snapshot(db2, keys2[0])
+
+
+def test_extra_period_match_keeps_results_and_schedule_but_blocks_advanced_stats(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match(
+            "2025-01-05", "Home", "Cup", 1, 1, source_id="et",
+            home_score_et=2, away_score_et=1,
+            home_xg=2.5, away_xg=1.1, home_shots=20, away_shots=9,
+            home_yellows=3, away_yellows=2,
+        ),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    direct = build_historical_asof_snapshot(db, keys[-1])
+    assert _resolution(direct, "home", HistoricalFeatureId.POINTS_PER_MATCH).value == 1
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.DAYS_SINCE_LAST_MATCH,
+        window=HistoricalWindow.AS_OF,
+    ).value == 5
+    for feature_id in (
+        HistoricalFeatureId.XG_FOR_PER_MATCH,
+        HistoricalFeatureId.XG_AGAINST_PER_MATCH,
+        HistoricalFeatureId.XG_TOTAL_PER_MATCH,
+        HistoricalFeatureId.SHOTS_FOR_PER_MATCH,
+        HistoricalFeatureId.YELLOWS_FOR_PER_MATCH,
+    ):
+        resolution = _resolution(direct, "home", feature_id)
+        assert resolution.status is HistoricalFeatureStatus.BLOCKED
+        assert resolution.blocker is haf.HistoricalFeatureBlocker.UNSAFE_SOURCE_STATE
+
+    output = tmp_path / "et-features.db"
+    build_corpus(db, output, start_date="2025-01-10", limit=1)
+    connection = sqlite3.connect(output)
+    payload = json.loads(connection.execute(
+        "SELECT payload_json FROM historical_asof_snapshots WHERE match_key=?", (keys[-1],)
+    ).fetchone()[0])
+    connection.close()
+    assert payload == direct.to_dict()
+
+
+def test_normal_completed_non_et_match_keeps_advanced_stats(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match(
+            "2025-01-05", "Home", "Normal", 2, 0, source_id="normal",
+            home_xg=1.7, away_xg=0.4, home_yellows=1, away_yellows=2,
+        ),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    assert _resolution(snapshot, "home", HistoricalFeatureId.XG_FOR_PER_MATCH).value == 1.7
+    assert _resolution(snapshot, "home", HistoricalFeatureId.YELLOWS_FOR_PER_MATCH).value == 1
+
+
+def _manual_feature_resolution(
+    projection: TeamMatchProjection, feature_id: HistoricalFeatureId,
+):
+    definition = next(item for item in HISTORICAL_FEATURE_REGISTRY if item.feature_id is feature_id)
+    return haf._resolution(
+        definition, HistoricalTeamScope.OVERALL, HistoricalWindow.LAST_5,
+        (projection,), "2025-01-10",
+    )
+
+
+def test_minimal_score_dependencies_allow_only_mathematically_supported_features():
+    base = _projection_for("partial", "2025-01-01")
+    goals_for_only = dataclasses.replace(base, goals_for=2, goals_against=None)
+    goals_for_mean = _manual_feature_resolution(
+        goals_for_only, HistoricalFeatureId.GOALS_FOR_PER_MATCH
+    )
+    failed_to_score = _manual_feature_resolution(
+        goals_for_only, HistoricalFeatureId.FAILED_TO_SCORE_RATE
+    )
+    assert goals_for_mean.status is HistoricalFeatureStatus.AVAILABLE
+    assert goals_for_mean.value == 2
+    assert failed_to_score.status is HistoricalFeatureStatus.AVAILABLE
+    assert failed_to_score.value == 0
+    assert _manual_feature_resolution(
+        goals_for_only, HistoricalFeatureId.GOALS_AGAINST_PER_MATCH
+    ).status is HistoricalFeatureStatus.MISSING
+    assert _manual_feature_resolution(
+        goals_for_only, HistoricalFeatureId.CLEAN_SHEET_RATE
+    ).status is HistoricalFeatureStatus.MISSING
+
+    goals_against_only = dataclasses.replace(base, goals_for=None, goals_against=0)
+    goals_against_mean = _manual_feature_resolution(
+        goals_against_only, HistoricalFeatureId.GOALS_AGAINST_PER_MATCH
+    )
+    clean_sheet = _manual_feature_resolution(
+        goals_against_only, HistoricalFeatureId.CLEAN_SHEET_RATE
+    )
+    assert goals_against_mean.status is HistoricalFeatureStatus.AVAILABLE
+    assert goals_against_mean.value == 0
+    assert clean_sheet.status is HistoricalFeatureStatus.AVAILABLE
+    assert clean_sheet.value == 1
+    assert _manual_feature_resolution(
+        goals_against_only, HistoricalFeatureId.GOALS_FOR_PER_MATCH
+    ).status is HistoricalFeatureStatus.MISSING
+    assert _manual_feature_resolution(
+        goals_against_only, HistoricalFeatureId.FAILED_TO_SCORE_RATE
+    ).status is HistoricalFeatureStatus.MISSING
+
+    two_sided = (
+        HistoricalFeatureId.POINTS_PER_MATCH, HistoricalFeatureId.WIN_RATE,
+        HistoricalFeatureId.DRAW_RATE, HistoricalFeatureId.LOSS_RATE,
+        HistoricalFeatureId.GOAL_DIFFERENCE_PER_MATCH,
+        HistoricalFeatureId.TOTAL_GOALS_PER_MATCH, HistoricalFeatureId.BTTS_RATE,
+        HistoricalFeatureId.OVER_1_5_RATE, HistoricalFeatureId.OVER_2_5_RATE,
+    )
+    for feature_id in two_sided:
+        assert _manual_feature_resolution(
+            goals_for_only, feature_id
+        ).status is HistoricalFeatureStatus.MISSING
+        assert _manual_feature_resolution(
+            goals_against_only, feature_id
+        ).status is HistoricalFeatureStatus.MISSING
+        assert _manual_feature_resolution(
+            dataclasses.replace(base, goals_for=2, goals_against=0), feature_id
+        ).status is HistoricalFeatureStatus.AVAILABLE

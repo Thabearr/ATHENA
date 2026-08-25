@@ -29,6 +29,7 @@ from domain.historical_asof_features import (  # noqa: E402
     _assemble_snapshot,
     _projection,
     historical_team_identity,
+    qualifies_completed_prior_fixture,
     validate_historical_feature_registry,
 )
 
@@ -68,6 +69,11 @@ class TeamRollingHistory:
             return
         self.recent_date_buckets.append((match_date, bucket))
         self.schedule_date_buckets.append((match_date, bucket))
+        incoming = date.fromisoformat(match_date)
+        while self.schedule_date_buckets and (
+            incoming - date.fromisoformat(self.schedule_date_buckets[0][0])
+        ).days > 28:
+            self.schedule_date_buckets.pop(0)
         while len(self.recent_date_buckets) > 1 and sum(
             len(group) for _, group in self.recent_date_buckets[1:]
         ) >= 20:
@@ -211,8 +217,6 @@ def build_corpus(
                     for row in rows:
                         provenance = dict(_decode_pairs(row["provenance_pairs"]))
                         conflicts = _decode_fields(row["conflict_fields"])
-                        home_projection = _projection(row, row["home_team"], provenance, conflicts)
-                        away_projection = _projection(row, row["away_team"], provenance, conflicts)
                         home_identity = historical_team_identity(
                             row["scope"], row["competition_key"], row["home_team"]
                         )
@@ -237,10 +241,17 @@ def build_corpus(
                             count += 1
                             if count % 500 == 0:
                                 destination.commit()
-                        if home_identity is not None:
-                            additions[home_identity].append(home_projection)
-                        if away_identity is not None:
-                            additions[away_identity].append(away_projection)
+                        if qualifies_completed_prior_fixture(row):
+                            home_projection = _projection(
+                                row, row["home_team"], provenance, conflicts
+                            )
+                            away_projection = _projection(
+                                row, row["away_team"], provenance, conflicts
+                            )
+                            if home_identity is not None:
+                                additions[home_identity].append(home_projection)
+                            if away_identity is not None:
+                                additions[away_identity].append(away_projection)
                     for identity, projections in additions.items():
                         histories[identity].add_date_bucket(rows[0]["match_date"], projections)
 
