@@ -11,6 +11,7 @@ if __package__ in {None, ""}:
         sys.path.insert(0, str(_REPOSITORY_ROOT))
 
 import argparse
+import errno
 import hashlib
 import json
 import os
@@ -163,15 +164,34 @@ def _read_existing(path: Path) -> bytes:
     return raw
 
 
-def _sync_directory(path: Path) -> None:
+def _sync_directory(path: Path) -> bool:
+    if os.name == "nt":
+        return False
+    unsupported = {
+        errno.EBADF,
+        errno.EINVAL,
+        getattr(errno, "ENOTSUP", errno.EINVAL),
+        getattr(errno, "EOPNOTSUPP", errno.EINVAL),
+    }
     try:
-        descriptor = os.open(path, os.O_RDONLY)
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno in unsupported:
+            return False
+        raise _error("could not durably synchronize audit artifact directory") from exc
+    try:
         try:
             os.fsync(descriptor)
+        except OSError as exc:
+            if exc.errno in unsupported:
+                return False
+            raise _error("could not durably synchronize audit artifact directory") from exc
         finally:
             os.close(descriptor)
-    except OSError as exc:
-        raise _error("could not durably synchronize audit artifact directory") from exc
+    except PredictionFieldTrialImportError:
+        raise
+    return True
 
 
 def _write_idempotent(path: Path, content: bytes) -> str:
@@ -204,6 +224,7 @@ def import_field_trial(
     source: Path,
     output: Path,
     repository_root: Path,
+    execution_commit_sha: str,
 ) -> dict[str, Any]:
     """Import local JSON only; no provider or browser acquisition is performed."""
 
@@ -216,6 +237,7 @@ def import_field_trial(
             source_repository_path=source_relative,
             source_sha256=source_sha256,
             source_size=len(raw),
+            execution_commit_sha=execution_commit_sha,
         )
         artifact = canonical_prediction_field_trial_bytes(trial)
     except PredictionPostMatchAuditError as exc:
@@ -233,6 +255,8 @@ def import_field_trial(
         "declared_leg_count": trial.declared_leg_count,
         "reconstructed_leg_count": trial.reconstructed_leg_count,
         "unresolved_leg_count": trial.unresolved_leg_count,
+        "contract_origin_sha": trial.creation_import_identity.contract_origin_sha,
+        "execution_commit_sha": trial.creation_import_identity.execution_commit_sha,
         "source_sha256": source_sha256,
         "network_requests_performed": False,
         "model_state_modified": False,
@@ -252,6 +276,11 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--source", required=True)
     parser.add_argument("--output", required=True)
     parser.add_argument("--repository-root", default=".")
+    parser.add_argument(
+        "--execution-commit-sha",
+        required=True,
+        help="Exact 40-character Git commit that executed this import",
+    )
     return parser
 
 
@@ -262,6 +291,7 @@ def main(argv: list[str] | None = None) -> int:
             source=Path(args.source),
             output=Path(args.output),
             repository_root=Path(args.repository_root),
+            execution_commit_sha=args.execution_commit_sha,
         )
     except PredictionFieldTrialImportError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
