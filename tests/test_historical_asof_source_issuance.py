@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+import domain
 import domain.historical_asof_features as haf
 from domain.historical_asof_features import (
     HistoricalAsOfError,
@@ -255,8 +256,12 @@ def test_issuance_state_and_unsafe_assembly_are_not_exposed_as_module_state(
         assert "_issued_projections" not in vars(source)
 
 
-def test_normal_import_of_internal_impl_resolves_to_hardened_facade() -> None:
+def test_normal_import_paths_cannot_bypass_hardened_facade() -> None:
     direct = importlib.import_module("domain._historical_asof_features_impl")
+    from domain import _historical_asof_features_impl as package_direct
+
     assert direct is haf
+    assert package_direct is haf
+    assert domain._historical_asof_features_impl is haf
     assert direct._assemble_snapshot is haf._assemble_snapshot
     assert direct.ReadOnlyHistoricalWarehouse is haf.ReadOnlyHistoricalWarehouse
