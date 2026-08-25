@@ -200,3 +200,55 @@ def test_issue_time_sha_rejects_post_issuance_mutation_even_when_rehashed(
                 registry_sha,
                 generation_sha,
             )
+
+
+def test_caller_created_private_ledger_attributes_have_no_authority(
+    tmp_path: Path,
+) -> None:
+    db, keys = _warehouse(tmp_path)
+    with ReadOnlyHistoricalWarehouse(db) as source:
+        target = haf._target(source.target_match(keys[-1]))
+        row = source.historical_matches(
+            "club", "eng_premier", "Home", "2025-01-10"
+        )[0]
+        legitimate = haf._projection(row, "Home")
+        values = {
+            field.name: getattr(legitimate, field.name)
+            for field in dataclasses.fields(TeamMatchProjection)
+            if field.name != "projection_sha256"
+        }
+        values["goals_for"] = 99
+        forged = TeamMatchProjection(_token=haf._PROJECTION_TOKEN, **values)
+
+        # These attributes intentionally mimic the prior implementation's
+        # readable mutable issuance ledgers. The hardened boundary ignores them.
+        source._issued_bound_rows = {id(row): (None, row.row_sha256)}
+        source._issued_targets = {id(target): (None, target.target_sha256)}
+        source._issued_projections = {
+            id(forged): (None, forged.projection_sha256)
+        }
+
+        registry_sha, generation_sha = _assembly_ids()
+        with pytest.raises(HistoricalAsOfError, match="not issued unchanged"):
+            haf._assemble_snapshot(
+                target,
+                (forged,),
+                (),
+                source,
+                registry_sha,
+                generation_sha,
+            )
+
+
+def test_issuance_state_and_unsafe_assembly_are_not_exposed_as_module_state(
+    tmp_path: Path,
+) -> None:
+    assert not hasattr(haf, "_SOURCE_BY_TOKEN_ID")
+    assert not hasattr(haf, "_UNSAFE_ASSEMBLE_SNAPSHOT")
+    assert not hasattr(haf, "_build_hardened_boundary")
+
+    db, _keys = _warehouse(tmp_path)
+    with ReadOnlyHistoricalWarehouse(db) as source:
+        assert "_issued_bound_rows" not in vars(source)
+        assert "_issued_targets" not in vars(source)
+        assert "_issued_projections" not in vars(source)
