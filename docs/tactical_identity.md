@@ -1,159 +1,243 @@
 # Tactical Identity Engine
 
-Expansion Phase 3 adds a research-only, historical Tactical Identity layer. It
-addresses the Getafe-class diagnostic without encoding Getafe, or any club, as
-a style. The question is what environment the qualifying pre-match evidence
-describes—not what a team is reputed to be.
+Expansion Phase 3 adds a research-only historical Tactical Identity layer. Its
+purpose is to express evidence-backed team behaviour without encoding club
+reputation. A Getafe-class signal therefore means that strictly prior evidence
+supports a low-event environment or defensive suppression; it never means that
+a team name is mapped to an Under-style stereotype.
 
 ## Source and leakage boundary
 
 The primary source is the canonical Phase 2 historical as-of corpus. The exact
-canonical warehouse is additionally opened read-only for source-issued prior
-team-match projections and prior coach observations. Construction fails unless
-the corpus metadata warehouse SHA-256 equals the SHA-256 calculated from the
-warehouse bytes. Corpus payload hashes are replayed and target identity is
-checked against the exact source-issued warehouse row. Caller-provided SHAs
-have no authority.
+canonical historical warehouse is additionally opened read-only for source-bound
+prior team-match observations, prior coach evidence, and strictly prior
+competition baselines.
 
-`DATE_STRICT_PRIOR_FIXTURES_V1` is retained. For target date D, only completed
-fixtures with `match_date < D` enter team profiles or competition baselines.
-Same-date targets are built before date-D observations enter bulk rolling
-state. The target's FT/HT/xG/shots, target coach row, later matches, and future
-baseline population therefore cannot influence its profile.
+Construction fails closed unless the as-of corpus metadata warehouse SHA-256
+matches the SHA-256 calculated from the actual warehouse bytes. Historical
+feature-registry and generation-contract identities are revalidated. Corpus
+payload bytes are replayed canonically and target identity is checked against
+the exact source-bound warehouse row.
 
-Team identity remains
-`COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1`. Exact display-name equality does
-not join league, cup, UEFA, club, or international identities. Consequently,
-schedule values are explicitly
-`COMPETITION_SCOPED_WORKLOAD_CONTEXT_V1`; they are not complete real-world club
-congestion and must not be described as such.
+Canonical Tactical Identity snapshots are source-builder-only. There is no
+public constructor token or caller-authoritative assembler that can combine a
+real source SHA with fabricated target payloads or competition baselines.
+Caller-provided SHA strings, fake private attributes, or a recomputed output hash
+do not establish ancestry.
 
-## Registry and dimensions
+`DATE_STRICT_PRIOR_FIXTURES_V1` remains authoritative. For target date D, only
+completed fixtures with `match_date < D` may influence the target. Target FT,
+HT, xG, shots, events, target coach evidence, same-date fixtures, and later
+fixtures cannot enter that target's identity.
 
-Registry v1 is independently pinned to:
+Team identity remains:
 
-`c71f11e9f97fcc71bd38eb7a9fa558ebc09e5dfbc648e5991862dc75b80fcb69`
+`COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1`
 
-Every canonical profile has explicit `AVAILABLE`, `MISSING`, or `BLOCKED`
-resolution for these dimensions:
+The same display name in another competition is not automatically the same
+historical identity. The schedule fields inherited from Phase 2 therefore remain
+`COMPETITION_SCOPED_WORKLOAD_CONTEXT_V1`; they are not complete all-competition
+club congestion.
 
-- event environment;
-- attacking production;
-- defensive suppression (opponent-output suppression, not a claimed low block);
-- shot profile;
-- first-half environment;
-- control/tempo proxies;
-- scoring reliability;
-- venue expression;
-- opponent interaction;
-- regime context;
-- evidence uncertainty.
+## Frozen Tactical Identity contract
 
-Continuous source components remain visible. xG, goals, shots, HT evidence,
-rates, and possession are not silently substituted for one another. Missing
-xG stays missing. Possession is only a proxy and does not prove control,
-pressing, PPDA, field tilt, or tactical mechanism.
+Tactical Identity registry version 1 is independently pinned to:
+
+`f3bc2dadefe51126093c44abdacb0a252498684fbed23c4a5662d8d8e8d01d0e`
+
+Tactical generation contract version 1 is independently pinned to:
+
+`5658030a4583acc2c6f35ebc1ea0f950e01f1f22d4c6e82ed722e77f26769f9b`
+
+The generation contract binds the actual output semantics, including:
+
+- Tactical Identity registry version and SHA;
+- Phase 2 feature-registry version and SHA;
+- Phase 2 generation-contract version and SHA;
+- historical completion and advanced-period safety policies;
+- DATE_STRICT and competition-scoped identity policies;
+- the 60-day recency half-life;
+- freshness-sensitive shrinkage policy and K=5;
+- minimum team component evidence of 3;
+- minimum competition baseline population of 20;
+- descriptor thresholds -0.5 and +0.5;
+- independent LAST_20 history policy by scope;
+- manager-regime and regime-profile policies;
+- opponent-adjustment policy;
+- workload-context, score-state, and matchup-interaction policies.
+
+Changing these values or policy IDs without a reviewed version/pin change fails
+same-version validation.
+
+## Dimensions
+
+Every canonical team profile resolves evidence as `AVAILABLE`, `MISSING`, or
+`BLOCKED` across:
+
+- EVENT_ENVIRONMENT;
+- ATTACKING_PRODUCTION;
+- DEFENSIVE_SUPPRESSION;
+- SHOT_PROFILE;
+- FIRST_HALF_ENVIRONMENT;
+- CONTROL_TEMPO;
+- SCORING_RELIABILITY;
+- VENUE_EXPRESSION;
+- OPPONENT_INTERACTION;
+- REGIME_CONTEXT;
+- EVIDENCE_UNCERTAINTY.
+
+Continuous component estimates remain visible. Goals, xG, shots, shots on
+target, possession, HT evidence, clean-sheet/failed-to-score rates, BTTS, and
+total-goal rates are not silently substituted for each other. Missing xG stays
+missing. Possession is only a proxy and does not prove pressing, field tilt,
+low-block behaviour, or another tactical mechanism.
 
 ## Recency and shrinkage
 
-`EXPONENTIAL_DATE_DECAY_60_DAY_HALF_LIFE_V1` weights a valid observation of
-integer date age `a` days as:
+`EXPONENTIAL_DATE_DECAY_60_DAY_HALF_LIFE_V1` gives a valid observation of age
+`a` integer days:
 
 `w(a) = 2 ** (-a / 60)`
 
-The 60-day half-life is a versioned research choice, not football truth. Each
-component retains raw sample count, valid/missing/blocked counts, dates,
-projection identities, conflicts, and effective weighted sample size:
+The profile retains both:
 
-`ESS = (sum(w) ** 2) / sum(w ** 2)`
+`Kish ESS = (sum(w) ** 2) / sum(w ** 2)`
 
-`EFFECTIVE_SAMPLE_EMPIRICAL_SHRINKAGE_K5_V1` uses:
+and the freshness-sensitive evidence mass:
 
-`reliability = ESS / (ESS + 5)`
+`decayed evidence mass = sum(w)`
 
-`shrunk = reliability * team_raw + (1 - reliability) * prior`
+Kish ESS describes weight concentration; it is not used as an age-invariant
+substitute for freshness. Shrinkage uses
+`DECAY_WEIGHT_MASS_EMPIRICAL_SHRINKAGE_K5_V1`:
 
-The competition prior is available only with at least 20 strictly-prior valid
-projection observations. A descriptor component requires at least three team
-observations. No team observation remains `MISSING`; the competition prior
-alone never creates team evidence. If the prior is unavailable, raw evidence
-is retained but shrinkage and relative descriptors remain unavailable.
+`reliability = evidence_mass / (evidence_mass + 5)`
 
-## Competition baselines and descriptors
+`shrunk = reliability * team_raw + (1 - reliability) * competition_prior`
 
-`DATE_STRICT_COMPETITION_BASELINE_V1` maintains deterministic online moments by
-scope and competition. Bulk construction is date-batched: every target on D is
-emitted before D enters the baseline. Filters select target output only and do
-not narrow prior history.
+This means an equally sized history moved hundreds of days into the past gets
+less shrinkage reliability. A competition prior never creates team evidence
+when the team has no qualifying observations.
 
-For supported dimensions, component values are transformed to competition
-relative z values after shrinkage and combined by the registry's explicit
-orientation and arithmetic-mean rule. There is no hidden magic score.
-Descriptors use `PRIOR_COMPETITION_Z_BANDS_HALF_SIGMA_V1`:
+## Strictly prior competition baselines and descriptors
 
-- score `<= -0.5`: LOW;
-- score `>= +0.5`: HIGH;
+`DATE_STRICT_COMPETITION_BASELINE_V1` uses only completed observations strictly
+before the target date. Same-date and future observations are excluded.
+
+A component receives a competition-relative z value only when a sufficient
+strictly prior competition population exists. A tactical dimension combines
+only qualifying component z values using the versioned registry orientations
+and arithmetic-mean rule.
+
+For the dimensions with descriptive bands,
+`PRIOR_COMPETITION_Z_BANDS_HALF_SIGMA_V1` uses:
+
+- `score <= -0.5`: LOW;
+- `score >= +0.5`: HIGH;
 - otherwise: MID.
 
-The profile retains the continuous score, normal-distribution percentile,
-component estimates, prior population size, shrinkage weight, and coverage.
-The labels are descriptive research bands, not probabilities or selections.
+These are descriptive historical research bands, not probabilities, prices, or
+betting decisions.
 
-## Home/away and interaction
+## Independent overall and venue histories
 
-Each side retains `OVERALL` history and the target-relevant `HOME_ONLY` or
-`AWAY_ONLY` history. Venue delta is available only when both continuous
-profiles are available; missing splits do not become zero delta.
+History policy is:
 
-Matchup interaction contains only statistical dimension differences (event
-environment, attack versus suppression). It does not emit folklore labels such
-as press-vs-build-up or low-block-vs-possession.
+`INDEPENDENT_COMPLETE_BOUNDARY_LAST_20_BY_SCOPE_V1`
 
-Opponent adjustment is governed by
-`PRIOR_MATCH_OPPONENT_PREMATCH_RESIDUAL_V1`. The only authorized future
-mechanism is a source-compatible join from a prior observation P to the
-opponent's pre-P as-of state. Raw averages are never relabeled
-opponent-adjusted. Phase 3 leaves the value `MISSING` with sample zero when this
-exact safe join is unavailable; no target-date or post-P opponent state is
-used.
+OVERALL uses the last 20 qualifying overall fixtures with complete-date-boundary
+semantics. HOME_ONLY independently filters all qualifying history to home
+fixtures and then applies its own last-20 complete-date window. AWAY_ONLY does
+the same for away fixtures.
 
-## Manager regime and score state
+The venue profile is therefore not merely the home/away subset found inside the
+overall last 20. Venue deltas are emitted only where both underlying continuous
+profiles exist; missing evidence does not become a zero delta.
 
-`LAST_OBSERVED_PRIOR_EXACT_MANAGER_V1` reads exact coach strings only from
-completed prior matches. It retains the last observed prior manager, observation
-date, consecutive prior-regime sample, and observed transitions. There is no
-fuzzy coach matching. Critically, `LAST_OBSERVED_PRIOR_MANAGER` is not
-`CURRENT_MANAGER`: `current_manager_confirmed` is always false without separate
-pre-match evidence, and the target's stored post-hoc coach never establishes
-the target manager.
+## Feature-local conflicts
 
-Score-state behavior is `FUTURE_EVIDENCE_REQUIRED_V1`. No duration estimate is
-invented from FT/HT, and raw event rows are not aggregated. A later bounded
-contract may use complete regulation-only `warehouse_events_preferred`
-chronology.
+Conflict coverage is component-local. For example, an xG-for component counts
+conflicts on the exact side-specific xG warehouse field used by that component;
+a referee, possession, coach, or unrelated opponent-field conflict does not
+inflate xG conflict coverage.
 
-## Canonical identity and bulk construction
+## Opponent adjustment
 
-Generation contract v1 is independently pinned to:
+`PRIOR_MATCH_OPPONENT_PREMATCH_RESIDUAL_V1` is implemented through a safe
+pre-prior-match join.
 
-`73482eb97e8ad0acaa6690a72921117541cc6c97948e35a4ff49b481b738d701`
+For each contributing prior match P, the engine uses P's source-issued observed
+team projection and the opponent's Phase 2 as-of snapshot for P. The opponent
+expectation therefore comes from evidence that existed before P. Supported
+residual families include goals, xG, shots, and shots on target where both sides
+of the residual are safely available.
 
-It binds registry identity, Phase 2 source contracts, DATE_STRICT/team identity,
-recency, competition baseline, shrinkage, manager regime, opponent adjustment,
-descriptor policy, and schema version. Same-version drift and unknown versions
-fail closed. Snapshots freeze every source/registry/generation identity and
-serialize without consulting future live registry objects.
+The engine never uses the opponent's state after P or the target-date opponent
+state to normalize P. Missing pre-P opponent state stays missing; blocked state
+stays blocked. Raw averages are never relabelled opponent-adjusted. The profile
+retains valid/missing/blocked sample counts, contributing match keys, source
+opponent snapshot identities, and recency-weighted residuals.
+
+## Manager regime
+
+Manager policy is:
+
+`LAST_OBSERVED_PRIOR_EXACT_MANAGER_DATE_BUCKET_V1`
+
+Only exact prior coach observations are used. Same-date observations are treated
+as a date bucket; distinct manager identities within one prior date bucket fail
+closed as `AMBIGUOUS_SAME_DATE_PRIOR_MANAGER`. Match-key ordering is never used
+to invent intra-day chronology.
+
+Unknown coach gaps do not prove uninterrupted regime continuity. The profile
+retains the last observed prior manager, last observed date, observed manager
+change status, exact regime match keys, unknown-gap/continuity metadata, and:
+
+`current_manager_confirmed = false`
+
+The target's stored post-hoc coach never establishes the target's current
+manager.
+
+When a safe last-observed prior regime exists, the engine emits both the general
+recency-weighted Tactical Identity profile and a separate
+`LAST_OBSERVED_PRIOR_MANAGER_REGIME` profile plus available deltas against the
+general profile.
+
+## Score state
+
+Score-state behaviour remains:
+
+`FUTURE_EVIDENCE_REQUIRED_V1`
+
+No leading/level/trailing duration is invented from FT/HT scores. A later
+reviewed contract may use complete regulation-only preferred-event chronology.
+
+## Matchup interaction
+
+`DESCRIPTIVE_STATISTICAL_DIFFERENCES_ONLY_V1` exposes only supported numerical
+interactions such as event-environment difference and attack-versus-suppression
+differences. It does not manufacture mechanism labels such as press-vs-build-up
+or low-block-vs-possession.
+
+## Canonical output and bulk construction
+
+Canonical snapshots retain target identity, exact as-of corpus SHA, exact
+warehouse SHA, Phase 2 registry/generation identities, Tactical Identity
+registry/generation identities, policy IDs, home/away profiles, matchup
+interaction, coverage, and all-false authority flags. Serialization is
+self-contained and does not consult a future mutated registry.
 
 `scripts/build_tactical_identity_corpus.py` writes a separate generated SQLite
-corpus. It uses chronological date batches, bounded complete-date LAST_20 team
-histories, online competition moments, batched writes, read-only sources, and
-collision-safe atomic output. Generated databases stay outside Git. No network
-or provider acquisition occurs.
+corpus. The implementation processes chronological source/corpus records with
+bounded per-team rolling histories and independent overall/home/away date
+buckets rather than materializing the full corpus target universe in one Python
+set. Source databases remain read-only and generated databases stay outside
+Git.
 
 ## Scope and authority
 
-Fixture State v2 tactical slots are not activated here. Historical training,
-model inference, probability adjustment, calibration, pricing, routing,
-selection, accumulator changes, production approval, and BET authority are all
-explicitly false. No odds, bookmaker probabilities, or team-name rules enter
-the registry.
+Fixture State v2 tactical slots are not activated by this PR and
+`fixture_model_features` v1 is unchanged. Tactical Identity grants no network or
+provider acquisition, model training/promotion, probability inference or
+adjustment, calibration, bookmaker pricing, market activation, routing,
+selection, accumulator, production approval, or BET authority.
