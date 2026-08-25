@@ -13,8 +13,10 @@ import pytest
 import domain.historical_asof_features as haf
 from domain.historical_asof_features import (
     EXPECTED_HISTORICAL_FEATURE_REGISTRY_SHA256_BY_VERSION,
+    EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION,
     HISTORICAL_FEATURE_REGISTRY,
     HISTORICAL_FEATURE_REGISTRY_VERSION,
+    HISTORICAL_TEAM_IDENTITY_POLICY_ID,
     TEMPORAL_POLICY_ID,
     HistoricalAsOfError,
     HistoricalFeatureFamily,
@@ -29,7 +31,9 @@ from domain.historical_asof_features import (
     complete_boundary_window,
     file_sha256,
     find_resolution,
+    historical_team_identity,
     validate_historical_feature_registry,
+    validate_warehouse_schema_sql,
 )
 from scripts.build_historical_asof_feature_corpus import build_corpus
 from scripts.build_historical_warehouse import Warehouse
@@ -338,3 +342,193 @@ def test_active_wal_sidecar_is_rejected(tmp_path: Path):
     Path(str(db) + "-wal").write_bytes(b"active")
     with pytest.raises(HistoricalAsOfError, match="unsafe active"):
         build_historical_asof_snapshot(db, "anything")
+
+
+def test_team_identity_is_exact_scope_and_competition_scoped_for_both_builders(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-01", "United", "League Opponent", 2, 0, source_id="league"),
+        _match(
+            "2025-01-02", "United", "Cup Opponent", 8, 0, source_id="cup",
+            competition_key="eng_fa_cup", competition_name="FA Cup",
+        ),
+        _match(
+            "2025-01-03", "United", "National Opponent", 9, 0, source_id="international",
+            competition_key="intl_world_cup", competition_name="FIFA World Cup",
+            scope="international", season="2025",
+        ),
+        _match("2025-01-04", "united", "Case Opponent", 7, 0, source_id="case"),
+        _match("2025-01-10", "United", "Target", 0, 0, source_id="target"),
+    ])
+    direct = build_historical_asof_snapshot(db, keys[-1])
+    result = _resolution(direct, "home", HistoricalFeatureId.GOALS_FOR_PER_MATCH)
+    assert direct.team_identity_policy_id == HISTORICAL_TEAM_IDENTITY_POLICY_ID
+    assert result.value == 2
+    assert result.effective_match_sample == 1
+    assert historical_team_identity("club", "eng_premier", "United") == (
+        "club", "eng_premier", "United",
+    )
+    assert historical_team_identity("club", "eng_fa_cup", "United") != historical_team_identity(
+        "club", "eng_premier", "United"
+    )
+    assert historical_team_identity("international", "eng_premier", "United") != historical_team_identity(
+        "club", "eng_premier", "United"
+    )
+    assert historical_team_identity("club", "eng_premier", "united") != historical_team_identity(
+        "club", "eng_premier", "United"
+    )
+
+    output = tmp_path / "identity-features.db"
+    build_corpus(db, output, start_date="2025-01-10", limit=1)
+    connection = sqlite3.connect(output)
+    payload = json.loads(connection.execute(
+        "SELECT payload_json FROM historical_asof_snapshots WHERE match_key=?", (keys[-1],)
+    ).fetchone()[0])
+    metadata = dict(connection.execute("SELECT key,value FROM corpus_meta"))
+    connection.close()
+    assert payload == direct.to_dict()
+    assert json.loads(metadata["historical_team_identity_policy_id"]) == HISTORICAL_TEAM_IDENTITY_POLICY_ID
+
+
+def test_missing_season_never_becomes_an_all_time_season(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2022-01-01", "Home", "A", 1, 0, source_id="2022", season=None),
+        _match("2024-01-01", "Home", "B", 3, 0, source_id="2024", season=None),
+        _match("2025-01-01", "Home", "Target", 0, 0, source_id="target", season=None),
+    ])
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    season = _resolution(
+        snapshot, "home", HistoricalFeatureId.GOALS_FOR_PER_MATCH,
+        window=HistoricalWindow.SEASON_TO_DATE,
+    )
+    rolling = _resolution(snapshot, "home", HistoricalFeatureId.GOALS_FOR_PER_MATCH)
+    assert season.status is HistoricalFeatureStatus.MISSING
+    assert season.value is None and season.effective_match_sample == 0
+    assert rolling.value == 2
+
+
+def test_exact_season_to_date_still_uses_only_that_season(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2024-01-01", "Home", "Old", 8, 0, source_id="old", season="2024-25"),
+        _match("2025-08-01", "Home", "Current", 2, 0, source_id="current", season="2025-26"),
+        _match("2025-08-10", "Home", "Target", 0, 0, source_id="target", season="2025-26"),
+    ])
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    season = _resolution(
+        snapshot, "home", HistoricalFeatureId.GOALS_FOR_PER_MATCH,
+        window=HistoricalWindow.SEASON_TO_DATE,
+    )
+    assert season.status is HistoricalFeatureStatus.AVAILABLE
+    assert season.value == 2 and season.effective_match_sample == 1
+
+
+def test_dense_schedule_single_and_bulk_snapshots_are_exactly_equivalent(tmp_path: Path):
+    rows = [
+        _match(f"2025-01-{day:02d}", "Dense", f"Opponent {day}", 1, 0, source_id=f"p{day}")
+        for day in range(1, 22)
+    ]
+    rows.append(_match("2025-01-22", "Dense", "Target", 0, 0, source_id="target"))
+    db, keys = _warehouse(tmp_path, rows)
+    direct = build_historical_asof_snapshot(db, keys[-1])
+    expected = {
+        HistoricalFeatureId.DAYS_SINCE_LAST_MATCH: 1,
+        HistoricalFeatureId.FIXTURES_LAST_7_DAYS: 7,
+        HistoricalFeatureId.FIXTURES_LAST_14_DAYS: 14,
+        HistoricalFeatureId.FIXTURES_LAST_28_DAYS: 21,
+    }
+    for feature_id, value in expected.items():
+        assert _resolution(
+            direct, "home", feature_id, window=HistoricalWindow.AS_OF
+        ).value == value
+
+    output = tmp_path / "dense-features.db"
+    build_corpus(db, output, start_date="2025-01-22", limit=1)
+    connection = sqlite3.connect(output)
+    payload = json.loads(connection.execute(
+        "SELECT payload_json FROM historical_asof_snapshots WHERE match_key=?", (keys[-1],)
+    ).fetchone()[0])
+    connection.close()
+    assert payload == direct.to_dict()
+
+
+def test_conflicts_are_attributed_per_match_and_required_primitive(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-01", "Home", "A", 1, 0, source_id="home", home_xg=1.0, away_xg=0.5),
+        _match("2025-01-02", "B", "Home", 0, 1, source_id="away", home_xg=0.3, away_xg=1.2),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    connection = sqlite3.connect(db)
+    conflicts = (
+        (keys[0], "home_xg", "1.1"),
+        (keys[0], "away_xg", "0.6"),
+        (keys[1], "home_xg", "0.4"),
+        (keys[1], "away_xg", "1.3"),
+    )
+    connection.executemany(
+        "INSERT INTO warehouse_conflicts(match_key,field_name,incoming_source,incoming_value) "
+        "VALUES(?,?,'weaker',?)", conflicts,
+    )
+    connection.commit(); connection.close()
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    xg_for = _resolution(snapshot, "home", HistoricalFeatureId.XG_FOR_PER_MATCH)
+    xg_against = _resolution(snapshot, "home", HistoricalFeatureId.XG_AGAINST_PER_MATCH)
+    xg_total = _resolution(snapshot, "home", HistoricalFeatureId.XG_TOTAL_PER_MATCH)
+    assert xg_for.conflict_count == 2
+    assert xg_against.conflict_count == 2
+    assert xg_total.conflict_count == 4
+
+
+def test_canonical_schema_sql_is_pinned_and_not_caller_injectable(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [_match("2025-01-10", "Home", "Away", 1, 0, source_id="target")])
+    first = build_historical_asof_snapshot(db, keys[0])
+    second = build_historical_asof_snapshot(db, keys[0])
+    assert first.source_schema_sql_sha256 == second.source_schema_sql_sha256
+    assert first.source_schema_sql_sha256 == EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION["1"]
+    with pytest.raises(TypeError):
+        build_historical_asof_snapshot(db, keys[0], schema_sql_path=tmp_path / "forged.sql")
+
+    modified = tmp_path / "modified-schema.sql"
+    modified.write_text("-- not ATHENA's reviewed schema\n", encoding="utf-8")
+    with pytest.raises(HistoricalAsOfError, match="schema SQL drift"):
+        validate_warehouse_schema_sql("1", modified)
+    with pytest.raises(HistoricalAsOfError, match="unreviewed"):
+        validate_warehouse_schema_sql("999", modified)
+
+
+def test_warehouse_schema_version_mismatch_still_fails_closed(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [_match("2025-01-10", "Home", "Away", 1, 0, source_id="target")])
+    connection = sqlite3.connect(db)
+    connection.execute("UPDATE warehouse_meta SET value='999' WHERE key='schema_version'")
+    connection.commit(); connection.close()
+    with pytest.raises(HistoricalAsOfError, match="schema version mismatch"):
+        build_historical_asof_snapshot(db, keys[0])
+
+
+@pytest.mark.parametrize("field_name,value,error", [
+    ("home_xg", -0.01, "negative xG"),
+    ("home_shots", -1, "invalid count"),
+    ("home_shots", 1.5, "invalid count"),
+])
+def test_mechanically_impossible_numeric_values_fail_closed(
+    tmp_path: Path, field_name: str, value: float, error: str,
+):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-01", "Home", "Prior", 1, 0, source_id="prior"),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    connection = sqlite3.connect(db)
+    connection.execute(
+        f"UPDATE warehouse_matches SET {field_name}=? WHERE match_key=?", (value, keys[0])
+    )
+    connection.commit(); connection.close()
+    with pytest.raises(HistoricalAsOfError, match=error):
+        build_historical_asof_snapshot(db, keys[-1])
+
+
+def test_possession_is_finite_without_inventing_an_unreviewed_range(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-01", "Home", "Prior", 1, 0, source_id="prior", home_possession=150.0),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    possession = _resolution(snapshot, "home", HistoricalFeatureId.POSSESSION_FOR_MEAN)
+    assert possession.value == 150.0

@@ -21,7 +21,14 @@ HISTORICAL_ASOF_DATASET = "athena_historical_asof_features"
 HISTORICAL_ASOF_SCHEMA_VERSION = 1
 HISTORICAL_FEATURE_REGISTRY_VERSION = 1
 TEMPORAL_POLICY_ID = "DATE_STRICT_PRIOR_FIXTURES_V1"
+HISTORICAL_TEAM_IDENTITY_POLICY_ID = "COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1"
 WAREHOUSE_SCHEMA_VERSION = "1"
+CANONICAL_WAREHOUSE_SCHEMA_SQL = (
+    Path(__file__).resolve().parents[1] / "database" / "historical_warehouse_schema.sql"
+)
+EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION: Mapping[str, str] = MappingProxyType(
+    {"1": "d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f"}
+)
 
 
 class HistoricalAsOfError(ValueError):
@@ -362,6 +369,7 @@ class HistoricalAsOfFixtureSnapshot:
     target_home_team: str
     target_away_team: str
     temporal_policy_id: str
+    team_identity_policy_id: str
     source_warehouse_sha256: str
     source_warehouse_schema_version: str
     source_schema_sql_sha256: str
@@ -407,6 +415,7 @@ class HistoricalAsOfFixtureSnapshot:
                 "stage": self.target_stage,
             },
             "temporal_policy_id": self.temporal_policy_id,
+            "team_identity_policy_id": self.team_identity_policy_id,
         }
 
     @property
@@ -434,10 +443,33 @@ def file_sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def validate_warehouse_schema_sql(
+    schema_version: str,
+    schema_path: Path | None = None,
+    expected_by_version: Mapping[str, str] = EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION,
+) -> str:
+    """Validate canonical schema SQL against an independent versioned pin."""
+    expected = expected_by_version.get(schema_version)
+    if expected is None:
+        raise HistoricalAsOfError(
+            f"unreviewed historical warehouse schema SQL version: {schema_version}"
+        )
+    path = CANONICAL_WAREHOUSE_SCHEMA_SQL if schema_path is None else Path(schema_path)
+    if not path.is_file():
+        raise HistoricalAsOfError("historical warehouse schema SQL is unavailable")
+    actual = file_sha256(path)
+    if actual != expected:
+        raise HistoricalAsOfError(
+            f"historical warehouse schema SQL drift for version {schema_version}: "
+            f"{actual} != {expected}"
+        )
+    return actual
+
+
 class ReadOnlyHistoricalWarehouse:
     """Stable, SHA-bound, query-only view of one warehouse image."""
 
-    def __init__(self, path: Path, *, schema_sql_path: Path | None = None) -> None:
+    def __init__(self, path: Path) -> None:
         self.path = Path(path).resolve()
         if not self.path.is_file():
             raise HistoricalAsOfError(f"historical warehouse does not exist: {self.path}")
@@ -451,11 +483,11 @@ class ReadOnlyHistoricalWarehouse:
         self.connection.row_factory = sqlite3.Row
         self.connection.execute("PRAGMA query_only = ON")
         self._validate_schema()
-        schema_path = schema_sql_path or Path(__file__).resolve().parents[1] / "database" / "historical_warehouse_schema.sql"
-        if not schema_path.is_file():
+        try:
+            self.schema_sql_sha256 = validate_warehouse_schema_sql(self.schema_version)
+        except Exception:
             self.close()
-            raise HistoricalAsOfError("historical warehouse schema SQL is unavailable")
-        self.schema_sql_sha256 = file_sha256(schema_path)
+            raise
 
     def _validate_schema(self) -> None:
         objects = {row[0] for row in self.connection.execute(
@@ -519,6 +551,8 @@ def _safe_number(value: Any, field_name: str) -> int | float | None:
     if field_name in _NUMERIC_COLUMNS - {"home_xg", "away_xg", "home_possession", "away_possession"}:
         if not isinstance(value, int) or value < 0:
             raise HistoricalAsOfError(f"invalid count warehouse value for {field_name}")
+    if field_name in {"home_xg", "away_xg"} and float(value) < 0:
+        raise HistoricalAsOfError(f"invalid negative xG warehouse value for {field_name}")
     return value
 
 
@@ -568,11 +602,33 @@ _MATCH_COLUMNS = """m.match_key,m.competition_key,m.scope,m.season,m.match_date,
  m.home_fouls,m.away_fouls,m.home_yellows,m.away_yellows,m.home_reds,m.away_reds"""
 
 
-def _history(connection: sqlite3.Connection, team: str, target_date: str) -> tuple[TeamMatchProjection, ...]:
+def historical_team_identity(
+    scope: Any, competition_key: Any, canonical_team: Any,
+) -> tuple[str, str, str] | None:
+    """Return the reviewed narrow identity, or None when it is unusable."""
+    if not all(isinstance(value, str) and value and value == value.strip() for value in (
+        scope, competition_key, canonical_team,
+    )):
+        return None
+    return scope, competition_key, canonical_team
+
+
+def _history(
+    connection: sqlite3.Connection,
+    scope: Any,
+    competition_key: Any,
+    team: Any,
+    target_date: str,
+) -> tuple[TeamMatchProjection, ...]:
+    identity = historical_team_identity(scope, competition_key, team)
+    if identity is None:
+        return ()
     rows = connection.execute(
         f"SELECT {_MATCH_COLUMNS} FROM warehouse_matches m "
-        "WHERE m.match_date < ? AND (m.home_team=? OR m.away_team=?) "
-        "ORDER BY m.match_date,m.match_key", (target_date, team, team),
+        "WHERE m.match_date < ? AND m.scope=? AND m.competition_key=? "
+        "AND (m.home_team=? OR m.away_team=?) "
+        "ORDER BY m.match_date,m.match_key",
+        (target_date, identity[0], identity[1], identity[2], identity[2]),
     ).fetchall()
     if not rows:
         return ()
@@ -580,20 +636,22 @@ def _history(connection: sqlite3.Connection, team: str, target_date: str) -> tup
     for item in connection.execute(
         "SELECT p.match_key,p.field_name,p.source_key FROM warehouse_field_provenance p "
         "JOIN warehouse_matches m ON m.match_key=p.match_key "
-        "WHERE m.match_date < ? AND (m.home_team=? OR m.away_team=?)",
-        (target_date, team, team),
+        "WHERE m.match_date < ? AND m.scope=? AND m.competition_key=? "
+        "AND (m.home_team=? OR m.away_team=?)",
+        (target_date, identity[0], identity[1], identity[2], identity[2]),
     ):
         provenance_by_match.setdefault(item["match_key"], {})[item["field_name"]] = item["source_key"]
     conflicts_by_match: dict[str, list[str]] = {}
     for item in connection.execute(
         "SELECT c.match_key,c.field_name FROM warehouse_conflicts c "
         "JOIN warehouse_matches m ON m.match_key=c.match_key "
-        "WHERE m.match_date < ? AND (m.home_team=? OR m.away_team=?)",
-        (target_date, team, team),
+        "WHERE m.match_date < ? AND m.scope=? AND m.competition_key=? "
+        "AND (m.home_team=? OR m.away_team=?)",
+        (target_date, identity[0], identity[1], identity[2], identity[2]),
     ):
         conflicts_by_match.setdefault(item["match_key"], []).append(item["field_name"])
     return tuple(_projection(
-        row, team, provenance_by_match.get(row["match_key"], {}), conflicts_by_match.get(row["match_key"], ()),
+        row, identity[2], provenance_by_match.get(row["match_key"], {}), conflicts_by_match.get(row["match_key"], ()),
     ) for row in rows)
 
 
@@ -691,7 +749,16 @@ def _resolution(
     valid = [item for item in selected if all(getattr(item, name) is not None for name in definition.required_primitives)]
     dates = [item.match_date for item in (valid or selected)]
     provenance = _relevant_provenance(valid, definition.required_primitives)
-    relevant_fields = {field_name for _, field_name, _ in provenance}
+    conflict_count = 0
+    for item in valid:
+        relevant_fields = {
+            field_name
+            for primitive in definition.required_primitives
+            if (field_name := _warehouse_field_for(item, primitive)) is not None
+        }
+        conflict_count += sum(
+            field_name in relevant_fields for field_name in item.conflict_fields
+        )
     common = dict(
         feature_id=definition.feature_id, scope=scope, window=window,
         requested_window_size=requested, effective_match_sample=len(selected),
@@ -702,7 +769,7 @@ def _resolution(
         contributing_match_keys=tuple(item.match_key for item in valid),
         source_keys=tuple(sorted({source for _, _, source in provenance})),
         source_field_provenance=provenance,
-        conflict_count=sum(sum(field in relevant_fields for field in item.conflict_fields) for item in valid),
+        conflict_count=conflict_count,
     )
     if not valid:
         return HistoricalFeatureResolution(
@@ -772,19 +839,26 @@ def _team_resolutions(
     for scope in (HistoricalTeamScope.OVERALL, venue_scope):
         scoped = tuple(item for item in history if scope is HistoricalTeamScope.OVERALL or item.side == scope.value.removesuffix("_ONLY"))
         for window in (HistoricalWindow.LAST_5, HistoricalWindow.LAST_10, HistoricalWindow.LAST_20, HistoricalWindow.SEASON_TO_DATE):
-            window_history = scoped if window is not HistoricalWindow.SEASON_TO_DATE else tuple(
-                item for item in scoped if item.season == target_season
-            )
+            if window is HistoricalWindow.SEASON_TO_DATE:
+                window_history = tuple(
+                    item for item in scoped if _usable_season(target_season) and item.season == target_season
+                )
+            else:
+                window_history = scoped
             resolutions.extend(_resolution(item, scope, window, window_history, target_date) for item in performance)
     resolutions.extend(_schedule_resolutions(history, target_date))
     return tuple(sorted(resolutions, key=lambda item: (item.scope.value, item.window.value, item.feature_id.value)))
 
 
+def _usable_season(value: Any) -> bool:
+    return isinstance(value, str) and bool(value) and value == value.strip()
+
+
 def build_historical_asof_snapshot(
-    warehouse_path: Path, target_match_key: str, *, schema_sql_path: Path | None = None,
+    warehouse_path: Path, target_match_key: str,
 ) -> HistoricalAsOfFixtureSnapshot:
     registry_sha = validate_historical_feature_registry()
-    with ReadOnlyHistoricalWarehouse(warehouse_path, schema_sql_path=schema_sql_path) as source:
+    with ReadOnlyHistoricalWarehouse(warehouse_path) as source:
         target = source.connection.execute(
             "SELECT match_key,match_date,competition_key,competition_name,scope,season,stage,round_name,"
             "hierarchy_rank,hierarchy_tier,home_team,away_team "
@@ -793,8 +867,14 @@ def build_historical_asof_snapshot(
         if target is None:
             raise HistoricalAsOfError(f"unknown target match_key: {target_match_key}")
         _parse_date(target["match_date"])
-        home_history = _history(source.connection, target["home_team"], target["match_date"])
-        away_history = _history(source.connection, target["away_team"], target["match_date"])
+        home_history = _history(
+            source.connection, target["scope"], target["competition_key"],
+            target["home_team"], target["match_date"],
+        )
+        away_history = _history(
+            source.connection, target["scope"], target["competition_key"],
+            target["away_team"], target["match_date"],
+        )
         snapshot = _assemble_snapshot(target, home_history, away_history, source, registry_sha)
         source.assert_unchanged()
         return snapshot
@@ -810,6 +890,21 @@ def _assemble_snapshot(
         raise HistoricalAsOfError("historical registry identity changed during construction")
     target_date = target["match_date"]
     _parse_date(target_date)
+    home_identity = historical_team_identity(
+        target["scope"], target["competition_key"], target["home_team"]
+    )
+    away_identity = historical_team_identity(
+        target["scope"], target["competition_key"], target["away_team"]
+    )
+    if home_identity is None or away_identity is None:
+        if home_history or away_history:
+            raise HistoricalAsOfError("unusable target team identity retained history")
+    for expected, history in ((home_identity, home_history), (away_identity, away_history)):
+        if expected is not None and any(
+            historical_team_identity(item.scope, item.competition_key, item.team) != expected
+            for item in history
+        ):
+            raise HistoricalAsOfError("history violates the historical team identity policy")
     if any(item.match_date >= target_date for item in (*home_history, *away_history)):
         raise HistoricalAsOfError("DATE_STRICT history contains target-date or later evidence")
     home = _team_resolutions(home_history, target_date, target["season"], HistoricalTeamScope.HOME_ONLY)
@@ -830,6 +925,7 @@ def _assemble_snapshot(
         target_hierarchy_rank=target["hierarchy_rank"], target_hierarchy_tier=target["hierarchy_tier"],
         target_home_team=target["home_team"],
         target_away_team=target["away_team"], temporal_policy_id=TEMPORAL_POLICY_ID,
+        team_identity_policy_id=HISTORICAL_TEAM_IDENTITY_POLICY_ID,
         source_warehouse_sha256=source.sha256, source_warehouse_schema_version=source.schema_version,
         source_schema_sql_sha256=source.schema_sql_sha256,
         generation_schema_version=HISTORICAL_ASOF_SCHEMA_VERSION,

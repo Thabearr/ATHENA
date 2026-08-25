@@ -21,12 +21,14 @@ from domain.historical_asof_features import (  # noqa: E402
     HISTORICAL_ASOF_DATASET,
     HISTORICAL_ASOF_SCHEMA_VERSION,
     HISTORICAL_FEATURE_REGISTRY_VERSION,
+    HISTORICAL_TEAM_IDENTITY_POLICY_ID,
     TEMPORAL_POLICY_ID,
     HistoricalAsOfError,
     ReadOnlyHistoricalWarehouse,
     TeamMatchProjection,
     _assemble_snapshot,
     _projection,
+    historical_team_identity,
     validate_historical_feature_registry,
 )
 
@@ -37,12 +39,27 @@ DEFAULT_OUTPUT = ROOT / "data" / "history_features" / "athena_history_asof_featu
 @dataclass
 class TeamRollingHistory:
     recent_date_buckets: list[tuple[str, list[TeamMatchProjection]]] = field(default_factory=list)
-    seasons: dict[str | None, list[TeamMatchProjection]] = field(default_factory=dict)
-    season_last_date: dict[str | None, str] = field(default_factory=dict)
+    schedule_date_buckets: list[tuple[str, list[TeamMatchProjection]]] = field(default_factory=list)
+    current_season: str | None = None
+    current_season_matches: list[TeamMatchProjection] = field(default_factory=list)
+    closed_seasons: set[str] = field(default_factory=set)
 
-    def history_for(self, season: str | None) -> tuple[TeamMatchProjection, ...]:
+    def history_for(self, season: str | None, target_date: str) -> tuple[TeamMatchProjection, ...]:
+        if season is not None and season in self.closed_seasons:
+            raise HistoricalAsOfError("historical target season reappeared after a later season")
+        target = date.fromisoformat(target_date)
+        while self.schedule_date_buckets and (
+            target - date.fromisoformat(self.schedule_date_buckets[0][0])
+        ).days > 28:
+            self.schedule_date_buckets.pop(0)
         combined = {item.match_key: item for _, bucket in self.recent_date_buckets for item in bucket}
-        combined.update({item.match_key: item for item in self.seasons.get(season, ())})
+        combined.update({
+            item.match_key: item
+            for _, bucket in self.schedule_date_buckets
+            for item in bucket
+        })
+        if season is not None and season == self.current_season:
+            combined.update({item.match_key: item for item in self.current_season_matches})
         return tuple(sorted(combined.values(), key=lambda item: (item.match_date, item.match_key)))
 
     def add_date_bucket(self, match_date: str, items: Iterable[TeamMatchProjection]) -> None:
@@ -50,18 +67,28 @@ class TeamRollingHistory:
         if not bucket:
             return
         self.recent_date_buckets.append((match_date, bucket))
+        self.schedule_date_buckets.append((match_date, bucket))
         while len(self.recent_date_buckets) > 1 and sum(
             len(group) for _, group in self.recent_date_buckets[1:]
         ) >= 20:
             self.recent_date_buckets.pop(0)
-        for item in bucket:
-            self.seasons.setdefault(item.season, []).append(item)
-            self.season_last_date[item.season] = match_date
-        cutoff_ordinal = date.fromisoformat(match_date).toordinal() - 800
-        expired = [season for season, last in self.season_last_date.items() if date.fromisoformat(last).toordinal() < cutoff_ordinal]
-        for season in expired:
-            self.seasons.pop(season, None)
-            self.season_last_date.pop(season, None)
+        seasons = {
+            item.season
+            for item in bucket
+            if isinstance(item.season, str) and item.season and item.season == item.season.strip()
+        }
+        if len(seasons) > 1:
+            raise HistoricalAsOfError("ambiguous same-date season transition in rolling history")
+        if seasons:
+            season = next(iter(seasons))
+            if season != self.current_season:
+                if season in self.closed_seasons:
+                    raise HistoricalAsOfError("historical season reappeared after a later season")
+                if self.current_season is not None:
+                    self.closed_seasons.add(self.current_season)
+                self.current_season = season
+                self.current_season_matches = []
+            self.current_season_matches.extend(item for item in bucket if item.season == season)
 
 
 def _decode_pairs(value: str | None) -> tuple[tuple[str, str], ...]:
@@ -158,13 +185,14 @@ def build_corpus(
     try:
         with ReadOnlyHistoricalWarehouse(source_path) as source:
             destination = _create_output(temporary)
-            histories: dict[str, TeamRollingHistory] = defaultdict(TeamRollingHistory)
+            histories: dict[tuple[str, str, str], TeamRollingHistory] = defaultdict(TeamRollingHistory)
             try:
                 meta = {
                     "dataset": HISTORICAL_ASOF_DATASET,
                     "feature_registry_sha256": registry_sha,
                     "feature_registry_version": HISTORICAL_FEATURE_REGISTRY_VERSION,
                     "generation_schema_version": HISTORICAL_ASOF_SCHEMA_VERSION,
+                    "historical_team_identity_policy_id": HISTORICAL_TEAM_IDENTITY_POLICY_ID,
                     "source_schema_sql_sha256": source.schema_sql_sha256,
                     "source_warehouse_schema_version": source.schema_version,
                     "source_warehouse_sha256": source.sha256,
@@ -179,17 +207,25 @@ def build_corpus(
 
                 def process_batch(rows: list[sqlite3.Row]) -> None:
                     nonlocal count
-                    additions: dict[str, list[TeamMatchProjection]] = defaultdict(list)
+                    additions: dict[tuple[str, str, str], list[TeamMatchProjection]] = defaultdict(list)
                     for row in rows:
                         provenance = dict(_decode_pairs(row["provenance_pairs"]))
                         conflicts = _decode_fields(row["conflict_fields"])
                         home_projection = _projection(row, row["home_team"], provenance, conflicts)
                         away_projection = _projection(row, row["away_team"], provenance, conflicts)
+                        home_identity = historical_team_identity(
+                            row["scope"], row["competition_key"], row["home_team"]
+                        )
+                        away_identity = historical_team_identity(
+                            row["scope"], row["competition_key"], row["away_team"]
+                        )
                         if _selected(row, competition, start_date, end_date) and (limit is None or count < limit):
                             snapshot = _assemble_snapshot(
                                 row,
-                                histories[row["home_team"]].history_for(row["season"]),
-                                histories[row["away_team"]].history_for(row["season"]),
+                                histories[home_identity].history_for(row["season"], row["match_date"])
+                                if home_identity is not None else (),
+                                histories[away_identity].history_for(row["season"], row["match_date"])
+                                if away_identity is not None else (),
                                 source,
                                 registry_sha,
                             )
@@ -201,10 +237,12 @@ def build_corpus(
                             count += 1
                             if count % 500 == 0:
                                 destination.commit()
-                        additions[row["home_team"]].append(home_projection)
-                        additions[row["away_team"]].append(away_projection)
-                    for team, projections in additions.items():
-                        histories[team].add_date_bucket(rows[0]["match_date"], projections)
+                        if home_identity is not None:
+                            additions[home_identity].append(home_projection)
+                        if away_identity is not None:
+                            additions[away_identity].append(away_projection)
+                    for identity, projections in additions.items():
+                        histories[identity].add_date_bucket(rows[0]["match_date"], projections)
 
                 for row in _stream_rows(source.connection):
                     date.fromisoformat(row["match_date"])

@@ -30,8 +30,20 @@ Every snapshot stores:
 - generation schema version;
 - temporal-policy ID;
 - independently pinned historical feature-registry version and SHA-256.
+- historical team-identity policy `COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1`.
 
-There is no caller-supplied warehouse SHA parameter. Canonical snapshot construction is internal to the verified file/streaming builders.
+There is no caller-supplied warehouse SHA or schema-SQL path parameter. Canonical snapshot construction is internal to the verified file/streaming builders. Warehouse schema version 1 is independently pinned to repository schema SQL SHA-256 `d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f`; changed schema bytes or an unknown version fail closed.
+
+## Historical team identity
+
+The warehouse does not currently establish a globally unique cross-competition team ID. Its reviewed aliases are competition- and source-qualified. Phase 2 therefore uses the deliberately narrow policy:
+
+```text
+COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1
+(scope, competition_key, exact canonical team text)
+```
+
+All three components must be present, exact, and whitespace-canonical. Missing competition identity produces no usable history. Identical display text in another competition or scope is a different identity. This temporarily prevents league/cup/UEFA joins even when a human believes the club is the same; losing coverage is safer than contaminating evidence. No case folding, normalization, fuzzy matching, Levenshtein matching, or guessed alias is used by this feature layer. Direct and bulk builders share the same identity function and snapshots/corpus metadata retain its policy ID.
 
 The warehouse's canonical columns are used as-is. `warehouse_field_provenance` source keys and `warehouse_conflicts` counts remain attached to derived feature resolutions. A retained conflict is visible but does not cause this layer to choose a weaker alternative value; provider precedence remains the warehouse's responsibility. Derived projection SHA-256 values are explicitly identities of canonical team-perspective projections, not provider payload hashes.
 
@@ -72,6 +84,8 @@ Missing pairs are never synthesized. For example, a missing away xG is not zero.
 
 Each target home team has distinct `OVERALL` and `HOME_ONLY` summaries. Each target away team has distinct `OVERALL` and `AWAY_ONLY` summaries. Schedule features use overall chronology. Performance summaries cover last 5, 10, and 20 complete-boundary-date windows plus same-season season-to-date history.
 
+`season = NULL`, blank, or otherwise unusable is unknown—not an all-time season identifier. For such a target every `SEASON_TO_DATE` resolution is `MISSING`; last-5/10/20 and schedule features continue under their independent temporal rules.
+
 Every resolution is explicitly:
 
 - `AVAILABLE`: qualifying prior values exist and the finite derived value retains a deterministic contributing-projection identity;
@@ -94,7 +108,11 @@ python scripts/build_historical_asof_feature_corpus.py \
 
 Development filters are `--competition`, `--start-date`, `--end-date`, and `--limit`. They select target rows only; all strictly prior warehouse matches remain eligible history, so filters cannot change feature semantics.
 
-The builder streams matches in date order and handles each date as a batch. All target snapshots for date D are captured before D is added to rolling team state, which mechanically enforces DATE_STRICT and prevents same-day leakage. Rolling state retains complete date buckets through the last-20 boundary and bounded active season state. Output commits are batched. The process is linear in matches apart from indexed per-match provenance lookups and bounded feature aggregation; it does not rebuild history by scanning all prior matches for every target.
+The builder streams matches in date order and handles each date as a batch. All target snapshots for date D are captured before D is added to rolling team state, which mechanically enforces DATE_STRICT and prevents same-day leakage. Rolling state independently retains: complete date buckets through the last-20 boundary; every match in the previous 28 days for schedule counts; and the current usable exact season for season-to-date. A closed season reappearing after a later season fails closed rather than producing partial season state. Output commits are batched. The process is linear in matches apart from indexed per-match provenance lookups and bounded feature aggregation; it does not rebuild history by scanning all prior matches for every target.
+
+Conflict attribution is match- and feature-local. Each feature maps its required primitives to the exact home/away warehouse columns for each contributing projection, then counts only conflicts on those columns in that match. A conflict on an opponent-side field cannot become relevant merely because the same column is used by another match in the sample.
+
+Warehouse numeric validation rejects NaN, infinity, negative xG, and non-integer or negative count fields. The warehouse schema establishes xG as a non-negative quantity and count fields as exact counts. Possession remains finite-only because the repository does not yet prove one universal stored scale/domain; this layer does not invent a 0–1 or 0–100 bound.
 
 The output path must differ from both `athena_history.db` and operational `database/athena.db`. Existing output is refused unless `--replace` is explicit. No network code is called.
 
