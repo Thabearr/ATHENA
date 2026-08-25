@@ -17,7 +17,7 @@ permissions:
 
 jobs:
   mirror:
-    name: verify archive and mirror canonical receipt
+    name: verify archive or proven no-acquisition disposition
     if: ${{ github.event.workflow_run.event == 'schedule' && github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -41,14 +41,20 @@ jobs:
             echo "FATAL: release-receipt mirror implementation blob changed"
             exit 1
           }
+          recovery_actual="$(git hash-object domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)"
+          recovery_expected="73ed6ef7cdcc79b43373a78c60b5f2b6dd601095"
+          test "${recovery_actual}" = "${recovery_expected}" || {
+            echo "FATAL: reviewed no-acquisition proof implementation blob changed"
+            exit 1
+          }
           transport_actual="$(git hash-object scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)"
-          transport_expected="a9e6414288e98e9788b987aa9dd10ac35cc2d4cc"
+          transport_expected="69166bf26c32f2385c9b26d651292754dae85be0"
           test "${transport_actual}" = "${transport_expected}" || {
-            echo "FATAL: release-receipt Actions artifact transport blob changed"
+            echo "FATAL: release-receipt Actions transport/compatibility blob changed"
             exit 1
           }
 
-      - name: Verify release archive and mirror canonical receipt
+      - name: Verify release archive or proven no-acquisition disposition
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
