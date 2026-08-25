@@ -639,6 +639,7 @@ def _assemble_coverage_row(
     *,
     preferred_events: Sequence[Mapping[str, Any]],
     counts: Mapping[str, int],
+    unresolved_conflict_fields: Sequence[str] | None = None,
     asof_join_sha256: str | None = None,
     tactical_join_sha256: str | None = None,
 ) -> HistoricalTrainingCoverageRow:
@@ -648,9 +649,10 @@ def _assemble_coverage_row(
         raise HistoricalTrainingCoverageError("warehouse row ancestry mismatch")
     registry_sha, market_sha, generation_sha = validate_contracts()
     identity = _row_identity(row, source.sha256)
-    unresolved = [item[0] for item in source.connection.execute(
+    unresolved = (list(unresolved_conflict_fields)
+                  if unresolved_conflict_fields is not None else [item[0] for item in source.connection.execute(
         "SELECT DISTINCT field_name FROM warehouse_conflicts "
-        "WHERE match_key=? AND resolved=0 ORDER BY field_name", (row["match_key"],))]
+        "WHERE match_key=? AND resolved=0 ORDER BY field_name", (row["match_key"],))])
     row_values = dict(row.row_items)
     row_values["conflict_fields"] = chr(30).join(unresolved) if unresolved else None
     row_values["source_warehouse_sha256"] = source.sha256
@@ -788,6 +790,55 @@ def build_coverage_row_from_bound_source(
     )
 
 
+def build_coverage_rows_from_bound_source(
+    source: ReadOnlyHistoricalWarehouse,
+    rows: Sequence[Mapping[str, Any]],
+    *,
+    asof_corpus: "ReadOnlyOptionalJoinCorpus | None" = None,
+    tactical_corpus: "ReadOnlyOptionalJoinCorpus | None" = None,
+) -> tuple[HistoricalTrainingCoverageRow, ...]:
+    """Set-based replay for one bounded batch with no caller evidence inputs."""
+    for row in rows:
+        source._require_bound_row(row)
+    keys = [str(row["match_key"]) for row in rows]
+    if not keys:
+        return ()
+    placeholders = ",".join("?" for _ in keys)
+    events: dict[str, list[Mapping[str, Any]]] = {key: [] for key in keys}
+    for event in source.connection.execute(
+        f"SELECT * FROM warehouse_events_preferred WHERE match_key IN ({placeholders}) "
+        "ORDER BY match_key,event_type,source_key,minute,stoppage_minute,second", keys):
+        events[event["match_key"]].append(MappingProxyType(dict(event)))
+    counts: dict[str, dict[str, int]] = {key: {} for key in keys}
+    queries = {
+        "home_lineups": "SELECT l.match_key,count(*) n FROM warehouse_lineups l JOIN warehouse_matches m ON m.match_key=l.match_key WHERE l.match_key IN ({}) AND l.team=m.home_team GROUP BY l.match_key",
+        "away_lineups": "SELECT l.match_key,count(*) n FROM warehouse_lineups l JOIN warehouse_matches m ON m.match_key=l.match_key WHERE l.match_key IN ({}) AND l.team=m.away_team GROUP BY l.match_key",
+        "home_coaches": "SELECT c.match_key,count(*) n FROM warehouse_coaches c JOIN warehouse_matches m ON m.match_key=c.match_key WHERE c.match_key IN ({}) AND c.team=m.home_team GROUP BY c.match_key",
+        "away_coaches": "SELECT c.match_key,count(*) n FROM warehouse_coaches c JOIN warehouse_matches m ON m.match_key=c.match_key WHERE c.match_key IN ({}) AND c.team=m.away_team GROUP BY c.match_key",
+        "referees": "SELECT match_key,count(*) n FROM warehouse_officials WHERE match_key IN ({}) AND role='referee' GROUP BY match_key",
+        "advanced_sources": "SELECT match_key,count(*) n FROM warehouse_match_sources WHERE match_key IN ({}) AND has_advanced_stats=1 GROUP BY match_key",
+        "provenance": "SELECT match_key,count(*) n FROM warehouse_field_provenance WHERE match_key IN ({}) GROUP BY match_key",
+        "approved_event_sources": "SELECT match_key,count(*) n FROM warehouse_match_sources WHERE match_key IN ({}) AND has_events=1 AND source_key IN ('statsbomb_open','fjelstul_worldcup') GROUP BY match_key",
+    }
+    for name, template in queries.items():
+        for item in source.connection.execute(template.format(placeholders), keys):
+            counts[item["match_key"]][name] = int(item["n"])
+    conflicts: dict[str, list[str]] = {key: [] for key in keys}
+    for item in source.connection.execute(
+        f"SELECT DISTINCT match_key,field_name FROM warehouse_conflicts "
+        f"WHERE resolved=0 AND match_key IN ({placeholders}) ORDER BY match_key,field_name",
+        keys):
+        conflicts[item["match_key"]].append(str(item["field_name"]))
+    return tuple(_assemble_coverage_row(
+        source, row,
+        preferred_events=tuple(events[str(row["match_key"])]),
+        counts=MappingProxyType(counts[str(row["match_key"])]),
+        unresolved_conflict_fields=tuple(conflicts[str(row["match_key"])]),
+        asof_join_sha256=(None if asof_corpus is None else asof_corpus.join_identity(str(row["match_key"]))),
+        tactical_join_sha256=(None if tactical_corpus is None else tactical_corpus.join_identity(str(row["match_key"]))),
+    ) for row in rows)
+
+
 def build_historical_training_coverage_row(warehouse_path: Path, match_key: str) -> HistoricalTrainingCoverageRow:
     with ReadOnlyHistoricalWarehouse(Path(warehouse_path)) as source:
         row = source.target_match(match_key)
@@ -891,7 +942,8 @@ __all__ = [
     "MARKET_LABEL_REGISTRY", "MARKET_LABEL_REGISTRY_VERSION", "Resolution", "ResolutionStatus",
     "ReadOnlyOptionalJoinCorpus",
     "SCHEMA_VERSION", "SettlementState", "build_historical_training_coverage_row",
-    "build_coverage_row_from_bound_source", "calculate_canonical_market_semantics_sha256",
+    "build_coverage_row_from_bound_source", "build_coverage_rows_from_bound_source",
+    "calculate_canonical_market_semantics_sha256",
     "calculate_label_generation_contract_sha256", "calculate_market_label_registry_sha256",
     "settle_asian_handicap", "settle_total_goals", "validate_contracts",
 ]
