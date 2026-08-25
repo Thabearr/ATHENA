@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import datetime
+import hashlib
 import math
 import socket
 import urllib.request
@@ -30,6 +31,8 @@ from domain.fixture_model_features import (
 from domain.fixture_state_v2 import (
     DATASET_NAME,
     FIXTURE_STATE_FIELD_REGISTRY,
+    FIXTURE_STATE_FIELD_REGISTRY_SHA256,
+    FIXTURE_STATE_FIELD_REGISTRY_VERSION,
     SCHEMA_VERSION,
     FixtureStateBlocker,
     FixtureStateEvidenceIdentity,
@@ -42,6 +45,7 @@ from domain.fixture_state_v2 import (
     FixtureStateSourceClass,
     FixtureStateStatus,
     FixtureStateV2Error,
+    FixtureStateV2Snapshot,
     FixtureStateValueType,
     build_fixture_state_v2_snapshot,
     canonical_fixture_state_v2_bytes,
@@ -138,6 +142,7 @@ def test_canonical_serialization_and_sha_are_deterministic() -> None:
     assert canonical_fixture_state_v2_bytes(first) == canonical_fixture_state_v2_bytes(second)
     assert sha256_fixture_state_v2(first) == sha256_fixture_state_v2(second)
     assert first.canonical_sha256 == second.canonical_sha256
+    assert hashlib.sha256(canonical_fixture_state_v2_bytes(first)).hexdigest() == first.canonical_sha256
 
 
 def test_mutable_caller_input_cannot_mutate_snapshot_identity() -> None:
@@ -168,10 +173,8 @@ def test_future_source_fact_cannot_activate_unreviewed_field() -> None:
 
 
 def test_as_of_must_be_strictly_before_kickoff() -> None:
-    snapshot = _state()
-
-    with pytest.raises(FixtureStateV2Error, match="strictly before kickoff"):
-        dataclasses.replace(snapshot, as_of=snapshot.kickoff)
+    with pytest.raises(FixtureIntelligenceError, match="strictly before kickoff"):
+        build_snapshot("fixture-229", KICKOFF, KICKOFF, [])
 
 
 def test_evidence_after_as_of_is_rejected_before_state_build() -> None:
@@ -312,6 +315,69 @@ def test_mapped_field_rejects_wrong_evidence_field() -> None:
         )
 
 
+def test_snapshot_direct_construction_cannot_forge_bound_upstream_evidence() -> None:
+    upstream = _intelligence()
+    built = build_fixture_state_v2_snapshot(upstream)
+    forged_home_form = FixtureStateFieldResolution(
+        FixtureStateFieldId.HOME_FORM,
+        FixtureStateStatus.AVAILABLE,
+        0.7,
+        (),
+        (_evidence(),),
+    )
+    forged_fields = tuple(
+        forged_home_form if item.field_id is FixtureStateFieldId.HOME_FORM else item
+        for item in built.fields
+    )
+
+    with pytest.raises(FixtureStateV2Error, match="builder-only"):
+        FixtureStateV2Snapshot(
+            schema_version=built.schema_version,
+            dataset_name=built.dataset_name,
+            field_registry_version=built.field_registry_version,
+            field_registry_sha256=built.field_registry_sha256,
+            fixture_identifier=built.fixture_identifier,
+            kickoff=built.kickoff,
+            as_of=built.as_of,
+            source_snapshot_dataset_name=built.source_snapshot_dataset_name,
+            source_snapshot_schema_version=built.source_snapshot_schema_version,
+            source_snapshot_sha256=built.source_snapshot_sha256,
+            fields=forged_fields,
+            safety=built.safety,
+        )
+
+    assert _field(built, FixtureStateFieldId.HOME_FORM).status is FixtureStateStatus.MISSING
+    eligibility = evaluate_required_fields(
+        built,
+        (FixtureStateFieldId.HOME_FORM,),
+    )
+    assert eligibility.usable is False
+    assert eligibility.missing_field_ids == (FixtureStateFieldId.HOME_FORM,)
+
+
+def test_matching_but_absent_evidence_cannot_be_injected_after_construction() -> None:
+    built = _state()
+    forged_home_form = FixtureStateFieldResolution(
+        FixtureStateFieldId.HOME_FORM,
+        FixtureStateStatus.AVAILABLE,
+        0.7,
+        (),
+        (_evidence(),),
+    )
+    forged_fields = tuple(
+        forged_home_form if item.field_id is FixtureStateFieldId.HOME_FORM else item
+        for item in built.fields
+    )
+
+    with pytest.raises(FixtureStateV2Error, match="builder-only"):
+        dataclasses.replace(built, fields=forged_fields)
+
+    assert evaluate_required_fields(
+        built,
+        (FixtureStateFieldId.HOME_FORM,),
+    ).usable is False
+
+
 @pytest.mark.parametrize(
     ("field_id", "value"),
     (
@@ -399,8 +465,8 @@ def test_source_snapshot_identity_is_exactly_sha_bound() -> None:
     assert state.source_snapshot_dataset_name == INTELLIGENCE_DATASET_NAME
     assert state.source_snapshot_schema_version == INTELLIGENCE_SCHEMA_VERSION
     assert state.source_snapshot_sha256 == expected
-    changed = dataclasses.replace(state, source_snapshot_sha256="f" * 64)
-    assert changed.canonical_sha256 != state.canonical_sha256
+    with pytest.raises(FixtureStateV2Error, match="builder-only"):
+        dataclasses.replace(state, source_snapshot_sha256="f" * 64)
 
 
 def test_altering_upstream_snapshot_changes_v2_source_identity() -> None:
@@ -762,14 +828,18 @@ def test_source_coverage_registry_is_deterministic_but_not_state_identity() -> N
         "FIXTURE_STATE_FIELD_REGISTRY",
         changed_registry,
     ):
+        rebuilt = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
         assert snapshot.canonical_sha256 == before_sha
         assert canonical_fixture_state_v2_bytes(snapshot) == before_identity_bytes
+        assert rebuilt.canonical_sha256 == before_sha
+        assert rebuilt.field_registry_sha256 == snapshot.field_registry_sha256
         assert snapshot.to_dict()["source_coverage"] != before_coverage
 
 
-def test_stable_registry_semantic_change_changes_state_identity() -> None:
+def test_live_stable_registry_mutation_cannot_rewrite_existing_snapshot() -> None:
     snapshot = _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
     before_sha = snapshot.canonical_sha256
+    before_bytes = canonical_fixture_state_v2_bytes(snapshot)
     changed_registry = tuple(
         dataclasses.replace(
             definition,
@@ -785,4 +855,60 @@ def test_stable_registry_semantic_change_changes_state_identity() -> None:
         "FIXTURE_STATE_FIELD_REGISTRY",
         changed_registry,
     ):
-        assert snapshot.canonical_sha256 != before_sha
+        assert snapshot.canonical_sha256 == before_sha
+        assert canonical_fixture_state_v2_bytes(snapshot) == before_bytes
+        with pytest.raises(FixtureStateV2Error, match="deliberate version/identity"):
+            _state(_fact(IntelligenceCategory.FORM, "home_form", 0.7))
+
+
+def test_deliberate_stable_registry_change_requires_new_version_and_identity() -> None:
+    upstream_fact = _fact(IntelligenceCategory.FORM, "home_form", 0.7)
+    original = _state(upstream_fact)
+    changed_registry = tuple(
+        dataclasses.replace(
+            definition,
+            family=FixtureStateFieldFamily.CONTEXT,
+        )
+        if definition.field_id is FixtureStateFieldId.HOME_FORM
+        else definition
+        for definition in FIXTURE_STATE_FIELD_REGISTRY
+    )
+    next_version = FIXTURE_STATE_FIELD_REGISTRY_VERSION + 1
+    next_sha256 = fixture_state_v2._field_registry_sha256(
+        changed_registry,
+        next_version,
+    )
+
+    with patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY",
+        changed_registry,
+    ), patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY_VERSION",
+        next_version,
+    ), patch.object(
+        fixture_state_v2,
+        "FIXTURE_STATE_FIELD_REGISTRY_SHA256",
+        next_sha256,
+    ):
+        changed = _state(upstream_fact)
+
+    assert changed.field_registry_version == next_version
+    assert changed.field_registry_sha256 == next_sha256
+    assert changed.canonical_sha256 != original.canonical_sha256
+    assert original.field_registry_version == FIXTURE_STATE_FIELD_REGISTRY_VERSION
+    assert original.field_registry_sha256 == FIXTURE_STATE_FIELD_REGISTRY_SHA256
+
+
+def test_frozen_field_registry_identity_is_deterministic() -> None:
+    expected = fixture_state_v2._field_registry_sha256(
+        FIXTURE_STATE_FIELD_REGISTRY,
+        FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+    )
+    first = _state()
+    second = _state()
+
+    assert expected == FIXTURE_STATE_FIELD_REGISTRY_SHA256
+    assert first.field_registry_version == second.field_registry_version == 1
+    assert first.field_registry_sha256 == second.field_registry_sha256 == expected
