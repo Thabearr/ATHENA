@@ -266,13 +266,10 @@ def build_corpus(warehouse_path: Path, output_path: Path, *, asof_corpus: Path |
                     import itertools
                     selected = itertools.islice(selected, limit)
                 for batch in _chunks(selected):
-                    events, counts_by_key = _batch_material(source, batch)
                     for row in batch:
                         key = row["match_key"]
                         result = build_coverage_row_from_bound_source(
-                            source, row, preferred_events=events[key], counts=counts_by_key[key],
-                            asof_join_sha256=None if asof is None else asof.join_identity(key),
-                            tactical_join_sha256=None if tactical is None else tactical.join_identity(key))
+                            source, row, asof_corpus=asof, tactical_corpus=tactical)
                         payload = result.canonical_bytes.decode("utf-8")
                         destination.execute("INSERT INTO match_evidence_coverage VALUES(?,?,?,?,?,?,?,?)",
                             (result.match_key, result.match_date, result.scope, result.competition_key,
