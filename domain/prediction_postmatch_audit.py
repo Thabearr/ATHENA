@@ -26,7 +26,7 @@ SCHEMA_VERSION = 1
 DATASET_NAME = "athena-prediction-postmatch-field-trial-v1"
 IMPORT_DATASET_NAME = "athena-prediction-field-trial-import-v1"
 IMPORTER_ID = "athena-prediction-field-trial-importer-v1"
-AUTHORITATIVE_BASE_SHA = "a9bcba9271dd516f4a5754f3128af0178fcffff9"
+CONTRACT_ORIGIN_SHA = "a9bcba9271dd516f4a5754f3128af0178fcffff9"
 
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _GIT_SHA_RE = re.compile(r"^[0-9a-f]{40}$", flags=re.ASCII)
@@ -96,6 +96,11 @@ class ReconstructionStatus(str, Enum):
     PARTIAL = "PARTIAL"
     SUMMARY_ONLY = "SUMMARY_ONLY"
     UNKNOWN = "UNKNOWN"
+
+
+class LegReconstructionState(str, Enum):
+    RECONSTRUCTED = "RECONSTRUCTED"
+    UNRESOLVED = "UNRESOLVED"
 
 
 def _fail(message: str) -> PredictionPostMatchAuditError:
@@ -544,6 +549,7 @@ class PostMatchSettlementRecord:
     source_evidence_reference: EvidencedValue
     settlement_outcome: SettlementOutcome
     settlement_evidence_references: tuple[str, ...]
+    verification_state: VerificationState
 
     def __post_init__(self) -> None:
         for name in (
@@ -571,12 +577,19 @@ class PostMatchSettlementRecord:
             _parse_timestamp_text(self.observed_at.value, "settlement observed_at")
         if type(self.settlement_outcome) is not SettlementOutcome:
             raise _fail("settlement outcome must be typed")
+        if type(self.verification_state) is not VerificationState:
+            raise _fail("settlement verification_state must be typed")
         refs = _strict_refs(
             self.settlement_evidence_references,
             "settlement_evidence_references",
         )
-        if self.settlement_outcome is not SettlementOutcome.UNKNOWN and not refs:
-            raise _fail("a non-UNKNOWN settlement requires evidence")
+        if self.settlement_outcome is not SettlementOutcome.UNKNOWN:
+            if not refs:
+                raise _fail("a non-UNKNOWN settlement requires evidence")
+            if self.verification_state is VerificationState.UNKNOWN:
+                raise _fail(
+                    "a non-UNKNOWN settlement requires an explicit verification state"
+                )
         object.__setattr__(self, "settlement_evidence_references", refs)
 
     def to_dict(self) -> dict[str, Any]:
@@ -589,6 +602,7 @@ class PostMatchSettlementRecord:
             "source_evidence_reference": self.source_evidence_reference.to_dict(),
             "settlement_outcome": self.settlement_outcome.value,
             "settlement_evidence_references": list(self.settlement_evidence_references),
+            "verification_state": self.verification_state.value,
         }
 
 
@@ -678,9 +692,43 @@ class FieldTrialLeg:
     def leg_identity(self) -> str:
         return self.pre_match_decision.content_sha256
 
+    @property
+    def reconstruction_blockers(self) -> tuple[str, ...]:
+        """Explain why a recorded shell is not a reconstructed prediction leg."""
+
+        decision = self.pre_match_decision
+        blockers: list[str] = []
+        if decision.fixture_identity.status is not EvidenceAvailability.AVAILABLE:
+            blockers.append("EVIDENCE_BACKED_FIXTURE_IDENTITY_MISSING")
+        if decision.selected_candidate_id.status is not EvidenceAvailability.AVAILABLE:
+            blockers.append("EVIDENCE_BACKED_SELECTED_CANDIDATE_MISSING")
+        else:
+            selected_id = decision.selected_candidate_id.value
+            selected = next(
+                (
+                    candidate
+                    for candidate in decision.eligible_market_candidates
+                    if candidate.candidate_id == selected_id
+                ),
+                None,
+            )
+            if selected is None or not selected.pre_match_evidence_references:
+                blockers.append("EVIDENCE_BACKED_SELECTED_MARKET_SELECTION_MISSING")
+        return tuple(blockers)
+
+    @property
+    def reconstruction_state(self) -> LegReconstructionState:
+        return (
+            LegReconstructionState.UNRESOLVED
+            if self.reconstruction_blockers
+            else LegReconstructionState.RECONSTRUCTED
+        )
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "leg_identity": self.leg_identity,
+            "reconstruction_state": self.reconstruction_state.value,
+            "reconstruction_blockers": list(self.reconstruction_blockers),
             "pre_match_decision": self.pre_match_decision.to_dict(),
             "post_match_settlement": self.post_match_settlement.to_dict(),
             "post_match_attribution": self.post_match_attribution.to_dict(),
@@ -790,14 +838,16 @@ class DiagnosticNote:
 @dataclasses.dataclass(frozen=True)
 class ImportIdentity:
     importer_id: str
-    base_commit_sha: str
+    contract_origin_sha: str
+    execution_commit_sha: str
     source_repository_path: str
     source_sha256: str
     source_size: int
 
     def __post_init__(self) -> None:
         _strict_string(self.importer_id, "importer_id", identifier=False)
-        _strict_git_sha(self.base_commit_sha, "base_commit_sha")
+        _strict_git_sha(self.contract_origin_sha, "contract_origin_sha")
+        _strict_git_sha(self.execution_commit_sha, "execution_commit_sha")
         _strict_string(self.source_repository_path, "source_repository_path")
         _strict_sha256(self.source_sha256, "source_sha256")
         if type(self.source_size) is not int or self.source_size <= 0:
@@ -806,7 +856,8 @@ class ImportIdentity:
     def _content_dict(self) -> dict[str, Any]:
         return {
             "importer_id": self.importer_id,
-            "base_commit_sha": self.base_commit_sha,
+            "contract_origin_sha": self.contract_origin_sha,
+            "execution_commit_sha": self.execution_commit_sha,
             "source_repository_path": self.source_repository_path,
             "source_sha256": self.source_sha256,
             "source_size": self.source_size,
@@ -885,12 +936,12 @@ class PredictionFieldTrial:
         identities = [leg.leg_identity for leg in self.legs]
         if len(set(identities)) != len(identities):
             raise _fail("duplicate pre-match leg identity")
-        unresolved = declared - len(self.legs)
+        unresolved = declared - self.reconstructed_leg_count
         expected_status = (
             ReconstructionStatus.COMPLETE
             if unresolved == 0
             else ReconstructionStatus.SUMMARY_ONLY
-            if not self.legs
+            if self.reconstructed_leg_count == 0
             else ReconstructionStatus.PARTIAL
         )
         if self.reconstruction_status is not expected_status:
@@ -922,6 +973,11 @@ class PredictionFieldTrial:
             for candidate in leg.pre_match_decision.eligible_market_candidates:
                 refs.extend(candidate.pre_match_evidence_references)
             attribution = leg.post_match_attribution
+            settlement = leg.post_match_settlement
+            if settlement.verification_state is VerificationState.VERIFIED:
+                verified_reference_groups.append(
+                    settlement.settlement_evidence_references
+                )
             if attribution.verification_state is VerificationState.VERIFIED:
                 verified_reference_groups.append(attribution.evidence_references)
         missing_refs = sorted(set(refs).difference(source_by_id))
@@ -947,7 +1003,19 @@ class PredictionFieldTrial:
 
     @property
     def reconstructed_leg_count(self) -> int:
+        return len(self.reconstructed_legs)
+
+    @property
+    def recorded_leg_count(self) -> int:
         return len(self.legs)
+
+    @property
+    def reconstructed_legs(self) -> tuple[FieldTrialLeg, ...]:
+        return tuple(
+            leg
+            for leg in self.legs
+            if leg.reconstruction_state is LegReconstructionState.RECONSTRUCTED
+        )
 
     @property
     def unresolved_leg_count(self) -> int:
@@ -955,7 +1023,7 @@ class PredictionFieldTrial:
 
     @property
     def reconstructed_settlement_summary(self) -> SettlementSummary:
-        return SettlementSummary.from_legs(self.legs)
+        return SettlementSummary.from_legs(self.reconstructed_legs)
 
     def _content_dict(self) -> dict[str, Any]:
         return {
@@ -964,6 +1032,7 @@ class PredictionFieldTrial:
             "trial_key": self.trial_key,
             "trial_identity": self.trial_identity,
             "declared_leg_count": self.declared_leg_count,
+            "recorded_leg_count": self.recorded_leg_count,
             "reconstructed_leg_count": self.reconstructed_leg_count,
             "unresolved_leg_count": self.unresolved_leg_count,
             "reconstruction_status": self.reconstruction_status.value,
@@ -1163,6 +1232,7 @@ _SETTLEMENT_KEYS = frozenset(
         "source_evidence_reference",
         "settlement_outcome",
         "settlement_evidence_references",
+        "verification_state",
     }
 )
 
@@ -1174,8 +1244,9 @@ def _settlement_from_mapping(value: Any, label: str) -> PostMatchSettlementRecor
         raise _fail(f"{label}.settlement_evidence_references must be an exact JSON array")
     try:
         outcome = SettlementOutcome(payload["settlement_outcome"])
+        verification = VerificationState(payload["verification_state"])
     except (TypeError, ValueError) as exc:
-        raise _fail(f"{label}.settlement_outcome is invalid") from exc
+        raise _fail(f"{label} settlement enum is invalid") from exc
     names = (
         "final_home_score",
         "final_away_score",
@@ -1187,6 +1258,7 @@ def _settlement_from_mapping(value: Any, label: str) -> PostMatchSettlementRecor
     return PostMatchSettlementRecord(
         settlement_outcome=outcome,
         settlement_evidence_references=tuple(refs),
+        verification_state=verification,
         **{
             name: _evidenced_from_mapping(payload[name], f"{label}.{name}")
             for name in names
@@ -1368,6 +1440,7 @@ def build_prediction_field_trial_from_import(
     source_repository_path: str,
     source_sha256: str,
     source_size: int,
+    execution_commit_sha: str,
 ) -> PredictionFieldTrial:
     """Build one deterministic audit object from strict local import JSON."""
 
@@ -1387,11 +1460,15 @@ def build_prediction_field_trial_from_import(
         for index, item in enumerate(payload["legs"])
     )
     declared = _strict_count(payload["declared_leg_count"], "declared_leg_count")
+    reconstructed_count = sum(
+        leg.reconstruction_state is LegReconstructionState.RECONSTRUCTED
+        for leg in legs
+    )
     status = (
         ReconstructionStatus.COMPLETE
-        if len(legs) == declared
+        if reconstructed_count == declared
         else ReconstructionStatus.SUMMARY_ONLY
-        if not legs
+        if reconstructed_count == 0
         else ReconstructionStatus.PARTIAL
     )
     return PredictionFieldTrial(
@@ -1411,7 +1488,11 @@ def build_prediction_field_trial_from_import(
         ),
         creation_import_identity=ImportIdentity(
             importer_id=IMPORTER_ID,
-            base_commit_sha=AUTHORITATIVE_BASE_SHA,
+            contract_origin_sha=CONTRACT_ORIGIN_SHA,
+            execution_commit_sha=_strict_git_sha(
+                execution_commit_sha,
+                "execution_commit_sha",
+            ),
             source_repository_path=source_repository_path,
             source_sha256=_strict_sha256(source_sha256, "source_sha256"),
             source_size=source_size,
@@ -1422,7 +1503,7 @@ def build_prediction_field_trial_from_import(
 
 
 __all__ = [
-    "AUTHORITATIVE_BASE_SHA",
+    "CONTRACT_ORIGIN_SHA",
     "AttributionFactor",
     "DATASET_NAME",
     "DecisionQuality",
@@ -1435,6 +1516,7 @@ __all__ = [
     "IMPORTER_ID",
     "IMPORT_DATASET_NAME",
     "ImportIdentity",
+    "LegReconstructionState",
     "MarketCandidate",
     "PostMatchAttribution",
     "PostMatchSettlementRecord",
