@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import dataclasses
 import hashlib
+import importlib
 import json
 from pathlib import Path
 
@@ -252,3 +253,10 @@ def test_issuance_state_and_unsafe_assembly_are_not_exposed_as_module_state(
         assert "_issued_bound_rows" not in vars(source)
         assert "_issued_targets" not in vars(source)
         assert "_issued_projections" not in vars(source)
+
+
+def test_normal_import_of_internal_impl_resolves_to_hardened_facade() -> None:
+    direct = importlib.import_module("domain._historical_asof_features_impl")
+    assert direct is haf
+    assert direct._assemble_snapshot is haf._assemble_snapshot
+    assert direct.ReadOnlyHistoricalWarehouse is haf.ReadOnlyHistoricalWarehouse
