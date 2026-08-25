@@ -26,6 +26,10 @@ _training_coverage_post_hardening = importlib.import_module(
     "._historical_training_coverage_post_hardening", __name__
 )
 _training_coverage_post_hardening.install(_historical_training_coverage)
+_training_coverage_row_issuance = importlib.import_module(
+    "._historical_training_coverage_row_issuance", __name__
+)
+_training_coverage_row_issuance.install(_historical_training_coverage)
 _historical_training_coverage_impl = _historical_training_coverage
 sys.modules[
     f"{__name__}._historical_training_coverage_impl"
