@@ -27,6 +27,7 @@ from domain.historical_training_coverage import (
     HistoricalTrainingCoverageError,
     ReadOnlyOptionalJoinCorpus,
     build_coverage_row_from_bound_source,
+    build_coverage_rows_from_bound_source,
     validate_contracts,
 )
 
@@ -266,10 +267,10 @@ def build_corpus(warehouse_path: Path, output_path: Path, *, asof_corpus: Path |
                     import itertools
                     selected = itertools.islice(selected, limit)
                 for batch in _chunks(selected):
-                    for row in batch:
+                    results = build_coverage_rows_from_bound_source(
+                        source, batch, asof_corpus=asof, tactical_corpus=tactical)
+                    for row, result in zip(batch, results):
                         key = row["match_key"]
-                        result = build_coverage_row_from_bound_source(
-                            source, row, asof_corpus=asof, tactical_corpus=tactical)
                         payload = result.canonical_bytes.decode("utf-8")
                         destination.execute("INSERT INTO match_evidence_coverage VALUES(?,?,?,?,?,?,?,?)",
                             (result.match_key, result.match_date, result.scope, result.competition_key,
