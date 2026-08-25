@@ -41,6 +41,12 @@ jobs:
             echo "FATAL: release-receipt mirror implementation blob changed"
             exit 1
           }
+          recovery_actual="$(git hash-object domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)"
+          recovery_expected="73ed6ef7cdcc79b43373a78c60b5f2b6dd601095"
+          test "${recovery_actual}" = "${recovery_expected}" || {
+            echo "FATAL: reviewed no-acquisition proof implementation blob changed"
+            exit 1
+          }
           transport_actual="$(git hash-object scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)"
           transport_expected="69166bf26c32f2385c9b26d651292754dae85be0"
           test "${transport_actual}" = "${transport_expected}" || {
