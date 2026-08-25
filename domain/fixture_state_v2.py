@@ -34,6 +34,7 @@ from domain.fixture_intelligence import (
 DATASET_NAME = "athena-fixture-state-v2"
 SCHEMA_VERSION = 2
 SOURCE_COVERAGE_SCHEMA_VERSION = 1
+FIXTURE_STATE_FIELD_REGISTRY_VERSION = 1
 
 
 class FixtureStateV2Error(ValueError):
@@ -610,6 +611,58 @@ if (
 ):
     raise RuntimeError("Fixture State v2 registry must define every field exactly once")
 
+
+def _canonical_bytes(value: Any) -> bytes:
+    try:
+        return (
+            json.dumps(
+                value,
+                ensure_ascii=False,
+                sort_keys=True,
+                allow_nan=False,
+                separators=(",", ":"),
+            )
+            + "\n"
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise FixtureStateV2Error("Fixture State v2 canonical serialization failed") from exc
+
+
+def _field_registry_identity_dict(
+    registry: tuple[FixtureStateFieldDefinition, ...],
+    version: int,
+) -> dict[str, Any]:
+    if type(registry) is not tuple or any(
+        type(item) is not FixtureStateFieldDefinition for item in registry
+    ):
+        raise FixtureStateV2Error("field registry must be an exact definition tuple")
+    if type(version) is not int or version <= 0:
+        raise FixtureStateV2Error("field registry version must be a positive int")
+    ids = tuple(item.field_id for item in registry)
+    if ids != tuple(sorted(FixtureStateFieldId, key=lambda item: item.value)):
+        raise FixtureStateV2Error(
+            "field registry identity requires one sorted definition per field"
+        )
+    return {
+        "field_registry_version": version,
+        "fields": [item.to_identity_dict() for item in registry],
+    }
+
+
+def _field_registry_sha256(
+    registry: tuple[FixtureStateFieldDefinition, ...],
+    version: int,
+) -> str:
+    return hashlib.sha256(
+        _canonical_bytes(_field_registry_identity_dict(registry, version))
+    ).hexdigest()
+
+
+FIXTURE_STATE_FIELD_REGISTRY_SHA256 = _field_registry_sha256(
+    FIXTURE_STATE_FIELD_REGISTRY,
+    FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+)
+
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$", flags=re.ASCII)
 _STRUCTURED_KEY_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$", flags=re.ASCII)
 _SAFETY_KEYS = frozenset(
@@ -957,10 +1010,12 @@ def _default_safety() -> dict[str, bool]:
     return {key: False for key in sorted(_SAFETY_KEYS)}
 
 
-@dataclasses.dataclass(frozen=True)
+@dataclasses.dataclass(frozen=True, init=False)
 class FixtureStateV2Snapshot:
     schema_version: int
     dataset_name: str
+    field_registry_version: int
+    field_registry_sha256: str
     fixture_identifier: str
     kickoff: datetime.datetime
     as_of: datetime.datetime
@@ -970,11 +1025,76 @@ class FixtureStateV2Snapshot:
     fields: Tuple[FixtureStateFieldResolution, ...]
     safety: Mapping[str, bool]
 
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        raise FixtureStateV2Error(
+            "FixtureStateV2Snapshot is builder-only; replay an exact "
+            "FixtureIntelligenceSnapshot"
+        )
+
+    @classmethod
+    def _from_intelligence_snapshot(
+        cls,
+        intelligence_snapshot: FixtureIntelligenceSnapshot,
+    ) -> FixtureStateV2Snapshot:
+        if type(intelligence_snapshot) is not FixtureIntelligenceSnapshot:
+            raise FixtureStateV2Error(
+                "intelligence_snapshot must be exact FixtureIntelligenceSnapshot"
+            )
+        if intelligence_snapshot.as_of >= intelligence_snapshot.kickoff:
+            raise FixtureStateV2Error("as_of must be strictly before kickoff")
+        if any(
+            fact.observed_at > intelligence_snapshot.as_of
+            for fact in intelligence_snapshot.facts
+        ):
+            raise FixtureStateV2Error("evidence observed after as_of cannot enter state")
+
+        registry_sha256 = _field_registry_sha256(
+            FIXTURE_STATE_FIELD_REGISTRY,
+            FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+        )
+        if registry_sha256 != FIXTURE_STATE_FIELD_REGISTRY_SHA256:
+            raise FixtureStateV2Error(
+                "live stable field registry changed without a deliberate "
+                "version/identity update"
+            )
+        fields = tuple(
+            _resolution_for(intelligence_snapshot, definition)
+            for definition in FIXTURE_STATE_FIELD_REGISTRY
+        )
+        source_sha256 = sha256_bytes(canonical_snapshot_bytes(intelligence_snapshot))
+
+        instance = object.__new__(cls)
+        values = {
+            "schema_version": SCHEMA_VERSION,
+            "dataset_name": DATASET_NAME,
+            "field_registry_version": FIXTURE_STATE_FIELD_REGISTRY_VERSION,
+            "field_registry_sha256": registry_sha256,
+            "fixture_identifier": intelligence_snapshot.fixture_identifier,
+            "kickoff": intelligence_snapshot.kickoff,
+            "as_of": intelligence_snapshot.as_of,
+            "source_snapshot_dataset_name": intelligence_snapshot.dataset_name,
+            "source_snapshot_schema_version": intelligence_snapshot.schema_version,
+            "source_snapshot_sha256": source_sha256,
+            "fields": fields,
+            "safety": _default_safety(),
+        }
+        for name, value in values.items():
+            object.__setattr__(instance, name, value)
+        instance.__post_init__()
+        return instance
+
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != SCHEMA_VERSION:
             raise FixtureStateV2Error(f"schema_version must be exact int {SCHEMA_VERSION}")
         if self.dataset_name != DATASET_NAME:
             raise FixtureStateV2Error(f"dataset_name must be {DATASET_NAME}")
+        if type(self.field_registry_version) is not int or self.field_registry_version <= 0:
+            raise FixtureStateV2Error("field_registry_version must be a positive int")
+        if (
+            type(self.field_registry_sha256) is not str
+            or _SHA256_RE.fullmatch(self.field_registry_sha256) is None
+        ):
+            raise FixtureStateV2Error("field_registry_sha256 must be exact SHA-256")
         _exact_string(self.fixture_identifier)
         kickoff = _utc(self.kickoff, "kickoff")
         as_of = _utc(self.as_of, "as_of")
@@ -1024,15 +1144,14 @@ class FixtureStateV2Snapshot:
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
+            "field_registry_version": self.field_registry_version,
+            "field_registry_sha256": self.field_registry_sha256,
             "fixture_identifier": self.fixture_identifier,
             "kickoff": _iso(self.kickoff),
             "as_of": _iso(self.as_of),
             "source_snapshot_dataset_name": self.source_snapshot_dataset_name,
             "source_snapshot_schema_version": self.source_snapshot_schema_version,
             "source_snapshot_sha256": self.source_snapshot_sha256,
-            "field_registry": [
-                item.to_identity_dict() for item in FIXTURE_STATE_FIELD_REGISTRY
-            ],
             "fields": [item.to_dict() for item in self.fields],
             "coverage": self.coverage.to_dict(),
             "safety": dict(self.safety),
@@ -1064,22 +1183,6 @@ class FixtureStateV2Snapshot:
         result = self._content_dict()
         result["canonical_sha256"] = self.canonical_sha256
         return result
-
-
-def _canonical_bytes(value: Any) -> bytes:
-    try:
-        return (
-            json.dumps(
-                value,
-                ensure_ascii=False,
-                sort_keys=True,
-                allow_nan=False,
-                separators=(",", ":"),
-            )
-            + "\n"
-        ).encode("utf-8")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise FixtureStateV2Error("Fixture State v2 canonical serialization failed") from exc
 
 
 def _resolution_for(
@@ -1169,32 +1272,7 @@ def build_fixture_state_v2_snapshot(
     intelligence_snapshot: FixtureIntelligenceSnapshot,
 ) -> FixtureStateV2Snapshot:
     """Resolve the complete v2 registry from one preserved pre-match snapshot."""
-
-    if type(intelligence_snapshot) is not FixtureIntelligenceSnapshot:
-        raise FixtureStateV2Error(
-            "intelligence_snapshot must be exact FixtureIntelligenceSnapshot"
-        )
-    if intelligence_snapshot.as_of >= intelligence_snapshot.kickoff:
-        raise FixtureStateV2Error("as_of must be strictly before kickoff")
-    if any(fact.observed_at > intelligence_snapshot.as_of for fact in intelligence_snapshot.facts):
-        raise FixtureStateV2Error("evidence observed after as_of cannot enter state")
-    fields = tuple(
-        _resolution_for(intelligence_snapshot, definition)
-        for definition in FIXTURE_STATE_FIELD_REGISTRY
-    )
-    source_sha = sha256_bytes(canonical_snapshot_bytes(intelligence_snapshot))
-    return FixtureStateV2Snapshot(
-        schema_version=SCHEMA_VERSION,
-        dataset_name=DATASET_NAME,
-        fixture_identifier=intelligence_snapshot.fixture_identifier,
-        kickoff=intelligence_snapshot.kickoff,
-        as_of=intelligence_snapshot.as_of,
-        source_snapshot_dataset_name=intelligence_snapshot.dataset_name,
-        source_snapshot_schema_version=intelligence_snapshot.schema_version,
-        source_snapshot_sha256=source_sha,
-        fields=fields,
-        safety=_default_safety(),
-    )
+    return FixtureStateV2Snapshot._from_intelligence_snapshot(intelligence_snapshot)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -1288,6 +1366,8 @@ __all__ = [
     "DATASET_NAME",
     "SCHEMA_VERSION",
     "SOURCE_COVERAGE_SCHEMA_VERSION",
+    "FIXTURE_STATE_FIELD_REGISTRY_VERSION",
+    "FIXTURE_STATE_FIELD_REGISTRY_SHA256",
     "FIXTURE_STATE_FIELD_REGISTRY",
     "FixtureStateAvailabilityExpectation",
     "FixtureStateBlocker",
