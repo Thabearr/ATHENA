@@ -180,13 +180,31 @@ or motivation becomes normal. Defaulting and shrinkage belong downstream.
 
 Fixture State v2 is pre-match only: `as_of` must be strictly earlier than
 kickoff, and every retained evidence observation must be at or before `as_of`.
+Canonical snapshots are builder-only. `FixtureStateV2Snapshot` has no public
+initializer; `build_fixture_state_v2_snapshot` accepts one exact
+`FixtureIntelligenceSnapshot`, replays the complete registry against its facts,
+computes the upstream canonical SHA itself, and invokes the private constructor.
+Callers cannot provide a source SHA, fields, or evidence resolutions, and
+`dataclasses.replace` cannot manufacture a canonical replacement. Thus an
+evidence identity absent from the SHA-bound upstream snapshot cannot be injected
+to make a required field usable.
+
 The source fixture identity, kickoff, `as_of`, upstream fixture-intelligence
 dataset name, upstream schema version, and canonical upstream snapshot SHA-256
 are embedded in the state. Stable registry semantics—field ID, family, value
-type, exact activation binding, derivation slot, and availability
-expectation—join resolutions, coverage, provenance, and safety in the canonical
-SHA-256 identity. Changing the upstream snapshot or stable field semantics
-changes the state identity.
+type, exact activation binding, derivation slot, and availability expectation—
+have their own deterministic registry identity. The current frozen identity is
+registry version `1`, SHA-256
+`330e81a3fd8dc88c8fee98544d7f63e9d429c43c5d32ca761da5227e34de588a`.
+Each snapshot stores that version and SHA alongside its resolutions, coverage,
+provenance, and safety mapping. Canonical bytes read the stored identity and
+never re-read the live registry, so later module mutation cannot retroactively
+change an existing snapshot.
+
+The builder recomputes the live stable-registry SHA before every construction.
+A stable semantic change with the old version/SHA fails closed. A deliberate
+change must provide a new registry version and matching deterministic identity;
+only newly built snapshots receive it.
 
 Mutable source-acquisition progress is emitted separately as
 `source_coverage`, schema version `1`. Preferred-source planning,
