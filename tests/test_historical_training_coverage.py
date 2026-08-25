@@ -5,7 +5,6 @@ import json
 import socket
 import sqlite3
 from pathlib import Path
-from types import MappingProxyType
 
 import pytest
 
@@ -64,11 +63,13 @@ def _add_events(path: Path, key: str, events: list[dict], *, source="statsbomb_o
                   "event_type": "goal", "team": "Home", "minute": index + 1,
                   "stoppage_minute": 0, "second": 0, "period": "1",
                   "is_penalty": 0, "is_own_goal": 0, **event}
+        details_json = values.pop("details_json", "{}")
+        values["details_json"] = details_json
         connection.execute("""INSERT INTO warehouse_events(
             event_key,match_key,source_key,event_type,team,minute,stoppage_minute,second,
             period,is_penalty,is_own_goal,details_json) VALUES(
             :event_key,:match_key,:source_key,:event_type,:team,:minute,:stoppage_minute,:second,
-            :period,:is_penalty,:is_own_goal,'{}')""", values)
+            :period,:is_penalty,:is_own_goal,:details_json)""", values)
     connection.commit(); connection.close()
 
 
@@ -76,7 +77,7 @@ def test_independent_registry_market_and_generation_pins_fail_closed():
     registry, market, generation = validate_contracts()
     assert registry == "3eff35745371543bf6ff20c6c7e8550835382c04eba6583b8dbded932753e87b"
     assert market == "b6a1de9415e27d9ed0e7394012435a60ca733187d41c951fd53d4a035ae84f11"
-    assert generation == "b60bbaaff1819d9eea09fae514d19c82af99878e7f9f799bb7efedbcc3149ee5"
+    assert generation == "cf6434c6ad1a16e4ff8b6ca05a3a2c4d3b4d3d2c2fce60dd293640b40219b7ab"
     changed = list(htc.MARKET_LABEL_REGISTRY)
     changed[0] = dataclasses.replace(changed[0], derivation="semantic drift")
     assert calculate_market_label_registry_sha256(changed, 1) != registry
@@ -178,7 +179,7 @@ def test_complete_preferred_path_and_overlapping_early_payout(tmp_path: Path):
     assert labels["MATCH_RESULT_1UP_DRAW"].value is True
     assert labels["MATCH_RESULT_2UP_HOME"].value is True
     assert labels["MATCH_RESULT_2UP_DRAW"].value is True
-    assert labels["MATCH_RESULT"].value == "DRAW"  # ET/PEN never replace regulation FT.
+    assert labels["MATCH_RESULT"].value == "DRAW"
 
 
 def test_extra_period_aggregate_capability_is_blocked_but_score_is_usable(tmp_path: Path):
@@ -339,6 +340,9 @@ def test_summary_preserves_quality_denominators_and_all_output_tables(tmp_path: 
     assert {"corpus_meta", "match_evidence_coverage", "evidence_capability_resolutions",
             "market_label_resolutions", "coverage_summary"} <= tables
     assert connection.execute("SELECT count(*) FROM coverage_summary WHERE group_type='DATA_QUALITY'").fetchone()[0] > 0
+    assert connection.execute("SELECT count(*) FROM coverage_summary WHERE group_type='DATA_QUALITY' AND item_type='MARKET_FAMILY'").fetchone()[0] > 0
+    rates = connection.execute("SELECT DISTINCT coverage_rate,blocked_rate FROM coverage_summary WHERE group_type='CORPUS' AND item_type='LABEL' AND item_id='MATCH_RESULT'").fetchall()
+    assert len(rates) == 1
     connection.close()
 
 
@@ -354,3 +358,104 @@ def test_no_market_probability_price_or_authority_fields():
     assert sha256_sportybet_early_payout_settlement_receipt(
         reviewed_sportybet_early_payout_settlement_receipt()
     ) == htc.EARLY_PAYOUT_SETTLEMENT_RECEIPT_SHA256
+
+
+def test_present_malformed_scores_are_blocked_not_missing(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [{"home_score_ft": 1, "away_score_ft": 0,
+                                      "home_score_ht": 0, "away_score_ht": 0}])
+    connection = sqlite3.connect(db)
+    connection.execute("UPDATE warehouse_matches SET home_score_ft=-1 WHERE match_key=?", (keys[0],))
+    connection.commit(); connection.close()
+    row = build_historical_training_coverage_row(db, keys[0])
+    assert _capabilities(row)["REGULATION_FT"].status is ResolutionStatus.BLOCKED
+    assert _labels(row)["MATCH_RESULT"].status is ResolutionStatus.BLOCKED
+
+    connection = sqlite3.connect(db)
+    connection.execute("UPDATE warehouse_matches SET home_score_ft=1,home_score_ht=-1 WHERE match_key=?", (keys[0],))
+    connection.commit(); connection.close()
+    row = build_historical_training_coverage_row(db, keys[0])
+    assert _capabilities(row)["HALF_TIME_SCORE"].status is ResolutionStatus.BLOCKED
+    assert _labels(row)["HOME_WIN_EITHER_HALF"].status is ResolutionStatus.BLOCKED
+
+
+def test_statsbomb_own_goal_for_and_against_have_distinct_attribution(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        {"home_score_ft": 1, "away_score_ft": 0},
+        {"home_score_ft": 0, "away_score_ft": 1},
+    ])
+    _add_events(db, keys[0], [{
+        "team": "Home", "minute": 10, "second": 5, "is_own_goal": 1,
+        "details_json": json.dumps({"type": "Own Goal For"}),
+    }])
+    _add_events(db, keys[1], [{
+        "team": "Home", "minute": 10, "second": 5, "is_own_goal": 1,
+        "details_json": json.dumps({"type": "Own Goal Against"}),
+    }])
+    own_for = _labels(build_historical_training_coverage_row(db, keys[0]))
+    own_against = _labels(build_historical_training_coverage_row(db, keys[1]))
+    assert own_for["MATCH_RESULT_1UP_HOME"].value is True
+    assert own_against["MATCH_RESULT_1UP_AWAY"].value is True
+
+
+def test_statsbomb_unproved_own_goal_semantics_block_path(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [{"home_score_ft": 0, "away_score_ft": 1}])
+    _add_events(db, keys[0], [{
+        "team": "Home", "minute": 10, "second": 5, "is_own_goal": 1,
+        "details_json": "{}",
+    }])
+    row = build_historical_training_coverage_row(db, keys[0])
+    assert _labels(row)["MATCH_RESULT_1UP_AWAY"].status is ResolutionStatus.BLOCKED
+
+
+def test_normal_import_cannot_reach_injectable_coverage_assembler():
+    import domain
+    import importlib
+
+    direct = importlib.import_module("domain._historical_training_coverage_impl")
+    assert direct is htc
+    assert domain._historical_training_coverage_impl is htc
+    assert not hasattr(htc, "_assemble_coverage_row")
+    assert not hasattr(htc, "preferred_events_for_match")
+    assert not hasattr(htc, "evidence_counts_for_match")
+
+
+def test_output_companion_blocks_replace(tmp_path: Path):
+    db, _ = _warehouse(tmp_path, [{"home_score_ft": 0, "away_score_ft": 0}])
+    output = tmp_path / "labels.db"
+    output.write_bytes(b"old")
+    companion = Path(str(output) + "-wal")
+    companion.write_bytes(b"stale")
+    with pytest.raises(HistoricalTrainingCoverageError, match="companion"):
+        build_corpus(db, output, replace=True)
+    assert output.read_bytes() == b"old"
+    assert companion.read_bytes() == b"stale"
+
+
+def test_optional_corpus_metadata_contract_drift_fails_closed(tmp_path: Path):
+    db, _ = _warehouse(tmp_path, [{"home_score_ft": 1, "away_score_ft": 0}])
+    asof = tmp_path / "asof.db"
+    assert build_asof_corpus(db, asof) == 1
+    connection = sqlite3.connect(asof)
+    connection.execute("UPDATE corpus_meta SET value=? WHERE key='feature_registry_sha256'",
+                       (json.dumps("0" * 64),))
+    connection.commit(); connection.close()
+    with pytest.raises(HistoricalTrainingCoverageError, match="contract"):
+        build_corpus(db, tmp_path / "joined.db", asof_corpus=asof)
+
+
+def test_tactical_corpus_must_bind_exact_supplied_asof_bytes(tmp_path: Path):
+    db, _ = _warehouse(tmp_path, [{"home_score_ft": 1, "away_score_ft": 0}])
+    asof = tmp_path / "asof.db"
+    tactical = tmp_path / "tactical.db"
+    assert build_asof_corpus(db, asof) == 1
+    assert build_tactical_corpus(asof, db, tactical) == 1
+    copied = tmp_path / "asof-copy.db"
+    copied.write_bytes(asof.read_bytes())
+    assert build_corpus(db, tmp_path / "ok.db", asof_corpus=copied,
+                        tactical_corpus=tactical) == 1
+    connection = sqlite3.connect(copied)
+    connection.execute("INSERT INTO corpus_meta(key,value) VALUES('tamper', '1')")
+    connection.commit(); connection.close()
+    with pytest.raises(HistoricalTrainingCoverageError):
+        build_corpus(db, tmp_path / "bad.db", asof_corpus=copied,
+                     tactical_corpus=tactical)

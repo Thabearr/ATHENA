@@ -1,11 +1,10 @@
 """Domain models shared across ATHENA's prediction and export boundaries.
 
-The historical as-of implementation has an internal split solely to keep its
-source-owned issuance facade small and reviewable.  Load that facade while the
-package initializes, then make both the implementation module import name and
-the package attribute resolve to the same hardened module object.  Normal Python
-imports therefore cannot bypass the canonical issuance boundary by importing
-the underscore implementation first or through ``from domain import ...``.
+The historical as-of and historical-training-coverage implementations use
+internal splits solely to keep their source-owned issuance facades small and
+reviewable. Package initialization makes normal imports of each underscore
+implementation resolve to its hardened facade, so a caller cannot bypass a
+canonical evidence boundary by importing the implementation module directly.
 """
 from __future__ import annotations
 
@@ -19,3 +18,11 @@ _historical_asof_features_impl = _historical_asof_features
 sys.modules[
     f"{__name__}._historical_asof_features_impl"
 ] = _historical_asof_features
+
+_historical_training_coverage = importlib.import_module(
+    ".historical_training_coverage", __name__
+)
+_historical_training_coverage_impl = _historical_training_coverage
+sys.modules[
+    f"{__name__}._historical_training_coverage_impl"
+] = _historical_training_coverage
