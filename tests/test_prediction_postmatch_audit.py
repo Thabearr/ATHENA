@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import errno
 import hashlib
 import json
 from pathlib import Path
@@ -12,7 +13,7 @@ import pytest
 
 from domain.markets import MarketId, OutcomeId
 from domain.prediction_postmatch_audit import (
-    AUTHORITATIVE_BASE_SHA,
+    CONTRACT_ORIGIN_SHA,
     AttributionFactor,
     DecisionQuality,
     DeclaredSettlementSummary,
@@ -21,6 +22,7 @@ from domain.prediction_postmatch_audit import (
     EvidencedValue,
     FieldTrialLeg,
     ImportIdentity,
+    LegReconstructionState,
     MarketCandidate,
     PostMatchAttribution,
     PostMatchSettlementRecord,
@@ -46,6 +48,7 @@ from scripts.import_prediction_field_trial import (
 
 
 SOURCE_ID = "preserved-source-1"
+EXECUTION_COMMIT_SHA = "1e8a21dbee833bb31fa2ce8344ab4d861470c33c"
 
 
 def _available(value, source_id: str = SOURCE_ID) -> EvidencedValue:
@@ -116,7 +119,7 @@ def _pre_match(
         source_fixture_identifiers=_available({"provider": "fixture-123"}),
         generated_at=_available("2026-08-22T10:00:00Z"),
         athena_version=_available("preserved-athena-version"),
-        athena_commit=_available(AUTHORITATIVE_BASE_SHA),
+        athena_commit=_available(CONTRACT_ORIGIN_SHA),
         model_identity=_available("preserved-model-identity"),
         pre_match_evidence_references=(SOURCE_ID,),
         model_raw_outputs=_available({"source_probability": 0.72}),
@@ -129,8 +132,18 @@ def _pre_match(
     )
 
 
-def _settlement(outcome: SettlementOutcome = SettlementOutcome.LOST) -> PostMatchSettlementRecord:
+def _settlement(
+    outcome: SettlementOutcome = SettlementOutcome.LOST,
+    *,
+    verification: VerificationState | None = None,
+) -> PostMatchSettlementRecord:
     refs = () if outcome is SettlementOutcome.UNKNOWN else (SOURCE_ID,)
+    if verification is None:
+        verification = (
+            VerificationState.UNKNOWN
+            if outcome is SettlementOutcome.UNKNOWN
+            else VerificationState.VERIFIED
+        )
     return PostMatchSettlementRecord(
         final_home_score=unknown_value(SOURCE_ID),
         final_away_score=unknown_value(SOURCE_ID),
@@ -140,6 +153,7 @@ def _settlement(outcome: SettlementOutcome = SettlementOutcome.LOST) -> PostMatc
         source_evidence_reference=unknown_value(SOURCE_ID),
         settlement_outcome=outcome,
         settlement_evidence_references=refs,
+        verification_state=verification,
     )
 
 
@@ -188,6 +202,7 @@ def _trial(
     declared_leg_count: int = 1,
     reconstruction_status: ReconstructionStatus = ReconstructionStatus.COMPLETE,
     sources: tuple[SourceEvidence, ...] | None = None,
+    declared_verification: VerificationState = VerificationState.VERIFIED,
 ) -> PredictionFieldTrial:
     legs = legs if legs is not None else (_leg(),)
     summary = SettlementSummary.from_legs(legs)
@@ -201,13 +216,14 @@ def _trial(
             status=EvidenceAvailability.AVAILABLE,
             summary=summary,
             evidence_references=(SOURCE_ID,),
-            verification_state=VerificationState.VERIFIED,
+            verification_state=declared_verification,
         ),
         source_evidence=sources or (_source(),),
         diagnostic_notes=(),
         creation_import_identity=ImportIdentity(
             importer_id="athena-prediction-field-trial-importer-v1",
-            base_commit_sha=AUTHORITATIVE_BASE_SHA,
+            contract_origin_sha=CONTRACT_ORIGIN_SHA,
+            execution_commit_sha=EXECUTION_COMMIT_SHA,
             source_repository_path="evidence/test-field-trial.json",
             source_sha256="a" * 64,
             source_size=1,
@@ -251,6 +267,53 @@ def _summary_import_payload() -> dict:
         "diagnostic_notes": [],
         "legs": [],
         "safety": dict(default_safety()),
+    }
+
+
+def _zero_evidence_shell(index: int) -> FieldTrialLeg:
+    unknown = unknown_value()
+    return FieldTrialLeg(
+        pre_match_decision=PreMatchDecisionRecord(
+            record_key=f"zero-evidence-shell-{index}",
+            fixture_identity=unknown,
+            home_team=unknown,
+            away_team=unknown,
+            competition=unknown,
+            kickoff_time=unknown,
+            source_fixture_identifiers=unknown,
+            generated_at=unknown,
+            athena_version=unknown,
+            athena_commit=unknown,
+            model_identity=unknown,
+            pre_match_evidence_references=(),
+            model_raw_outputs=unknown,
+            score_distribution_model_identifiers=unknown,
+            eligible_candidates_status=EvidenceAvailability.UNKNOWN,
+            eligible_market_candidates=(),
+            selected_candidate_id=unknown,
+            candidate_ranking=unknown,
+            counterfactual_candidate_ids=unknown,
+        ),
+        post_match_settlement=PostMatchSettlementRecord(
+            final_home_score=unknown,
+            final_away_score=unknown,
+            regulation_score_semantics=unknown,
+            result_source=unknown,
+            observed_at=unknown,
+            source_evidence_reference=unknown,
+            settlement_outcome=SettlementOutcome.UNKNOWN,
+            settlement_evidence_references=(),
+            verification_state=VerificationState.UNKNOWN,
+        ),
+        post_match_attribution=_unknown_attribution(),
+    )
+
+
+def _leg_import_mapping(leg: FieldTrialLeg) -> dict:
+    return {
+        "pre_match_decision": leg.pre_match_decision._content_dict(),
+        "post_match_settlement": leg.post_match_settlement.to_dict(),
+        "post_match_attribution": leg.post_match_attribution.to_dict(),
     }
 
 
@@ -359,6 +422,7 @@ def test_post_match_namespace_rejects_counterfactual_injection() -> None:
             source_repository_path="evidence/test.json",
             source_sha256="b" * 64,
             source_size=1,
+            execution_commit_sha=EXECUTION_COMMIT_SHA,
         )
 
 
@@ -398,6 +462,37 @@ def test_user_reported_fact_cannot_be_silently_upgraded_to_verified() -> None:
         _trial(sources=(user_source,))
 
 
+def test_user_reported_settlement_remains_visibly_unverified() -> None:
+    user_source = _source(
+        authority=EvidenceAuthority.USER_REPORTED,
+        verification=VerificationState.UNVERIFIED,
+    )
+    settlement = _settlement(
+        SettlementOutcome.LOST,
+        verification=VerificationState.UNVERIFIED,
+    )
+    trial = _trial(
+        legs=(_leg(settlement=settlement),),
+        sources=(user_source,),
+        declared_verification=VerificationState.UNVERIFIED,
+    )
+
+    assert trial.legs[0].post_match_settlement.to_dict()["verification_state"] == "UNVERIFIED"
+
+
+def test_verified_settlement_requires_verified_source_evidence() -> None:
+    user_source = _source(
+        authority=EvidenceAuthority.USER_REPORTED,
+        verification=VerificationState.UNVERIFIED,
+    )
+
+    with pytest.raises(PredictionPostMatchAuditError, match="VERIFIED source evidence"):
+        _trial(
+            sources=(user_source,),
+            declared_verification=VerificationState.UNVERIFIED,
+        )
+
+
 def test_unverified_penalty_report_cannot_be_irreducible_variance() -> None:
     with pytest.raises(PredictionPostMatchAuditError, match="verified event evidence"):
         dataclasses.replace(
@@ -418,9 +513,19 @@ def test_import_is_deterministic_and_idempotent(tmp_path: Path) -> None:
     source = _write_source(tmp_path, _summary_import_payload())
     output = tmp_path / "artifacts" / "prediction-field-trials" / "trial.json"
 
-    first = import_field_trial(source=source, output=output, repository_root=tmp_path)
+    first = import_field_trial(
+        source=source,
+        output=output,
+        repository_root=tmp_path,
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
+    )
     first_bytes = output.read_bytes()
-    second = import_field_trial(source=source, output=output, repository_root=tmp_path)
+    second = import_field_trial(
+        source=source,
+        output=output,
+        repository_root=tmp_path,
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
+    )
 
     assert first["status"] == "AUDIT_ARTIFACT_CREATED"
     assert second["status"] == "IDENTICAL_REIMPORT_NOOP"
@@ -432,13 +537,23 @@ def test_different_identity_cannot_overwrite_existing_artifact(tmp_path: Path) -
     payload = _summary_import_payload()
     source = _write_source(tmp_path, payload)
     output = tmp_path / "artifacts" / "prediction-field-trials" / "trial.json"
-    import_field_trial(source=source, output=output, repository_root=tmp_path)
+    import_field_trial(
+        source=source,
+        output=output,
+        repository_root=tmp_path,
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
+    )
     original = output.read_bytes()
     payload["source_evidence"][0]["notes"] = "Different preserved bytes."
     _write_source(tmp_path, payload)
 
     with pytest.raises(PredictionFieldTrialImportError, match="refusing to overwrite"):
-        import_field_trial(source=source, output=output, repository_root=tmp_path)
+        import_field_trial(
+            source=source,
+            output=output,
+            repository_root=tmp_path,
+            execution_commit_sha=EXECUTION_COMMIT_SHA,
+        )
     assert output.read_bytes() == original
 
 
@@ -446,6 +561,37 @@ def test_trial_leg_counts_reconcile() -> None:
     trial = _trial()
 
     assert trial.declared_leg_count == trial.reconstructed_leg_count + trial.unresolved_leg_count
+
+
+def test_zero_evidence_shells_never_count_as_reconstructed_or_complete() -> None:
+    payload = _summary_import_payload()
+    payload["legs"] = [
+        _leg_import_mapping(_zero_evidence_shell(index))
+        for index in range(payload["declared_leg_count"])
+    ]
+    raw = json.dumps(payload, sort_keys=True).encode("utf-8")
+    trial = build_prediction_field_trial_from_import(
+        payload,
+        source_repository_path="evidence/zero-evidence-shells.json",
+        source_sha256=hashlib.sha256(raw).hexdigest(),
+        source_size=len(raw),
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
+    )
+
+    assert trial.recorded_leg_count == 20
+    assert trial.reconstructed_leg_count == 0
+    assert trial.unresolved_leg_count == 20
+    assert trial.reconstruction_status is ReconstructionStatus.SUMMARY_ONLY
+    assert trial.reconstructed_settlement_summary.total == 0
+    assert all(
+        leg.reconstruction_state is LegReconstructionState.UNRESOLVED
+        for leg in trial.legs
+    )
+    with pytest.raises(
+        PredictionPostMatchAuditError,
+        match="reconstruction_status must be SUMMARY_ONLY",
+    ):
+        dataclasses.replace(trial, reconstruction_status=ReconstructionStatus.COMPLETE)
 
 
 def test_complete_is_impossible_with_unresolved_legs() -> None:
@@ -469,6 +615,7 @@ def test_import_performs_no_network_calls(tmp_path: Path) -> None:
             source=source,
             output=output,
             repository_root=tmp_path,
+            execution_commit_sha=EXECUTION_COMMIT_SHA,
         )
 
     assert receipt["network_requests_performed"] is False
@@ -494,6 +641,51 @@ def test_duplicate_json_keys_and_non_finite_constants_are_rejected() -> None:
         strict_json_loads(b'{"value":NaN}')
 
 
+def test_import_provenance_separates_contract_origin_from_execution_commit() -> None:
+    payload = _summary_import_payload()
+    first = build_prediction_field_trial_from_import(
+        payload,
+        source_repository_path="evidence/summary.json",
+        source_sha256="a" * 64,
+        source_size=1,
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
+    )
+    other_execution_sha = "2" * 40
+    second = build_prediction_field_trial_from_import(
+        payload,
+        source_repository_path="evidence/summary.json",
+        source_sha256="a" * 64,
+        source_size=1,
+        execution_commit_sha=other_execution_sha,
+    )
+
+    assert first.creation_import_identity.contract_origin_sha == CONTRACT_ORIGIN_SHA
+    assert first.creation_import_identity.execution_commit_sha == EXECUTION_COMMIT_SHA
+    assert second.creation_import_identity.execution_commit_sha == other_execution_sha
+    assert first.canonical_sha256 != second.canonical_sha256
+
+
+def test_unsupported_directory_fsync_does_not_fail_completed_write(
+    tmp_path: Path,
+) -> None:
+    source = _write_source(tmp_path, _summary_import_payload())
+    output = tmp_path / "artifacts" / "prediction-field-trials" / "trial.json"
+
+    with patch(
+        "scripts.import_prediction_field_trial.os.open",
+        side_effect=OSError(errno.EINVAL, "directory fsync unsupported"),
+    ):
+        receipt = import_field_trial(
+            source=source,
+            output=output,
+            repository_root=tmp_path,
+            execution_commit_sha=EXECUTION_COMMIT_SHA,
+        )
+
+    assert receipt["status"] == "AUDIT_ARTIFACT_CREATED"
+    assert output.is_file()
+
+
 def test_summary_only_reconstruction_preserves_counts_without_fabricating_legs() -> None:
     payload = _summary_import_payload()
     raw = json.dumps(payload, sort_keys=True).encode("utf-8")
@@ -502,6 +694,7 @@ def test_summary_only_reconstruction_preserves_counts_without_fabricating_legs()
         source_repository_path="evidence/summary.json",
         source_sha256=hashlib.sha256(raw).hexdigest(),
         source_size=len(raw),
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
     )
 
     assert trial.reconstruction_status is ReconstructionStatus.SUMMARY_ONLY
@@ -523,6 +716,7 @@ def test_committed_first_trial_artifact_exactly_replays_its_source() -> None:
         source_repository_path=source.relative_to(repository).as_posix(),
         source_sha256=hashlib.sha256(raw).hexdigest(),
         source_size=len(raw),
+        execution_commit_sha=EXECUTION_COMMIT_SHA,
     )
 
     assert canonical_prediction_field_trial_bytes(trial) == artifact.read_bytes()
