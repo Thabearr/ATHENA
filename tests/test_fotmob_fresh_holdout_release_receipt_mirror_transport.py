@@ -261,6 +261,7 @@ def test_workflow_pins_and_invokes_reviewed_transport_only_after_success() -> No
         ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
     ).read_text(encoding="utf-8")
     assert "ddabb6ae83cbe6c81c9264119a121a54715df960" in workflow
+    assert "73ed6ef7cdcc79b43373a78c60b5f2b6dd601095" in workflow
     assert "69166bf26c32f2385c9b26d651292754dae85be0" in workflow
     assert (
         "python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror" in workflow
