@@ -11,11 +11,16 @@ from types import MappingProxyType
 import pytest
 
 import domain.historical_asof_features as haf
+import scripts.build_historical_asof_feature_corpus as corpus_builder
 from domain.historical_asof_features import (
     EXPECTED_HISTORICAL_FEATURE_REGISTRY_SHA256_BY_VERSION,
+    EXPECTED_HISTORICAL_GENERATION_CONTRACT_SHA256_BY_VERSION,
     EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256_BY_VERSION,
     HISTORICAL_FEATURE_REGISTRY,
     HISTORICAL_FEATURE_REGISTRY_VERSION,
+    HISTORICAL_GENERATION_CONTRACT_VERSION,
+    HISTORICAL_COMPLETION_POLICY_ID,
+    HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID,
     HISTORICAL_TEAM_IDENTITY_POLICY_ID,
     TEMPORAL_POLICY_ID,
     HistoricalAsOfError,
@@ -28,12 +33,14 @@ from domain.historical_asof_features import (
     TeamMatchProjection,
     build_historical_asof_snapshot,
     calculate_historical_feature_registry_sha256,
+    calculate_historical_generation_contract_sha256,
     complete_boundary_window,
     file_sha256,
     find_resolution,
     historical_team_identity,
     qualifies_completed_prior_fixture,
     validate_historical_feature_registry,
+    validate_historical_generation_contract,
     validate_warehouse_schema_sql,
 )
 from scripts.build_historical_asof_feature_corpus import TeamRollingHistory, build_corpus
@@ -68,6 +75,7 @@ def _match(
 
 
 def _warehouse(tmp_path: Path, rows: list[dict]) -> tuple[Path, list[str]]:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     path = tmp_path / "history.db"
     wh = Warehouse(path)
     wh.initialize()
@@ -103,6 +111,60 @@ def test_registry_has_independent_reviewed_pin_and_rejects_drift():
     assert validate_historical_feature_registry(changed, 2, reviewed_v2) == reviewed_v2[2]
 
 
+def test_generation_contract_has_independent_pin_and_rejects_drift_or_unknown_version():
+    expected = "82c23162aeef7b49a2205c2476f29ff97073b56a3519d6b8b1b7138925d41b3a"
+    assert EXPECTED_HISTORICAL_GENERATION_CONTRACT_SHA256_BY_VERSION[1] == expected
+    assert validate_historical_generation_contract() == expected
+
+    changed = calculate_historical_generation_contract_sha256(
+        1, completion_policy_id="CHANGED_WITHOUT_VERSION",
+    )
+    assert changed != expected
+    with pytest.raises(HistoricalAsOfError, match="generation contract drift"):
+        validate_historical_generation_contract(
+            1, completion_policy_id="CHANGED_WITHOUT_VERSION",
+        )
+    with pytest.raises(HistoricalAsOfError, match="unreviewed"):
+        validate_historical_generation_contract(2)
+
+    reviewed_v2_sha = calculate_historical_generation_contract_sha256(2)
+    reviewed_v2 = MappingProxyType({2: reviewed_v2_sha})
+    assert validate_historical_generation_contract(2, reviewed_v2) == reviewed_v2_sha
+
+
+def test_snapshots_and_corpus_freeze_generation_policy_identity(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-10", "Home", "Away", 1, 0, source_id="target")
+    ])
+    snapshot = build_historical_asof_snapshot(db, keys[0])
+    assert snapshot.completion_policy_id == HISTORICAL_COMPLETION_POLICY_ID
+    assert (
+        snapshot.advanced_period_safety_policy_id
+        == HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID
+    )
+    assert snapshot.generation_contract_version == HISTORICAL_GENERATION_CONTRACT_VERSION
+    assert (
+        snapshot.generation_contract_sha256
+        == EXPECTED_HISTORICAL_GENERATION_CONTRACT_SHA256_BY_VERSION[1]
+    )
+
+    output = tmp_path / "generation-meta.db"
+    build_corpus(db, output, limit=1)
+    connection = sqlite3.connect(output)
+    metadata = {
+        key: json.loads(value)
+        for key, value in connection.execute("SELECT key,value FROM corpus_meta")
+    }
+    connection.close()
+    assert metadata["historical_completion_policy_id"] == HISTORICAL_COMPLETION_POLICY_ID
+    assert (
+        metadata["historical_advanced_period_safety_policy_id"]
+        == HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID
+    )
+    assert metadata["generation_contract_version"] == 1
+    assert metadata["generation_contract_sha256"] == snapshot.generation_contract_sha256
+
+
 def test_target_and_later_match_values_never_enter_target_features(tmp_path: Path):
     rows = [
         _match("2025-01-01", "Home", "Prior", 2, 0, source_id="prior", home_score_ht=1, away_score_ht=0,
@@ -124,7 +186,12 @@ def test_target_and_later_match_values_never_enter_target_features(tmp_path: Pat
     connection.commit()
     connection.close()
     changed = build_historical_asof_snapshot(db, keys[1])
-    assert _feature_payload(changed) == _feature_payload(snapshot)
+    assert [item.value for item in changed.home_resolutions] == [
+        item.value for item in snapshot.home_resolutions
+    ]
+    assert [item.status for item in changed.home_resolutions] == [
+        item.status for item in snapshot.home_resolutions
+    ]
 
 
 def test_date_strict_excludes_all_same_day_irrespective_of_raw_clock(tmp_path: Path):
@@ -162,8 +229,10 @@ def test_missing_field_is_not_zero_and_samples_remain_field_specific(tmp_path: P
     assert shots_against.status is HistoricalFeatureStatus.MISSING and shots_against.value is None
 
 
-def _projection_for(key: str, match_date: str) -> TeamMatchProjection:
+def _projection_for(key: str, match_date: str, **overrides) -> TeamMatchProjection:
     values = dict(
+        source_warehouse_sha256="a" * 64,
+        _source_instance_token=object(),
         match_key=key, match_date=match_date, competition_key="c", scope="club", season="s",
         team="A", opponent="B", side="HOME", goals_for=1, goals_against=0,
         first_half_goals_for=None, first_half_goals_against=None, xg_for=None, xg_against=None,
@@ -171,9 +240,10 @@ def _projection_for(key: str, match_date: str) -> TeamMatchProjection:
         possession_for=None, possession_against=None, corners_for=None, corners_against=None,
         fouls_for=None, fouls_against=None, yellows_for=None, yellows_against=None,
         reds_for=None, reds_against=None, blocked_primitives=(), field_source_keys=(),
-        conflict_fields=(), projection_sha256=hashlib.sha256(key.encode("utf-8")).hexdigest(),
+        conflict_fields=(),
     )
-    return TeamMatchProjection(**values)
+    values.update(overrides)
+    return TeamMatchProjection(_token=haf._PROJECTION_TOKEN, **values)
 
 
 def test_complete_boundary_date_never_splits_tied_oldest_bucket():
@@ -214,6 +284,74 @@ def test_source_is_read_only_sha_bound_and_caller_cannot_forge_it(tmp_path: Path
         build_historical_asof_snapshot(db, keys[0], source_warehouse_sha256="0" * 64)
     with pytest.raises(HistoricalAsOfError, match="builder-only"):
         haf.HistoricalAsOfFixtureSnapshot(source_warehouse_sha256="0" * 64)
+
+
+def test_targets_and_team_projections_are_source_bound_and_tamper_evident(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-01", "Home", "Prior", 2, 0, source_id="prior", home_xg=1.4),
+        _match("2025-01-10", "Home", "Away", 0, 0, source_id="target"),
+    ])
+    with pytest.raises(HistoricalAsOfError, match="source-builder-only"):
+        TeamMatchProjection(match_key="forged")
+    with pytest.raises(HistoricalAsOfError, match="source-builder-only"):
+        haf.HistoricalAsOfTarget(match_key="forged")
+
+    with ReadOnlyHistoricalWarehouse(db) as source:
+        target = haf._target(source.target_match(keys[-1]))
+        with pytest.raises(HistoricalAsOfError, match="source-builder-only"):
+            dataclasses.replace(target, home_team="Forged")
+        projection = haf._projection(
+            source.historical_matches("club", "eng_premier", "Home", "2025-01-10")[0],
+            "Home",
+        )
+        with pytest.raises(HistoricalAsOfError, match="source-builder-only"):
+            dataclasses.replace(projection, goals_for=99)
+
+        forged = object.__new__(TeamMatchProjection)
+        for item in dataclasses.fields(TeamMatchProjection):
+            object.__setattr__(forged, item.name, getattr(projection, item.name))
+        object.__setattr__(forged, "goals_for", 99)
+        object.__setattr__(forged, "projection_sha256", "f" * 64)
+        with pytest.raises(HistoricalAsOfError, match="projection identity mismatch"):
+            haf._assemble_snapshot(
+                target, (forged,), (), source,
+                haf.validate_historical_feature_registry(),
+                haf.validate_historical_generation_contract(),
+            )
+
+        with pytest.raises(HistoricalAsOfError, match="source-bound target"):
+            haf._assemble_snapshot(
+                {"match_key": "not-in-the-warehouse"}, (), (), source,
+                haf.validate_historical_feature_registry(),
+                haf.validate_historical_generation_contract(),
+            )
+
+
+def test_projection_from_one_warehouse_cannot_enter_another(tmp_path: Path):
+    first_root = tmp_path / "first"
+    second_root = tmp_path / "second"
+    first_root.mkdir(); second_root.mkdir()
+    first, first_keys = _warehouse(first_root, [
+        _match("2025-01-01", "Home", "Prior", 1, 0, source_id="prior-a"),
+        _match("2025-01-10", "Home", "Away", 0, 0, source_id="target-a"),
+    ])
+    second, second_keys = _warehouse(second_root, [
+        _match("2025-01-01", "Home", "Prior", 1, 0, source_id="prior-b"),
+        _match("2025-01-10", "Home", "Away", 0, 0, source_id="target-b"),
+    ])
+    with ReadOnlyHistoricalWarehouse(first) as source_a:
+        projection_a = haf._projection(
+            source_a.historical_matches("club", "eng_premier", "Home", "2025-01-10")[0],
+            "Home",
+        )
+    with ReadOnlyHistoricalWarehouse(second) as source_b:
+        target_b = haf._target(source_b.target_match(second_keys[-1]))
+        with pytest.raises(HistoricalAsOfError, match="different warehouse"):
+            haf._assemble_snapshot(
+                target_b, (projection_a,), (), source_b,
+                haf.validate_historical_feature_registry(),
+                haf.validate_historical_generation_contract(),
+            )
 
 
 def test_different_database_bytes_change_source_identity_and_same_source_is_deterministic(tmp_path: Path):
@@ -325,6 +463,40 @@ def test_bulk_builder_is_date_batched_filter_safe_and_separate(tmp_path: Path):
     connection.close()
     with pytest.raises(HistoricalAsOfError, match="output must be separate"):
         build_corpus(db, db)
+
+
+def test_output_temporary_and_sqlite_companion_collisions_fail_before_mutation(tmp_path: Path):
+    original, _ = _warehouse(tmp_path, [
+        _match("2025-01-10", "Home", "Away", 1, 0, source_id="target")
+    ])
+    source = tmp_path / "features.db.tmp"
+    original.rename(source)
+    before = file_sha256(source)
+    with pytest.raises(HistoricalAsOfError, match="output must be separate"):
+        build_corpus(source, tmp_path / "features.db")
+    assert source.is_file() and file_sha256(source) == before
+    assert not (tmp_path / "features.db").exists()
+
+    for suffix in ("-wal", "-journal", "-shm"):
+        with pytest.raises(HistoricalAsOfError, match="output must be separate"):
+            build_corpus(source, Path(str(source) + suffix))
+        assert file_sha256(source) == before
+
+    operational = (corpus_builder.ROOT / "database" / "athena.db").resolve()
+    for suffix in ("-wal", "-journal", "-shm"):
+        with pytest.raises(HistoricalAsOfError, match="output must be separate"):
+            build_corpus(source, Path(str(operational) + suffix))
+        assert file_sha256(source) == before
+
+
+def test_unique_temporary_output_remains_atomic_and_separate(tmp_path: Path):
+    db, _ = _warehouse(tmp_path, [
+        _match("2025-01-10", "Home", "Away", 1, 0, source_id="target")
+    ])
+    output = tmp_path / "ordinary-output.db"
+    assert build_corpus(db, output, limit=1) == 1
+    assert output.is_file()
+    assert not list(tmp_path.glob(f".{output.name}.*.tmp"))
 
 
 def test_builders_perform_no_network_calls(tmp_path: Path, monkeypatch):
@@ -597,9 +769,7 @@ def test_companion_created_after_open_fails_final_source_validation(tmp_path: Pa
 def test_schedule_cache_prunes_on_add_even_before_any_target_lookup():
     rolling = TeamRollingHistory()
     for year in range(1990, 2026):
-        projection = dataclasses.replace(
-            _projection_for(f"m{year}", f"{year}-01-01"), season=None,
-        )
+        projection = _projection_for(f"m{year}", f"{year}-01-01", season=None)
         rolling.add_date_bucket(projection.match_date, (projection,))
         assert len(rolling.schedule_date_buckets) <= 1
     assert rolling.schedule_date_buckets[0][0] == "2025-01-01"
@@ -701,6 +871,78 @@ def test_extra_period_match_keeps_results_and_schedule_but_blocks_advanced_stats
     assert payload == direct.to_dict()
 
 
+def test_valid_missing_and_blocked_observations_reconcile_without_contamination(tmp_path: Path):
+    rows = [
+        _match("2025-01-02", "Home", "Safe", 1, 0, source_id="safe", home_xg=1.5),
+        _match("2025-01-01", "Home", "Missing", 1, 0, source_id="missing"),
+    ]
+    rows.extend(
+        _match(
+            f"2025-01-0{day}", "Home", f"ET {day}", 1, 1,
+            source_id=f"blocked-{day}", home_score_et=1, away_score_et=1,
+            home_xg=90.0 + day,
+        )
+        for day in range(3, 7)
+    )
+    rows.append(_match("2025-01-10", "Home", "Target", 0, 0, source_id="target"))
+    db, keys = _warehouse(tmp_path, rows)
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+
+    last_5 = _resolution(snapshot, "home", HistoricalFeatureId.XG_FOR_PER_MATCH)
+    assert last_5.status is HistoricalFeatureStatus.AVAILABLE
+    assert last_5.value == 1.5
+    assert last_5.valid_field_sample == 1
+    assert last_5.blocked_field_sample == 4
+    assert last_5.missing_field_count == 0
+    assert len(last_5.blocked_match_keys) == 4
+    assert last_5.contributing_match_keys == (keys[0],)
+
+    last_10 = _resolution(
+        snapshot, "home", HistoricalFeatureId.XG_FOR_PER_MATCH,
+        window=HistoricalWindow.LAST_10,
+    )
+    assert last_10.value == 1.5
+    assert (
+        last_10.effective_match_sample
+        == last_10.valid_field_sample
+        + last_10.missing_field_count
+        + last_10.blocked_field_sample
+    )
+    assert (last_10.valid_field_sample, last_10.missing_field_count, last_10.blocked_field_sample) == (1, 1, 4)
+
+
+def test_all_blocked_and_all_missing_observation_states_remain_distinct(tmp_path: Path):
+    blocked_rows = [
+        _match(
+            f"2025-01-0{day}", "Home", f"ET {day}", 1, 1,
+            source_id=f"et-{day}", home_score_et=1, away_score_et=1, home_xg=4.0,
+        )
+        for day in range(1, 5)
+    ]
+    blocked_rows.append(_match("2025-01-10", "Home", "Target", 0, 0, source_id="target"))
+    blocked_db, blocked_keys = _warehouse(tmp_path / "blocked", blocked_rows)
+    blocked = _resolution(
+        build_historical_asof_snapshot(blocked_db, blocked_keys[-1]),
+        "home", HistoricalFeatureId.XG_FOR_PER_MATCH,
+    )
+    assert blocked.status is HistoricalFeatureStatus.BLOCKED
+    assert (blocked.valid_field_sample, blocked.missing_field_count, blocked.blocked_field_sample) == (0, 0, 4)
+    assert blocked.value is None and blocked.contributing_match_keys == ()
+
+    missing_rows = [
+        _match(f"2025-01-0{day}", "Home", f"No xG {day}", 1, 0, source_id=f"m-{day}")
+        for day in range(1, 5)
+    ]
+    missing_rows.append(_match("2025-01-10", "Home", "Target", 0, 0, source_id="target"))
+    missing_db, missing_keys = _warehouse(tmp_path / "missing", missing_rows)
+    missing = _resolution(
+        build_historical_asof_snapshot(missing_db, missing_keys[-1]),
+        "home", HistoricalFeatureId.XG_FOR_PER_MATCH,
+    )
+    assert missing.status is HistoricalFeatureStatus.MISSING
+    assert (missing.valid_field_sample, missing.missing_field_count, missing.blocked_field_sample) == (0, 4, 0)
+
+
 def test_normal_completed_non_et_match_keeps_advanced_stats(tmp_path: Path):
     db, keys = _warehouse(tmp_path, [
         _match(
@@ -714,6 +956,73 @@ def test_normal_completed_non_et_match_keeps_advanced_stats(tmp_path: Path):
     assert _resolution(snapshot, "home", HistoricalFeatureId.YELLOWS_FOR_PER_MATCH).value == 1
 
 
+@pytest.mark.parametrize("signal", ["statsbomb_period_3", "penalty_shootout"])
+def test_reviewed_extra_period_signals_block_unqualified_aggregates_without_summary_scores(
+    tmp_path: Path, signal: str,
+):
+    db, keys = _warehouse(tmp_path, [
+        _match(
+            "2025-01-05", "Home", "Cup", 1, 1, source_id="prior",
+            home_score_ht=1, away_score_ht=0, home_xg=7.5, away_xg=2.0,
+            home_yellows=4, away_yellows=3,
+        ),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    connection = sqlite3.connect(db)
+    if signal == "statsbomb_period_3":
+        connection.execute(
+            "INSERT INTO warehouse_events(event_key,match_key,source_key,event_type,period) "
+            "VALUES('et-event',?,'statsbomb_open','shot','3')", (keys[0],),
+        )
+    else:
+        connection.execute(
+            "INSERT INTO warehouse_penalty_shootouts(shootout_key,match_key,source_key,details_json) "
+            "VALUES('shootout',?,'football_data_uk','{}')", (keys[0],),
+        )
+    connection.commit(); connection.close()
+
+    direct = build_historical_asof_snapshot(db, keys[-1])
+    assert _resolution(direct, "home", HistoricalFeatureId.POINTS_PER_MATCH).value == 1
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.FIRST_HALF_GOALS_FOR_PER_MATCH
+    ).value == 1
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.DAYS_SINCE_LAST_MATCH,
+        window=HistoricalWindow.AS_OF,
+    ).value == 5
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.XG_FOR_PER_MATCH
+    ).status is HistoricalFeatureStatus.BLOCKED
+    assert _resolution(
+        direct, "home", HistoricalFeatureId.YELLOWS_FOR_PER_MATCH
+    ).status is HistoricalFeatureStatus.BLOCKED
+
+    output = tmp_path / f"{signal}.db"
+    build_corpus(db, output, start_date="2025-01-10", limit=1)
+    connection = sqlite3.connect(output)
+    payload = json.loads(connection.execute(
+        "SELECT payload_json FROM historical_asof_snapshots WHERE match_key=?", (keys[-1],)
+    ).fetchone()[0])
+    connection.close()
+    assert payload == direct.to_dict()
+
+
+def test_normal_statsbomb_period_one_two_events_do_not_block(tmp_path: Path):
+    db, keys = _warehouse(tmp_path, [
+        _match("2025-01-05", "Home", "Normal", 2, 0, source_id="prior", home_xg=1.8),
+        _match("2025-01-10", "Home", "Target", 0, 0, source_id="target"),
+    ])
+    connection = sqlite3.connect(db)
+    connection.executemany(
+        "INSERT INTO warehouse_events(event_key,match_key,source_key,event_type,period) "
+        "VALUES(?,?,'statsbomb_open','shot',?)",
+        (("p1", keys[0], "1"), ("p2", keys[0], "2")),
+    )
+    connection.commit(); connection.close()
+    snapshot = build_historical_asof_snapshot(db, keys[-1])
+    assert _resolution(snapshot, "home", HistoricalFeatureId.XG_FOR_PER_MATCH).value == 1.8
+
+
 def _manual_feature_resolution(
     projection: TeamMatchProjection, feature_id: HistoricalFeatureId,
 ):
@@ -725,8 +1034,9 @@ def _manual_feature_resolution(
 
 
 def test_minimal_score_dependencies_allow_only_mathematically_supported_features():
-    base = _projection_for("partial", "2025-01-01")
-    goals_for_only = dataclasses.replace(base, goals_for=2, goals_against=None)
+    goals_for_only = _projection_for(
+        "partial-for", "2025-01-01", goals_for=2, goals_against=None
+    )
     goals_for_mean = _manual_feature_resolution(
         goals_for_only, HistoricalFeatureId.GOALS_FOR_PER_MATCH
     )
@@ -744,7 +1054,9 @@ def test_minimal_score_dependencies_allow_only_mathematically_supported_features
         goals_for_only, HistoricalFeatureId.CLEAN_SHEET_RATE
     ).status is HistoricalFeatureStatus.MISSING
 
-    goals_against_only = dataclasses.replace(base, goals_for=None, goals_against=0)
+    goals_against_only = _projection_for(
+        "partial-against", "2025-01-01", goals_for=None, goals_against=0
+    )
     goals_against_mean = _manual_feature_resolution(
         goals_against_only, HistoricalFeatureId.GOALS_AGAINST_PER_MATCH
     )
@@ -777,5 +1089,5 @@ def test_minimal_score_dependencies_allow_only_mathematically_supported_features
             goals_against_only, feature_id
         ).status is HistoricalFeatureStatus.MISSING
         assert _manual_feature_resolution(
-            dataclasses.replace(base, goals_for=2, goals_against=0), feature_id
+            _projection_for("both", "2025-01-01", goals_for=2, goals_against=0), feature_id
         ).status is HistoricalFeatureStatus.AVAILABLE

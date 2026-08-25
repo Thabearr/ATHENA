@@ -29,10 +29,15 @@ Every snapshot stores:
 - the repository historical schema SQL SHA-256;
 - generation schema version;
 - temporal-policy ID;
-- independently pinned historical feature-registry version and SHA-256.
+- completion-policy ID `CANONICAL_REGULATION_FT_BOTH_SIDES_V1`;
+- advanced-period-safety policy ID `BLOCK_UNQUALIFIED_AGGREGATES_ON_EXTRA_PERIOD_EVIDENCE_V1`;
+- independently pinned generation-contract version 1 and SHA-256 `82c23162aeef7b49a2205c2476f29ff97073b56a3519d6b8b1b7138925d41b3a`;
+- independently pinned historical feature-registry version and SHA-256;
 - historical team-identity policy `COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1`.
 
-There is no caller-supplied warehouse SHA or schema-SQL path parameter. Canonical snapshot construction is internal to the verified file/streaming builders. Warehouse schema version 1 is independently pinned to repository schema SQL SHA-256 `d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f`; changed schema bytes or an unknown version fail closed.
+There is no caller-supplied warehouse SHA or schema-SQL path parameter. Canonical targets and team projections are immutable, builder-only objects issued from rows replayed by the exact `ReadOnlyHistoricalWarehouse`. Each freezes the warehouse SHA and an internally calculated content SHA; canonical assembly revalidates those identities and rejects projections from another warehouse. Direct construction and `dataclasses.replace()` cannot manufacture canonical targets or projections. Warehouse schema version 1 is independently pinned to repository schema SQL SHA-256 `d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f`; changed schema bytes or an unknown version fail closed.
+
+The independently pinned generation contract binds the temporal, team-identity, completion, advanced-period-safety, and generation-schema semantics. Stable drift under version 1 and unknown versions fail closed. Snapshots freeze the reviewed contract version/SHA, so future live policy changes cannot retroactively alter their serialization.
 
 ## Historical team identity
 
@@ -47,7 +52,7 @@ All three components must be present, exact, and whitespace-canonical. Missing c
 
 The warehouse's canonical columns are used as-is. `warehouse_field_provenance` source keys and `warehouse_conflicts` counts remain attached to derived feature resolutions. A retained conflict is visible but does not cause this layer to choose a weaker alternative value; provider precedence remains the warehouse's responsibility. Derived projection SHA-256 values are explicitly identities of canonical team-perspective projections, not provider payload hashes.
 
-This implementation does not aggregate incidents. It therefore reads neither raw `warehouse_events` nor `warehouse_events_preferred`. If a later model-facing feature needs incidents, it must consume `warehouse_events_preferred`; raw cross-source incidents must never be double-counted.
+This implementation does not aggregate incidents. It consults raw `warehouse_events` only as a narrow match-level safety signal: StatsBomb Open event periods `3` and `4` mechanically prove extra time. It also treats any `warehouse_penalty_shootouts` row as shootout evidence. Periods `1` and `2` do not block normal matches, and generic `minute > 90` is deliberately not used. These signals only block period-unqualified aggregate statistics; no event goal/card/xG is aggregated or substituted. If a later model-facing feature needs incidents, it must consume `warehouse_events_preferred`; raw cross-source incidents must never be double-counted.
 
 ## Historical feature registry
 
@@ -94,7 +99,7 @@ A completed prior match is projected once from each team's perspective. The proj
 
 Missing pairs are never synthesized. For example, a missing away xG is not zero. Registry dependencies are the minimal mathematical inputs: `goals_for_per_match` and `failed_to_score_rate` require only goals for; `goals_against_per_match` and `clean_sheet_rate` require only goals against. Result/outcome, goal-difference, total-goal, BTTS, and over-rate metrics require both. The same minimal rule applies to HT, xG, shots, possession, discipline, and schedule fields.
 
-For a mechanically identified ET or shootout match, aggregate advanced fields without reviewed regulation-only semantics are unsafe. Any retained xG, shots, shots on target, possession, corners, fouls, yellows, or reds are `BLOCKED` from model-facing aggregation. Regulation FT/HT results and completed-match schedule chronology remain usable. No proportional scaling, 120-minute division, estimated subtraction, or provider-wide assumption is applied.
+For a mechanically identified ET or shootout match—through ET/PEN summary columns, a StatsBomb Open period `3`/`4` event, or a penalty-shootout row—aggregate advanced fields without reviewed regulation-only semantics are unsafe. Any retained xG, shots, shots on target, possession, corners, fouls, yellows, or reds are `BLOCKED` from model-facing aggregation. Regulation FT/HT results and completed-match schedule chronology remain usable. No proportional scaling, 120-minute division, estimated subtraction, or provider-wide assumption is applied.
 
 Each target home team has distinct `OVERALL` and `HOME_ONLY` summaries. Each target away team has distinct `OVERALL` and `AWAY_ONLY` summaries. Here `OVERALL` and all schedule fields mean overall only within `COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1`. They are not all-competition club workload: league/cup/UEFA joining remains unauthorized, so PR #231 must not treat these schedule fields as complete real-world congestion. Performance summaries cover last 5, 10, and 20 complete-boundary-date windows plus same-season season-to-date history.
 
@@ -106,7 +111,7 @@ Every resolution is explicitly:
 - `MISSING`: no qualifying value exists, with `value = null` and no default;
 - `BLOCKED`: an unsafe/invalid source condition is explicitly retained. Invalid non-finite or invalid count values currently fail the containing build closed before a misleading feature can be serialized.
 
-For each metric the ledger retains requested window, effective match sample, valid-field sample, missing-field count, oldest/newest contributing dates, source keys, conflict count, algorithm ID, required primitives, and derived projection SHA. Metrics with different warehouse coverage therefore have different valid samples. No xG/stat absence becomes zero or a league average.
+For each metric the ledger retains requested window, effective match sample, valid-field sample, missing-field count, blocked-field sample, oldest/newest dates, source keys, conflict count, algorithm ID, required primitives, and derived projection identities. Counts always reconcile as `effective = valid + missing + blocked`. A mixed feature is derived only from valid observations while separately retaining blocked match keys, blocked projection identity, blocker reasons, and blocked source-field provenance. Zero valid plus blocked observations is `BLOCKED`; zero valid and zero blocked is `MISSING`. Metrics with different warehouse coverage therefore have different valid samples. No blocked value enters an average, and no xG/stat absence becomes zero or a league average.
 
 No prior match means rest and congestion are `MISSING`. Once prior chronology exists, a zero fixtures-in-window value is a legitimate derivation rather than a neutral default.
 
@@ -130,7 +135,7 @@ Conflict attribution is match- and feature-local. Each feature maps its required
 
 Warehouse numeric validation rejects NaN, infinity, negative xG, and non-integer or negative count fields. The warehouse schema establishes xG as a non-negative quantity and count fields as exact counts. Possession remains finite-only because the repository does not yet prove one universal stored scale/domain; this layer does not invent a 0–1 or 0–100 bound.
 
-The output path must differ from both `athena_history.db` and operational `database/athena.db`. Existing output is refused unless `--replace` is explicit. No network code is called.
+The final output and its temporary path are validated against the source database, source `-wal`/`-journal`/`-shm`, operational `database/athena.db`, and its companions before mutation. A uniquely named, exclusively created temporary file in the output directory replaces the former predictable `.tmp` name; only that builder-created file may be cleaned up, and successful output still uses atomic `os.replace`. Existing output is refused unless `--replace` is explicit. No network code is called.
 
 ## Explicit deferrals and Fixture State v2
 

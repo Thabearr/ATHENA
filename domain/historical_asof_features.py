@@ -22,6 +22,11 @@ HISTORICAL_ASOF_SCHEMA_VERSION = 1
 HISTORICAL_FEATURE_REGISTRY_VERSION = 1
 TEMPORAL_POLICY_ID = "DATE_STRICT_PRIOR_FIXTURES_V1"
 HISTORICAL_TEAM_IDENTITY_POLICY_ID = "COMPETITION_SCOPED_EXACT_CANONICAL_TEAM_V1"
+HISTORICAL_COMPLETION_POLICY_ID = "CANONICAL_REGULATION_FT_BOTH_SIDES_V1"
+HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID = (
+    "BLOCK_UNQUALIFIED_AGGREGATES_ON_EXTRA_PERIOD_EVIDENCE_V1"
+)
+HISTORICAL_GENERATION_CONTRACT_VERSION = 1
 WAREHOUSE_SCHEMA_VERSION = "1"
 CANONICAL_WAREHOUSE_SCHEMA_SQL = (
     Path(__file__).resolve().parents[1] / "database" / "historical_warehouse_schema.sql"
@@ -188,6 +193,55 @@ def _canonical_bytes(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+def calculate_historical_generation_contract_sha256(
+    version: int,
+    *,
+    temporal_policy_id: str = TEMPORAL_POLICY_ID,
+    team_identity_policy_id: str = HISTORICAL_TEAM_IDENTITY_POLICY_ID,
+    completion_policy_id: str = HISTORICAL_COMPLETION_POLICY_ID,
+    advanced_period_safety_policy_id: str = HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID,
+    generation_schema_version: int = HISTORICAL_ASOF_SCHEMA_VERSION,
+) -> str:
+    payload = {
+        "advanced_period_safety_policy_id": advanced_period_safety_policy_id,
+        "completion_policy_id": completion_policy_id,
+        "generation_schema_version": generation_schema_version,
+        "team_identity_policy_id": team_identity_policy_id,
+        "temporal_policy_id": temporal_policy_id,
+        "version": version,
+    }
+    return hashlib.sha256(_canonical_bytes(payload)).hexdigest()
+
+
+# Independently reviewed pins. Never derive this mapping from the live policies.
+EXPECTED_HISTORICAL_GENERATION_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = (
+    MappingProxyType({1: "82c23162aeef7b49a2205c2476f29ff97073b56a3519d6b8b1b7138925d41b3a"})
+)
+
+
+def validate_historical_generation_contract(
+    version: int = HISTORICAL_GENERATION_CONTRACT_VERSION,
+    expected_by_version: Mapping[int, str] = (
+        EXPECTED_HISTORICAL_GENERATION_CONTRACT_SHA256_BY_VERSION
+    ),
+    **policy_overrides: Any,
+) -> str:
+    expected = expected_by_version.get(version)
+    if expected is None:
+        raise HistoricalAsOfError(
+            f"unreviewed historical generation contract version: {version}"
+        )
+    actual = calculate_historical_generation_contract_sha256(
+        version, **policy_overrides
+    )
+    if actual != expected:
+        raise HistoricalAsOfError(
+            f"historical generation contract drift for version {version}: "
+            f"{actual} != {expected}"
+        )
+    return actual
+
+
 def calculate_historical_feature_registry_sha256(
     registry: Sequence[HistoricalFeatureDefinition], version: int,
 ) -> str:
@@ -224,8 +278,96 @@ def validate_historical_feature_registry(
 _DEFINITION_BY_ID = MappingProxyType({item.feature_id: item for item in HISTORICAL_FEATURE_REGISTRY})
 
 
-@dataclass(frozen=True)
+_BOUND_MATCH_TOKEN = object()
+_PROJECTION_TOKEN = object()
+_TARGET_TOKEN = object()
+
+
+@dataclass(frozen=True, init=False)
+class _SourceBoundWarehouseMatch:
+    source_warehouse_sha256: str
+    row_items: tuple[tuple[str, Any], ...]
+    row_sha256: str
+    _source_instance_token: object
+
+    def __init__(
+        self, *, _token: object | None = None,
+        source_warehouse_sha256: str, row_items: Sequence[tuple[str, Any]],
+        _source_instance_token: object,
+    ) -> None:
+        if _token is not _BOUND_MATCH_TOKEN:
+            raise HistoricalAsOfError("warehouse match rows are source-builder-only")
+        frozen_items = tuple(sorted((str(key), value) for key, value in row_items))
+        identity = {
+            "row": [[key, value] for key, value in frozen_items],
+            "source_warehouse_sha256": source_warehouse_sha256,
+        }
+        try:
+            row_sha256 = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
+        except (TypeError, ValueError) as exc:
+            raise HistoricalAsOfError("invalid numeric warehouse value in source row") from exc
+        object.__setattr__(self, "source_warehouse_sha256", source_warehouse_sha256)
+        object.__setattr__(self, "row_items", frozen_items)
+        object.__setattr__(self, "row_sha256", row_sha256)
+        object.__setattr__(self, "_source_instance_token", _source_instance_token)
+
+    def __getitem__(self, key: str) -> Any:
+        try:
+            return dict(self.row_items)[key]
+        except KeyError as exc:
+            raise KeyError(key) from exc
+
+    def verify_integrity(self) -> None:
+        identity = {
+            "row": [[key, value] for key, value in self.row_items],
+            "source_warehouse_sha256": self.source_warehouse_sha256,
+        }
+        if hashlib.sha256(_canonical_bytes(identity)).hexdigest() != self.row_sha256:
+            raise HistoricalAsOfError("source-bound warehouse match identity mismatch")
+
+
+@dataclass(frozen=True, init=False)
+class HistoricalAsOfTarget:
+    match_key: str
+    match_date: str
+    competition_key: str | None
+    competition_name: str
+    scope: str
+    season: str | None
+    stage: str | None
+    round_name: str | None
+    hierarchy_rank: int | None
+    hierarchy_tier: str | None
+    home_team: str
+    away_team: str
+    source_warehouse_sha256: str
+    target_sha256: str
+    _source_instance_token: object
+
+    def __init__(self, *, _token: object | None = None, **values: Any) -> None:
+        if _token is not _TARGET_TOKEN:
+            raise HistoricalAsOfError("historical targets are source-builder-only")
+        identity = {
+            key: values[key] for key in values
+            if key not in {"target_sha256", "_source_instance_token"}
+        }
+        values["target_sha256"] = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
+        for field in fields(type(self)):
+            object.__setattr__(self, field.name, values[field.name])
+
+    def verify_integrity(self) -> None:
+        identity = {
+            field.name: getattr(self, field.name)
+            for field in fields(type(self))
+            if field.name not in {"target_sha256", "_source_instance_token"}
+        }
+        if hashlib.sha256(_canonical_bytes(identity)).hexdigest() != self.target_sha256:
+            raise HistoricalAsOfError("historical target identity mismatch")
+
+
+@dataclass(frozen=True, init=False)
 class TeamMatchProjection:
+    source_warehouse_sha256: str
     match_key: str
     match_date: str
     competition_key: str | None
@@ -258,11 +400,42 @@ class TeamMatchProjection:
     field_source_keys: tuple[tuple[str, str], ...]
     conflict_fields: tuple[str, ...]
     projection_sha256: str
+    _source_instance_token: object
+
+    def __init__(self, *, _token: object | None = None, **values: Any) -> None:
+        if _token is not _PROJECTION_TOKEN:
+            raise HistoricalAsOfError("team match projections are source-builder-only")
+        identity = {
+            key: values[key] for key in values
+            if key not in {"projection_sha256", "_source_instance_token"}
+        }
+        identity["field_source_keys"] = [list(item) for item in values["field_source_keys"]]
+        identity["conflict_fields"] = list(values["conflict_fields"])
+        identity["blocked_primitives"] = list(values["blocked_primitives"])
+        values["projection_sha256"] = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
+        for field in fields(type(self)):
+            object.__setattr__(self, field.name, values[field.name])
+
+    def verify_integrity(self) -> None:
+        identity = {
+            field.name: getattr(self, field.name)
+            for field in fields(type(self))
+            if field.name not in {"projection_sha256", "_source_instance_token"}
+        }
+        identity["field_source_keys"] = [list(item) for item in self.field_source_keys]
+        identity["conflict_fields"] = list(self.conflict_fields)
+        identity["blocked_primitives"] = list(self.blocked_primitives)
+        if hashlib.sha256(_canonical_bytes(identity)).hexdigest() != self.projection_sha256:
+            raise HistoricalAsOfError("team match projection identity mismatch")
 
     def to_dict(self) -> dict[str, Any]:
-        return {field.name: getattr(self, field.name) for field in fields(self)} | {
+        return {
+            field.name: getattr(self, field.name)
+            for field in fields(self) if field.name != "_source_instance_token"
+        } | {
             "field_source_keys": [list(item) for item in self.field_source_keys],
             "conflict_fields": list(self.conflict_fields),
+            "blocked_primitives": list(self.blocked_primitives),
         }
 
 
@@ -278,12 +451,17 @@ class HistoricalFeatureResolution:
     effective_match_sample: int
     valid_field_sample: int
     missing_field_count: int
+    blocked_field_sample: int
     oldest_included_date: str | None
     newest_included_date: str | None
     algorithm_id: str
     required_primitives: tuple[str, ...]
     contributing_projection_sha256: str | None
     contributing_match_keys: tuple[str, ...]
+    blocked_projection_sha256: str | None
+    blocked_match_keys: tuple[str, ...]
+    blocked_source_field_provenance: tuple[tuple[str, str, str], ...]
+    blocked_reasons: tuple[str, ...]
     source_keys: tuple[str, ...]
     source_field_provenance: tuple[tuple[str, str, str], ...]
     conflict_count: int
@@ -302,13 +480,35 @@ class HistoricalFeatureResolution:
             raise HistoricalAsOfError("BLOCKED historical feature requires a blocker")
         if self.status is not HistoricalFeatureStatus.BLOCKED and self.blocker is not None:
             raise HistoricalAsOfError("only BLOCKED historical features may retain a blocker")
-        if self.missing_field_count != self.effective_match_sample - self.valid_field_sample:
+        if self.effective_match_sample != (
+            self.valid_field_sample + self.missing_field_count + self.blocked_field_sample
+        ):
             raise HistoricalAsOfError("historical feature sample counts do not reconcile")
+        if self.blocked_field_sample != len(self.blocked_match_keys):
+            raise HistoricalAsOfError("blocked historical observation counts do not reconcile")
+        if self.blocked_field_sample and (
+            self.blocked_projection_sha256 is None or not self.blocked_reasons
+        ):
+            raise HistoricalAsOfError("blocked observations require deterministic evidence")
+        if not self.blocked_field_sample and (
+            self.blocked_projection_sha256 is not None
+            or self.blocked_match_keys
+            or self.blocked_source_field_provenance
+            or self.blocked_reasons
+        ):
+            raise HistoricalAsOfError("unblocked observations cannot retain blocked evidence")
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "algorithm_id": self.algorithm_id,
             "blocker": self.blocker.value if self.blocker else None,
+            "blocked_field_sample": self.blocked_field_sample,
+            "blocked_match_keys": list(self.blocked_match_keys),
+            "blocked_projection_sha256": self.blocked_projection_sha256,
+            "blocked_reasons": list(self.blocked_reasons),
+            "blocked_source_field_provenance": [
+                list(item) for item in self.blocked_source_field_provenance
+            ],
             "conflict_count": self.conflict_count,
             "contributing_projection_sha256": self.contributing_projection_sha256,
             "contributing_match_keys": list(self.contributing_match_keys),
@@ -370,10 +570,14 @@ class HistoricalAsOfFixtureSnapshot:
     target_away_team: str
     temporal_policy_id: str
     team_identity_policy_id: str
+    completion_policy_id: str
+    advanced_period_safety_policy_id: str
     source_warehouse_sha256: str
     source_warehouse_schema_version: str
     source_schema_sql_sha256: str
     generation_schema_version: int
+    generation_contract_version: int
+    generation_contract_sha256: str
     feature_registry_version: int
     feature_registry_sha256: str
     home_resolutions: tuple[HistoricalFeatureResolution, ...]
@@ -394,6 +598,8 @@ class HistoricalAsOfFixtureSnapshot:
             "dataset": HISTORICAL_ASOF_DATASET,
             "feature_registry_sha256": self.feature_registry_sha256,
             "feature_registry_version": self.feature_registry_version,
+            "generation_contract_sha256": self.generation_contract_sha256,
+            "generation_contract_version": self.generation_contract_version,
             "generation_schema_version": self.generation_schema_version,
             "home_resolutions": [item.to_dict() for item in self.home_resolutions],
             "away_resolutions": [item.to_dict() for item in self.away_resolutions],
@@ -416,6 +622,8 @@ class HistoricalAsOfFixtureSnapshot:
             },
             "temporal_policy_id": self.temporal_policy_id,
             "team_identity_policy_id": self.team_identity_policy_id,
+            "completion_policy_id": self.completion_policy_id,
+            "advanced_period_safety_policy_id": self.advanced_period_safety_policy_id,
         }
 
     @property
@@ -431,7 +639,7 @@ REQUIRED_WAREHOUSE_OBJECTS = frozenset({
     "warehouse_meta", "warehouse_sources", "warehouse_matches", "warehouse_match_flat",
     "warehouse_events", "warehouse_events_preferred", "warehouse_lineups",
     "warehouse_coaches", "warehouse_officials", "warehouse_field_provenance",
-    "warehouse_match_sources", "warehouse_conflicts",
+    "warehouse_match_sources", "warehouse_conflicts", "warehouse_penalty_shootouts",
 })
 
 
@@ -466,10 +674,36 @@ def validate_warehouse_schema_sql(
     return actual
 
 
+_SOURCE_BOUND_MATCH_SELECT = """
+SELECT m.*,
+  (SELECT group_concat(pair, char(30)) FROM (
+     SELECT p.field_name || char(31) || p.source_key AS pair
+     FROM warehouse_field_provenance p
+     WHERE p.match_key=m.match_key ORDER BY p.field_name,p.source_key
+  )) AS provenance_pairs,
+  (SELECT group_concat(field_name, char(30)) FROM (
+     SELECT DISTINCT c.field_name AS field_name FROM warehouse_conflicts c
+     WHERE c.match_key=m.match_key ORDER BY c.field_name
+  )) AS conflict_fields,
+  EXISTS(
+    SELECT 1 FROM warehouse_events e
+    WHERE e.match_key=m.match_key
+      AND e.source_key='statsbomb_open'
+      AND e.period IN ('3','4')
+  ) AS has_reviewed_extra_time_event,
+  EXISTS(
+    SELECT 1 FROM warehouse_penalty_shootouts p
+    WHERE p.match_key=m.match_key
+  ) AS has_penalty_shootout_evidence
+FROM warehouse_match_flat m
+"""
+
+
 class ReadOnlyHistoricalWarehouse:
     """Stable, SHA-bound, query-only view of one warehouse image."""
 
     def __init__(self, path: Path) -> None:
+        self._source_instance_token = object()
         self.path = Path(path).resolve()
         if not self.path.is_file():
             raise HistoricalAsOfError(f"historical warehouse does not exist: {self.path}")
@@ -522,6 +756,51 @@ class ReadOnlyHistoricalWarehouse:
             raise HistoricalAsOfError("historical warehouse bytes changed during construction")
         self._assert_no_active_companions()
 
+    def _bound_matches(
+        self, where_sql: str = "", parameters: Sequence[Any] = (),
+        order_sql: str = "",
+    ) -> tuple[_SourceBoundWarehouseMatch, ...]:
+        query = _SOURCE_BOUND_MATCH_SELECT
+        if where_sql:
+            query += " WHERE " + where_sql
+        if order_sql:
+            query += " ORDER BY " + order_sql
+        return tuple(
+            _SourceBoundWarehouseMatch(
+                _token=_BOUND_MATCH_TOKEN,
+                source_warehouse_sha256=self.sha256,
+                row_items=tuple((key, row[key]) for key in row.keys()),
+                _source_instance_token=self._source_instance_token,
+            )
+            for row in self.connection.execute(query, tuple(parameters))
+        )
+
+    def target_match(self, match_key: str) -> _SourceBoundWarehouseMatch:
+        matches = self._bound_matches("m.match_key=?", (match_key,))
+        if len(matches) != 1:
+            raise HistoricalAsOfError(f"unknown target match_key: {match_key}")
+        return matches[0]
+
+    def historical_matches(
+        self, scope: str, competition_key: str, team: str, target_date: str,
+    ) -> tuple[_SourceBoundWarehouseMatch, ...]:
+        return self._bound_matches(
+            "m.match_date < ? AND m.scope=? AND m.competition_key=? "
+            "AND (m.home_team=? OR m.away_team=?)",
+            (target_date, scope, competition_key, team, team),
+            "m.match_date,m.match_key",
+        )
+
+    def stream_matches(self) -> Iterable[_SourceBoundWarehouseMatch]:
+        query = _SOURCE_BOUND_MATCH_SELECT + " ORDER BY m.match_date,m.match_key"
+        for row in self.connection.execute(query):
+            yield _SourceBoundWarehouseMatch(
+                _token=_BOUND_MATCH_TOKEN,
+                source_warehouse_sha256=self.sha256,
+                row_items=tuple((key, row[key]) for key in row.keys()),
+                _source_instance_token=self._source_instance_token,
+            )
+
     def close(self) -> None:
         connection = getattr(self, "connection", None)
         if connection is not None:
@@ -566,7 +845,9 @@ def _safe_number(value: Any, field_name: str) -> int | float | None:
     return value
 
 
-def qualifies_completed_prior_fixture(row: Mapping[str, Any] | sqlite3.Row) -> bool:
+def qualifies_completed_prior_fixture(
+    row: Mapping[str, Any] | sqlite3.Row | _SourceBoundWarehouseMatch,
+) -> bool:
     """Return true only for mechanically completed regulation-score rows."""
     scores = (row["home_score_ft"], row["away_score_ft"])
     if any(value is None for value in scores):
@@ -585,16 +866,41 @@ _PERIOD_UNQUALIFIED_ADVANCED_PRIMITIVES = frozenset({
 })
 
 
-def _has_extra_period_evidence(row: Mapping[str, Any] | sqlite3.Row) -> bool:
+def _has_extra_period_evidence(
+    row: Mapping[str, Any] | sqlite3.Row | _SourceBoundWarehouseMatch,
+) -> bool:
     return any(
         row[field_name] is not None
         for field_name in (
             "home_score_et", "away_score_et", "home_score_pen", "away_score_pen",
         )
+    ) or bool(row["has_reviewed_extra_time_event"]) or bool(
+        row["has_penalty_shootout_evidence"]
     )
 
 
-def _projection(row: sqlite3.Row, team: str, provenance: Mapping[str, str], conflicts: Iterable[str]) -> TeamMatchProjection:
+def _decode_pairs(value: str | None) -> tuple[tuple[str, str], ...]:
+    if not value:
+        return ()
+    pairs = []
+    for entry in value.split("\x1e"):
+        field_name, source_key = entry.split("\x1f", 1)
+        pairs.append((field_name, source_key))
+    return tuple(sorted(set(pairs)))
+
+
+def _decode_fields(value: str | None) -> tuple[str, ...]:
+    return tuple(sorted(set(value.split("\x1e")))) if value else ()
+
+
+def _projection(
+    row: _SourceBoundWarehouseMatch, team: str,
+) -> TeamMatchProjection:
+    if not isinstance(row, _SourceBoundWarehouseMatch):
+        raise HistoricalAsOfError("team projections require a source-bound warehouse row")
+    row.verify_integrity()
+    provenance = dict(_decode_pairs(row["provenance_pairs"]))
+    conflicts = _decode_fields(row["conflict_fields"])
     home = team == row["home_team"]
     if not home and team != row["away_team"]:
         raise HistoricalAsOfError("team is not present in prior match")
@@ -624,6 +930,8 @@ def _projection(row: sqlite3.Row, team: str, provenance: Mapping[str, str], conf
         return _safe_number(row[field_name], field_name)
 
     values: dict[str, Any] = {
+        "source_warehouse_sha256": row.source_warehouse_sha256,
+        "_source_instance_token": row._source_instance_token,
         "match_key": row["match_key"], "match_date": row["match_date"],
         "competition_key": row["competition_key"], "scope": row["scope"], "season": row["season"],
         "team": team, "opponent": row[f"{other}_team"], "side": side.upper(),
@@ -651,19 +959,7 @@ def _projection(row: sqlite3.Row, team: str, provenance: Mapping[str, str], conf
         "field_source_keys": tuple(sorted(provenance.items())),
         "conflict_fields": tuple(sorted(set(conflicts))),
     }
-    identity = {key: value for key, value in values.items() if key not in {"projection_sha256"}}
-    identity["field_source_keys"] = [list(item) for item in values["field_source_keys"]]
-    identity["conflict_fields"] = list(values["conflict_fields"])
-    values["projection_sha256"] = hashlib.sha256(_canonical_bytes(identity)).hexdigest()
-    return TeamMatchProjection(**values)
-
-
-_MATCH_COLUMNS = """m.match_key,m.competition_key,m.scope,m.season,m.match_date,
- m.home_team,m.away_team,m.home_score_ft,m.away_score_ft,m.home_score_ht,m.away_score_ht,
- m.home_score_et,m.away_score_et,m.home_score_pen,m.away_score_pen,
- m.home_xg,m.away_xg,m.home_possession,m.away_possession,m.home_shots,m.away_shots,
- m.home_shots_on_target,m.away_shots_on_target,m.home_corners,m.away_corners,
- m.home_fouls,m.away_fouls,m.home_yellows,m.away_yellows,m.home_reds,m.away_reds"""
+    return TeamMatchProjection(_token=_PROJECTION_TOKEN, **values)
 
 
 def historical_team_identity(
@@ -678,7 +974,7 @@ def historical_team_identity(
 
 
 def _history(
-    connection: sqlite3.Connection,
+    source: ReadOnlyHistoricalWarehouse,
     scope: Any,
     competition_key: Any,
     team: Any,
@@ -687,37 +983,13 @@ def _history(
     identity = historical_team_identity(scope, competition_key, team)
     if identity is None:
         return ()
-    rows = connection.execute(
-        f"SELECT {_MATCH_COLUMNS} FROM warehouse_matches m "
-        "WHERE m.match_date < ? AND m.scope=? AND m.competition_key=? "
-        "AND (m.home_team=? OR m.away_team=?) "
-        "ORDER BY m.match_date,m.match_key",
-        (target_date, identity[0], identity[1], identity[2], identity[2]),
-    ).fetchall()
+    rows = source.historical_matches(
+        identity[0], identity[1], identity[2], target_date
+    )
     rows = [row for row in rows if qualifies_completed_prior_fixture(row)]
     if not rows:
         return ()
-    provenance_by_match: dict[str, dict[str, str]] = {}
-    for item in connection.execute(
-        "SELECT p.match_key,p.field_name,p.source_key FROM warehouse_field_provenance p "
-        "JOIN warehouse_matches m ON m.match_key=p.match_key "
-        "WHERE m.match_date < ? AND m.scope=? AND m.competition_key=? "
-        "AND (m.home_team=? OR m.away_team=?)",
-        (target_date, identity[0], identity[1], identity[2], identity[2]),
-    ):
-        provenance_by_match.setdefault(item["match_key"], {})[item["field_name"]] = item["source_key"]
-    conflicts_by_match: dict[str, list[str]] = {}
-    for item in connection.execute(
-        "SELECT c.match_key,c.field_name FROM warehouse_conflicts c "
-        "JOIN warehouse_matches m ON m.match_key=c.match_key "
-        "WHERE m.match_date < ? AND m.scope=? AND m.competition_key=? "
-        "AND (m.home_team=? OR m.away_team=?)",
-        (target_date, identity[0], identity[1], identity[2], identity[2]),
-    ):
-        conflicts_by_match.setdefault(item["match_key"], []).append(item["field_name"])
-    return tuple(_projection(
-        row, identity[2], provenance_by_match.get(row["match_key"], {}), conflicts_by_match.get(row["match_key"], ()),
-    ) for row in rows)
+    return tuple(_projection(row, identity[2]) for row in rows)
 
 
 def complete_boundary_window(history: Sequence[TeamMatchProjection], requested: int) -> tuple[TeamMatchProjection, ...]:
@@ -811,16 +1083,21 @@ def _resolution(
 ) -> HistoricalFeatureResolution:
     requested = WINDOW_SIZES[window]
     selected = complete_boundary_window(history, requested) if requested else tuple(history)
-    valid = [item for item in selected if all(getattr(item, name) is not None for name in definition.required_primitives)]
     blocked = [
         item for item in selected
         if any(primitive in item.blocked_primitives for primitive in definition.required_primitives)
     ]
-    evidence_items = valid or blocked
-    dates = [item.match_date for item in (evidence_items or selected)]
-    provenance = _relevant_provenance(evidence_items, definition.required_primitives)
+    valid = [
+        item for item in selected
+        if item not in blocked
+        and all(getattr(item, name) is not None for name in definition.required_primitives)
+    ]
+    missing = [item for item in selected if item not in blocked and item not in valid]
+    dates = [item.match_date for item in selected]
+    provenance = _relevant_provenance(valid, definition.required_primitives)
+    blocked_provenance = _relevant_provenance(blocked, definition.required_primitives)
     conflict_count = 0
-    for item in evidence_items:
+    for item in valid:
         relevant_fields = {
             field_name
             for primitive in definition.required_primitives
@@ -832,24 +1109,32 @@ def _resolution(
     common = dict(
         feature_id=definition.feature_id, scope=scope, window=window,
         requested_window_size=requested, effective_match_sample=len(selected),
-        valid_field_sample=len(valid), missing_field_count=len(selected) - len(valid),
+        valid_field_sample=len(valid), missing_field_count=len(missing),
+        blocked_field_sample=len(blocked),
         oldest_included_date=min(dates) if dates else None,
         newest_included_date=max(dates) if dates else None,
         algorithm_id=definition.algorithm_id, required_primitives=definition.required_primitives,
-        contributing_match_keys=tuple(item.match_key for item in evidence_items),
+        contributing_match_keys=tuple(item.match_key for item in valid),
+        blocked_projection_sha256=(
+            hashlib.sha256(
+                _canonical_bytes([item.projection_sha256 for item in blocked])
+            ).hexdigest() if blocked else None
+        ),
+        blocked_match_keys=tuple(item.match_key for item in blocked),
+        blocked_source_field_provenance=blocked_provenance,
+        blocked_reasons=(
+            (HistoricalFeatureBlocker.UNSAFE_SOURCE_STATE.value,) if blocked else ()
+        ),
         source_keys=tuple(sorted({source for _, _, source in provenance})),
         source_field_provenance=provenance,
         conflict_count=conflict_count,
     )
     if not valid:
         if blocked:
-            projection_sha = hashlib.sha256(
-                _canonical_bytes([item.projection_sha256 for item in blocked])
-            ).hexdigest()
             return HistoricalFeatureResolution(
                 status=HistoricalFeatureStatus.BLOCKED, value=None,
                 blocker=HistoricalFeatureBlocker.UNSAFE_SOURCE_STATE,
-                contributing_projection_sha256=projection_sha, **common,
+                contributing_projection_sha256=None, **common,
             )
         return HistoricalFeatureResolution(
             status=HistoricalFeatureStatus.MISSING, value=None, blocker=None,
@@ -895,10 +1180,13 @@ def _schedule_resolutions(history: Sequence[TeamMatchProjection], target_date: s
             feature_id=feature_id, scope=HistoricalTeamScope.OVERALL, window=HistoricalWindow.AS_OF,
             requested_window_size=None, effective_match_sample=effective,
             valid_field_sample=effective if all_history_exists else 0, missing_field_count=0,
+            blocked_field_sample=0,
             oldest_included_date=min((x.match_date for x in selected), default=None),
             newest_included_date=max((x.match_date for x in selected), default=None),
             algorithm_id=definition.algorithm_id, required_primitives=definition.required_primitives,
             contributing_match_keys=tuple(item.match_key for item in evidence_items) if all_history_exists else (),
+            blocked_projection_sha256=None, blocked_match_keys=(),
+            blocked_source_field_provenance=(), blocked_reasons=(),
             source_keys=tuple(sorted({source for _, _, source in provenance})),
             source_field_provenance=provenance,
             conflict_count=sum("match_date" in item.conflict_fields for item in evidence_items),
@@ -942,51 +1230,85 @@ def _usable_season(value: Any) -> bool:
     return isinstance(value, str) and bool(value) and value == value.strip()
 
 
+def _target(row: _SourceBoundWarehouseMatch) -> HistoricalAsOfTarget:
+    if not isinstance(row, _SourceBoundWarehouseMatch):
+        raise HistoricalAsOfError("historical targets require a source-bound warehouse row")
+    row.verify_integrity()
+    return HistoricalAsOfTarget(
+        _token=_TARGET_TOKEN,
+        match_key=row["match_key"], match_date=row["match_date"],
+        competition_key=row["competition_key"], competition_name=row["competition_name"],
+        scope=row["scope"], season=row["season"], stage=row["stage"],
+        round_name=row["round_name"], hierarchy_rank=row["hierarchy_rank"],
+        hierarchy_tier=row["hierarchy_tier"], home_team=row["home_team"],
+        away_team=row["away_team"],
+        source_warehouse_sha256=row.source_warehouse_sha256,
+        _source_instance_token=row._source_instance_token,
+    )
+
+
 def build_historical_asof_snapshot(
     warehouse_path: Path, target_match_key: str,
 ) -> HistoricalAsOfFixtureSnapshot:
     registry_sha = validate_historical_feature_registry()
+    generation_contract_sha = validate_historical_generation_contract()
     with ReadOnlyHistoricalWarehouse(warehouse_path) as source:
-        target = source.connection.execute(
-            "SELECT match_key,match_date,competition_key,competition_name,scope,season,stage,round_name,"
-            "hierarchy_rank,hierarchy_tier,home_team,away_team "
-            "FROM warehouse_match_flat WHERE match_key=?", (target_match_key,),
-        ).fetchone()
-        if target is None:
-            raise HistoricalAsOfError(f"unknown target match_key: {target_match_key}")
-        _parse_date(target["match_date"])
+        target = _target(source.target_match(target_match_key))
+        _parse_date(target.match_date)
         home_history = _history(
-            source.connection, target["scope"], target["competition_key"],
-            target["home_team"], target["match_date"],
+            source, target.scope, target.competition_key,
+            target.home_team, target.match_date,
         )
         away_history = _history(
-            source.connection, target["scope"], target["competition_key"],
-            target["away_team"], target["match_date"],
+            source, target.scope, target.competition_key,
+            target.away_team, target.match_date,
         )
-        snapshot = _assemble_snapshot(target, home_history, away_history, source, registry_sha)
+        snapshot = _assemble_snapshot(
+            target, home_history, away_history, source, registry_sha,
+            generation_contract_sha,
+        )
         source.assert_unchanged()
         return snapshot
 
 
 def _assemble_snapshot(
-    target: Mapping[str, Any], home_history: Sequence[TeamMatchProjection],
+    target: HistoricalAsOfTarget, home_history: Sequence[TeamMatchProjection],
     away_history: Sequence[TeamMatchProjection], source: ReadOnlyHistoricalWarehouse,
-    registry_sha: str,
+    registry_sha: str, generation_contract_sha: str,
 ) -> HistoricalAsOfFixtureSnapshot:
     """Internal constructor used by verified file and streaming builders."""
     if registry_sha != validate_historical_feature_registry():
         raise HistoricalAsOfError("historical registry identity changed during construction")
-    target_date = target["match_date"]
+    if generation_contract_sha != validate_historical_generation_contract():
+        raise HistoricalAsOfError("historical generation contract changed during construction")
+    if not isinstance(target, HistoricalAsOfTarget):
+        raise HistoricalAsOfError("canonical assembly requires a source-bound target")
+    target.verify_integrity()
+    if target.source_warehouse_sha256 != source.sha256:
+        raise HistoricalAsOfError("historical target belongs to a different warehouse")
+    if target._source_instance_token is not source._source_instance_token:
+        raise HistoricalAsOfError("historical target was not issued by the bound warehouse")
+    target_date = target.match_date
     _parse_date(target_date)
     home_identity = historical_team_identity(
-        target["scope"], target["competition_key"], target["home_team"]
+        target.scope, target.competition_key, target.home_team
     )
     away_identity = historical_team_identity(
-        target["scope"], target["competition_key"], target["away_team"]
+        target.scope, target.competition_key, target.away_team
     )
     if home_identity is None or away_identity is None:
         raise HistoricalAsOfError("unusable target team identity")
     for expected, history in ((home_identity, home_history), (away_identity, away_history)):
+        for item in history:
+            if not isinstance(item, TeamMatchProjection):
+                raise HistoricalAsOfError("canonical history requires source-bound projections")
+            item.verify_integrity()
+            if item.source_warehouse_sha256 != source.sha256:
+                raise HistoricalAsOfError("historical projection belongs to a different warehouse")
+            if item._source_instance_token is not source._source_instance_token:
+                raise HistoricalAsOfError(
+                    "historical projection was not issued by the bound warehouse"
+                )
         if expected is not None and any(
             historical_team_identity(item.scope, item.competition_key, item.team) != expected
             for item in history
@@ -994,8 +1316,8 @@ def _assemble_snapshot(
             raise HistoricalAsOfError("history violates the historical team identity policy")
     if any(item.match_date >= target_date for item in (*home_history, *away_history)):
         raise HistoricalAsOfError("DATE_STRICT history contains target-date or later evidence")
-    home = _team_resolutions(home_history, target_date, target["season"], HistoricalTeamScope.HOME_ONLY)
-    away = _team_resolutions(away_history, target_date, target["season"], HistoricalTeamScope.AWAY_ONLY)
+    home = _team_resolutions(home_history, target_date, target.season, HistoricalTeamScope.HOME_ONLY)
+    away = _team_resolutions(away_history, target_date, target.season, HistoricalTeamScope.AWAY_ONLY)
     all_resolutions = home + away
     coverage = HistoricalCoverage(
         total=len(all_resolutions),
@@ -1005,17 +1327,21 @@ def _assemble_snapshot(
     )
     return HistoricalAsOfFixtureSnapshot(
         _token=_SNAPSHOT_TOKEN,
-        target_match_key=target["match_key"], target_match_date=target_date,
-        target_competition_key=target["competition_key"], target_scope=target["scope"],
-        target_competition_name=target["competition_name"], target_season=target["season"],
-        target_stage=target["stage"], target_round_name=target["round_name"],
-        target_hierarchy_rank=target["hierarchy_rank"], target_hierarchy_tier=target["hierarchy_tier"],
-        target_home_team=target["home_team"],
-        target_away_team=target["away_team"], temporal_policy_id=TEMPORAL_POLICY_ID,
+        target_match_key=target.match_key, target_match_date=target_date,
+        target_competition_key=target.competition_key, target_scope=target.scope,
+        target_competition_name=target.competition_name, target_season=target.season,
+        target_stage=target.stage, target_round_name=target.round_name,
+        target_hierarchy_rank=target.hierarchy_rank, target_hierarchy_tier=target.hierarchy_tier,
+        target_home_team=target.home_team,
+        target_away_team=target.away_team, temporal_policy_id=TEMPORAL_POLICY_ID,
         team_identity_policy_id=HISTORICAL_TEAM_IDENTITY_POLICY_ID,
+        completion_policy_id=HISTORICAL_COMPLETION_POLICY_ID,
+        advanced_period_safety_policy_id=HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID,
         source_warehouse_sha256=source.sha256, source_warehouse_schema_version=source.schema_version,
         source_schema_sql_sha256=source.schema_sql_sha256,
         generation_schema_version=HISTORICAL_ASOF_SCHEMA_VERSION,
+        generation_contract_version=HISTORICAL_GENERATION_CONTRACT_VERSION,
+        generation_contract_sha256=generation_contract_sha,
         feature_registry_version=HISTORICAL_FEATURE_REGISTRY_VERSION,
         feature_registry_sha256=registry_sha, home_resolutions=home, away_resolutions=away,
         coverage=coverage, authority_flags=tuple(sorted(AUTHORITY_FLAGS.items())),

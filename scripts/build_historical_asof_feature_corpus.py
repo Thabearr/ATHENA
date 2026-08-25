@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sqlite3
 import sys
 from collections import defaultdict
@@ -20,7 +21,10 @@ if str(ROOT) not in sys.path:
 from domain.historical_asof_features import (  # noqa: E402
     HISTORICAL_ASOF_DATASET,
     HISTORICAL_ASOF_SCHEMA_VERSION,
+    HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID,
+    HISTORICAL_COMPLETION_POLICY_ID,
     HISTORICAL_FEATURE_REGISTRY_VERSION,
+    HISTORICAL_GENERATION_CONTRACT_VERSION,
     HISTORICAL_TEAM_IDENTITY_POLICY_ID,
     TEMPORAL_POLICY_ID,
     HistoricalAsOfError,
@@ -28,9 +32,11 @@ from domain.historical_asof_features import (  # noqa: E402
     TeamMatchProjection,
     _assemble_snapshot,
     _projection,
+    _target,
     historical_team_identity,
     qualifies_completed_prior_fixture,
     validate_historical_feature_registry,
+    validate_historical_generation_contract,
 )
 
 DEFAULT_DB = ROOT / "database" / "athena_history.db"
@@ -97,42 +103,7 @@ class TeamRollingHistory:
             self.current_season_matches.extend(item for item in bucket if item.season == season)
 
 
-def _decode_pairs(value: str | None) -> tuple[tuple[str, str], ...]:
-    if not value:
-        return ()
-    pairs = []
-    for entry in value.split("\x1e"):
-        field_name, source_key = entry.split("\x1f", 1)
-        pairs.append((field_name, source_key))
-    return tuple(sorted(set(pairs)))
-
-
-def _decode_fields(value: str | None) -> tuple[str, ...]:
-    return tuple(sorted(set(value.split("\x1e")))) if value else ()
-
-
-def _stream_rows(connection: sqlite3.Connection) -> Iterable[sqlite3.Row]:
-    # Correlated indexed lookups avoid retaining the warehouse provenance tables
-    # in memory and preserve one canonical row per match.
-    return connection.execute(
-        """
-        SELECT m.*,
-          (SELECT group_concat(pair, char(30)) FROM (
-             SELECT p.field_name || char(31) || p.source_key AS pair
-             FROM warehouse_field_provenance p
-             WHERE p.match_key=m.match_key ORDER BY p.field_name,p.source_key
-          )) AS provenance_pairs,
-          (SELECT group_concat(field_name, char(30)) FROM (
-             SELECT DISTINCT c.field_name AS field_name FROM warehouse_conflicts c
-             WHERE c.match_key=m.match_key ORDER BY c.field_name
-          )) AS conflict_fields
-        FROM warehouse_match_flat m
-        ORDER BY m.match_date,m.match_key
-        """
-    )
-
-
-def _selected(row: sqlite3.Row, competition: str | None, start_date: str | None, end_date: str | None) -> bool:
+def _selected(row: Any, competition: str | None, start_date: str | None, end_date: str | None) -> bool:
     return (
         (competition is None or row["competition_key"] == competition)
         and (start_date is None or row["match_date"] >= start_date)
@@ -160,6 +131,24 @@ def _create_output(path: Path) -> sqlite3.Connection:
     return connection
 
 
+def _protected_sqlite_paths(main_path: Path) -> frozenset[Path]:
+    return frozenset(
+        {main_path.resolve()}
+        | {Path(str(main_path.resolve()) + suffix) for suffix in ("-wal", "-journal", "-shm")}
+    )
+
+
+def _new_safe_temporary(output: Path, protected: frozenset[Path]) -> Path:
+    for _ in range(100):
+        candidate = output.with_name(f".{output.name}.{secrets.token_hex(12)}.tmp").resolve()
+        if candidate in protected or candidate.exists():
+            continue
+        descriptor = os.open(candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        os.close(descriptor)
+        return candidate
+    raise HistoricalAsOfError("unable to allocate a collision-safe output temporary file")
+
+
 def build_corpus(
     warehouse_path: Path,
     output_path: Path,
@@ -173,7 +162,9 @@ def build_corpus(
     source_path = Path(warehouse_path).resolve()
     output = Path(output_path).resolve()
     operational = (ROOT / "database" / "athena.db").resolve()
-    if output in {source_path, operational}:
+    protected = _protected_sqlite_paths(source_path) | _protected_sqlite_paths(operational)
+    legacy_temporary = output.with_name(output.name + ".tmp").resolve()
+    if output in protected or legacy_temporary == source_path:
         raise HistoricalAsOfError("output must be separate from historical and operational databases")
     if limit is not None and limit < 1:
         raise HistoricalAsOfError("limit must be positive")
@@ -183,10 +174,9 @@ def build_corpus(
     if output.exists() and not replace:
         raise HistoricalAsOfError(f"output already exists: {output}")
     output.parent.mkdir(parents=True, exist_ok=True)
-    temporary = output.with_name(output.name + ".tmp")
-    if temporary.exists():
-        temporary.unlink()
+    temporary = _new_safe_temporary(output, protected)
     registry_sha = validate_historical_feature_registry()
+    generation_contract_sha = validate_historical_generation_contract()
     count = 0
     try:
         with ReadOnlyHistoricalWarehouse(source_path) as source:
@@ -198,6 +188,12 @@ def build_corpus(
                     "feature_registry_sha256": registry_sha,
                     "feature_registry_version": HISTORICAL_FEATURE_REGISTRY_VERSION,
                     "generation_schema_version": HISTORICAL_ASOF_SCHEMA_VERSION,
+                    "generation_contract_version": HISTORICAL_GENERATION_CONTRACT_VERSION,
+                    "generation_contract_sha256": generation_contract_sha,
+                    "historical_completion_policy_id": HISTORICAL_COMPLETION_POLICY_ID,
+                    "historical_advanced_period_safety_policy_id": (
+                        HISTORICAL_ADVANCED_PERIOD_SAFETY_POLICY_ID
+                    ),
                     "historical_team_identity_policy_id": HISTORICAL_TEAM_IDENTITY_POLICY_ID,
                     "source_schema_sql_sha256": source.schema_sql_sha256,
                     "source_warehouse_schema_version": source.schema_version,
@@ -208,15 +204,13 @@ def build_corpus(
                     "INSERT INTO corpus_meta(key,value) VALUES(?,?)",
                     sorted((key, json.dumps(value, separators=(",", ":"))) for key, value in meta.items()),
                 )
-                date_batch: list[sqlite3.Row] = []
+                date_batch: list[Any] = []
                 current_date: str | None = None
 
-                def process_batch(rows: list[sqlite3.Row]) -> None:
+                def process_batch(rows: list[Any]) -> None:
                     nonlocal count
                     additions: dict[tuple[str, str, str], list[TeamMatchProjection]] = defaultdict(list)
                     for row in rows:
-                        provenance = dict(_decode_pairs(row["provenance_pairs"]))
-                        conflicts = _decode_fields(row["conflict_fields"])
                         home_identity = historical_team_identity(
                             row["scope"], row["competition_key"], row["home_team"]
                         )
@@ -225,13 +219,14 @@ def build_corpus(
                         )
                         if _selected(row, competition, start_date, end_date) and (limit is None or count < limit):
                             snapshot = _assemble_snapshot(
-                                row,
+                                _target(row),
                                 histories[home_identity].history_for(row["season"], row["match_date"])
                                 if home_identity is not None else (),
                                 histories[away_identity].history_for(row["season"], row["match_date"])
                                 if away_identity is not None else (),
                                 source,
                                 registry_sha,
+                                generation_contract_sha,
                             )
                             destination.execute(
                                 "INSERT INTO historical_asof_snapshots VALUES(?,?,?,?,?)",
@@ -243,10 +238,10 @@ def build_corpus(
                                 destination.commit()
                         if qualifies_completed_prior_fixture(row):
                             home_projection = _projection(
-                                row, row["home_team"], provenance, conflicts
+                                row, row["home_team"]
                             )
                             away_projection = _projection(
-                                row, row["away_team"], provenance, conflicts
+                                row, row["away_team"]
                             )
                             if home_identity is not None:
                                 additions[home_identity].append(home_projection)
@@ -255,7 +250,7 @@ def build_corpus(
                     for identity, projections in additions.items():
                         histories[identity].add_date_bucket(rows[0]["match_date"], projections)
 
-                for row in _stream_rows(source.connection):
+                for row in source.stream_matches():
                     date.fromisoformat(row["match_date"])
                     if current_date is None:
                         current_date = row["match_date"]
