@@ -59,11 +59,12 @@ SETTLEMENT_RETURN_SEMANTICS = MappingProxyType({
 })
 DEVIG_CLASSIFICATION_SEMANTICS = MappingProxyType({
     "ordinary_complete_partitions": (
-        "MATCH_RESULT", "BTTS", "TOTAL_GOALS_EXACT_LINE",
+        "MATCH_RESULT", "BTTS", "TOTAL_GOALS_EXACT_HALF_LINE",
         "RESULT_OR_TOTALS_YES_NO", "WIN_TO_NIL_YES_NO",
     ),
     "overlapping_no_ordinary_devig": ("DOUBLE_CHANCE", "EARLY_PAYOUT"),
     "push_or_split_no_ordinary_devig": ("DRAW_NO_BET", "ASIAN_HANDICAP"),
+    "totals_line_settlement": "integer_push_quarter_split_half_win_loss",
     "partition_binding": "same_fixture_event_source_snapshot_market_and_exact_line",
 })
 
@@ -158,7 +159,7 @@ def calculate_price_all_contract_sha256(*, calibration_sha: str, market_sha: str
 
 
 EXPECTED_PRICE_ALL_CONTRACT_SHA256_BY_VERSION = MappingProxyType({
-    1: "f944e178f20ec697e1e82d2f328b3c8ae4cecf3ad28bd379e7552e9800430c6b",
+    1: "b62bbac793a1b2ff60c405cc954105237c1353b995645406f5da7ac4d10e97d5",
 })
 
 
