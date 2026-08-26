@@ -338,9 +338,9 @@ def _tactical_event_regime(row: TrainingRow) -> str:
             return "UNKNOWN"
         values.append(float(value))
     score = float(np.mean(values))
-    if score <= -0.5:
+    if score <= STRATIFIED_TACTICAL_EVENT_LOW:
         return "LOW_EVENT"
-    if score >= 0.5:
+    if score >= STRATIFIED_TACTICAL_EVENT_HIGH:
         return "HIGH_EVENT"
     return "MID_EVENT"
 
@@ -428,31 +428,54 @@ def _pairwise_comparisons(
 
 
 def _winner_guardrail(
-    holdout_ranked: Sequence[str],
+    development_selected_model_id: str,
     holdout_metrics: Mapping[str, Mapping[str, float]],
 ) -> tuple[str | None, str, dict[str, Any]]:
-    if not holdout_ranked:
+    if development_selected_model_id not in holdout_metrics:
         return None, "NO_HOLDOUT_CANDIDATES", {}
-    candidate = holdout_ranked[0]
+    candidate = development_selected_model_id
     secondary = (
         "result_1x2_log_loss",
         "total_goals_log_loss",
         "goal_margin_log_loss",
     )
+    primary_best_model = min(
+        holdout_metrics,
+        key=lambda model_id: (
+            holdout_metrics[model_id]["exact_score_nll"],
+            model_id,
+        ),
+    )
+    primary_best = holdout_metrics[primary_best_model]["exact_score_nll"]
+    primary_candidate = holdout_metrics[candidate]["exact_score_nll"]
+    primary_passed = primary_candidate <= primary_best + 1e-15
     details: dict[str, Any] = {
-        "policy_id": RESEARCH_WINNER_POLICY_ID,
-        "candidate": candidate,
-        "maximum_secondary_relative_regression": 0.05,
-        "minimum_prediction_availability": 0.99,
+        "policy_id": WINNER_GUARDRAIL_POLICY_ID,
+        "development_selected_candidate": candidate,
+        "terminal_holdout_can_reselect": False,
+        "holdout_primary_best_model": primary_best_model,
+        "holdout_primary_candidate_nll": primary_candidate,
+        "holdout_primary_best_nll": primary_best,
+        "holdout_primary_passed": primary_passed,
+        "maximum_secondary_relative_regression": (
+            WINNER_MAX_SECONDARY_RELATIVE_REGRESSION
+        ),
+        "minimum_prediction_availability": WINNER_MIN_PREDICTION_AVAILABILITY,
         "secondary_checks": {},
     }
-    if holdout_metrics[candidate]["prediction_availability"] < 0.99:
+    if not primary_passed:
+        details["failure"] = "PRIMARY_NLL_GUARDRAIL"
+        return None, "NO_CHALLENGER_CLEARED_GUARDRAILS", details
+    if (
+        holdout_metrics[candidate]["prediction_availability"]
+        < WINNER_MIN_PREDICTION_AVAILABILITY
+    ):
         details["failure"] = "PREDICTION_AVAILABILITY_GUARDRAIL"
         return None, "NO_CHALLENGER_CLEARED_GUARDRAILS", details
     for metric in secondary:
         best = min(values[metric] for values in holdout_metrics.values())
         value = holdout_metrics[candidate][metric]
-        allowed = best * 1.05
+        allowed = best * (1.0 + WINNER_MAX_SECONDARY_RELATIVE_REGRESSION)
         passed = value <= allowed + 1e-15
         details["secondary_checks"][metric] = {
             "candidate": value,
@@ -479,6 +502,7 @@ def _evaluate_challengers(
         development[definition.model_id] = score
         fold_metrics[definition.model_id] = metrics
     ranked = sorted(development, key=lambda key: (development[key], key))
+    best_development = ranked[0]
 
     holdout_metrics: dict[str, dict[str, float]] = {}
     holdout_predictions: dict[str, list[GoalScoreDistribution]] = {}
@@ -492,7 +516,6 @@ def _evaluate_challengers(
             split.holdout_rows, predictions
         )
 
-    best_development = ranked[0]
     core_features = [
         feature.feature_id
         for feature in GOAL_SCORE_FEATURE_REGISTRY
@@ -518,7 +541,7 @@ def _evaluate_challengers(
         key=lambda key: (holdout_metrics[key]["exact_score_nll"], key),
     )
     winner, winner_status, winner_guardrail = _winner_guardrail(
-        holdout_ranked, holdout_metrics
+        best_development, holdout_metrics
     )
     disagreements = [
         {
@@ -547,10 +570,13 @@ def _evaluate_challengers(
     ).hexdigest()
     result = {
         "development_ranking": ranked,
+        "development_selected_model_id": best_development,
         "development_exact_score_nll": development,
         "fold_metrics": fold_metrics,
         "holdout_ranking": holdout_ranked,
+        "holdout_ranking_role": "DIAGNOSTIC_ONLY_NO_SELECTION_AUTHORITY",
         "holdout_metrics": holdout_metrics,
+        "terminal_holdout_selection_authority": False,
         "research_challenger_winner": winner,
         "research_challenger_winner_status": winner_status,
         "research_winner_guardrail": winner_guardrail,
