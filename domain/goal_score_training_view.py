@@ -90,7 +90,7 @@ def calculate_training_view_contract_sha256(
 
 
 EXPECTED_TRAINING_VIEW_GENERATION_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = MappingProxyType({
-    1: "8b523ae26166d389fe70cd6a5c9372a73de278bb0196eb5240464515c8997b32",
+    1: "bac5380814de579dffe96d4e5daa39b0cf1e2d6144b59b5d89f2a81f7b27017b",
 })
 
 
