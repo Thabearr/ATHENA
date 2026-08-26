@@ -38,6 +38,10 @@ def load_forward_calibration_artifact(path: Path) -> ForwardCalibrationArtifact:
             "calibration artifact requires canonical artifact_sha256"
         )
     artifact = ForwardCalibrationArtifact.from_dict(raw)
+    if raw != artifact.to_dict():
+        raise ForwardCalibrationError(
+            "calibration artifact payload is not canonical"
+        )
     expected = validate_calibration_contract()
     if dict(artifact.contract_identities) != expected:
         raise ForwardCalibrationError(
