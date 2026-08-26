@@ -9,41 +9,51 @@ fixture-level market selection.
 
 Accumulator Optimizer contract version 1 is pinned at:
 
-`7e7562c67609feaf90be7933090c40a9666ac212abfb067df9e9004e02bb128d`
+`de6578c1a21370a1859901a73e4d3993d1544a66cb0f09384a45a8233a5ce253`
 
 It binds the exact Market Router v1 contract:
 
 `0e4486527b060109852ab56dd76774b2d150cf8326875e44537a3bce2dc656bf`
 
-and the reviewed SportyBet/FotMob full-UTC reconciliation contract used to
-source team, competition, and kickoff exposure identity.
+and both the reviewed SportyBet/FotMob full-UTC reconciliation contract and its
+source-replayed receipt contract used to source team, competition, and kickoff
+exposure identity.
 
 ## Router replay is mandatory
 
 The authoritative Phase 9 entry point does not trust an arbitrary serialized
-`MarketRouterDecision`.  For every fixture it accepts exact builder-issued
-Phase 6 calibrated candidates, exact source-issued SportyBet quotes, exact
-Fixture State v2, and exact source reconciliation.  It replays
+`MarketRouterDecision`.  For every fixture it accepts only an exact
+`AccumulatorFixtureInput` that was builder-issued from exact Phase 6 calibrated
+candidates, exact source-issued SportyBet quotes, exact Fixture State v2, and a
+verified full-UTC reconciliation receipt/source bundle.  It then replays
 `route_market_candidates()` before portfolio admission.
 
 A Router `NO_BET` remains `NO_BET`.  The accumulator cannot replace it with a
 runner-up, reserve, legacy verdict, or other market simply to fill the requested
 fold size.
 
-## Source-bound exposure identity
+## Source-replayed exposure identity
 
 Portfolio correlation and concentration controls need real team and competition
-identity.  These are not caller-provided strings.
+identity.  These are not caller-provided strings, and a caller-constructed
+`SportyBetFotMobFullUtcReconciliation` dataclass is not sufficient authority.
 
-For a Router-selected opportunity, the exact selected Phase 7 quote contains the
-SHA-256 of the full-UTC SportyBet/FotMob reconciliation already bound into the
-reviewed SportyBet market-mapping ancestry.  Phase 9 recomputes the supplied
-reconciliation SHA and requires exact equality.  Only then does it admit the
-matched FotMob home team, away team, competition, and kickoff as portfolio
-exposure metadata.
+`AccumulatorFixtureInput` is builder-only.  Its public issuance path calls the
+existing `verify_reconciliation_receipt_directory()` boundary, which rebuilds
+the full-UTC reconciliation from the complete preserved SportyBet, Terms,
+Sportradar, and FotMob source bundle and requires exact equality with the stored
+receipt bytes.
 
-Changing a team or competition label changes the reconciliation hash and fails
-portfolio admission instead of evading an exposure cap.
+The rebuilt canonical reconciliation SHA-256 must then equal the reconciliation
+SHA already bound into every supplied source-issued SportyBet quote.  Fixture
+State fixture identity and kickoff, Phase 6 candidate fixture/event identity,
+and quote fixture/event identity must all match that same source-replayed
+reconciliation before the immutable input is issued.
+
+Only after those checks are the matched FotMob home team, away team,
+competition, and kickoff admitted as portfolio exposure metadata.  Relabelling a
+team or competition changes the reconciliation bytes and therefore cannot evade
+an exposure cap.
 
 ## Joint portfolio selection
 
