@@ -171,6 +171,7 @@ def parse_openfootball_text(text: str, source_path: str) -> Iterator[dict[str, A
             competition = competition_from_title(title)
             key = competition.key if competition else None
             season, start_year = season_parts(title, key)
+            stage = None
             current_date = None
             continue
         if line.startswith("▪"):
