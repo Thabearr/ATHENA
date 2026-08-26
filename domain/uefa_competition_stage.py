@@ -33,6 +33,7 @@ PARENTS = MappingProxyType({
 REVIEWED_STAGE_SOURCES = frozenset({"openfootball"})
 SOURCE_POLICY = "WAREHOUSE_SCHEMA_V1_EXACT_FIELD_PROVENANCE_REVIEWED_SOURCE_ALLOWLIST_V2"
 QUALIFIER_POLICY = "OPENFOOTBALL_SAME_SOURCE_QUALIFIER_FILE_REQUIRED_V1"
+SOURCE_PATH_POLICY = "OPENFOOTBALL_PARENT_AND_PHASE_PATH_CONSISTENCY_V1"
 ERA_POLICY = "UEFA_STAGE_ERA_ALLOWLIST_FAIL_CLOSED_V1"
 TIE_POLICY = "PRIOR_RECIPROCAL_REPLAYED_STAGE_AND_SAME_SOURCE_REGULATION_FT_V2"
 AWAY_GOALS_POLICY = "UEFA_AWAY_GOALS_THROUGH_2020_21_V1"
@@ -152,11 +153,14 @@ MAIN_FILES = MappingProxyType({
     "el.txt": "uefa_uel",
     "conf.txt": "uefa_uecl",
 })
-KNOCKOUT = frozenset({
+QUALIFYING_STAGES = frozenset({
     UEFACompetitionStage.QUALIFYING_R1,
     UEFACompetitionStage.QUALIFYING_R2,
     UEFACompetitionStage.QUALIFYING_R3,
     UEFACompetitionStage.QUALIFYING_PLAYOFF,
+})
+KNOCKOUT = frozenset({
+    *QUALIFYING_STAGES,
     UEFACompetitionStage.ROUND_OF_32,
     UEFACompetitionStage.KNOCKOUT_PLAYOFF,
     UEFACompetitionStage.ROUND_OF_16,
@@ -207,6 +211,7 @@ def calculate_stage_contract_sha256(parent_sha: str, registry_sha: str) -> str:
         "source_policy": SOURCE_POLICY,
         "reviewed_stage_sources": sorted(REVIEWED_STAGE_SOURCES),
         "qualifier_policy": QUALIFIER_POLICY,
+        "source_path_policy": SOURCE_PATH_POLICY,
         "era_policy": ERA_POLICY,
         "tie_policy": TIE_POLICY,
         "away_goals_policy": AWAY_GOALS_POLICY,
@@ -240,10 +245,10 @@ EXPECTED_STAGE_REGISTRY_SHA256 = (
     "3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b"
 )
 EXPECTED_STAGE_CONTRACT_SHA256 = (
-    "a7d81fe1a316152cde10f10f488a1a3a7c455b676bcf7f55070fd87fd12dcd09"
+    "8e803e2fd180ce48a0833d4934a07ad6195e2897d2a06fac89b71979ad847dfe"
 )
 EXPECTED_TRAINING_SIDECAR_CONTRACT_SHA256 = (
-    "7aadf488db412a7233ffa2a885545c78eca2e6f5a9201e643215e348f42d025b"
+    "55641cdc1a1c4e3e1deb1af07003688e1a26b4efb8a027da159cc89ed2938884"
 )
 
 
@@ -485,10 +490,20 @@ class _PriorLegEvidence:
         }
 
 
+@dataclass(frozen=True)
+class _FileIdentity:
+    size: int
+    mtime_ns: int
+    sha256: str
+
+
 def _companions(path: Path, label: str) -> None:
-    for suffix in ("-wal", "-shm", "-journal"):
+    # Match the reviewed canonical historical-warehouse rule: only a non-empty
+    # WAL/journal proves active SQLite state. A zero-length WAL and a standalone
+    # SHM pathname are not sufficient to claim uncheckpointed source bytes.
+    for suffix in ("-wal", "-journal"):
         companion = Path(str(path) + suffix)
-        if companion.exists():
+        if companion.exists() and companion.stat().st_size:
             raise UEFAStageError(
                 f"{label} has active SQLite companion {suffix}"
             )
@@ -500,6 +515,30 @@ def _sha(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _file_identity(path: Path, label: str) -> _FileIdentity:
+    _companions(path, label)
+    before = path.stat()
+    sha256 = _sha(path)
+    _companions(path, label)
+    after = path.stat()
+    if (before.st_size, before.st_mtime_ns) != (
+        after.st_size,
+        after.st_mtime_ns,
+    ):
+        raise UEFAStageError(f"{label} changed while identity was calculated")
+    return _FileIdentity(after.st_size, after.st_mtime_ns, sha256)
+
+
+def _assert_file_unchanged(
+    path: Path,
+    label: str,
+    expected: _FileIdentity,
+) -> None:
+    actual = _file_identity(path, label)
+    if actual != expected:
+        raise UEFAStageError(f"{label} changed during stage projection")
 
 
 def _field_source(
@@ -621,6 +660,28 @@ def _load(
     )
 
 
+def _source_path_consistent(
+    evidence: UEFAStageEvidence,
+    stage: UEFACompetitionStage,
+) -> bool:
+    if not evidence.source_path:
+        return True
+    name = Path(evidence.source_path).name.casefold()
+    qualifier_parent = QUALIFIER_FILES.get(name)
+    main_parent = MAIN_FILES.get(name)
+    if qualifier_parent is not None:
+        return (
+            qualifier_parent == evidence.competition_key
+            and stage in QUALIFYING_STAGES
+        )
+    if main_parent is not None:
+        return (
+            main_parent == evidence.competition_key
+            and stage not in QUALIFYING_STAGES
+        )
+    return True
+
+
 def _derive_stage(
     evidence: UEFAStageEvidence,
 ) -> tuple[UEFACompetitionStage, str | None]:
@@ -689,6 +750,11 @@ def _derive_stage(
                     "PATH_CONTEXT_NOT_SAME_SOURCE",
                 )
         if stage is not UEFACompetitionStage.UNKNOWN:
+            if not _source_path_consistent(evidence, stage):
+                return (
+                    UEFACompetitionStage.UNKNOWN,
+                    "SOURCE_PATH_PARENT_OR_PHASE_CONFLICT",
+                )
             if stage_allowed_in_era(
                 evidence.competition_key, stage, evidence.season
             ):
@@ -943,6 +1009,20 @@ def stage_coverage_report(
     projections: Iterable[UEFAStageProjection],
 ) -> dict[str, Any]:
     rows = tuple(projections)
+    for row in rows:
+        if type(row) is not UEFAStageProjection:
+            raise UEFAStageError(
+                "coverage report requires exact UEFA stage projections"
+            )
+        if row.stage_contract_sha256 != EXPECTED_STAGE_CONTRACT_SHA256:
+            raise UEFAStageError(
+                "coverage projection stage contract identity mismatch"
+            )
+    warehouse_ids = {row.warehouse_sha256 for row in rows}
+    if len(warehouse_ids) > 1:
+        raise UEFAStageError(
+            "coverage projections span multiple warehouse identities"
+        )
     authorized = sum(row.stage_authorized for row in rows)
     by_competition: dict[str, dict[str, int]] = {}
     by_stage: dict[str, int] = {}
@@ -965,6 +1045,9 @@ def stage_coverage_report(
         "dataset": DATASET,
         "schema_version": SCHEMA_VERSION,
         "stage_contract_sha256": EXPECTED_STAGE_CONTRACT_SHA256,
+        "source_warehouse_sha256": (
+            next(iter(warehouse_ids)) if warehouse_ids else None
+        ),
         "total_uefa_matches": len(rows),
         "authorized_stage_matches": authorized,
         "unknown_stage_matches": len(rows) - authorized,
@@ -1030,6 +1113,7 @@ def _validate_training_view(
         f"{training_path.as_uri()}?mode=ro", uri=True
     )
     try:
+        db.execute("PRAGMA query_only = ON")
         objects = {
             row[0]
             for row in db.execute(
@@ -1090,9 +1174,10 @@ def project_training_view_uefa_stages(
         raise UEFAStageError(
             "training view or historical warehouse does not exist"
         )
-    _companions(training, "Goal/Score training view")
-    _companions(warehouse, "historical warehouse")
     validate_training_sidecar_contract()
+    training_identity = _file_identity(
+        training, "Goal/Score training view"
+    )
 
     source = _validated_warehouse(warehouse)
     try:
@@ -1102,14 +1187,22 @@ def project_training_view_uefa_stages(
         source.close()
 
     keys = _validate_training_view(training, warehouse_sha)
-    projected = {
-        row.match_key: row
-        for row in project_warehouse_uefa_stages(warehouse)
-    }
+    _assert_file_unchanged(
+        training, "Goal/Score training view", training_identity
+    )
+    projected_rows = project_warehouse_uefa_stages(warehouse)
+    if any(row.warehouse_sha256 != warehouse_sha for row in projected_rows):
+        raise UEFAStageError(
+            "historical warehouse changed between training join and stage replay"
+        )
+    projected = {row.match_key: row for row in projected_rows}
     if keys - projected.keys():
         raise UEFAStageError(
             "UEFA training rows missing from stage projection"
         )
+    _assert_file_unchanged(
+        training, "Goal/Score training view", training_identity
+    )
     return tuple(projected[key] for key in sorted(keys))
 
 
@@ -1117,9 +1210,11 @@ def training_view_stage_join_report(
     training_view_path: Path,
     warehouse_path: Path,
 ) -> dict[str, Any]:
+    training = Path(training_view_path).resolve()
     warehouse = Path(warehouse_path).resolve()
-    rows = project_training_view_uefa_stages(
-        training_view_path, warehouse
+    rows = project_training_view_uefa_stages(training, warehouse)
+    training_identity = _file_identity(
+        training, "Goal/Score training view"
     )
     report = stage_coverage_report(rows)
     report.update({
@@ -1130,7 +1225,7 @@ def training_view_stage_join_report(
         "goal_score_training_view_contract_sha256": (
             EXPECTED_GOAL_SCORE_TRAINING_VIEW_CONTRACT_SHA256
         ),
-        "source_warehouse_sha256": _sha(warehouse),
+        "source_training_view_sha256": training_identity.sha256,
         "uefa_training_rows": len(rows),
     })
     return report
@@ -1154,6 +1249,7 @@ __all__ = [
     "REGISTRY_VERSION",
     "REVIEWED_STAGE_SOURCES",
     "SCHEMA_VERSION",
+    "SOURCE_PATH_POLICY",
     "SOURCE_POLICY",
     "TIE_POLICY",
     "TRAINING_JOIN_POLICY",
