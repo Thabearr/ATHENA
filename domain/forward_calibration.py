@@ -2,3 +2,4 @@
 from domain._forward_calibration_contracts import *
 from domain._forward_calibration_projection import *
 from domain._forward_calibration_fit import *
+from domain._forward_calibration_hardening import *
