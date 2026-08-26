@@ -1,7 +1,7 @@
 """ATHENA Goal/Score Dynamics v2 offline challenger protocol.
 
-This module is deliberately research-only.  It consumes already-issued pre-match
-training rows and produces coherent regulation-time score distributions.  It
+This module is deliberately research-only. It consumes already-issued pre-match
+training rows and produces coherent regulation-time score distributions. It
 contains no bookmaker inputs, calibration, routing, selection, accumulator, or
 BET authority.
 """
@@ -13,7 +13,7 @@ import hashlib
 import json
 import math
 from types import MappingProxyType
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 
 from domain.score_matrix import DEFAULT_TAIL_TOLERANCE
 
@@ -34,9 +34,13 @@ FEATURE_TARGET_FIREWALL_POLICY_ID = "PREMATCH_CORPORA_ONLY_POSTMATCH_SCORE_TARGE
 SCORE_TAIL_POLICY_ID = "ADAPTIVE_POISSON_RECTANGLE_TAIL_1E10_V1"
 DIXON_COLES_POLICY_ID = "STANDARD_FOUR_CELL_TAU_TRAIN_ONLY_BOUNDED_RHO_V1"
 METRICS_POLICY_ID = "EXACT_SCORE_NLL_AND_COHERENT_SCORE_SURFACE_DIAGNOSTICS_V1"
+PAIRWISE_POLICY_ID = "COMMON_TARGET_SET_PAIRED_DATE_BUCKET_BOOTSTRAP_V1"
+GOAL_MARGIN_METRIC_POLICY_ID = "EXACT_SKELLAM_PLUS_DC_LOCAL_CORRECTION_V1"
+RESEARCH_WINNER_POLICY_ID = "HOLDOUT_NLL_PAIRED_BLOCK_BOOTSTRAP_AND_GUARDRAILS_V1"
+STRATIFIED_EVALUATION_POLICY_ID = "PREMATCH_ONLY_MIN50_STRATA_V1"
+COMPACT_LOADING_POLICY_ID = "NUMPY_ARRAY_SINGLE_PARSE_TRAINING_VIEW_V1"
 NO_BOOKMAKER_POLICY_ID = "NO_BOOKMAKER_ODDS_PRICES_LINES_OR_VALUE_INPUTS_V1"
 PRODUCTION_PROMOTION_POLICY_ID = "RESEARCH_ONLY_NO_PRODUCTION_PROMOTION_V1"
-PAIRWISE_POLICY_ID = "COMMON_TARGET_SET_PAIRED_DATE_BUCKET_BOOTSTRAP_V1"
 LIVE_CHAMPION_REPLAY_STATUS = "BLOCKED_NOT_CANONICALLY_REPLAYABLE"
 FULL_CORPUS_EVALUATION_STATUS = "NOT_RUN_SOURCE_CORPORA_UNAVAILABLE"
 RANDOM_SEED = 233
@@ -92,7 +96,13 @@ class GoalScoreFeatureDefinition:
         }
 
 
-def _hist(side: str, scope: str, feature: str, window: str = "LAST_20", required: bool = False) -> GoalScoreFeatureDefinition:
+def _hist(
+    side: str,
+    scope: str,
+    feature: str,
+    window: str = "LAST_20",
+    required: bool = False,
+) -> GoalScoreFeatureDefinition:
     return GoalScoreFeatureDefinition(
         f"HIST.{side}.{scope}.{window}.{feature}",
         "HISTORICAL_ASOF",
@@ -117,44 +127,66 @@ def _tactical(side: str, scope: str, dimension: str) -> GoalScoreFeatureDefiniti
 
 
 _CORE_HISTORICAL_FEATURES = (
-    "points_per_match", "goals_for_per_match", "goals_against_per_match",
-    "goal_difference_per_match", "total_goals_per_match", "clean_sheet_rate",
-    "failed_to_score_rate", "btts_rate", "over_1_5_rate", "over_2_5_rate",
-    "xg_for_per_match", "xg_against_per_match", "xg_total_per_match",
-    "shots_for_per_match", "shots_against_per_match",
-    "shots_on_target_for_per_match", "shots_on_target_against_per_match",
-    "possession_for_mean", "first_half_goals_for_per_match",
-    "first_half_goals_against_per_match", "first_half_total_goals_per_match",
+    "points_per_match",
+    "goals_for_per_match",
+    "goals_against_per_match",
+    "goal_difference_per_match",
+    "total_goals_per_match",
+    "clean_sheet_rate",
+    "failed_to_score_rate",
+    "btts_rate",
+    "over_1_5_rate",
+    "over_2_5_rate",
+    "xg_for_per_match",
+    "xg_against_per_match",
+    "xg_total_per_match",
+    "shots_for_per_match",
+    "shots_against_per_match",
+    "shots_on_target_for_per_match",
+    "shots_on_target_against_per_match",
+    "possession_for_mean",
+    "first_half_goals_for_per_match",
+    "first_half_goals_against_per_match",
+    "first_half_total_goals_per_match",
 )
 _SCHEDULE_FEATURES = (
-    "days_since_last_match", "fixtures_last_7_days", "fixtures_last_14_days",
+    "days_since_last_match",
+    "fixtures_last_7_days",
+    "fixtures_last_14_days",
     "fixtures_last_28_days",
 )
 _TACTICAL_DIMENSIONS = (
-    "EVENT_ENVIRONMENT", "ATTACKING_PRODUCTION", "DEFENSIVE_SUPPRESSION",
-    "SHOT_PROFILE", "FIRST_HALF_ENVIRONMENT", "CONTROL_TEMPO",
+    "EVENT_ENVIRONMENT",
+    "ATTACKING_PRODUCTION",
+    "DEFENSIVE_SUPPRESSION",
+    "SHOT_PROFILE",
+    "FIRST_HALF_ENVIRONMENT",
+    "CONTROL_TEMPO",
     "SCORING_RELIABILITY",
 )
 
-GOAL_SCORE_FEATURE_REGISTRY: tuple[GoalScoreFeatureDefinition, ...] = tuple(
-    [
-        *(_hist("HOME", "OVERALL", feature) for feature in _CORE_HISTORICAL_FEATURES),
-        *(_hist("HOME", "HOME_ONLY", feature) for feature in _CORE_HISTORICAL_FEATURES),
-        *(_hist("AWAY", "OVERALL", feature) for feature in _CORE_HISTORICAL_FEATURES),
-        *(_hist("AWAY", "AWAY_ONLY", feature) for feature in _CORE_HISTORICAL_FEATURES),
-        *(_hist("HOME", "OVERALL", feature, "AS_OF") for feature in _SCHEDULE_FEATURES),
-        *(_hist("AWAY", "OVERALL", feature, "AS_OF") for feature in _SCHEDULE_FEATURES),
-        *(_tactical("HOME", "OVERALL", dimension) for dimension in _TACTICAL_DIMENSIONS),
-        *(_tactical("HOME", "HOME_ONLY", dimension) for dimension in _TACTICAL_DIMENSIONS),
-        *(_tactical("AWAY", "OVERALL", dimension) for dimension in _TACTICAL_DIMENSIONS),
-        *(_tactical("AWAY", "AWAY_ONLY", dimension) for dimension in _TACTICAL_DIMENSIONS),
-    ]
-)
+GOAL_SCORE_FEATURE_REGISTRY: tuple[GoalScoreFeatureDefinition, ...] = tuple([
+    *(_hist("HOME", "OVERALL", feature) for feature in _CORE_HISTORICAL_FEATURES),
+    *(_hist("HOME", "HOME_ONLY", feature) for feature in _CORE_HISTORICAL_FEATURES),
+    *(_hist("AWAY", "OVERALL", feature) for feature in _CORE_HISTORICAL_FEATURES),
+    *(_hist("AWAY", "AWAY_ONLY", feature) for feature in _CORE_HISTORICAL_FEATURES),
+    *(_hist("HOME", "OVERALL", feature, "AS_OF") for feature in _SCHEDULE_FEATURES),
+    *(_hist("AWAY", "OVERALL", feature, "AS_OF") for feature in _SCHEDULE_FEATURES),
+    *(_tactical("HOME", "OVERALL", dimension) for dimension in _TACTICAL_DIMENSIONS),
+    *(_tactical("HOME", "HOME_ONLY", dimension) for dimension in _TACTICAL_DIMENSIONS),
+    *(_tactical("AWAY", "OVERALL", dimension) for dimension in _TACTICAL_DIMENSIONS),
+    *(_tactical("AWAY", "AWAY_ONLY", dimension) for dimension in _TACTICAL_DIMENSIONS),
+])
 
 
 def _canonical_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-                      allow_nan=False).encode("utf-8")
+    return json.dumps(
+        value,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
 
 
 def calculate_feature_registry_sha256(
@@ -210,19 +242,35 @@ class GoalScoreModelDefinition:
 
 GOAL_SCORE_MODEL_REGISTRY: tuple[GoalScoreModelDefinition, ...] = (
     GoalScoreModelDefinition(
-        "POISSON_GLM_SCORE_V1", "INDEPENDENT_POISSON", "sklearn.PoissonRegressor",
-        (("alpha", 0.25), ("max_iter", 500), ("tol", 1e-8)), None, None,
+        "POISSON_GLM_SCORE_V1",
+        "INDEPENDENT_POISSON",
+        "sklearn.PoissonRegressor",
+        (("alpha", 0.25), ("max_iter", 500), ("tol", 1e-8)),
+        None,
+        None,
     ),
     GoalScoreModelDefinition(
-        "DIXON_COLES_SCORE_V1", "DIXON_COLES", "PoissonRegressor+four_cell_tau",
-        (("alpha", 0.25), ("max_iter", 500), ("tol", 1e-8)), DIXON_COLES_POLICY_ID, None,
+        "DIXON_COLES_SCORE_V1",
+        "DIXON_COLES",
+        "PoissonRegressor+four_cell_tau",
+        (("alpha", 0.25), ("max_iter", 500), ("tol", 1e-8)),
+        DIXON_COLES_POLICY_ID,
+        None,
     ),
     GoalScoreModelDefinition(
-        "HIST_GRADIENT_BOOSTING_POISSON_V1", "NONLINEAR_POISSON",
+        "HIST_GRADIENT_BOOSTING_POISSON_V1",
+        "NONLINEAR_POISSON",
         "sklearn.HistGradientBoostingRegressor",
-        (("loss", "poisson"), ("learning_rate", 0.05), ("max_iter", 160),
-         ("max_leaf_nodes", 15), ("l2_regularization", 1.0), ("min_samples_leaf", 12)),
-        None, RANDOM_SEED,
+        (
+            ("loss", "poisson"),
+            ("learning_rate", 0.05),
+            ("max_iter", 160),
+            ("max_leaf_nodes", 15),
+            ("l2_regularization", 1.0),
+            ("min_samples_leaf", 12),
+        ),
+        None,
+        RANDOM_SEED,
     ),
 )
 
@@ -278,6 +326,10 @@ def evaluation_contract_payload(feature_sha: str, model_sha: str) -> dict[str, A
         "pairwise_policy_id": PAIRWISE_POLICY_ID,
         "pair_bootstrap_replicates": PAIR_BOOTSTRAP_REPLICATES,
         "minimum_stratum_sample": MIN_STRATUM_SAMPLE,
+        "goal_margin_metric_policy_id": GOAL_MARGIN_METRIC_POLICY_ID,
+        "research_winner_policy_id": RESEARCH_WINNER_POLICY_ID,
+        "stratified_evaluation_policy_id": STRATIFIED_EVALUATION_POLICY_ID,
+        "compact_loading_policy_id": COMPACT_LOADING_POLICY_ID,
         "no_bookmaker_policy_id": NO_BOOKMAKER_POLICY_ID,
         "production_promotion_policy_id": PRODUCTION_PROMOTION_POLICY_ID,
         "random_seed": RANDOM_SEED,
@@ -286,7 +338,9 @@ def evaluation_contract_payload(feature_sha: str, model_sha: str) -> dict[str, A
 
 
 def calculate_evaluation_contract_sha256(
-    *, feature_sha: str, model_sha: str,
+    *,
+    feature_sha: str,
+    model_sha: str,
     version: int = GOAL_SCORE_EVALUATION_CONTRACT_VERSION,
 ) -> str:
     return hashlib.sha256(_canonical_bytes({
@@ -296,14 +350,17 @@ def calculate_evaluation_contract_sha256(
 
 
 EXPECTED_GOAL_SCORE_EVALUATION_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = MappingProxyType({
-    1: "dd14b3aedf90619cee53de5a6b01c24674401eaca9b24b86fa9cf3d871f7a690",
+    1: "d1435ab31a6f557dd9610eda4855781fa663ed2982ed61e6c71d98674227ee83",
 })
 
 
 def validate_evaluation_contract() -> tuple[str, str, str]:
     feature_sha = validate_feature_registry()
     model_sha = validate_model_registry()
-    actual = calculate_evaluation_contract_sha256(feature_sha=feature_sha, model_sha=model_sha)
+    actual = calculate_evaluation_contract_sha256(
+        feature_sha=feature_sha,
+        model_sha=model_sha,
+    )
     expected = EXPECTED_GOAL_SCORE_EVALUATION_CONTRACT_SHA256_BY_VERSION.get(
         GOAL_SCORE_EVALUATION_CONTRACT_VERSION
     )
@@ -327,7 +384,10 @@ class TrainingRow:
     def __post_init__(self) -> None:
         if not self.match_key or not self.match_date:
             raise GoalScoreError("training rows require canonical identity")
-        for value, name in ((self.home_goals, "home_goals"), (self.away_goals, "away_goals")):
+        for value, name in (
+            (self.home_goals, "home_goals"),
+            (self.away_goals, "away_goals"),
+        ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
                 raise GoalScoreError(f"{name} must be a non-negative integer")
         registered = {item.feature_id for item in GOAL_SCORE_FEATURE_REGISTRY}
@@ -335,10 +395,19 @@ class TrainingRow:
             if feature_id not in registered:
                 raise GoalScoreError(f"unregistered model feature: {feature_id}")
             if status is FeatureStatus.AVAILABLE:
-                if value is None or isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
-                    raise GoalScoreError("AVAILABLE model feature requires finite numeric value")
+                if (
+                    value is None
+                    or isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(float(value))
+                ):
+                    raise GoalScoreError(
+                        "AVAILABLE model feature requires finite numeric value"
+                    )
             elif value is not None:
-                raise GoalScoreError("MISSING/BLOCKED model feature cannot retain value")
+                raise GoalScoreError(
+                    "MISSING/BLOCKED model feature cannot retain value"
+                )
 
 
 __all__ = [name for name in globals() if not name.startswith("_")]
