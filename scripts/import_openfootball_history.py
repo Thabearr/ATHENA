@@ -179,13 +179,13 @@ def parse_openfootball_text(text: str, source_path: str) -> Iterator[dict[str, A
 
         date_match = DATE_RE.match(line)
         if date_match:
+            if competition is None:
+                current_date = None
+                continue
             calendar_year = bool(
-                competition
-                and (
-                    competition.key in CALENDAR_YEAR_KEYS
-                    or competition.scope == "international"
-                    or (season and "-" not in season)
-                )
+                competition.key in CALENDAR_YEAR_KEYS
+                or competition.scope == "international"
+                or (season and "-" not in season)
             )
             current_date = resolve_date(
                 date_match.group(1),
