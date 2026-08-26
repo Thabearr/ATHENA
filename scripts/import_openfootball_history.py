@@ -67,11 +67,11 @@ def _is_reviewed_uefa_ucl_title(lowered_title: str) -> bool:
 
     title = " ".join(lowered_title.split())
     if "champions league" in title:
-        return "uefa champions league" in title
+        return title.startswith("uefa champions league") and "women" not in title
     if "european cup" in title:
         if "winners" in title or "women" in title:
             return False
-        return title.startswith("european cup") or "uefa european cup" in title
+        return title.startswith("european cup") or title.startswith("uefa european cup")
     return False
 
 
