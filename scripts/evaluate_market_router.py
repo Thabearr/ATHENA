@@ -1,8 +1,8 @@
 """Offline deterministic evaluator for ATHENA Market Router v1.
 
 The CLI accepts a trusted local Python factory instead of free-form serialized
-EV/edge records. The factory must return the exact builder-issued objects that
-the authoritative Router requires. Network sockets are blocked while the
+EV/edge records.  The factory must return the exact builder-issued objects that
+the authoritative Router requires.  Network sockets are blocked while the
 factory and Router execute.
 """
 from __future__ import annotations
@@ -80,8 +80,8 @@ def _atomic_write(path: Path, payload: bytes, *, replace: bool) -> None:
 
 
 def run_factory(factory_specification: str):
-    factory = _load_factory(factory_specification)
     with _network_disabled():
+        factory = _load_factory(factory_specification)
         values = factory()
         if not isinstance(values, Mapping):
             raise OfflineRouterRunnerError("factory must return a mapping")
