@@ -11,12 +11,12 @@ def _key(title: str) -> str | None:
 
 def test_reviewed_uefa_ucl_titles_remain_authorized() -> None:
     assert _key("UEFA Champions League 2025/26") == "uefa_ucl"
-    assert _key("Champions League 1999/2000") == "uefa_ucl"
     assert _key("European Cup 1987/88") == "uefa_ucl"
 
 
-def test_non_uefa_champions_league_titles_fail_closed() -> None:
+def test_non_uefa_or_ambiguous_champions_league_titles_fail_closed() -> None:
     for title in (
+        "Champions League 1999/2000",
         "CAF Champions League 2024/25",
         "CONCACAF Champions League 2025",
         "AFC Champions League 2023/24",
