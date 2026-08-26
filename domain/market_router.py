@@ -309,6 +309,7 @@ def _build_opportunity(
     results: Sequence[PriceAllValueResult],
     *,
     context_passed: bool,
+    identity_reasons: tuple[str, ...] = (),
 ) -> RoutedOpportunity:
     if not results:
         raise MarketRouterError("cannot build empty routing opportunity")
@@ -324,6 +325,9 @@ def _build_opportunity(
         rejection.append("specialist market lacks reviewed Phase 6 routing authority")
     if not context_passed:
         rejection.append("strict reviewed Fixture State context gate did not pass")
+    rejection.extend(
+        f"routing identity gate failed: {reason}" for reason in identity_reasons
+    )
 
     fair_probability = first.fair_probability if all_priced else None
     event_probabilities: list[float] = []
@@ -510,7 +514,11 @@ def _decision(
         grouped.setdefault(_opportunity_group_key(item), []).append(item)
     opportunities = tuple(sorted(
         (
-            _build_opportunity(values, context_passed=context.passed and not identity_reasons)
+            _build_opportunity(
+                values,
+                context_passed=context.passed,
+                identity_reasons=identity_reasons,
+            )
             for values in grouped.values()
         ),
         key=lambda item: item.opportunity_id,
