@@ -8,7 +8,7 @@ Router; it does not rank, route, select, export, or authorize a bet.
 ## Contract and source boundary
 
 Contract version 1 is independently pinned at
-`f944e178f20ec697e1e82d2f328b3c8ae4cecf3ad28bd379e7552e9800430c6b`.
+`b62bbac793a1b2ff60c405cc954105237c1353b995645406f5da7ac4d10e97d5`.
 It binds the reviewed Phase 6 calibration contract, canonical market semantics,
 reviewed SportyBet canonical-mapping semantics, the 900-second freshness rule,
 de-vig classification, unit-stake settlement returns, and all authority flags.
@@ -46,12 +46,12 @@ partition from the same fixture, event, source, snapshot, market, and line:
 
 - regulation 1X2;
 - BTTS Yes/No;
-- Over/Under at one exact total line;
+- Over/Under at one exact half-goal line;
 - each Result-or-Over Yes/No market;
 - each Win-to-Nil Yes/No market.
 
 Double Chance and early-payout selections overlap and are never normalized as
-a partition. DNB and Asian Handicap contain push or split-settlement states, so
+a partition. Integer/quarter Total Goals, DNB, and Asian Handicap contain push or split-settlement states, so
 ordinary proportional de-vig is not claimed. A genuine exact quote may still
 receive settlement-aware EV while `fair_probability` remains absent.
 
