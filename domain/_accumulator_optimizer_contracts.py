@@ -10,6 +10,7 @@ from typing import Any, Mapping
 
 from domain._market_router_contracts import validate_market_router_contract
 from domain import sportybet_fotmob_full_utc_reconciliation as reconciliation
+from domain import sportybet_fotmob_full_utc_reconciliation_receipt as reconciliation_receipt
 
 ACCUMULATOR_OPTIMIZER_DATASET = "athena_accumulator_optimizer_v2"
 ACCUMULATOR_OPTIMIZER_SCHEMA_VERSION = 2
@@ -29,7 +30,7 @@ MINIMUM_SURVIVAL_FLOOR_FOR_NON_FRAGILE = 0.60
 
 ROUTER_REPLAY_POLICY_ID = "REPLAY_EXACT_PHASE8_ROUTE_BEFORE_PORTFOLIO_ADMISSION_V1"
 FIXTURE_EXPOSURE_IDENTITY_POLICY_ID = (
-    "QUOTE_BOUND_FULL_UTC_RECONCILIATION_HOME_AWAY_COMPETITION_V1"
+    "QUOTE_BOUND_SOURCE_REPLAYED_FULL_UTC_RECONCILIATION_RECEIPT_V1"
 )
 JOINT_SELECTION_POLICY_ID = "DETERMINISTIC_MARGINAL_DIVERSIFICATION_WITH_HARD_CAPS_V1"
 CORRELATION_POLICY_ID = "EXPOSURE_FLAGS_AND_CAPS_NO_FABRICATED_STATISTICAL_RHO_V1"
@@ -96,6 +97,12 @@ def accumulator_optimizer_contract_payload(
         "canonical_market_semantics_sha256": canonical_market_semantics_sha256,
         "sportybet_fotmob_reconciliation_dataset": reconciliation.DATASET_NAME,
         "sportybet_fotmob_reconciliation_schema_version": reconciliation.SCHEMA_VERSION,
+        "sportybet_fotmob_reconciliation_receipt_dataset": (
+            reconciliation_receipt.DATASET_NAME
+        ),
+        "sportybet_fotmob_reconciliation_receipt_schema_version": (
+            reconciliation_receipt.SCHEMA_VERSION
+        ),
         "maximum_target_size": MAXIMUM_TARGET_SIZE,
         "router_replay_policy_id": ROUTER_REPLAY_POLICY_ID,
         "fixture_exposure_identity_policy_id": FIXTURE_EXPOSURE_IDENTITY_POLICY_ID,
@@ -152,7 +159,7 @@ def calculate_accumulator_optimizer_contract_sha256(
 
 EXPECTED_ACCUMULATOR_OPTIMIZER_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = (
     MappingProxyType({
-        1: "7e7562c67609feaf90be7933090c40a9666ac212abfb067df9e9004e02bb128d",
+        1: "de6578c1a21370a1859901a73e4d3993d1544a66cb0f09384a45a8233a5ce253",
     })
 )
 
@@ -168,6 +175,16 @@ def validate_accumulator_optimizer_contract() -> Mapping[str, str]:
         1,
     ):
         raise AccumulatorOptimizerError("SportyBet/FotMob reconciliation contract drifted")
+    if (
+        reconciliation_receipt.DATASET_NAME,
+        reconciliation_receipt.SCHEMA_VERSION,
+    ) != (
+        "athena-sportybet-fotmob-full-utc-reconciliation-receipt-v1",
+        1,
+    ):
+        raise AccumulatorOptimizerError(
+            "SportyBet/FotMob reconciliation receipt contract drifted"
+        )
     for value, label in (
         (MAXIMUM_COMPETITION_SHARE, "competition share"),
         (MAXIMUM_MARKET_FAMILY_SHARE, "market-family share"),
