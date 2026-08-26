@@ -152,7 +152,7 @@ def calculate_accumulator_optimizer_contract_sha256(
 
 EXPECTED_ACCUMULATOR_OPTIMIZER_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = (
     MappingProxyType({
-        1: "a55cf58591d245b23d4161d4cf7a1ec9ab77a28e2855fd434800fab97459fb73",
+        1: "7e7562c67609feaf90be7933090c40a9666ac212abfb067df9e9004e02bb128d",
     })
 )
 
