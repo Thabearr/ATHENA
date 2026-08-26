@@ -1,10 +1,12 @@
 """ATHENA Phase 9 correlation-aware Accumulator Optimizer v2.
 
 The authoritative boundary replays Phase 8 for every supplied fixture from the
-exact builder-issued Phase 6/7 inputs before any portfolio leg can exist.  It
-then selects a diversified qualified set, may return a requested-size shortfall,
-and preserves reserves.  It does not construct a bookmaker slip or authorize a
-bet.
+exact builder-issued Phase 6/7 inputs before any portfolio leg can exist.  Each
+fixture input itself is builder-issued only after the existing full-UTC
+reconciliation receipt verifier replays the preserved source bundle.  The
+optimizer then selects a diversified qualified set, may return a requested-size
+shortfall, and preserves reserves.  It does not construct a bookmaker slip or
+authorize a bet.
 """
 from __future__ import annotations
 
@@ -14,9 +16,11 @@ from decimal import Decimal
 import hashlib
 import json
 import math
+from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 from domain import sportybet_fotmob_full_utc_reconciliation as reconciliation
+from domain import sportybet_fotmob_full_utc_reconciliation_receipt as reconciliation_receipt
 from domain._accumulator_optimizer_contracts import (
     AUTHORITY_FLAGS,
     CORRELATION_POLICY_ID,
@@ -89,30 +93,122 @@ def _finite_probability(value: Any, label: str) -> float:
     return result
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, init=False)
 class AccumulatorFixtureInput:
-    """Exact upstream objects required to replay one fixture through Phase 8."""
+    """Builder-issued exact upstream objects for one Phase 9 fixture.
+
+    The only public issuance path replays the stored full-UTC reconciliation
+    receipt from its complete preserved source bundle.  A caller cannot supply a
+    constructible reconciliation dataclass or free-form home/away/competition
+    strings as portfolio exposure authority.
+    """
 
     candidates: tuple[CalibratedValueCandidate, ...]
     quotes: tuple[SportyBetExactQuote, ...]
     fixture_state: FixtureStateV2Snapshot
     reconciliation: reconciliation.SportyBetFotMobFullUtcReconciliation
+    reconciliation_receipt_sha256: str
+    reconciliation_receipt_identifier: str
 
-    def __post_init__(self) -> None:
-        if type(self.candidates) is not tuple or any(
-            type(item) is not CalibratedValueCandidate for item in self.candidates
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
+        raise AccumulatorOptimizerError(
+            "AccumulatorFixtureInput is builder-only; use "
+            "from_source_replayed_receipt()"
+        )
+
+    @classmethod
+    def from_source_replayed_receipt(
+        cls,
+        *,
+        candidates: tuple[CalibratedValueCandidate, ...],
+        quotes: tuple[SportyBetExactQuote, ...],
+        fixture_state: FixtureStateV2Snapshot,
+        receipt_directory: Any,
+        source_bundle: reconciliation_receipt.FullUtcReconciliationSourceBundle,
+        repository_root: Path,
+    ) -> "AccumulatorFixtureInput":
+        if type(candidates) is not tuple or any(
+            type(item) is not CalibratedValueCandidate for item in candidates
         ):
-            raise AccumulatorOptimizerError("candidates must be an exact tuple of Phase 6 candidates")
-        if type(self.quotes) is not tuple or any(
-            type(item) is not SportyBetExactQuote for item in self.quotes
-        ):
-            raise AccumulatorOptimizerError("quotes must be an exact tuple of source-issued quotes")
-        if type(self.fixture_state) is not FixtureStateV2Snapshot:
-            raise AccumulatorOptimizerError("fixture_state must be exact FixtureStateV2Snapshot")
-        if type(self.reconciliation) is not reconciliation.SportyBetFotMobFullUtcReconciliation:
             raise AccumulatorOptimizerError(
-                "reconciliation must be exact SportyBetFotMobFullUtcReconciliation"
+                "candidates must be an exact tuple of Phase 6 candidates"
             )
+        if type(quotes) is not tuple or any(
+            type(item) is not SportyBetExactQuote for item in quotes
+        ):
+            raise AccumulatorOptimizerError(
+                "quotes must be an exact tuple of source-issued quotes"
+            )
+        if type(fixture_state) is not FixtureStateV2Snapshot:
+            raise AccumulatorOptimizerError(
+                "fixture_state must be exact FixtureStateV2Snapshot"
+            )
+        if type(source_bundle) is not reconciliation_receipt.FullUtcReconciliationSourceBundle:
+            raise AccumulatorOptimizerError(
+                "source_bundle must be exact FullUtcReconciliationSourceBundle"
+            )
+        if not isinstance(repository_root, Path):
+            raise AccumulatorOptimizerError("repository_root must be a Path")
+        try:
+            rebuilt = reconciliation_receipt.verify_reconciliation_receipt_directory(
+                receipt_directory,
+                source_bundle=source_bundle,
+                repository_root=repository_root,
+            )
+        except reconciliation_receipt.SportyBetFotMobFullUtcReconciliationReceiptError as exc:
+            raise AccumulatorOptimizerError(
+                "source-replayed full-UTC reconciliation receipt verification failed"
+            ) from exc
+        if (
+            rebuilt.disposition
+            is not reconciliation.FullUtcReconciliationDisposition.UNIQUE_EXACT_FULL_UTC_MATCH_RECONCILED
+            or rebuilt.fixture_reconciliation_authorized is not True
+            or rebuilt.matched_fixture is None
+        ):
+            raise AccumulatorOptimizerError(
+                "Accumulator fixture exposure requires a source-replayed unique exact full-UTC reconciliation"
+            )
+        payload = reconciliation.canonical_reconciliation_bytes(rebuilt)
+        reconciliation_sha = reconciliation_receipt.receipt_sha256_from_bytes(payload)
+        reconciliation_identifier = (
+            reconciliation_receipt.receipt_identifier_from_bytes(payload)
+        )
+        matched = rebuilt.matched_fixture
+        if (
+            fixture_state.fixture_identifier != matched.source_fixture_identifier
+            or fixture_state.kickoff != rebuilt.sportybet_kickoff_utc
+        ):
+            raise AccumulatorOptimizerError(
+                "Fixture State identity/kickoff does not match source-replayed reconciliation"
+            )
+        if any(
+            item.fixture_id != matched.source_fixture_identifier
+            or item.sportybet_event_id != rebuilt.sportybet_event_id
+            for item in candidates
+        ):
+            raise AccumulatorOptimizerError(
+                "Phase 6 candidate identity does not match source-replayed reconciliation"
+            )
+        if any(
+            item.fixture_id != matched.source_fixture_identifier
+            or item.event_id != rebuilt.sportybet_event_id
+            or item.fixture_reconciliation_sha256 != reconciliation_sha
+            for item in quotes
+        ):
+            raise AccumulatorOptimizerError(
+                "source-issued quote ancestry does not bind the exact source-replayed reconciliation receipt"
+            )
+        instance = object.__new__(cls)
+        for name, value in {
+            "candidates": candidates,
+            "quotes": quotes,
+            "fixture_state": fixture_state,
+            "reconciliation": rebuilt,
+            "reconciliation_receipt_sha256": reconciliation_sha,
+            "reconciliation_receipt_identifier": reconciliation_identifier,
+        }.items():
+            object.__setattr__(instance, name, value)
+        return instance
 
 
 @dataclass(frozen=True)
