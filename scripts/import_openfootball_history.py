@@ -56,21 +56,20 @@ COUNTRY_SUFFIX_RE = re.compile(r"\s+\([A-Z]{3}\)$")
 
 
 def _is_reviewed_uefa_ucl_title(lowered_title: str) -> bool:
-    """Return whether a source title is an reviewed UEFA UCL/European Cup title.
+    """Return whether a source title proves the reviewed UEFA UCL identity.
 
-    OpenFootball's broad ``world`` repository also contains CAF and CONCACAF
-    competitions whose titles include the generic words ``Champions League``.
-    ATHENA has no reviewed canonical keys for those continental club cups, so
-    generic substring matching would contaminate ``uefa_ucl``.  Fail closed:
-    only the explicit UEFA form or OpenFootball's reviewed plain historical
-    form may mint the UEFA parent identity.
+    OpenFootball's broad ``world`` repository also contains CAF, AFC,
+    CONCACAF and other competitions whose titles include the generic words
+    ``Champions League``. ATHENA has no reviewed canonical keys for those
+    continental club cups, so generic substring matching must not mint the
+    ``uefa_ucl`` parent identity.
     """
 
     title = " ".join(lowered_title.split())
     if "champions league" in title:
-        return "uefa champions league" in title or title.startswith("champions league")
+        return "uefa champions league" in title
     if "european cup" in title:
-        if "winners" in title:
+        if "winners" in title or "women" in title:
             return False
         return title.startswith("european cup") or "uefa european cup" in title
     return False
@@ -79,8 +78,10 @@ def _is_reviewed_uefa_ucl_title(lowered_title: str) -> bool:
 def competition_from_title(title: str):
     lowered = title.casefold()
 
-    if _is_reviewed_uefa_ucl_title(lowered):
-        return competition_by_key("uefa_ucl")
+    if "champions league" in lowered or "european cup" in lowered:
+        if _is_reviewed_uefa_ucl_title(lowered):
+            return competition_by_key("uefa_ucl")
+        return None
     if "europa league" in lowered or "uefa cup" in lowered:
         return competition_by_key("uefa_uel")
     if "conference league" in lowered:
