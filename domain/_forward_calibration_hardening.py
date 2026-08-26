@@ -28,6 +28,15 @@ def load_forward_calibration_artifact(path: Path) -> ForwardCalibrationArtifact:
         raise ForwardCalibrationError("invalid calibration artifact JSON") from exc
     if not isinstance(raw, dict):
         raise ForwardCalibrationError("calibration artifact JSON must be an object")
+    supplied_sha = raw.get("artifact_sha256")
+    if (
+        not isinstance(supplied_sha, str)
+        or len(supplied_sha) != 64
+        or any(character not in "0123456789abcdef" for character in supplied_sha)
+    ):
+        raise ForwardCalibrationError(
+            "calibration artifact requires canonical artifact_sha256"
+        )
     artifact = ForwardCalibrationArtifact.from_dict(raw)
     expected = validate_calibration_contract()
     if dict(artifact.contract_identities) != expected:
