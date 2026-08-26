@@ -393,10 +393,6 @@ def _build_portfolio_leg(
         or quote.event_id != decision.sportybet_event_id
     ):
         raise AccumulatorOptimizerError("Router/quote/reconciliation fixture identity mismatch")
-    if source_reconciliation.sportybet_kickoff_utc != decision.evaluation_time and False:
-        # Deliberately unreachable: evaluation time is not kickoff.  The exact kickoff
-        # is validated against Fixture State before this builder is called.
-        raise AssertionError
     robust_ev = opportunity.robust_net_expected_value
     if robust_ev is None or not math.isfinite(robust_ev) or robust_ev <= 0.0:
         raise AccumulatorOptimizerError("selected Router opportunity lacks positive robust EV")
