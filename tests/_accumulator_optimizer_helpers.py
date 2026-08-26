@@ -4,9 +4,11 @@ from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 from pathlib import Path
+from unittest.mock import patch
 from urllib.parse import urlencode
 
 from domain import sportybet_fotmob_full_utc_reconciliation as full
+from domain import sportybet_fotmob_full_utc_reconciliation_receipt as receipt
 from domain import sportybet_user_controlled_evidence as manual
 from domain import sportybet_user_controlled_native_inventory as native
 from domain._price_all_contracts import SportyBetExactQuote
@@ -43,6 +45,29 @@ _CONTEXT = (
     (IntelligenceCategory.SCHEDULE_LOAD, "fatigue", 0.23),
     (IntelligenceCategory.FIXTURE_CONTEXT, "live_data_freshness", 0.95),
 )
+
+
+def source_bundle() -> receipt.FullUtcReconciliationSourceBundle:
+    """Minimal exact bundle type for tests that patch only the receipt verifier.
+
+    The production builder still calls the real verifier.  These portfolio tests
+    isolate Phase 9 from the already-covered PR #163 receipt replay mechanics.
+    """
+
+    return receipt.FullUtcReconciliationSourceBundle(
+        kickoff_promotion=object(),
+        event_time_basis=object(),
+        event_manifest=object(),
+        event_inventory=object(),
+        event_raw_html=b"<html>optimizer-test-event</html>",
+        terms_qualification=object(),
+        terms_raw_html=b"<html>optimizer-test-terms</html>",
+        event_bridge=object(),
+        sportradar_evidence=object(),
+        sportradar_raw_response=b'{"sport_event":{}}',
+        fotmob_admission_value=object(),
+        fotmob_captures=((b"{}", object()),),
+    )
 
 
 def _sha_row(value) -> str:
@@ -367,9 +392,17 @@ def fixture_input(
         competition=competition,
         kickoff=kickoff,
     )
-    return AccumulatorFixtureInput(
-        candidates=(candidate,),
-        quotes=quotes,
-        fixture_state=_fixture_state(fixture_id, kickoff),
-        reconciliation=reconciled,
-    )
+    state = _fixture_state(fixture_id, kickoff)
+    with patch.object(
+        receipt,
+        "verify_reconciliation_receipt_directory",
+        return_value=reconciled,
+    ):
+        return AccumulatorFixtureInput.from_source_replayed_receipt(
+            candidates=(candidate,),
+            quotes=quotes,
+            fixture_state=state,
+            receipt_directory=tmp_path / f"receipt-{fixture_id}",
+            source_bundle=source_bundle(),
+            repository_root=tmp_path,
+        )
