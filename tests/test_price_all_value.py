@@ -86,6 +86,15 @@ def test_complete_partitions_devig_and_cross_snapshot_never_mix():
     assert result.fair_probability is None
 
 
+def test_full_calibrated_market_vector_is_preserved_and_prices_selection_settlement():
+    item = candidate(components=("HOME", "DRAW", "AWAY"),
+                     probabilities=(0.55, 0.25, 0.20))
+    result = price_all_candidates([item], [quote(odds=2.0)], evaluation_time=NOW)[0]
+    assert result.disposition is PriceDisposition.PRICED
+    assert item.probability_map == {"HOME": 0.55, "DRAW": 0.25, "AWAY": 0.20}
+    assert result.net_expected_value == pytest.approx(0.55 - 0.45)
+
+
 @pytest.mark.parametrize("market,outcomes,line", [
     (MarketId.BTTS, (OutcomeId.YES, OutcomeId.NO), None),
     (MarketId.TOTAL_GOALS, (OutcomeId.OVER, OutcomeId.UNDER), 2.5),
@@ -126,6 +135,24 @@ def test_asian_handicap_full_quarter_settlement_ev():
     assert result.net_expected_value == pytest.approx(0.3 + 0.1 - 0.075 - 0.25)
     assert dict(result.settlement_returns)["HALF_WIN"] == pytest.approx(0.5)
     assert dict(result.settlement_returns)["HALF_LOSS"] == -0.5
+
+
+def test_integer_and_quarter_totals_preserve_push_and_split_settlement_without_false_devig():
+    integer = candidate(MarketId.TOTAL_GOALS, OutcomeId.OVER, 2.0,
+                        ("WIN", "PUSH", "LOSS"), (0.4, 0.2, 0.4))
+    integer_quotes = [quote(MarketId.TOTAL_GOALS, OutcomeId.OVER, 2.0, 2.1),
+                      quote(MarketId.TOTAL_GOALS, OutcomeId.UNDER, 2.0, 1.8)]
+    result = price_all_candidates([integer], integer_quotes, evaluation_time=NOW)[0]
+    assert result.net_expected_value == pytest.approx(0.4 * 1.1 - 0.4)
+    assert result.devig_status is DevigStatus.NOT_IDENTIFIABLE_PUSH_OR_SPLIT_SETTLEMENT
+    quarter = candidate(MarketId.TOTAL_GOALS, OutcomeId.OVER, 2.25,
+        ("WIN", "HALF_WIN", "PUSH", "HALF_LOSS", "LOSS"),
+        (0.3, 0.2, 0.0, 0.2, 0.3))
+    result = price_all_candidates(
+        [quarter], [quote(MarketId.TOTAL_GOALS, OutcomeId.OVER, 2.25, 2.0)],
+        evaluation_time=NOW)[0]
+    assert result.net_expected_value == pytest.approx(0.3 + 0.1 - 0.1 - 0.3)
+    assert result.devig_status is DevigStatus.NOT_IDENTIFIABLE_PUSH_OR_SPLIT_SETTLEMENT
 
 
 def test_incomplete_distribution_and_exact_line_mismatch_fail_closed():
