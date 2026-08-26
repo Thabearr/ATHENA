@@ -14,8 +14,8 @@ Hierarchy priority and competition stage remain different concepts. A UEFA quali
 
 - parent identity SHA-256: `1ec3df0b5c1a428cf92b1427929acb0c80e04143b90166fdd2e74da8516b8fec`
 - stage registry v1 SHA-256: `3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b`
-- stage contract v1 SHA-256: `8e803e2fd180ce48a0833d4934a07ad6195e2897d2a06fac89b71979ad847dfe`
-- Goal/Score training-sidecar contract v1 SHA-256: `55641cdc1a1c4e3e1deb1af07003688e1a26b4efb8a027da159cc89ed2938884`
+- stage contract v1 SHA-256: `56fd0f25cc176e434a107cb88d48b22f705a4b4b461e44fe995dda7f00adfbbc`
+- Goal/Score training-sidecar contract v1 SHA-256: `ade99d568b22687650ee01e136ec0a735af32e57c25633ae8e8898038842e906`
 - canonical historical warehouse schema SQL SHA-256: `d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f`
 - frozen Goal/Score training-view v1 contract SHA-256: `bac5380814de579dffe96d4e5daa39b0cf1e2d6144b59b5d89f2a81f7b27017b`
 
@@ -35,7 +35,7 @@ For an OpenFootball stage to become authoritative, the stage/round field must be
 
 ### Qualifying files and source-path consistency
 
-Generic labels such as `1. Round`, `2. Round`, `3. Round`, and `Play-offs` are ambiguous by themselves. They become `QUALIFYING_R1`, `QUALIFYING_R2`, `QUALIFYING_R3`, or `QUALIFYING_PLAYOFF` only when the same OpenFootball provenance also owns the `extra_json` source path and the basename proves the matching parent qualifier file:
+The current reviewed OpenFootball qualifier files use source-native labels such as `Round 1`, `Round 2`, `Round 3`, and `Playoffs`. Historical spelling variants such as `1. Round` remain accepted only under the same source/path proof. These labels are ambiguous by themselves. They become `QUALIFYING_R1`, `QUALIFYING_R2`, `QUALIFYING_R3`, or `QUALIFYING_PLAYOFF` only when the same OpenFootball provenance also owns the `extra_json` source path and the basename proves the matching parent qualifier file:
 
 - `clq.txt` → `uefa_ucl`
 - `elq.txt` → `uefa_uel`
