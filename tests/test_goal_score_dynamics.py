@@ -6,6 +6,7 @@ from types import MappingProxyType
 import numpy as np
 import pytest
 
+import domain._goal_score_evaluation as goal_score_evaluation
 from domain.goal_score_dynamics import (
     AUTHORITY_FLAGS, FeatureStatus, FoldPreprocessor, GOAL_SCORE_FEATURE_REGISTRY,
     GOAL_SCORE_MODEL_REGISTRY, GoalScoreError, TrainingRow,
@@ -132,6 +133,33 @@ def test_synthetic_tactical_signal_is_learned_without_identity():
     model=fit_challenger('POISSON_GLM_SCORE_V1',rows,feature_ids=[T])
     assert model.predict_intensities([rows[1]])[0][0]>model.predict_intensities([rows[0]])[0][0]
 
+def test_terminal_holdout_cannot_reselect_development_winner():
+    metrics={
+        'POISSON_GLM_SCORE_V1':{
+            'exact_score_nll':2.0,
+            'result_1x2_log_loss':1.0,
+            'total_goals_log_loss':1.0,
+            'goal_margin_log_loss':1.0,
+            'prediction_availability':1.0,
+        },
+        'DIXON_COLES_SCORE_V1':{
+            'exact_score_nll':1.0,
+            'result_1x2_log_loss':1.0,
+            'total_goals_log_loss':1.0,
+            'goal_margin_log_loss':1.0,
+            'prediction_availability':1.0,
+        },
+    }
+    winner,status,details=goal_score_evaluation._winner_guardrail(
+        'POISSON_GLM_SCORE_V1',metrics
+    )
+    assert winner is None
+    assert status=='NO_CHALLENGER_CLEARED_GUARDRAILS'
+    assert details['development_selected_candidate']=='POISSON_GLM_SCORE_V1'
+    assert details['holdout_primary_best_model']=='DIXON_COLES_SCORE_V1'
+    assert details['terminal_holdout_can_reselect'] is False
+    assert details['failure']=='PRIMARY_NLL_GUARDRAIL'
+
 def test_authority_is_research_only():
     assert AUTHORITY_FLAGS['research_goal_score_model'] is True
     assert not any(v for k,v in AUTHORITY_FLAGS.items() if k!='research_goal_score_model')
@@ -139,6 +167,11 @@ def test_authority_is_research_only():
 def test_full_protocol_runs_without_production_promotion():
     result=evaluate_challengers(corpus(36))
     assert len(result['development_ranking'])==3
+    assert result['development_selected_model_id']==result['development_ranking'][0]
+    assert result['terminal_holdout_selection_authority'] is False
+    assert result['holdout_ranking_role']=='DIAGNOSTIC_ONLY_NO_SELECTION_AUTHORITY'
+    if result['research_challenger_winner'] is not None:
+        assert result['research_challenger_winner']==result['development_selected_model_id']
     assert result['production_promotion_eligible'] is False
     assert result['holdout_exposure'] is True
     assert result['live_champion_replay_status']=='BLOCKED_NOT_CANONICALLY_REPLAYABLE'
