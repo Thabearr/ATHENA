@@ -9,12 +9,23 @@ import json
 import math
 import re
 from types import MappingProxyType
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from domain._forward_calibration_contracts import validate_calibration_contract
+from domain._forward_calibration_contracts import (
+    ForwardCalibrationError,
+    validate_calibration_contract,
+)
+from domain._forward_calibration_fit import ForwardCalibrationArtifact
+from domain._forward_calibration_projection import (
+    CalibrationUnitSpec,
+    CalibrationVectorRow,
+    calibration_unit_specs,
+)
 from domain.historical_training_coverage import validate_contracts as validate_label_contracts
-from domain.markets import MarketId, OutcomeId, validate_selection
+from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId, validate_selection
 from domain.pricing import DEFAULT_MAX_QUOTE_AGE_SECONDS, parse_observed_at
+from domain import sportybet_user_controlled_native_inventory as source_inventory
 from domain.sportybet_reviewed_canonical_market_mapping import (
     DATASET_NAME as SPORTYBET_MAPPING_DATASET,
     PROVIDER as SPORTYBET_MAPPING_PROVIDER,
@@ -30,10 +41,10 @@ from domain.sportybet_reviewed_canonical_market_mapping import (
 PRICE_ALL_DATASET = "athena_price_all_value_engine"
 PRICE_ALL_SCHEMA_VERSION = 1
 PRICE_ALL_CONTRACT_VERSION = 1
-QUOTE_POLICY_ID = "SPORTYBET_EXACT_MAPPING_SINGLE_SNAPSHOT_TZ_FRESH_900S_V1"
+QUOTE_POLICY_ID = "SPORTYBET_VERIFIED_SOURCE_REPLAY_EVIDENCE_SNAPSHOT_FRESH_900S_V1"
 DEVIG_POLICY_ID = "PROPORTIONAL_ONLY_MUTUALLY_EXCLUSIVE_EXHAUSTIVE_PARTITIONS_V1"
 SETTLEMENT_RETURN_POLICY_ID = "UNIT_STAKE_FULL_PUSH_SPLIT_SETTLEMENT_RETURNS_V1"
-CALIBRATED_INPUT_POLICY_ID = "UPSTREAM_AUTHORIZED_FULL_SETTLEMENT_DISTRIBUTION_V1"
+CALIBRATED_INPUT_POLICY_ID = "EXACT_PHASE6_ARTIFACT_UNIT_PROJECTION_ISSUANCE_V1"
 NO_ROUTER_POLICY_ID = "PRICE_ALL_NO_RANK_ROUTE_SELECT_OR_BET_V1"
 REAL_CURRENT_SPORTYBET_PRICE_ALL_STATUS = "NOT_RUN_VERIFIED_QUOTE_CORPUS_UNAVAILABLE"
 _SHA = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
@@ -65,7 +76,20 @@ DEVIG_CLASSIFICATION_SEMANTICS = MappingProxyType({
     "overlapping_no_ordinary_devig": ("DOUBLE_CHANCE", "EARLY_PAYOUT"),
     "push_or_split_no_ordinary_devig": ("DRAW_NO_BET", "ASIAN_HANDICAP"),
     "totals_line_settlement": "integer_push_quarter_split_half_win_loss",
-    "partition_binding": "same_fixture_event_source_snapshot_market_and_exact_line",
+    "partition_binding": (
+        "same_fixture_event_source_evidence_snapshot_provider_market_specifier_"
+        "exact_line_mapping_inventory_and_reconciliation_ancestry"
+    ),
+})
+QUOTE_SOURCE_ISSUANCE_SEMANTICS = MappingProxyType({
+    "source_contract": "SportyBetUserControlledNativeInventory",
+    "price_origin": "exact_native_selection_replayed_from_verified_raw_html",
+    "observation_time_origin": "verified_manifest_user_attested_observation",
+    "observation_authority": "USER_ATTESTED_NOT_PROVIDER_TIMESTAMP",
+    "evidence_snapshot_identity": "canonical_native_inventory_sha256",
+    "raw_identity": "source_raw_sha256",
+    "provider_quote_timestamp": None,
+    "provider_snapshot_id": None,
 })
 
 
@@ -139,6 +163,7 @@ def contract_payload(calibration_sha: str, market_sha: str, mapping_sha: str) ->
         "sportybet_mapping_semantics_sha256": mapping_sha,
         "quote_policy_id": QUOTE_POLICY_ID,
         "max_quote_age_seconds": DEFAULT_MAX_QUOTE_AGE_SECONDS,
+        "quote_source_issuance_semantics": dict(QUOTE_SOURCE_ISSUANCE_SEMANTICS),
         "devig_policy_id": DEVIG_POLICY_ID,
         "settlement_return_policy_id": SETTLEMENT_RETURN_POLICY_ID,
         "settlement_return_semantics": dict(SETTLEMENT_RETURN_SEMANTICS),
@@ -159,7 +184,7 @@ def calculate_price_all_contract_sha256(*, calibration_sha: str, market_sha: str
 
 
 EXPECTED_PRICE_ALL_CONTRACT_SHA256_BY_VERSION = MappingProxyType({
-    1: "b62bbac793a1b2ff60c405cc954105237c1353b995645406f5da7ac4d10e97d5",
+    1: "1fb0a6c891adccd76b4864a6197e55d22154176a4191f57ce92cde13501535aa",
 })
 
 
@@ -192,7 +217,33 @@ def _probabilities(components: Sequence[str], values: Sequence[float]) -> tuple[
     return tuple(zip(names, probabilities))
 
 
-@dataclass(frozen=True)
+def _validate_phase6_unit(unit: CalibrationUnitSpec, outcome: OutcomeId) -> None:
+    if type(unit) is not CalibrationUnitSpec or type(outcome) is not OutcomeId:
+        raise PriceAllError("calibration unit and outcome must be exact reviewed types")
+    try:
+        if unit.market_id is MarketId.TOTAL_GOALS:
+            reviewed = calibration_unit_specs(total_goal_lines=(unit.line,))
+        elif unit.market_id is MarketId.ASIAN_HANDICAP:
+            if unit.selection_outcome not in {OutcomeId.HOME, OutcomeId.AWAY}:
+                raise PriceAllError("unsupported Phase 6 calibration unit semantics")
+            home_line = unit.line if unit.selection_outcome is OutcomeId.HOME else -unit.line
+            reviewed = calibration_unit_specs(asian_handicap_home_lines=(home_line,))
+        else:
+            reviewed = calibration_unit_specs()
+    except ForwardCalibrationError as exc:
+        raise PriceAllError("unsupported Phase 6 calibration unit semantics") from exc
+    if unit not in reviewed:
+        raise PriceAllError("unsupported Phase 6 calibration unit semantics")
+    if outcome not in MARKET_REGISTRY[unit.market_id].supported_outcomes:
+        raise PriceAllError("candidate outcome is not canonical for calibration market")
+    if unit.selection_outcome is not None:
+        if outcome is not unit.selection_outcome:
+            raise PriceAllError("candidate outcome differs from selection-specific calibration unit")
+    elif outcome.value not in unit.components:
+        raise PriceAllError("candidate outcome is absent from calibration partition components")
+
+
+@dataclass(frozen=True, init=False)
 class CalibratedValueCandidate:
     candidate_id: str
     fixture_id: str
@@ -204,22 +255,88 @@ class CalibratedValueCandidate:
     model_id: str
     calibration_artifact_sha256: str
     calibration_strategy: str
-    raw_probability_identity: str | None
-    upstream_probability_authorized: bool
+    calibration_unit: tuple[tuple[str, Any], ...]
+    raw_probability_identity: str
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        raise PriceAllError("candidates are issued only from exact Phase 6 calibration ancestry")
 
     @classmethod
-    def create(cls, *, components: Sequence[str], probabilities: Sequence[float], **value: Any) -> "CalibratedValueCandidate":
-        market, outcome, line = validate_selection(value["market_id"], value["outcome_id"], value.get("line"))
-        for field in ("candidate_id", "fixture_id", "sportybet_event_id", "model_id", "calibration_strategy"):
-            if type(value.get(field)) is not str or not value[field].strip():
-                raise PriceAllError(f"{field} is required")
-        _sha(value["calibration_artifact_sha256"], "calibration_artifact_sha256")
-        if value.get("raw_probability_identity") is not None:
-            _sha(value["raw_probability_identity"], "raw_probability_identity")
-        return cls(value["candidate_id"], value["fixture_id"], value["sportybet_event_id"],
-                   market, outcome, line, _probabilities(components, probabilities), value["model_id"],
-                   value["calibration_artifact_sha256"], value["calibration_strategy"],
-                   value.get("raw_probability_identity"), value.get("upstream_probability_authorized") is True)
+    def from_phase6_calibration(
+        cls,
+        artifact: ForwardCalibrationArtifact,
+        row: CalibrationVectorRow,
+        *,
+        fixture_id: str,
+        sportybet_event_id: str,
+        outcome_id: OutcomeId,
+        strategy: str = "HIERARCHICAL",
+    ) -> "CalibratedValueCandidate":
+        if type(artifact) is not ForwardCalibrationArtifact or type(row) is not CalibrationVectorRow:
+            raise PriceAllError("exact Phase 6 artifact and calibration row are required")
+        if dict(artifact.contract_identities) != validate_calibration_contract():
+            raise PriceAllError("Phase 6 artifact frozen dependency identity mismatch")
+        if artifact.model_id != row.model_id:
+            raise PriceAllError("Phase 6 artifact/model identity mismatch")
+        model = artifact.unit_models.get(row.unit.unit_id)
+        if model is None or model.unit != row.unit:
+            raise PriceAllError("calibration unit is absent or differs from exact artifact")
+        _validate_phase6_unit(row.unit, outcome_id)
+        market, outcome, line = validate_selection(row.unit.market_id, outcome_id, row.unit.line)
+        strategy_value = str(strategy).strip().upper()
+        try:
+            probabilities = artifact.predict(row, strategy_value)
+        except ForwardCalibrationError as exc:
+            raise PriceAllError("Phase 6 calibration projection failed") from exc
+        calibrated = _probabilities(row.unit.components, probabilities)
+        for label, value in (("fixture_id", fixture_id), ("sportybet_event_id", sportybet_event_id)):
+            if type(value) is not str or not value.strip():
+                raise PriceAllError(f"{label} is required")
+        row_payload = {
+            "match_key": row.match_key,
+            "match_date": row.match_date,
+            "competition_key": row.competition_key,
+            "season": row.season,
+            "regime": row.regime,
+            "model_id": row.model_id,
+            "fold_index": row.fold_index,
+            "fit_end_date": row.fit_end_date,
+            "partition": row.partition.value,
+            "unit": row.unit.stable_dict(),
+            "raw_probabilities": list(row.raw_probabilities),
+        }
+        raw_identity = hashlib.sha256(_canonical_bytes(row_payload)).hexdigest()
+        candidate_payload = {
+            "fixture_id": fixture_id,
+            "sportybet_event_id": sportybet_event_id,
+            "market_id": market.value,
+            "outcome_id": outcome.value,
+            "line": line,
+            "artifact_sha256": artifact.artifact_sha256,
+            "raw_probability_identity": raw_identity,
+            "strategy": strategy_value,
+        }
+        candidate_id = hashlib.sha256(_canonical_bytes(candidate_payload)).hexdigest()
+        result = object.__new__(cls)
+        stable_unit = row.unit.stable_dict()
+        stable_unit["components"] = tuple(stable_unit["components"])
+        values = {
+            "candidate_id": candidate_id,
+            "fixture_id": fixture_id,
+            "sportybet_event_id": sportybet_event_id,
+            "market_id": market,
+            "outcome_id": outcome,
+            "line": line,
+            "settlement_probabilities": calibrated,
+            "model_id": artifact.model_id,
+            "calibration_artifact_sha256": artifact.artifact_sha256,
+            "calibration_strategy": strategy_value,
+            "calibration_unit": tuple(sorted(stable_unit.items())),
+            "raw_probability_identity": raw_identity,
+        }
+        for name, value in values.items():
+            object.__setattr__(result, name, value)
+        return result
 
     @property
     def probability_map(self) -> Mapping[str, float]:
@@ -240,8 +357,8 @@ class CalibratedValueCandidate:
             "model_id": self.model_id,
             "calibration_artifact_sha256": self.calibration_artifact_sha256,
             "calibration_strategy": self.calibration_strategy,
+            "calibration_unit": dict(self.calibration_unit),
             "raw_probability_identity": self.raw_probability_identity,
-            "upstream_probability_authorized": self.upstream_probability_authorized,
         }
 
 
@@ -256,15 +373,23 @@ class SportyBetExactQuote:
     canonical_outcome_id: OutcomeId
     canonical_line: float | None
     source: str
-    snapshot_id: str
+    evidence_snapshot_sha256: str
+    provider_snapshot_id: None
     observed_at: datetime
+    observation_authority: str
+    odds_raw: str
     decimal_odds: float
+    source_evidence_manifest_sha256: str
+    source_raw_sha256: str
+    source_native_inventory_sha256: str
     mapping_evidence_sha256: str
     fixture_reconciliation_sha256: str
     settlement_equivalence_authority: SettlementEquivalenceAuthority
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
-        raise PriceAllError("exact quotes are issued only from a reviewed SportyBet mapping")
+        raise PriceAllError(
+            "exact quotes are issued only by replaying reviewed SportyBet source ancestry"
+        )
 
     @classmethod
     def from_reviewed_mapping(
@@ -272,9 +397,8 @@ class SportyBetExactQuote:
         mapping: SportyBetReviewedCanonicalMarketMapping,
         *,
         provider_selection_sha256: str,
-        snapshot_id: str,
-        observed_at: datetime | str,
-        decimal_odds: float,
+        evidence_directory: Path,
+        allowed_evidence_root: Path,
     ) -> "SportyBetExactQuote":
         if type(mapping) is not SportyBetReviewedCanonicalMarketMapping:
             raise PriceAllError("quote mapping must be an exact reviewed SportyBet mapping")
@@ -287,23 +411,50 @@ class SportyBetExactQuote:
             raise PriceAllError("mapped selection event conflicts with reconciled SportyBet event")
         if not mapped.canonical_market_mapping_authorized:
             raise PriceAllError("reviewed canonical mapping authority is absent")
+        try:
+            inventory = source_inventory.build_inventory_from_evidence(
+                evidence_directory, allowed_root=Path(allowed_evidence_root))
+            inventory_sha = source_inventory.inventory_sha256(inventory)
+        except source_inventory.SportyBetUserInventoryError as exc:
+            raise PriceAllError("verified SportyBet source evidence replay failed") from exc
+        if inventory_sha != mapping.source_native_inventory_sha256:
+            raise PriceAllError("reviewed mapping does not bind exact replayed native inventory")
+        if (
+            inventory.source_event_id != mapping.sportybet_event_id
+            or inventory.source_sport_id != mapping.sportybet_sport_id
+            or inventory.source_evidence_id != mapping.source_event_evidence_id
+        ):
+            raise PriceAllError("source inventory event ancestry differs from reviewed mapping")
+        native_identity = (
+            mapped.event_id, mapped.provider_market_id,
+            mapped.provider_specifier, mapped.provider_outcome_id,
+        )
+        source_rows = tuple(
+            item for item in inventory.selections
+            if item.selection_identity == native_identity
+        )
+        if len(source_rows) != 1:
+            raise PriceAllError("mapped provider selection is absent or ambiguous in source evidence")
+        source_selection = source_rows[0]
+        source_selection_sha = hashlib.sha256(
+            _canonical_bytes(source_selection.to_dict()) + b"\n"
+        ).hexdigest()
+        if source_selection_sha != mapped.provider_selection_sha256:
+            raise PriceAllError("mapped provider selection identity differs from source evidence")
+        if (
+            source_selection.odds_raw != mapped.odds_raw
+            or source_selection.odds_decimal != mapped.odds_decimal
+        ):
+            raise PriceAllError("mapped odds differ from exact source evidence")
+        if source_selection.availability.value != "AVAILABLE":
+            raise PriceAllError("source evidence selection is not explicitly available")
         market, outcome, line = validate_selection(
             mapped.canonical_market_id, mapped.canonical_outcome_id, mapped.canonical_line)
-        if type(snapshot_id) is not str or not snapshot_id.strip():
-            raise PriceAllError("snapshot_id is required")
-        observed_value = observed_at
         try:
-            if type(observed_value) is datetime:
-                if observed_value.tzinfo is None or observed_value.utcoffset() is None:
-                    raise ValueError("timezone required")
-                observed = observed_value.astimezone(timezone.utc)
-            else:
-                observed = parse_observed_at(observed_value)
+            observed = parse_observed_at(inventory.observed_at_user_attested)
         except ValueError as exc:
-            raise PriceAllError("observed_at must be a timezone-aware timestamp") from exc
-        odds = decimal_odds
-        if isinstance(odds, bool) or not isinstance(odds, (int, float)) or not math.isfinite(float(odds)) or float(odds) <= 1:
-            raise PriceAllError("decimal_odds must be finite and above 1.0")
+            raise PriceAllError("source observation time is invalid") from exc
+        odds = float(source_selection.odds_decimal)
         result = object.__new__(cls)
         fields = {
             "fixture_id": mapping.matched_fotmob_fixture_id,
@@ -315,9 +466,15 @@ class SportyBetExactQuote:
             "canonical_outcome_id": outcome,
             "canonical_line": line,
             "source": "SportyBet",
-            "snapshot_id": snapshot_id,
+            "evidence_snapshot_sha256": inventory_sha,
+            "provider_snapshot_id": None,
             "observed_at": observed,
-            "decimal_odds": float(odds),
+            "observation_authority": inventory.observation_authority,
+            "odds_raw": source_selection.odds_raw,
+            "decimal_odds": odds,
+            "source_evidence_manifest_sha256": inventory.source_evidence_manifest_sha256,
+            "source_raw_sha256": inventory.source_raw_sha256,
+            "source_native_inventory_sha256": inventory_sha,
             "mapping_evidence_sha256": canonical_mapping_sha256(mapping),
             "fixture_reconciliation_sha256": mapping.source_reconciliation_receipt_sha256,
             "settlement_equivalence_authority": mapped.settlement_equivalence_authority,
@@ -329,7 +486,8 @@ class SportyBetExactQuote:
     @property
     def quote_identity(self) -> tuple[Any, ...]:
         return (self.fixture_id, self.event_id, self.provider_market_id,
-                self.provider_specifier, self.provider_outcome_id, self.snapshot_id)
+                self.provider_specifier, self.provider_outcome_id,
+                self.evidence_snapshot_sha256)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -342,9 +500,15 @@ class SportyBetExactQuote:
             "canonical_outcome_id": self.canonical_outcome_id.value,
             "canonical_line": self.canonical_line,
             "source": self.source,
-            "snapshot_id": self.snapshot_id,
+            "evidence_snapshot_sha256": self.evidence_snapshot_sha256,
+            "provider_snapshot_id": None,
             "observed_at": self.observed_at.astimezone(timezone.utc).isoformat().replace("+00:00", "Z"),
+            "observation_authority": self.observation_authority,
+            "odds_raw": self.odds_raw,
             "decimal_odds": self.decimal_odds,
+            "source_evidence_manifest_sha256": self.source_evidence_manifest_sha256,
+            "source_raw_sha256": self.source_raw_sha256,
+            "source_native_inventory_sha256": self.source_native_inventory_sha256,
             "mapping_evidence_sha256": self.mapping_evidence_sha256,
             "fixture_reconciliation_sha256": self.fixture_reconciliation_sha256,
             "settlement_equivalence_authority": self.settlement_equivalence_authority.value,
