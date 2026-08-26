@@ -33,6 +33,7 @@ PARENTS = MappingProxyType({
 REVIEWED_STAGE_SOURCES = frozenset({"openfootball"})
 SOURCE_POLICY = "WAREHOUSE_SCHEMA_V1_EXACT_FIELD_PROVENANCE_REVIEWED_SOURCE_ALLOWLIST_V2"
 QUALIFIER_POLICY = "OPENFOOTBALL_SAME_SOURCE_QUALIFIER_FILE_ROUND_LABELS_V2"
+MAIN_STAGE_POLICY = "OPENFOOTBALL_SOURCE_NATIVE_MAIN_STAGE_LABELS_AND_ERA_V1"
 SOURCE_PATH_POLICY = "OPENFOOTBALL_PARENT_AND_PHASE_PATH_CONSISTENCY_V1"
 ERA_POLICY = "UEFA_STAGE_ERA_ALLOWLIST_FAIL_CLOSED_V1"
 TIE_POLICY = "PRIOR_RECIPROCAL_REPLAYED_STAGE_AND_SAME_SOURCE_REGULATION_FT_V2"
@@ -214,6 +215,7 @@ def calculate_stage_contract_sha256(parent_sha: str, registry_sha: str) -> str:
         "source_policy": SOURCE_POLICY,
         "reviewed_stage_sources": sorted(REVIEWED_STAGE_SOURCES),
         "qualifier_policy": QUALIFIER_POLICY,
+        "main_stage_policy": MAIN_STAGE_POLICY,
         "source_path_policy": SOURCE_PATH_POLICY,
         "era_policy": ERA_POLICY,
         "tie_policy": TIE_POLICY,
@@ -249,10 +251,10 @@ EXPECTED_STAGE_REGISTRY_SHA256 = (
     "3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b"
 )
 EXPECTED_STAGE_CONTRACT_SHA256 = (
-    "56fd0f25cc176e434a107cb88d48b22f705a4b4b461e44fe995dda7f00adfbbc"
+    "b009351d6de7dc85cb9bd4a9ad009aad34d36bbe514aa6cf2a0a28791cb35621"
 )
 EXPECTED_TRAINING_SIDECAR_CONTRACT_SHA256 = (
-    "ade99d568b22687650ee01e136ec0a735af32e57c25633ae8e8898038842e906"
+    "bc898289751b790084d21101b0171ad651a95c4d179436f0f4ed4df8d41d49f9"
 )
 
 
@@ -331,9 +333,21 @@ def _explicit(label: str, season: str) -> UEFACompetitionStage:
         "last 16": UEFACompetitionStage.ROUND_OF_16,
         "quarter final": UEFACompetitionStage.QUARTER_FINAL,
         "quarter finals": UEFACompetitionStage.QUARTER_FINAL,
+        "quarterfinal": UEFACompetitionStage.QUARTER_FINAL,
+        "quarterfinals": UEFACompetitionStage.QUARTER_FINAL,
         "semi final": UEFACompetitionStage.SEMI_FINAL,
         "semi finals": UEFACompetitionStage.SEMI_FINAL,
+        "semifinal": UEFACompetitionStage.SEMI_FINAL,
+        "semifinals": UEFACompetitionStage.SEMI_FINAL,
         "final": UEFACompetitionStage.FINAL,
+        "finals round of 16": UEFACompetitionStage.ROUND_OF_16,
+        "finals quarterfinal": UEFACompetitionStage.QUARTER_FINAL,
+        "finals quarterfinals": UEFACompetitionStage.QUARTER_FINAL,
+        "finals semi final": UEFACompetitionStage.SEMI_FINAL,
+        "finals semi finals": UEFACompetitionStage.SEMI_FINAL,
+        "finals semifinal": UEFACompetitionStage.SEMI_FINAL,
+        "finals semifinals": UEFACompetitionStage.SEMI_FINAL,
+        "finals final": UEFACompetitionStage.FINAL,
         "knockout playoff": UEFACompetitionStage.KNOCKOUT_PLAYOFF,
         "knockout play off": UEFACompetitionStage.KNOCKOUT_PLAYOFF,
         "knockout play offs": UEFACompetitionStage.KNOCKOUT_PLAYOFF,
@@ -347,7 +361,7 @@ def _explicit(label: str, season: str) -> UEFACompetitionStage:
             if year is not None and year >= 2024
             else UEFACompetitionStage.UNKNOWN
         )
-    if normalized.startswith("group "):
+    if normalized.startswith("group ") or normalized.startswith("gruppe "):
         return UEFACompetitionStage.GROUP_PHASE
     for prefix, stage in (
         ("round of 32 ", UEFACompetitionStage.ROUND_OF_32),
@@ -392,13 +406,19 @@ def _path_stage(
             "qualifying play offs", "qualifying play off",
         }:
             return UEFACompetitionStage.QUALIFYING_PLAYOFF
-    if (
-        MAIN_FILES.get(name) == competition
-        and normalized in {"playoffs", "playoff", "play offs", "play off"}
-    ):
-        year = season_start_year(season)
-        if year is not None and year >= 2024:
-            return UEFACompetitionStage.KNOCKOUT_PLAYOFF
+    if MAIN_FILES.get(name) == competition:
+        playoff_label = (
+            normalized in {"playoffs", "playoff", "play offs", "play off"}
+            or normalized.startswith("playoffs matchday ")
+            or normalized.startswith("playoff matchday ")
+            or normalized.startswith("play offs matchday ")
+            or normalized.startswith("play off matchday ")
+        )
+        if playoff_label:
+            year = season_start_year(season)
+            minimum_year = 2024 if competition == "uefa_ucl" else 2021
+            if year is not None and year >= minimum_year:
+                return UEFACompetitionStage.KNOCKOUT_PLAYOFF
     return UEFACompetitionStage.UNKNOWN
 
 
@@ -1232,6 +1252,7 @@ __all__ = [
     "EXPECTED_TRAINING_SIDECAR_CONTRACT_SHA256",
     "EXPECTED_WAREHOUSE_SCHEMA_SQL_SHA256",
     "FINAL_FORMAT_POLICY",
+    "MAIN_STAGE_POLICY",
     "PARENTS",
     "QUALIFIER_POLICY",
     "REGISTRY_VERSION",
