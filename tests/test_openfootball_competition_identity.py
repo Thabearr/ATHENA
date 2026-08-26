@@ -58,6 +58,32 @@ def test_rejected_non_uefa_source_cannot_emit_uefa_rows() -> None:
     ) == []
 
 
+def test_rejected_single_year_competition_does_not_interpret_dates() -> None:
+    text = """= CONCACAF Champions League 2024
+
+▪ Round 1
+  Thu Feb 29 2024
+    20:00  Example FC (MEX) v Sample FC (USA)  1-0 (0-0)
+
+= UEFA Champions League 2024/25
+
+▪ League, Matchday 1
+  Tue Sep 17 2024
+    18:45  Example FC (ESP) v Sample FC (ENG)  2-0 (1-0)
+"""
+
+    rows = list(
+        parse_openfootball_text(
+            text,
+            "mixed-source-regression.txt",
+        )
+    )
+
+    assert len(rows) == 1
+    assert rows[0]["competition_key"] == "uefa_ucl"
+    assert rows[0]["match_date"] == "2024-09-17"
+
+
 def test_uefa_ucl_and_sibling_uefa_competitions_still_parse() -> None:
     ucl = """= UEFA Champions League 2025/26
 
