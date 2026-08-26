@@ -175,4 +175,6 @@ def validate_calibration_contract() -> dict[str, str]:
     }
 
 
-__all__ = [name for name in globals() if not name.startswith("_")]
+__all__ = [name for name in globals() if not name.startswith("_")] + [
+    "_canonical_bytes"
+]
