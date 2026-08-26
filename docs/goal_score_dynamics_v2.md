@@ -40,7 +40,7 @@ Competition-scoped schedule features are never described as complete all-competi
 
 ## Missingness and competition prior
 
-Upstream `AVAILABLE`, `MISSING`, and `BLOCKED` stay distinct. Numeric estimators use `TRAIN_FOLD_MEDIAN_PLUS_MISSING_BLOCKED_INDICATORS_V1`: each source feature becomes a numeric column plus separate MISSING and BLOCKED indicators. Medians are fit on TRAIN rows only. An all-missing feature uses zero only as a model-space anchor accompanied by a status indicator; no source fact is recovered or rewritten.
+Upstream `AVAILABLE`, `MISSING`, and `BLOCKED` stay distinct. Numeric estimators use `TRAIN_FOLD_MEDIAN_PLUS_MISSING_BLOCKED_INDICATORS_V1`: each source feature becomes a numeric column plus separate MISSING and BLOCKED indicators. Medians are fit on TRAIN rows only. An all-missing feature uses zero only as a model-space anchor accompanied by a status indicator; no source fact is recovered or rewritten. There is no standardization step in this policy.
 
 `TRAIN_FOLD_HIERARCHICAL_COMPETITION_GOAL_PRIOR_K20_V1` computes global and competition HomeGoals/AwayGoals rates from TRAIN outcomes only. For competition sample `n`, `weight=n/(n+20)` and `shrunk_rate=weight*competition_rate+(1-weight)*global_rate`. Unknown competitions use the train-global prior. Validation/holdout outcomes cannot change preprocessing or priors.
 
@@ -48,7 +48,7 @@ Upstream `AVAILABLE`, `MISSING`, and `BLOCKED` stay distinct. Numeric estimators
 
 Model registry version **1** is pinned to:
 
-`11d0d68078f9deeb0d9386aaa07581bf842feea4d33c310b3c86664fb8999768`
+`5451bdd4a3463100866b23b29c0399412fab781f664aee8133c3a123e586ac68`
 
 Candidates:
 
@@ -62,19 +62,21 @@ No model contains a hand-written `LOW_EVENT => lambda -= x` rule. Tactical effec
 
 Evaluation contract v1:
 
-`dd14b3aedf90619cee53de5a6b01c24674401eaca9b24b86fa9cf3d871f7a690`
+`20f533874e74195b2dc3ebe93b9edf60a26a9dbc9aaed5668d7c6412f520efd7`
 
 Training-view generation contract v1:
 
-`dc7d58e1fec2f7a27f6bb8cb8dd2849ebb6b65f0d2185c76c4ac10b5d1c4455d`
+`bac5380814de579dffe96d4e5daa39b0cf1e2d6144b59b5d89f2a81f7b27017b`
 
-These bind registry identities, missingness, train-only competition prior, date-bucket split, rolling-origin policy, terminal holdout, target firewall, adaptive tail, Dixon-Coles semantics, metrics, paired comparison, random seed, no-bookmaker input, and no-production-promotion semantics. Same-version drift fails closed.
+These bind registry identities, missingness, train-only competition prior, date-bucket split, rolling-origin policy, terminal holdout, target firewall, adaptive tail, Dixon-Coles semantics, metrics, paired comparison, random seed, no-bookmaker input, frozen-development-winner guardrails, and no-production-promotion semantics. Same-version drift fails closed.
 
 ## Chronology and evaluation
 
 There is no random split. Rows are grouped by complete `match_date` buckets. The latest **20% of unique dates** (ceiling, at least one) form the terminal holdout; same-date rows cannot straddle development and holdout.
 
 Development uses `DATE_BUCKET_EXPANDING_5_FOLD_V1`: the earlier half of development dates seeds the initial training window and the remainder is deterministically divided into five ordered validation blocks. Each fold satisfies `max(train_date) < min(validation_date)`. Preprocessing, competition priors, estimators, and Dixon-Coles `rho` are train-fold only.
+
+The challenger with the lowest development rolling-origin exact-score NLL is frozen **before** terminal-holdout exposure. The terminal holdout has no model-selection authority and cannot replace that development winner with a different challenger. All three challengers may still be evaluated on the same holdout for diagnostic ranking, pairwise comparison, disagreement, and stratification. The frozen development candidate clears the research-winner gate only if it remains best on holdout exact-score NLL, meets the prediction-availability floor, and stays within the fixed 5% relative-regression guardrail on secondary log-loss metrics. If another challenger wins the terminal holdout, the frozen candidate is rejected and **no** alternative is promoted from that holdout.
 
 Primary metric is mean exact-score negative log likelihood using the positive infinite-support Poisson/Dixon-Coles probability of the observed regulation score. Secondary diagnostics include Home/Away and combined Poisson deviance, 1X2 multiclass log loss/Brier, total-goal and goal-margin log loss, BTTS Brier/log loss, Over-2.5 Brier/log loss, predicted-vs-observed Home/Away goal means, and prediction availability. No calibration is fit here.
 
