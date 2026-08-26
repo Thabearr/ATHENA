@@ -144,7 +144,17 @@ def _settlement_ev(candidate: CalibratedValueCandidate, odds: float) -> tuple[tu
         settlement_probabilities = supplied
     else:
         partition = _ORDINARY_PARTITIONS.get(candidate.market_id)
-        if required == (SettlementState.WIN, SettlementState.LOSS) and partition is not None \
+        unit = dict(candidate.calibration_unit)
+        if (
+            required == (SettlementState.WIN, SettlementState.LOSS)
+            and set(supplied) == {"YES", "NO"}
+            and unit.get("selection_outcome") == candidate.outcome_id.value
+        ):
+            settlement_probabilities = MappingProxyType({
+                SettlementState.WIN.value: supplied["YES"],
+                SettlementState.LOSS.value: supplied["NO"],
+            })
+        elif required == (SettlementState.WIN, SettlementState.LOSS) and partition is not None \
                 and set(supplied) == {outcome.value for outcome in partition}:
             win = supplied[candidate.outcome_id.value]
             settlement_probabilities = MappingProxyType({
@@ -181,14 +191,23 @@ def _partition_quotes(candidate: CalibratedValueCandidate, quote: SportyBetExact
     expected = _ORDINARY_PARTITIONS.get(candidate.market_id)
     if expected is None:
         return DevigStatus.UNAVAILABLE_INCOMPLETE_PARTITION, None, None
-    related = [item for item in quotes if (
+    market_related = [item for item in quotes if (
         item.fixture_id == quote.fixture_id
         and item.event_id == quote.event_id
+        and item.source == quote.source
         and item.canonical_market_id is quote.canonical_market_id
         and item.canonical_line == quote.canonical_line
+        and item.provider_market_id == quote.provider_market_id
+        and item.provider_specifier == quote.provider_specifier
         and item.fixture_reconciliation_sha256 == quote.fixture_reconciliation_sha256
     )]
-    same = [item for item in related if item.snapshot_id == quote.snapshot_id and item.source == quote.source]
+    same = [item for item in market_related if (
+        item.evidence_snapshot_sha256 == quote.evidence_snapshot_sha256
+        and item.source_evidence_manifest_sha256 == quote.source_evidence_manifest_sha256
+        and item.source_raw_sha256 == quote.source_raw_sha256
+        and item.mapping_evidence_sha256 == quote.mapping_evidence_sha256
+        and item.source_native_inventory_sha256 == quote.source_native_inventory_sha256
+    )]
     by_outcome: dict[OutcomeId, SportyBetExactQuote] = {}
     duplicate = False
     for item in same:
@@ -196,7 +215,7 @@ def _partition_quotes(candidate: CalibratedValueCandidate, quote: SportyBetExact
             duplicate = True
         by_outcome[item.canonical_outcome_id] = item
     if duplicate or set(by_outcome) != set(expected):
-        if set(item.canonical_outcome_id for item in related) >= set(expected):
+        if set(item.canonical_outcome_id for item in market_related) >= set(expected):
             return DevigStatus.UNAVAILABLE_CROSS_SNAPSHOT_PARTITION, None, None
         return DevigStatus.UNAVAILABLE_INCOMPLETE_PARTITION, None, None
     overround = math.fsum(1.0 / by_outcome[outcome].decimal_odds for outcome in expected)
@@ -228,7 +247,7 @@ def price_all_candidates(
         other.quote_identity == item.quote_identity for other in quote_values) > 1}
     results: list[PriceAllValueResult] = []
     for candidate in sorted(candidate_values, key=lambda item: item.candidate_id):
-        if candidate.market_id in _EARLY_OR_WEH or not candidate.upstream_probability_authorized:
+        if candidate.market_id in _EARLY_OR_WEH:
             results.append(_empty_result(candidate,
                 PriceDisposition.BLOCKED_UPSTREAM_PROBABILITY_UNAVAILABLE,
                 "upstream calibrated probability authority is unavailable", now, contract_sha))
