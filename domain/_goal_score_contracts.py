@@ -23,23 +23,36 @@ GOAL_SCORE_FEATURE_REGISTRY_VERSION = 1
 GOAL_SCORE_MODEL_REGISTRY_VERSION = 1
 GOAL_SCORE_EVALUATION_CONTRACT_VERSION = 1
 
-MISSINGNESS_POLICY_ID = "TRAIN_FOLD_MEDIAN_PLUS_MISSING_BLOCKED_INDICATORS_V1"
-COMPETITION_PRIOR_POLICY_ID = "TRAIN_FOLD_HIERARCHICAL_COMPETITION_GOAL_PRIOR_K20_V1"
+MISSINGNESS_POLICY_ID = (
+    "TRAIN_FOLD_MEDIAN_STANDARDIZE_VALUE_PLUS_MISSING_BLOCKED_INDICATORS_V1"
+)
+COMPETITION_PRIOR_POLICY_ID = (
+    "TRAIN_FOLD_HIERARCHICAL_COMPETITION_GOAL_PRIOR_K20_V1"
+)
 COMPETITION_PRIOR_K = 20.0
-CHRONOLOGICAL_SPLIT_POLICY_ID = "LATEST_20_PERCENT_UNIQUE_DATES_TERMINAL_HOLDOUT_V1"
+CHRONOLOGICAL_SPLIT_POLICY_ID = (
+    "LATEST_20_PERCENT_UNIQUE_DATES_TERMINAL_HOLDOUT_V1"
+)
 ROLLING_ORIGIN_POLICY_ID = "DATE_BUCKET_EXPANDING_5_FOLD_V1"
 TERMINAL_HOLDOUT_POLICY_ID = "SINGLE_EXPOSURE_AFTER_DEVELOPMENT_FREEZE_V1"
 TARGET_POLICY_ID = "REGULATION_FT_AVAILABLE_HOME_AWAY_GOALS_V1"
-FEATURE_TARGET_FIREWALL_POLICY_ID = "PREMATCH_CORPORA_ONLY_POSTMATCH_SCORE_TARGET_ONLY_V1"
+FEATURE_TARGET_FIREWALL_POLICY_ID = (
+    "PREMATCH_CORPORA_ONLY_POSTMATCH_SCORE_TARGET_ONLY_V1"
+)
 SCORE_TAIL_POLICY_ID = "ADAPTIVE_POISSON_RECTANGLE_TAIL_1E10_V1"
 DIXON_COLES_POLICY_ID = "STANDARD_FOUR_CELL_TAU_TRAIN_ONLY_BOUNDED_RHO_V1"
-METRICS_POLICY_ID = "EXACT_SCORE_NLL_AND_COHERENT_SCORE_SURFACE_DIAGNOSTICS_V1"
+METRICS_POLICY_ID = (
+    "EXACT_SCORE_NLL_AND_COHERENT_SCORE_SURFACE_DIAGNOSTICS_V1"
+)
 PAIRWISE_POLICY_ID = "COMMON_TARGET_SET_PAIRED_DATE_BUCKET_BOOTSTRAP_V1"
 GOAL_MARGIN_METRIC_POLICY_ID = "EXACT_SKELLAM_PLUS_DC_LOCAL_CORRECTION_V1"
-RESEARCH_WINNER_POLICY_ID = "HOLDOUT_NLL_PAIRED_BLOCK_BOOTSTRAP_AND_GUARDRAILS_V1"
-STRATIFIED_EVALUATION_POLICY_ID = "PREMATCH_ONLY_MIN50_STRATA_V1"
-COMPACT_LOADING_POLICY_ID = "NUMPY_ARRAY_SINGLE_PARSE_TRAINING_VIEW_V1"
-NO_BOOKMAKER_POLICY_ID = "NO_BOOKMAKER_ODDS_PRICES_LINES_OR_VALUE_INPUTS_V1"
+STRATIFIED_EVALUATION_POLICY_ID = "FIXED_PREMATCH_STRATA_MIN_SAMPLE_V1"
+WINNER_GUARDRAIL_POLICY_ID = (
+    "HOLDOUT_NLL_PRIMARY_SECONDARY_LOGLOSS_5PCT_GUARDRAIL_V1"
+)
+NO_BOOKMAKER_POLICY_ID = (
+    "NO_BOOKMAKER_ODDS_PRICES_LINES_OR_VALUE_INPUTS_V1"
+)
 PRODUCTION_PROMOTION_POLICY_ID = "RESEARCH_ONLY_NO_PRODUCTION_PROMOTION_V1"
 LIVE_CHAMPION_REPLAY_STATUS = "BLOCKED_NOT_CANONICALLY_REPLAYABLE"
 FULL_CORPUS_EVALUATION_STATUS = "NOT_RUN_SOURCE_CORPORA_UNAVAILABLE"
@@ -47,6 +60,12 @@ RANDOM_SEED = 233
 MIN_INTENSITY = 1e-8
 PAIR_BOOTSTRAP_REPLICATES = 400
 MIN_STRATUM_SAMPLE = 50
+STRATIFIED_TACTICAL_EVENT_LOW = -0.5
+STRATIFIED_TACTICAL_EVENT_HIGH = 0.5
+STRATIFIED_COVERAGE_MID = 0.50
+STRATIFIED_COVERAGE_HIGH = 0.80
+WINNER_MAX_SECONDARY_RELATIVE_REGRESSION = 0.05
+WINNER_MIN_PREDICTION_AVAILABILITY = 0.99
 
 AUTHORITY_FLAGS: Mapping[str, bool] = MappingProxyType({
     "research_goal_score_model": True,
@@ -114,7 +133,11 @@ def _hist(
     )
 
 
-def _tactical(side: str, scope: str, dimension: str) -> GoalScoreFeatureDefinition:
+def _tactical(
+    side: str,
+    scope: str,
+    dimension: str,
+) -> GoalScoreFeatureDefinition:
     return GoalScoreFeatureDefinition(
         f"TACTICAL.{side}.{scope}.{dimension}",
         "TACTICAL_IDENTITY",
@@ -199,19 +222,25 @@ def calculate_feature_registry_sha256(
     })).hexdigest()
 
 
-EXPECTED_GOAL_SCORE_FEATURE_REGISTRY_SHA256_BY_VERSION: Mapping[int, str] = MappingProxyType({
-    1: "8052e9177e5c9d88226d36b5e7b11308ba0871889439638eb9f3570d37972bb0",
-})
+EXPECTED_GOAL_SCORE_FEATURE_REGISTRY_SHA256_BY_VERSION: Mapping[int, str] = (
+    MappingProxyType({
+        1: "8052e9177e5c9d88226d36b5e7b11308ba0871889439638eb9f3570d37972bb0",
+    })
+)
 
 
 def validate_feature_registry(
     registry: Sequence[GoalScoreFeatureDefinition] = GOAL_SCORE_FEATURE_REGISTRY,
     version: int = GOAL_SCORE_FEATURE_REGISTRY_VERSION,
-    expected_by_version: Mapping[int, str] = EXPECTED_GOAL_SCORE_FEATURE_REGISTRY_SHA256_BY_VERSION,
+    expected_by_version: Mapping[int, str] = (
+        EXPECTED_GOAL_SCORE_FEATURE_REGISTRY_SHA256_BY_VERSION
+    ),
 ) -> str:
     expected = expected_by_version.get(version)
     if expected is None:
-        raise GoalScoreError(f"unreviewed Goal/Score feature registry version: {version}")
+        raise GoalScoreError(
+            f"unreviewed Goal/Score feature registry version: {version}"
+        )
     actual = calculate_feature_registry_sha256(registry, version)
     if actual != expected:
         raise GoalScoreError("Goal/Score feature registry drift")
@@ -245,7 +274,15 @@ GOAL_SCORE_MODEL_REGISTRY: tuple[GoalScoreModelDefinition, ...] = (
         "POISSON_GLM_SCORE_V1",
         "INDEPENDENT_POISSON",
         "sklearn.PoissonRegressor",
-        (("alpha", 0.25), ("max_iter", 500), ("tol", 1e-8)),
+        (
+            ("alpha", 0.25),
+            ("fit_intercept", True),
+            ("solver", "lbfgs"),
+            ("max_iter", 500),
+            ("tol", 1e-8),
+            ("warm_start", False),
+            ("verbose", 0),
+        ),
         None,
         None,
     ),
@@ -253,7 +290,15 @@ GOAL_SCORE_MODEL_REGISTRY: tuple[GoalScoreModelDefinition, ...] = (
         "DIXON_COLES_SCORE_V1",
         "DIXON_COLES",
         "PoissonRegressor+four_cell_tau",
-        (("alpha", 0.25), ("max_iter", 500), ("tol", 1e-8)),
+        (
+            ("alpha", 0.25),
+            ("fit_intercept", True),
+            ("solver", "lbfgs"),
+            ("max_iter", 500),
+            ("tol", 1e-8),
+            ("warm_start", False),
+            ("verbose", 0),
+        ),
         DIXON_COLES_POLICY_ID,
         None,
     ),
@@ -263,11 +308,25 @@ GOAL_SCORE_MODEL_REGISTRY: tuple[GoalScoreModelDefinition, ...] = (
         "sklearn.HistGradientBoostingRegressor",
         (
             ("loss", "poisson"),
+            ("quantile", None),
             ("learning_rate", 0.05),
             ("max_iter", 160),
             ("max_leaf_nodes", 15),
-            ("l2_regularization", 1.0),
+            ("max_depth", None),
             ("min_samples_leaf", 12),
+            ("l2_regularization", 1.0),
+            ("max_features", 1.0),
+            ("max_bins", 255),
+            ("categorical_features", None),
+            ("monotonic_cst", None),
+            ("interaction_cst", None),
+            ("warm_start", False),
+            ("early_stopping", False),
+            ("scoring", "loss"),
+            ("validation_fraction", 0.1),
+            ("n_iter_no_change", 10),
+            ("tol", 1e-7),
+            ("verbose", 0),
         ),
         None,
         RANDOM_SEED,
@@ -285,26 +344,35 @@ def calculate_model_registry_sha256(
     })).hexdigest()
 
 
-EXPECTED_GOAL_SCORE_MODEL_REGISTRY_SHA256_BY_VERSION: Mapping[int, str] = MappingProxyType({
-    1: "11d0d68078f9deeb0d9386aaa07581bf842feea4d33c310b3c86664fb8999768",
-})
+EXPECTED_GOAL_SCORE_MODEL_REGISTRY_SHA256_BY_VERSION: Mapping[int, str] = (
+    MappingProxyType({
+        1: "5451bdd4a3463100866b23b29c0399412fab781f664aee8133c3a123e586ac68",
+    })
+)
 
 
 def validate_model_registry(
     registry: Sequence[GoalScoreModelDefinition] = GOAL_SCORE_MODEL_REGISTRY,
     version: int = GOAL_SCORE_MODEL_REGISTRY_VERSION,
-    expected_by_version: Mapping[int, str] = EXPECTED_GOAL_SCORE_MODEL_REGISTRY_SHA256_BY_VERSION,
+    expected_by_version: Mapping[int, str] = (
+        EXPECTED_GOAL_SCORE_MODEL_REGISTRY_SHA256_BY_VERSION
+    ),
 ) -> str:
     expected = expected_by_version.get(version)
     if expected is None:
-        raise GoalScoreError(f"unreviewed Goal/Score model registry version: {version}")
+        raise GoalScoreError(
+            f"unreviewed Goal/Score model registry version: {version}"
+        )
     actual = calculate_model_registry_sha256(registry, version)
     if actual != expected:
         raise GoalScoreError("Goal/Score model registry drift")
     return actual
 
 
-def evaluation_contract_payload(feature_sha: str, model_sha: str) -> dict[str, Any]:
+def evaluation_contract_payload(
+    feature_sha: str,
+    model_sha: str,
+) -> dict[str, Any]:
     return {
         "schema_version": GOAL_SCORE_SCHEMA_VERSION,
         "feature_registry_version": GOAL_SCORE_FEATURE_REGISTRY_VERSION,
@@ -325,11 +393,18 @@ def evaluation_contract_payload(feature_sha: str, model_sha: str) -> dict[str, A
         "metrics_policy_id": METRICS_POLICY_ID,
         "pairwise_policy_id": PAIRWISE_POLICY_ID,
         "pair_bootstrap_replicates": PAIR_BOOTSTRAP_REPLICATES,
-        "minimum_stratum_sample": MIN_STRATUM_SAMPLE,
         "goal_margin_metric_policy_id": GOAL_MARGIN_METRIC_POLICY_ID,
-        "research_winner_policy_id": RESEARCH_WINNER_POLICY_ID,
         "stratified_evaluation_policy_id": STRATIFIED_EVALUATION_POLICY_ID,
-        "compact_loading_policy_id": COMPACT_LOADING_POLICY_ID,
+        "minimum_stratum_sample": MIN_STRATUM_SAMPLE,
+        "stratified_tactical_event_low": STRATIFIED_TACTICAL_EVENT_LOW,
+        "stratified_tactical_event_high": STRATIFIED_TACTICAL_EVENT_HIGH,
+        "stratified_coverage_mid": STRATIFIED_COVERAGE_MID,
+        "stratified_coverage_high": STRATIFIED_COVERAGE_HIGH,
+        "winner_guardrail_policy_id": WINNER_GUARDRAIL_POLICY_ID,
+        "winner_max_secondary_relative_regression": (
+            WINNER_MAX_SECONDARY_RELATIVE_REGRESSION
+        ),
+        "winner_min_prediction_availability": WINNER_MIN_PREDICTION_AVAILABILITY,
         "no_bookmaker_policy_id": NO_BOOKMAKER_POLICY_ID,
         "production_promotion_policy_id": PRODUCTION_PROMOTION_POLICY_ID,
         "random_seed": RANDOM_SEED,
@@ -349,9 +424,11 @@ def calculate_evaluation_contract_sha256(
     })).hexdigest()
 
 
-EXPECTED_GOAL_SCORE_EVALUATION_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = MappingProxyType({
-    1: "d1435ab31a6f557dd9610eda4855781fa663ed2982ed61e6c71d98674227ee83",
-})
+EXPECTED_GOAL_SCORE_EVALUATION_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = (
+    MappingProxyType({
+        1: "ef0ec96b81af72c8fe8cec192e2ae01eef547298dcfb1b4a8e62cf6d11dcd661",
+    })
+)
 
 
 def validate_evaluation_contract() -> tuple[str, str, str]:
@@ -389,11 +466,15 @@ class TrainingRow:
             (self.away_goals, "away_goals"),
         ):
             if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-                raise GoalScoreError(f"{name} must be a non-negative integer")
+                raise GoalScoreError(
+                    f"{name} must be a non-negative integer"
+                )
         registered = {item.feature_id for item in GOAL_SCORE_FEATURE_REGISTRY}
         for feature_id, (status, value) in self.features.items():
             if feature_id not in registered:
-                raise GoalScoreError(f"unregistered model feature: {feature_id}")
+                raise GoalScoreError(
+                    f"unregistered model feature: {feature_id}"
+                )
             if status is FeatureStatus.AVAILABLE:
                 if (
                     value is None
