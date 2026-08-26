@@ -1,10 +1,10 @@
-"""Source-qualified UEFA stage semantics for ATHENA historical research.
+"""Source-qualified UEFA competition-stage semantics for ATHENA research.
 
-Stable parent competition keys remain unchanged. Stage authority is issued only
-by replaying the canonical warehouse, its reviewed schema, and exact field/source
-provenance. UNKNOWN is first-class. This module grants research stratification
-only; never probability, pricing, routing, selection, accumulator, production,
-or BET authority.
+The stable parent competition identities remain ``uefa_ucl``, ``uefa_uel`` and
+``uefa_uecl``.  Stage is a separate, fail-closed historical research sidecar.
+Authority comes from replaying an exact canonical historical warehouse and its
+field/source provenance; it never grants live Fixture State, probability,
+pricing, routing, selection, accumulator, production, or BET authority.
 """
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ PARENTS = MappingProxyType({
 })
 REVIEWED_STAGE_SOURCES = frozenset({"openfootball"})
 SOURCE_POLICY = "WAREHOUSE_SCHEMA_V1_EXACT_FIELD_PROVENANCE_REVIEWED_SOURCE_ALLOWLIST_V2"
-QUALIFIER_POLICY = "OPENFOOTBALL_SAME_SOURCE_QUALIFIER_FILE_REQUIRED_V1"
+QUALIFIER_POLICY = "OPENFOOTBALL_SAME_SOURCE_QUALIFIER_FILE_ROUND_LABELS_V2"
 SOURCE_PATH_POLICY = "OPENFOOTBALL_PARENT_AND_PHASE_PATH_CONSISTENCY_V1"
 ERA_POLICY = "UEFA_STAGE_ERA_ALLOWLIST_FAIL_CLOSED_V1"
 TIE_POLICY = "PRIOR_RECIPROCAL_REPLAYED_STAGE_AND_SAME_SOURCE_REGULATION_FT_V2"
@@ -67,7 +67,7 @@ AUTHORITY_FLAGS = MappingProxyType({
 
 
 class UEFAStageError(ValueError):
-    """Raised when UEFA stage semantics cannot be proven safely."""
+    """Raised when a stage claim cannot be proven under the frozen contract."""
 
 
 class UEFACompetitionStage(str, Enum):
@@ -100,7 +100,7 @@ class UEFAQualificationState(str, Enum):
     AWAY_ADVANTAGE = "AWAY_ADVANTAGE"
 
 
-# Inclusive season-start-year eras. None means open-ended.
+# Inclusive season-start-year ranges. ``None`` means open-ended.
 ERA_REGISTRY: Mapping[str, Mapping[str, tuple[int, int | None]]] = MappingProxyType({
     "uefa_ucl": MappingProxyType({
         "QUALIFYING_R1": (1992, None),
@@ -178,15 +178,18 @@ def _canon(value: Any) -> bytes:
             separators=(",", ":"),
             ensure_ascii=False,
             allow_nan=False,
-        ).encode()
+        ).encode("utf-8")
     except (TypeError, ValueError, OverflowError) as exc:
         raise UEFAStageError("canonical serialization failed") from exc
 
 
 def _registry_payload() -> dict[str, Any]:
     return {
-        comp: {stage: [lo, hi] for stage, (lo, hi) in sorted(rules.items())}
-        for comp, rules in sorted(ERA_REGISTRY.items())
+        competition: {
+            stage: [lower, upper]
+            for stage, (lower, upper) in sorted(rules.items())
+        }
+        for competition, rules in sorted(ERA_REGISTRY.items())
     }
 
 
@@ -203,7 +206,7 @@ def calculate_stage_registry_sha256() -> str:
 
 
 def calculate_stage_contract_sha256(parent_sha: str, registry_sha: str) -> str:
-    return hashlib.sha256(_canon({
+    payload = {
         "version": CONTRACT_VERSION,
         "schema_version": SCHEMA_VERSION,
         "parent_identity_sha256": parent_sha,
@@ -222,7 +225,8 @@ def calculate_stage_contract_sha256(parent_sha: str, registry_sha: str) -> str:
             EXPECTED_GOAL_SCORE_TRAINING_VIEW_CONTRACT_SHA256
         ),
         "authority_flags": dict(AUTHORITY_FLAGS),
-    })).hexdigest()
+    }
+    return hashlib.sha256(_canon(payload)).hexdigest()
 
 
 def calculate_training_sidecar_contract_sha256(stage_contract_sha: str) -> str:
@@ -245,10 +249,10 @@ EXPECTED_STAGE_REGISTRY_SHA256 = (
     "3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b"
 )
 EXPECTED_STAGE_CONTRACT_SHA256 = (
-    "8e803e2fd180ce48a0833d4934a07ad6195e2897d2a06fac89b71979ad847dfe"
+    "56fd0f25cc176e434a107cb88d48b22f705a4b4b461e44fe995dda7f00adfbbc"
 )
 EXPECTED_TRAINING_SIDECAR_CONTRACT_SHA256 = (
-    "55641cdc1a1c4e3e1deb1af07003688e1a26b4efb8a027da159cc89ed2938884"
+    "ade99d568b22687650ee01e136ec0a735af32e57c25633ae8e8898038842e906"
 )
 
 
@@ -276,7 +280,9 @@ def validate_training_sidecar_contract() -> str:
 def _norm(value: Any) -> str:
     if type(value) is not str:
         return ""
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", value.casefold()).split())
+    return " ".join(
+        re.sub(r"[^a-z0-9]+", " ", value.casefold()).split()
+    )
 
 
 def season_start_year(season: Any) -> int | None:
@@ -366,25 +372,29 @@ def _path_stage(
     normalized = _norm(label)
     if QUALIFIER_FILES.get(name) == competition:
         if normalized in {
-            "1 round", "first round", "qualifying round 1", "qualifying r1",
+            "round 1", "1 round", "first round",
+            "qualifying round 1", "qualifying r1",
         }:
             return UEFACompetitionStage.QUALIFYING_R1
         if normalized in {
-            "2 round", "second round", "qualifying round 2", "qualifying r2",
+            "round 2", "2 round", "second round",
+            "qualifying round 2", "qualifying r2",
         }:
             return UEFACompetitionStage.QUALIFYING_R2
         if normalized in {
-            "3 round", "third round", "qualifying round 3", "qualifying r3",
+            "round 3", "3 round", "third round",
+            "qualifying round 3", "qualifying r3",
         }:
             return UEFACompetitionStage.QUALIFYING_R3
         if normalized in {
-            "play offs", "play off", "playoffs", "playoff",
-            "qualifying play offs", "qualifying playoff",
+            "playoffs", "playoff", "play offs", "play off",
+            "qualifying playoffs", "qualifying playoff",
+            "qualifying play offs", "qualifying play off",
         }:
             return UEFACompetitionStage.QUALIFYING_PLAYOFF
     if (
         MAIN_FILES.get(name) == competition
-        and normalized in {"play offs", "play off", "playoffs", "playoff"}
+        and normalized in {"playoffs", "playoff", "play offs", "play off"}
     ):
         year = season_start_year(season)
         if year is not None and year >= 2024:
@@ -462,7 +472,7 @@ class UEFAStageProjection:
         return obj
 
     def stable_dict(self) -> dict[str, Any]:
-        out = {
+        output = {
             name: (
                 getattr(self, name).value
                 if isinstance(getattr(self, name), Enum)
@@ -470,8 +480,8 @@ class UEFAStageProjection:
             )
             for name in self.__dataclass_fields__
         }
-        out["authority_flags"] = dict(AUTHORITY_FLAGS)
-        return out
+        output["authority_flags"] = dict(AUTHORITY_FLAGS)
+        return output
 
 
 @dataclass(frozen=True)
@@ -498,9 +508,8 @@ class _FileIdentity:
 
 
 def _companions(path: Path, label: str) -> None:
-    # Match the reviewed canonical historical-warehouse rule: only a non-empty
-    # WAL/journal proves active SQLite state. A zero-length WAL and a standalone
-    # SHM pathname are not sufficient to claim uncheckpointed source bytes.
+    # Match ATHENA's reviewed historical-warehouse rule: a non-empty WAL or
+    # journal proves active SQLite state. A zero-length WAL alone does not.
     for suffix in ("-wal", "-journal"):
         companion = Path(str(path) + suffix)
         if companion.exists() and companion.stat().st_size:
@@ -536,8 +545,7 @@ def _assert_file_unchanged(
     label: str,
     expected: _FileIdentity,
 ) -> None:
-    actual = _file_identity(path, label)
-    if actual != expected:
+    if _file_identity(path, label) != expected:
         raise UEFAStageError(f"{label} changed during stage projection")
 
 
@@ -594,10 +602,15 @@ def _load(
             "match is absent or not a reviewed UEFA parent"
         )
     for field in (
-        "match_key", "season", "match_date", "home_team", "away_team",
+        "match_key",
+        "season",
+        "match_date",
+        "home_team",
+        "away_team",
     ):
         if type(row[field]) is not str or not row[field]:
             raise UEFAStageError(f"UEFA row missing exact {field}")
+
     stage_source = _field_source(db, match_key, "stage")
     round_source = _field_source(db, match_key, "round_name")
     extra_source = _field_source(db, match_key, "extra_json")
@@ -623,9 +636,7 @@ def _load(
         match_date=row["match_date"],
         home_team=row["home_team"],
         away_team=row["away_team"],
-        raw_stage=(
-            row["stage"] if type(row["stage"]) is str else None
-        ),
+        raw_stage=(row["stage"] if type(row["stage"]) is str else None),
         raw_round_name=(
             row["round_name"]
             if type(row["round_name"]) is str
@@ -637,20 +648,17 @@ def _load(
         source_path=path,
         source_match_id=(
             str(source["source_match_id"])
-            if source is not None
-            and source["source_match_id"] is not None
+            if source is not None and source["source_match_id"] is not None
             else None
         ),
         source_url=(
             str(source["source_url"])
-            if source is not None
-            and source["source_url"] is not None
+            if source is not None and source["source_url"] is not None
             else None
         ),
         source_payload_sha256=(
             str(source["payload_sha256"])
-            if source is not None
-            and source["payload_sha256"] is not None
+            if source is not None and source["payload_sha256"] is not None
             else None
         ),
         source_lineage_resolved=_source_lineage_is_reviewed(
@@ -690,10 +698,8 @@ def _derive_stage(
         and evidence.round_source
         and evidence.stage_source != evidence.round_source
     ):
-        return (
-            UEFACompetitionStage.UNKNOWN,
-            "STAGE_ROUND_SOURCE_CONFLICT",
-        )
+        return UEFACompetitionStage.UNKNOWN, "STAGE_ROUND_SOURCE_CONFLICT"
+
     source_key = _primary_stage_source(evidence)
     if source_key is None:
         for label, field_name in (
@@ -713,6 +719,7 @@ def _derive_stage(
             UEFACompetitionStage.UNKNOWN,
             "STAGE_SOURCE_LINEAGE_NOT_UNIQUE_OR_UNREVIEWED",
         )
+
     for label, source, field_name in (
         (evidence.raw_stage, evidence.stage_source, "STAGE"),
         (evidence.raw_round_name, evidence.round_source, "ROUND"),
@@ -726,11 +733,9 @@ def _derive_stage(
             )
         if source not in REVIEWED_STAGE_SOURCES:
             return UEFACompetitionStage.UNKNOWN, "UNREVIEWED_STAGE_SOURCE"
+
         stage = _explicit(label, evidence.season)
-        if (
-            stage is UEFACompetitionStage.UNKNOWN
-            and field_name == "STAGE"
-        ):
+        if stage is UEFACompetitionStage.UNKNOWN and field_name == "STAGE":
             stage = _path_stage(
                 evidence.competition_key,
                 label,
@@ -745,10 +750,8 @@ def _derive_stage(
                     == "openfootball"
                 )
             ):
-                return (
-                    UEFACompetitionStage.UNKNOWN,
-                    "PATH_CONTEXT_NOT_SAME_SOURCE",
-                )
+                return UEFACompetitionStage.UNKNOWN, "PATH_CONTEXT_NOT_SAME_SOURCE"
+
         if stage is not UEFACompetitionStage.UNKNOWN:
             if not _source_path_consistent(evidence, stage):
                 return (
@@ -756,7 +759,9 @@ def _derive_stage(
                     "SOURCE_PATH_PARENT_OR_PHASE_CONFLICT",
                 )
             if stage_allowed_in_era(
-                evidence.competition_key, stage, evidence.season
+                evidence.competition_key,
+                stage,
+                evidence.season,
             ):
                 return stage, None
             return (
@@ -776,13 +781,11 @@ def _prior_leg(
     if current_source not in REVIEWED_STAGE_SOURCES:
         return None
     candidates = db.execute(
-        """
-        SELECT match_key
+        """SELECT match_key
         FROM warehouse_matches
         WHERE competition_key=? AND season=? AND match_date<?
           AND home_team=? AND away_team=?
-        ORDER BY match_date,match_key
-        """,
+        ORDER BY match_date,match_key""",
         (
             evidence.competition_key,
             evidence.season,
@@ -813,12 +816,8 @@ def _prior_leg(
             or score_row["away_score_ft"] < 0
         ):
             continue
-        home_source = _field_source(
-            db, prior.match_key, "home_score_ft"
-        )
-        away_source = _field_source(
-            db, prior.match_key, "away_score_ft"
-        )
+        home_source = _field_source(db, prior.match_key, "home_score_ft")
+        away_source = _field_source(db, prior.match_key, "away_score_ft")
         if not (
             home_source == away_source == prior_source
             and prior_source in REVIEWED_STAGE_SOURCES
@@ -837,17 +836,13 @@ def _source_identity(
     evidence: UEFAStageEvidence,
     prior: _PriorLegEvidence | None = None,
 ) -> str:
-    payload: dict[str, Any] = {
-        "current": evidence.identity_payload()
-    }
+    payload: dict[str, Any] = {"current": evidence.identity_payload()}
     if prior is not None:
         payload["prior_leg_ancestry"] = prior.identity_payload()
     return hashlib.sha256(_canon(payload)).hexdigest()
 
 
-def _final_is_reviewed_single_match(
-    evidence: UEFAStageEvidence,
-) -> bool:
+def _final_is_reviewed_single_match(evidence: UEFAStageEvidence) -> bool:
     if evidence.competition_key != "uefa_uel":
         return True
     year = season_start_year(evidence.season)
@@ -907,19 +902,18 @@ def _project(
         penalties = True
     elif stage in KNOCKOUT:
         prior = _prior_leg(
-            db, evidence, stage, evidence.warehouse_sha256
+            db,
+            evidence,
+            stage,
+            evidence.warehouse_sha256,
         )
         if prior is not None:
             aggregate_home = prior.away_score_ft
             aggregate_away = prior.home_score_ft
             if aggregate_home > aggregate_away:
-                qualification_state = (
-                    UEFAQualificationState.HOME_ADVANTAGE
-                )
+                qualification_state = UEFAQualificationState.HOME_ADVANTAGE
             elif aggregate_away > aggregate_home:
-                qualification_state = (
-                    UEFAQualificationState.AWAY_ADVANTAGE
-                )
+                qualification_state = UEFAQualificationState.AWAY_ADVANTAGE
             else:
                 year = season_start_year(evidence.season)
                 if (
@@ -927,9 +921,7 @@ def _project(
                     and year <= 2020
                     and aggregate_home > 0
                 ):
-                    qualification_state = (
-                        UEFAQualificationState.HOME_ADVANTAGE
-                    )
+                    qualification_state = UEFAQualificationState.HOME_ADVANTAGE
                 else:
                     qualification_state = UEFAQualificationState.LEVEL
             tie = UEFATieFormat.TWO_LEG
@@ -960,6 +952,7 @@ def _project(
 def _validated_warehouse(path: Path):
     try:
         from domain.historical_asof_features import ReadOnlyHistoricalWarehouse
+
         source = ReadOnlyHistoricalWarehouse(path)
     except Exception as exc:
         if exc.__class__.__name__ == "HistoricalAsOfError":
@@ -1033,9 +1026,7 @@ def stage_coverage_report(
             {"total": 0, "authorized": 0, "unknown": 0},
         )
         bucket["total"] += 1
-        bucket[
-            "authorized" if row.stage_authorized else "unknown"
-        ] += 1
+        bucket["authorized" if row.stage_authorized else "unknown"] += 1
         by_stage[row.competition_stage.value] = (
             by_stage.get(row.competition_stage.value, 0) + 1
         )
@@ -1051,9 +1042,7 @@ def stage_coverage_report(
         "total_uefa_matches": len(rows),
         "authorized_stage_matches": authorized,
         "unknown_stage_matches": len(rows) - authorized,
-        "coverage_fraction": (
-            authorized / len(rows) if rows else None
-        ),
+        "coverage_fraction": authorized / len(rows) if rows else None,
         "by_competition": dict(sorted(by_competition.items())),
         "by_stage": dict(sorted(by_stage.items())),
         "blockers": dict(sorted(blockers.items())),
@@ -1061,10 +1050,7 @@ def stage_coverage_report(
     }
 
 
-def _read_meta(
-    db: sqlite3.Connection,
-    key: str,
-) -> Any:
+def _read_meta(db: sqlite3.Connection, key: str) -> Any:
     row = db.execute(
         "SELECT value FROM corpus_meta WHERE key=?",
         (key,),
@@ -1091,6 +1077,7 @@ def _validate_training_view(
             TRAINING_VIEW_SCHEMA_VERSION,
             validate_training_view_contract,
         )
+
         (
             feature_sha,
             model_sha,
@@ -1109,16 +1096,14 @@ def _validate_training_view(
         raise UEFAStageError(
             "Goal/Score training-view contract identity mismatch"
         )
-    db = sqlite3.connect(
-        f"{training_path.as_uri()}?mode=ro", uri=True
-    )
+
+    db = sqlite3.connect(f"{training_path.as_uri()}?mode=ro", uri=True)
     try:
         db.execute("PRAGMA query_only = ON")
         objects = {
             row[0]
             for row in db.execute(
-                "SELECT name FROM sqlite_master "
-                "WHERE type='table'"
+                "SELECT name FROM sqlite_master WHERE type='table'"
             )
         }
         if not {"corpus_meta", "training_rows"} <= objects:
@@ -1127,9 +1112,7 @@ def _validate_training_view(
             )
         columns = {
             row[1]
-            for row in db.execute(
-                "PRAGMA table_info(training_rows)"
-            )
+            for row in db.execute("PRAGMA table_info(training_rows)")
         }
         if not {"match_key", "competition_key"} <= columns:
             raise UEFAStageError(
@@ -1147,8 +1130,7 @@ def _validate_training_view(
             ),
         }
         for key, expected in expected_meta.items():
-            actual = _read_meta(db, key)
-            if actual != expected:
+            if _read_meta(db, key) != expected:
                 raise UEFAStageError(
                     f"Goal/Score training metadata mismatch for {key}"
                 )
@@ -1176,7 +1158,8 @@ def project_training_view_uefa_stages(
         )
     validate_training_sidecar_contract()
     training_identity = _file_identity(
-        training, "Goal/Score training view"
+        training,
+        "Goal/Score training view",
     )
 
     source = _validated_warehouse(warehouse)
@@ -1188,7 +1171,9 @@ def project_training_view_uefa_stages(
 
     keys = _validate_training_view(training, warehouse_sha)
     _assert_file_unchanged(
-        training, "Goal/Score training view", training_identity
+        training,
+        "Goal/Score training view",
+        training_identity,
     )
     projected_rows = project_warehouse_uefa_stages(warehouse)
     if any(row.warehouse_sha256 != warehouse_sha for row in projected_rows):
@@ -1201,7 +1186,9 @@ def project_training_view_uefa_stages(
             "UEFA training rows missing from stage projection"
         )
     _assert_file_unchanged(
-        training, "Goal/Score training view", training_identity
+        training,
+        "Goal/Score training view",
+        training_identity,
     )
     return tuple(projected[key] for key in sorted(keys))
 
@@ -1214,7 +1201,8 @@ def training_view_stage_join_report(
     warehouse = Path(warehouse_path).resolve()
     rows = project_training_view_uefa_stages(training, warehouse)
     training_identity = _file_identity(
-        training, "Goal/Score training view"
+        training,
+        "Goal/Score training view",
     )
     report = stage_coverage_report(rows)
     report.update({
