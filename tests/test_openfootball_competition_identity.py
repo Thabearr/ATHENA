@@ -23,6 +23,7 @@ def test_non_uefa_or_ambiguous_champions_league_titles_fail_closed() -> None:
         "AFC Champions League Elite 2024/25",
         "OFC Champions League 2025",
         "Arab Club Champions League 2025",
+        "CAF UEFA Champions League 2025",
         "UEFA Women's Champions League 2025/26",
         "European Cup Winners' Cup 1990/91",
     ):
