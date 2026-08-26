@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from decimal import Decimal
 import hashlib
 import json
 import math
@@ -122,14 +123,38 @@ def _required_states(candidate: CalibratedValueCandidate) -> tuple[SettlementSta
         return (SettlementState.WIN, SettlementState.PUSH, SettlementState.LOSS)
     if family is MarketFamily.ASIAN_HANDICAP:
         return tuple(SettlementState)
+    if family is MarketFamily.TOTAL_GOALS:
+        quarter_units = Decimal(str(candidate.line)) * 4
+        if quarter_units != quarter_units.to_integral_value():
+            raise PriceAllError("total-goals line lacks reviewed quarter-goal settlement semantics")
+        modulo = int(quarter_units) % 4
+        if modulo == 0:
+            return (SettlementState.WIN, SettlementState.PUSH, SettlementState.LOSS)
+        if modulo == 2:
+            return (SettlementState.WIN, SettlementState.LOSS)
+        return tuple(SettlementState)
     return (SettlementState.WIN, SettlementState.LOSS)
 
 
 def _settlement_ev(candidate: CalibratedValueCandidate, odds: float) -> tuple[tuple[tuple[str, float], ...], float]:
     required = _required_states(candidate)
     supplied = candidate.probability_map
-    if set(supplied) != {state.value for state in required}:
-        raise PriceAllError("calibrated settlement distribution is incomplete")
+    required_names = {state.value for state in required}
+    if set(supplied) == required_names:
+        settlement_probabilities = supplied
+    else:
+        partition = _ORDINARY_PARTITIONS.get(candidate.market_id)
+        if required == (SettlementState.WIN, SettlementState.LOSS) and partition is not None \
+                and set(supplied) == {outcome.value for outcome in partition}:
+            win = supplied[candidate.outcome_id.value]
+            settlement_probabilities = MappingProxyType({
+                SettlementState.WIN.value: win,
+                SettlementState.LOSS.value: math.fsum(
+                    probability for name, probability in supplied.items()
+                    if name != candidate.outcome_id.value),
+            })
+        else:
+            raise PriceAllError("calibrated settlement distribution is incomplete")
     returns = {
         SettlementState.WIN: odds - 1.0,
         SettlementState.HALF_WIN: (odds - 1.0) / 2.0,
@@ -138,7 +163,7 @@ def _settlement_ev(candidate: CalibratedValueCandidate, odds: float) -> tuple[tu
         SettlementState.LOSS: -1.0,
     }
     serialized = tuple((state.value, returns[state]) for state in required)
-    ev = math.fsum(supplied[state.value] * returns[state] for state in required)
+    ev = math.fsum(settlement_probabilities[state.value] * returns[state] for state in required)
     return serialized, ev
 
 
@@ -149,6 +174,10 @@ def _partition_quotes(candidate: CalibratedValueCandidate, quote: SportyBetExact
         return DevigStatus.NOT_IDENTIFIABLE_OVERLAPPING_EVENTS, None, None
     if family in {MarketFamily.DRAW_NO_BET, MarketFamily.ASIAN_HANDICAP}:
         return DevigStatus.NOT_IDENTIFIABLE_PUSH_OR_SPLIT_SETTLEMENT, None, None
+    if family is MarketFamily.TOTAL_GOALS:
+        quarter_units = Decimal(str(candidate.line)) * 4
+        if quarter_units != quarter_units.to_integral_value() or int(quarter_units) % 4 != 2:
+            return DevigStatus.NOT_IDENTIFIABLE_PUSH_OR_SPLIT_SETTLEMENT, None, None
     expected = _ORDINARY_PARTITIONS.get(candidate.market_id)
     if expected is None:
         return DevigStatus.UNAVAILABLE_INCOMPLETE_PARTITION, None, None
