@@ -64,7 +64,21 @@ def main() -> int:
     if args.start_date and args.end_date and args.start_date > args.end_date:
         raise SystemExit("--start-date must not exceed --end-date")
 
-    rows = list(load_training_rows(args.training_view))
+    training_view_path = args.training_view.resolve()
+    artifact_path = (
+        args.output_dir / "forward_calibration_artifact.json"
+    ).resolve()
+    report_path = (
+        args.output_dir / "forward_calibration_evaluation.json"
+    ).resolve()
+    if training_view_path in {artifact_path, report_path}:
+        raise ForwardCalibrationError(
+            "calibration output cannot collide with the canonical training view"
+        )
+    if artifact_path == report_path:
+        raise ForwardCalibrationError("calibration outputs must be distinct")
+
+    rows = list(load_training_rows(training_view_path))
     subset = False
     if args.competition is not None:
         rows = [row for row in rows if row.competition_key == args.competition]
@@ -81,7 +95,7 @@ def main() -> int:
     if not rows:
         raise SystemExit("no eligible Goal/Score training rows")
 
-    training_view_sha = file_sha256(args.training_view)
+    training_view_sha = file_sha256(training_view_path)
     artifact, report = run_forward_calibration(
         rows,
         model_id=args.model_id,
@@ -95,8 +109,6 @@ def main() -> int:
         "full_corpus_source_environment_status": FULL_CORPUS_CALIBRATION_STATUS,
     }
 
-    artifact_path = args.output_dir / "forward_calibration_artifact.json"
-    report_path = args.output_dir / "forward_calibration_evaluation.json"
     _atomic_write(
         artifact_path,
         canonical_calibration_artifact_bytes(artifact),
