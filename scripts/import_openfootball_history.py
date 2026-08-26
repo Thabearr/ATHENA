@@ -55,10 +55,31 @@ SINGLE_YEAR_RE = re.compile(r"\b(18\d{2}|19\d{2}|20\d{2})\b")
 COUNTRY_SUFFIX_RE = re.compile(r"\s+\([A-Z]{3}\)$")
 
 
+def _is_reviewed_uefa_ucl_title(lowered_title: str) -> bool:
+    """Return whether a source title is an reviewed UEFA UCL/European Cup title.
+
+    OpenFootball's broad ``world`` repository also contains CAF and CONCACAF
+    competitions whose titles include the generic words ``Champions League``.
+    ATHENA has no reviewed canonical keys for those continental club cups, so
+    generic substring matching would contaminate ``uefa_ucl``.  Fail closed:
+    only the explicit UEFA form or OpenFootball's reviewed plain historical
+    form may mint the UEFA parent identity.
+    """
+
+    title = " ".join(lowered_title.split())
+    if "champions league" in title:
+        return "uefa champions league" in title or title.startswith("champions league")
+    if "european cup" in title:
+        if "winners" in title:
+            return False
+        return title.startswith("european cup") or "uefa european cup" in title
+    return False
+
+
 def competition_from_title(title: str):
     lowered = title.casefold()
 
-    if "champions league" in lowered or "european cup" in lowered:
+    if _is_reviewed_uefa_ucl_title(lowered):
         return competition_by_key("uefa_ucl")
     if "europa league" in lowered or "uefa cup" in lowered:
         return competition_by_key("uefa_uel")
