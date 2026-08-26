@@ -81,6 +81,12 @@ def test_mixed_fixture_ids_fail_closed_without_dropping_price_results(tmp_path):
         fixture_state=state, evaluation_time=NOW)
     assert len(decision.price_all_results) == 2
     assert decision.decision_status is RouterDecisionStatus.NO_BET
+    assert decision.context.passed is True
+    assert all(item.context_gate_passed is True for item in decision.opportunities)
+    assert all(
+        "strict reviewed Fixture State context gate did not pass" not in item.rejection_reasons
+        for item in decision.opportunities
+    )
     assert any("mixed ATHENA fixture IDs" in reason for reason in decision.decision_reasons)
 
 
@@ -180,3 +186,33 @@ def test_router_decision_does_not_claim_accumulator_or_bet_authority():
     assert payload["authority_flags"]["accumulator"] is False
     assert payload["authority_flags"]["bet"] is False
     assert "selected" not in payload["authority_flags"]
+
+
+def test_offline_runner_blocks_network_before_factory_import(monkeypatch):
+    import scripts.evaluate_market_router as runner
+
+    observed = {}
+
+    def guarded_loader(_specification):
+        import socket
+        sock = socket.socket()
+        try:
+            with pytest.raises(runner.OfflineRouterRunnerError, match="network access is disabled"):
+                sock.connect(("127.0.0.1", 9))
+            observed["blocked_during_import"] = True
+        finally:
+            sock.close()
+
+        def factory():
+            return {
+                "candidates": [],
+                "quotes": [],
+                "fixture_state": complete_fixture_state(),
+                "evaluation_time": NOW,
+            }
+        return factory
+
+    monkeypatch.setattr(runner, "_load_factory", guarded_loader)
+    decision = runner.run_factory("fake.module:factory")
+    assert observed == {"blocked_during_import": True}
+    assert decision.decision_status is RouterDecisionStatus.NO_BET
