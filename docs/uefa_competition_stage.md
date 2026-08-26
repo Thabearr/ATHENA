@@ -2,111 +2,130 @@
 
 ## Purpose
 
-PR #238 adds a **separate, source-qualified UEFA stage identity** for historical
-research and future hosted backtests. It does **not** replace ATHENA's stable
-parent competition keys:
+PR #238 adds a **separate, source-qualified UEFA stage identity** for historical research and future hosted backtests. It does **not** replace ATHENA's stable parent competition keys:
 
 - `uefa_ucl` — UEFA Champions League
 - `uefa_uel` — UEFA Europa League
 - `uefa_uecl` — UEFA Conference League
 
-This follows the expansion blueprint rule that hierarchy priority and
-competition stage are different concepts. UEFA qualifying fixtures remain UEFA
-fixtures; stage changes modeling context and later backtest stratification, not
-the parent competition identity.
+Hierarchy priority and competition stage remain different concepts. A UEFA qualifying fixture stays inside its parent UEFA competition; stage changes research context and later backtest stratification, not the parent hierarchy identity.
 
 ## Frozen identities
 
 - parent identity SHA-256: `1ec3df0b5c1a428cf92b1427929acb0c80e04143b90166fdd2e74da8516b8fec`
-- stage registry SHA-256: `3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b`
-- stage contract SHA-256: `54fc67276364d8e447a95afcefcc5efdb36f7f33a8e0b69869d659e84916c943`
+- stage registry v1 SHA-256: `3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b`
+- stage contract v1 SHA-256: `8e803e2fd180ce48a0833d4934a07ad6195e2897d2a06fac89b71979ad847dfe`
+- Goal/Score training-sidecar contract v1 SHA-256: `55641cdc1a1c4e3e1deb1af07003688e1a26b4efb8a027da159cc89ed2938884`
+- canonical historical warehouse schema SQL SHA-256: `d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f`
+- frozen Goal/Score training-view v1 contract SHA-256: `bac5380814de579dffe96d4e5daa39b0cf1e2d6144b59b5d89f2a81f7b27017b`
 
-The registry is era-aware. Historical `GROUP_PHASE` and the 2024+ `LEAGUE_PHASE`
-are distinct. The registry also preserves older Europa League / UEFA Cup
-`ROUND_OF_32` semantics where the reviewed era allows them. A stage that is not
-allowed for the exact parent competition and season remains `UNKNOWN`.
+The stage registry is era-aware. Historical `GROUP_PHASE` and 2024+ `LEAGUE_PHASE` are distinct. Unsupported competition/season/stage combinations remain `UNKNOWN`; coverage pressure never authorizes reconstruction.
 
-## Historical evidence boundary
+## Reviewed historical evidence boundary
 
-The canonical historical warehouse already stores `stage`, `round_name`, and
-field-level provenance. PR #238 replays those exact fields rather than accepting
-a caller's stage assertion.
+The canonical historical warehouse already stores `stage`, `round_name`, field-level provenance, and source lineage. PR #238 replays those exact objects through the existing canonical `ReadOnlyHistoricalWarehouse` validation boundary instead of accepting caller stage assertions.
 
-Generic labels are deliberately not trusted by themselves. For example,
-OpenFootball's current UEFA qualifier files use labels such as `1. Round`,
-`2. Round`, `3. Round`, and `Play-offs`. Those labels become
-`QUALIFYING_R1/R2/R3/QUALIFYING_PLAYOFF` only when:
+The v1 reviewed historical stage-source allowlist contains only:
 
-1. the `stage` field is provenance-owned by `openfootball`;
-2. the `extra_json` path evidence is also provenance-owned by `openfootball`;
-3. the exact basename proves the matching parent qualifier source:
-   `clq.txt`, `elq.txt`, or `confq.txt`;
-4. the stage is allowed in the parent competition's frozen era registry; and
-5. the match has one unambiguous `warehouse_match_sources` lineage row for the
-   source.
+- `openfootball`
 
-A qualifier-file path for one parent cannot authorize another parent. If field
-provenance is absent, mixed across sources, or ambiguous, the stage stays
-`UNKNOWN`.
+That allowlist is frozen in the stage contract. A future source merely writing a `stage` field into the warehouse does not gain stage authority automatically.
 
-Explicit labels such as group/league phase, Round of 16, quarter-final,
-semi-final, and final still require exact field provenance and source lineage.
-No missing stage is reconstructed merely to improve coverage.
+For an OpenFootball stage to become authoritative, the stage/round field must be provenance-owned by `openfootball`, the match must have exactly one matching source-lineage row, the source match ID must be present, and the source URL must match the reviewed OpenFootball repository archive route. Missing, duplicate, mixed, or unreviewed ancestry fails closed.
+
+### Qualifying files and source-path consistency
+
+Generic labels such as `1. Round`, `2. Round`, `3. Round`, and `Play-offs` are ambiguous by themselves. They become `QUALIFYING_R1`, `QUALIFYING_R2`, `QUALIFYING_R3`, or `QUALIFYING_PLAYOFF` only when the same OpenFootball provenance also owns the `extra_json` source path and the basename proves the matching parent qualifier file:
+
+- `clq.txt` → `uefa_ucl`
+- `elq.txt` → `uefa_uel`
+- `confq.txt` → `uefa_uecl`
+
+Recognized main files are likewise parent-bound:
+
+- `cl.txt` → `uefa_ucl`
+- `el.txt` → `uefa_uel`
+- `conf.txt` → `uefa_uecl`
+
+When one of those reviewed basenames is present, both parent and phase must agree with the derived canonical stage. Therefore an explicit `Quarter-finals` label cannot be authorized from `clq.txt`, and an Europa League row cannot borrow a Champions League file path. Unknown OpenFootball basenames are not reinterpreted solely from their name; the stage must still pass all other source and era gates.
+
+## Era-aware stage semantics
+
+The v1 stage vocabulary is:
+
+- `QUALIFYING_R1`
+- `QUALIFYING_R2`
+- `QUALIFYING_R3`
+- `QUALIFYING_PLAYOFF`
+- `GROUP_PHASE`
+- `LEAGUE_PHASE`
+- `ROUND_OF_32`
+- `KNOCKOUT_PLAYOFF`
+- `ROUND_OF_16`
+- `QUARTER_FINAL`
+- `SEMI_FINAL`
+- `FINAL`
+- `UNKNOWN`
+
+The registry explicitly prevents modern terminology from being projected backward into eras where the format did not exist. `UNKNOWN` is a valid research result, not an error to be patched with a guess.
 
 ## Two-leg and aggregate semantics
 
-A knockout stage label alone does not prove that an exact historical fixture is
-leg one, leg two, or a one-off exception. Therefore the default tie format for a
-knockout row is `UNKNOWN`.
+A knockout label alone does not prove whether an exact historical match is leg one, leg two, or a one-off exception. The default tie format for an otherwise authorized knockout stage is therefore `UNKNOWN`.
 
-`TWO_LEG`, `leg_number=2`, and entering aggregate state are issued only when the
-warehouse contains one **strictly prior reciprocal fixture** with:
+`TWO_LEG`, `leg_number=2`, entering aggregate state, and qualification state are issued only if the warehouse contains exactly one strictly prior reciprocal fixture that independently replays through the same stage contract and proves:
 
-- the same parent competition and season;
-- the exact same raw stage/round fields;
-- the same stage source;
-- both full-time scores provenance-owned by that same source; and
-- one unambiguous source-lineage row.
+- same parent competition and season;
+- reversed teams;
+- the same canonical stage after replay, not merely matching raw text;
+- the same reviewed stage source;
+- finite non-negative regulation full-time scores; and
+- both score fields provenance-owned by that same reviewed source.
 
-The first leg never uses a future reciprocal fixture to prove its tie format.
-That avoids a future-data dependency in historical pre-match research.
+The first leg never inspects a future reciprocal match to label itself as leg one. That intentionally sacrifices some descriptive completeness to preserve historical pre-match chronology.
 
-For second legs, aggregate scores are oriented to the current home/away teams.
-The frozen away-goals rule is applied only through season `2020-21`; from
-`2021-22` onward a level aggregate remains `LEVEL`. Extra time and penalties are
-marked possible only for a proven second leg or an explicit final. They remain
-unknown for an unproven knockout tie format.
+For a proven second leg, aggregate scores are oriented to the current home/away teams. The away-goals rule is applied only through season `2020-21`; from `2021-22` onward a level aggregate remains `LEVEL`.
 
-The deterministic `stage_source_identity` includes the exact current warehouse
-evidence and, when aggregate state is issued, the exact prior-leg source/score
-ancestry.
+Historical UEFA Cup final format is also era-aware: finals through `1996-97` are not assumed to be single-match, while `1997-98` and later Europa/UEFA Cup finals are single-match under this reviewed rule. UCL and UECL finals in their supported eras are single-match.
 
-## Goal/Score training integration
+Extra time and penalties are marked possible only where the tie/final format has actually been proven by the contract. They remain unknown for an unproven knockout format.
 
-The frozen Goal/Score training-view v1 contract is **not modified**. PR #238
-instead exposes an exact sidecar projection joined by:
+## Projection records are not authentication primitives
 
-- exact `match_key`; and
-- exact `source_warehouse_sha256`.
+`UEFAStageProjection` is a deterministic research record. Its public constructor is disabled, but the Python type itself is not claimed to be cryptographically unforgeable. Future authoritative research consumers must obtain stage data by replaying the public warehouse/training-sidecar boundary against the exact frozen source artifacts; they must not trust a caller-supplied serialized projection merely because its fields look valid.
 
-`project_training_view_uefa_stages()` rejects a training view whose frozen
-warehouse SHA does not equal the exact warehouse bytes used for stage
-projection. This lets PR #239 stratify historical backtests by stage without
-silently changing the already-reviewed Phase 4–9 probability/calibration/value
-contracts.
+Coverage reporting validates exact projection types, exact stage-contract identity, and a single warehouse identity, but this remains research-report integrity rather than production betting authority.
 
-Active SQLite `-wal`, `-shm`, or `-journal` companions fail closed before file
-identity is calculated.
+## Goal/Score training-sidecar integration
+
+The frozen Goal/Score training-view v1 contract is **not modified**. PR #238 exposes a separate sidecar join so #239 and later hosted backtests can stratify by stage without silently rewriting the already-reviewed Phase 4–9 probability/calibration/value contracts.
+
+The sidecar requires all of the following:
+
+- the exact live Goal/Score training-view contract validates to the independently pinned v1 SHA;
+- training metadata pins the expected dataset/schema, feature registry, model registry, evaluation contract, training-view contract, and source warehouse SHA;
+- exact `match_key` and `competition_key` join columns exist;
+- the stage warehouse bytes validate through the canonical warehouse contract;
+- the warehouse SHA used by the training view equals the warehouse SHA used by every returned stage projection; and
+- the training-view file remains byte-for-byte and stat-stable across the join.
+
+The audit report records the exact training-view SHA when this sidecar is used.
+
+## SQLite and file-integrity rule
+
+The stage boundary follows ATHENA's canonical historical-warehouse SQLite safety rule: a **non-empty** `-wal` or `-journal` companion is active state and fails closed. Merely finding a zero-length WAL or a standalone SHM pathname is not sufficient evidence of uncheckpointed source bytes.
+
+This is paired with explicit size/mtime/SHA checks before and after training-sidecar reads. The warehouse itself is protected by the existing `ReadOnlyHistoricalWarehouse.assert_unchanged()` SHA/stat checks, and the sidecar additionally rejects a warehouse identity change between training metadata validation and stage replay.
 
 ## Coverage audit
 
-Run:
+Warehouse-only audit:
 
 ```bash
 python scripts/audit_uefa_stage_coverage.py --warehouse <athena_history.db>
 ```
 
-For the Goal/Score training population:
+Goal/Score training-population audit:
 
 ```bash
 python scripts/audit_uefa_stage_coverage.py \
@@ -114,27 +133,16 @@ python scripts/audit_uefa_stage_coverage.py \
   --training-view <goal_score_training_view.db>
 ```
 
-The report preserves total, authorized, and `UNKNOWN` counts, stage counts,
-competition counts, blockers, contract identities, and the explicit authority
-flags. No partial or unknown stage is silently promoted.
+The report preserves total, authorized, and `UNKNOWN` counts; per-stage and per-competition counts; blocker counts; exact contract/artifact identities; and authority flags. No unknown stage is silently promoted.
 
-**Repository status at PR creation:** the real full-corpus stage backfill audit
-has not yet been executed against the hosted canonical warehouse artifact.
-Therefore PR #238 makes no stage-coverage percentage claim. The required next
-checkpoint after merge is the real backfill/audit report before PR #239 creates
-long-lived hosted backtest artifacts.
+**PR #238 does not claim a real full-corpus coverage percentage.** The mandatory next checkpoint after merge is to run this audit against the hosted canonical warehouse/training artifacts and inspect the unresolved stage distribution before PR #239 freezes long-lived backtest artifacts.
+
+## Live Fixture State remains unchanged
+
+This historical research contract does **not** qualify a current pre-match competition-stage source. `FixtureStateFieldId.COMPETITION_STAGE` remains `FUTURE_SOURCE_REQUIRED` with `currently_reviewed_path_exists=False`. A separate current-source review is required before live Fixture State can consume stage as authoritative evidence.
 
 ## Authority boundary
 
-True authority is limited to:
+True authority in PR #238 is limited to historical stage projection, historical research stratification, and exact training-sidecar joining.
 
-- historical stage projection;
-- research stage stratification; and
-- exact training-sidecar join.
-
-This PR grants **no live Fixture State stage authority**. The existing
-`FixtureStateFieldId.COMPETITION_STAGE` remains a future-source-required slot
-until a separately reviewed current pre-match source path proves it.
-
-It also grants no probability inference, calibration, bookmaker pricing, market
-routing, final selection, accumulator, production approval, or BET authority.
+It grants no live Fixture State stage authority, probability inference, calibration, bookmaker pricing, market routing, final selection, accumulator authority, production approval, or BET authority.
