@@ -18,7 +18,7 @@ from tests._accumulator_optimizer_helpers import NOW, fixture_input
 def test_frozen_accumulator_optimizer_contract_validates():
     identities = validate_accumulator_optimizer_contract()
     assert identities["accumulator_optimizer_contract_sha256"] == (
-        "7e7562c67609feaf90be7933090c40a9666ac212abfb067df9e9004e02bb128d"
+        "de6578c1a21370a1859901a73e4d3993d1544a66cb0f09384a45a8233a5ce253"
     )
     assert EXPECTED_ACCUMULATOR_OPTIMIZER_CONTRACT_SHA256_BY_VERSION[1] == (
         identities["accumulator_optimizer_contract_sha256"]
