@@ -8,7 +8,7 @@ import domain.accumulator_optimizer as optimizer
 from domain._accumulator_optimizer_contracts import AccumulatorOptimizerError
 from domain.accumulator_optimizer import AccumulatorFixtureInput, optimize_accumulator
 from domain.model_status import MODEL_STATUS_REGISTRY
-from tests._accumulator_optimizer_helpers import NOW, fixture_input
+from tests._accumulator_optimizer_helpers import NOW, fixture_input, source_bundle
 
 
 def test_authoritative_entry_replays_router_for_every_fixture(monkeypatch, tmp_path):
@@ -62,26 +62,50 @@ def test_free_form_fixture_dict_is_rejected_before_portfolio_authority():
         )
 
 
-def test_fixture_input_constructor_requires_exact_builder_issued_types(tmp_path):
+def test_fixture_input_constructor_is_builder_only_even_with_exact_types(tmp_path):
     item = fixture_input(tmp_path, 23)
-    with pytest.raises(AccumulatorOptimizerError):
+    with pytest.raises(AccumulatorOptimizerError, match="builder-only"):
         AccumulatorFixtureInput(
-            candidates=list(item.candidates),
+            candidates=item.candidates,
             quotes=item.quotes,
             fixture_state=item.fixture_state,
             reconciliation=item.reconciliation,
         )
-    with pytest.raises(AccumulatorOptimizerError):
-        AccumulatorFixtureInput(
+    with pytest.raises(AccumulatorOptimizerError, match="builder-only"):
+        dataclasses.replace(item, reconciliation=item.reconciliation)
+
+
+def test_fixture_input_issuance_requires_receipt_source_replay(monkeypatch, tmp_path):
+    item = fixture_input(tmp_path, 24)
+
+    def fail(*_args, **_kwargs):
+        raise optimizer.reconciliation_receipt.SportyBetFotMobFullUtcReconciliationReceiptError(
+            "source replay failed"
+        )
+
+    monkeypatch.setattr(
+        optimizer.reconciliation_receipt,
+        "verify_reconciliation_receipt_directory",
+        fail,
+    )
+    with pytest.raises(
+        AccumulatorOptimizerError,
+        match="source-replayed full-UTC reconciliation receipt verification failed",
+    ):
+        AccumulatorFixtureInput.from_source_replayed_receipt(
             candidates=item.candidates,
-            quotes=list(item.quotes),
+            quotes=item.quotes,
             fixture_state=item.fixture_state,
-            reconciliation=item.reconciliation,
+            receipt_directory=tmp_path / "forged-receipt",
+            source_bundle=source_bundle(),
+            repository_root=tmp_path,
         )
 
 
-def test_relabelled_team_cannot_evade_caps_because_reconciliation_hash_is_quote_bound(tmp_path):
-    item = fixture_input(tmp_path, 24, home="Original FC")
+def test_relabelled_team_cannot_evade_caps_through_constructible_reconciliation(
+    monkeypatch, tmp_path
+):
+    item = fixture_input(tmp_path, 25, home="Original FC")
     original = item.reconciliation
     assert original.matched_fixture is not None
     tampered_match = dataclasses.replace(
@@ -92,26 +116,29 @@ def test_relabelled_team_cannot_evade_caps_because_reconciliation_hash_is_quote_
         home_display="Relabelled FC",
         matched_fixture=tampered_match,
     )
-    tampered = AccumulatorFixtureInput(
-        candidates=item.candidates,
-        quotes=item.quotes,
-        fixture_state=item.fixture_state,
-        reconciliation=tampered_reconciliation,
+    monkeypatch.setattr(
+        optimizer.reconciliation_receipt,
+        "verify_reconciliation_receipt_directory",
+        lambda *_args, **_kwargs: tampered_reconciliation,
     )
-    result = optimize_accumulator([tampered], target_size=1, evaluation_time=NOW)
-    assert result.selected_legs == ()
-    assert result.shortfall == 1
-    audit = result.route_audits[0]
-    assert audit.router_decision_status == "SELECTED"
-    assert audit.portfolio_admitted is False
-    assert any(
-        "exact reconciliation bound into the selected quote" in reason
-        for reason in audit.portfolio_admission_reasons
-    )
+    with pytest.raises(
+        AccumulatorOptimizerError,
+        match="quote ancestry does not bind the exact source-replayed reconciliation receipt",
+    ):
+        AccumulatorFixtureInput.from_source_replayed_receipt(
+            candidates=item.candidates,
+            quotes=item.quotes,
+            fixture_state=item.fixture_state,
+            receipt_directory=tmp_path / "tampered-team",
+            source_bundle=source_bundle(),
+            repository_root=tmp_path,
+        )
 
 
-def test_relabelled_competition_is_rejected_by_same_quote_bound_hash(tmp_path):
-    item = fixture_input(tmp_path, 25, competition="Original League")
+def test_relabelled_competition_is_rejected_by_source_replayed_quote_binding(
+    monkeypatch, tmp_path
+):
+    item = fixture_input(tmp_path, 26, competition="Original League")
     original = item.reconciliation
     assert original.matched_fixture is not None
     tampered_match = dataclasses.replace(
@@ -122,19 +149,34 @@ def test_relabelled_competition_is_rejected_by_same_quote_bound_hash(tmp_path):
         competition_display="Other League",
         matched_fixture=tampered_match,
     )
-    tampered = AccumulatorFixtureInput(
-        candidates=item.candidates,
-        quotes=item.quotes,
-        fixture_state=item.fixture_state,
-        reconciliation=tampered_reconciliation,
+    monkeypatch.setattr(
+        optimizer.reconciliation_receipt,
+        "verify_reconciliation_receipt_directory",
+        lambda *_args, **_kwargs: tampered_reconciliation,
     )
-    result = optimize_accumulator([tampered], target_size=1, evaluation_time=NOW)
-    assert result.selected_legs == ()
-    assert result.route_audits[0].portfolio_admitted is False
+    with pytest.raises(
+        AccumulatorOptimizerError,
+        match="quote ancestry does not bind the exact source-replayed reconciliation receipt",
+    ):
+        AccumulatorFixtureInput.from_source_replayed_receipt(
+            candidates=item.candidates,
+            quotes=item.quotes,
+            fixture_state=item.fixture_state,
+            receipt_directory=tmp_path / "tampered-competition",
+            source_bundle=source_bundle(),
+            repository_root=tmp_path,
+        )
+
+
+def test_builder_records_exact_source_replayed_reconciliation_identity(tmp_path):
+    item = fixture_input(tmp_path, 27)
+    quote_hashes = {quote.fixture_reconciliation_sha256 for quote in item.quotes}
+    assert quote_hashes == {item.reconciliation_receipt_sha256}
+    assert item.reconciliation_receipt_identifier == item.reconciliation_receipt_sha256[:24]
 
 
 def test_duplicate_fixture_and_event_inputs_fail_closed(tmp_path):
-    first = fixture_input(tmp_path, 26)
+    first = fixture_input(tmp_path, 28)
     with pytest.raises(AccumulatorOptimizerError, match="duplicate fixture"):
         optimize_accumulator([first, first], target_size=2, evaluation_time=NOW)
 
@@ -162,8 +204,8 @@ def test_output_never_claims_slip_staking_execution_or_bet_authority():
 
 
 def test_no_statistical_correlation_is_fabricated(tmp_path):
-    first = fixture_input(tmp_path, 27, competition="Shared Competition")
-    second = fixture_input(tmp_path, 28, competition="Shared Competition")
+    first = fixture_input(tmp_path, 29, competition="Shared Competition")
+    second = fixture_input(tmp_path, 30, competition="Shared Competition")
     result = optimize_accumulator(
         [first, second], target_size=2, evaluation_time=NOW
     )
