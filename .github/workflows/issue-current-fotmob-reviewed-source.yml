@@ -17,11 +17,6 @@ on:
         required: true
         default: NGA
         type: string
-      minimum_lead_seconds:
-        description: Minimum seconds from review time to kickoff
-        required: true
-        default: "3600"
-        type: string
 
 permissions:
   contents: read
@@ -49,7 +44,6 @@ jobs:
             --date '${{ inputs.date }}' \
             --timezone '${{ inputs.timezone }}' \
             --ccode3 '${{ inputs.ccode3 }}' \
-            --minimum-lead-seconds '${{ inputs.minimum_lead_seconds }}' \
             --execute-live-network \
             --output .cache/athena-research/current-fotmob-reviewed-source/execution.json
 
