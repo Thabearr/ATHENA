@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS fixtures (
     season INTEGER,
     home_team TEXT,
     away_team TEXT,
+    home_source_id INTEGER,
+    away_source_id INTEGER,
     match_date TEXT,
     kickoff TEXT,
     venue TEXT,

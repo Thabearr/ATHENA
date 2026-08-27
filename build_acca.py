@@ -12,7 +12,8 @@ if sys.stdout.encoding != 'utf-8':
 
 import logging
 import asyncio
-from datetime import datetime, timedelta
+import json
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import typer
@@ -103,8 +104,42 @@ class AccaBuilder:
         try:
             # Fetch from FotMob (primary - bypass client, no API key needed)
             fotmob_fixtures = self.fotmob_scraper.fetch_upcoming_matches(days_ahead=self.days_ahead)
-            
-            # Sync to DB
+
+            observed_at = datetime.now(timezone.utc).isoformat()
+            enriched_count = 0
+            for fixture in fotmob_fixtures:
+                if fixture.get("status") != "NS":
+                    continue
+                try:
+                    kickoff = datetime.fromisoformat(
+                        str(fixture.get("match_date")).replace("Z", "+00:00")
+                    )
+                    if kickoff.tzinfo is None:
+                        kickoff = kickoff.replace(tzinfo=timezone.utc)
+                except (TypeError, ValueError):
+                    continue
+                if kickoff <= datetime.now(timezone.utc):
+                    continue
+                try:
+                    details = self.fotmob_scraper.enrich_match(
+                        int(fixture["fixture_id"])
+                    )
+                except (KeyError, TypeError, ValueError) as exc:
+                    logger.warning(
+                        "FotMob current-form enrichment skipped for %s: %s",
+                        fixture.get("fixture_id"),
+                        exc,
+                    )
+                    continue
+                if details:
+                    fixture.update(details)
+                    fixture["current_form_observed_at"] = observed_at
+                    enriched_count += 1
+            console.print(
+                f"[green]FotMob current match-details enriched: "
+                f"{enriched_count}/{len(fotmob_fixtures)}[/green]"
+            )
+
             if fotmob_fixtures:
                 self.fotmob_scraper.sync_to_db(fotmob_fixtures)
             
@@ -138,19 +173,31 @@ class AccaBuilder:
                 cutoff = now + timedelta(days=days)
                 
                 cursor.execute("""
-                    SELECT 
-                        fixture_id, league, home_team, away_team, 
-                        match_date, status, data_source
-                    FROM fixtures
-                    WHERE status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'POST', 'CA', 'PP', 'TBA', 'ABANDONED')
-                      AND match_date >= ? AND match_date <= ?
-                    ORDER BY match_date ASC
+                    SELECT
+                        f.fixture_id, f.league, f.home_team, f.away_team,
+                        f.match_date, f.status, f.data_source,
+                        f.home_source_id, f.away_source_id,
+                        e.home_form, e.away_form, e.synced_at
+                    FROM fixtures f
+                    LEFT JOIN fixture_extended e ON e.fixture_id = f.fixture_id
+                    WHERE f.status NOT IN ('FT', 'AET', 'PEN', 'CANC', 'POST', 'CA', 'PP', 'TBA', 'ABANDONED')
+                      AND f.match_date >= ? AND f.match_date <= ?
+                    ORDER BY f.match_date ASC
                 """, (now.isoformat(), cutoff.isoformat()))
                 
                 rows = cursor.fetchall()
                 fixtures = []
                 
                 for row in rows:
+                    def _json_mapping(raw):
+                        if raw is None:
+                            return None
+                        try:
+                            value = json.loads(raw)
+                        except (TypeError, ValueError):
+                            return None
+                        return value if isinstance(value, dict) else None
+
                     fixtures.append({
                         "fixture_id": row[0],
                         "league": row[1],
@@ -159,6 +206,11 @@ class AccaBuilder:
                         "match_date": row[4],
                         "status": row[5],
                         "data_source": row[6],
+                        "home_source_id": row[7],
+                        "away_source_id": row[8],
+                        "current_home_form": _json_mapping(row[9]),
+                        "current_away_form": _json_mapping(row[10]),
+                        "current_form_observed_at": row[11],
                     })
                 
                 return fixtures

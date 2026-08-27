@@ -4,6 +4,7 @@ Balances edge confidence with practical betting constraints.
 """
 
 import logging
+import math
 from datetime import datetime, timezone
 from typing import List, Dict
 
@@ -124,7 +125,14 @@ class AccumulatorEngine:
         for callers that have not yet crossed the new priority boundary.
         """
         verdict = fixture.get("verdict", "DC_1X")
-        edge = fixture.get("edge", 0.0)
+        raw_edge = fixture.get("edge")
+        edge = (
+            float(raw_edge)
+            if isinstance(raw_edge, (int, float))
+            and not isinstance(raw_edge, bool)
+            and math.isfinite(float(raw_edge))
+            else 0.0
+        )
         risk_score = fixture.get("risk_score", 100)
         upset_alert = fixture.get("upset_alert", False)
 
@@ -143,7 +151,14 @@ class AccumulatorEngine:
 
     def _is_acca_eligible(self, fixture: dict, strict: bool = False) -> bool:
         """Determine if a fixture is eligible under the legacy risk rules."""
-        edge = fixture.get("edge", 0.0)
+        raw_edge = fixture.get("edge")
+        edge = (
+            float(raw_edge)
+            if isinstance(raw_edge, (int, float))
+            and not isinstance(raw_edge, bool)
+            and math.isfinite(float(raw_edge))
+            else 0.0
+        )
         upset_alert = fixture.get("upset_alert", False)
         risk_score = fixture.get("risk_score", 100)
         verdict = fixture.get("verdict", "")

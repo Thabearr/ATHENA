@@ -158,6 +158,27 @@ def _valid_bookmaker_odds(value: Any) -> bool:
     return _is_number(value) and float(value) > 1.0
 
 
+def score_current_form_snapshot(value: Any) -> Optional[float]:
+    """Convert exact current FotMob W/D/L evidence into ATHENA form scale."""
+    if not isinstance(value, Mapping):
+        return None
+    matches = value.get("matches")
+    if not isinstance(matches, list):
+        return None
+    results = []
+    for item in matches[:5]:
+        raw = item.get("result") if isinstance(item, Mapping) else item
+        if not isinstance(raw, str) or not raw.strip():
+            continue
+        result = raw.strip().upper()[:1]
+        if result in {"W", "D", "L"}:
+            results.append(result)
+    if len(results) < 3:
+        return None
+    points = sum(3 if result == "W" else 1 if result == "D" else 0 for result in results)
+    return round(0.10 + (points / (len(results) * 3)) * 0.85, 3)
+
+
 def build_market_evaluations(
     market_probabilities: Mapping[str, float],
     viable_markets: Sequence[dict],
@@ -524,18 +545,43 @@ class MatchAnalyst:
         is_backtest = bool(fixture_context.get('is_backtest', False))
 
         form_service = getattr(self.form_eng, 'form_svc', None) or getattr(self.form_eng, 'form_service', None)
+        current_home_form = score_current_form_snapshot(
+            fixture_context.get("current_home_form")
+        )
+        current_away_form = score_current_form_snapshot(
+            fixture_context.get("current_away_form")
+        )
         home_form_value = (
-            form_service.get_recent_form_score(home_id, match_date)
-            if form_service
-            else None
+            current_home_form
+            if current_home_form is not None
+            else (
+                form_service.get_recent_form_score(home_id, match_date)
+                if form_service
+                else None
+            )
         )
         away_form_value = (
-            form_service.get_recent_form_score(away_id, match_date)
-            if form_service
-            else None
+            current_away_form
+            if current_away_form is not None
+            else (
+                form_service.get_recent_form_score(away_id, match_date)
+                if form_service
+                else None
+            )
         )
         home_form_defaulted = not _is_number(home_form_value)
         away_form_defaulted = not _is_number(away_form_value)
+        home_form_source = (
+            "fotmob_match_details_current_form"
+            if current_home_form is not None
+            else "team_form_service"
+        )
+        away_form_source = (
+            "fotmob_match_details_current_form"
+            if current_away_form is not None
+            else "team_form_service"
+        )
+        current_form_observed_at = fixture_context.get("current_form_observed_at")
         home_raw = (
             float(home_form_value) if not home_form_defaulted else 0.50
         )
@@ -544,14 +590,22 @@ class MatchAnalyst:
         )
 
         home_freshness = (
-            form_service.get_data_freshness(home_id, match_date)
-            if form_service
-            else None
+            {"has_data": True, "live_ratio": 1.0, "sample_size": 5}
+            if current_home_form is not None
+            else (
+                form_service.get_data_freshness(home_id, match_date)
+                if form_service
+                else None
+            )
         )
         away_freshness = (
-            form_service.get_data_freshness(away_id, match_date)
-            if form_service
-            else None
+            {"has_data": True, "live_ratio": 1.0, "sample_size": 5}
+            if current_away_form is not None
+            else (
+                form_service.get_data_freshness(away_id, match_date)
+                if form_service
+                else None
+            )
         )
         home_live_ratio = (
             home_freshness.get("live_ratio")
@@ -800,22 +854,28 @@ class MatchAnalyst:
                 fallback_note if status != available else None,
             )
 
-        for field, value, was_defaulted, observed_at in (
+        for field, value, was_defaulted, observed_at, source in (
             (
                 "home_form",
                 home_form_value,
                 home_form_defaulted,
-                home_last_date,
+                current_form_observed_at
+                if current_home_form is not None
+                else home_last_date,
+                home_form_source,
             ),
             (
                 "away_form",
                 away_form_value,
                 away_form_defaulted,
-                away_last_date,
+                current_form_observed_at
+                if current_away_form is not None
+                else away_last_date,
+                away_form_source,
             ),
         ):
             record_evidence(
-                "team_form_service",
+                source,
                 field,
                 0.50 if was_defaulted else float(value),
                 defaulted if was_defaulted else available,

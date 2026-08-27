@@ -345,7 +345,6 @@ class FotMobAdvancedScraper:
                         weather TEXT,
                         referee TEXT,
                         head_to_head TEXT,
-                        head_to_head TEXT,
                         home_form TEXT,
                         away_form TEXT,
                         home_xg REAL,
@@ -363,16 +362,23 @@ class FotMobAdvancedScraper:
                     cursor.execute("""
                         INSERT INTO fixtures
                             (fixture_id, league, season, home_team, away_team,
-                             match_date, status, data_source, season_label)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             home_source_id, away_source_id, match_date, status,
+                             data_source, season_label)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ON CONFLICT(fixture_id) DO UPDATE SET
                             league=excluded.league,
+                            home_team=excluded.home_team,
+                            away_team=excluded.away_team,
+                            home_source_id=excluded.home_source_id,
+                            away_source_id=excluded.away_source_id,
                             status=excluded.status,
                             match_date=excluded.match_date,
-                            data_source=excluded.data_source
+                            data_source=excluded.data_source,
+                            season_label=excluded.season_label
                     """, (
                         fixture_id, match.get("league"), match.get("season_label"),
                         match.get("home_team"), match.get("away_team"),
+                        match.get("home_id"), match.get("away_id"),
                         match.get("match_date"), match.get("status"),
                         match.get("data_source"), match.get("season_label"),
                     ))
@@ -418,7 +424,8 @@ class FotMobAdvancedScraper:
                             match.get("away_xg"),
                             match.get("home_possession"),
                             match.get("away_possession"),
-                            datetime.now(timezone.utc).isoformat(),
+                            match.get("current_form_observed_at")
+                            or datetime.now(timezone.utc).isoformat(),
                         ))
 
                 conn.commit()

@@ -24,6 +24,8 @@ class Database:
 
             self._migrate_add_column(connection, "fixtures", "data_source", "TEXT")
             self._migrate_add_column(connection, "fixtures", "season_label", "TEXT")
+            self._migrate_add_column(connection, "fixtures", "home_source_id", "INTEGER")
+            self._migrate_add_column(connection, "fixtures", "away_source_id", "INTEGER")
             self._migrate_add_column(connection, "historical_matches", "data_source", "TEXT")
             self._migrate_add_column(connection, "historical_matches", "season_label", "TEXT")
             self._migrate_add_column(connection, "historical_matches", "league_code", "TEXT")

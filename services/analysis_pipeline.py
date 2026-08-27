@@ -209,16 +209,35 @@ class AnalysisPipeline:
             if youth_pattern.search(home_team) or youth_pattern.search(away_team):
                 continue
 
+            home_source_id = fix.get("home_source_id")
+            away_source_id = fix.get("away_source_id")
             context_payload = {
                 "fixture_id": fix.get("fixture_id", 0),
                 "home_team": home_team,
                 "away_team": away_team,
-                "home_id": self._resolve_team_id(home_team),
-                "away_id": self._resolve_team_id(away_team),
+                "home_id": (
+                    home_source_id
+                    if home_source_id is not None
+                    else self._resolve_team_id(home_team)
+                ),
+                "away_id": (
+                    away_source_id
+                    if away_source_id is not None
+                    else self._resolve_team_id(away_team)
+                ),
                 "match_date": fix.get("match_date", ""),
                 "data_source": fix.get("data_source"),
                 "is_knockout": any(k in league_name for k in ["cup", "champions league", "playoff", "knockout", "qualif", "conference"]),
             }
+
+            if fix.get("current_home_form") is not None:
+                context_payload["current_home_form"] = fix["current_home_form"]
+            if fix.get("current_away_form") is not None:
+                context_payload["current_away_form"] = fix["current_away_form"]
+            if fix.get("current_form_observed_at") is not None:
+                context_payload["current_form_observed_at"] = (
+                    fix["current_form_observed_at"]
+                )
 
             if fix.get("bookmaker_odds") is not None:
                 context_payload["bookmaker_odds"] = fix["bookmaker_odds"]
