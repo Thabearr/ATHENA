@@ -216,6 +216,20 @@ class CurrentFotMobReviewedSourceExecution:
             raise CurrentFotMobReviewedSourceError(
                 "verified bootstrap fixture count differs from policy approvals"
             )
+        sources = self.handoff.candidate_bundle.sources
+        if type(sources) is not tuple or len(sources) != 1:
+            raise CurrentFotMobReviewedSourceError(
+                "current source execution must bind exactly one PR38 capture source"
+            )
+        source = sources[0]
+        if self.source_capture_manifest_sha256 != source.source_capture_manifest_sha256:
+            raise CurrentFotMobReviewedSourceError(
+                "source_capture_manifest_sha256 does not anchor the exact handoff source"
+            )
+        if self.source_raw_sha256 != source.source_raw_sha256:
+            raise CurrentFotMobReviewedSourceError(
+                "source_raw_sha256 does not anchor the exact handoff source"
+            )
         for value, label in (
             (self.source_capture_manifest_sha256, "source_capture_manifest_sha256"),
             (self.source_raw_sha256, "source_raw_sha256"),
@@ -230,6 +244,14 @@ class CurrentFotMobReviewedSourceExecution:
                 "source_capture_directory must be existing non-symlink directory"
             )
         issued_at = _utc(self.issued_at, "issued_at")
+        if issued_at != self.policy_result.reviewed_at:
+            raise CurrentFotMobReviewedSourceError(
+                "issued_at does not match the exact PR243 policy review time"
+            )
+        if self.verified_bootstrap.verified_at != issued_at:
+            raise CurrentFotMobReviewedSourceError(
+                "verified bootstrap time does not match execution issued_at"
+            )
         if self.next_required_boundary != NEXT_REQUIRED_BOUNDARY:
             raise CurrentFotMobReviewedSourceError("next boundary mismatch")
         object.__setattr__(self, "source_capture_directory", directory)
