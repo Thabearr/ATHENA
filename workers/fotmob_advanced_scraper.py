@@ -97,18 +97,28 @@ class FotMobAdvancedScraper:
             date_str = target_date.strftime("%Y%m%d")
 
             source_response = getattr(self.client, "fetch_matches_by_date_with_raw", None)
-            acquired = source_response(date_str) if callable(source_response) else None
-            if acquired is not None:
-                data, raw_bytes, observed_at, source_reference = acquired
-            else:
-                data = self.client.fetch_matches_by_date(date_str)
-                raw_bytes = observed_at = source_reference = None
-            if not data:
-                logger.warning(f"No data returned for date {date_str}")
-                continue
-
             fixture_evidence = None
-            if raw_bytes is not None:
+            if callable(source_response):
+                acquired = source_response(date_str)
+                if acquired is None:
+                    logger.warning(
+                        "Raw-aware FotMob fixture-list acquisition failed for %s; "
+                        "refusing uncaptured fallback",
+                        date_str,
+                    )
+                    continue
+                try:
+                    data, raw_bytes, observed_at, source_reference = acquired
+                except (TypeError, ValueError):
+                    logger.warning(
+                        "Raw-aware FotMob fixture-list acquisition returned an invalid "
+                        "response for %s; refusing uncaptured fallback",
+                        date_str,
+                    )
+                    continue
+                if not data:
+                    logger.warning(f"No data returned for date {date_str}")
+                    continue
                 try:
                     fixture_evidence = self._capture(
                         kind="FIXTURE_LIST",
@@ -119,9 +129,20 @@ class FotMobAdvancedScraper:
                     )
                 except LiveFotMobFixtureIntelligenceError as exc:
                     logger.warning(
-                        "Legacy FotMob fixture-list evidence was not preserved: %s",
+                        "Legacy FotMob fixture-list evidence was not preserved for %s; "
+                        "refusing to normalize the uncaptured response: %s",
+                        date_str,
                         exc,
                     )
+                    continue
+            else:
+                # Compatibility only for older clients that genuinely predate
+                # raw-aware acquisition. A present raw-aware method is never
+                # bypassed with a second uncaptured network request.
+                data = self.client.fetch_matches_by_date(date_str)
+                if not data:
+                    logger.warning(f"No data returned for date {date_str}")
+                    continue
 
             leagues = data.get("leagues", [])
             logger.info(f"  [{date_str}] Found {len(leagues)} leagues")
@@ -215,10 +236,27 @@ class FotMobAdvancedScraper:
         """
         details = {}
         source_response = getattr(self.client, "fetch_match_details_with_raw", None)
-        acquired = source_response(fixture_id) if callable(source_response) else None
         details_evidence = None
-        if acquired is not None:
-            match_info, raw_bytes, observed_at, source_reference = acquired
+        if callable(source_response):
+            acquired = source_response(fixture_id)
+            if acquired is None:
+                logger.warning(
+                    "Raw-aware FotMob match-details acquisition failed for %s; "
+                    "refusing uncaptured fallback",
+                    fixture_id,
+                )
+                return details
+            try:
+                match_info, raw_bytes, observed_at, source_reference = acquired
+            except (TypeError, ValueError):
+                logger.warning(
+                    "Raw-aware FotMob match-details acquisition returned an invalid "
+                    "response for %s; refusing uncaptured fallback",
+                    fixture_id,
+                )
+                return details
+            if not match_info:
+                return details
             try:
                 details_evidence = self._capture(
                     kind="MATCH_DETAILS",
@@ -229,13 +267,18 @@ class FotMobAdvancedScraper:
                 )
             except LiveFotMobFixtureIntelligenceError as exc:
                 logger.warning(
-                    "Legacy FotMob match-details evidence was not preserved: %s",
+                    "Legacy FotMob match-details evidence was not preserved for %s; "
+                    "refusing to normalize the uncaptured response: %s",
+                    fixture_id,
                     exc,
                 )
+                return details
         else:
+            # Compatibility only for older clients that genuinely predate
+            # raw-aware acquisition.
             match_info = self.client.fetch_match_details(fixture_id)
-        if not match_info:
-            return details
+            if not match_info:
+                return details
 
         try:
             content = match_info.get("content", {})
