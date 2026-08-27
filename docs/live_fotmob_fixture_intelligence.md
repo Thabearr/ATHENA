@@ -45,6 +45,18 @@ The current reviewed implementations descended from the PR #38 data-matches
 capture boundary and PR #50–#65 match-details/Fixture-Intelligence boundaries
 remain the authority. This module does not replace them.
 
+## Why the compatibility receipt remains
+
+The reviewed capture objects cannot truthfully wrap the legacy bypass request:
+their manifests pin the transparent ATHENA request profile, while the bypass
+runtime explicitly performs browser/TLS impersonation. Reusing those canonical
+objects for a different request profile would be provenance forgery.
+
+The small compatibility receipt therefore remains only to keep the exact legacy
+bytes replayable while the operational runtime is still present. It has no
+source-qualification or Fixture-Intelligence authority and cannot be converted
+into a reviewed capture by changing a flag.
+
 ## One response, one capture
 
 A `/api/data/matches` response belongs to the HTTP request, not to a single
