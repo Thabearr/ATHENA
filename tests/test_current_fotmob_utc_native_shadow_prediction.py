@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import hashlib
 import json
@@ -45,9 +46,19 @@ def _raw(*, fixture_id: int = 1001, kickoff: dt.datetime = KICKOFF) -> bytes:
                 "internalRank": 1,
                 "matches": [
                     {
-                        "away": {"id": 202, "score": 0, "name": "Away FC", "longName": "Away FC"},
+                        "away": {
+                            "id": 202,
+                            "score": 0,
+                            "name": "Away FC",
+                            "longName": "Away FC",
+                        },
                         "eliminatedTeamId": None,
-                        "home": {"id": 101, "score": 0, "name": "Home FC", "longName": "Home FC"},
+                        "home": {
+                            "id": 101,
+                            "score": 0,
+                            "name": "Home FC",
+                            "longName": "Home FC",
+                        },
                         "id": fixture_id,
                         "leagueId": 47,
                         "status": {
@@ -130,7 +141,9 @@ def _bootstrap_row(
         "home_goals": home_goals,
         "away_goals": away_goals,
         "observed_at": observed.isoformat().replace("+00:00", "Z"),
-        "evidence_sha256": hashlib.sha256(f"bootstrap:{fixture_id}".encode()).hexdigest(),
+        "evidence_sha256": hashlib.sha256(
+            f"bootstrap:{fixture_id}".encode()
+        ).hexdigest(),
         "evidence_reference": f"synthetic-reviewed-bootstrap:{fixture_id}",
     }
 
@@ -160,24 +173,40 @@ def _history(monkeypatch: pytest.MonkeyPatch, *, include_away: bool = True) -> b
             )
         )
     raw = b"".join(fresh._canonical(row) for row in rows)
-    monkeypatch.setattr(fresh, "BOOTSTRAP_PROJECTION_SHA256", hashlib.sha256(raw).hexdigest())
+    monkeypatch.setattr(
+        fresh,
+        "BOOTSTRAP_PROJECTION_SHA256",
+        hashlib.sha256(raw).hexdigest(),
+    )
     monkeypatch.setattr(fresh, "BOOTSTRAP_PROJECTION_SIZE", len(raw))
     monkeypatch.setattr(fresh, "BOOTSTRAP_PROJECTION_ROWS", len(rows))
     return raw
+
+
+def _handoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    include_away: bool = True,
+):
+    execution, raw, manifest = _current(tmp_path)
+    history = _history(monkeypatch, include_away=include_away)
+    handoff = build_current_fotmob_utc_native_shadow_prediction_handoff(
+        current_bootstrap=execution.bootstrap,
+        source_raw_json=raw,
+        source_manifest=manifest,
+        legacy_bootstrap_projection_raw=history,
+    )
+    return handoff, execution, raw, manifest, history
 
 
 def test_current_pr243_bootstrap_reaches_exact_utc_native_shadow_seal(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    execution, raw, manifest = _current(tmp_path)
-    history = _history(monkeypatch)
-
-    handoff = build_current_fotmob_utc_native_shadow_prediction_handoff(
-        current_bootstrap=execution.bootstrap,
-        source_raw_json=raw,
-        source_manifest=manifest,
-        legacy_bootstrap_projection_raw=history,
+    handoff, _execution, _raw_bytes, _manifest, _history_bytes = _handoff(
+        tmp_path,
+        monkeypatch,
     )
 
     assert handoff.fixture_count == 1
@@ -188,19 +217,22 @@ def test_current_pr243_bootstrap_reaches_exact_utc_native_shadow_seal(
     assert row.fixture_identifier == "FOTMOB:1001"
     assert row.disposition == SEALED_COMPLETE_CASE
     assert row.sealed_prediction is not None
-    assert row.sealed_prediction.fixture.fixture_id == 1001
-    assert row.sealed_prediction.fixture.provider_primary_id == 47
-    assert row.sealed_prediction.fixture.wrapper_id == 47
-    assert row.sealed_prediction.fixture.home_team_id == 101
-    assert row.sealed_prediction.fixture.away_team_id == 202
+    assert row.fixture == row.sealed_prediction.fixture
+    assert row.fixture.fixture_id == 1001
+    assert row.fixture.provider_primary_id == 47
+    assert row.fixture.wrapper_id == 47
+    assert row.fixture.home_team_id == 101
+    assert row.fixture.away_team_id == 202
     assert row.sealed_prediction_sha256 == fresh.sha256_sealed_fresh_prediction(
         row.sealed_prediction
     )
     assert handoff.next_required_boundary == NEXT_REQUIRED_BOUNDARY
-    assert handoff.authority == {
+    assert handoff.research_evidence == {
         "reviewed_current_fixture_identity": True,
         "utc_native_research_feature_construction": True,
         "shadow_expected_goals_rates": True,
+    }
+    assert handoff.authority == {
         "production_model": False,
         "score_matrix": False,
         "probability": False,
@@ -210,6 +242,7 @@ def test_current_pr243_bootstrap_reaches_exact_utc_native_shadow_seal(
         "sportybet_execution": False,
         "bet": False,
     }
+    assert not any(handoff.authority.values())
     assert handoff.to_dict()["wager_placed"] is False
 
 
@@ -217,13 +250,10 @@ def test_missing_utc_native_history_remains_explicit_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    execution, raw, manifest = _current(tmp_path)
-    history = _history(monkeypatch, include_away=False)
-    handoff = build_current_fotmob_utc_native_shadow_prediction_handoff(
-        current_bootstrap=execution.bootstrap,
-        source_raw_json=raw,
-        source_manifest=manifest,
-        legacy_bootstrap_projection_raw=history,
+    handoff, _execution, _raw_bytes, _manifest, _history_bytes = _handoff(
+        tmp_path,
+        monkeypatch,
+        include_away=False,
     )
     row = handoff.rows[0]
     assert row.disposition == MISSING_REVIEWED_FEATURES
@@ -249,6 +279,7 @@ def test_pr243_capture_outside_24h_seal_window_is_not_retrofilled(
     row = handoff.rows[0]
     assert row.disposition == OUTSIDE_REVIEWED_SEAL_WINDOW
     assert row.sealed_prediction is None
+    assert row.missing_feature_ids == ()
     assert handoff.outside_seal_window_count == 1
 
 
@@ -267,6 +298,21 @@ def test_source_raw_tampering_fails_before_shadow_construction(
         )
 
 
+def test_source_bundle_raw_replacement_cannot_create_relabelled_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, _execution, raw, _manifest, _history_bytes = _handoff(
+        tmp_path,
+        monkeypatch,
+    )
+    with pytest.raises(CurrentUtcNativeShadowPredictionError, match="raw SHA"):
+        dataclasses.replace(
+            handoff.source_bundle,
+            source_raw_json=raw + b" ",
+        )
+
+
 def test_bootstrap_cannot_be_bound_to_different_current_capture(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -274,7 +320,10 @@ def test_bootstrap_cannot_be_bound_to_different_current_capture(
     first, raw, manifest = _current(tmp_path / "one", fixture_id=1001)
     second, _raw2, _manifest2 = _current(tmp_path / "two", fixture_id=1002)
     history = _history(monkeypatch)
-    with pytest.raises(CurrentUtcNativeShadowPredictionError, match="candidate bundle differs"):
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="candidate bundle differs",
+    ):
         build_current_fotmob_utc_native_shadow_prediction_handoff(
             current_bootstrap=second.bootstrap,
             source_raw_json=raw,
@@ -299,6 +348,97 @@ def test_exact_pr119_bootstrap_bytes_are_required(
         )
 
 
+def test_detached_candidate_sha_cannot_be_relabelled_after_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    replacement = "f" * 64
+    assert replacement != handoff.candidate_bundle_sha256
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="candidate_bundle_sha256 differs",
+    ):
+        dataclasses.replace(handoff, candidate_bundle_sha256=replacement)
+
+
+def test_detached_review_sha_cannot_be_relabelled_after_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    replacement = "e" * 64
+    assert replacement != handoff.review_bundle_sha256
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="review_bundle_sha256 differs",
+    ):
+        dataclasses.replace(handoff, review_bundle_sha256=replacement)
+
+
+def test_detached_history_update_count_cannot_be_relabelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    assert handoff.reviewed_fresh_legacy_update_count == 0
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="fresh legacy update count differs",
+    ):
+        dataclasses.replace(handoff, reviewed_fresh_legacy_update_count=1)
+
+
+def test_detached_row_cannot_be_relabelled_after_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    original = handoff.rows[0]
+    tampered = dataclasses.replace(
+        original,
+        disposition=MISSING_REVIEWED_FEATURES,
+        missing_feature_ids=("away_form",),
+        sealed_prediction=None,
+        sealed_prediction_sha256=None,
+    )
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="shadow rows differ",
+    ):
+        dataclasses.replace(handoff, rows=(tampered,))
+
+
+def test_research_evidence_cannot_be_downgraded_or_relabelled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    changed = dict(handoff.research_evidence)
+    changed["shadow_expected_goals_rates"] = False
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="research_evidence.*changed reviewed state",
+    ):
+        dataclasses.replace(handoff, research_evidence=changed)
+
+
+@pytest.mark.parametrize("key", ["phase6", "selection", "sportybet_execution", "bet"])
+def test_downstream_authority_cannot_be_switched_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    key: str,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    changed = dict(handoff.authority)
+    changed[key] = True
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="authority.*changed reviewed state",
+    ):
+        dataclasses.replace(handoff, authority=changed)
+
+
 def test_shadow_handoff_is_canonical_and_deterministic(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -317,9 +457,16 @@ def test_shadow_handoff_is_canonical_and_deterministic(
         source_manifest=manifest,
         legacy_bootstrap_projection_raw=history,
     )
-    assert canonical_current_fotmob_utc_native_shadow_prediction_handoff_bytes(first) == (
-        canonical_current_fotmob_utc_native_shadow_prediction_handoff_bytes(second)
+    first_bytes = canonical_current_fotmob_utc_native_shadow_prediction_handoff_bytes(
+        first
     )
+    second_bytes = canonical_current_fotmob_utc_native_shadow_prediction_handoff_bytes(
+        second
+    )
+    assert first_bytes == second_bytes
+    assert b"Home FC" not in first_bytes
+    assert b"synthetic-reviewed-bootstrap" not in first_bytes
+    assert history not in first_bytes
 
 
 def test_bridge_source_contains_no_provider_scalar_or_phase6_shortcut() -> None:
