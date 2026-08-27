@@ -5,8 +5,8 @@ request for the requested date, durably preserves it, applies the separately
 reviewed PR243 fixture-identity policy, and then composes the existing
 PR41->PR48 catalog/admission/bootstrap chain.
 
-The live entry point deliberately freezes the reviewed PR243 recency and lead
-bounds. Callers cannot weaken them through the CLI or hosted workflow.
+The reviewed PR243 recency and lead bounds are part of the domain policy itself.
+Neither live execution nor replay can weaken them through arguments.
 
 This script deliberately stops at verified fixture identity. It does not parse
 legacy browser-impersonated evidence, create Fixture Intelligence facts, infer
@@ -298,12 +298,10 @@ def build_verified_current_fotmob_bootstrap_from_capture(
     capture_directory: Path,
     *,
     issued_at: Any,
-    minimum_lead_seconds: int = DEFAULT_MINIMUM_LEAD_SECONDS,
-    max_source_age_seconds: int = DEFAULT_MAX_SOURCE_AGE_SECONDS,
     repository_root: Path | None = None,
     code_state: Mapping[str, Any] | None = None,
 ) -> CurrentFotMobReviewedSourceExecution:
-    """Replay one exact PR38 capture into the reviewed current identity bootstrap."""
+    """Replay one exact PR38 capture through the frozen PR243 identity policy."""
 
     repository = _repo_root(repository_root)
     capture_root = repository / DATA_MATCHES_CAPTURE_ROOT
@@ -323,8 +321,6 @@ def build_verified_current_fotmob_bootstrap_from_capture(
     policy_result = build_current_fotmob_fixture_review_policy_result(
         candidate_bundle,
         reviewed_at=issued,
-        minimum_lead_seconds=minimum_lead_seconds,
-        max_source_age_seconds=max_source_age_seconds,
     )
     if policy_result.policy_approved_count == 0:
         raise CurrentFotMobReviewedSourceError(STATUS_NO_FIXTURES)
@@ -350,7 +346,7 @@ def build_verified_current_fotmob_bootstrap_from_capture(
             input_path=temporary_path,
             evidence_root=capture_root,
             as_of=issued,
-            minimum_lead_seconds=minimum_lead_seconds,
+            minimum_lead_seconds=DEFAULT_MINIMUM_LEAD_SECONDS,
             code_state=code_state,
         )
     finally:
@@ -431,7 +427,7 @@ def issue_current_fotmob_reviewed_source(
     connection_factory: Callable[..., Any] | None = None,
     clock: Callable[[], dt.datetime] | None = None,
 ) -> CurrentFotMobReviewedSourceExecution:
-    """Capture one current transparent source response using frozen PR243 bounds."""
+    """Capture one current transparent source response using frozen PR243 policy."""
 
     if type(execute_live_network) is not bool or execute_live_network is not True:
         raise CurrentFotMobReviewedSourceError(
@@ -464,8 +460,6 @@ def issue_current_fotmob_reviewed_source(
     return build_verified_current_fotmob_bootstrap_from_capture(
         capture_directory,
         issued_at=issued,
-        minimum_lead_seconds=DEFAULT_MINIMUM_LEAD_SECONDS,
-        max_source_age_seconds=DEFAULT_MAX_SOURCE_AGE_SECONDS,
         repository_root=repository,
     )
 
