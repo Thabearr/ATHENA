@@ -5,7 +5,10 @@ request for the requested date, durably preserves it, applies the separately
 reviewed PR243 fixture-identity policy, and then composes the existing
 PR41->PR48 catalog/admission/bootstrap chain.
 
-This script deliberately stops at verified fixture identity.  It does not parse
+The live entry point deliberately freezes the reviewed PR243 recency and lead
+bounds. Callers cannot weaken them through the CLI or hosted workflow.
+
+This script deliberately stops at verified fixture identity. It does not parse
 legacy browser-impersonated evidence, create Fixture Intelligence facts, infer
 probabilities, inspect bookmaker prices, select markets, generate a SportyBet
 code, or place a wager.
@@ -31,6 +34,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from domain.current_fotmob_fixture_review_policy import (
+    DEFAULT_MAX_SOURCE_AGE_SECONDS,
     DEFAULT_MINIMUM_LEAD_SECONDS,
     POLICY_ID,
     REVIEWER_REFERENCE,
@@ -152,6 +156,14 @@ def _read_capture_raw(capture_directory: Path) -> bytes:
         ) from exc
 
 
+def _write_result(path: Path, payload: Mapping[str, Any]) -> None:
+    raw = (
+        json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n"
+    ).encode("utf-8")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(raw)
+
+
 @dataclasses.dataclass(frozen=True)
 class CurrentFotMobReviewedSourceExecution:
     schema_version: int
@@ -234,11 +246,19 @@ class CurrentFotMobReviewedSourceExecution:
             "source_capture_manifest_sha256": self.source_capture_manifest_sha256,
             "source_raw_sha256": self.source_raw_sha256,
             "issued_at": self.issued_at.isoformat().replace("+00:00", "Z"),
+            "minimum_lead_seconds": self.policy_result.minimum_lead_seconds,
+            "max_source_age_seconds": self.policy_result.max_source_age_seconds,
             "candidate_count": self.policy_result.candidate_count,
             "exact_competition_identity_count": (
                 self.policy_result.exact_competition_identity_count
             ),
             "pr41_blocked_count": self.policy_result.pr41_blocked_count,
+            "stale_source_excluded_count": (
+                self.policy_result.stale_source_excluded_count
+            ),
+            "request_date_excluded_count": (
+                self.policy_result.request_date_excluded_count
+            ),
             "lead_window_excluded_count": (
                 self.policy_result.lead_window_excluded_count
             ),
@@ -279,6 +299,7 @@ def build_verified_current_fotmob_bootstrap_from_capture(
     *,
     issued_at: Any,
     minimum_lead_seconds: int = DEFAULT_MINIMUM_LEAD_SECONDS,
+    max_source_age_seconds: int = DEFAULT_MAX_SOURCE_AGE_SECONDS,
     repository_root: Path | None = None,
     code_state: Mapping[str, Any] | None = None,
 ) -> CurrentFotMobReviewedSourceExecution:
@@ -303,6 +324,7 @@ def build_verified_current_fotmob_bootstrap_from_capture(
         candidate_bundle,
         reviewed_at=issued,
         minimum_lead_seconds=minimum_lead_seconds,
+        max_source_age_seconds=max_source_age_seconds,
     )
     if policy_result.policy_approved_count == 0:
         raise CurrentFotMobReviewedSourceError(STATUS_NO_FIXTURES)
@@ -405,12 +427,11 @@ def issue_current_fotmob_reviewed_source(
     timezone: str,
     ccode3: str,
     execute_live_network: bool,
-    minimum_lead_seconds: int = DEFAULT_MINIMUM_LEAD_SECONDS,
     repository_root: Path | None = None,
     connection_factory: Callable[..., Any] | None = None,
     clock: Callable[[], dt.datetime] | None = None,
 ) -> CurrentFotMobReviewedSourceExecution:
-    """Capture one current transparent source response and issue its bootstrap."""
+    """Capture one current transparent source response using frozen PR243 bounds."""
 
     if type(execute_live_network) is not bool or execute_live_network is not True:
         raise CurrentFotMobReviewedSourceError(
@@ -443,7 +464,8 @@ def issue_current_fotmob_reviewed_source(
     return build_verified_current_fotmob_bootstrap_from_capture(
         capture_directory,
         issued_at=issued,
-        minimum_lead_seconds=minimum_lead_seconds,
+        minimum_lead_seconds=DEFAULT_MINIMUM_LEAD_SECONDS,
+        max_source_age_seconds=DEFAULT_MAX_SOURCE_AGE_SECONDS,
         repository_root=repository,
     )
 
@@ -452,17 +474,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Issue a current reviewed FotMob fixture bootstrap from the transparent "
-            "PR38 source path and the bounded PR243 fixture policy."
+            "PR38 source path and frozen PR243 fixture policy."
         )
     )
     parser.add_argument("--date", required=True, help="Exact Gregorian YYYYMMDD date")
     parser.add_argument("--timezone", default="UTC")
     parser.add_argument("--ccode3", default="NGA")
-    parser.add_argument(
-        "--minimum-lead-seconds",
-        type=int,
-        default=DEFAULT_MINIMUM_LEAD_SECONDS,
-    )
     parser.add_argument("--execute-live-network", action="store_true")
     parser.add_argument("--output", type=Path)
     return parser
@@ -479,15 +496,13 @@ def main(argv: list[str] | None = None) -> int:
             timezone=args.timezone,
             ccode3=args.ccode3,
             execute_live_network=True,
-            minimum_lead_seconds=args.minimum_lead_seconds,
         )
         payload = execution.summary()
         raw = (json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n").encode(
             "utf-8"
         )
         if args.output is not None:
-            args.output.parent.mkdir(parents=True, exist_ok=True)
-            args.output.write_bytes(raw)
+            _write_result(args.output, payload)
         print(raw.decode("utf-8"), end="")
         return 0
     except CurrentFotMobReviewedSourceError as exc:
@@ -495,9 +510,13 @@ def main(argv: list[str] | None = None) -> int:
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
             "status": str(exc),
+            "minimum_lead_seconds": DEFAULT_MINIMUM_LEAD_SECONDS,
+            "max_source_age_seconds": DEFAULT_MAX_SOURCE_AGE_SECONDS,
             "next_required_boundary": NEXT_REQUIRED_BOUNDARY,
             "wager_placed": False,
         }
+        if args.output is not None:
+            _write_result(args.output, payload)
         parser.exit(1, json.dumps(payload, sort_keys=True) + "\n")
 
 
