@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import hashlib
 
@@ -7,6 +8,7 @@ import pytest
 
 import domain.fotmob_fixture_candidates as candidate_module
 from domain.current_fotmob_fixture_review_policy import (
+    DEFAULT_MAX_SOURCE_AGE_SECONDS,
     POLICY_ID,
     REVIEWER_REFERENCE,
     CurrentFotMobFixtureReviewPolicyError,
@@ -64,7 +66,6 @@ def _candidate(
     away_id: int = 202,
     away_name: str = "Away FC",
     kickoff: dt.datetime | None = None,
-    observed_at: dt.datetime = OBSERVED,
 ) -> FotMobFixtureCandidate:
     return FotMobFixtureCandidate(
         review_status=FixtureCandidateReviewStatus.UNREVIEWED,
@@ -84,7 +85,7 @@ def _candidate(
         source_capture_manifest_sha256=source.source_capture_manifest_sha256,
         source_raw_sha256=source.source_raw_sha256,
         source_request_date=source.request_date,
-        source_observed_at=observed_at,
+        source_observed_at=source.source_observed_at,
     )
 
 
@@ -102,7 +103,6 @@ def _bundle(candidates: tuple[FotMobFixtureCandidate, ...]) -> FotMobFixtureCand
             away_id=item.away_source_team_id,
             away_name=item.away_name,
             kickoff=item.kickoff_utc,
-            observed_at=item.source_observed_at,
         )
         for item in candidates
     )
@@ -140,16 +140,22 @@ def test_exact_reviewed_source_competition_is_policy_approved() -> None:
     )
 
     assert result.policy_id == POLICY_ID
+    assert result.max_source_age_seconds == DEFAULT_MAX_SOURCE_AGE_SECONDS
     assert result.exact_competition_identity_count == 1
     assert result.pr41_blocked_count == 0
+    assert result.stale_source_excluded_count == 0
+    assert result.request_date_excluded_count == 0
     assert result.lead_window_excluded_count == 0
     assert result.policy_approved_count == 1
     assert result.review_bundle.approved_count == 1
     decision = result.review_bundle.decisions[0]
     assert decision.disposition is FixtureCandidateReviewDisposition.APPROVED
     assert decision.reviewer_reference == REVIEWER_REFERENCE
+    assert decision.reviewed_at == REVIEWED
     assert POLICY_ID in decision.notes
     assert "canonical=Premier League" in decision.notes
+    assert "source_request_date=20260827" in decision.notes
+    assert "source_timezone=UTC" in decision.notes
     assert all(value is False for value in result.safety.values())
 
 
@@ -170,6 +176,39 @@ def test_unreviewed_source_competition_remains_unreviewed() -> None:
     assert result.exact_competition_identity_count == 0
     assert result.policy_approved_count == 0
     assert result.review_bundle.decision_count == 0
+    assert result.review_bundle.unreviewed_count == 1
+
+
+def test_stale_source_remains_unreviewed_without_claiming_provider_freshness() -> None:
+    bundle = _bundle((_seed_candidate(),))
+    reviewed = OBSERVED + dt.timedelta(seconds=DEFAULT_MAX_SOURCE_AGE_SECONDS + 1)
+    result = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=reviewed,
+    )
+
+    assert result.exact_competition_identity_count == 1
+    assert result.stale_source_excluded_count == 1
+    assert result.policy_approved_count == 0
+    assert result.review_bundle.unreviewed_count == 1
+
+
+def test_source_date_spillover_remains_unreviewed() -> None:
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                kickoff=dt.datetime(2026, 8, 28, 0, 30, tzinfo=UTC),
+            ),
+        )
+    )
+    result = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+
+    assert result.exact_competition_identity_count == 1
+    assert result.request_date_excluded_count == 1
+    assert result.policy_approved_count == 0
     assert result.review_bundle.unreviewed_count == 1
 
 
@@ -215,16 +254,15 @@ def test_pr41_identity_conflict_remains_blocked_not_approved() -> None:
     assert result.review_bundle.decision_count == 0
 
 
-def test_future_source_observation_fails_closed() -> None:
-    candidate = _seed_candidate(observed_at=REVIEWED + dt.timedelta(seconds=1))
-    bundle = _bundle((candidate,))
+def test_source_observation_after_policy_time_fails_closed() -> None:
+    bundle = _bundle((_seed_candidate(),))
     with pytest.raises(
         CurrentFotMobFixtureReviewPolicyError,
         match="source observation is after",
     ):
         build_current_fotmob_fixture_review_policy_result(
             bundle,
-            reviewed_at=REVIEWED,
+            reviewed_at=OBSERVED - dt.timedelta(seconds=1),
         )
 
 
@@ -243,6 +281,16 @@ def test_policy_result_bytes_are_deterministic() -> None:
     )
 
 
+def test_result_count_tampering_fails_closed() -> None:
+    bundle = _bundle((_seed_candidate(),))
+    result = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="counts do not reconcile"):
+        dataclasses.replace(result, stale_source_excluded_count=1)
+
+
 def test_negative_minimum_lead_is_rejected() -> None:
     bundle = _bundle((_seed_candidate(),))
     with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="non-negative"):
@@ -250,4 +298,14 @@ def test_negative_minimum_lead_is_rejected() -> None:
             bundle,
             reviewed_at=REVIEWED,
             minimum_lead_seconds=-1,
+        )
+
+
+def test_negative_max_source_age_is_rejected() -> None:
+    bundle = _bundle((_seed_candidate(),))
+    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="non-negative"):
+        build_current_fotmob_fixture_review_policy_result(
+            bundle,
+            reviewed_at=REVIEWED,
+            max_source_age_seconds=-1,
         )
