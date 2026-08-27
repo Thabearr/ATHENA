@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+import scripts.issue_current_fotmob_reviewed_source as issuer_module
 from domain.current_fotmob_fixture_review_policy import (
     DEFAULT_MAX_SOURCE_AGE_SECONDS,
     DEFAULT_MINIMUM_LEAD_SECONDS,
@@ -251,3 +252,36 @@ def test_hosted_workflow_does_not_expose_policy_bound_overrides() -> None:
     assert "max_source_age_seconds:" not in workflow
     assert "--minimum-lead-seconds" not in workflow
     assert "--max-source-age-seconds" not in workflow
+
+
+def test_cli_failure_still_writes_auditable_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "execution.json"
+
+    def fail(**_kwargs):
+        raise CurrentFotMobReviewedSourceError(STATUS_NO_FIXTURES)
+
+    monkeypatch.setattr(issuer_module, "issue_current_fotmob_reviewed_source", fail)
+    with pytest.raises(SystemExit) as exc_info:
+        issuer_module.main(
+            [
+                "--date",
+                "20260827",
+                "--timezone",
+                "UTC",
+                "--ccode3",
+                "NGA",
+                "--execute-live-network",
+                "--output",
+                str(output),
+            ]
+        )
+    assert exc_info.value.code == 1
+    payload = json.loads(output.read_text(encoding="utf-8"))
+    assert payload["status"] == STATUS_NO_FIXTURES
+    assert payload["minimum_lead_seconds"] == DEFAULT_MINIMUM_LEAD_SECONDS
+    assert payload["max_source_age_seconds"] == DEFAULT_MAX_SOURCE_AGE_SECONDS
+    assert payload["next_required_boundary"] == NEXT_REQUIRED_BOUNDARY
+    assert payload["wager_placed"] is False
