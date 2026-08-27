@@ -1,16 +1,21 @@
 """Reviewed policy issuer for current FotMob fixture-identity decisions.
 
 This boundary is intentionally narrower than the historical PR #41 human-review
-contract.  PR #41 remains unchanged and continues to reject automatic promotion
-on its own.  This module is a separately reviewed policy issuer which may create
+contract. PR #41 remains unchanged and continues to reject automatic promotion
+on its own. This module is a separately reviewed policy issuer which may create
 individual PR #41 APPROVED decisions only when the exact current candidate:
 
 * belongs to an already-reviewed exact FotMob source competition identity;
 * is not blocked by PR #41's own conflict/string checks;
-* was observed no later than the policy evaluation time; and
+* was observed no later than the policy evaluation time;
+* is recent under an ATHENA acquisition-age bound;
+* kicks off on the exact requested source date in the source timezone; and
 * remains sufficiently prospective for the configured minimum lead window.
 
-The result grants only source-scoped fixture identity review.  It does not grant
+The acquisition-age rule is ATHENA provenance recency only. It is not silently
+reclassified as provider-native freshness metadata.
+
+The result grants only source-scoped fixture identity review. It does not grant
 team/competition global identity, Fixture Intelligence facts, model, pricing,
 selection, SportyBet, or BET authority.
 """
@@ -23,6 +28,7 @@ import json
 import types
 from collections.abc import Mapping
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from config.competition_review_priority import (
     COMPETITION_REVIEW_PRIORITY_POLICY_VERSION,
@@ -38,7 +44,9 @@ from domain.fotmob_fixture_candidate_review import (
     sha256_fotmob_fixture_candidate,
 )
 from domain.fotmob_fixture_candidates import (
+    FotMobFixtureCandidate,
     FotMobFixtureCandidateBundle,
+    FotMobFixtureCandidateSource,
     sha256_fotmob_fixture_candidate_bundle,
 )
 
@@ -48,6 +56,7 @@ DATASET_NAME = "athena-current-fotmob-fixture-review-policy-v1"
 POLICY_ID = "ATHENA_PR243_CURRENT_FOTMOB_FIXTURE_IDENTITY_POLICY_V1"
 REVIEWER_REFERENCE = "athena-policy:pr243-current-fotmob-fixture-identity-v1"
 DEFAULT_MINIMUM_LEAD_SECONDS = 60 * 60
+DEFAULT_MAX_SOURCE_AGE_SECONDS = 15 * 60
 
 _SAFETY_KEYS = frozenset(
     {
@@ -82,10 +91,10 @@ def _utc(value: Any, label: str) -> dt.datetime:
         raise CurrentFotMobFixtureReviewPolicyError(f"{label} is invalid") from exc
 
 
-def _minimum_lead(value: Any) -> int:
+def _non_negative_seconds(value: Any, label: str) -> int:
     if type(value) is not int or value < 0:
         raise CurrentFotMobFixtureReviewPolicyError(
-            "minimum_lead_seconds must be an exact non-negative integer"
+            f"{label} must be an exact non-negative integer"
         )
     return value
 
@@ -104,6 +113,25 @@ def _validate_safety(value: Any) -> Mapping[str, bool]:
     return _safety()
 
 
+def _requested_date_matches(
+    candidate: FotMobFixtureCandidate,
+    source: FotMobFixtureCandidateSource,
+) -> bool:
+    try:
+        zone = ZoneInfo(source.timezone)
+    except (ZoneInfoNotFoundError, ValueError, TypeError) as exc:
+        raise CurrentFotMobFixtureReviewPolicyError(
+            "source timezone cannot be resolved for requested-date review"
+        ) from exc
+    try:
+        local_date = candidate.kickoff_utc.astimezone(zone).strftime("%Y%m%d")
+    except (OverflowError, ValueError) as exc:
+        raise CurrentFotMobFixtureReviewPolicyError(
+            "candidate kickoff cannot be evaluated in source timezone"
+        ) from exc
+    return local_date == source.request_date
+
+
 @dataclasses.dataclass(frozen=True)
 class CurrentFotMobFixtureReviewPolicyResult:
     schema_version: int
@@ -113,9 +141,12 @@ class CurrentFotMobFixtureReviewPolicyResult:
     candidate_bundle_sha256: str
     reviewed_at: dt.datetime
     minimum_lead_seconds: int
+    max_source_age_seconds: int
     candidate_count: int
     exact_competition_identity_count: int
     pr41_blocked_count: int
+    stale_source_excluded_count: int
+    request_date_excluded_count: int
     lead_window_excluded_count: int
     policy_approved_count: int
     review_bundle: FotMobFixtureCandidateReviewBundle
@@ -142,19 +173,44 @@ class CurrentFotMobFixtureReviewPolicyResult:
                 "candidate_bundle_sha256 must be exact SHA-256"
             )
         reviewed_at = _utc(self.reviewed_at, "reviewed_at")
-        minimum_lead = _minimum_lead(self.minimum_lead_seconds)
-        for label in (
+        minimum_lead = _non_negative_seconds(
+            self.minimum_lead_seconds,
+            "minimum_lead_seconds",
+        )
+        max_source_age = _non_negative_seconds(
+            self.max_source_age_seconds,
+            "max_source_age_seconds",
+        )
+        count_labels = (
             "candidate_count",
             "exact_competition_identity_count",
             "pr41_blocked_count",
+            "stale_source_excluded_count",
+            "request_date_excluded_count",
             "lead_window_excluded_count",
             "policy_approved_count",
-        ):
+        )
+        for label in count_labels:
             value = getattr(self, label)
             if type(value) is not int or value < 0:
                 raise CurrentFotMobFixtureReviewPolicyError(
                     f"{label} must be exact non-negative integer"
                 )
+        accounted = (
+            self.pr41_blocked_count
+            + self.stale_source_excluded_count
+            + self.request_date_excluded_count
+            + self.lead_window_excluded_count
+            + self.policy_approved_count
+        )
+        if self.exact_competition_identity_count != accounted:
+            raise CurrentFotMobFixtureReviewPolicyError(
+                "exact competition policy counts do not reconcile"
+            )
+        if self.exact_competition_identity_count > self.candidate_count:
+            raise CurrentFotMobFixtureReviewPolicyError(
+                "exact competition count exceeds candidate count"
+            )
         if type(self.review_bundle) is not FotMobFixtureCandidateReviewBundle:
             raise CurrentFotMobFixtureReviewPolicyError(
                 "review_bundle must be exact FotMobFixtureCandidateReviewBundle"
@@ -181,12 +237,22 @@ class CurrentFotMobFixtureReviewPolicyResult:
             raise CurrentFotMobFixtureReviewPolicyError(
                 "current policy must never manufacture REJECTED decisions"
             )
-        if any(item.reviewer_reference != REVIEWER_REFERENCE for item in self.review_bundle.decisions):
-            raise CurrentFotMobFixtureReviewPolicyError(
-                "review bundle contains non-policy reviewer authority"
-            )
+        for decision in self.review_bundle.decisions:
+            if decision.reviewer_reference != REVIEWER_REFERENCE:
+                raise CurrentFotMobFixtureReviewPolicyError(
+                    "review bundle contains non-policy reviewer authority"
+                )
+            if decision.reviewed_at != reviewed_at:
+                raise CurrentFotMobFixtureReviewPolicyError(
+                    "policy decision reviewed_at differs from result reviewed_at"
+                )
+            if POLICY_ID not in decision.notes:
+                raise CurrentFotMobFixtureReviewPolicyError(
+                    "policy decision notes do not identify the reviewed policy"
+                )
         object.__setattr__(self, "reviewed_at", reviewed_at)
         object.__setattr__(self, "minimum_lead_seconds", minimum_lead)
+        object.__setattr__(self, "max_source_age_seconds", max_source_age)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
@@ -198,9 +264,12 @@ class CurrentFotMobFixtureReviewPolicyResult:
             "candidate_bundle_sha256": self.candidate_bundle_sha256,
             "reviewed_at": self.reviewed_at.isoformat().replace("+00:00", "Z"),
             "minimum_lead_seconds": self.minimum_lead_seconds,
+            "max_source_age_seconds": self.max_source_age_seconds,
             "candidate_count": self.candidate_count,
             "exact_competition_identity_count": self.exact_competition_identity_count,
             "pr41_blocked_count": self.pr41_blocked_count,
+            "stale_source_excluded_count": self.stale_source_excluded_count,
+            "request_date_excluded_count": self.request_date_excluded_count,
             "lead_window_excluded_count": self.lead_window_excluded_count,
             "policy_approved_count": self.policy_approved_count,
             "review_bundle_sha256": self.review_bundle_sha256,
@@ -214,6 +283,7 @@ def build_current_fotmob_fixture_review_policy_result(
     *,
     reviewed_at: Any,
     minimum_lead_seconds: int = DEFAULT_MINIMUM_LEAD_SECONDS,
+    max_source_age_seconds: int = DEFAULT_MAX_SOURCE_AGE_SECONDS,
 ) -> CurrentFotMobFixtureReviewPolicyResult:
     """Issue exact PR #41 decisions under the separately reviewed PR243 policy."""
 
@@ -222,7 +292,14 @@ def build_current_fotmob_fixture_review_policy_result(
             "candidate_bundle must be exact FotMobFixtureCandidateBundle"
         )
     reviewed = _utc(reviewed_at, "reviewed_at")
-    minimum_lead = _minimum_lead(minimum_lead_seconds)
+    minimum_lead = _non_negative_seconds(
+        minimum_lead_seconds,
+        "minimum_lead_seconds",
+    )
+    max_source_age = _non_negative_seconds(
+        max_source_age_seconds,
+        "max_source_age_seconds",
+    )
 
     try:
         baseline = build_fotmob_fixture_candidate_review_bundle(candidate_bundle, ())
@@ -231,15 +308,22 @@ def build_current_fotmob_fixture_review_policy_result(
             "PR41 baseline blocker derivation failed"
         ) from exc
     blocked_keys = {item.candidate_key for item in baseline.blocked_candidates}
+    source_map = {
+        item.source_capture_manifest_sha256: item
+        for item in candidate_bundle.sources
+    }
 
     exact_competition_count = 0
     blocked_count = 0
+    stale_count = 0
+    request_date_count = 0
     lead_excluded = 0
     decisions: list[FotMobFixtureCandidateReviewDecision] = []
     lead_floor = reviewed + dt.timedelta(seconds=minimum_lead)
 
     for candidate in candidate_bundle.candidates:
-        if candidate.source_observed_at > reviewed:
+        source_age = reviewed - candidate.source_observed_at
+        if source_age.total_seconds() < 0:
             raise CurrentFotMobFixtureReviewPolicyError(
                 "candidate source observation is after policy reviewed_at"
             )
@@ -259,6 +343,17 @@ def build_current_fotmob_fixture_review_policy_result(
         if candidate_key in blocked_keys:
             blocked_count += 1
             continue
+        if source_age.total_seconds() > max_source_age:
+            stale_count += 1
+            continue
+        source = source_map.get(candidate.source_capture_manifest_sha256)
+        if source is None:
+            raise CurrentFotMobFixtureReviewPolicyError(
+                "candidate source ancestry is absent during requested-date review"
+            )
+        if not _requested_date_matches(candidate, source):
+            request_date_count += 1
+            continue
         if candidate.kickoff_utc < lead_floor:
             lead_excluded += 1
             continue
@@ -274,7 +369,10 @@ def build_current_fotmob_fixture_review_policy_result(
                     f"{POLICY_ID}; exact reviewed source competition "
                     f"{candidate.source_competition_ccode}:{candidate.source_competition_name}; "
                     f"canonical={priority.canonical_name}; rank={priority.rank}; "
-                    f"minimum_lead_seconds={minimum_lead}"
+                    f"minimum_lead_seconds={minimum_lead}; "
+                    f"max_source_age_seconds={max_source_age}; "
+                    f"source_request_date={source.request_date}; "
+                    f"source_timezone={source.timezone}"
                 ),
             )
         )
@@ -297,9 +395,12 @@ def build_current_fotmob_fixture_review_policy_result(
         candidate_bundle_sha256=sha256_fotmob_fixture_candidate_bundle(candidate_bundle),
         reviewed_at=reviewed,
         minimum_lead_seconds=minimum_lead,
+        max_source_age_seconds=max_source_age,
         candidate_count=candidate_bundle.candidate_count,
         exact_competition_identity_count=exact_competition_count,
         pr41_blocked_count=blocked_count,
+        stale_source_excluded_count=stale_count,
+        request_date_excluded_count=request_date_count,
         lead_window_excluded_count=lead_excluded,
         policy_approved_count=review_bundle.approved_count,
         review_bundle=review_bundle,
@@ -332,6 +433,7 @@ def canonical_current_fotmob_fixture_review_policy_result_bytes(value: Any) -> b
 
 __all__ = [
     "DATASET_NAME",
+    "DEFAULT_MAX_SOURCE_AGE_SECONDS",
     "DEFAULT_MINIMUM_LEAD_SECONDS",
     "POLICY_ID",
     "REVIEWER_REFERENCE",
