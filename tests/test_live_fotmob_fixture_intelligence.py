@@ -136,21 +136,36 @@ def test_actual_runtime_shape_is_preserved_from_exact_raw_evidence(tmp_path: Pat
 
     with sqlite3.connect(scraper.db.db_path) as connection:
         row = connection.execute(
-            "SELECT home_form, away_form, match_details_evidence_sha256 "
+            "SELECT home_form, away_form, match_details_evidence_sha256, synced_at "
             "FROM fixture_extended WHERE fixture_id=123456"
         ).fetchone()
     assert json.loads(row[0]) == fixture["home_form"]
     assert json.loads(row[1]) == fixture["away_form"]
     assert row[2] == fixture["fotmob_match_details_evidence"].evidence_sha256
+    assert row[3] == OBSERVED.isoformat()
 
 
 def test_one_matches_response_is_captured_once_and_shared_by_fixtures(tmp_path: Path) -> None:
-    _scraper, fixtures, _target, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    scraper, fixtures, _target, _fixture_raw, _detail_raw = _runtime(tmp_path)
     receipts = [item["fotmob_fixture_evidence"] for item in fixtures]
     assert receipts[0] == receipts[1]
     assert receipts[0].fixture_identifier is None
     capture_root = tmp_path / EVIDENCE_ROOT
     assert len(tuple(capture_root.glob("fixture-list--*"))) == 1
+
+    # Merely sharing the fixture-list receipt must not manufacture current form
+    # for the second, unenriched fixture.
+    with sqlite3.connect(scraper.db.db_path) as connection:
+        row = connection.execute(
+            "SELECT home_form, away_form, synced_at, fixture_evidence_sha256, "
+            "match_details_evidence_sha256 FROM fixture_extended WHERE fixture_id=123457"
+        ).fetchone()
+    assert row is not None
+    assert row[0] is None
+    assert row[1] is None
+    assert row[2] is None
+    assert row[3] == receipts[1].evidence_sha256
+    assert row[4] is None
 
 
 def test_legacy_runtime_evidence_cannot_issue_canonical_intelligence(tmp_path: Path) -> None:
@@ -260,7 +275,7 @@ def test_manifest_symlink_fails_closed(tmp_path: Path) -> None:
 
 
 def test_absent_away_form_is_not_inferred(tmp_path: Path) -> None:
-    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(
+    scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(
         tmp_path,
         include_away=False,
     )
@@ -272,6 +287,12 @@ def test_absent_away_form_is_not_inferred(tmp_path: Path) -> None:
         "summary": "WD",
     }
     assert "away_form" not in fixture
+    with sqlite3.connect(scraper.db.db_path) as connection:
+        row = connection.execute(
+            "SELECT home_form, away_form FROM fixture_extended WHERE fixture_id=123456"
+        ).fetchone()
+    assert json.loads(row[0]) == fixture["home_form"]
+    assert row[1] is None
 
 
 def test_replay_is_deterministic_for_exact_runtime_evidence(tmp_path: Path) -> None:
