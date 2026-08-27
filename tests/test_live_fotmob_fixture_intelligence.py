@@ -74,11 +74,14 @@ def test_actual_runtime_shape_is_preserved_then_issued_from_raw_evidence(tmp_pat
         match_details_evidence=fixture["fotmob_match_details_evidence"], repository_root=tmp_path,
     )
     facts = {fact.field: fact for fact in snapshot.facts}
+    canonical_values = {fact["field"]: fact["value"] for fact in snapshot.to_dict()["facts"]}
     assert fixture["home_form"] == {"matches": [{"result": "Win", "opponent": "A"}, {"result": "Draw", "opponent": "B"}], "summary": "WD"}
     assert fixture["away_form"] == {"matches": [{"result": "Loss", "opponent": "C"}], "summary": "L"}
     assert fixture["current_form_observed_at"] == OBSERVED.isoformat()
-    assert facts["home_form"].value == fixture["home_form"]
-    assert facts["away_form"].value == fixture["away_form"]
+    # Facts are deliberately frozen internally; canonical serialization must
+    # still preserve the exact runtime JSON extracted from the source bytes.
+    assert canonical_values["home_form"] == fixture["home_form"]
+    assert canonical_values["away_form"] == fixture["away_form"]
     assert facts["home_form"].evidence_sha256 == fixture["fotmob_match_details_evidence"].evidence_sha256
     assert facts["home_form"].observed_at == OBSERVED
     with sqlite3.connect(_scraper.db.db_path) as connection:
