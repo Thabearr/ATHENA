@@ -409,7 +409,7 @@ class FotMobAdvancedScraper:
         return {"matches": recent, "summary": summary}
 
     def sync_to_db(self, matches: List[Dict]) -> bool:
-        """Persist enriched fixtures to the database."""
+        """Persist enriched fixtures and compatibility evidence pointers."""
         if not matches:
             logger.warning("No matches to sync")
             return False
@@ -487,10 +487,37 @@ class FotMobAdvancedScraper:
                         match.get("data_source"), match.get("season_label"),
                     ))
 
-                    # Extended metadata (if enriched)
-                    if any(k in match for k in ["home_lineup", "weather", "referee", "fotmob_fixture_evidence", "fotmob_match_details_evidence"]):
-                        fixture_evidence = match.get("fotmob_fixture_evidence")
-                        details_evidence = match.get("fotmob_match_details_evidence")
+                    fixture_evidence = match.get("fotmob_fixture_evidence")
+                    details_evidence = match.get("fotmob_match_details_evidence")
+                    has_enriched_metadata = any(
+                        key in match
+                        for key in (
+                            "home_lineup", "away_lineup", "home_injuries",
+                            "away_injuries", "weather", "referee", "head_to_head",
+                            "home_form", "away_form", "home_xg", "away_xg",
+                            "home_possession", "away_possession",
+                            "fotmob_match_details_evidence",
+                        )
+                    )
+
+                    if has_enriched_metadata:
+                        # Preserve absence as SQL NULL. In particular, a missing
+                        # source form side must not become a fabricated `{}`.
+                        home_form = (
+                            json.dumps(match["home_form"])
+                            if "home_form" in match
+                            else None
+                        )
+                        away_form = (
+                            json.dumps(match["away_form"])
+                            if "away_form" in match
+                            else None
+                        )
+                        form_observed_at = (
+                            match.get("current_form_observed_at")
+                            if "home_form" in match or "away_form" in match
+                            else None
+                        )
                         cursor.execute("""
                             INSERT INTO fixture_extended
                                 (fixture_id, home_lineup, away_lineup, home_injuries,
@@ -533,8 +560,8 @@ class FotMobAdvancedScraper:
                             json.dumps(match.get("weather", {})),
                             match.get("referee", "Unknown"),
                             json.dumps(match.get("head_to_head", {})),
-                            json.dumps(match.get("home_form", {})),
-                            json.dumps(match.get("away_form", {})),
+                            home_form,
+                            away_form,
                             match.get("home_xg"),
                             match.get("away_xg"),
                             match.get("home_possession"),
@@ -545,8 +572,27 @@ class FotMobAdvancedScraper:
                             None if details_evidence is None else details_evidence.evidence_directory.as_posix(),
                             None if details_evidence is None else details_evidence.evidence_sha256,
                             None if details_evidence is None else details_evidence.observed_at.isoformat(),
-                            match.get("current_form_observed_at")
-                            or datetime.now(timezone.utc).isoformat(),
+                            form_observed_at,
+                        ))
+                    elif fixture_evidence is not None:
+                        # A shared fixture-list response may be linked to every
+                        # derived fixture without pretending that match-details
+                        # enrichment or current form was observed for each one.
+                        cursor.execute("""
+                            INSERT INTO fixture_extended
+                                (fixture_id, fixture_evidence_path,
+                                 fixture_evidence_sha256,
+                                 fixture_evidence_observed_at, synced_at)
+                            VALUES (?, ?, ?, ?, NULL)
+                            ON CONFLICT(fixture_id) DO UPDATE SET
+                                fixture_evidence_path=excluded.fixture_evidence_path,
+                                fixture_evidence_sha256=excluded.fixture_evidence_sha256,
+                                fixture_evidence_observed_at=excluded.fixture_evidence_observed_at
+                        """, (
+                            fixture_id,
+                            fixture_evidence.evidence_directory.as_posix(),
+                            fixture_evidence.evidence_sha256,
+                            fixture_evidence.observed_at.isoformat(),
                         ))
 
                 conn.commit()
