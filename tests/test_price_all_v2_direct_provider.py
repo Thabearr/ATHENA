@@ -79,7 +79,7 @@ def _native_selection(
         outcome_id=provider_outcome_id,
         selection_label=label,
         odds_raw=f"{odds:.2f}",
-        odds_decimal=str(odds),
+        odds_decimal=f"{odds:g}",
         availability=NativeAvailability.AVAILABLE,
         provider_quote_at=None,
         provider_snapshot_id=None,
