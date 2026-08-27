@@ -67,11 +67,15 @@ A candidate is policy-reviewable only when:
 The 900-second rule is explicitly **ATHENA acquisition recency**. It is not
 provider-native freshness metadata and must never be relabelled as such.
 
-The 900-second maximum source age and 3600-second minimum kickoff lead are frozen
-reviewed production constants. The live Python entry point, CLI and hosted
-workflow expose no override for either value. Replay/test helpers may exercise
-other values only to prove fail-closed behavior; they are not a production
-configuration surface.
+The 900-second maximum source age and 3600-second minimum kickoff lead are part
+of the exact PR243 policy identity. They are not configuration. The domain
+policy issuer, replay helper, live Python entry point, CLI and hosted workflow
+expose no override for either value. Tests exercise stale and near-kickoff cases
+by changing evidence/timestamps, never by weakening the policy.
+
+The policy result constructor also rejects an object relabelled with different
+bounds, and every issued approval note records the exact `900` / `3600` values.
+A weaker decision therefore cannot be presented as the frozen PR243 policy.
 
 The policy never emits a fabricated `REJECTED` decision. A candidate which does
 not satisfy the policy simply remains unreviewed.
@@ -100,7 +104,7 @@ constructors revalidate their normal ancestry.
 
 The existing compiler still requires a clean tracked worktree and records the
 actual current Git commit. No caller can supply fixture IDs, team names, a
-preselected fixture list, or policy-bound overrides to this live path.
+preselected fixture list, or policy-bound overrides to this path.
 
 ## Production entry point
 
@@ -129,8 +133,10 @@ The hosted workflow is:
 .github/workflows/issue-current-fotmob-reviewed-source.yml
 ```
 
-It accepts only the request date, request timezone and request country code. The
-reviewed recency/lead policy cannot be weakened at dispatch time.
+It accepts only the request date, request timezone and request country code.
+Dispatch inputs are transferred to the shell through environment variables, not
+interpolated into executable shell text. The artifact upload path is fixed and
+does not contain caller input.
 
 Whether execution succeeds or fails closed, the CLI writes its explicit result
 receipt when `--output` is supplied. The workflow uploads that receipt together
