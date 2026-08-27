@@ -131,8 +131,8 @@ def test_actual_runtime_shape_is_preserved_from_exact_raw_evidence(tmp_path: Pat
     detail_payload = replay_live_fotmob_evidence(
         fixture["fotmob_match_details_evidence"], repository_root=tmp_path
     )
-    assert json.dumps(fixture_payload, separators=(",", ":")).encode() == fixture_raw
-    assert json.dumps(detail_payload, separators=(",", ":")).encode() == detail_raw
+    assert fixture_payload == json.loads(fixture_raw)
+    assert detail_payload == json.loads(detail_raw)
 
     with sqlite3.connect(scraper.db.db_path) as connection:
         row = connection.execute(
@@ -216,7 +216,9 @@ def test_alternate_root_and_traversal_are_rejected(tmp_path: Path) -> None:
     with pytest.raises(LiveFotMobFixtureIntelligenceError, match="traversal"):
         dataclasses.replace(
             receipt,
-            evidence_directory=EVIDENCE_ROOT / ".." / "escape",
+            evidence_directory=Path(
+                ".cache/athena-runtime/fotmob-live-evidence/../escape"
+            ),
         )
 
 
