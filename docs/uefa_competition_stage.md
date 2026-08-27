@@ -14,8 +14,8 @@ Hierarchy priority and competition stage remain different concepts. A UEFA quali
 
 - parent identity SHA-256: `1ec3df0b5c1a428cf92b1427929acb0c80e04143b90166fdd2e74da8516b8fec`
 - stage registry v1 SHA-256: `3125b6673b30a6706d9f03e335ae79ebca65a9a6c4b291504a7e5ae92a36d69b`
-- stage contract v1 SHA-256: `b009351d6de7dc85cb9bd4a9ad009aad34d36bbe514aa6cf2a0a28791cb35621`
-- Goal/Score training-sidecar contract v1 SHA-256: `bc898289751b790084d21101b0171ad651a95c4d179436f0f4ed4df8d41d49f9`
+- stage contract v1 SHA-256: `069a838cf9561243e5f02c56f814c6c458b7a883ec7c4d84d4dcbd95af0154ce`
+- Goal/Score training-sidecar contract v1 SHA-256: `2c1bfdd6d21892fba7cb1a1df64e02e188cf76c5fb2368716093df4343121014`
 - canonical historical warehouse schema SQL SHA-256: `d5a3b545a639c43a2b35fb18529a429ba2572d2861ac52c638cce42a8141306f`
 - frozen Goal/Score training-view v1 contract SHA-256: `bac5380814de579dffe96d4e5daa39b0cf1e2d6144b59b5d89f2a81f7b27017b`
 
@@ -55,6 +55,7 @@ The main-stage policy is frozen separately from qualifier interpretation. Review
 
 - UCL 2024+: `League, Matchday N`, `Playoffs, Matchday N`, `Finals, Round of 16`, `Finals, Quarterfinals`, `Finals, Semifinals`, and `Finals, Final`;
 - UEL / UECL 2024+: `League phase`, `Playoffs`, `Round of 16`, `Quarterfinals`, `Semifinals`, and `Final`;
+- UEL 2004-05 through 2020-21 `Round of 32`, including the source-native `Sechzehntelfinale` spelling used by OpenFootball;
 - UEL / UECL `Playoffs` from 2021-22 onward, matching the introduction of the knockout playoff round in those competitions; and
 - reviewed historical OpenFootball group headings beginning with either `Group` or the source-native `Gruppe` spelling.
 
