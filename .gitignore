@@ -14,4 +14,5 @@ backtest_output.txt
 .cache/football-data-uk/
 .cache/athena-research/
 .cache/athena-history/
+.cache/athena-runtime/
 data/history_exports/
