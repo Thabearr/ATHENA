@@ -116,12 +116,17 @@ evidence was captured.
 Those values may be compared later with a separately source-replayed reviewed
 snapshot, but this legacy capture cannot itself mint a reviewed fact.
 
-## Why canonical issuance is still blocked
+## Exact reviewed capability stop
 
-ATHENA already has reviewed transparent FotMob source contracts. The current
-legacy runtime request profile does not satisfy those request identities, and
-the reviewed match-details chain additionally requires the exact reviewed
-fixture/bootstrap/admission lineage before canonical semantics can be issued.
+ATHENA already has a reviewed transparent `/api/data/matches` capture contract.
+It also has the reviewed match-details lineage requiring an exact verified
+fixture/bootstrap plan before transparent `/api/data/matchDetails` capture,
+followed by persisted-evidence verification, structural/semantic review,
+whole-set admission, and the reviewed Fixture Intelligence snapshot wrapper.
+
+The legacy bypass runtime cannot manufacture that bootstrap/admission lineage,
+and its request profile is not interchangeable with the transparent profile.
+That is the first remaining canonical source-authority boundary.
 
 The correct response is therefore to fail closed rather than generate an
 `UNVERIFIED` snapshot and then try to weaken Fixture State.
