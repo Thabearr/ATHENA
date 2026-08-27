@@ -1,10 +1,18 @@
 """Compose PR243 current fixture identity with the reviewed UTC-native shadow path.
 
-This is a research/shadow boundary only. It replays the exact transparent
+This is a research/replay boundary only. It replays the exact transparent
 `/api/data/matches` response behind a current PR243 bootstrap, re-runs PR243,
-reconstructs UTC-native history only from exact PR119 bootstrap bytes plus
-reviewed fresh settlements, then delegates all feature/xG construction to the
-existing PR149 fresh-holdout implementation.
+reconstructs UTC-native history from the exact PR119 bootstrap bytes plus the
+reviewed fresh settlements supplied to this call, and delegates all feature/xG
+construction to the existing PR149 fresh-holdout implementation.
+
+Important: this module does not prove that the supplied fresh-settlement tuple is
+the complete active PR151 durable history prefix. Therefore a derived row is a
+deterministic shadow replay of the supplied reviewed inputs, not a claim that it
+is the complete current campaign state. The next reviewed boundary must bind an
+exact cumulative PR151 success archive + canonical tick receipt and prove the
+complete committed fresh-history prefix before current-shadow completeness can
+be claimed.
 
 Provider scalar form/Elo/fatigue fields are never treated as successor inputs.
 No score matrix, market probability, Phase 6 candidate, price, selection,
@@ -44,11 +52,11 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout_collection_control 
 
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-current-fotmob-utc-native-shadow-prediction-v1"
-STATUS_READY = "CURRENT_REVIEWED_FOTMOB_UTC_NATIVE_SHADOW_PREDICTIONS_ISSUED"
-NEXT_REQUIRED_BOUNDARY = (
-    "CURRENT_UTC_NATIVE_MODEL_PRODUCTION_AUTHORITY_REQUIRES_REVIEWED_"
-    "FRESH_HOLDOUT_CONFIRMATION"
-)
+STATUS_REPLAYED = "CURRENT_REVIEWED_FOTMOB_UTC_NATIVE_SHADOW_REPLAY_DERIVED"
+# Kept as a compatibility alias for callers that imported the original symbol.
+# The value itself no longer claims that current-history completeness is ready.
+STATUS_READY = STATUS_REPLAYED
+NEXT_REQUIRED_BOUNDARY = "CURRENT_DURABLE_FRESH_HISTORY_PREFIX_BINDING_REQUIRED"
 
 SEALED_COMPLETE_CASE = "SEALED_COMPLETE_CASE"
 MISSING_REVIEWED_FEATURES = "MISSING_REVIEWED_FEATURES"
@@ -57,13 +65,13 @@ _DISPOSITIONS = frozenset(
     {SEALED_COMPLETE_CASE, MISSING_REVIEWED_FEATURES, OUTSIDE_REVIEWED_SEAL_WINDOW}
 )
 
-_RESEARCH_EVIDENCE_KEYS = frozenset(
-    {
-        "reviewed_current_fixture_identity",
-        "utc_native_research_feature_construction",
-        "shadow_expected_goals_rates",
-    }
-)
+_RESEARCH_EVIDENCE_STATE = {
+    "reviewed_current_fixture_identity": True,
+    "supplied_reviewed_history_inputs_replayed": True,
+    "utc_native_research_feature_construction": True,
+    "shadow_expected_goals_rates": True,
+    "complete_current_fresh_history_prefix": False,
+}
 _DOWNSTREAM_AUTHORITY_KEYS = frozenset(
     {
         "production_model",
@@ -79,7 +87,7 @@ _DOWNSTREAM_AUTHORITY_KEYS = frozenset(
 
 
 class CurrentUtcNativeShadowPredictionError(ValueError):
-    """Raised when exact reviewed ancestry cannot be preserved."""
+    """Raised when exact reviewed replay ancestry cannot be preserved."""
 
 
 def _error(message: str) -> CurrentUtcNativeShadowPredictionError:
@@ -122,9 +130,7 @@ def _source_id(fixture_identifier: str) -> int:
 
 
 def _research_evidence() -> Mapping[str, bool]:
-    return types.MappingProxyType(
-        {key: True for key in sorted(_RESEARCH_EVIDENCE_KEYS)}
-    )
+    return types.MappingProxyType(dict(_RESEARCH_EVIDENCE_STATE))
 
 
 def _downstream_authority() -> Mapping[str, bool]:
@@ -165,7 +171,12 @@ def _canonical(payload: Mapping[str, Any]) -> bytes:
 
 @dataclasses.dataclass(frozen=True)
 class CurrentUtcNativeShadowPredictionSourceBundle:
-    """Exact immutable inputs needed to re-prove every detached handoff claim."""
+    """Exact supplied inputs needed to re-prove every detached replay claim.
+
+    `reviewed_fresh_settlements` is validated as reviewed PR149 settlement
+    objects, but this object deliberately does not claim that the tuple is the
+    complete active PR151 durable settlement prefix.
+    """
 
     current_bootstrap: ReviewedFixtureIntelligenceBootstrap
     source_raw_json: bytes
@@ -196,6 +207,7 @@ class CurrentUtcNativeShadowPredictionSourceBundle:
             raise _error("legacy bootstrap projection must be exact bytes")
         if type(self.reviewed_fresh_settlements) is not tuple:
             raise _error("reviewed fresh settlements must be immutable tuple")
+
         seen: set[str] = set()
         settlements: list[fresh.SettledFreshPrediction] = []
         for settlement in self.reviewed_fresh_settlements:
@@ -211,6 +223,7 @@ class CurrentUtcNativeShadowPredictionSourceBundle:
             fresh.build_fresh_history_ledger(self.legacy_bootstrap_projection_raw)
         except Exception as exc:
             raise _error("exact PR119 bootstrap failed reviewed replay") from exc
+
         object.__setattr__(self, "current_bootstrap", bootstrap)
         object.__setattr__(self, "source_manifest", manifest)
         object.__setattr__(self, "reviewed_fresh_settlements", tuple(settlements))
@@ -295,10 +308,9 @@ class CurrentUtcNativeShadowPredictionRow:
         return self.fixture.kickoff_utc
 
     def to_dict(self) -> dict[str, Any]:
-        fixture = self.fixture.to_dict()
         return {
             "fixture_identifier": self.fixture_identifier,
-            "fixture": fixture,
+            "fixture": self.fixture.to_dict(),
             "disposition": self.disposition,
             "missing_feature_ids": list(self.missing_feature_ids),
             "sealed_prediction_sha256": self.sealed_prediction_sha256,
@@ -320,7 +332,10 @@ class _DerivedShadowState:
     def __post_init__(self) -> None:
         _sha(self.candidate_bundle_sha256, "candidate_bundle_sha256")
         _sha(self.review_bundle_sha256, "review_bundle_sha256")
-        if type(self.fresh_legacy_update_count) is not int or self.fresh_legacy_update_count < 0:
+        if (
+            type(self.fresh_legacy_update_count) is not int
+            or self.fresh_legacy_update_count < 0
+        ):
             raise _error("fresh_legacy_update_count must be exact non-negative integer")
         if type(self.rows) is not tuple or not self.rows or any(
             type(row) is not CurrentUtcNativeShadowPredictionRow for row in self.rows
@@ -483,7 +498,7 @@ class CurrentUtcNativeShadowPredictionHandoff:
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION or self.dataset_name != DATASET_NAME:
             raise _error("handoff schema mismatch")
-        if self.status != STATUS_READY:
+        if self.status != STATUS_REPLAYED:
             raise _error("handoff status mismatch")
         if type(self.source_bundle) is not CurrentUtcNativeShadowPredictionSourceBundle:
             raise _error("handoff source_bundle type mismatch")
@@ -538,6 +553,10 @@ class CurrentUtcNativeShadowPredictionHandoff:
         return control.holdout_start_utc()
 
     @property
+    def current_fresh_history_prefix_complete(self) -> bool:
+        return False
+
+    @property
     def fixture_count(self) -> int:
         return len(self.rows)
 
@@ -570,6 +589,9 @@ class CurrentUtcNativeShadowPredictionHandoff:
             "legacy_bootstrap_sha256": self.legacy_bootstrap_sha256,
             "reviewed_fresh_settlement_count": self.reviewed_fresh_settlement_count,
             "reviewed_fresh_legacy_update_count": self.reviewed_fresh_legacy_update_count,
+            "current_fresh_history_prefix_complete": (
+                self.current_fresh_history_prefix_complete
+            ),
             "fixture_count": self.fixture_count,
             "sealed_complete_case_count": self.sealed_complete_case_count,
             "missing_feature_count": self.missing_feature_count,
@@ -590,7 +612,12 @@ def build_current_fotmob_utc_native_shadow_prediction_handoff(
     legacy_bootstrap_projection_raw: bytes,
     reviewed_fresh_settlements: tuple[fresh.SettledFreshPrediction, ...] = (),
 ) -> CurrentUtcNativeShadowPredictionHandoff:
-    """Issue research/shadow UTC-native xG seals for exact current PR243 fixtures."""
+    """Derive a deterministic shadow replay from exact supplied reviewed inputs.
+
+    This function validates each supplied fresh settlement, but it does not prove
+    that the tuple is the complete active PR151 durable prefix. Callers must not
+    treat a returned `SEALED_COMPLETE_CASE` as a complete-current-history claim.
+    """
     source = CurrentUtcNativeShadowPredictionSourceBundle(
         current_bootstrap=current_bootstrap,
         source_raw_json=source_raw_json,
@@ -602,7 +629,7 @@ def build_current_fotmob_utc_native_shadow_prediction_handoff(
     return CurrentUtcNativeShadowPredictionHandoff(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
-        status=STATUS_READY,
+        status=STATUS_REPLAYED,
         source_bundle=source,
         candidate_bundle_sha256=derived.candidate_bundle_sha256,
         review_bundle_sha256=derived.review_bundle_sha256,
@@ -636,6 +663,7 @@ __all__ = [
     "SCHEMA_VERSION",
     "SEALED_COMPLETE_CASE",
     "STATUS_READY",
+    "STATUS_REPLAYED",
     "CurrentUtcNativeShadowPredictionError",
     "CurrentUtcNativeShadowPredictionHandoff",
     "CurrentUtcNativeShadowPredictionRow",
