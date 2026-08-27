@@ -1,4 +1,10 @@
+import inspect
 from pathlib import Path
+
+from scripts.issue_current_fotmob_reviewed_source import (
+    build_verified_current_fotmob_bootstrap_from_capture,
+    issue_current_fotmob_reviewed_source,
+)
 
 
 def test_current_fotmob_workflow_uses_env_transport_for_dispatch_inputs() -> None:
@@ -30,3 +36,13 @@ def test_current_fotmob_workflow_has_no_policy_bound_dispatch_inputs() -> None:
     assert "max_source_age_seconds:" not in workflow
     assert "--minimum-lead-seconds" not in workflow
     assert "--max-source-age-seconds" not in workflow
+
+
+def test_live_and_replay_entry_points_cannot_override_policy_bounds() -> None:
+    for callable_ in (
+        issue_current_fotmob_reviewed_source,
+        build_verified_current_fotmob_bootstrap_from_capture,
+    ):
+        parameters = inspect.signature(callable_).parameters
+        assert "minimum_lead_seconds" not in parameters
+        assert "max_source_age_seconds" not in parameters
