@@ -1,0 +1,63 @@
+name: Issue Current Reviewed FotMob Source
+
+on:
+  workflow_dispatch:
+    inputs:
+      date:
+        description: Exact Gregorian request date (YYYYMMDD)
+        required: true
+        type: string
+      timezone:
+        description: Explicit FotMob request timezone
+        required: true
+        default: UTC
+        type: string
+      ccode3:
+        description: Explicit three-letter FotMob request country code
+        required: true
+        default: NGA
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  issue-reviewed-source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Issue current reviewed FotMob fixture bootstrap
+        env:
+          ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}
+          ATHENA_FOTMOB_REQUEST_TIMEZONE: ${{ inputs.timezone }}
+          ATHENA_FOTMOB_REQUEST_CCODE3: ${{ inputs.ccode3 }}
+        run: |
+          set -euo pipefail
+          mkdir -p .cache/athena-research/current-fotmob-reviewed-source
+          python scripts/issue_current_fotmob_reviewed_source.py \
+            --date "${ATHENA_FOTMOB_REQUEST_DATE}" \
+            --timezone "${ATHENA_FOTMOB_REQUEST_TIMEZONE}" \
+            --ccode3 "${ATHENA_FOTMOB_REQUEST_CCODE3}" \
+            --execute-live-network \
+            --output .cache/athena-research/current-fotmob-reviewed-source/execution.json
+
+      - name: Upload reviewed source receipt and exact raw evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-fotmob-reviewed-source-${{ github.run_id }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            .cache/athena-research/current-fotmob-reviewed-source/execution.json
+            .cache/athena-research/fotmob-data-matches-captures/
