@@ -58,16 +58,28 @@ A candidate is policy-reviewable only when:
    existing `athena-competition-review-priority-v2` source-identity registry;
 2. PR #41's own deterministic blocker derivation does not block the candidate;
 3. the source observation is not later than the policy evaluation timestamp;
-4. kickoff remains at least the requested minimum lead time after policy
-   evaluation.
+4. ATHENA acquired the exact source response no more than **900 seconds** before
+   policy evaluation;
+5. the fixture kickoff resolves to the exact requested source date in the exact
+   source timezone; and
+6. kickoff remains at least **3600 seconds** after policy evaluation.
+
+The 900-second rule is explicitly **ATHENA acquisition recency**. It is not
+provider-native freshness metadata and must never be relabelled as such.
+
+The 900-second maximum source age and 3600-second minimum kickoff lead are frozen
+reviewed production constants. The live Python entry point, CLI and hosted
+workflow expose no override for either value. Replay/test helpers may exercise
+other values only to prove fail-closed behavior; they are not a production
+configuration surface.
 
 The policy never emits a fabricated `REJECTED` decision. A candidate which does
 not satisfy the policy simply remains unreviewed.
 
 This means an unknown competition, ambiguous fixture/team/competition identity,
-duplicate source identity, malformed catalog field, stale/too-close fixture, or
-future-dated observation cannot be promoted merely to increase accumulator
-fixture count.
+duplicate source identity, malformed catalog field, stale acquisition,
+requested-date spillover, too-close fixture, or future-dated observation cannot
+be promoted merely to increase accumulator fixture count.
 
 International hierarchy entries which do not yet carry exact reviewed FotMob
 source identities are not automatically admitted by this policy.
@@ -87,8 +99,8 @@ reviewed source-capability identity. All existing admission/artifact/bootstrap
 constructors revalidate their normal ancestry.
 
 The existing compiler still requires a clean tracked worktree and records the
-actual current Git commit. No caller can supply fixture IDs, team names, or a
-preselected fixture list to this policy.
+actual current Git commit. No caller can supply fixture IDs, team names, a
+preselected fixture list, or policy-bound overrides to this live path.
 
 ## Production entry point
 
@@ -105,12 +117,25 @@ git pull && python scripts/issue_current_fotmob_reviewed_source.py \
   --date YYYYMMDD \
   --timezone UTC \
   --ccode3 NGA \
-  --minimum-lead-seconds 3600 \
   --execute-live-network
 ```
 
-There is no `module:callable`, caller-native fixture authority, or legacy
-`FotmobBypassClient` input.
+There is no `module:callable`, caller-native fixture authority, policy-bound
+override, or legacy `FotmobBypassClient` input.
+
+The hosted workflow is:
+
+```text
+.github/workflows/issue-current-fotmob-reviewed-source.yml
+```
+
+It accepts only the request date, request timezone and request country code. The
+reviewed recency/lead policy cannot be weakened at dispatch time.
+
+Whether execution succeeds or fails closed, the CLI writes its explicit result
+receipt when `--output` is supplied. The workflow uploads that receipt together
+with any exact PR #38 raw capture so a source failure is auditable rather than
+hidden behind a missing artifact.
 
 ## Current authority after PR243
 
@@ -120,8 +145,8 @@ A successful result means:
 REVIEWED_CURRENT_FOTMOB_FIXTURE_BOOTSTRAP_VERIFIED
 ```
 
-It proves current transparent source capture and reviewed source-scoped fixture
-identity ancestry.
+It proves a recent transparent ATHENA source acquisition and reviewed
+source-scoped fixture identity ancestry under the frozen PR243 policy.
 
 It does **not** authorize:
 
@@ -140,6 +165,24 @@ It does **not** authorize:
 - BET.
 
 Every such downstream authority remains false, and `wager_placed=false`.
+
+## SportyBet separation
+
+PR #243 changes no SportyBet code-generation transport. The established ATHENA
+path remains separate:
+
+```text
+ATHENA semantic intent
+-> current SportyBet semantic resolution
+-> ATHENA-derived provider-native identities
+-> direct SportyBet create/share
+-> direct SportyBet reload
+-> exact native + human-readable semantic verification
+```
+
+No ParseBot, BookBet or other third-party booking-code service is introduced.
+FotMob source qualification and SportyBet code-generation transport remain
+separate authority boundaries.
 
 ## Next exact boundary
 
