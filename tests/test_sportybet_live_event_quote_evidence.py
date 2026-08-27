@@ -148,7 +148,6 @@ def test_current_live_issuer_uses_direct_response_price_not_old_mapping_price(
     monkeypatch, tmp_path
 ):
     reviewed = _reviewed_mapping(monkeypatch)
-    # The reviewed mapping fixture was built from historical/manual odds 1.90.
     assert reviewed.mapped_selections[0].odds_raw == "1.90"
     monkeypatch.setattr(
         live,
@@ -313,8 +312,16 @@ def test_absent_or_unavailable_exact_mapping_is_audited_not_guessed(monkeypatch,
 
 def test_invalid_active_priced_selection_and_event_status_fail_closed(monkeypatch, tmp_path):
     reviewed = _reviewed_mapping(monkeypatch)
+    invalid_dir, _ = _capture(
+        monkeypatch,
+        tmp_path,
+        raw=_raw_event(odds="1.0"),
+    )
     with pytest.raises(live.SportyBetLiveEventQuoteEvidenceError, match="odds"):
-        _capture(monkeypatch, tmp_path, raw=_raw_event(odds="1.0"))
+        live.build_live_event_quote_inventory(
+            invalid_dir,
+            repository_root=tmp_path,
+        )
 
     directory, _ = _capture(
         monkeypatch,
@@ -352,7 +359,6 @@ def test_raw_tamper_extra_file_and_path_escape_fail_closed(monkeypatch, tmp_path
     with pytest.raises(live.SportyBetLiveEventQuoteEvidenceError):
         live.verify_live_event_quote_evidence(directory, repository_root=tmp_path)
 
-    # Restore the exact bytes so the extra-file check is independently exercised.
     raw_path.write_bytes(original)
     (directory / "extra.txt").write_text("x", encoding="utf-8")
     with pytest.raises(
