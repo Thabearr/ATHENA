@@ -1,11 +1,16 @@
 from __future__ import annotations
 
 import datetime as dt
+import inspect
 import json
 from pathlib import Path
 
 import pytest
 
+from domain.current_fotmob_fixture_review_policy import (
+    DEFAULT_MAX_SOURCE_AGE_SECONDS,
+    DEFAULT_MINIMUM_LEAD_SECONDS,
+)
 from domain.reviewed_fixture_intelligence_bootstrap import (
     canonical_reviewed_fixture_intelligence_bootstrap_bytes,
 )
@@ -16,6 +21,7 @@ from scripts.issue_current_fotmob_reviewed_source import (
     STATUS_NO_FIXTURES,
     STATUS_READY,
     CurrentFotMobReviewedSourceError,
+    build_parser,
     build_verified_current_fotmob_bootstrap_from_capture,
     issue_current_fotmob_reviewed_source,
 )
@@ -82,14 +88,20 @@ def _raw(*, league_name: str = "Premier League", ccode: str = "ENG") -> bytes:
     return json.dumps(payload, separators=(",", ":")).encode("utf-8")
 
 
-def _capture(tmp_path: Path, *, league_name: str = "Premier League", ccode: str = "ENG") -> Path:
+def _capture(
+    tmp_path: Path,
+    *,
+    league_name: str = "Premier League",
+    ccode: str = "ENG",
+    observed_at: dt.datetime = OBSERVED,
+) -> Path:
     raw = _raw(league_name=league_name, ccode=ccode)
     response = CapturedFotMobDataMatchesResponse(
         status=200,
         content_type="application/json; charset=utf-8",
         content_length=len(raw),
         body=raw,
-        observed_at=OBSERVED,
+        observed_at=observed_at,
         network_acquisition_performed=True,
     )
     directory, _manifest = write_data_matches_capture_directory(
@@ -114,12 +126,13 @@ def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> Non
     execution = build_verified_current_fotmob_bootstrap_from_capture(
         capture,
         issued_at=ISSUED,
-        minimum_lead_seconds=3600,
         repository_root=tmp_path,
         code_state=_code_state(),
     )
 
     assert execution.status == STATUS_READY
+    assert execution.policy_result.minimum_lead_seconds == DEFAULT_MINIMUM_LEAD_SECONDS
+    assert execution.policy_result.max_source_age_seconds == DEFAULT_MAX_SOURCE_AGE_SECONDS
     assert execution.policy_result.policy_approved_count == 1
     assert [item.fixture_identifier for item in execution.bootstrap.fixtures] == [
         "FOTMOB:1001"
@@ -127,6 +140,10 @@ def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> Non
     assert execution.verified_bootstrap.bootstrap == execution.bootstrap
     assert execution.next_required_boundary == NEXT_REQUIRED_BOUNDARY
     summary = execution.summary()
+    assert summary["minimum_lead_seconds"] == DEFAULT_MINIMUM_LEAD_SECONDS
+    assert summary["max_source_age_seconds"] == DEFAULT_MAX_SOURCE_AGE_SECONDS
+    assert summary["stale_source_excluded_count"] == 0
+    assert summary["request_date_excluded_count"] == 0
     assert summary["authority"] == {
         "transparent_fotmob_network_capture": True,
         "pr243_fixture_identity_policy_decisions": True,
@@ -175,6 +192,18 @@ def test_unknown_competition_fails_with_explicit_no_fixture_status(tmp_path: Pat
         )
 
 
+def test_stale_capture_cannot_be_replayed_as_current(tmp_path: Path) -> None:
+    stale_observed = ISSUED - dt.timedelta(seconds=DEFAULT_MAX_SOURCE_AGE_SECONDS + 1)
+    capture = _capture(tmp_path, observed_at=stale_observed)
+    with pytest.raises(CurrentFotMobReviewedSourceError, match=STATUS_NO_FIXTURES):
+        build_verified_current_fotmob_bootstrap_from_capture(
+            capture,
+            issued_at=ISSUED,
+            repository_root=tmp_path,
+            code_state=_code_state(),
+        )
+
+
 def test_dirty_code_state_still_fails_closed_in_existing_compiler(tmp_path: Path) -> None:
     capture = _capture(tmp_path)
     with pytest.raises(Exception, match="Tracked worktree must be clean"):
@@ -197,3 +226,28 @@ def test_live_entry_point_requires_explicit_network_authorization() -> None:
             ccode3="NGA",
             execute_live_network=False,
         )
+
+
+def test_live_entry_point_does_not_expose_policy_bound_overrides() -> None:
+    parameters = inspect.signature(issue_current_fotmob_reviewed_source).parameters
+    assert "minimum_lead_seconds" not in parameters
+    assert "max_source_age_seconds" not in parameters
+
+    option_strings = {
+        option
+        for action in build_parser()._actions
+        for option in action.option_strings
+    }
+    assert "--minimum-lead-seconds" not in option_strings
+    assert "--max-source-age-seconds" not in option_strings
+
+
+def test_hosted_workflow_does_not_expose_policy_bound_overrides() -> None:
+    repository = Path(__file__).resolve().parents[1]
+    workflow = (
+        repository / ".github/workflows/issue-current-fotmob-reviewed-source.yml"
+    ).read_text(encoding="utf-8")
+    assert "minimum_lead_seconds:" not in workflow
+    assert "max_source_age_seconds:" not in workflow
+    assert "--minimum-lead-seconds" not in workflow
+    assert "--max-source-age-seconds" not in workflow
