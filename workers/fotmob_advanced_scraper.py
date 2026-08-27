@@ -9,10 +9,15 @@ Uses FotmobBypassClient for TLS fingerprint spoofing to bypass Cloudflare.
 import logging
 import json
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import List, Dict, Optional
 
 from database.database import Database
 from workers.fotmob_bypass_client import FotmobBypassClient
+from domain.live_fotmob_fixture_intelligence import (
+    LiveFotMobFixtureIntelligenceError,
+    persist_live_fotmob_evidence,
+)
 
 logger = logging.getLogger("athena.fotmob_advanced_scraper")
 
@@ -27,6 +32,22 @@ class FotMobAdvancedScraper:
         self.db = Database()
         self.client = FotmobBypassClient()
         logger.info("FotMob Advanced Scraper initialized with bypass client.")
+
+    @staticmethod
+    def _repository_root() -> Path:
+        return Path(__file__).resolve().parents[1]
+
+    def _capture(self, *, kind: str, fixture_id: int, source_reference: str,
+                 observed_at: datetime, raw_bytes: bytes):
+        """Persist raw response evidence before legacy normalization."""
+        return persist_live_fotmob_evidence(
+            kind=kind,
+            fixture_identifier=f"FOTMOB:{fixture_id}",
+            source_reference=source_reference,
+            observed_at=observed_at,
+            raw_bytes=raw_bytes,
+            repository_root=self._repository_root(),
+        )
 
     def _parse_datetime(self, dt_str: str) -> Optional[datetime]:
         """Parse datetime string from FotMob (always returns UTC-aware)."""
@@ -62,7 +83,13 @@ class FotMobAdvancedScraper:
             target_date = now_utc + timedelta(days=day_offset)
             date_str = target_date.strftime("%Y%m%d")
 
-            data = self.client.fetch_matches_by_date(date_str)
+            source_response = getattr(self.client, "fetch_matches_by_date_with_raw", None)
+            acquired = source_response(date_str) if callable(source_response) else None
+            if acquired is not None:
+                data, raw_bytes, observed_at, source_reference = acquired
+            else:
+                data = self.client.fetch_matches_by_date(date_str)
+                raw_bytes = observed_at = source_reference = None
             if not data:
                 logger.warning(f"No data returned for date {date_str}")
                 continue
@@ -110,6 +137,17 @@ class FotMobAdvancedScraper:
                         if is_womens_fixture(league_name, home_team, away_team):
                             continue
 
+                        fixture_evidence = None
+                        if raw_bytes is not None:
+                            try:
+                                fixture_evidence = self._capture(
+                                    kind="FIXTURE_LIST", fixture_id=fixture_id,
+                                    source_reference=source_reference,
+                                    observed_at=observed_at, raw_bytes=raw_bytes,
+                                )
+                            except LiveFotMobFixtureIntelligenceError as exc:
+                                logger.warning("Live FotMob fixture evidence was not preserved: %s", exc)
+
                         # Get scores if available
                         home_score = match.get("home", {}).get("score", "")
                         away_score = match.get("away", {}).get("score", "")
@@ -138,6 +176,8 @@ class FotMobAdvancedScraper:
                             "season_label": str(now_utc.year),
                             "tournament_stage": match.get("tournamentStage"),
                         }
+                        if fixture_evidence is not None:
+                            enriched["fotmob_fixture_evidence"] = fixture_evidence
 
                         all_matches.append(enriched)
 
@@ -156,7 +196,21 @@ class FotMobAdvancedScraper:
         Call this for high-priority matches only (rate-limit friendly).
         """
         details = {}
-        match_info = self.client.fetch_match_details(fixture_id)
+        source_response = getattr(self.client, "fetch_match_details_with_raw", None)
+        acquired = source_response(fixture_id) if callable(source_response) else None
+        details_evidence = None
+        if acquired is not None:
+            match_info, raw_bytes, observed_at, source_reference = acquired
+            try:
+                details_evidence = self._capture(
+                    kind="MATCH_DETAILS", fixture_id=fixture_id,
+                    source_reference=source_reference, observed_at=observed_at,
+                    raw_bytes=raw_bytes,
+                )
+            except LiveFotMobFixtureIntelligenceError as exc:
+                logger.warning("Live FotMob match-details evidence was not preserved: %s", exc)
+        else:
+            match_info = self.client.fetch_match_details(fixture_id)
         if not match_info:
             return details
 
@@ -248,6 +302,10 @@ class FotMobAdvancedScraper:
                                     details["away_possession"] = int(str(vals[1]).replace('%', ''))
                                 except (ValueError, TypeError):
                                     pass
+
+            if details_evidence is not None:
+                details["fotmob_match_details_evidence"] = details_evidence
+                details["current_form_observed_at"] = details_evidence.observed_at.isoformat()
 
         except Exception as e:
             logger.warning(f"Error enriching match {fixture_id}: {e}")
@@ -351,9 +409,28 @@ class FotMobAdvancedScraper:
                         away_xg REAL,
                         home_possession INTEGER,
                         away_possession INTEGER,
+                        fixture_evidence_path TEXT,
+                        fixture_evidence_sha256 TEXT,
+                        fixture_evidence_observed_at TEXT,
+                        match_details_evidence_path TEXT,
+                        match_details_evidence_sha256 TEXT,
+                        match_details_evidence_observed_at TEXT,
                         synced_at TEXT
                     )
                 """)
+                # ``fixture_extended`` predates provenance columns in many
+                # operator databases.  Add them additively; raw bytes remain
+                # the authority and these columns are only replay pointers.
+                existing_columns = {
+                    row[1] for row in cursor.execute("PRAGMA table_info(fixture_extended)")
+                }
+                for column in (
+                    "fixture_evidence_path", "fixture_evidence_sha256",
+                    "fixture_evidence_observed_at", "match_details_evidence_path",
+                    "match_details_evidence_sha256", "match_details_evidence_observed_at",
+                ):
+                    if column not in existing_columns:
+                        cursor.execute(f"ALTER TABLE fixture_extended ADD COLUMN {column} TEXT")
 
                 for match in matches:
                     fixture_id = match.get("fixture_id")
@@ -384,14 +461,19 @@ class FotMobAdvancedScraper:
                     ))
 
                     # Extended metadata (if enriched)
-                    if any(k in match for k in ["home_lineup", "weather", "referee"]):
+                    if any(k in match for k in ["home_lineup", "weather", "referee", "fotmob_fixture_evidence", "fotmob_match_details_evidence"]):
+                        fixture_evidence = match.get("fotmob_fixture_evidence")
+                        details_evidence = match.get("fotmob_match_details_evidence")
                         cursor.execute("""
                             INSERT INTO fixture_extended
                                 (fixture_id, home_lineup, away_lineup, home_injuries,
                                  away_injuries, live_odds, weather, referee, 
                                  head_to_head, home_form, away_form, home_xg, away_xg, 
-                                 home_possession, away_possession, synced_at)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                 home_possession, away_possession, fixture_evidence_path,
+                                 fixture_evidence_sha256, fixture_evidence_observed_at,
+                                 match_details_evidence_path, match_details_evidence_sha256,
+                                 match_details_evidence_observed_at, synced_at)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                             ON CONFLICT(fixture_id) DO UPDATE SET
                                 home_lineup=excluded.home_lineup,
                                 away_lineup=excluded.away_lineup,
@@ -407,6 +489,12 @@ class FotMobAdvancedScraper:
                                 away_xg=excluded.away_xg,
                                 home_possession=excluded.home_possession,
                                 away_possession=excluded.away_possession,
+                                fixture_evidence_path=excluded.fixture_evidence_path,
+                                fixture_evidence_sha256=excluded.fixture_evidence_sha256,
+                                fixture_evidence_observed_at=excluded.fixture_evidence_observed_at,
+                                match_details_evidence_path=excluded.match_details_evidence_path,
+                                match_details_evidence_sha256=excluded.match_details_evidence_sha256,
+                                match_details_evidence_observed_at=excluded.match_details_evidence_observed_at,
                                 synced_at=excluded.synced_at
                         """, (
                             fixture_id,
@@ -424,6 +512,12 @@ class FotMobAdvancedScraper:
                             match.get("away_xg"),
                             match.get("home_possession"),
                             match.get("away_possession"),
+                            None if fixture_evidence is None else fixture_evidence.evidence_directory.as_posix(),
+                            None if fixture_evidence is None else fixture_evidence.evidence_sha256,
+                            None if fixture_evidence is None else fixture_evidence.observed_at.isoformat(),
+                            None if details_evidence is None else details_evidence.evidence_directory.as_posix(),
+                            None if details_evidence is None else details_evidence.evidence_sha256,
+                            None if details_evidence is None else details_evidence.observed_at.isoformat(),
                             match.get("current_form_observed_at")
                             or datetime.now(timezone.utc).isoformat(),
                         ))

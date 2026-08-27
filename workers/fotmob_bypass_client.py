@@ -4,6 +4,8 @@ Queries FotMob's internal Next.js /api/data/* endpoints.
 """
 import logging
 import time
+import json
+from datetime import datetime, timezone
 from typing import Optional, Dict, Any, List
 from curl_cffi import requests as cffi_requests
 from fake_useragent import UserAgent
@@ -91,6 +93,11 @@ class FotmobBypassClient:
         url = f"{FOTMOB_BASE}{ENDPOINTS['matches']}?date={date_str}"
         return self._execute_request(url)
 
+    def fetch_matches_by_date_with_raw(self, date_str: str):
+        """Compatibility acquisition plus the exact response bytes it parsed."""
+        url = f"{FOTMOB_BASE}{ENDPOINTS['matches']}?date={date_str}"
+        return self._execute_request(url, include_raw=True)
+
     def fetch_matches_today(self) -> Optional[Dict[str, Any]]:
         """Fetch all of today's matches (no date param needed)."""
         url = f"{FOTMOB_BASE}{ENDPOINTS['matches']}"
@@ -104,6 +111,11 @@ class FotmobBypassClient:
         """
         url = f"{FOTMOB_BASE}{ENDPOINTS['match_details']}?matchId={match_id}"
         return self._execute_request(url)
+
+    def fetch_match_details_with_raw(self, match_id: int):
+        """Compatibility acquisition plus the exact response bytes it parsed."""
+        url = f"{FOTMOB_BASE}{ENDPOINTS['match_details']}?matchId={match_id}"
+        return self._execute_request(url, include_raw=True)
 
     def fetch_all_leagues(self) -> Optional[Dict[str, Any]]:
         """
@@ -129,7 +141,8 @@ class FotmobBypassClient:
     # ------------------------------------------------------------------ #
 
     def _execute_request(
-        self, url: str, retries: int = 3, base_delay: float = 1.0
+        self, url: str, retries: int = 3, base_delay: float = 1.0,
+        include_raw: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """
         Execute an HTTP GET with retry logic, header rotation, and exponential backoff.
@@ -142,7 +155,15 @@ class FotmobBypassClient:
                 if response.status_code == 200:
                     ct = response.headers.get("content-type", "")
                     if "json" in ct.lower():
-                        return response.json()
+                        body = bytes(response.content)
+                        try:
+                            payload = json.loads(body.decode("utf-8"))
+                        except (UnicodeDecodeError, json.JSONDecodeError):
+                            logger.warning("FotMob returned invalid JSON for %s", url)
+                            return None
+                        if include_raw:
+                            return payload, body, datetime.now(timezone.utc), url
+                        return payload
                     else:
                         logger.warning(
                             f"FotMob returned 200 but non-JSON content-type: {ct} for {url}"
