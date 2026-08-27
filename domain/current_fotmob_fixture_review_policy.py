@@ -8,9 +8,12 @@ individual PR #41 APPROVED decisions only when the exact current candidate:
 * belongs to an already-reviewed exact FotMob source competition identity;
 * is not blocked by PR #41's own conflict/string checks;
 * was observed no later than the policy evaluation time;
-* is recent under an ATHENA acquisition-age bound;
+* is no more than 900 seconds old under ATHENA acquisition provenance;
 * kicks off on the exact requested source date in the source timezone; and
-* remains sufficiently prospective for the configured minimum lead window.
+* remains at least 3600 seconds prospective.
+
+The two time bounds are part of the PR243 policy identity. They are not caller
+configuration and cannot be overridden through this domain issuer.
 
 The acquisition-age rule is ATHENA provenance recency only. It is not silently
 reclassified as provider-native freshness metadata.
@@ -91,14 +94,6 @@ def _utc(value: Any, label: str) -> dt.datetime:
         raise CurrentFotMobFixtureReviewPolicyError(f"{label} is invalid") from exc
 
 
-def _non_negative_seconds(value: Any, label: str) -> int:
-    if type(value) is not int or value < 0:
-        raise CurrentFotMobFixtureReviewPolicyError(
-            f"{label} must be an exact non-negative integer"
-        )
-    return value
-
-
 def _safety() -> Mapping[str, bool]:
     return types.MappingProxyType({key: False for key in sorted(_SAFETY_KEYS)})
 
@@ -173,14 +168,20 @@ class CurrentFotMobFixtureReviewPolicyResult:
                 "candidate_bundle_sha256 must be exact SHA-256"
             )
         reviewed_at = _utc(self.reviewed_at, "reviewed_at")
-        minimum_lead = _non_negative_seconds(
-            self.minimum_lead_seconds,
-            "minimum_lead_seconds",
-        )
-        max_source_age = _non_negative_seconds(
-            self.max_source_age_seconds,
-            "max_source_age_seconds",
-        )
+        if (
+            type(self.minimum_lead_seconds) is not int
+            or self.minimum_lead_seconds != DEFAULT_MINIMUM_LEAD_SECONDS
+        ):
+            raise CurrentFotMobFixtureReviewPolicyError(
+                "minimum_lead_seconds must equal the frozen PR243 policy bound"
+            )
+        if (
+            type(self.max_source_age_seconds) is not int
+            or self.max_source_age_seconds != DEFAULT_MAX_SOURCE_AGE_SECONDS
+        ):
+            raise CurrentFotMobFixtureReviewPolicyError(
+                "max_source_age_seconds must equal the frozen PR243 policy bound"
+            )
         count_labels = (
             "candidate_count",
             "exact_competition_identity_count",
@@ -237,6 +238,11 @@ class CurrentFotMobFixtureReviewPolicyResult:
             raise CurrentFotMobFixtureReviewPolicyError(
                 "current policy must never manufacture REJECTED decisions"
             )
+        required_note_tokens = (
+            POLICY_ID,
+            f"minimum_lead_seconds={DEFAULT_MINIMUM_LEAD_SECONDS}",
+            f"max_source_age_seconds={DEFAULT_MAX_SOURCE_AGE_SECONDS}",
+        )
         for decision in self.review_bundle.decisions:
             if decision.reviewer_reference != REVIEWER_REFERENCE:
                 raise CurrentFotMobFixtureReviewPolicyError(
@@ -246,13 +252,11 @@ class CurrentFotMobFixtureReviewPolicyResult:
                 raise CurrentFotMobFixtureReviewPolicyError(
                     "policy decision reviewed_at differs from result reviewed_at"
                 )
-            if POLICY_ID not in decision.notes:
+            if any(token not in decision.notes for token in required_note_tokens):
                 raise CurrentFotMobFixtureReviewPolicyError(
-                    "policy decision notes do not identify the reviewed policy"
+                    "policy decision notes do not identify the exact frozen PR243 policy"
                 )
         object.__setattr__(self, "reviewed_at", reviewed_at)
-        object.__setattr__(self, "minimum_lead_seconds", minimum_lead)
-        object.__setattr__(self, "max_source_age_seconds", max_source_age)
         object.__setattr__(self, "safety", _validate_safety(self.safety))
 
     def to_dict(self) -> dict[str, Any]:
@@ -282,24 +286,16 @@ def build_current_fotmob_fixture_review_policy_result(
     candidate_bundle: Any,
     *,
     reviewed_at: Any,
-    minimum_lead_seconds: int = DEFAULT_MINIMUM_LEAD_SECONDS,
-    max_source_age_seconds: int = DEFAULT_MAX_SOURCE_AGE_SECONDS,
 ) -> CurrentFotMobFixtureReviewPolicyResult:
-    """Issue exact PR #41 decisions under the separately reviewed PR243 policy."""
+    """Issue exact PR #41 decisions under the frozen reviewed PR243 policy."""
 
     if type(candidate_bundle) is not FotMobFixtureCandidateBundle:
         raise CurrentFotMobFixtureReviewPolicyError(
             "candidate_bundle must be exact FotMobFixtureCandidateBundle"
         )
     reviewed = _utc(reviewed_at, "reviewed_at")
-    minimum_lead = _non_negative_seconds(
-        minimum_lead_seconds,
-        "minimum_lead_seconds",
-    )
-    max_source_age = _non_negative_seconds(
-        max_source_age_seconds,
-        "max_source_age_seconds",
-    )
+    minimum_lead = DEFAULT_MINIMUM_LEAD_SECONDS
+    max_source_age = DEFAULT_MAX_SOURCE_AGE_SECONDS
 
     try:
         baseline = build_fotmob_fixture_candidate_review_bundle(candidate_bundle, ())
