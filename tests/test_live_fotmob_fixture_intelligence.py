@@ -93,7 +93,7 @@ def test_actual_runtime_shape_is_preserved_then_issued_from_raw_evidence(tmp_pat
     assert json.loads(row[1]) == fixture["away_form"]
     assert row[2] == facts["home_form"].evidence_sha256
     state = build_fixture_state_v2_snapshot(snapshot)
-    assert state.field_index()[FixtureStateFieldId.HOME_FORM].status is FixtureStateStatus.BLOCKED
+    assert state.field_index[FixtureStateFieldId.HOME_FORM].status is FixtureStateStatus.BLOCKED
 
 
 def test_db_normalized_values_are_not_canonical_authority(tmp_path: Path) -> None:
