@@ -121,7 +121,12 @@ def _synthetic_success_artifact(
     return artifact, zip_bytes, run
 
 
-def _selected_run_material(lower, *, artifact_id: int = 7001, release_state: str = "RELEASE_ARCHIVE_AND_RECEIPT_VERIFIED"):
+def _selected_run_material(
+    lower,
+    *,
+    artifact_id: int = 7001,
+    release_state: str = "RELEASE_ARCHIVE_AND_RECEIPT_VERIFIED",
+):
     artifact = {
         "id": artifact_id,
         "name": lower.source_bundle.artifact_name,
@@ -222,6 +227,18 @@ def _fake_projected_audit(
     }
 
 
+def _wrapped_fake_projected_audit(**kwargs):
+    """Mirror production's projected-audit error normalization in deterministic tests."""
+    try:
+        return _fake_projected_audit(**kwargs)
+    except CurrentLatestDurableFreshHistoryError:
+        raise
+    except Exception as exc:
+        raise CurrentLatestDurableFreshHistoryError(
+            "reviewed projected PR151 Actions lineage audit failed"
+        ) from exc
+
+
 def _readers(*, runs: list[dict], artifacts: dict[int, dict], zips: dict[int, bytes]):
     return {
         "get_main_ref": lambda: {"sha": EXPECTED_MAIN},
@@ -262,7 +279,11 @@ def _github_evidence(
     artifacts: dict[int, dict],
     zips: dict[int, bytes],
 ) -> GitHubActionsLineageEvidenceBundle:
-    monkeypatch.setattr(latest, "_run_reviewed_projected_audit", _fake_projected_audit)
+    monkeypatch.setattr(
+        latest,
+        "_run_reviewed_projected_audit",
+        _wrapped_fake_projected_audit,
+    )
     readers = _readers(runs=runs, artifacts=artifacts, zips=zips)
     recorder = latest._ReadRecorder()
     audit = latest._run_reviewed_projected_audit(
@@ -555,7 +576,7 @@ def test_partial_durability_on_selected_latest_success_blocks_current_claim(
 ) -> None:
     with pytest.raises(
         CurrentLatestDurableFreshHistoryError,
-        match="lacks long-lived archive\+receipt durability",
+        match=r"lacks long-lived archive\+receipt durability",
     ):
         _source_bundle(
             tmp_path,
