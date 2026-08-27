@@ -37,13 +37,17 @@ jobs:
           python-version: "3.12"
 
       - name: Issue current reviewed FotMob fixture bootstrap
+        env:
+          ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}
+          ATHENA_FOTMOB_REQUEST_TIMEZONE: ${{ inputs.timezone }}
+          ATHENA_FOTMOB_REQUEST_CCODE3: ${{ inputs.ccode3 }}
         run: |
           set -euo pipefail
           mkdir -p .cache/athena-research/current-fotmob-reviewed-source
           python scripts/issue_current_fotmob_reviewed_source.py \
-            --date '${{ inputs.date }}' \
-            --timezone '${{ inputs.timezone }}' \
-            --ccode3 '${{ inputs.ccode3 }}' \
+            --date "${ATHENA_FOTMOB_REQUEST_DATE}" \
+            --timezone "${ATHENA_FOTMOB_REQUEST_TIMEZONE}" \
+            --ccode3 "${ATHENA_FOTMOB_REQUEST_CCODE3}" \
             --execute-live-network \
             --output .cache/athena-research/current-fotmob-reviewed-source/execution.json
 
@@ -51,9 +55,9 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: current-fotmob-reviewed-source-${{ inputs.date }}-${{ github.run_id }}
+          name: current-fotmob-reviewed-source-${{ github.run_id }}
           if-no-files-found: error
           retention-days: 7
           path: |
             .cache/athena-research/current-fotmob-reviewed-source/execution.json
-            .cache/athena-research/fotmob-data-matches-captures/${{ inputs.date }}/
+            .cache/athena-research/fotmob-data-matches-captures/
