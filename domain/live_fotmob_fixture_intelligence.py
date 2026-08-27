@@ -30,6 +30,7 @@ DATASET_NAME = "athena-live-fotmob-runtime-evidence-v2"
 EVIDENCE_ROOT = Path(".cache/athena-runtime/fotmob-live-evidence")
 RAW_FILENAME = "response.json"
 MANIFEST_FILENAME = "manifest.json"
+MAX_RESPONSE_BYTES = 8 * 1024 * 1024
 CANONICAL_ISSUER_STATUS = (
     "BLOCKED_REVIEWED_TRANSPARENT_FOTMOB_SOURCE_REPLAY_REQUIRED"
 )
@@ -329,6 +330,10 @@ def persist_live_fotmob_evidence(
         raise LiveFotMobFixtureIntelligenceError(
             "raw_bytes must be exact non-empty bytes"
         )
+    if len(raw_bytes) > MAX_RESPONSE_BYTES:
+        raise LiveFotMobFixtureIntelligenceError(
+            "raw FotMob evidence exceeds the 8 MiB compatibility capture limit"
+        )
     _strict_json(raw_bytes)
     if output_root != EVIDENCE_ROOT:
         raise LiveFotMobFixtureIntelligenceError(
@@ -449,6 +454,10 @@ def replay_live_fotmob_evidence(
         receipt.evidence_directory,
     )
     raw = _read_regular_file(directory / RAW_FILENAME, "live evidence response.json")
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise LiveFotMobFixtureIntelligenceError(
+            "raw FotMob evidence exceeds the 8 MiB compatibility capture limit"
+        )
     manifest_bytes = _read_regular_file(
         directory / MANIFEST_FILENAME,
         "live evidence manifest.json",
@@ -591,6 +600,7 @@ def issue_live_fotmob_fixture_intelligence(
 __all__ = [
     "CANONICAL_ISSUER_STATUS",
     "EVIDENCE_ROOT",
+    "MAX_RESPONSE_BYTES",
     "LiveFotMobEvidenceReceipt",
     "LiveFotMobFixtureIntelligenceError",
     "issue_live_fotmob_fixture_intelligence",
