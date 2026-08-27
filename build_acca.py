@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 """
-ATHENA Accumulator Builder - CLI Interface
-Generates bulletproof accas based on statistical analysis over configurable timeframes.
-Usage: python build_acca.py --days 2 --folds 20
+Legacy ATHENA accumulator analysis CLI.
+
+This module retains the operational FotMob/OpenFootball and MatchAnalyst
+compatibility surface.  It is analysis-only and is not authoritative for
+selection, accumulator, or SportyBet booking-code generation.  The single
+reviewed booking-code entry point is the source-bound runner in
+``scripts/execute_canonical_accumulator.py``.
+
+Usage: python build_acca.py generate --days 2 --folds 20
 """
 
 import sys
@@ -52,7 +58,12 @@ console = Console()
 
 
 class AccaBuilder:
-    """Orchestrates acca generation pipeline."""
+    """Run the retained legacy analysis/report pipeline only.
+
+    The class deliberately does not mint a SportyBet code.  Callers that need
+    a code must use the canonical Phase 6 -> 7 -> 8 -> 9 -> semantic bridge
+    runner documented in ``docs/canonical_accumulator_sportybet_execution.md``.
+    """
     
     def __init__(self, days_ahead: int = 3, min_edge: float = 0.05):
         self.days_ahead = min(days_ahead, 7)  # Enforce 7-day max
@@ -409,8 +420,8 @@ class AccaBuilder:
         
         # Header
         header = (
-            f"⚡ {fold_size}-FOLD BULLETPROOF ACCUMULATOR SLIP\n"
-            f"🎯 Compounded Odds: {total_odds}x\n"
+            f"ℹ LEGACY {fold_size}-FOLD ANALYSIS REPORT — NOT A BETTING SLIP\n"
+            f"🎯 Estimated Compounded Odds: {total_odds}x\n"
             f"📊 Total Analyzed: {acca.get('available_count', 0)} fixtures\n"
             f"✅ Eligible: {acca.get('eligible_count', 0)} fixtures\n"
             f"⏰ Timeframe: {acca.get('timeframe_days', 0)} day(s)\n"
@@ -444,9 +455,10 @@ class AccaBuilder:
         console.print(table)
         
         console.print(
-            f"\n[bold green]✅ FULLPROOF ACCA READY FOR BETTING[/bold green]\n"
-            f"Expected Value: {total_odds}x your stake\n"
-            f"Strategy: High-confidence markets + strong edges + risk-adjusted selection\n"
+            f"\n[bold yellow]ℹ LEGACY ANALYSIS REPORT — NO BOOKING CODE GENERATED[/bold yellow]\n"
+            f"Estimated odds in report: {total_odds}x\n"
+            f"Use scripts/execute_canonical_accumulator.py for the reviewed,\n"
+            f"source-bound SportyBet semantic create/reload workflow.\n"
         )
 
 
@@ -459,7 +471,7 @@ def generate(
     league: str = typer.Option(None, "--league", "-l", help="Filter by league name"),
 ):
     """
-    Generate a bulletproof accumulator using fullproof strategy.
+    Generate a legacy analysis report; this command cannot generate a booking code.
     
     Examples:
       python build_acca.py generate --days 2 --folds 10
@@ -480,7 +492,7 @@ def quick(
     folds: int = typer.Option(5, "--folds", "-f", help="Number of legs"),
 ):
     """
-    Quick acca with defaults (2 days, min edge 0.05, fullproof strategy).
+    Quick legacy analysis report with defaults.  No booking code is generated.
     
     Example: python build_acca.py quick --folds 8
     """

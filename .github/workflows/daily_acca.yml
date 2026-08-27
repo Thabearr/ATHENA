@@ -1,4 +1,7 @@
-name: ATHENA Daily Accumulator
+# LEGACY ANALYSIS / RESEARCH SURFACE ONLY.
+# build_acca.py no longer represents the canonical SportyBet booking-code path.
+# The reviewed execution entry point is canonical-sportybet-accumulator.yml.
+name: ATHENA Daily Legacy Analysis
 
 on:
   schedule:
@@ -6,7 +9,7 @@ on:
   workflow_dispatch: # Allow manual trigger
 
 jobs:
-  build-acca:
+  build-legacy-analysis:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -23,7 +26,7 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Generate Accumulator
+      - name: Generate legacy analysis report (no booking code)
         env:
           PYTHONPATH: .
           PYTHONIOENCODING: utf-8

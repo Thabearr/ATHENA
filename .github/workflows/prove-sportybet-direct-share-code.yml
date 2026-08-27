@@ -1,4 +1,8 @@
-name: Prove SportyBet direct share code
+# HISTORICAL PROOF / RESEARCH SURFACE ONLY.
+# This transport-only workflow is retained for reproducibility.  It is not the
+# canonical ATHENA accumulator booking-code entry point and cannot authorize
+# user-intent semantics.  Use canonical-sportybet-accumulator.yml instead.
+name: Historical proof — SportyBet direct share code
 
 on:
   pull_request:
@@ -20,7 +24,7 @@ concurrency:
 
 jobs:
   prove:
-    name: one-leg anonymous create-and-load roundtrip
+    name: historical one-leg transport roundtrip (non-canonical)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
@@ -41,7 +45,7 @@ jobs:
           python -m pip install pytest
           python -m pytest -q tests/test_sportybet_direct_share_bridge.py
 
-      - name: Create and round-trip one anonymous SportyBet share code
+      - name: Historical proof only — direct transport round-trip
         id: direct
         continue-on-error: true
         run: |

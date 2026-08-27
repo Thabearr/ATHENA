@@ -21,8 +21,7 @@ cookie, wallet, stake, or bet authority is introduced here.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timezone
-from decimal import Decimal, InvalidOperation
+from datetime import datetime, timedelta, timezone
 import hashlib
 import json
 import math
@@ -31,13 +30,13 @@ from pathlib import Path
 import tempfile
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Sequence
+import unicodedata
 
 from domain import sportybet_fotmob_full_utc_reconciliation as reconciliation
 from domain import sportybet_fotmob_full_utc_reconciliation_receipt as reconciliation_receipt
 from domain import sportybet_user_controlled_native_inventory as source_inventory
 from domain._accumulator_optimizer_contracts import (
     AccumulatorOptimizerError,
-    AccumulatorOptimizationStatus,
     validate_accumulator_optimizer_contract,
 )
 from domain._forward_calibration_fit import ForwardCalibrationArtifact
@@ -93,6 +92,10 @@ SHORTFALL_POLICY_ID = (
     "REQUESTED_FOLD_COUNT_IS_TARGET_NO_FORCED_REPLACEMENT_OR_PADDING_V1"
 )
 FRESHNESS_POLICY_ID = "SOURCE_EVIDENCE_OBSERVED_AT_MAX_900S_PREMATCH_BOOKABLE_V1"
+SEMANTIC_NATIVE_ROUNDTRIP_SOURCE_BINDING_POLICY_ID = (
+    "CREATE_RELOAD_NATIVE_ROWS_MUST_MATCH_SOURCE_QUOTE_AND_SEMANTIC_INTENT_V1"
+)
+MINIMUM_LEAD_SECONDS_DEFAULT = 120
 REAL_CURRENT_CANONICAL_EXECUTION_STATUS = (
     "NOT_RUN_VERIFIED_CURRENT_SPORTYBET_EXECUTION_CORPUS_UNAVAILABLE"
 )
@@ -166,6 +169,12 @@ def _exact_sha(value: Any, label: str) -> str:
     return value
 
 
+def _semantic_name_key(value: str) -> str:
+    folded = unicodedata.normalize("NFKD", value)
+    ascii_text = folded.encode("ascii", "ignore").decode("ascii")
+    return "".join(char.lower() for char in ascii_text if char.isalnum())
+
+
 def _quote_sha(quote: SportyBetExactQuote) -> str:
     return _sha(quote.to_dict())
 
@@ -198,7 +207,11 @@ def canonical_execution_contract_payload(
         "count_invariant_policy_id": COUNT_INVARIANT_POLICY_ID,
         "shortfall_policy_id": SHORTFALL_POLICY_ID,
         "freshness_policy_id": FRESHNESS_POLICY_ID,
+        "semantic_native_roundtrip_source_binding_policy_id": (
+            SEMANTIC_NATIVE_ROUNDTRIP_SOURCE_BINDING_POLICY_ID
+        ),
         "max_quote_age_seconds": DEFAULT_MAX_QUOTE_AGE_SECONDS,
+        "minimum_lead_seconds_default": MINIMUM_LEAD_SECONDS_DEFAULT,
         "authority_flags": dict(AUTHORITY_FLAGS),
         "real_current_execution_status": REAL_CURRENT_CANONICAL_EXECUTION_STATUS,
     }
@@ -229,7 +242,7 @@ def calculate_canonical_execution_contract_sha256(
 
 # Filled from the exact payload after the first implementation checkpoint.
 EXPECTED_CANONICAL_EXECUTION_CONTRACT_SHA256_BY_VERSION: Mapping[int, str] = {
-    1: "__PENDING_CANONICAL_EXECUTION_CONTRACT_SHA256__",
+    1: "e4619cfa17e8e6adabd93317e4c76a34d0d82d5ac7ea66b5775f78130542f3d1",
 }
 
 
@@ -798,9 +811,13 @@ def adapt_optimization_to_semantic_intents(
             )
         opportunity = _selected_opportunity_or_fail(leg, audit)
         quote = _selected_quote(item, leg)
+        candidate_ids = {
+            variant.candidate_id for variant in opportunity.variants
+        }
         candidate_matches = tuple(
             candidate
             for candidate in item.optimizer_input.candidates
+            if candidate.candidate_id in candidate_ids
             if candidate.market_id is leg.market_id
             and candidate.outcome_id is leg.outcome_id
             and candidate.line == leg.line
@@ -859,6 +876,7 @@ def _replay_and_verify_fixture_sources(
     *,
     now: datetime,
     required_quote_identity_sha256: str,
+    minimum_lead_seconds: int,
 ) -> None:
     """Replay all source bytes immediately before semantic provider execution."""
     current_inventory = _inventory_from_source(
@@ -900,9 +918,9 @@ def _replay_and_verify_fixture_sources(
         raise CanonicalAccumulatorExecutionError(
             "current reconciliation is not the exact authorized fixture exposure"
         )
-    if now >= rebuilt.sportybet_kickoff_utc:
+    if now + timedelta(seconds=minimum_lead_seconds) >= rebuilt.sportybet_kickoff_utc:
         raise CanonicalAccumulatorExecutionError(
-            "selected fixture is no longer strictly pre-match"
+            "selected fixture is live or too close to kickoff for safe execution"
         )
     current_quotes = _derive_quotes(
         item.mapping,
@@ -916,13 +934,13 @@ def _replay_and_verify_fixture_sources(
         raise CanonicalAccumulatorExecutionError(
             "source-issued SportyBet quote ancestry changed after qualification"
         )
-    quote = _quote_by_identity(item, required_quote_identity_sha256)
     current_quote = current_by_hash.get(required_quote_identity_sha256)
     if current_quote is None:
         raise CanonicalAccumulatorExecutionError(
             "selected source-issued quote is absent from current evidence replay"
         )
-    if quote.provider_snapshot_id is not None or current_quote.provider_snapshot_id is not None:
+    stored_quote = _quote_by_identity(item, required_quote_identity_sha256)
+    if stored_quote.provider_snapshot_id is not None or current_quote.provider_snapshot_id is not None:
         raise CanonicalAccumulatorExecutionError(
             "unproven provider snapshot identity cannot authorize execution"
         )
@@ -938,6 +956,7 @@ def _validate_final_freshness_and_bookability_ancestry(
     fixture_inputs: tuple[CanonicalAccumulatorFixtureInput, ...],
     *,
     now: datetime,
+    minimum_lead_seconds: int,
 ) -> None:
     wrappers = _wrapper_by_fixture(fixture_inputs)
     for intent in intents:
@@ -950,6 +969,7 @@ def _validate_final_freshness_and_bookability_ancestry(
             item,
             now=now,
             required_quote_identity_sha256=intent.quote_identity_sha256,
+            minimum_lead_seconds=minimum_lead_seconds,
         )
         quote = _quote_by_identity(item, intent.quote_identity_sha256)
         if quote.evidence_snapshot_sha256 != intent.evidence_snapshot_sha256:
@@ -974,6 +994,15 @@ def _validate_optimization_ancestry(
     contract_identities: Mapping[str, str],
 ) -> tuple[int, int, tuple[str, ...]]:
     wrappers = _wrapper_by_fixture(fixture_inputs)
+    audit_fixture_ids = [audit.fixture_id for audit in optimization.route_audits]
+    if (
+        len(audit_fixture_ids) != len(wrappers)
+        or len(audit_fixture_ids) != len(set(audit_fixture_ids))
+        or set(audit_fixture_ids) != set(wrappers)
+    ):
+        raise CanonicalAccumulatorExecutionError(
+            "Router audit count/fixture ancestry does not equal canonical fixture universe"
+        )
     if optimization.accumulator_optimizer_contract_sha256 != contract_identities[
         "accumulator_optimizer_contract_sha256"
     ]:
@@ -986,6 +1015,10 @@ def _validate_optimization_ancestry(
         raise CanonicalAccumulatorExecutionError("Optimizer Router dependency drifted")
     if optimization.requested_target_size < 1:
         raise CanonicalAccumulatorExecutionError("Optimizer target identity is invalid")
+    if len(optimization.selected_legs) > optimization.requested_target_size:
+        raise CanonicalAccumulatorExecutionError(
+            "Optimizer qualified leg count exceeds its requested target"
+        )
     selected_fixture_ids: set[str] = set()
     router_ids: list[str] = []
     for leg in optimization.selected_legs:
@@ -1012,13 +1045,12 @@ def _validate_optimization_ancestry(
         _selected_opportunity_or_fail(leg, audit)
         _selected_quote(item, leg)
         router_ids.append(leg.router_decision_sha256)
-    route_selected_count = sum(
-        1
-        for audit in optimization.route_audits
-        if audit.router_decision_status == "SELECTED"
-        and audit.portfolio_admitted
-        and audit.selected_opportunity_id is not None
-    )
+    # The Router may qualify a larger admitted pool than the Optimizer can
+    # place under its joint exposure caps.  The count invariant is therefore
+    # about the exact legs that crossed the Optimizer boundary, not every
+    # Router-qualified reserve leg.  Each selected leg was already checked
+    # above against its own admitted Router audit.
+    route_selected_count = len(optimization.selected_legs)
     router_pool_count = sum(
         1
         for audit in optimization.route_audits
@@ -1129,6 +1161,20 @@ def _fixture_ancestry(
         ),
         "canonical_mapping_sha256": item.mapping_sha256,
         "candidate_ids": [candidate.candidate_id for candidate in item.optimizer_input.candidates],
+        "candidate_ancestry": [
+            candidate.to_dict()
+            for candidate in sorted(
+                item.optimizer_input.candidates,
+                key=lambda value: value.candidate_id,
+            )
+        ],
+        "quote_ancestry": [
+            quote.to_dict()
+            for quote in sorted(
+                item.optimizer_input.quotes,
+                key=_quote_sha,
+            )
+        ],
         "quote_identity_sha256": sorted(
             _quote_sha(quote) for quote in item.optimizer_input.quotes
         ),
@@ -1185,14 +1231,21 @@ def write_canonical_execution_artifact(
     return _atomic_write_json(output_dir / filename, result.to_dict())
 
 
-def _failure_artifact(
+def write_canonical_execution_failure_artifact(
     *,
+    output_dir: Path,
     contract_sha256: str,
     evaluation_time: datetime,
     requested_fold_count: int,
     error: str,
 ) -> dict[str, Any]:
-    return {
+    """Persist a safe no-code artifact when the runner fails before a result.
+
+    The artifact contains no provider credentials or raw responses.  It is
+    intentionally a separate, explicit failure status rather than a partial
+    booking-code receipt.
+    """
+    payload = {
         "schema": "athena-canonical-accumulator-sportybet-execution-v1",
         "contract_sha256": contract_sha256,
         "evaluation_time": _iso(evaluation_time),
@@ -1219,6 +1272,8 @@ def _failure_artifact(
         "authority_flags": dict(AUTHORITY_FLAGS),
         "error": error[:1000],
     }
+    _atomic_write_json(output_dir / "canonical-accumulator-execution.json", payload)
+    return payload
 
 
 def execute_canonical_accumulator(
@@ -1227,7 +1282,7 @@ def execute_canonical_accumulator(
     target_size: int,
     output_dir: Path,
     evaluation_time: datetime | None = None,
-    minimum_lead_seconds: int = 120,
+    minimum_lead_seconds: int = MINIMUM_LEAD_SECONDS_DEFAULT,
     delay_seconds: float = 0.25,
 ) -> CanonicalAccumulatorExecution:
     """Run the only reviewed selection-to-SportyBet code path.
@@ -1316,6 +1371,7 @@ def execute_canonical_accumulator(
         intents,
         fixture_inputs,
         now=now,
+        minimum_lead_seconds=minimum_lead_seconds,
     )
     try:
         semantic_receipt = semantic_bridge.create_semantic_share_code(
@@ -1324,7 +1380,12 @@ def execute_canonical_accumulator(
             minimum_lead_seconds=minimum_lead_seconds,
             delay_seconds=float(delay_seconds),
         )
-    except (semantic_bridge.SportyBetSemanticShareError, TypeError, ValueError) as exc:
+    except (
+        semantic_bridge.SportyBetSemanticShareError,
+        semantic_bridge.transport.SportyBetDirectShareError,
+        TypeError,
+        ValueError,
+    ) as exc:
         raise CanonicalAccumulatorExecutionError(
             "semantic SportyBet create/reload gate failed closed"
         ) from exc
@@ -1370,21 +1431,75 @@ def execute_canonical_accumulator(
             raise CanonicalAccumulatorExecutionError(
                 "provider semantic round-trip omitted expected semantic row"
             )
+        item = wrappers.get(intent.fixture_id)
+        if item is None:
+            raise CanonicalAccumulatorExecutionError(
+                "semantic round-trip fixture is outside canonical source ancestry"
+            )
+        quote = _quote_by_identity(item, intent.quote_identity_sha256)
         if (
             expected.get("homeTeamName") != intent.expected_home_team
             or expected.get("awayTeamName") != intent.expected_away_team
             or expected.get("marketName") != intent.provider_market_name
             or expected.get("outcomeName") != intent.provider_outcome_name
             or expected.get("specifier") != intent.provider_specifier
+            or expected.get("marketId") != quote.provider_market_id
+            or expected.get("outcomeId") != quote.provider_outcome_id
         ):
             raise CanonicalAccumulatorExecutionError(
                 "provider semantic round-trip expected row differs from adapter intent"
             )
+        create = row.get("create")
+        reload = row.get("reload")
+        if type(create) is not dict or type(reload) is not dict:
+            raise CanonicalAccumulatorExecutionError(
+                "provider semantic round-trip omitted create/reload rows"
+            )
+        for label, accepted in (("create", create), ("reload", reload)):
+            if (
+                accepted.get("eventId") != intent.provider_event_id
+                or _semantic_name_key(str(accepted.get("homeTeamName", "")))
+                != _semantic_name_key(intent.expected_home_team)
+                or _semantic_name_key(str(accepted.get("awayTeamName", "")))
+                != _semantic_name_key(intent.expected_away_team)
+                or str(accepted.get("marketName", "")).casefold()
+                != intent.provider_market_name.casefold()
+                or str(accepted.get("outcomeName", "")).casefold()
+                != intent.provider_outcome_name.casefold()
+                or accepted.get("specifier") != intent.provider_specifier
+                or accepted.get("marketId") != quote.provider_market_id
+                or accepted.get("outcomeId") != quote.provider_outcome_id
+            ):
+                raise CanonicalAccumulatorExecutionError(
+                    f"provider {label} round-trip semantics differ from source-bound intent"
+                )
+            try:
+                accepted_odds = float(accepted["odds"])
+            except (KeyError, TypeError, ValueError) as exc:
+                raise CanonicalAccumulatorExecutionError(
+                    f"provider {label} round-trip odds are invalid"
+                ) from exc
+            if not math.isfinite(accepted_odds) or not math.isclose(
+                accepted_odds,
+                intent.expected_decimal_odds,
+                rel_tol=0.0,
+                abs_tol=1e-12,
+            ):
+                raise CanonicalAccumulatorExecutionError(
+                    f"provider {label} round-trip odds differ from source quote"
+                )
     if not isinstance(semantic_receipt.get("shareCode"), str) or not isinstance(semantic_receipt.get("shareURL"), str):
         raise CanonicalAccumulatorExecutionError("semantic bridge did not return a verified share code")
+    intents_by_leg_id = {intent.leg_id: intent for intent in intents}
+    if len(intents_by_leg_id) != len(intents) or set(intents_by_leg_id) != {
+        leg.leg_id for leg in optimization.selected_legs
+    }:
+        raise CanonicalAccumulatorExecutionError(
+            "semantic intent leg identities differ from Optimizer selected legs"
+        )
     selected_payload = tuple(
-        _selected_leg_payload(leg, intent)
-        for leg, intent in zip(optimization.selected_legs, intents)
+        _selected_leg_payload(leg, intents_by_leg_id[leg.leg_id])
+        for leg in optimization.selected_legs
     )
     result = CanonicalAccumulatorExecution(
         contract_sha256=identities["canonical_execution_contract_sha256"],

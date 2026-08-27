@@ -259,3 +259,85 @@ def test_create_semantic_share_code_binds_transport_to_resolved_count(
             minimum_lead_seconds=0,
             delay_seconds=0,
         )
+
+
+def test_native_roundtrip_success_is_insufficient_when_semantics_differ():
+    intent = semantic.validate_intents([_intent()])[0]
+    selection, audit = semantic.resolve_intent(
+        event=_event(), intent=intent, minimum_lead_seconds=0
+    )
+    wrong_provider_semantics = {
+        "eventId": intent["eventId"],
+        "homeTeamName": intent["homeTeamName"],
+        "awayTeamName": intent["awayTeamName"],
+        "markets": [
+            {
+                # The native market/outcome IDs intentionally remain the same.
+                # Only the human-readable selection is wrong.
+                "id": selection["marketId"],
+                "desc": "Double Chance",
+                "specifier": None,
+                "outcomes": [
+                    {
+                        "id": selection["outcomeId"],
+                        "desc": "Home or Draw",
+                        "odds": "1.29",
+                        "isActive": 1,
+                    }
+                ],
+            }
+        ],
+    }
+    transport_receipt = {
+        "exact_roundtrip_selection_identity_verified": True,
+        "create_accepted_selection_count": 1,
+        "load_accepted_selection_count": 1,
+        "create_accepted_outcomes": [wrong_provider_semantics],
+        "load_accepted_outcomes": [wrong_provider_semantics],
+    }
+    with pytest.raises(
+        semantic.SportyBetSemanticShareError,
+        match="market semantics differ",
+    ):
+        semantic.verify_semantic_roundtrip(
+            intents=(intent,),
+            selections=(selection,),
+            audits=(audit,),
+            transport_receipt=transport_receipt,
+        )
+
+
+def test_semantic_roundtrip_requires_provider_create_and_reload_semantics():
+    intent = semantic.validate_intents([_intent()])[0]
+    selection, audit = semantic.resolve_intent(
+        event=_event(), intent=intent, minimum_lead_seconds=0
+    )
+    accepted = _event(
+        markets=[
+            {
+                "id": "1",
+                "desc": "1X2",
+                "specifier": None,
+                "outcomes": [
+                    {"id": "1", "desc": "Home", "odds": "1.29", "isActive": 1}
+                ],
+            }
+        ]
+    )
+    transport_receipt = {
+        "exact_roundtrip_selection_identity_verified": True,
+        "create_accepted_selection_count": 1,
+        "load_accepted_selection_count": 1,
+        "create_accepted_outcomes": [accepted],
+        "load_accepted_outcomes": [accepted],
+    }
+    rows = semantic.verify_semantic_roundtrip(
+        intents=(intent,),
+        selections=(selection,),
+        audits=(audit,),
+        transport_receipt=transport_receipt,
+    )
+    assert len(rows) == 1
+    assert rows[0]["exact_semantic_match"] is True
+    assert rows[0]["create"]["marketId"] == "1"
+    assert rows[0]["reload"]["outcomeId"] == "1"

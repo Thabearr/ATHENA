@@ -1,0 +1,62 @@
+name: Canonical ATHENA SportyBet accumulator
+
+# This is the generic controlled execution surface for the canonical path.
+# Historic date-specific direct-share workflows remain research/proof surfaces
+# and are not invoked here.
+on:
+  workflow_dispatch:
+    inputs:
+      factory:
+        description: "Reviewed repository factory as module:callable"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: canonical-sportybet-accumulator-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    name: source-bound semantic create/reload execution
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      PYTHONPATH: .
+      PYTHONIOENCODING: utf-8
+
+    steps:
+      - name: Checkout reviewed repository code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install reviewed runtime dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Execute canonical accumulator boundary
+        run: |
+          mkdir -p .cache/athena-research
+          python scripts/execute_canonical_accumulator.py \
+            --factory "${{ inputs.factory }}" \
+            --output-dir .cache/athena-research/canonical-sportybet-accumulator \
+            | tee .cache/athena-research/canonical-sportybet-accumulator.summary.json
+
+      - name: Upload durable canonical execution artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: canonical-sportybet-accumulator-execution
+          path: |
+            .cache/athena-research/canonical-sportybet-accumulator
+            .cache/athena-research/canonical-sportybet-accumulator.summary.json
+          if-no-files-found: warn
+          retention-days: 7

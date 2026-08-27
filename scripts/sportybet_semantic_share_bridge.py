@@ -371,6 +371,12 @@ def resolve_live_intents(
     minimum_lead_seconds: int = 120,
     delay_seconds: float = 0.25,
 ) -> tuple[tuple[dict[str, str], ...], dict[str, Any]]:
+    try:
+        intents = validate_intents(list(intents))
+    except TypeError as exc:
+        raise SportyBetSemanticShareError(
+            "intents must be an exact semantic-intent tuple"
+        ) from exc
     if delay_seconds < 0:
         raise SportyBetSemanticShareError("delay_seconds must be non-negative")
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -624,6 +630,12 @@ def create_semantic_share_code(
     minimum_lead_seconds: int = 120,
     delay_seconds: float = 0.25,
 ) -> dict[str, Any]:
+    try:
+        intents = validate_intents(list(intents))
+    except TypeError as exc:
+        raise SportyBetSemanticShareError(
+            "intents must be an exact semantic-intent tuple"
+        ) from exc
     resolution_dir = output_dir / "semantic-resolution"
     transport_dir = output_dir / "transport-roundtrip"
     selections, semantic_receipt = resolve_live_intents(
