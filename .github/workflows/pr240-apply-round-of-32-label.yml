@@ -27,6 +27,7 @@ jobs:
           python - <<'PY'
           from pathlib import Path
           import importlib.util
+          import sys
 
           module_path = Path('domain/uefa_competition_stage.py')
           text = module_path.read_text(encoding='utf-8')
@@ -48,6 +49,7 @@ jobs:
           spec = importlib.util.spec_from_file_location('stage_pr240', module_path)
           module = importlib.util.module_from_spec(spec)
           assert spec.loader is not None
+          sys.modules[spec.name] = module
           spec.loader.exec_module(module)
           parent = module.calculate_parent_identity_sha256()
           registry = module.calculate_stage_registry_sha256()
