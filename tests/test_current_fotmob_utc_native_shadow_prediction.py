@@ -14,6 +14,7 @@ from domain.current_fotmob_utc_native_shadow_prediction import (
     NEXT_REQUIRED_BOUNDARY,
     OUTSIDE_REVIEWED_SEAL_WINDOW,
     SEALED_COMPLETE_CASE,
+    STATUS_REPLAYED,
     CurrentUtcNativeShadowPredictionError,
     build_current_fotmob_utc_native_shadow_prediction_handoff,
     canonical_current_fotmob_utc_native_shadow_prediction_handoff_bytes,
@@ -200,15 +201,13 @@ def _handoff(
     return handoff, execution, raw, manifest, history
 
 
-def test_current_pr243_bootstrap_reaches_exact_utc_native_shadow_seal(
+def test_supplied_reviewed_inputs_reach_exact_utc_native_shadow_replay(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handoff, _execution, _raw_bytes, _manifest, _history_bytes = _handoff(
-        tmp_path,
-        monkeypatch,
-    )
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
 
+    assert handoff.status == STATUS_REPLAYED
     assert handoff.fixture_count == 1
     assert handoff.sealed_complete_case_count == 1
     assert handoff.missing_feature_count == 0
@@ -227,10 +226,15 @@ def test_current_pr243_bootstrap_reaches_exact_utc_native_shadow_seal(
         row.sealed_prediction
     )
     assert handoff.next_required_boundary == NEXT_REQUIRED_BOUNDARY
+    assert NEXT_REQUIRED_BOUNDARY == "CURRENT_DURABLE_FRESH_HISTORY_PREFIX_BINDING_REQUIRED"
+
+    assert handoff.current_fresh_history_prefix_complete is False
     assert handoff.research_evidence == {
         "reviewed_current_fixture_identity": True,
+        "supplied_reviewed_history_inputs_replayed": True,
         "utc_native_research_feature_construction": True,
         "shadow_expected_goals_rates": True,
+        "complete_current_fresh_history_prefix": False,
     }
     assert handoff.authority == {
         "production_model": False,
@@ -242,24 +246,34 @@ def test_current_pr243_bootstrap_reaches_exact_utc_native_shadow_seal(
         "sportybet_execution": False,
         "bet": False,
     }
+    payload = handoff.to_dict()
+    assert payload["current_fresh_history_prefix_complete"] is False
+    assert payload["wager_placed"] is False
     assert not any(handoff.authority.values())
-    assert handoff.to_dict()["wager_placed"] is False
+
+
+def test_empty_fresh_settlement_tuple_never_claims_current_history_completeness(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    assert handoff.reviewed_fresh_settlement_count == 0
+    assert handoff.current_fresh_history_prefix_complete is False
+    assert handoff.research_evidence["complete_current_fresh_history_prefix"] is False
+    assert handoff.next_required_boundary == NEXT_REQUIRED_BOUNDARY
 
 
 def test_missing_utc_native_history_remains_explicit_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    handoff, _execution, _raw_bytes, _manifest, _history_bytes = _handoff(
-        tmp_path,
-        monkeypatch,
-        include_away=False,
-    )
+    handoff, *_rest = _handoff(tmp_path, monkeypatch, include_away=False)
     row = handoff.rows[0]
     assert row.disposition == MISSING_REVIEWED_FEATURES
     assert "away_form" in row.missing_feature_ids
     assert row.sealed_prediction is None
     assert handoff.missing_feature_count == 1
+    assert handoff.current_fresh_history_prefix_complete is False
 
 
 def test_pr243_capture_outside_24h_seal_window_is_not_retrofilled(
@@ -307,10 +321,7 @@ def test_source_bundle_raw_replacement_cannot_create_relabelled_receipt(
         monkeypatch,
     )
     with pytest.raises(CurrentUtcNativeShadowPredictionError, match="raw SHA"):
-        dataclasses.replace(
-            handoff.source_bundle,
-            source_raw_json=raw + b" ",
-        )
+        dataclasses.replace(handoff.source_bundle, source_raw_json=raw + b" ")
 
 
 def test_bootstrap_cannot_be_bound_to_different_current_capture(
@@ -409,6 +420,20 @@ def test_detached_row_cannot_be_relabelled_after_construction(
         dataclasses.replace(handoff, rows=(tampered,))
 
 
+def test_current_history_completeness_claim_cannot_be_switched_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    handoff, *_rest = _handoff(tmp_path, monkeypatch)
+    changed = dict(handoff.research_evidence)
+    changed["complete_current_fresh_history_prefix"] = True
+    with pytest.raises(
+        CurrentUtcNativeShadowPredictionError,
+        match="research_evidence.*changed reviewed state",
+    ):
+        dataclasses.replace(handoff, research_evidence=changed)
+
+
 def test_research_evidence_cannot_be_downgraded_or_relabelled(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -467,6 +492,9 @@ def test_shadow_handoff_is_canonical_and_deterministic(
     assert b"Home FC" not in first_bytes
     assert b"synthetic-reviewed-bootstrap" not in first_bytes
     assert history not in first_bytes
+    decoded = json.loads(first_bytes)
+    assert decoded["current_fresh_history_prefix_complete"] is False
+    assert decoded["next_required_boundary"] == NEXT_REQUIRED_BOUNDARY
 
 
 def test_bridge_source_contains_no_provider_scalar_or_phase6_shortcut() -> None:
