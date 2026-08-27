@@ -37,12 +37,21 @@ class FotMobAdvancedScraper:
     def _repository_root() -> Path:
         return Path(__file__).resolve().parents[1]
 
-    def _capture(self, *, kind: str, fixture_id: int, source_reference: str,
-                 observed_at: datetime, raw_bytes: bytes):
-        """Persist raw response evidence before legacy normalization."""
+    def _capture(
+        self,
+        *,
+        kind: str,
+        fixture_id: int | None,
+        source_reference: str,
+        observed_at: datetime,
+        raw_bytes: bytes,
+    ):
+        """Persist one exact legacy response before compatibility normalization."""
         return persist_live_fotmob_evidence(
             kind=kind,
-            fixture_identifier=f"FOTMOB:{fixture_id}",
+            fixture_identifier=(
+                None if fixture_id is None else f"FOTMOB:{fixture_id}"
+            ),
             source_reference=source_reference,
             observed_at=observed_at,
             raw_bytes=raw_bytes,
@@ -72,6 +81,10 @@ class FotMobAdvancedScraper:
         """
         Fetch all upcoming matches within N days using the bypass client.
         Returns enriched fixture data with lineups, injuries, odds, weather, etc.
+
+        The legacy fixture-list HTTP response is captured exactly once per
+        actual request. Every fixture derived from that response references the
+        same immutable compatibility-evidence receipt.
         """
         logger.info(f"Fetching FotMob matches for next {days_ahead} days...")
 
@@ -94,12 +107,28 @@ class FotMobAdvancedScraper:
                 logger.warning(f"No data returned for date {date_str}")
                 continue
 
+            fixture_evidence = None
+            if raw_bytes is not None:
+                try:
+                    fixture_evidence = self._capture(
+                        kind="FIXTURE_LIST",
+                        fixture_id=None,
+                        source_reference=source_reference,
+                        observed_at=observed_at,
+                        raw_bytes=raw_bytes,
+                    )
+                except LiveFotMobFixtureIntelligenceError as exc:
+                    logger.warning(
+                        "Legacy FotMob fixture-list evidence was not preserved: %s",
+                        exc,
+                    )
+
             leagues = data.get("leagues", [])
             logger.info(f"  [{date_str}] Found {len(leagues)} leagues")
 
             for league in leagues:
                 league_name = league.get("name", "Unknown")
-                
+
                 # Filter out Women's matches
                 from services.gender_filter import is_womens_fixture
                 if is_womens_fixture(league_name, "", ""):
@@ -119,7 +148,7 @@ class FotMobAdvancedScraper:
 
                         # Parse status info
                         status_info = match.get("status", {})
-                            
+
                         # Check if cancelled or postponed
                         status_str = status_info.get("reason", {}).get("short", "") or status_info.get("reason", {}).get("long", "")
                         status_lower = status_str.lower()
@@ -136,17 +165,6 @@ class FotMobAdvancedScraper:
 
                         if is_womens_fixture(league_name, home_team, away_team):
                             continue
-
-                        fixture_evidence = None
-                        if raw_bytes is not None:
-                            try:
-                                fixture_evidence = self._capture(
-                                    kind="FIXTURE_LIST", fixture_id=fixture_id,
-                                    source_reference=source_reference,
-                                    observed_at=observed_at, raw_bytes=raw_bytes,
-                                )
-                            except LiveFotMobFixtureIntelligenceError as exc:
-                                logger.warning("Live FotMob fixture evidence was not preserved: %s", exc)
 
                         # Get scores if available
                         home_score = match.get("home", {}).get("score", "")
@@ -203,12 +221,17 @@ class FotMobAdvancedScraper:
             match_info, raw_bytes, observed_at, source_reference = acquired
             try:
                 details_evidence = self._capture(
-                    kind="MATCH_DETAILS", fixture_id=fixture_id,
-                    source_reference=source_reference, observed_at=observed_at,
+                    kind="MATCH_DETAILS",
+                    fixture_id=fixture_id,
+                    source_reference=source_reference,
+                    observed_at=observed_at,
                     raw_bytes=raw_bytes,
                 )
             except LiveFotMobFixtureIntelligenceError as exc:
-                logger.warning("Live FotMob match-details evidence was not preserved: %s", exc)
+                logger.warning(
+                    "Legacy FotMob match-details evidence was not preserved: %s",
+                    exc,
+                )
         else:
             match_info = self.client.fetch_match_details(fixture_id)
         if not match_info:
@@ -271,11 +294,15 @@ class FotMobAdvancedScraper:
                         injuries.get("awayTeam", [])
                     )
 
-                # Team form
+                # Team form is compatibility data only. Preserve each side
+                # independently when the legacy payload actually contains it;
+                # do not manufacture a missing side.
                 team_form = facts.get("teamForm", [])
-                if isinstance(team_form, list) and len(team_form) >= 2:
-                    details["home_form"] = self._extract_form(team_form[0])
-                    details["away_form"] = self._extract_form(team_form[1])
+                if isinstance(team_form, list):
+                    if len(team_form) > 0 and team_form[0] is not None:
+                        details["home_form"] = self._extract_form(team_form[0])
+                    if len(team_form) > 1 and team_form[1] is not None:
+                        details["away_form"] = self._extract_form(team_form[1])
 
             # === MATCH STATS (xG, Possession) ===
             stats_block = content.get("stats", {})
@@ -357,7 +384,7 @@ class FotMobAdvancedScraper:
         return injuries
 
     def _extract_form(self, form_data) -> Dict:
-        """Extract recent form from team form data."""
+        """Extract recent form from team form data for legacy compatibility only."""
         if not form_data:
             return {"matches": [], "summary": ""}
 
@@ -419,8 +446,8 @@ class FotMobAdvancedScraper:
                     )
                 """)
                 # ``fixture_extended`` predates provenance columns in many
-                # operator databases.  Add them additively; raw bytes remain
-                # the authority and these columns are only replay pointers.
+                # operator databases. Add them additively; these are
+                # compatibility replay pointers, never canonical source authority.
                 existing_columns = {
                     row[1] for row in cursor.execute("PRAGMA table_info(fixture_extended)")
                 }
@@ -467,8 +494,8 @@ class FotMobAdvancedScraper:
                         cursor.execute("""
                             INSERT INTO fixture_extended
                                 (fixture_id, home_lineup, away_lineup, home_injuries,
-                                 away_injuries, live_odds, weather, referee, 
-                                 head_to_head, home_form, away_form, home_xg, away_xg, 
+                                 away_injuries, live_odds, weather, referee,
+                                 head_to_head, home_form, away_form, home_xg, away_xg,
                                  home_possession, away_possession, fixture_evidence_path,
                                  fixture_evidence_sha256, fixture_evidence_observed_at,
                                  match_details_evidence_path, match_details_evidence_sha256,
