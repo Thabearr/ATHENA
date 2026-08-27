@@ -15,8 +15,10 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
+from decimal import Decimal, InvalidOperation
 import hashlib
 import json
+import math
 from pathlib import Path
 import re
 import time
@@ -439,6 +441,182 @@ def resolve_live_intents(
     return validated, receipt
 
 
+def _semantic_transport_row(value: Any, label: str) -> dict[str, Any]:
+    """Extract one accepted provider selection without trusting native IDs.
+
+    Direct-share transport proves native identity only.  This parser is kept in
+    the semantic gate so a successful create/load cannot hide a differently
+    labelled market or outcome behind a provider ID.
+    """
+    if type(value) is not dict:
+        raise SportyBetSemanticShareError(f"{label} accepted event must be an object")
+    event_id = value.get("eventId")
+    if type(event_id) is not str or _EVENT_RE.fullmatch(event_id) is None:
+        raise SportyBetSemanticShareError(f"{label} accepted event has invalid eventId")
+    home = _exact_text(value.get("homeTeamName"), f"{label} homeTeamName")
+    away = _exact_text(value.get("awayTeamName"), f"{label} awayTeamName")
+    markets = value.get("markets")
+    if type(markets) is not list or len(markets) != 1 or type(markets[0]) is not dict:
+        raise SportyBetSemanticShareError(
+            f"{label} accepted event must contain exactly one market"
+        )
+    market = markets[0]
+    market_id = market.get("id", market.get("marketId"))
+    if market_id is None:
+        raise SportyBetSemanticShareError(f"{label} accepted market omitted market ID")
+    market_name = _exact_text(_market_text(market), f"{label} marketName")
+    specifier = market.get("specifier")
+    if specifier is not None:
+        specifier = _exact_text(specifier, f"{label} specifier", maximum=160)
+    outcomes = market.get("outcomes")
+    if type(outcomes) is not list or len(outcomes) != 1 or type(outcomes[0]) is not dict:
+        raise SportyBetSemanticShareError(
+            f"{label} accepted market must contain exactly one outcome"
+        )
+    outcome = outcomes[0]
+    outcome_id = outcome.get("id", outcome.get("outcomeId"))
+    if outcome_id is None:
+        raise SportyBetSemanticShareError(f"{label} accepted outcome omitted outcome ID")
+    outcome_name = _exact_text(_outcome_text(outcome), f"{label} outcomeName")
+    odds = outcome.get("odds")
+    if isinstance(odds, bool) or not isinstance(odds, (str, int, float)):
+        raise SportyBetSemanticShareError(f"{label} accepted outcome omitted odds")
+    try:
+        decimal_odds = Decimal(str(odds))
+    except (InvalidOperation, ValueError) as exc:
+        raise SportyBetSemanticShareError(f"{label} accepted outcome odds are invalid") from exc
+    if not decimal_odds.is_finite() or decimal_odds <= Decimal("1"):
+        raise SportyBetSemanticShareError(f"{label} accepted outcome odds are invalid")
+    return {
+        "eventId": event_id,
+        "homeTeamName": home,
+        "awayTeamName": away,
+        "marketId": str(market_id),
+        "marketName": market_name,
+        "specifier": specifier,
+        "outcomeId": str(outcome_id),
+        "outcomeName": outcome_name,
+        "odds": format(decimal_odds, "f"),
+    }
+
+
+def verify_semantic_roundtrip(
+    *,
+    intents: tuple[dict[str, Any], ...],
+    selections: tuple[dict[str, str], ...],
+    audits: tuple[dict[str, Any], ...],
+    transport_receipt: dict[str, Any],
+) -> tuple[dict[str, Any], ...]:
+    """Prove semantic intent == provider create == provider reload.
+
+    ``_validate_exact_roundtrip`` remains necessary, but it is intentionally
+    insufficient: provider-native IDs can be stable while pointing at a
+    different human-readable market.  This gate requires both accepted
+    payloads to carry and match the exact semantic intent and native identity.
+    """
+    if type(transport_receipt) is not dict:
+        raise SportyBetSemanticShareError("transport receipt must be an object")
+    if transport_receipt.get("exact_roundtrip_selection_identity_verified") is not True:
+        raise SportyBetSemanticShareError("native transport round-trip was not verified")
+    if type(intents) is not tuple or type(selections) is not tuple or type(audits) is not tuple:
+        raise SportyBetSemanticShareError("semantic round-trip inputs must be exact tuples")
+    if not intents or len(intents) != len(selections) or len(intents) != len(audits):
+        raise SportyBetSemanticShareError("semantic round-trip input counts drifted")
+    normalized_intents = validate_intents(list(intents))
+    normalized_selections = transport.validate_selections(list(selections))
+
+    create_rows = transport_receipt.get("create_accepted_outcomes")
+    load_rows = transport_receipt.get("load_accepted_outcomes")
+    if type(create_rows) is not list or type(load_rows) is not list:
+        raise SportyBetSemanticShareError(
+            "transport receipt omitted provider create/reload semantic outcomes"
+        )
+    if len(create_rows) != len(intents) or len(load_rows) != len(intents):
+        raise SportyBetSemanticShareError(
+            "provider create/reload semantic outcome count drifted"
+        )
+    if transport_receipt.get("create_accepted_selection_count") != len(intents):
+        raise SportyBetSemanticShareError("provider create selection count drifted")
+    if transport_receipt.get("load_accepted_selection_count") != len(intents):
+        raise SportyBetSemanticShareError("provider reload selection count drifted")
+
+    expected_by_event: dict[str, tuple[dict[str, Any], dict[str, str], dict[str, Any]]] = {}
+    for intent, selection, audit in zip(normalized_intents, normalized_selections, audits):
+        event_id = intent["eventId"]
+        if event_id in expected_by_event:
+            raise SportyBetSemanticShareError("duplicate semantic round-trip event")
+        if audit.get("eventId") != event_id:
+            raise SportyBetSemanticShareError("semantic resolution audit event drifted")
+        expected_by_event[event_id] = (intent, selection, audit)
+
+    parsed_create = tuple(
+        _semantic_transport_row(row, f"create[{index}]")
+        for index, row in enumerate(create_rows)
+    )
+    parsed_load = tuple(
+        _semantic_transport_row(row, f"reload[{index}]")
+        for index, row in enumerate(load_rows)
+    )
+    create_by_event = {row["eventId"]: row for row in parsed_create}
+    load_by_event = {row["eventId"]: row for row in parsed_load}
+    if len(create_by_event) != len(parsed_create) or len(load_by_event) != len(parsed_load):
+        raise SportyBetSemanticShareError("provider create/reload contains duplicate events")
+    if set(create_by_event) != set(expected_by_event) or set(load_by_event) != set(expected_by_event):
+        raise SportyBetSemanticShareError(
+            "provider create/reload event identities differ from semantic intent"
+        )
+
+    verified: list[dict[str, Any]] = []
+    for event_id in sorted(expected_by_event):
+        intent, selection, audit = expected_by_event[event_id]
+        create = create_by_event[event_id]
+        reload = load_by_event[event_id]
+        for label, row in (("create", create), ("reload", reload)):
+            if row["marketId"] != selection["marketId"] or row["outcomeId"] != selection["outcomeId"]:
+                raise SportyBetSemanticShareError(
+                    f"{label} provider-native identity differs from semantic resolution"
+                )
+            if _name_key(row["homeTeamName"]) != _name_key(intent["homeTeamName"]):
+                raise SportyBetSemanticShareError(f"{label} home-team semantics differ from intent")
+            if _name_key(row["awayTeamName"]) != _name_key(intent["awayTeamName"]):
+                raise SportyBetSemanticShareError(f"{label} away-team semantics differ from intent")
+            if row["marketName"].casefold() != intent["marketName"].casefold():
+                raise SportyBetSemanticShareError(f"{label} market semantics differ from intent")
+            if row["outcomeName"].casefold() != intent["outcomeName"].casefold():
+                raise SportyBetSemanticShareError(f"{label} outcome semantics differ from intent")
+            if row["specifier"] != intent["specifier"]:
+                raise SportyBetSemanticShareError(f"{label} specifier semantics differ from intent")
+        if create != reload:
+            raise SportyBetSemanticShareError(
+                "provider create/reload semantic/native rows differ"
+            )
+        if create["odds"] != reload["odds"]:
+            raise SportyBetSemanticShareError("provider create/reload odds differ")
+        verified.append({
+            "eventId": event_id,
+            "expected": {
+                "homeTeamName": intent["homeTeamName"],
+                "awayTeamName": intent["awayTeamName"],
+                "marketName": intent["marketName"],
+                "outcomeName": intent["outcomeName"],
+                "specifier": intent["specifier"],
+                "marketId": selection["marketId"],
+                "outcomeId": selection["outcomeId"],
+            },
+            "resolved": {
+                "observed_home_team": audit.get("observed_home_team"),
+                "observed_away_team": audit.get("observed_away_team"),
+                "observed_market_name": audit.get("observed_market_name"),
+                "observed_outcome_name": audit.get("observed_outcome_name"),
+                "observed_specifier": audit.get("observed_specifier"),
+            },
+            "create": create,
+            "reload": reload,
+            "exact_semantic_match": True,
+        })
+    return tuple(verified)
+
+
 def create_semantic_share_code(
     *,
     intents: tuple[dict[str, Any], ...],
@@ -462,6 +640,14 @@ def create_semantic_share_code(
         raise SportyBetSemanticShareError(
             "transport round-trip selection count drifted from semantic resolution"
         )
+    semantic_roundtrip = verify_semantic_roundtrip(
+        intents=intents,
+        selections=selections,
+        audits=tuple(semantic_receipt["resolved"]),
+        transport_receipt=transport_receipt,
+    )
+    if len(semantic_roundtrip) != len(intents):
+        raise SportyBetSemanticShareError("semantic round-trip verification count drifted")
 
     receipt = {
         "schema": "athena-sportybet-semantic-booking-code-proof-v1",
@@ -473,6 +659,28 @@ def create_semantic_share_code(
         "exact_roundtrip_selection_identity_verified": bool(
             transport_receipt["exact_roundtrip_selection_identity_verified"]
         ),
+        "provider_create_selection_count": transport_receipt[
+            "create_accepted_selection_count"
+        ],
+        "provider_reload_selection_count": transport_receipt[
+            "load_accepted_selection_count"
+        ],
+        "semantic_roundtrip_verified": True,
+        "semantic_roundtrip_verification": list(semantic_roundtrip),
+        "provider_create_receipt": {
+            "http_status": transport_receipt["create_http_status"],
+            "response_sha256": transport_receipt["create_response_sha256"],
+            "accepted_selection_count": transport_receipt[
+                "create_accepted_selection_count"
+            ],
+        },
+        "provider_reload_receipt": {
+            "http_status": transport_receipt["load_http_status"],
+            "response_sha256": transport_receipt["load_response_sha256"],
+            "accepted_selection_count": transport_receipt[
+                "load_accepted_selection_count"
+            ],
+        },
         "shareCode": transport_receipt["shareCode"],
         "shareURL": transport_receipt["shareURL"],
         "combined_odds": transport_receipt["combined_odds"],

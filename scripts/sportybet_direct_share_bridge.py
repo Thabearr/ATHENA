@@ -312,6 +312,14 @@ def create_and_roundtrip(
         "exact_roundtrip_selection_identity_verified": True,
         "create_unavailable_outcomes": 0,
         "load_unavailable_outcomes": 0,
+        # These are the provider's accepted event/market/outcome objects, not
+        # caller input.  The semantic bridge consumes them to prove that a
+        # native-ID round trip also preserved the human-readable selection.
+        # Keep the direct bridge transport-only: it does not interpret them.
+        "create_accepted_selection_count": len(create_data["outcomes"]),
+        "load_accepted_selection_count": len(load_data["outcomes"]),
+        "create_accepted_outcomes": create_data["outcomes"],
+        "load_accepted_outcomes": load_data["outcomes"],
         "sportybet_login_used": False,
         "sportybet_cookie_used": False,
         "sportybet_wallet_used": False,
