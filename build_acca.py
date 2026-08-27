@@ -133,7 +133,10 @@ class AccaBuilder:
                     continue
                 if details:
                     fixture.update(details)
-                    fixture["current_form_observed_at"] = observed_at
+                    # A source-issued match-details receipt owns the form
+                    # observation time.  Keep the legacy run timestamp only
+                    # when older clients supplied no immutable evidence.
+                    fixture.setdefault("current_form_observed_at", observed_at)
                     enriched_count += 1
             console.print(
                 f"[green]FotMob current match-details enriched: "
