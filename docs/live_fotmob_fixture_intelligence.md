@@ -133,6 +133,17 @@ The correct response is therefore to fail closed rather than generate an
 
 No Fixture State status is upgraded by this boundary.
 
+## Next boundary
+
+The next reviewed implementation must build/obtain the exact current reviewed
+fixture/bootstrap lineage and run the transparent match-details source chain for
+current fixtures. Only that source-replayed result may issue the canonical
+snapshot consumed by Fixture State v2 and the later Phase 6/Router/Optimizer
+pipeline.
+
+This PR intentionally does not solve that later admission step by weakening or
+forking the existing contracts.
+
 ## Safety
 
 This module grants no source qualification, Fixture Intelligence, model-feature,
