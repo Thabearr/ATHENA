@@ -959,3 +959,65 @@ def test_coverage_report_keeps_unknown_explicit_and_rejects_mixed_warehouse(
     )
     with pytest.raises(UEFAStageError, match="multiple warehouse"):
         stage_coverage_report((rows[0], project_warehouse_uefa_stages(other)[0]))
+
+
+
+def test_source_native_uel_sechzehntelfinale_is_round_of_32_and_era_bounded(
+    tmp_path: Path,
+) -> None:
+    warehouse = _warehouse(
+        tmp_path / "round32.db",
+        [
+            dict(
+                key="valid",
+                date="2021-02-18",
+                home="A",
+                away="B",
+                stage="Sechzehntelfinale",
+                competition="uefa_uel",
+                season="2020-21",
+                source_path="champions-league-master/2020-21/el.txt",
+            ),
+            dict(
+                key="too-late",
+                date="2022-02-17",
+                home="C",
+                away="D",
+                stage="Sechzehntelfinale",
+                competition="uefa_uel",
+                season="2021-22",
+                source_path="champions-league-master/2021-22/el.txt",
+            ),
+            dict(
+                key="wrong-parent",
+                date="2021-02-18",
+                home="E",
+                away="F",
+                stage="Sechzehntelfinale",
+                competition="uefa_ucl",
+                season="2020-21",
+                source_path="champions-league-master/2020-21/cl.txt",
+            ),
+            dict(
+                key="wrong-phase",
+                date="2021-02-18",
+                home="G",
+                away="H",
+                stage="Sechzehntelfinale",
+                competition="uefa_uel",
+                season="2020-21",
+                source_path="champions-league-master/2020-21/elq.txt",
+            ),
+        ],
+    )
+    rows = {row.match_key: row for row in project_warehouse_uefa_stages(warehouse)}
+
+    assert rows["valid"].competition_stage is UEFACompetitionStage.ROUND_OF_32
+    assert rows["valid"].stage_authorized is True
+    assert rows["valid"].blocker is None
+    assert rows["too-late"].competition_stage is UEFACompetitionStage.UNKNOWN
+    assert rows["too-late"].blocker == "STAGE_NOT_ALLOWED_IN_COMPETITION_ERA"
+    assert rows["wrong-parent"].competition_stage is UEFACompetitionStage.UNKNOWN
+    assert rows["wrong-parent"].blocker == "STAGE_NOT_ALLOWED_IN_COMPETITION_ERA"
+    assert rows["wrong-phase"].competition_stage is UEFACompetitionStage.UNKNOWN
+    assert rows["wrong-phase"].blocker == "SOURCE_PATH_PARENT_OR_PHASE_CONFLICT"
