@@ -3,6 +3,7 @@ from __future__ import annotations
 import dataclasses
 import datetime as dt
 import hashlib
+import inspect
 
 import pytest
 
@@ -132,9 +133,14 @@ def _seed_candidate(**kwargs) -> FotMobFixtureCandidate:
     return _candidate(source, match_id=kwargs.pop("match_id", 1001), **kwargs)
 
 
-def test_reviewed_production_bounds_are_pinned() -> None:
+def test_reviewed_production_bounds_are_pinned_and_not_parameters() -> None:
     assert DEFAULT_MINIMUM_LEAD_SECONDS == 3600
     assert DEFAULT_MAX_SOURCE_AGE_SECONDS == 900
+    parameters = inspect.signature(
+        build_current_fotmob_fixture_review_policy_result
+    ).parameters
+    assert "minimum_lead_seconds" not in parameters
+    assert "max_source_age_seconds" not in parameters
 
 
 def test_exact_reviewed_source_competition_is_policy_approved() -> None:
@@ -142,10 +148,10 @@ def test_exact_reviewed_source_competition_is_policy_approved() -> None:
     result = build_current_fotmob_fixture_review_policy_result(
         bundle,
         reviewed_at=REVIEWED,
-        minimum_lead_seconds=3600,
     )
 
     assert result.policy_id == POLICY_ID
+    assert result.minimum_lead_seconds == DEFAULT_MINIMUM_LEAD_SECONDS
     assert result.max_source_age_seconds == DEFAULT_MAX_SOURCE_AGE_SECONDS
     assert result.exact_competition_identity_count == 1
     assert result.pr41_blocked_count == 0
@@ -160,6 +166,8 @@ def test_exact_reviewed_source_competition_is_policy_approved() -> None:
     assert decision.reviewed_at == REVIEWED
     assert POLICY_ID in decision.notes
     assert "canonical=Premier League" in decision.notes
+    assert "minimum_lead_seconds=3600" in decision.notes
+    assert "max_source_age_seconds=900" in decision.notes
     assert "source_request_date=20260827" in decision.notes
     assert "source_timezone=UTC" in decision.notes
     assert all(value is False for value in result.safety.values())
@@ -218,7 +226,7 @@ def test_source_date_spillover_remains_unreviewed() -> None:
     assert result.review_bundle.unreviewed_count == 1
 
 
-def test_fixture_inside_minimum_lead_window_remains_unreviewed() -> None:
+def test_fixture_inside_frozen_minimum_lead_window_remains_unreviewed() -> None:
     bundle = _bundle(
         (
             _seed_candidate(
@@ -229,7 +237,6 @@ def test_fixture_inside_minimum_lead_window_remains_unreviewed() -> None:
     result = build_current_fotmob_fixture_review_policy_result(
         bundle,
         reviewed_at=REVIEWED,
-        minimum_lead_seconds=3600,
     )
 
     assert result.exact_competition_identity_count == 1
@@ -297,21 +304,13 @@ def test_result_count_tampering_fails_closed() -> None:
         dataclasses.replace(result, stale_source_excluded_count=1)
 
 
-def test_negative_minimum_lead_is_rejected() -> None:
+def test_result_cannot_relabel_weaker_policy_bounds() -> None:
     bundle = _bundle((_seed_candidate(),))
-    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="non-negative"):
-        build_current_fotmob_fixture_review_policy_result(
-            bundle,
-            reviewed_at=REVIEWED,
-            minimum_lead_seconds=-1,
-        )
-
-
-def test_negative_max_source_age_is_rejected() -> None:
-    bundle = _bundle((_seed_candidate(),))
-    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="non-negative"):
-        build_current_fotmob_fixture_review_policy_result(
-            bundle,
-            reviewed_at=REVIEWED,
-            max_source_age_seconds=-1,
-        )
+    result = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="frozen PR243"):
+        dataclasses.replace(result, minimum_lead_seconds=0)
+    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="frozen PR243"):
+        dataclasses.replace(result, max_source_age_seconds=3600)
