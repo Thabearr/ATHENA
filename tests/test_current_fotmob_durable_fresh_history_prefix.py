@@ -246,6 +246,11 @@ def _state_archive(*, committed_at: dt.datetime = PREFIX_COMMITTED) -> tuple[byt
                 directories.add(current.as_posix())
                 current = current.parent
         for name in sorted(directories, key=lambda item: (item.count("/"), item)):
+            # The reviewed PR151 verifier admits archive members under `.cache/`
+            # but deliberately rejects a bare `.cache` root entry.  Synthetic
+            # evidence must match that exact reviewed archive-member contract.
+            if name == ".cache":
+                continue
             info = tarfile.TarInfo(name)
             info.type = tarfile.DIRTYPE
             info.mode = 0o700
