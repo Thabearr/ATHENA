@@ -752,7 +752,9 @@ def verify_live_event_quote_evidence(
         raise SportyBetLiveEventQuoteEvidenceError(
             "evidence directory must be a regular directory"
         )
-    if sorted(item.name for item in evidence.iterdir()) != [MANIFEST_FILENAME, RAW_FILENAME]:
+    if sorted(item.name for item in evidence.iterdir()) != sorted(
+        (MANIFEST_FILENAME, RAW_FILENAME)
+    ):
         raise SportyBetLiveEventQuoteEvidenceError(
             "evidence directory contents mismatch"
         )
