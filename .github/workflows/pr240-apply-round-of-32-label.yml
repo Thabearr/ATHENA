@@ -37,6 +37,7 @@ jobs:
           import importlib.util
           import sys
 
+          sys.dont_write_bytecode = True
           module_path = Path('domain/uefa_competition_stage.py')
           text = module_path.read_text(encoding='utf-8')
 
@@ -76,6 +77,10 @@ jobs:
           assert text.count(old_sidecar) == 1
           text = text.replace(old_contract, contract).replace(old_sidecar, sidecar)
           module_path.write_text(text, encoding='utf-8')
+          pycache = module_path.parent / '__pycache__'
+          if pycache.is_dir():
+              for cached in pycache.glob('uefa_competition_stage*.pyc'):
+                  cached.unlink()
 
           tests = Path('tests/test_uefa_competition_stage.py')
           test_text = tests.read_text(encoding='utf-8')
@@ -101,6 +106,8 @@ jobs:
           PY
 
       - name: Run focused tests
+        env:
+          PYTHONDONTWRITEBYTECODE: "1"
         run: python -m pytest tests/test_uefa_competition_stage.py -q
 
       - name: Commit source-label revision and remove bootstrap workflow
