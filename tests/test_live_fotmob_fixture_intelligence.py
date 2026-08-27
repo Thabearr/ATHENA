@@ -9,10 +9,12 @@ from pathlib import Path
 import pytest
 
 from database.database import Database
-from domain.fixture_state_v2 import FixtureStateFieldId, FixtureStateStatus, build_fixture_state_v2_snapshot
 from domain.live_fotmob_fixture_intelligence import (
+    CANONICAL_ISSUER_STATUS,
+    EVIDENCE_ROOT,
     LiveFotMobFixtureIntelligenceError,
     issue_live_fotmob_fixture_intelligence,
+    replay_live_fotmob_evidence,
 )
 from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
 
@@ -27,29 +29,69 @@ class _Client:
         self.detail_raw = detail_raw
         self.fixture_calls = 0
 
-    def fetch_matches_by_date_with_raw(self, _date: str):
+    def fetch_matches_by_date_with_raw(self, date: str):
         self.fixture_calls += 1
         if self.fixture_calls > 1:
-            return {}, b"{}", OBSERVED, "https://www.fotmob.com/api/data/matches?date=20260828"
-        return json.loads(self.fixture_raw), self.fixture_raw, OBSERVED, "https://www.fotmob.com/api/data/matches?date=20260827"
+            return {}, b"{}", OBSERVED, f"https://www.fotmob.com/api/data/matches?date={date}"
+        return (
+            json.loads(self.fixture_raw),
+            self.fixture_raw,
+            OBSERVED,
+            f"https://www.fotmob.com/api/data/matches?date={date}",
+        )
 
-    def fetch_match_details_with_raw(self, _fixture_id: int):
-        return json.loads(self.detail_raw), self.detail_raw, OBSERVED, "https://www.fotmob.com/api/data/matchDetails?matchId=123456"
+    def fetch_match_details_with_raw(self, fixture_id: int):
+        return (
+            json.loads(self.detail_raw),
+            self.detail_raw,
+            OBSERVED,
+            f"https://www.fotmob.com/api/data/matchDetails?matchId={fixture_id}",
+        )
 
 
 def _raws(include_away: bool = True) -> tuple[bytes, bytes]:
-    fixture = {"leagues": [{"id": 1, "name": "Premier League", "matches": [{
-        "id": 123456, "home": {"id": 10, "longName": "Home FC"},
-        "away": {"id": 20, "longName": "Away FC"},
-        "status": {"utcTime": KICKOFF, "started": False},
-    }]}]}
+    fixture = {
+        "leagues": [
+            {
+                "id": 1,
+                "name": "Premier League",
+                "matches": [
+                    {
+                        "id": 123456,
+                        "home": {"id": 10, "longName": "Home FC"},
+                        "away": {"id": 20, "longName": "Away FC"},
+                        "status": {"utcTime": KICKOFF, "started": False},
+                    },
+                    {
+                        "id": 123457,
+                        "home": {"id": 30, "longName": "Second Home"},
+                        "away": {"id": 40, "longName": "Second Away"},
+                        "status": {"utcTime": KICKOFF, "started": False},
+                    },
+                ],
+            }
+        ]
+    }
     forms = [
-        {"recentResults": [{"resultString": "Win", "against": "A"}, {"resultString": "Draw", "against": "B"}]},
+        {
+            "recentResults": [
+                {"resultString": "Win", "against": "A"},
+                {"resultString": "Draw", "against": "B"},
+            ]
+        }
     ]
     if include_away:
-        forms.append({"recentResults": [{"resultString": "Loss", "against": "C"}]})
-    detail = {"general": {"matchId": 123456}, "content": {"matchFacts": {"teamForm": forms}}}
-    return json.dumps(fixture, separators=(",", ":")).encode(), json.dumps(detail, separators=(",", ":")).encode()
+        forms.append(
+            {"recentResults": [{"resultString": "Loss", "against": "C"}]}
+        )
+    detail = {
+        "general": {"matchId": 123456},
+        "content": {"matchFacts": {"teamForm": forms}},
+    }
+    return (
+        json.dumps(fixture, separators=(",", ":")).encode(),
+        json.dumps(detail, separators=(",", ":")).encode(),
+    )
 
 
 def _runtime(tmp_path: Path, *, include_away: bool = True):
@@ -60,77 +102,179 @@ def _runtime(tmp_path: Path, *, include_away: bool = True):
     scraper.db.initialize()
     scraper._repository_root = lambda: tmp_path
     fixtures = scraper.fetch_upcoming_matches(days_ahead=1)
-    assert len(fixtures) == 1
-    details = scraper.enrich_match(123456)
-    fixtures[0].update(details)
+    assert len(fixtures) == 2
+    target = next(item for item in fixtures if item["fixture_id"] == 123456)
+    target.update(scraper.enrich_match(123456))
     assert scraper.sync_to_db(fixtures)
-    return scraper, fixtures[0]
+    return scraper, fixtures, target, fixture_raw, detail_raw
 
 
-def test_actual_runtime_shape_is_preserved_then_issued_from_raw_evidence(tmp_path: Path) -> None:
-    _scraper, fixture = _runtime(tmp_path)
-    snapshot = issue_live_fotmob_fixture_intelligence(
-        fixture_evidence=fixture["fotmob_fixture_evidence"],
-        match_details_evidence=fixture["fotmob_match_details_evidence"], repository_root=tmp_path,
-    )
-    facts = {fact.field: fact for fact in snapshot.facts}
-    canonical_values = {fact["field"]: fact["value"] for fact in snapshot.to_dict()["facts"]}
-    assert fixture["home_form"] == {"matches": [{"result": "Win", "opponent": "A"}, {"result": "Draw", "opponent": "B"}], "summary": "WD"}
-    assert fixture["away_form"] == {"matches": [{"result": "Loss", "opponent": "C"}], "summary": "L"}
+def test_actual_runtime_shape_is_preserved_from_exact_raw_evidence(tmp_path: Path) -> None:
+    scraper, _fixtures, fixture, fixture_raw, detail_raw = _runtime(tmp_path)
+
+    assert fixture["home_form"] == {
+        "matches": [
+            {"result": "Win", "opponent": "A"},
+            {"result": "Draw", "opponent": "B"},
+        ],
+        "summary": "WD",
+    }
+    assert fixture["away_form"] == {
+        "matches": [{"result": "Loss", "opponent": "C"}],
+        "summary": "L",
+    }
     assert fixture["current_form_observed_at"] == OBSERVED.isoformat()
-    # Facts are deliberately frozen internally; canonical serialization must
-    # still preserve the exact runtime JSON extracted from the source bytes.
-    assert canonical_values["home_form"] == fixture["home_form"]
-    assert canonical_values["away_form"] == fixture["away_form"]
-    assert facts["home_form"].evidence_sha256 == fixture["fotmob_match_details_evidence"].evidence_sha256
-    assert facts["home_form"].observed_at == OBSERVED
-    with sqlite3.connect(_scraper.db.db_path) as connection:
+
+    fixture_payload = replay_live_fotmob_evidence(
+        fixture["fotmob_fixture_evidence"], repository_root=tmp_path
+    )
+    detail_payload = replay_live_fotmob_evidence(
+        fixture["fotmob_match_details_evidence"], repository_root=tmp_path
+    )
+    assert json.dumps(fixture_payload, separators=(",", ":")).encode() == fixture_raw
+    assert json.dumps(detail_payload, separators=(",", ":")).encode() == detail_raw
+
+    with sqlite3.connect(scraper.db.db_path) as connection:
         row = connection.execute(
             "SELECT home_form, away_form, match_details_evidence_sha256 "
             "FROM fixture_extended WHERE fixture_id=123456"
         ).fetchone()
     assert json.loads(row[0]) == fixture["home_form"]
     assert json.loads(row[1]) == fixture["away_form"]
-    assert row[2] == facts["home_form"].evidence_sha256
-    state = build_fixture_state_v2_snapshot(snapshot)
-    assert state.field_index[FixtureStateFieldId.HOME_FORM].status is FixtureStateStatus.BLOCKED
+    assert row[2] == fixture["fotmob_match_details_evidence"].evidence_sha256
+
+
+def test_one_matches_response_is_captured_once_and_shared_by_fixtures(tmp_path: Path) -> None:
+    _scraper, fixtures, _target, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipts = [item["fotmob_fixture_evidence"] for item in fixtures]
+    assert receipts[0] == receipts[1]
+    assert receipts[0].fixture_identifier is None
+    capture_root = tmp_path / EVIDENCE_ROOT
+    assert len(tuple(capture_root.glob("fixture-list--*"))) == 1
+
+
+def test_legacy_runtime_evidence_cannot_issue_canonical_intelligence(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    with pytest.raises(
+        LiveFotMobFixtureIntelligenceError,
+        match=CANONICAL_ISSUER_STATUS,
+    ):
+        issue_live_fotmob_fixture_intelligence(
+            fixture_evidence=fixture["fotmob_fixture_evidence"],
+            match_details_evidence=fixture["fotmob_match_details_evidence"],
+            repository_root=tmp_path,
+        )
 
 
 def test_db_normalized_values_are_not_canonical_authority(tmp_path: Path) -> None:
-    _scraper, fixture = _runtime(tmp_path)
-    with pytest.raises(LiveFotMobFixtureIntelligenceError):
+    scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    with sqlite3.connect(scraper.db.db_path) as connection:
+        row = connection.execute(
+            "SELECT home_form, away_form, match_details_evidence_path "
+            "FROM fixture_extended WHERE fixture_id=123456"
+        ).fetchone()
+    assert json.loads(row[0]) == fixture["home_form"]
+    assert json.loads(row[1]) == fixture["away_form"]
+    assert row[2]
+    with pytest.raises(
+        LiveFotMobFixtureIntelligenceError,
+        match=CANONICAL_ISSUER_STATUS,
+    ):
         issue_live_fotmob_fixture_intelligence(
-            fixture_evidence=dataclasses.replace(fixture["fotmob_fixture_evidence"], evidence_directory=Path("fixture_extended")),
-            match_details_evidence=fixture["fotmob_match_details_evidence"], repository_root=tmp_path,
+            fixture_evidence=fixture["fotmob_fixture_evidence"],
+            match_details_evidence=fixture["fotmob_match_details_evidence"],
+            repository_root=tmp_path,
         )
 
 
-def test_raw_hash_or_evidence_path_mutation_fails_closed(tmp_path: Path) -> None:
-    _scraper, fixture = _runtime(tmp_path)
+def test_raw_hash_mutation_fails_closed(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
     receipt = fixture["fotmob_match_details_evidence"]
     raw_path = tmp_path / receipt.evidence_directory / "response.json"
     raw_path.write_bytes(b'{"tampered":true}')
-    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="SHA"):
-        issue_live_fotmob_fixture_intelligence(
-            fixture_evidence=fixture["fotmob_fixture_evidence"], match_details_evidence=receipt, repository_root=tmp_path,
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="SHA-256"):
+        replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
+
+
+def test_manifest_mutation_fails_closed(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipt = fixture["fotmob_match_details_evidence"]
+    manifest_path = tmp_path / receipt.evidence_directory / "manifest.json"
+    manifest_path.write_bytes(b'{"tampered":true}\n')
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="manifest SHA-256"):
+        replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
+
+
+def test_alternate_root_and_traversal_are_rejected(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipt = fixture["fotmob_match_details_evidence"]
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="fixed live evidence root"):
+        dataclasses.replace(
+            receipt,
+            evidence_directory=Path(".cache/elsewhere/capture"),
+        )
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="traversal"):
+        dataclasses.replace(
+            receipt,
+            evidence_directory=EVIDENCE_ROOT / ".." / "escape",
         )
 
 
-def test_absent_form_remains_unknown_not_inferred(tmp_path: Path) -> None:
-    _scraper, fixture = _runtime(tmp_path, include_away=False)
-    snapshot = issue_live_fotmob_fixture_intelligence(
-        fixture_evidence=fixture["fotmob_fixture_evidence"],
-        match_details_evidence=fixture["fotmob_match_details_evidence"], repository_root=tmp_path,
-    )
-    assert {fact.field for fact in snapshot.facts} == {"home_form", "live_fixture_context"}
+def test_parent_symlink_escape_fails_closed(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipt = fixture["fotmob_match_details_evidence"]
+    evidence_root = tmp_path / EVIDENCE_ROOT
+    moved = tmp_path / "real-live-evidence"
+    evidence_root.rename(moved)
+    evidence_root.symlink_to(moved, target_is_directory=True)
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="symlink"):
+        replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
 
 
-def test_snapshot_is_deterministic_for_exact_runtime_evidence(tmp_path: Path) -> None:
-    _scraper, fixture = _runtime(tmp_path)
-    first = issue_live_fotmob_fixture_intelligence(
-        fixture_evidence=fixture["fotmob_fixture_evidence"], match_details_evidence=fixture["fotmob_match_details_evidence"], repository_root=tmp_path,
+def test_response_symlink_fails_closed(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipt = fixture["fotmob_match_details_evidence"]
+    directory = tmp_path / receipt.evidence_directory
+    response = directory / "response.json"
+    target = tmp_path / "outside-response.json"
+    target.write_bytes(response.read_bytes())
+    response.unlink()
+    response.symlink_to(target)
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="non-symlink"):
+        replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
+
+
+def test_manifest_symlink_fails_closed(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipt = fixture["fotmob_match_details_evidence"]
+    directory = tmp_path / receipt.evidence_directory
+    manifest = directory / "manifest.json"
+    target = tmp_path / "outside-manifest.json"
+    target.write_bytes(manifest.read_bytes())
+    manifest.unlink()
+    manifest.symlink_to(target)
+    with pytest.raises(LiveFotMobFixtureIntelligenceError, match="non-symlink"):
+        replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
+
+
+def test_absent_away_form_is_not_inferred(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(
+        tmp_path,
+        include_away=False,
     )
-    second = issue_live_fotmob_fixture_intelligence(
-        fixture_evidence=fixture["fotmob_fixture_evidence"], match_details_evidence=fixture["fotmob_match_details_evidence"], repository_root=tmp_path,
-    )
+    assert fixture["home_form"] == {
+        "matches": [
+            {"result": "Win", "opponent": "A"},
+            {"result": "Draw", "opponent": "B"},
+        ],
+        "summary": "WD",
+    }
+    assert "away_form" not in fixture
+
+
+def test_replay_is_deterministic_for_exact_runtime_evidence(tmp_path: Path) -> None:
+    _scraper, _fixtures, fixture, _fixture_raw, _detail_raw = _runtime(tmp_path)
+    receipt = fixture["fotmob_match_details_evidence"]
+    first = replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
+    second = replay_live_fotmob_evidence(receipt, repository_root=tmp_path)
     assert first == second
