@@ -9,6 +9,7 @@ import pytest
 import domain.fotmob_fixture_candidates as candidate_module
 from domain.current_fotmob_fixture_review_policy import (
     DEFAULT_MAX_SOURCE_AGE_SECONDS,
+    DEFAULT_MINIMUM_LEAD_SECONDS,
     POLICY_ID,
     REVIEWER_REFERENCE,
     CurrentFotMobFixtureReviewPolicyError,
@@ -129,6 +130,11 @@ def _bundle(candidates: tuple[FotMobFixtureCandidate, ...]) -> FotMobFixtureCand
 def _seed_candidate(**kwargs) -> FotMobFixtureCandidate:
     source = _source(1)
     return _candidate(source, match_id=kwargs.pop("match_id", 1001), **kwargs)
+
+
+def test_reviewed_production_bounds_are_pinned() -> None:
+    assert DEFAULT_MINIMUM_LEAD_SECONDS == 3600
+    assert DEFAULT_MAX_SOURCE_AGE_SECONDS == 900
 
 
 def test_exact_reviewed_source_competition_is_policy_approved() -> None:
