@@ -82,6 +82,7 @@ def _current(
     fixture_id: int = 1001,
     kickoff: dt.datetime = KICKOFF,
 ):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     raw = _raw(fixture_id=fixture_id, kickoff=kickoff)
     response = CapturedFotMobDataMatchesResponse(
         status=200,
