@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import datetime as dt
 import inspect
 import json
@@ -122,14 +123,18 @@ def _code_state() -> dict[str, object]:
     }
 
 
-def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> None:
+def _execution(tmp_path: Path):
     capture = _capture(tmp_path)
-    execution = build_verified_current_fotmob_bootstrap_from_capture(
+    return build_verified_current_fotmob_bootstrap_from_capture(
         capture,
         issued_at=ISSUED,
         repository_root=tmp_path,
         code_state=_code_state(),
     )
+
+
+def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> None:
+    execution = _execution(tmp_path)
 
     assert execution.status == STATUS_READY
     assert execution.policy_result.minimum_lead_seconds == DEFAULT_MINIMUM_LEAD_SECONDS
@@ -161,14 +166,35 @@ def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> Non
     assert summary["wager_placed"] is False
 
 
+def test_execution_receipt_cannot_relabel_source_manifest_sha(tmp_path: Path) -> None:
+    execution = _execution(tmp_path)
+    with pytest.raises(
+        CurrentFotMobReviewedSourceError,
+        match="source_capture_manifest_sha256 does not anchor",
+    ):
+        dataclasses.replace(execution, source_capture_manifest_sha256="f" * 64)
+
+
+def test_execution_receipt_cannot_relabel_source_raw_sha(tmp_path: Path) -> None:
+    execution = _execution(tmp_path)
+    with pytest.raises(
+        CurrentFotMobReviewedSourceError,
+        match="source_raw_sha256 does not anchor",
+    ):
+        dataclasses.replace(execution, source_raw_sha256="f" * 64)
+
+
+def test_execution_receipt_cannot_relabel_issued_time(tmp_path: Path) -> None:
+    execution = _execution(tmp_path)
+    with pytest.raises(
+        CurrentFotMobReviewedSourceError,
+        match="issued_at does not match",
+    ):
+        dataclasses.replace(execution, issued_at=ISSUED + dt.timedelta(seconds=1))
+
+
 def test_bootstrap_does_not_smuggle_football_facts(tmp_path: Path) -> None:
-    capture = _capture(tmp_path)
-    execution = build_verified_current_fotmob_bootstrap_from_capture(
-        capture,
-        issued_at=ISSUED,
-        repository_root=tmp_path,
-        code_state=_code_state(),
-    )
+    execution = _execution(tmp_path)
     raw = canonical_reviewed_fixture_intelligence_bootstrap_bytes(execution.bootstrap)
     for forbidden in (
         b"home_form",
