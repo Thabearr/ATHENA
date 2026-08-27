@@ -25,8 +25,12 @@ class _Client:
     def __init__(self, fixture_raw: bytes, detail_raw: bytes):
         self.fixture_raw = fixture_raw
         self.detail_raw = detail_raw
+        self.fixture_calls = 0
 
     def fetch_matches_by_date_with_raw(self, _date: str):
+        self.fixture_calls += 1
+        if self.fixture_calls > 1:
+            return {}, b"{}", OBSERVED, "https://www.fotmob.com/api/data/matches?date=20260828"
         return json.loads(self.fixture_raw), self.fixture_raw, OBSERVED, "https://www.fotmob.com/api/data/matches?date=20260827"
 
     def fetch_match_details_with_raw(self, _fixture_id: int):
