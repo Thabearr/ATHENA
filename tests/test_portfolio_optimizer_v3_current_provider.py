@@ -114,6 +114,35 @@ def test_duplicate_provider_event_input_fails_closed(monkeypatch):
         )
 
 
+def test_portfolio_cannot_run_before_router_decision_time(monkeypatch):
+    source = _input(monkeypatch)
+    with pytest.raises(
+        portfolio.PortfolioOptimizerV3CurrentProviderError,
+        match="predates a Router v3 decision",
+    ):
+        portfolio.optimize_current_provider_portfolio_as_of(
+            (source,),
+            target_size=1,
+            evaluation_time=EVALUATION + timedelta(seconds=5),
+        )
+
+
+def test_live_portfolio_requires_live_router_status_not_only_proof_label(monkeypatch):
+    source = _input(monkeypatch)
+    object.__setattr__(source.router_decision, "proof_mode", router.price_v3.LIVE_CURRENT)
+    monkeypatch.setattr(
+        portfolio,
+        "verify_current_provider_portfolio_router_input",
+        lambda value: value,
+    )
+    monkeypatch.setattr(portfolio, "_now_utc", lambda: EVALUATION + timedelta(seconds=20))
+    with pytest.raises(
+        portfolio.PortfolioOptimizerV3CurrentProviderError,
+        match="live current Router ancestry",
+    ):
+        portfolio.optimize_current_provider_portfolio((source,), target_size=1)
+
+
 def test_portfolio_time_stale_leg_is_audited_not_silently_selected(monkeypatch):
     source = _input(monkeypatch)
     result = portfolio.optimize_current_provider_portfolio_as_of(
