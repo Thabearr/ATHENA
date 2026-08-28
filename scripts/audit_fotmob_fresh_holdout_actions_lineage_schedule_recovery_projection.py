@@ -1,12 +1,20 @@
-"""Project the read-only fresh-holdout audit across ambiguity no-op recovery.
+"""Project the read-only fresh-holdout audit across no-acquisition recovery paths.
 
 The underlying lineage audit remains the reviewed engine. This projection updates
-only its pinned runtime dependency identities and makes one evidence-transparent
-compatibility allowance: a completed scheduled run may be excluded from nominal
-source lineage only when GitHub metadata proves the exact reviewed
-AMBIGUOUS_NO_ACQUISITION path (zero artifacts and every acquisition/persistence
-step skipped). Such a run observed no provider bytes and cannot represent a
-nominal fixture observation.
+only its pinned runtime dependency identities and makes two evidence-transparent
+compatibility allowances for completed scheduled runs that provably acquired no
+provider bytes:
+
+1. a successful AMBIGUOUS_NO_ACQUISITION recovery run (the reviewed schedule
+   recovery path); and
+2. a failed pre-acquisition control run whose exact GitHub job-step shape is
+   already proved by the reviewed failure-lineage helper.
+
+Both run types are excluded from nominal source lineage because neither observed
+provider bytes and neither can represent a nominal fixture observation. A proven
+pre-acquisition failure may occur after campaign Genesis has already closed; it
+must not reopen Genesis, invent a nominal slot, or block auditing later durable
+campaign evidence merely because it has zero artifacts.
 """
 from __future__ import annotations
 
@@ -14,6 +22,7 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as failure_lineage
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as recovery
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as pr175
@@ -55,8 +64,34 @@ def _projected_noop_record(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _projected_preacquisition_failure_record(
+    run: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "run_id": run.get("id"),
+        "created_at": run.get("created_at"),
+        "head_sha": run.get("head_sha"),
+        "conclusion": run.get("conclusion"),
+        "evidence_state": "VERIFIED_PREACQUISITION_CONTROL_FAILURE",
+        "nominal_slot_utc": None,
+        "tick_committed": False,
+        "archive_name": None,
+        "archive_sha256": None,
+        "release_state": "NOT_APPLICABLE_NO_ACQUISITION",
+        "verification_error": None,
+    }
+
+
+def _exact_zero_artifacts(value: Mapping[str, Any]) -> bool:
+    return (
+        type(value) is dict
+        and type(value.get("artifacts")) is list
+        and not value["artifacts"]
+    )
+
+
 def _audit_actions_lineage_compatible(*args, **kwargs):
-    """Run the unchanged engine while projecting out proven zero-evidence no-ops."""
+    """Run the unchanged engine while projecting out proven zero-evidence runs."""
     if args:
         raise audit.FreshHoldoutActionsLineageAuditError(
             "schedule-recovery projection requires keyword audit arguments"
@@ -69,6 +104,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
+    projected_preacquisition_failures: dict[int, Mapping[str, Any]] = {}
 
     def cached_artifacts(run_id: int) -> Mapping[str, Any]:
         if run_id not in artifact_cache:
@@ -85,18 +121,39 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             return False
         run_id = run.get("id")
         if (
-            run.get("status") == "completed"
-            and run.get("conclusion") == "success"
-            and type(run_id) is int
-            and run_id > 0
+            run.get("status") != "completed"
+            or type(run_id) is not int
+            or run_id <= 0
         ):
-            artifacts = cached_artifacts(run_id)
+            return True
+
+        artifacts = cached_artifacts(run_id)
+        if run.get("conclusion") == "success":
             if recovery._prove_ambiguous_no_acquisition_success(
                 run,
                 artifacts,
                 cached_jobs,
             ):
                 projected_noops[run_id] = run
+                return False
+            return True
+
+        if run.get("conclusion") == "failure" and _exact_zero_artifacts(artifacts):
+            try:
+                proved_preacquisition = (
+                    failure_lineage._prove_preacquisition_control_failure(
+                        run,
+                        artifacts,
+                        cached_jobs,
+                    )
+                )
+            except failure_lineage.FreshHoldoutFailureLineageError as exc:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "pre-acquisition control-failure projection proof failed for "
+                    f"run {run_id}: {exc}"
+                ) from exc
+            if proved_preacquisition:
+                projected_preacquisition_failures[run_id] = run
                 return False
         return True
 
@@ -111,13 +168,33 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         audit._run_is_collection_candidate = previous_candidate
 
     result = dict(result)
-    ordered = sorted(
+    ordered_noops = sorted(
         projected_noops.values(),
         key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
     )
-    result["verified_ambiguous_no_acquisition_count"] = len(ordered)
+    ordered_failures = sorted(
+        projected_preacquisition_failures.values(),
+        key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
+    )
+    result["verified_ambiguous_no_acquisition_count"] = len(ordered_noops)
     result["projected_ambiguous_no_acquisition_runs"] = [
-        _projected_noop_record(run) for run in ordered
+        _projected_noop_record(run) for run in ordered_noops
+    ]
+    base_preacquisition_count = result.get(
+        "verified_preacquisition_control_failure_count", 0
+    )
+    if type(base_preacquisition_count) is not int or base_preacquisition_count < 0:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "base audit pre-acquisition failure count is invalid"
+        )
+    result["verified_preacquisition_control_failure_count"] = (
+        base_preacquisition_count + len(ordered_failures)
+    )
+    result["projected_preacquisition_control_failure_count"] = len(
+        ordered_failures
+    )
+    result["projected_preacquisition_control_failure_runs"] = [
+        _projected_preacquisition_failure_record(run) for run in ordered_failures
     ]
     return result
 
