@@ -452,16 +452,54 @@ def _build_opportunity(
     )
 
 
-def _rank(item: CurrentProviderRoutedOpportunity) -> tuple[Any, ...]:
+def _eligible_rank_key(item: CurrentProviderRoutedOpportunity) -> tuple[Any, ...]:
+    if item.robust_net_expected_value is None:
+        raise MarketRouterV3CurrentProviderError(
+            "eligible opportunity lacks robust EV"
+        )
+    edge_present = item.robust_edge is not None
+    event_present = item.event_probability_floor is not None
+    quote_age = (
+        item.router_quote_age_seconds
+        if item.router_quote_age_seconds is not None
+        else math.inf
+    )
     return (
-        -(item.robust_net_expected_value or 0.0),
-        0 if item.robust_edge is not None else 1,
-        -(item.robust_edge or 0.0),
-        0 if item.event_probability_floor is not None else 1,
-        -(item.event_probability_floor or 0.0),
-        item.router_quote_age_seconds if item.router_quote_age_seconds is not None else math.inf,
+        -item.robust_net_expected_value,
+        0 if edge_present else 1,
+        -(item.robust_edge if item.robust_edge is not None else 0.0),
+        0 if event_present else 1,
+        -(item.event_probability_floor if item.event_probability_floor is not None else 0.0),
+        quote_age,
         item.opportunity_id,
     )
+
+
+def _counterfactual_rank_key(
+    item: CurrentProviderRoutedOpportunity,
+) -> tuple[Any, ...]:
+    robust = item.robust_net_expected_value
+    edge = item.robust_edge
+    event = item.event_probability_floor
+    age = item.router_quote_age_seconds
+    return (
+        0 if robust is not None else 1,
+        -(robust if robust is not None else 0.0),
+        0 if edge is not None else 1,
+        -(edge if edge is not None else 0.0),
+        0 if event is not None else 1,
+        -(event if event is not None else 0.0),
+        age if age is not None else math.inf,
+        item.opportunity_id,
+    )
+
+
+def _strongest_counterfactual(
+    opportunities: Sequence[CurrentProviderRoutedOpportunity],
+) -> str | None:
+    if not opportunities:
+        return None
+    return min(opportunities, key=_counterfactual_rank_key).opportunity_id
 
 
 def _build(
@@ -519,21 +557,55 @@ def _build(
             global_reasons=tuple(global_reasons),
         ) for group in grouped.values()
     ), key=lambda x: x.opportunity_id))
-    eligible = sorted((x for x in opportunities if x.eligibility is OpportunityEligibility.ELIGIBLE), key=_rank)
-    rejected = sorted((x for x in opportunities if x.eligibility is OpportunityEligibility.REJECTED), key=_rank)
+    eligible = sorted(
+        (x for x in opportunities if x.eligibility is OpportunityEligibility.ELIGIBLE),
+        key=_eligible_rank_key,
+    )
+    rejected = sorted(
+        (x for x in opportunities if x.eligibility is OpportunityEligibility.REJECTED),
+        key=_counterfactual_rank_key,
+    )
+
     if global_reasons:
-        decision_status, reasons = RouterDecisionStatus.NO_BET, tuple(sorted(set(global_reasons)))
+        decision_status = RouterDecisionStatus.NO_BET
+        reasons = tuple(sorted(set(global_reasons)))
+        selected = None
+        runner = None
+        counterfactual = _strongest_counterfactual(opportunities)
     elif freshness_reasons:
-        decision_status, reasons = RouterDecisionStatus.NO_BET, tuple(freshness_reasons)
+        decision_status = RouterDecisionStatus.NO_BET
+        reasons = tuple(freshness_reasons)
+        selected = None
+        runner = None
+        counterfactual = _strongest_counterfactual(opportunities)
     elif not context.passed:
-        decision_status, reasons = RouterDecisionStatus.NO_BET, ("strict reviewed Fixture State context gate did not pass",)
+        pieces = ["strict reviewed Fixture State context gate did not pass"]
+        if context.missing_field_ids:
+            pieces.append(
+                "missing=" + ",".join(item.value for item in context.missing_field_ids)
+            )
+        if context.blocked_field_ids:
+            pieces.append(
+                "blocked=" + ",".join(item.value for item in context.blocked_field_ids)
+            )
+        decision_status = RouterDecisionStatus.NO_BET
+        reasons = tuple(pieces)
+        selected = None
+        runner = None
+        counterfactual = _strongest_counterfactual(opportunities)
     elif eligible:
-        decision_status, reasons = RouterDecisionStatus.SELECTED, ("highest frozen-policy robust current-provider opportunity selected",)
+        decision_status = RouterDecisionStatus.SELECTED
+        reasons = ("highest frozen-policy robust current-provider opportunity selected",)
+        selected = eligible[0].opportunity_id
+        runner = eligible[1].opportunity_id if len(eligible) > 1 else None
+        counterfactual = rejected[0].opportunity_id if rejected else runner
     else:
-        decision_status, reasons = RouterDecisionStatus.NO_BET, ("no opportunity cleared frozen Router policy",)
-    selected = eligible[0].opportunity_id if decision_status is RouterDecisionStatus.SELECTED else None
-    runner = eligible[1].opportunity_id if len(eligible) > 1 and selected is not None else None
-    counterfactual = rejected[0].opportunity_id if rejected else runner
+        decision_status = RouterDecisionStatus.NO_BET
+        reasons = ("no opportunity cleared frozen Router policy",)
+        selected = None
+        runner = None
+        counterfactual = _strongest_counterfactual(opportunities)
+
     value = object.__new__(MarketRouterV3CurrentProviderDecision)
     return _set_frozen(value, {
         "dataset_name": DATASET_NAME,
