@@ -130,7 +130,8 @@ jobs:
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "e3cdb18845403d92f94933f68c2bd06e55660de0"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "522b99260137fbeea1914495b3aaa368961ba455"
-          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "99a625e39c01012acbcd201ee8b43acb344a40ff"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "c1650a2c9ff55fe119d86985cc183e07531853e6"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_post_origin_projection.py)" = "e760194644a9ec63f591759b14f1847abe455320"
 
       - name: Execute read-only GitHub lineage audit
         id: lineage_audit
@@ -140,7 +141,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          python scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py \
+          python scripts/audit_fotmob_fresh_holdout_actions_lineage_post_origin_projection.py \
             --repository "${GITHUB_REPOSITORY}" \
             --expected-main-sha "${{ steps.guard.outputs.main_sha }}" \
             --output fresh-holdout-actions-lineage-audit.json \
