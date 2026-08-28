@@ -407,7 +407,7 @@ def test_mismatched_raw_fotmob_capture_cannot_reuse_admission(monkeypatch, tmp_p
     _install_discovery(monkeypatch, [_event()])
     _install_detail(monkeypatch)
     monkeypatch.setattr(current, "_now_utc", lambda: EVALUATION)
-    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="exact deterministic derivative"):
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="source replay failed closed"):
         current.discover_and_reconcile_current_events(
             repository_root=tmp_path,
             fotmob_admission_value=admission,
