@@ -1,0 +1,193 @@
+name: Watch FotMob Fresh-Holdout Scheduler Liveness
+
+on:
+  # Independent control-plane cadence, deliberately offset from the reviewed
+  # :07/:37 collection lattice. This workflow never performs collection.
+  schedule:
+    - cron: '3,33 * * * *'
+  issue_comment:
+    types: [created]
+
+permissions:
+  actions: write
+  contents: read
+  issues: write
+
+concurrency:
+  group: fotmob-fresh-holdout-scheduler-liveness-control
+  cancel-in-progress: false
+
+jobs:
+  scheduler_liveness:
+    name: verify and repair scheduler control plane
+    if: >-
+      github.event_name == 'schedule' ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.number == 172 &&
+        github.event.comment.user.login == github.repository_owner &&
+        startsWith(github.event.comment.body, '/athena-repair-fresh-holdout-scheduler')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Validate exact control trigger
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_SCHEDULE: ${{ github.event.schedule }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import os
+
+          event = os.environ.get('EVENT_NAME', '')
+          if event == 'schedule':
+              if os.environ.get('EVENT_SCHEDULE', '') != '3,33 * * * *':
+                  raise SystemExit('unexpected scheduler-watchdog cron identity')
+          elif event == 'issue_comment':
+              body = os.environ.get('COMMENT_BODY', '').replace('\r\n', '\n')
+              expected = (
+                  '/athena-repair-fresh-holdout-scheduler\n'
+                  'confirm: CONTROL_PLANE_ONLY_NO_ACQUISITION'
+              )
+              if body != expected:
+                  raise SystemExit('scheduler repair command must be the exact reviewed two-line command')
+          else:
+              raise SystemExit(f'forbidden control trigger: {event!r}')
+          PY
+
+      - name: Check out exact current main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: '3.12'
+
+      - name: Verify exact main and reviewed control dependencies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$(git rev-parse HEAD)" = "${current_main}"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
+          test "$(git rev-parse HEAD:scripts/check_fotmob_fresh_holdout_scheduler_liveness.py)" = "ba86f537b9c83930d84b8cab87844cc82e6f4dd8"
+
+      - name: Fetch authoritative workflow liveness metadata
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}" > primary-workflow.json
+          gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/runs?event=schedule&per_page=100" > primary-runs.json
+
+      - name: Decide fail-closed scheduler liveness action
+        id: decision
+        shell: bash
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python scripts/check_fotmob_fresh_holdout_scheduler_liveness.py \
+            --workflow-json primary-workflow.json \
+            --runs-json primary-runs.json \
+            --stale-minutes 90 \
+            --github-output "${GITHUB_OUTPUT}"
+
+      - name: Re-enable disabled primary schedule
+        if: steps.decision.outputs.decision == 'ENABLE_DISABLED'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          gh api --method PUT "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/enable"
+
+      - name: Re-register stale active primary schedule
+        if: steps.decision.outputs.decision == 'REREGISTER_STALE_ACTIVE'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          # Control-plane only: cycling registration cannot execute the collection
+          # job, choose a nominal slot, reconstruct a missed observation, or backfill.
+          gh api --method PUT "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/disable"
+          gh api --method PUT "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/enable"
+
+      - name: Verify primary schedule is active after repair
+        if: >-
+          steps.decision.outputs.decision == 'ENABLE_DISABLED' ||
+          steps.decision.outputs.decision == 'REREGISTER_STALE_ACTIVE'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          state="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}" --jq '.state')"
+          test "${state}" = 'active'
+
+      - name: Record control-plane repair on lineage control issue
+        if: >-
+          steps.decision.outputs.decision == 'ENABLE_DISABLED' ||
+          steps.decision.outputs.decision == 'REREGISTER_STALE_ACTIVE'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const decision = '${{ steps.decision.outputs.decision }}';
+            const latestRun = '${{ steps.decision.outputs.latest_schedule_run_id }}';
+            const latestCreated = '${{ steps.decision.outputs.latest_schedule_created_at }}';
+            const ageMinutes = '${{ steps.decision.outputs.age_minutes }}';
+            const lines = [
+              'ATHENA FRESH-HOLDOUT SCHEDULER CONTROL REPAIR',
+              '',
+              `decision: ${decision}`,
+              `latest-scheduled-run-id: ${latestRun}`,
+              `latest-scheduled-run-created-at: ${latestCreated}`,
+              `latest-scheduled-run-age-minutes: ${ageMinutes}`,
+              `control-actions-run-id: ${context.runId}`,
+              'primary-workflow-state-after-repair: active',
+              'collection-run-triggered-by-repair: false',
+              'provider-network-acquisition-performed-by-repair: false',
+              'missed-observation-reconstruction-performed: false',
+              'backfill-authorized: false',
+              'model-approval-authorized: false',
+              'production-authorized: false',
+              'pricing-authorized: false',
+              'selection-authorized: false',
+              'bet-authorized: false',
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 172,
+              body: lines.join('\n'),
+            });
+
+      - name: Report healthy no-op
+        if: >-
+          steps.decision.outputs.decision == 'HEALTHY' ||
+          steps.decision.outputs.decision == 'ACTIVE_RUN_PRESENT'
+        shell: bash
+        run: |
+          echo "Primary fresh-holdout scheduler is healthy or currently active; no control-plane mutation performed."
+          echo "No collection, acquisition, backfill, or authority change was authorized."
