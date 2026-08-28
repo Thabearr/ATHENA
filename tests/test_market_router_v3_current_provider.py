@@ -222,6 +222,19 @@ def test_live_lane_owns_clock_and_rejects_as_of_price_source(monkeypatch):
         router.route_price_all_v3_current_provider(evaluation, fixture_state=_fixture_state())
 
 
+def test_live_lane_rejects_as_of_price_status_even_if_proof_label_is_live(monkeypatch):
+    evaluation = _priced_match_result(monkeypatch)
+    object.__setattr__(evaluation, "proof_mode", price.LIVE_CURRENT)
+    monkeypatch.setattr(
+        router.price_v3,
+        "verify_price_all_v3_current_provider_evaluation",
+        lambda value: value,
+    )
+    monkeypatch.setattr(router, "_now_utc", lambda: EVALUATION + timedelta(seconds=10))
+    with pytest.raises(router.MarketRouterV3CurrentProviderError, match="live Price-all"):
+        router.route_price_all_v3_current_provider(evaluation, fixture_state=_fixture_state())
+
+
 def test_decision_reconstructs_exactly(monkeypatch):
     evaluation = _priced_match_result(monkeypatch)
     decision = router.route_price_all_v3_current_provider_as_of(
