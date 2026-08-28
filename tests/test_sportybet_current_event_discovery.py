@@ -114,6 +114,7 @@ def _capture(monkeypatch, tmp_path: Path, raw: bytes, *, observed_at=OBSERVED):
 
 
 def _live(monkeypatch, tmp_path: Path, raw: bytes, handoff=None, *, now=None):
+    tmp_path.mkdir(parents=True, exist_ok=True)
     handoff = handoff or _single_handoff()
     monkeypatch.setattr(
         discovery,
