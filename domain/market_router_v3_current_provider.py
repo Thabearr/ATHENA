@@ -517,7 +517,10 @@ def _build(
         verified = price_v3.verify_price_all_v3_current_provider_evaluation(price_evaluation)
     except price_v3.PriceAllV3CurrentProviderError as exc:
         raise MarketRouterV3CurrentProviderError("Price-all v3 reconstruction failed") from exc
-    if require_live_current and verified.proof_mode != price_v3.LIVE_CURRENT:
+    if require_live_current and (
+        verified.proof_mode != price_v3.LIVE_CURRENT
+        or verified.status != price_v3.STATUS_LIVE
+    ):
         raise MarketRouterV3CurrentProviderError("live Router v3 requires live Price-all v3 ancestry")
     if verified.evaluation_time > now:
         raise MarketRouterV3CurrentProviderError("Router time predates Price-all v3")
