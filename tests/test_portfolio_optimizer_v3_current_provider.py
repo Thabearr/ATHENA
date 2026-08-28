@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from domain import portfolio_optimizer_v3_current_provider as portfolio
 from domain import sportybet_current_event_discovery_reconciliation as current_recon
 from domain._portfolio_optimizer_v2_direct_provider_contracts import PortfolioOptimizationStatus
+from domain.markets import MarketId
 from tests.test_current_direct_provider_live_quote_mapping_consumption import EVALUATION
 from tests.test_market_router_v3_current_provider import (
     EVENT,
@@ -154,6 +156,50 @@ def test_portfolio_time_stale_leg_is_audited_not_silently_selected(monkeypatch):
     assert result.shortfall == 1
     assert result.route_audits[0].admitted is False
     assert "stale" in " ".join(result.route_audits[0].admission_reasons)
+
+
+def test_full_settlement_survival_preserves_dnb_and_asian_handicap_components():
+    dnb = SimpleNamespace(market_id=MarketId.DRAW_NO_BET, event_probability_floor=None)
+    dnb_results = (
+        SimpleNamespace(
+            candidate=SimpleNamespace(
+                probability_map={"WIN": 0.50, "PUSH": 0.20, "LOSS": 0.30}
+            )
+        ),
+    )
+    assert portfolio._survival(dnb, dnb_results) == pytest.approx(0.70)
+
+    asian = SimpleNamespace(market_id=MarketId.ASIAN_HANDICAP, event_probability_floor=None)
+    asian_results = (
+        SimpleNamespace(
+            candidate=SimpleNamespace(
+                probability_map={
+                    "WIN": 0.30,
+                    "HALF_WIN": 0.20,
+                    "PUSH": 0.10,
+                    "HALF_LOSS": 0.15,
+                    "LOSS": 0.25,
+                }
+            )
+        ),
+    )
+    assert portfolio._survival(asian, asian_results) == pytest.approx(0.60)
+
+
+def test_full_settlement_survival_rejects_component_drift():
+    dnb = SimpleNamespace(market_id=MarketId.DRAW_NO_BET, event_probability_floor=None)
+    bad_results = (
+        SimpleNamespace(
+            candidate=SimpleNamespace(
+                probability_map={"WIN": 0.60, "PUSH": 0.20, "LOSS": 0.10, "OTHER": 0.10}
+            )
+        ),
+    )
+    with pytest.raises(
+        portfolio.PortfolioOptimizerV3CurrentProviderError,
+        match="DNB settlement components drifted",
+    ):
+        portfolio._survival(dnb, bad_results)
 
 
 def test_portfolio_reconstructs_exactly(monkeypatch):
