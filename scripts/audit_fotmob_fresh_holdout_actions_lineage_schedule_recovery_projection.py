@@ -1,12 +1,18 @@
-"""Project the read-only fresh-holdout audit across ambiguity no-op recovery.
+"""Project the read-only fresh-holdout audit across reviewed no-acquisition recovery.
 
 The underlying lineage audit remains the reviewed engine. This projection updates
-only its pinned runtime dependency identities and makes one evidence-transparent
-compatibility allowance: a completed scheduled run may be excluded from nominal
-source lineage only when GitHub metadata proves the exact reviewed
-AMBIGUOUS_NO_ACQUISITION path (zero artifacts and every acquisition/persistence
-step skipped). Such a run observed no provider bytes and cannot represent a
-nominal fixture observation.
+only its pinned runtime dependency identities and makes evidence-transparent
+compatibility allowances for completed scheduled runs that GitHub metadata proves
+could not contain a provider observation:
+
+* exact AMBIGUOUS_NO_ACQUISITION successes; and
+* exact zero-artifact pre-acquisition failures admitted by the current reviewed
+  producer-side proof.
+
+The second allowance matches the post-PR207 producer boundary. A proven
+pre-acquisition failure may be transparent even after canonical campaign evidence
+exists, but projecting it out never reopens Genesis: the unchanged audit engine
+still derives campaign-origin state from the remaining chronological evidence.
 """
 from __future__ import annotations
 
@@ -55,8 +61,24 @@ def _projected_noop_record(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _projected_preacquisition_record(run: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "run_id": run.get("id"),
+        "created_at": run.get("created_at"),
+        "head_sha": run.get("head_sha"),
+        "conclusion": run.get("conclusion"),
+        "evidence_state": "VERIFIED_PREACQUISITION_CONTROL_FAILURE",
+        "nominal_slot_utc": None,
+        "tick_committed": False,
+        "archive_name": None,
+        "archive_sha256": None,
+        "release_state": "NOT_APPLICABLE_NO_ACQUISITION",
+        "verification_error": None,
+    }
+
+
 def _audit_actions_lineage_compatible(*args, **kwargs):
-    """Run the unchanged engine while projecting out proven zero-evidence no-ops."""
+    """Run the unchanged engine while projecting exact zero-observation runs."""
     if args:
         raise audit.FreshHoldoutActionsLineageAuditError(
             "schedule-recovery projection requires keyword audit arguments"
@@ -69,6 +91,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
+    projected_preacquisition: dict[int, Mapping[str, Any]] = {}
 
     def cached_artifacts(run_id: int) -> Mapping[str, Any]:
         if run_id not in artifact_cache:
@@ -84,19 +107,34 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         if not _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE(run):
             return False
         run_id = run.get("id")
-        if (
-            run.get("status") == "completed"
-            and run.get("conclusion") == "success"
-            and type(run_id) is int
-            and run_id > 0
-        ):
-            artifacts = cached_artifacts(run_id)
+        if run.get("status") != "completed" or type(run_id) is not int or run_id <= 0:
+            return True
+
+        artifacts = cached_artifacts(run_id)
+        if run.get("conclusion") == "success":
             if recovery._prove_ambiguous_no_acquisition_success(
                 run,
                 artifacts,
                 cached_jobs,
             ):
                 projected_noops[run_id] = run
+                return False
+        elif run.get("conclusion") == "failure":
+            try:
+                proved_preacquisition = (
+                    audit.failure_lineage._prove_preacquisition_control_failure(
+                        run,
+                        artifacts,
+                        cached_jobs,
+                    )
+                )
+            except audit.failure_lineage.FreshHoldoutFailureLineageError as exc:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "pre-acquisition control-failure projection proof failed for run "
+                    f"{run_id}: {exc}"
+                ) from exc
+            if proved_preacquisition:
+                projected_preacquisition[run_id] = run
                 return False
         return True
 
@@ -111,14 +149,40 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         audit._run_is_collection_candidate = previous_candidate
 
     result = dict(result)
-    ordered = sorted(
+    ordered_noops = sorted(
         projected_noops.values(),
         key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
     )
-    result["verified_ambiguous_no_acquisition_count"] = len(ordered)
+    ordered_preacquisition = sorted(
+        projected_preacquisition.values(),
+        key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
+    )
+    result["verified_ambiguous_no_acquisition_count"] = len(ordered_noops)
     result["projected_ambiguous_no_acquisition_runs"] = [
-        _projected_noop_record(run) for run in ordered
+        _projected_noop_record(run) for run in ordered_noops
     ]
+
+    existing_preacquisition = result.get(
+        "verified_preacquisition_control_failure_count", 0
+    )
+    if type(existing_preacquisition) is not int or existing_preacquisition < 0:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "audit engine returned invalid pre-acquisition control-failure count"
+        )
+    result["verified_preacquisition_control_failure_count"] = (
+        existing_preacquisition + len(ordered_preacquisition)
+    )
+    result["projected_preacquisition_control_failure_runs"] = [
+        _projected_preacquisition_record(run) for run in ordered_preacquisition
+    ]
+    if (
+        ordered_preacquisition
+        and result.get("audit_state") == "NO_COMPLETED_CAMPAIGN_EVIDENCE"
+    ):
+        # Preserve the base engine's historical semantics: a proven failed control
+        # attempt before Genesis is verified metadata, but there is still no nominal
+        # source observation to promote into completed campaign evidence.
+        result["audit_state"] = "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
     return result
 
 
