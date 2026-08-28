@@ -74,6 +74,8 @@ AUTHORITY = types.MappingProxyType(
 )
 
 _FULL_SETTLEMENT = frozenset({MarketId.DRAW_NO_BET, MarketId.ASIAN_HANDICAP})
+_DNB_COMPONENTS = frozen_v2._DNB_COMPONENTS
+_AH_COMPONENTS = frozen_v2._AH_COMPONENTS
 
 
 class PortfolioOptimizerV3CurrentProviderError(ValueError):
@@ -99,6 +101,19 @@ def _utc(value: Any, label: str) -> datetime:
 
 def _now_utc() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _finite_probability(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise PortfolioOptimizerV3CurrentProviderError(
+            f"{label} must be a finite probability"
+        )
+    result = float(value)
+    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            f"{label} must be within [0,1]"
+        )
+    return result
 
 
 def _contract_payload() -> dict[str, Any]:
@@ -408,14 +423,40 @@ def _survival(opportunity: router_v3.CurrentProviderRoutedOpportunity, results: 
     if opportunity.market_id not in _FULL_SETTLEMENT:
         if opportunity.event_probability_floor is None:
             raise PortfolioOptimizerV3CurrentProviderError("ordinary leg lacks event probability floor")
-        return float(opportunity.event_probability_floor)
-    values = []
+        return _finite_probability(
+            opportunity.event_probability_floor,
+            "ordinary leg event probability floor",
+        )
+    values: list[float] = []
     for result in results:
         probabilities = result.candidate.probability_map
+        components = frozenset(probabilities)
         if opportunity.market_id is MarketId.DRAW_NO_BET:
-            values.append(probabilities["WIN"] + probabilities["PUSH"])
+            if components != _DNB_COMPONENTS:
+                raise PortfolioOptimizerV3CurrentProviderError(
+                    "DNB settlement components drifted"
+                )
+            survival = probabilities["WIN"] + probabilities["PUSH"]
         else:
-            values.append(probabilities["WIN"] + probabilities["HALF_WIN"] + probabilities["PUSH"])
+            if components != _AH_COMPONENTS:
+                raise PortfolioOptimizerV3CurrentProviderError(
+                    "Asian Handicap settlement components drifted"
+                )
+            survival = (
+                probabilities["WIN"]
+                + probabilities["HALF_WIN"]
+                + probabilities["PUSH"]
+            )
+        values.append(
+            _finite_probability(
+                survival,
+                "selected settlement survival probability",
+            )
+        )
+    if not values:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "selected full-settlement opportunity has no model variants"
+        )
     return min(values)
 
 
@@ -432,7 +473,15 @@ def _build_leg(source: CurrentProviderPortfolioRouterInput, now: datetime) -> Cu
         raise PortfolioOptimizerV3CurrentProviderError("selected Router opportunity is not eligible")
     age = (now - decision.source_observed_at).total_seconds()
     lead = (decision.kickoff_utc - now).total_seconds()
-    if age < 0 or age > decision.price_all_evaluation.max_quote_age_seconds or lead <= decision.price_all_evaluation.minimum_lead_seconds:
+    if not math.isfinite(age) or age < 0:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "selected current-provider source is future-dated at portfolio time"
+        )
+    if not math.isfinite(lead):
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "selected current-provider kickoff lead is invalid"
+        )
+    if age > decision.price_all_evaluation.max_quote_age_seconds or lead <= decision.price_all_evaluation.minimum_lead_seconds:
         raise PortfolioOptimizerV3CurrentProviderError("selected leg is stale or too close to kickoff")
     results = _selected_results(decision)
     quote_shas = {_sha(result.quote.to_dict()) for result in results}
@@ -454,8 +503,26 @@ def _build_leg(source: CurrentProviderPortfolioRouterInput, now: datetime) -> Cu
         or opportunity.source_current_reconciliation_sha256 != source.current_reconciliation_sha256
     ):
         raise PortfolioOptimizerV3CurrentProviderError("selected Router/provider/current reconciliation ancestry differs")
-    survival = _survival(opportunity, results)
     robust_ev = float(opportunity.robust_net_expected_value)
+    if not math.isfinite(robust_ev) or robust_ev <= 0.0:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "selected Router opportunity lacks positive robust EV"
+        )
+    odds = float(opportunity.decimal_odds)
+    if not math.isfinite(odds) or odds <= 1.0:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "selected Router opportunity lacks valid decimal odds"
+        )
+    router_age = opportunity.router_quote_age_seconds
+    if router_age is None or not math.isfinite(router_age) or router_age < 0:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "selected Router opportunity lacks valid Router quote age"
+        )
+    if age + 1e-9 < router_age:
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "portfolio quote age cannot be younger than Router quote age"
+        )
+    survival = _survival(opportunity, results)
     payload = {
         "router_decision_sha256": decision.canonical_sha256,
         "opportunity_id": opportunity.opportunity_id,
@@ -475,7 +542,7 @@ def _build_leg(source: CurrentProviderPortfolioRouterInput, now: datetime) -> Cu
         provider_specifier=opportunity.provider_specifier,
         provider_market_name=str(opportunity.provider_market_name),
         provider_outcome_name=str(opportunity.provider_outcome_name),
-        decimal_odds=float(opportunity.decimal_odds),
+        decimal_odds=odds,
         quote_sha256=str(opportunity.quote_sha256),
         current_inventory_sha256=opportunity.current_inventory_sha256,
         source_manifest_sha256=opportunity.source_manifest_sha256,
@@ -484,7 +551,7 @@ def _build_leg(source: CurrentProviderPortfolioRouterInput, now: datetime) -> Cu
         current_mapping_contract_sha256=opportunity.current_mapping_contract_sha256,
         current_reconciliation_sha256=source.current_reconciliation_sha256,
         source_legacy_mapping_sha256=opportunity.source_legacy_mapping_sha256,
-        router_quote_age_seconds=float(opportunity.router_quote_age_seconds),
+        router_quote_age_seconds=float(router_age),
         portfolio_quote_age_seconds=age,
         portfolio_kickoff_lead_seconds=lead,
         robust_net_expected_value=robust_ev,
@@ -533,6 +600,39 @@ def _marginal(candidate: CurrentProviderPortfolioLeg, selected: Sequence[Current
     return (penalty, -candidate.survival_probability_floor, -candidate.robust_net_expected_value, 0 if candidate.robust_edge is not None else 1, -(candidate.robust_edge or 0), candidate.portfolio_quote_age_seconds, candidate.leg_id)
 
 
+def _reserve_key(candidate: CurrentProviderPortfolioLeg) -> tuple[Any, ...]:
+    edge_present = candidate.robust_edge is not None
+    return (
+        -candidate.survival_probability_floor,
+        -candidate.robust_net_expected_value,
+        0 if edge_present else 1,
+        -(candidate.robust_edge if candidate.robust_edge is not None else 0.0),
+        candidate.portfolio_quote_age_seconds,
+        candidate.leg_id,
+    )
+
+
+def _survival_product(selected: Sequence[CurrentProviderPortfolioLeg]) -> float | None:
+    if not selected:
+        return None
+    value = math.prod(item.survival_probability_floor for item in selected)
+    if not math.isfinite(value):
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "independence survival baseline is non-finite"
+        )
+    return value
+
+
+def _odds_product(selected: Sequence[CurrentProviderPortfolioLeg]) -> float | None:
+    if not selected:
+        return None
+    value = Decimal("1")
+    for item in selected:
+        value *= Decimal(str(item.decimal_odds))
+    result = float(value)
+    return result if math.isfinite(result) else None
+
+
 def _build(router_inputs: Iterable[CurrentProviderPortfolioRouterInput], *, target_size: int, evaluation_time: datetime, require_live_current: bool) -> CurrentProviderPortfolioOptimization:
     identities = validate_portfolio_optimizer_v3_contract(); now = _utc(evaluation_time, "evaluation_time")
     if type(target_size) is not int or not 1 <= target_size <= MAXIMUM_TARGET_SIZE:
@@ -541,11 +641,19 @@ def _build(router_inputs: Iterable[CurrentProviderPortfolioRouterInput], *, targ
     verified = tuple(verify_current_provider_portfolio_router_input(item) for item in inputs)
     if len({item.fixture_id for item in verified}) != len(verified) or len({item.event_id for item in verified}) != len(verified):
         raise PortfolioOptimizerV3CurrentProviderError("duplicate fixture or provider event input")
-    if require_live_current and any(item.router_decision.proof_mode != router_v3.price_v3.LIVE_CURRENT for item in verified):
+    if any(item.router_decision.evaluation_time > now for item in verified):
+        raise PortfolioOptimizerV3CurrentProviderError(
+            "portfolio evaluation_time predates a Router v3 decision"
+        )
+    if require_live_current and any(
+        item.router_decision.proof_mode != router_v3.price_v3.LIVE_CURRENT
+        or item.router_decision.status != router_v3.STATUS_LIVE
+        for item in verified
+    ):
         raise PortfolioOptimizerV3CurrentProviderError("live Portfolio v3 requires live current Router ancestry")
-    candidates = []
+    candidates: list[CurrentProviderPortfolioLeg] = []
     audits: list[CurrentProviderPortfolioRouteAudit] = []
-    for item in verified:
+    for item in sorted(verified, key=lambda value: value.fixture_id):
         if item.router_decision.decision_status is RouterDecisionStatus.SELECTED:
             try:
                 candidates.append(_build_leg(item, now))
@@ -560,19 +668,35 @@ def _build(router_inputs: Iterable[CurrentProviderPortfolioRouterInput], *, targ
             router_decision_sha256=item.router_decision_sha256,
             router_decision_status=item.router_decision.decision_status.value,
             admitted=admitted,
-            admission_reasons=reasons,
+            admission_reasons=tuple(sorted(set(reasons))),
         ))
-    caps = _caps(target_size); selected: list[CurrentProviderPortfolioLeg] = []; remaining = list(candidates)
+    caps = _caps(target_size); selected: list[CurrentProviderPortfolioLeg] = []; remaining = sorted(candidates, key=lambda item: item.leg_id)
     while remaining and len(selected) < target_size:
         eligible = [item for item in remaining if not _constraints(item, selected, caps)]
         if not eligible: break
         chosen = min(eligible, key=lambda item: _marginal(item, selected, caps)); selected.append(chosen); remaining.remove(chosen)
     selected = sorted(selected, key=lambda item: item.leg_id); selected_ids = {x.leg_id for x in selected}
-    reserves = tuple(CurrentProviderReserveLeg(item, _constraints(item, selected, caps) or (("TARGET_SIZE_REACHED",) if len(selected) >= target_size else ("NOT_SELECTED_BY_JOINT_POLICY",))) for item in sorted(candidates, key=lambda x: x.leg_id) if item.leg_id not in selected_ids)
-    shortfall = target_size - len(selected)
+    reserve_rows: list[CurrentProviderReserveLeg] = []
+    for item in sorted(
+        (candidate for candidate in candidates if candidate.leg_id not in selected_ids),
+        key=_reserve_key,
+    ):
+        reasons = list(_constraints(item, selected, caps))
+        if len(selected) >= target_size:
+            reasons.append("TARGET_FILLED")
+        if not reasons:
+            reasons.append("LOWER_MARGINAL_PORTFOLIO_PRIORITY")
+        reserve_rows.append(
+            CurrentProviderReserveLeg(
+                item,
+                tuple(sorted(set(reasons))),
+            )
+        )
+    reserves = tuple(reserve_rows)
+    shortfall = max(0, target_size - len(selected))
     status = PortfolioOptimizationStatus.QUALIFIED_SET if selected else PortfolioOptimizationStatus.NO_QUALIFIED_LEGS
-    survival = math.prod(item.survival_probability_floor for item in selected) if selected else None
-    odds = float(math.prod(Decimal(str(item.decimal_odds)) for item in selected)) if selected else None
+    survival = _survival_product(selected)
+    odds = _odds_product(selected)
     teams, competitions, families, fragile = _counts(selected)
     exposure = types.MappingProxyType({"caps": dict(caps), "team_counts": dict(sorted(teams.items())), "competition_counts": dict(sorted(competitions.items())), "market_family_counts": dict(sorted(families.items())), "fragile_count": fragile, "statistical_correlation_coefficients": None, "joint_dependence_status": JOINT_DEPENDENCE_STATUS})
     value = object.__new__(CurrentProviderPortfolioOptimization)
@@ -590,7 +714,7 @@ def _build(router_inputs: Iterable[CurrentProviderPortfolioRouterInput], *, targ
         "optimization_status": status, "shortfall": shortfall,
         "expected_slip_survival": survival, "combined_decimal_odds_product": odds,
         "exposure_summary": exposure, "authority": types.MappingProxyType(dict(AUTHORITY)),
-        "next_boundary": NEXT_BOUNDARY, "_router_inputs": inputs,
+        "next_boundary": NEXT_BOUNDARY, "_router_inputs": verified,
         "_require_live_current": require_live_current,
     }.items(): object.__setattr__(value, name, field)
     return value
