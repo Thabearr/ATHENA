@@ -90,7 +90,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          primary='fotmob-utc-native-xg-fresh-holdout.yml'
           gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}" > primary-workflow.json
           gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/runs?event=schedule&per_page=100" > primary-runs.json
 
@@ -115,7 +115,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          primary='fotmob-utc-native-xg-fresh-holdout.yml'
           gh api --method PUT "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/enable"
 
       - name: Re-register stale active primary schedule
@@ -126,7 +126,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          primary='fotmob-utc-native-xg-fresh-holdout.yml'
           # Control-plane only: cycling registration cannot execute the collection
           # job, choose a nominal slot, reconstruct a missed observation, or backfill.
           gh api --method PUT "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}/disable"
@@ -142,7 +142,7 @@ jobs:
           GITHUB_REPOSITORY: ${{ github.repository }}
         run: |
           set -euo pipefail
-          primary='.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml'
+          primary='fotmob-utc-native-xg-fresh-holdout.yml'
           state="$(gh api "/repos/${GITHUB_REPOSITORY}/actions/workflows/${primary}" --jq '.state')"
           test "${state}" = 'active'
 
