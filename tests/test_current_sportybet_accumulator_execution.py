@@ -58,6 +58,10 @@ def _install_success(monkeypatch, *, mutate_create=None, mutate_reload=None, acc
                 "observed_specifier": intents[0]["specifier"],
                 "odds": str(selected_leg.decimal_odds),
             }],
+            "sportybet_login_used": False,
+            "sportybet_cookie_used": False,
+            "sportybet_wallet_used": False,
+            "stake_submitted": False,
             "wager_placed": False,
         }
         return selections, receipt
@@ -75,10 +79,16 @@ def _install_success(monkeypatch, *, mutate_create=None, mutate_reload=None, acc
             "load_accepted_selection_count": accepted_count,
             "create_accepted_outcomes": [create],
             "load_accepted_outcomes": [reload],
+            "create_unavailable_outcomes": 0,
+            "load_unavailable_outcomes": 0,
             "exact_roundtrip_selection_identity_verified": True,
             "shareCode": "VERIFIED1",
             "shareURL": "https://www.sportybet.com/ng/share/VERIFIED1",
             "combined_odds": str(leg.decimal_odds),
+            "sportybet_login_used": False,
+            "sportybet_cookie_used": False,
+            "sportybet_wallet_used": False,
+            "stake_submitted": False,
             "wager_placed": False,
         }
 
@@ -166,6 +176,42 @@ def test_create_reload_count_or_native_identity_drift_fails(monkeypatch, tmp_pat
         )
 
 
+def test_provider_safety_or_unavailable_outcome_claim_fails_closed(monkeypatch, tmp_path):
+    optimization = _optimization(monkeypatch)
+    observed = _install_success(monkeypatch)
+    observed["optimization"] = optimization
+
+    original = execution.direct_bridge.create_and_roundtrip
+
+    def unsafe_transport(**kwargs):
+        receipt = original(**kwargs)
+        receipt["sportybet_wallet_used"] = True
+        return receipt
+
+    monkeypatch.setattr(execution.direct_bridge, "create_and_roundtrip", unsafe_transport)
+    with pytest.raises(execution.CurrentSportyBetAccumulatorExecutionError, match="safety field"):
+        execution.execute_current_sportybet_accumulator_as_of(
+            optimization, output_dir=tmp_path,
+            evaluation_time=EVALUATION + timedelta(seconds=30),
+        )
+
+    observed = _install_success(monkeypatch)
+    observed["optimization"] = optimization
+    original = execution.direct_bridge.create_and_roundtrip
+
+    def unavailable_transport(**kwargs):
+        receipt = original(**kwargs)
+        receipt["create_unavailable_outcomes"] = 1
+        return receipt
+
+    monkeypatch.setattr(execution.direct_bridge, "create_and_roundtrip", unavailable_transport)
+    with pytest.raises(execution.CurrentSportyBetAccumulatorExecutionError, match="unavailable outcomes"):
+        execution.execute_current_sportybet_accumulator_as_of(
+            optimization, output_dir=tmp_path,
+            evaluation_time=EVALUATION + timedelta(seconds=30),
+        )
+
+
 def test_requested_twenty_qualified_one_returns_shortfall_without_provider_call(monkeypatch, tmp_path):
     optimization = _optimization(monkeypatch, target=20)
     monkeypatch.setattr(execution.semantic_bridge, "resolve_live_intents", lambda **kwargs: (_ for _ in ()).throw(AssertionError("must not resolve")))
@@ -180,6 +226,43 @@ def test_requested_twenty_qualified_one_returns_shortfall_without_provider_call(
     assert result.shortfall == 19
     assert result.share_code is None
     assert result.wager_placed is False
+
+
+def test_execution_cannot_run_before_portfolio_evaluation_time(monkeypatch, tmp_path):
+    optimization = _optimization(monkeypatch)
+    with pytest.raises(
+        execution.CurrentSportyBetAccumulatorExecutionError,
+        match="predates Portfolio v3",
+    ):
+        execution.execute_current_sportybet_accumulator_as_of(
+            optimization,
+            output_dir=tmp_path,
+            evaluation_time=EVALUATION + timedelta(seconds=15),
+        )
+
+
+def test_live_execution_requires_live_portfolio_status_not_only_proof_label(monkeypatch, tmp_path):
+    optimization = _optimization(monkeypatch)
+    object.__setattr__(
+        optimization,
+        "proof_mode",
+        portfolio.router_v3.price_v3.LIVE_CURRENT,
+    )
+    monkeypatch.setattr(
+        execution.portfolio_v3,
+        "verify_current_provider_portfolio_optimization",
+        lambda value: value,
+    )
+    monkeypatch.setattr(execution, "_now_utc", lambda: EVALUATION + timedelta(seconds=30))
+    with pytest.raises(
+        execution.CurrentSportyBetAccumulatorExecutionError,
+        match="live current ancestry",
+    ):
+        execution.execute_current_sportybet_accumulator(
+            optimization,
+            output_dir=tmp_path,
+            delay_seconds=0.0,
+        )
 
 
 def test_final_source_replay_staleness_fails_whole_execution(monkeypatch, tmp_path):
