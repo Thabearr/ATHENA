@@ -1,202 +1,169 @@
-# SportyBet current event discovery + exact FotMob reconciliation
+# SportyBet current event discovery + source-replayed FotMob reconciliation
 
 ## Purpose
 
-PR #251 implements the next boundary declared by the direct-provider Portfolio
-Optimizer v2:
+PR #251 closes the autonomous event-identity gap left after Portfolio Optimizer v2. The direct SportyBet quote lane already knew how to read one exact `sr:match:<id>` once that provider event ID was known. This boundary discovers current SportyBet football event IDs and reconciles them conservatively to ATHENA's reviewed FotMob fixture truth.
 
-`SPORTYBET_CURRENT_EVENT_DISCOVERY_AND_FIXTURE_RECONCILIATION_REQUIRED`
+The boundary is deliberately narrow. It grants current event discovery, direct event-detail confirmation, and exact fixture reconciliation only. It does not grant canonical market mapping, Price-all, Router, portfolio optimization, final selection, slip construction, execution, staking, or BET authority.
 
-The existing live quote boundary can read a known `sr:match:...` event ID, but
-that does not make ATHENA autonomous: a current FotMob fixture still needs a
-reviewed way to discover the corresponding current SportyBet event ID.
+## Provider discovery source
 
-This boundary adds that missing source/provenance step. It discovers current
-football events from a public anonymous SportyBet event-list endpoint, preserves
-the exact response pages, exact-matches those provider identities against
-reviewed FotMob fixture inputs, and confirms every authorized reconciliation by
-replaying the already-reviewed PR #246 direct event-detail source.
+The discovery request is an anonymous read-only FactsCenter GET:
 
-It does **not** infer or reuse a canonical market mapping for a new event.
+`/api/ng/factsCenter/liveOrPrematchEvents?sportId=sr%3Asport%3A1&pageSize=100&pageNum=<n>`
 
-## Frozen identities
+ATHENA sends the reviewed public headers only. It does not use login state, cookies, wallet data, account tokens, a betslip, staking, or browser impersonation.
 
-- Portfolio Optimizer v2 direct-provider contract:
-  `919149759ffc9aabef2fefe7c6e0db72d697ebd1ffe33205054fc3ffb4f785fd`
-- direct current event/quote evidence contract:
-  `b888cebab6447cd4072d823dab67b56f1f75f72eb72d67b692d47a4378b27555`
-- current event discovery/reconciliation contract:
-  `ce69058ea61eecb9b5849567746bc0358ee29f2a4798b61190673d436d25b7ae`
+Pagination is bounded at 20 pages. A successful discovery capture must observe a terminal empty page. Reaching the bound without an empty terminal page fails closed rather than claiming complete coverage. This contract therefore describes the exact observed current SportyBet event-list source; it does not claim mathematical completeness of every possible SportyBet catalogue surface.
 
-The FotMob side remains anchored to the reviewed
-`athena-fotmob-fixture-catalog-handoff-v1` contract.
-
-## Discovery endpoint
-
-The runtime request is a public anonymous GET to:
-
-`/api/ng/factsCenter/liveOrPrematchEvents`
-
-with the frozen football/pagination parameters:
-
-- `sportId=sr:sport:1`
-- `pageSize=100`
-- `pageNum=<1..20>`
-
-No login, cookie, account, wallet, stake, booking-code creation or wager action
-is part of the discovery boundary.
-
-The endpoint identity is frozen by this PR, but actual network acquisition is
-still runtime evidence: the code grants no event identity merely because the
-URL exists. A capture must return HTTP 200, strict UTF-8 JSON and SportyBet
-`bizCode=10000` before any event candidate exists.
-
-## Pagination and raw evidence
-
-Discovery starts at page 1 and continues until a page contributes no new event
-IDs. Every response is preserved under:
+Every raw page is retained under:
 
 `.cache/athena-research/sportybet-current-event-discovery/<capture-id>/`
 
-with one immutable raw JSON file per page plus a canonical manifest.
+with a canonical manifest that records request target, response-completion observation time, raw SHA-256, size, and the exact events derived from that page.
 
-The manifest records for each page:
+## Time semantics
 
-- exact request target;
-- ATHENA response-completion observation time;
-- raw file name;
-- raw SHA-256;
-- raw byte size;
-- extracted event count.
+`observed_at` is ATHENA's response-completion time. It is not relabelled as a SportyBet provider event timestamp, provider quote timestamp, or provider snapshot ID.
 
-The observation time is ATHENA's response-completion time. It is not relabeled
-as a provider-native event timestamp, quote timestamp or snapshot identity.
+The discovery contract uses the same reviewed currentness bounds as PR #246:
 
-If page 20 still adds new event IDs, discovery fails closed rather than silently
-claiming a complete universe.
+- maximum source age: 900 seconds;
+- minimum kickoff lead: strictly greater than 120 seconds.
 
-If the same event ID appears on multiple pages with changed home, away,
-competition, kickoff or provider status identity, discovery fails closed.
+Both the discovery observation and the PR #246 direct event-detail observation are checked at the final PR #251 issuance time. An event is not authorized when either observation is stale or when the final kickoff lead is 120 seconds or less.
 
-## Provider event extraction
+## FotMob remains fixture truth
 
-An event candidate requires exact provider fields for:
+SportyBet is not promoted into ATHENA's primary fixture catalogue merely because it lists a betting event.
 
-- `eventId` in canonical `sr:match:<positive integer>` form;
-- `homeTeamName`;
-- `awayTeamName`;
-- numeric millisecond `estimateStartTime`;
-- provider status/bookability fields where present.
+Before any SportyBet/FotMob match can receive reconciliation authority, PR #251 requires an exact `ReviewedFixtureCatalogAdmission` plus the exact raw FotMob `/api/data/matches` captures from which that admission was derived.
 
-Competition identity is accepted only when all observed provider competition
-labels agree. The extractor can prove the label from a tournament envelope,
-`event.tournamentName`, `event.leagueName`, `event.competitionName`, or the
-nested `sport.category.tournament.name` structure.
+The boundary then replays the existing reviewed FotMob chain:
 
-If those fields disagree, competition identity remains unproven and the event
-cannot authorize fixture reconciliation.
+1. verify every raw capture against its exact capture manifest;
+2. rebuild the FotMob fixture-candidate bundle from those raw bytes;
+3. replay the explicit human fixture-review decisions;
+4. rebuild the exact `FotMobFixtureCatalogHandoff`;
+5. require canonical equality with the handoff retained by the supplied reviewed admission;
+6. require the catalog admission disposition to be exactly `ADMITTED`;
+7. require the reviewed FotMob source capability and fail-closed admission safety state;
+8. only then expose the reviewed FotMob catalog inputs for reconciliation.
 
-## Exact FotMob matching
+A prebuilt handoff by itself is therefore insufficient. This prevents a caller from presenting a semantically plausible catalog object without the raw FotMob ancestry that earned its authority.
 
-The supplied FotMob catalog handoff is reconstructed before use. The provider
-event is then compared with reviewed FotMob inputs using only:
+The issued bundle retains immutable identities for the admitted catalog and its raw capture population, including the admission, candidate bundle, review bundle, handoff, catalog, manifest, raw-capture, and capture-manifest SHA-256 identities.
 
-`EXACT_CASE_SENSITIVE_HOME_AWAY_COMPETITION_FULL_UTC_NO_ALIAS_NO_FUZZY_NO_TOLERANCE`
+## Exact reconciliation
 
-That means:
+The matching basis is:
 
-- exact home team string;
-- exact away team string;
-- exact competition string;
-- exact full UTC kickoff instant.
+`EXACT_CASE_SENSITIVE_HOME_AWAY_COMPETITION_FULL_UTC_NO_ALIAS_NO_FUZZY_NO_REVERSAL_NO_ROUNDING_NO_TOLERANCE`
 
-There is no case folding, alias table, fuzzy matching, home/away reversal,
-kickoff rounding or tolerance window in this authority boundary.
+The provider event must exactly equal one reviewed FotMob input on:
 
-Possible dispositions are explicit:
+- home team display name;
+- away team display name;
+- competition display name;
+- full UTC kickoff.
 
-- `UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILED`
-- `DISCOVERY_EVENT_NOT_PREMATCH_BOOKABLE`
-- `PROVIDER_COMPETITION_UNPROVEN`
-- `NO_EXACT_REVIEWED_FOTMOB_MATCH`
-- `AMBIGUOUS_EXACT_REVIEWED_FOTMOB_MATCH`
-- `DIRECT_EVENT_DETAIL_CONFIRMATION_FAILED`
+There is no case folding, alias table, fuzzy score, home/away reversal, kickoff rounding, or tolerance window in this boundary.
 
-No-match and ambiguous-match states are valid fail-closed outputs.
+Missing or conflicted provider competition identity remains explicit and cannot reconcile.
+
+One provider event matching multiple reviewed FotMob fixtures is ambiguous. Multiple distinct provider event IDs targeting one reviewed FotMob fixture are also all ambiguous. ATHENA does not choose among them.
 
 ## Direct event-detail confirmation
 
-A unique exact discovery/FotMob match is still not enough for reconciliation
-authority.
+Discovery alone is not enough to grant fixture reconciliation.
 
-Before promotion, PR #251 calls the already-reviewed PR #246 event endpoint for
-that exact event ID and rebuilds the live event inventory from its preserved raw
-response. The detail confirmation must agree exactly with discovery on:
+For each uniquely matched, non-ambiguous candidate, PR #251 executes the already reviewed PR #246 anonymous direct event GET and preserves that evidence under the PR #246 evidence root. The direct event inventory must confirm the same:
 
-- event ID;
+- `event_id`;
 - home team;
 - away team;
 - full UTC kickoff;
-- current prematch/bookable state.
+- prematch/bookable state.
 
-The detail observation must also precede kickoff.
+The direct event observation must also remain within the 900-second age limit at PR #251 issuance.
 
-Only after this second exact provider read succeeds does
-`fixture_reconciliation_authorized=True`.
+This two-source SportyBet check prevents an event-list row from gaining fixture authority without confirmation from the event-specific source that later supplies current quote evidence.
 
-The result preserves the PR #246 detail manifest SHA, inventory SHA and raw
-response SHA alongside the discovery event SHA and matched FotMob fixture ID.
+## Explicit dispositions
 
-## Reconstruction
+Every discovered event remains visible with one deterministic disposition:
+
+- `UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILED`;
+- `DISCOVERY_EVENT_NOT_PREMATCH_BOOKABLE`;
+- `PROVIDER_COMPETITION_UNPROVEN`;
+- `DISCOVERY_EVIDENCE_STALE`;
+- `PROVIDER_EVENT_TOO_CLOSE_TO_KICKOFF`;
+- `NO_EXACT_REVIEWED_FOTMOB_MATCH`;
+- `AMBIGUOUS_EXACT_REVIEWED_FOTMOB_MATCH`;
+- `AMBIGUOUS_PROVIDER_EVENT_FOR_FIXTURE`;
+- `DIRECT_EVENT_DETAIL_IDENTITY_MISMATCH`;
+- `DIRECT_EVENT_DETAIL_NOT_PREMATCH_BOOKABLE`;
+- `DIRECT_EVENT_DETAIL_STALE`.
+
+Only `UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILED` sets `fixture_reconciliation_authorized=true`.
+
+A successful empty SportyBet discovery feed remains a valid zero-event observation. ATHENA does not fill it from another source and does not fabricate provider event IDs.
+
+## Reconstruction and tamper resistance
 
 `SportyBetCurrentEventDiscoveryReconciliationBundle` is builder-only.
 
-Verification is offline. It replays:
+`verify_current_event_discovery_reconciliation_bundle()` replays:
 
-1. every exact preserved discovery response page;
-2. the reviewed FotMob handoff from its candidate/review ancestry;
-3. every retained PR #246 event-detail evidence directory;
-4. the exact matching and authorization decisions.
+- the exact raw FotMob captures into the reviewed admitted catalog chain;
+- every preserved SportyBet discovery page into the discovery manifest;
+- every retained PR #246 direct event-detail capture into its current event inventory;
+- the exact matching, ambiguity, freshness, and kickoff-lead policy at the original issuance time.
 
-Any public-field tamper or source-evidence drift changes the rebuilt result and
-fails verification.
+The rebuilt canonical bundle must equal the supplied bundle exactly. Public-field mutation or retained-source mutation fails closed.
 
-## Authority
+The verifier proves what was true at the original PR #251 issuance time. It does not make an old bundle perpetually current; downstream current market mapping and pricing consumers must perform their own currentness checks when they consume it.
 
-This PR grants only:
+## Contract identities
 
-- current provider event discovery;
-- exact current provider event-detail confirmation;
-- exact reviewed fixture reconciliation.
+PR #251 pins:
 
-It grants no authority for:
+- PR #246 direct event source contract: `b888cebab6447cd4072d823dab67b56f1f75f72eb72d67b692d47a4378b27555`;
+- PR #250 Portfolio Optimizer v2 contract: `919149759ffc9aabef2fefe7c6e0db72d697ebd1ffe33205054fc3ffb4f785fd`;
+- reviewed FotMob catalog-admission dataset/schema;
+- raw FotMob data-matches capture dataset/schema;
+- the 900-second / 120-second currentness policy;
+- the exact source-replay and matching semantics above.
 
-- canonical market mapping;
-- Price-all/value computation;
-- market routing;
-- portfolio optimization;
-- final selection;
-- accumulator/slip construction;
+Current PR #251 contract SHA-256:
+
+`64c7a2b71304f94a39de7e608be1f76a10e14a1a52a338f89d1c695ba0e5f1ee`
+
+## Authority boundary
+
+The contract can issue:
+
+- current SportyBet event discovery evidence;
+- PR #246 event-detail confirmation evidence;
+- exact source-replayed SportyBet-to-FotMob fixture reconciliation.
+
+It cannot issue:
+
+- provider event timestamps or snapshot identities that the source did not provide;
+- canonical market mappings;
+- bookmaker value or Price-all outputs;
+- Router decisions;
+- portfolio decisions;
+- final selections;
+- booking/slip instructions;
 - SportyBet execution;
-- staking;
-- BET.
+- stakes;
+- wagers.
 
-Every output keeps `wager_placed=false`.
+`wager_placed` is always `false`.
 
-## Why market mapping remains separate
-
-Provider event IDs are event-specific. The existing reviewed canonical mapping
-contract also binds exact provider market/outcome/specifier identities and exact
-provider labels to a particular reviewed event/native inventory ancestry.
-
-Discovering a new current event must therefore not silently reuse a historical
-or different-event mapping object. That would collapse fixture identity and
-market-settlement authority into one unreviewed assumption.
-
-The next boundary is intentionally:
+## Next reviewed boundary
 
 `CURRENT_DIRECT_PROVIDER_CANONICAL_MARKET_MAPPING_REBIND_REQUIRED`
 
-That boundary can decide how reviewed provider market semantics may be safely
-rebound to newly discovered current events before the already-merged direct
-quote -> Price-all v2 -> Router v2 -> Portfolio Optimizer v2 chain is invoked.
+The existing reviewed canonical market mapping is event-specific. Discovering a fresh provider event ID does not authorize copying a mapping object from a different event. The next boundary must bind canonical market semantics to the newly reconciled current provider event before the direct-provider Price-all/Router/portfolio chain can operate autonomously on it.
