@@ -1,0 +1,38 @@
+name: Current ATHENA SportyBet accumulator request
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_size:
+        description: Requested fold target (never padded)
+        required: true
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  request:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install project
+        run: pip install -r requirements.txt
+      - name: Execute fixed current request
+        run: |
+          python scripts/execute_current_sportybet_accumulator.py \
+            --target-size "${{ inputs.target_size }}" \
+            --output-dir artifacts/current-sportybet-accumulator
+      - name: Upload durable request receipt
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-sportybet-accumulator-request
+          path: artifacts/current-sportybet-accumulator
+          if-no-files-found: error
+          retention-days: 30
