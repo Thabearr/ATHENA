@@ -198,6 +198,10 @@ def _replay_final_sources(
         rebuilt = portfolio_v3.verify_current_provider_portfolio_optimization(optimization)
     except portfolio_v3.PortfolioOptimizerV3CurrentProviderError as exc:
         raise CurrentSportyBetAccumulatorExecutionError("Portfolio v3 final source replay failed") from exc
+    if rebuilt.evaluation_time > now:
+        raise CurrentSportyBetAccumulatorExecutionError(
+            "execution evaluation_time predates Portfolio v3"
+        )
     sources = _selected_input_by_leg(rebuilt)
     seen_events = set()
     for leg in rebuilt.selected_legs:
@@ -323,6 +327,17 @@ def _verify_resolution(
     selections: Sequence[Mapping[str, str]],
     semantic_receipt: Mapping[str, Any],
 ) -> None:
+    for field in (
+        "sportybet_login_used",
+        "sportybet_cookie_used",
+        "sportybet_wallet_used",
+        "stake_submitted",
+        "wager_placed",
+    ):
+        if semantic_receipt.get(field) is not False:
+            raise CurrentSportyBetAccumulatorExecutionError(
+                f"semantic resolution safety field {field} must remain false"
+            )
     audits = semantic_receipt.get("resolved")
     if type(audits) is not list or len(audits) != len(intents) or len(selections) != len(intents):
         raise CurrentSportyBetAccumulatorExecutionError("semantic resolution count drifted")
@@ -350,6 +365,21 @@ def _verify_transport(
     intents: Sequence[CurrentSemanticIntent],
     transport_receipt: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], ...]:
+    for field in (
+        "sportybet_login_used",
+        "sportybet_cookie_used",
+        "sportybet_wallet_used",
+        "stake_submitted",
+        "wager_placed",
+    ):
+        if transport_receipt.get(field) is not False:
+            raise CurrentSportyBetAccumulatorExecutionError(
+                f"provider transport safety field {field} must remain false"
+            )
+    if transport_receipt.get("create_unavailable_outcomes") != 0 or transport_receipt.get("load_unavailable_outcomes") != 0:
+        raise CurrentSportyBetAccumulatorExecutionError(
+            "provider create/reload contains unavailable outcomes"
+        )
     if transport_receipt.get("exact_roundtrip_selection_identity_verified") is not True:
         raise CurrentSportyBetAccumulatorExecutionError("native create/reload round-trip failed")
     create_rows = transport_receipt.get("create_accepted_outcomes"); reload_rows = transport_receipt.get("load_accepted_outcomes")
@@ -477,7 +507,10 @@ def _execute(
     if isinstance(delay_seconds, bool) or not isinstance(delay_seconds, (int, float)) or not math.isfinite(delay_seconds) or delay_seconds < 0:
         raise CurrentSportyBetAccumulatorExecutionError("delay_seconds must be finite non-negative")
     rebuilt, _ = _replay_final_sources(optimization, now=now)
-    if require_live_current and rebuilt.proof_mode != portfolio_v3.router_v3.price_v3.LIVE_CURRENT:
+    if require_live_current and (
+        rebuilt.proof_mode != portfolio_v3.router_v3.price_v3.LIVE_CURRENT
+        or rebuilt.status != portfolio_v3.STATUS_LIVE
+    ):
         raise CurrentSportyBetAccumulatorExecutionError("production execution requires live current ancestry")
     target = rebuilt.requested_target_size; selected_count = len(rebuilt.selected_legs)
     router_count = selected_count
@@ -525,8 +558,6 @@ def _execute(
         raise CurrentSportyBetAccumulatorExecutionError("semantic resolution count drifted")
     if transport_receipt.get("selection_count") != expected:
         raise CurrentSportyBetAccumulatorExecutionError("transport selection count drifted")
-    if transport_receipt.get("wager_placed") is not False:
-        raise CurrentSportyBetAccumulatorExecutionError("wager_placed must remain false")
     share_code = transport_receipt.get("shareCode"); share_url = transport_receipt.get("shareURL")
     if type(share_code) is not str or not share_code or type(share_url) is not str or not share_url:
         raise CurrentSportyBetAccumulatorExecutionError("verified share code/URL is absent")
