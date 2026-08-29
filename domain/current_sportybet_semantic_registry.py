@@ -1418,6 +1418,54 @@ class BoundedDiscoveryCapture:
         }
 
 
+def _dedupe_bounded_discovery_events(
+    events: Sequence[discovery.SportyBetDiscoveredEvent],
+) -> tuple[discovery.SportyBetDiscoveredEvent, ...]:
+    """Deduplicate a live paginated prefix without weakening fixture identity.
+
+    The reviewed discovery helper intentionally requires duplicate rows to have
+    byte-equivalent semantic identity. A bounded live prefix is observed over
+    several requests, though, so availability/status fields for the same event
+    can legitimately move between pages while the scan is in flight. PR-B
+    keeps the frozen helper unchanged and uses the newest observation only when
+    the stable fixture identity still agrees exactly.
+    """
+
+    by_id: dict[str, discovery.SportyBetDiscoveredEvent] = {}
+    for event in events:
+        existing = by_id.get(event.event_id)
+        if existing is None:
+            by_id[event.event_id] = event
+            continue
+        stable_existing = (
+            existing.event_id,
+            existing.home_team_name,
+            existing.away_team_name,
+            existing.competition_name,
+            existing.kickoff_utc,
+        )
+        stable_incoming = (
+            event.event_id,
+            event.home_team_name,
+            event.away_team_name,
+            event.competition_name,
+            event.kickoff_utc,
+        )
+        if stable_existing != stable_incoming:
+            raise CurrentSportyBetSemanticRegistryError(
+                f"conflicting bounded discovery fixture identity: {event.event_id}"
+            )
+        if event.source_observed_at == existing.source_observed_at:
+            if event.identity_payload != existing.identity_payload:
+                raise CurrentSportyBetSemanticRegistryError(
+                    f"ambiguous bounded discovery state collision: {event.event_id}"
+                )
+            continue
+        if event.source_observed_at > existing.source_observed_at:
+            by_id[event.event_id] = event
+    return tuple(by_id[key] for key in sorted(by_id))
+
+
 def capture_bounded_current_event_discovery(
     *,
     max_pages: int = MAX_DISCOVERY_PAGES,
@@ -1455,7 +1503,7 @@ def capture_bounded_current_event_discovery(
             break
     return BoundedDiscoveryCapture(
         pages=tuple(pages),
-        events=discovery._dedupe_events(events),
+        events=_dedupe_bounded_discovery_events(events),
         raw_pages=tuple(raw_pages),
         terminal_empty_page_observed=terminal,
     )
@@ -1510,7 +1558,7 @@ def scan_current_sportybet_semantic_registry(
                 for event_id in upcoming_ids[:MAX_EVENT_DETAIL_READS]
             ]
         except (pr258_proof.PR258LiveTransportProofError, OSError) as exc:
-            # This fallback is best-effort discovery only.  Keep its failure in
+            # This fallback is best-effort discovery only. Keep its failure in
             # proof metadata and preserve an explicit all-unproven matrix.
             fallback_error = type(exc).__name__
     evidence_rows: list[ProviderEventEvidence] = []
@@ -1533,7 +1581,7 @@ def scan_current_sportybet_semantic_registry(
                 {"event_id": event_id, "status": "CAPTURED", "candidate_source": candidate_source}
             )
         except (live.SportyBetLiveEventQuoteEvidenceError, OSError) as exc:
-            # Preserve failed attempts; do not retry silently.  Contract or
+            # Preserve failed attempts; do not retry silently. Contract or
             # replay drift raises rather than being disguised as provider
             # absence.
             attempts.append(
@@ -1545,7 +1593,7 @@ def scan_current_sportybet_semantic_registry(
                 }
             )
     # A live current claim is evaluated at the end of the reads it certifies,
-    # not at the beginning of discovery.  This avoids falsely classifying the
+    # not at the beginning of discovery. This avoids falsely classifying the
     # retained captures as future-dated merely because the scan took time.
     registry_time = evaluation_override or datetime.now(timezone.utc)
     registry = build_registry(
