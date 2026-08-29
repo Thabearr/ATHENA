@@ -34,7 +34,7 @@ import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
 POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
-SCHEDULE_RECOVERY_BLOB_SHA = "e24929813e5666c5477aa8906cf36cc7ef6ffcc4"
+SCHEDULE_RECOVERY_BLOB_SHA = "1752fd5b96823f8b52e99a2dbbf84250676809d8"
 SCHEDULE_RECOVERY_PATH = (
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
 )
@@ -94,7 +94,7 @@ def _projected_noop_record(run: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _projected_preacquisition_record(run: Mapping[str, Any]) -> dict[str, Any]:
-    return {
+    record = {
         "run_id": run.get("id"),
         "created_at": run.get("created_at"),
         "head_sha": run.get("head_sha"),
@@ -107,6 +107,11 @@ def _projected_preacquisition_record(run: Mapping[str, Any]) -> dict[str, Any]:
         "release_state": "NOT_APPLICABLE_NO_ACQUISITION",
         "verification_error": None,
     }
+    if run.get("event") == "workflow_dispatch":
+        record["execution_provenance"] = (
+            "PROSPECTIVE_CONTINUITY_DISPATCH_PREACQUISITION_FAILURE"
+        )
+    return record
 
 
 def _projected_continuity_noop_record(run: Mapping[str, Any]) -> dict[str, Any]:
@@ -236,6 +241,25 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
                     ) from exc
                 if continuity_noop:
                     projected_continuity_noops[run_id] = run
+                    projected_continuities.pop(run_id, None)
+                    return False
+            elif run.get("status") == "completed" and run.get("conclusion") == "failure":
+                continuity_artifacts = cached_artifacts(run_id)
+                try:
+                    continuity_preacquisition = (
+                        recovery._prove_continuity_preacquisition_control_failure(
+                            run,
+                            continuity_artifacts,
+                            cached_jobs,
+                        )
+                    )
+                except recovery.FreshHoldoutFailureLineageError as exc:
+                    raise audit.FreshHoldoutActionsLineageAuditError(
+                        "continuity pre-acquisition failure proof failed for run "
+                        f"{run_id}"
+                    ) from exc
+                if continuity_preacquisition:
+                    projected_preacquisition[run_id] = run
                     projected_continuities.pop(run_id, None)
                     return False
             return True
