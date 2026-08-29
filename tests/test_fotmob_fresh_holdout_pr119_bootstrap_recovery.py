@@ -112,7 +112,27 @@ def test_pr175_does_not_change_schedule_or_backfill_authority() -> None:
     text = _workflow_text()
     assert "- cron: '7 * * * *'" in text
     assert "- cron: '37 * * * *'" in text
-    assert "workflow_dispatch:" not in text
+    # PR262 adds only the fail-closed prospective continuity dispatch surface;
+    # it does not turn the historical collector into a manually runnable source.
+    assert "workflow_dispatch:" in text
+    for required_input in (
+        "continuity_source_watchdog_run_id:",
+        "continuity_target_slot:",
+        "continuity_target_cron:",
+        "continuity_confirmation:",
+    ):
+        assert required_input in text
+        assert text.index(required_input) < text.index("concurrency:")
+    assert "required: true" in text
+    assert '"PROSPECTIVE_ONLY_NO_BACKFILL_V1"' in text
+    assert "continuity.validate_watchdog_source_run(" in text
+    assert "continuity.validate_watchdog_source_jobs(" in text
+    assert "continuity.validate_continuity_dispatch(" in text
+    assert "current_main = subprocess.check_output(" in text
+    assert "checkout_head != current_main" in text
+    assert "Exact future :07/:37 UTC slot derived from the watchdog run" in text
+    assert "refusing to fabricate a nominal slot or backfill evidence" in text
+    assert "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION" in text
     assert "--execute-live-network" in text
     assert text.count("--execute-live-network") == 1
     assert "backfill_authorized: true" not in text
