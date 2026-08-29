@@ -49,7 +49,7 @@ STATUS_SOURCE_INCOMPLETE = "RESEARCH_NO_CODE_SOURCE_INCOMPLETE"
 
 PR119_BOOTSTRAP_ASSET_SHA256 = "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2"
 PR119_BOOTSTRAP_ENV = "ATHENA_PR119_BOOTSTRAP_PATH"
-EXPECTED_MAIN_ENV = "ATHENA_EXPECTED_MAIN_SHA"
+EXPECTED_LINEAGE_MAIN_ENV = "ATHENA_EXPECTED_LINEAGE_MAIN_SHA"
 CURRENT_FIXTURE_SEARCH_DAY_COUNT = 3
 
 AUTHORITY = MappingProxyType({
@@ -106,21 +106,26 @@ def _now() -> datetime:
 
 
 def _git_head(repository_root: Path) -> str:
-    override = os.environ.get(EXPECTED_MAIN_ENV)
-    if override:
-        value = override.strip().lower()
-    else:
-        try:
-            value = subprocess.check_output(
-                ["git", "rev-parse", "HEAD"],
-                cwd=repository_root,
-                text=True,
-                stderr=subprocess.DEVNULL,
-            ).strip().lower()
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise CurrentShadowAllMarketRunnerError("exact repository commit SHA is unavailable") from exc
+    try:
+        value = subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repository_root,
+            text=True,
+            stderr=subprocess.DEVNULL,
+        ).strip().lower()
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise CurrentShadowAllMarketRunnerError("exact repository commit SHA is unavailable") from exc
     if len(value) != 40 or any(ch not in "0123456789abcdef" for ch in value):
-        raise CurrentShadowAllMarketRunnerError("expected main SHA is invalid")
+        raise CurrentShadowAllMarketRunnerError("repository HEAD SHA is invalid")
+    return value
+
+
+def _expected_lineage_main_sha() -> str:
+    value = os.environ.get(EXPECTED_LINEAGE_MAIN_ENV, "").strip().lower()
+    if len(value) != 40 or any(ch not in "0123456789abcdef" for ch in value):
+        raise CurrentShadowAllMarketRunnerError(
+            f"{EXPECTED_LINEAGE_MAIN_ENV} must contain the exact current GitHub main SHA"
+        )
     return value
 
 
@@ -274,7 +279,9 @@ def _issue_current_fixture_source(
     )
 
 
-def _acquire_router_inputs(*, repository_root: Path, exact_commit_sha: str) -> CurrentShadowRunnerSourceBundle:
+def _acquire_router_inputs(
+    *, repository_root: Path, lineage_main_sha: str
+) -> CurrentShadowRunnerSourceBundle:
     execution, request_date = _issue_current_fixture_source(
         repository_root=repository_root
     )
@@ -293,7 +300,7 @@ def _acquire_router_inputs(*, repository_root: Path, exact_commit_sha: str) -> C
         source_raw_json=raw,
         source_manifest=manifest,
         legacy_bootstrap_projection_raw=legacy_bootstrap,
-        expected_main_sha=exact_commit_sha,
+        expected_main_sha=lineage_main_sha,
         repository_root=repository_root,
     )
 
@@ -325,6 +332,7 @@ def _acquire_router_inputs(*, repository_root: Path, exact_commit_sha: str) -> C
     summary = MappingProxyType({
         "selected_fixture_request_date": request_date,
         "fixture_search_day_count": CURRENT_FIXTURE_SEARCH_DAY_COUNT,
+        "lineage_expected_main_sha": lineage_main_sha,
         "current_fotmob": execution.summary(),
         "complete_current_history_sha256": latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(history),
         "current_reconciliation_sha256": current_events.canonical_sha256,
@@ -387,12 +395,16 @@ def execute_current_shadow_all_market(
         raise CurrentShadowAllMarketRunnerError("output_dir must be Path")
     repository_root = Path(__file__).resolve().parents[1]
     exact_commit_sha = _git_head(repository_root)
+    lineage_main_sha = _expected_lineage_main_sha()
     output_dir.mkdir(parents=True, exist_ok=True)
     sources: CurrentShadowRunnerSourceBundle | None = None
     portfolio: portfolio_module.ShadowPortfolioOptimization | None = None
     share_receipt: share_module.ShadowAllMarketShareCodeReceipt | None = None
     try:
-        sources = _acquire_router_inputs(repository_root=repository_root, exact_commit_sha=exact_commit_sha)
+        sources = _acquire_router_inputs(
+            repository_root=repository_root,
+            lineage_main_sha=lineage_main_sha,
+        )
         if sources.reconciled_fixture_count == 0:
             result = _receipt(
                 status=STATUS_INSUFFICIENT_SUPPORTED_MARKETS,
@@ -483,6 +495,7 @@ __all__ = [
     "CurrentShadowAllMarketRunnerError",
     "CurrentShadowRunnerSourceBundle",
     "CURRENT_FIXTURE_SEARCH_DAY_COUNT",
+    "EXPECTED_LINEAGE_MAIN_ENV",
     "STATUS_CODE_VERIFIED",
     "STATUS_CODE_VERIFIED_WITH_SHORTFALL",
     "STATUS_INSUFFICIENT_SUPPORTED_MARKETS",

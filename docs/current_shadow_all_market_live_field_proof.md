@@ -85,4 +85,13 @@ terminal condition and still fails at the page cap. The manifest records the
 basis and keeps `terminal_empty_page_observed` truthful; repeated-page detection
 is not treated as completeness.
 
+The following exact-head run (`33279866310`) reached the current source chain
+but correctly failed PR151 lineage replay because the workflow had supplied the
+PR branch head as the expected GitHub `main` identity. Those are different
+proof domains. The runner now records the actual checked-out commit as its code
+identity and separately passes a read-only, API-resolved `main` SHA to the
+reviewed PR151 audit. The audit still fetches and requires exact equality with
+that main SHA; this does not accept the PR head as historical lineage and does
+not weaken the fresh-holdout gate.
+
 `wager_placed=false` is invariant.

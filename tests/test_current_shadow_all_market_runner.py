@@ -61,6 +61,7 @@ def _share(status: str, *, code: str | None = None, url: str | None = None, reas
 
 def _install_common(monkeypatch):
     monkeypatch.setattr(runner, "_git_head", lambda _root: SHA)
+    monkeypatch.setattr(runner, "_expected_lineage_main_sha", lambda: "b" * 40)
     monkeypatch.setattr(runner, "_now", lambda: NOW)
 
 
@@ -85,6 +86,21 @@ def test_zero_exact_reconciliations_is_truthful_insufficient_supported_markets(m
     assert result.status == runner.STATUS_INSUFFICIENT_SUPPORTED_MARKETS
     assert result.share_code is None
     assert result.shortfall == 20
+
+
+def test_executed_head_and_audited_main_are_distinct_exact_identities(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    captured = {}
+
+    def acquire(**kwargs):
+        captured.update(kwargs)
+        return _sources(reconciled=0, selected=0, no_bet=0)
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", acquire)
+    result = runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    assert result.exact_commit_sha == SHA
+    assert captured["lineage_main_sha"] == "b" * 40
+    assert captured["lineage_main_sha"] != result.exact_commit_sha
 
 
 def test_all_router_no_bet_is_first_class_successful_no_code_state(monkeypatch, tmp_path):
