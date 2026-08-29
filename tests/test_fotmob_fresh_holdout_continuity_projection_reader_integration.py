@@ -161,10 +161,41 @@ def test_projection_consumes_exact_run_reader_before_frozen_raw_delegate(monkeyp
 
     result = projection._audit_actions_lineage_compatible(**kwargs)
 
-    assert result["verified_prospective_continuity_dispatch_count"] == 0
+    assert "verified_prospective_continuity_dispatch_count" not in result
     assert "get_run_by_id" not in inspect.signature(
         audit.audit_actions_lineage
     ).parameters
+
+
+def test_schedule_only_projection_preserves_pre_continuity_output_schema(monkeypatch):
+    expected = {
+        "audit_state": "VERIFIED_COMPLETE_TO_LATEST_OBSERVED_RUN",
+        "runs": [
+            {
+                "run_id": 455,
+                "nominal_slot_utc": "2026-08-19T00:07:00Z",
+            }
+        ],
+        "verified_ambiguous_no_acquisition_count": 0,
+        "projected_ambiguous_no_acquisition_runs": [],
+        "verified_preacquisition_control_failure_count": 0,
+        "projected_preacquisition_control_failure_runs": [],
+    }
+
+    monkeypatch.setattr(
+        projection,
+        "_ORIGINAL_AUDIT_ACTIONS_LINEAGE",
+        lambda **_kwargs: {
+            key: ([dict(item) for item in value] if key == "runs" else value)
+            for key, value in expected.items()
+        },
+    )
+
+    result = projection._audit_actions_lineage_compatible(**_call_kwargs())
+
+    assert result == expected
+    assert "verified_prospective_continuity_dispatch_count" not in result
+    assert "execution_provenance" not in result["runs"][0]
 
 
 def test_direct_projection_reader_fetches_exact_watchdog_run_only_for_continuity(
