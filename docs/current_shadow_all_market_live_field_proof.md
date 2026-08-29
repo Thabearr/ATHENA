@@ -56,4 +56,13 @@ now invokes the existing runner as `python -m scripts.execute_current_shadow_all
 This changes no football, semantic, freshness, routing, portfolio, or transport
 policy.
 
+The next hosted run (`33278685466`) reached the transparent current FotMob
+capture and observed the already-reviewed additive terminal-state fields
+(`awarded`, `scoreStr`, `ongoing`, red-card counts and `liveTime`). The frozen
+PR39 candidate builder previously called only the base PR39 assessment, so it
+rejected those exact reviewed fields. Candidate issuance now tries frozen PR39
+first and, only on that precise structural rejection, replays the existing
+strict PR87/PR89 extension chain. PR39 itself is unchanged; unknown fields,
+wrong types and semantic promotion still fail closed.
+
 `wager_placed=false` is invariant.
