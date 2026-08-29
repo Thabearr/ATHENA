@@ -43,6 +43,31 @@ _ORIGINAL_AUDIT_ACTIONS_LINEAGE = audit.audit_actions_lineage
 _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE = audit._run_is_collection_candidate
 
 
+def _fixed_get_run_by_id(
+    repository: str,
+    run_id: int,
+) -> Mapping[str, Any]:
+    """Read exactly one Actions run for the direct projection CLI.
+
+    Current-history construction supplies its own recorder-backed reader. This
+    helper is only the projection-owned live CLI/workflow fallback, and is
+    deliberately limited to the exact run-metadata endpoint.
+    """
+    if (
+        type(repository) is not str
+        or repository.count("/") != 1
+        or repository != repository.strip()
+    ):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "continuity exact-run reader requires an exact repository identity"
+        )
+    if type(run_id) is not int or run_id <= 0:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "continuity source watchdog run id is invalid"
+        )
+    return audit._gh_json(f"/repos/{repository}/actions/runs/{run_id}")
+
+
 def _git_blob_sha(path: Path) -> str:
     import hashlib
 
@@ -82,6 +107,14 @@ def _projected_preacquisition_record(run: Mapping[str, Any]) -> dict[str, Any]:
         "release_state": "NOT_APPLICABLE_NO_ACQUISITION",
         "verification_error": None,
     }
+
+
+def _projected_continuity_noop_record(run: Mapping[str, Any]) -> dict[str, Any]:
+    record = _projected_noop_record(run)
+    record["execution_provenance"] = (
+        "PROSPECTIVE_CONTINUITY_DISPATCH_NO_ACQUISITION"
+    )
+    return record
 
 
 def _prove_continuity_candidate(
@@ -140,20 +173,9 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     get_run_jobs = kwargs.get("get_run_jobs")
     if not callable(get_run_artifacts) or not callable(get_run_jobs):
         return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
-
     if get_run_by_id is None:
         repository = kwargs.get("repository")
-        if type(repository) is not str or not repository:
-            raise audit.FreshHoldoutActionsLineageAuditError(
-                "continuity exact-run reader requires repository identity"
-            )
-
-        def get_run_by_id(run_id: int) -> Mapping[str, Any]:
-            if type(run_id) is not int or run_id <= 0:
-                raise audit.FreshHoldoutActionsLineageAuditError(
-                    "continuity source watchdog run id is invalid"
-                )
-            return audit._gh_json(f"/repos/{repository}/actions/runs/{run_id}")
+        get_run_by_id = lambda run_id: _fixed_get_run_by_id(repository, run_id)
     elif not callable(get_run_by_id):
         raise audit.FreshHoldoutActionsLineageAuditError(
             "continuity exact-run reader must be callable"
@@ -162,6 +184,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
+    projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
     projected_continuities: dict[int, continuity.ContinuityPlan] = {}
 
@@ -198,6 +221,23 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
                 get_run_by_id=get_run_by_id,
                 get_run_jobs=cached_jobs,
             )
+            if run.get("status") == "completed" and run.get("conclusion") == "success":
+                continuity_artifacts = cached_artifacts(run_id)
+                try:
+                    continuity_noop = recovery._prove_continuity_duplicate_no_acquisition_success(
+                        run,
+                        continuity_artifacts,
+                        cached_jobs,
+                    )
+                except recovery.FreshHoldoutFailureLineageError as exc:
+                    raise audit.FreshHoldoutActionsLineageAuditError(
+                        "continuity duplicate no-acquisition proof failed for run "
+                        f"{run_id}"
+                    ) from exc
+                if continuity_noop:
+                    projected_continuity_noops[run_id] = run
+                    projected_continuities.pop(run_id, None)
+                    return False
             return True
         run_id = run.get("id")
         if run.get("status") != "completed" or type(run_id) is not int or run_id <= 0:
@@ -271,6 +311,18 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     result["projected_ambiguous_no_acquisition_runs"] = [
         _projected_noop_record(run) for run in ordered_noops
     ]
+    ordered_continuity_noops = sorted(
+        projected_continuity_noops.values(),
+        key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
+    )
+    if ordered_continuity_noops:
+        result["verified_continuity_duplicate_no_acquisition_count"] = len(
+            ordered_continuity_noops
+        )
+        result["projected_continuity_duplicate_no_acquisition_runs"] = [
+            _projected_continuity_noop_record(run)
+            for run in ordered_continuity_noops
+        ]
 
     existing_preacquisition = result.get(
         "verified_preacquisition_control_failure_count", 0
