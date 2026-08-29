@@ -71,6 +71,11 @@ DISCOVERY_PATH = "/api/ng/factsCenter/liveOrPrematchEvents"
 FOOTBALL_SPORT_ID = "sr:sport:1"
 PAGE_SIZE = 100
 MAX_PAGES = 20
+PAGINATION_TERMINATION_POLICY = (
+    "EMPTY_PAGE_OR_SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE_V2"
+)
+PAGINATION_TERMINATION_EMPTY_PAGE = "EMPTY_PAGE"
+PAGINATION_TERMINATION_SHORT_PAGE = "SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE"
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_SOURCE_AGE_SECONDS = 900
@@ -509,6 +514,7 @@ class SportyBetCurrentEventDiscoveryManifest:
     provider_event_timestamp: None
     provider_snapshot_id: None
     terminal_empty_page_observed: bool
+    pagination_termination_basis: str
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION or type(self.schema_version) is not int:
@@ -550,9 +556,23 @@ class SportyBetCurrentEventDiscoveryManifest:
             raise SportyBetCurrentEventDiscoveryError(
                 "discovery cannot invent provider event timestamp/snapshot identity"
             )
-        if self.terminal_empty_page_observed is not True or self.pages[-1].event_count != 0:
+        last_event_count = self.pages[-1].event_count
+        if self.pagination_termination_basis == PAGINATION_TERMINATION_EMPTY_PAGE:
+            if self.terminal_empty_page_observed is not True or last_event_count != 0:
+                raise SportyBetCurrentEventDiscoveryError(
+                    "empty-page termination basis does not match the final page"
+                )
+        elif self.pagination_termination_basis == PAGINATION_TERMINATION_SHORT_PAGE:
+            if (
+                self.terminal_empty_page_observed is not False
+                or not 0 < last_event_count < PAGE_SIZE
+            ):
+                raise SportyBetCurrentEventDiscoveryError(
+                    "short-page termination basis does not match the final page"
+                )
+        else:
             raise SportyBetCurrentEventDiscoveryError(
-                "discovery must prove pagination termination with an empty page"
+                "discovery pagination termination basis is not reviewed"
             )
         object.__setattr__(self, "first_observed_at", first)
         object.__setattr__(self, "last_observed_at", last)
@@ -572,7 +592,8 @@ class SportyBetCurrentEventDiscoveryManifest:
             "observation_authority": self.observation_authority,
             "provider_event_timestamp": None,
             "provider_snapshot_id": None,
-            "terminal_empty_page_observed": True,
+            "terminal_empty_page_observed": self.terminal_empty_page_observed,
+            "pagination_termination_basis": self.pagination_termination_basis,
         }
 
     @property
@@ -800,6 +821,7 @@ def _manifest_from_mapping(value: Any) -> SportyBetCurrentEventDiscoveryManifest
         "provider_event_timestamp",
         "provider_snapshot_id",
         "terminal_empty_page_observed",
+        "pagination_termination_basis",
     }
     if type(value) is not dict or set(value) != expected:
         raise SportyBetCurrentEventDiscoveryError("discovery manifest keys mismatch")
@@ -858,6 +880,7 @@ def _manifest_from_mapping(value: Any) -> SportyBetCurrentEventDiscoveryManifest
             provider_event_timestamp=value["provider_event_timestamp"],
             provider_snapshot_id=value["provider_snapshot_id"],
             terminal_empty_page_observed=value["terminal_empty_page_observed"],
+            pagination_termination_basis=value["pagination_termination_basis"],
         )
     except (KeyError, TypeError, ValueError, SportyBetLiteCaptureError) as exc:
         raise SportyBetCurrentEventDiscoveryError(
@@ -876,7 +899,7 @@ def capture_current_event_discovery(
     page_rows: list[SportyBetDiscoveryPage] = []
     all_events: list[SportyBetDiscoveredEvent] = []
     raw_pages: list[bytes] = []
-    terminated = False
+    termination_basis: str | None = None
     for page_num in range(1, MAX_PAGES + 1):
         raw, status, observed_at = _network_fetch_page(page_num)
         if status != 200:
@@ -888,11 +911,14 @@ def capture_current_event_discovery(
         all_events.extend(events)
         raw_pages.append(raw)
         if not events:
-            terminated = True
+            termination_basis = PAGINATION_TERMINATION_EMPTY_PAGE
             break
-    if not terminated:
+        if len(events) < PAGE_SIZE:
+            termination_basis = PAGINATION_TERMINATION_SHORT_PAGE
+            break
+    if termination_basis is None:
         raise SportyBetCurrentEventDiscoveryError(
-            "discovery pagination reached reviewed maximum without terminal empty page"
+            "discovery pagination reached reviewed maximum without an empty or short terminal page"
         )
     manifest = SportyBetCurrentEventDiscoveryManifest(
         schema_version=SCHEMA_VERSION,
@@ -908,7 +934,10 @@ def capture_current_event_discovery(
         observation_authority=OBSERVATION_AUTHORITY,
         provider_event_timestamp=None,
         provider_snapshot_id=None,
-        terminal_empty_page_observed=True,
+        terminal_empty_page_observed=(
+            termination_basis == PAGINATION_TERMINATION_EMPTY_PAGE
+        ),
+        pagination_termination_basis=termination_basis,
     )
     root = _evidence_root(Path(repository_root), create=True)
     directory = root / manifest.canonical_sha256[:24]
@@ -1663,6 +1692,9 @@ __all__ = [
     "MINIMUM_LEAD_SECONDS",
     "NEXT_BOUNDARY",
     "PAGE_SIZE",
+    "PAGINATION_TERMINATION_EMPTY_PAGE",
+    "PAGINATION_TERMINATION_POLICY",
+    "PAGINATION_TERMINATION_SHORT_PAGE",
     "SCHEMA_VERSION",
     "STATUS",
     "SportyBetCurrentEventDiscoveryError",

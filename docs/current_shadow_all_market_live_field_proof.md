@@ -73,4 +73,16 @@ the earliest exact reviewed nonempty catalogue. It does not accept a caller
 date, merge hand-picked fixtures, skip a nonempty earlier date, or alter PR243's
 recency/kickoff-lead policy.
 
+The next exact-head provider run reached SportyBet discovery. The current
+anonymous endpoint returned 29 events for every requested page number even
+though the reviewed request asks for 100. Requiring a later empty response made
+the capture loop hit its maximum without establishing a terminal condition.
+Discovery now records one of two exact, replay-verified termination bases:
+`EMPTY_PAGE` or `SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE`. A nonempty page is a
+terminal short page only when its exact extracted event count is strictly less
+than the requested page size. A full page still requires a later reviewed
+terminal condition and still fails at the page cap. The manifest records the
+basis and keeps `terminal_empty_page_observed` truthful; repeated-page detection
+is not treated as completeness.
+
 `wager_placed=false` is invariant.

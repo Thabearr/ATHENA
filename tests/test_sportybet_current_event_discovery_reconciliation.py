@@ -601,14 +601,18 @@ def test_successful_empty_provider_feed_is_explicit_zero_event_evidence(monkeypa
     assert result.to_dict()["event_count"] == 0
 
 
-def test_discovery_capture_requires_terminal_empty_page_and_replays_raw(monkeypatch, tmp_path):
+def test_discovery_capture_accepts_truthful_short_page_and_replays_raw(monkeypatch, tmp_path):
     _install_discovery(monkeypatch, [_event()])
     directory, manifest = current.capture_current_event_discovery(
         repository_root=tmp_path,
         execute_live_network=True,
     )
-    assert len(manifest.pages) == 2
-    assert manifest.pages[-1].event_count == 0
+    assert len(manifest.pages) == 1
+    assert manifest.pages[-1].event_count == 1
+    assert manifest.terminal_empty_page_observed is False
+    assert manifest.pagination_termination_basis == (
+        current.PAGINATION_TERMINATION_SHORT_PAGE
+    )
     assert current.verify_current_event_discovery(
         directory,
         repository_root=tmp_path,
@@ -620,10 +624,13 @@ def test_discovery_capture_requires_terminal_empty_page_and_replays_raw(monkeypa
 
 
 def test_conflicting_duplicate_provider_event_identity_fails_closed(monkeypatch, tmp_path):
+    first_page = [
+        _event(event_id=f"sr:match:{123456789 + index}")
+        for index in range(current.PAGE_SIZE)
+    ]
     pages = {
-        1: _discovery_raw([_event()]),
+        1: _discovery_raw(first_page),
         2: _discovery_raw([_event(home="Other Home FC")]),
-        3: _empty_discovery_raw(),
     }
 
     def fetch(page_num):
@@ -635,6 +642,36 @@ def test_conflicting_duplicate_provider_event_identity_fails_closed(monkeypatch,
             repository_root=tmp_path,
             execute_live_network=True,
         )
+
+
+def test_full_pages_without_reviewed_terminal_condition_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(current, "MAX_PAGES", 2)
+    monkeypatch.setattr(current, "validate_current_event_discovery_contract", lambda: {})
+
+    def fetch(page_num):
+        offset = page_num * 1000
+        events = [
+            _event(event_id=f"sr:match:{123456789 + offset + index}")
+            for index in range(current.PAGE_SIZE)
+        ]
+        return _discovery_raw(events), 200, DISCOVERY_OBSERVED + timedelta(seconds=page_num)
+
+    monkeypatch.setattr(current, "_network_fetch_page", fetch)
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="without an empty or short"):
+        current.capture_current_event_discovery(
+            repository_root=tmp_path,
+            execute_live_network=True,
+        )
+
+
+def test_unreviewed_pagination_termination_basis_fails_closed(monkeypatch, tmp_path):
+    _install_discovery(monkeypatch, [_event()])
+    _directory, manifest = current.capture_current_event_discovery(
+        repository_root=tmp_path,
+        execute_live_network=True,
+    )
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="not reviewed"):
+        dataclasses.replace(manifest, pagination_termination_basis="REPEATED_PAGE")
 
 
 def test_caller_cannot_run_network_without_exact_opt_in(monkeypatch, tmp_path):
