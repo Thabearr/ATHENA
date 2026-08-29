@@ -24,11 +24,13 @@ reconstructs the retained raw and manifest before any semantic row is issued;
 caller-supplied detached hashes cannot relabel evidence.
 
 The live proof reuses the reviewed anonymous current discovery and exact event
-detail GETs.  Discovery order is `(kickoff_utc, event_id)`, detail reads are
-bounded at twenty, only safe prematch/bookable events are considered, and every
-attempt (including a failed read) is retained in `proof.json`.  No odds are
-used as football-model inputs.  No login, cookie, wallet, stake, create,
-reload, share-code, or wager operation is present.
+detail GETs.  Discovery uses the existing request/parser contract as a bounded
+20-page prefix (a still-populated provider page cap is recorded rather than
+silently paginated or retried).  Detail reads are bounded at twenty, only safe
+prematch/bookable events are considered, and every attempt (including a failed
+read) is retained in `proof.json`.  No odds are used as football-model inputs.
+No login, cookie, wallet, stake, create, reload, share-code, or wager operation
+is present.
 
 ## Provider policy
 

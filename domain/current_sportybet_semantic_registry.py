@@ -1227,12 +1227,102 @@ def build_registry(
 build_current_sportybet_semantic_registry = build_registry
 
 
-def _discovery_by_id(manifest: discovery.SportyBetCurrentEventDiscoveryManifest) -> dict[str, discovery.SportyBetDiscoveredEvent]:
-    return {item.event_id: item for item in manifest.events}
-
-
 MAX_EVENT_DETAIL_READS = 20
 SCAN_POLICY_ID = "PRB_DETERMINISTIC_PREMATCH_BOOKABLE_DISCOVERY_ORDER_CAP20_V1"
+MAX_DISCOVERY_PAGES = discovery.MAX_PAGES
+
+
+@dataclass(frozen=True)
+class BoundedDiscoveryCapture:
+    """A bounded prefix of the reviewed discovery endpoint.
+
+    The frozen discovery reconciliation contract requires a terminal empty page
+    and therefore cannot represent a still-populated current provider after its
+    page cap.  PR-B keeps that contract untouched and records a separate,
+    source-bound bounded prefix instead of retrying past the cap.
+    """
+
+    pages: tuple[discovery.SportyBetDiscoveryPage, ...]
+    events: tuple[discovery.SportyBetDiscoveredEvent, ...]
+    raw_pages: tuple[bytes, ...]
+    terminal_empty_page_observed: bool
+
+    def __post_init__(self) -> None:
+        if type(self.pages) is not tuple or type(self.events) is not tuple or type(self.raw_pages) is not tuple:
+            raise CurrentSportyBetSemanticRegistryError("bounded discovery rows must be tuples")
+        if len(self.pages) != len(self.raw_pages) or not self.pages:
+            raise CurrentSportyBetSemanticRegistryError("bounded discovery page evidence is invalid")
+        if tuple(item.page_num for item in self.pages) != tuple(range(1, len(self.pages) + 1)):
+            raise CurrentSportyBetSemanticRegistryError("bounded discovery pages are not contiguous")
+        if any(type(raw) is not bytes or not raw for raw in self.raw_pages):
+            raise CurrentSportyBetSemanticRegistryError("bounded discovery raw page is invalid")
+        if any(type(item) is not discovery.SportyBetDiscoveredEvent for item in self.events):
+            raise CurrentSportyBetSemanticRegistryError("bounded discovery event is invalid")
+        if type(self.terminal_empty_page_observed) is not bool:
+            raise CurrentSportyBetSemanticRegistryError("bounded discovery terminal flag is invalid")
+
+    @property
+    def canonical_sha256(self) -> str:
+        value = {
+            "source_contract_sha256": discovery.EXPECTED_CONTRACT_SHA256,
+            "pages": [item.to_dict() for item in self.pages],
+            "events": [item.to_dict() for item in self.events],
+            "terminal_empty_page_observed": self.terminal_empty_page_observed,
+        }
+        return hashlib.sha256(_canonical_bytes(value)).hexdigest()
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "dataset_name": discovery.DISCOVERY_DATASET_NAME,
+            "source_contract_sha256": discovery.EXPECTED_CONTRACT_SHA256,
+            "pages": [item.to_dict() for item in self.pages],
+            "events": [item.to_dict() for item in self.events],
+            "terminal_empty_page_observed": self.terminal_empty_page_observed,
+            "canonical_sha256": self.canonical_sha256,
+        }
+
+
+def capture_bounded_current_event_discovery(
+    *,
+    max_pages: int = MAX_DISCOVERY_PAGES,
+) -> BoundedDiscoveryCapture:
+    """Capture at most ``max_pages`` using the reviewed discovery parser.
+
+    This helper intentionally uses the existing request/parser primitives and
+    never calls the frozen terminal-empty reconciliation helper.  A populated
+    cap is a valid bounded prefix, not permission for hidden pagination.
+    """
+
+    discovery.validate_current_event_discovery_contract()
+    if type(max_pages) is not int or not 1 <= max_pages <= discovery.MAX_PAGES:
+        raise CurrentSportyBetSemanticRegistryError("max_pages exceeds reviewed discovery bound")
+    pages: list[discovery.SportyBetDiscoveryPage] = []
+    raw_pages: list[bytes] = []
+    events: list[discovery.SportyBetDiscoveredEvent] = []
+    terminal = False
+    for page_num in range(1, max_pages + 1):
+        raw, status, observed_at = discovery._network_fetch_page(page_num)
+        if status != 200:
+            raise CurrentSportyBetSemanticRegistryError(
+                f"SportyBet discovery returned HTTP {status}"
+            )
+        page, page_events = discovery._parse_page(
+            raw,
+            page_num=page_num,
+            observed_at=observed_at,
+        )
+        pages.append(page)
+        raw_pages.append(raw)
+        events.extend(page_events)
+        if not page_events:
+            terminal = True
+            break
+    return BoundedDiscoveryCapture(
+        pages=tuple(pages),
+        events=discovery._dedupe_events(events),
+        raw_pages=tuple(raw_pages),
+        terminal_empty_page_observed=terminal,
+    )
 
 
 def scan_current_sportybet_semantic_registry(
@@ -1250,14 +1340,12 @@ def scan_current_sportybet_semantic_registry(
     if output == root:
         raise CurrentSportyBetSemanticRegistryError("proof output must not be repository root")
     output.mkdir(parents=True, exist_ok=True)
-    discovery_dir, discovery_manifest = discovery.capture_current_event_discovery(
-        repository_root=root, execute_live_network=True
-    )
+    discovery_capture = capture_bounded_current_event_discovery()
     scan_time = _utc(evaluation_time, "evaluation_time") if evaluation_time is not None else datetime.now(timezone.utc)
     candidates = sorted(
         (
             item
-            for item in discovery_manifest.events
+            for item in discovery_capture.events
             if item.prematch_bookable_observed
             and item.kickoff_utc - scan_time > timedelta(seconds=live.MINIMUM_LEAD_SECONDS)
         ),
@@ -1295,11 +1383,15 @@ def scan_current_sportybet_semantic_registry(
     # committed to the repository and no successful event hides failed reads.
     retained = output / "event-evidence"
     retained.mkdir(parents=True, exist_ok=True)
-    retained_discovery = output / "discovery-evidence" / discovery_dir.name
+    retained_discovery = output / "discovery-evidence"
     if retained_discovery.exists():
         shutil.rmtree(retained_discovery)
-    retained_discovery.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(discovery_dir, retained_discovery)
+    retained_discovery.mkdir(parents=True, exist_ok=True)
+    for page, raw in zip(discovery_capture.pages, discovery_capture.raw_pages, strict=True):
+        (retained_discovery / f"page-{page.page_num:03d}.raw.json").write_bytes(raw)
+    (retained_discovery / "manifest.json").write_bytes(
+        _canonical_bytes(discovery_capture.to_dict(), newline=True)
+    )
     for row in evidence_rows:
         destination = retained / row.evidence_directory.name
         if destination.exists():
@@ -1314,8 +1406,10 @@ def scan_current_sportybet_semantic_registry(
         "base_sha": base_sha,
         "capture_evaluation_time": registry.to_dict()["evaluation_time"],
         "discovery_directory": retained_discovery.as_posix(),
-        "discovery_manifest_sha256": discovery_manifest.canonical_sha256,
-        "discovery_event_count": len(discovery_manifest.events),
+        "discovery_manifest_sha256": discovery_capture.canonical_sha256,
+        "discovery_event_count": len(discovery_capture.events),
+        "discovery_pages_fetched": len(discovery_capture.pages),
+        "discovery_terminal_empty_page_observed": discovery_capture.terminal_empty_page_observed,
         "attempts": attempts,
         "registry": registry.to_dict(),
         "registry_sha256": registry.canonical_sha256,
@@ -1349,11 +1443,13 @@ __all__ = [
     "CURRENT_PROVIDER_UNAVAILABLE",
     "CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN",
     "CONTRACT_VERSION",
+    "BoundedDiscoveryCapture",
     "CurrentSportyBetSemanticRegistry",
     "CurrentSportyBetSemanticRegistryError",
     "DATASET_NAME",
     "EvidenceFreshnessState",
     "MAX_EVENT_DETAIL_READS",
+    "MAX_DISCOVERY_PAGES",
     "NEXT_BOUNDARY",
     "POLICY_ID",
     "ProviderCoverageRecord",
@@ -1368,6 +1464,7 @@ __all__ = [
     "build_coverage_record",
     "build_current_sportybet_semantic_registry",
     "build_registry",
+    "capture_bounded_current_event_discovery",
     "canonical_json_bytes",
     "load_provider_event_evidence",
     "provider_policy",
