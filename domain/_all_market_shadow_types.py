@@ -3,13 +3,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import hashlib
-import json
 import math
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional
 
-from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
+from domain.markets import MarketFamily, MarketId
 from domain.model_status import (
     AnalyticalProbabilityCapability,
     PricingAuthority,
@@ -85,6 +83,7 @@ def _probability(value: Any, label: str = "probability") -> float:
 
 
 def _canonical_json_bytes(payload: Mapping[str, Any]) -> bytes:
+    import json
     try:
         return (
             json.dumps(
@@ -216,4 +215,82 @@ class ShadowMarketAssessment:
             "specialist_evidence": (
                 dict(self.specialist_evidence) if self.specialist_evidence is not None else None
             ),
+        }
+
+
+@dataclass(frozen=True)
+class CurrentAllMarketShadowFixtureScan:
+    fixture_identity: str
+    kickoff_utc_iso: Optional[str]
+    research_xg: Optional[ResearchXGRates]
+    score_matrix_audit: Optional[Mapping[str, Any]]
+    market_assessments: tuple[ShadowMarketAssessment, ...]
+    authority: Mapping[str, bool]
+
+    def __post_init__(self) -> None:
+        if type(self.fixture_identity) is not str or not self.fixture_identity.strip():
+            raise AllMarketShadowError("fixture_identity must be non-empty")
+        if type(self.market_assessments) is not tuple:
+            raise AllMarketShadowError("market_assessments must be a tuple")
+        if len(self.market_assessments) != len(MarketId):
+            raise AllMarketShadowError(
+                f"expected exactly {len(MarketId)} market rows, got {len(self.market_assessments)}"
+            )
+        seen: set[MarketId] = set()
+        for assessment in self.market_assessments:
+            if type(assessment) is not ShadowMarketAssessment:
+                raise AllMarketShadowError("assessment type mismatch")
+            if assessment.market_id in seen:
+                raise AllMarketShadowError(f"duplicate market {assessment.market_id.value}")
+            seen.add(assessment.market_id)
+        if seen != set(MarketId):
+            missing = set(MarketId) - seen
+            raise AllMarketShadowError(f"missing markets: {sorted(m.value for m in missing)}")
+        if not isinstance(self.authority, Mapping) or set(self.authority) != set(_AUTHORITY_KEYS):
+            raise AllMarketShadowError("authority keys mismatch")
+        if any(self.authority[key] is not False for key in _AUTHORITY_KEYS):
+            raise AllMarketShadowError("all authority flags must be false")
+        object.__setattr__(self, "authority", _authority_map())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "fixture_identity": self.fixture_identity,
+            "kickoff_utc_iso": self.kickoff_utc_iso,
+            "research_xg": None if self.research_xg is None else self.research_xg.to_dict(),
+            "score_matrix_audit": (
+                dict(self.score_matrix_audit) if self.score_matrix_audit is not None else None
+            ),
+            "market_assessments": [item.to_dict() for item in self.market_assessments],
+            "authority": dict(self.authority),
+        }
+
+
+@dataclass(frozen=True)
+class CurrentAllMarketShadowScan:
+    schema_version: int
+    dataset_name: str
+    fixtures: tuple[CurrentAllMarketShadowFixtureScan, ...]
+    authority: Mapping[str, bool]
+
+    def __post_init__(self) -> None:
+        if self.schema_version != SCHEMA_VERSION or self.dataset_name != DATASET_NAME:
+            raise AllMarketShadowError("scan schema identity mismatch")
+        if type(self.fixtures) is not tuple or not self.fixtures:
+            raise AllMarketShadowError("fixtures must be a non-empty tuple")
+        identities = [f.fixture_identity for f in self.fixtures]
+        if len(set(identities)) != len(identities):
+            raise AllMarketShadowError("duplicate fixture identities rejected")
+        if not isinstance(self.authority, Mapping) or set(self.authority) != set(_AUTHORITY_KEYS):
+            raise AllMarketShadowError("authority keys mismatch")
+        if any(self.authority[key] is not False for key in _AUTHORITY_KEYS):
+            raise AllMarketShadowError("all authority flags must be false")
+        object.__setattr__(self, "authority", _authority_map())
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "schema_version": self.schema_version,
+            "dataset_name": self.dataset_name,
+            "fixtures": [item.to_dict() for item in self.fixtures],
+            "authority": dict(self.authority),
+            "wager_placed": False,
         }
