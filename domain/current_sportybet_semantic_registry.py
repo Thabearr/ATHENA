@@ -40,6 +40,7 @@ CONTRACT_VERSION = 1
 DATASET_NAME = "athena-current-sportybet-semantic-readiness-registry-v1"
 POLICY_ID = "PRB_EXACT_CURRENT_SPORTYBET_SEMANTIC_POLICIES_V1"
 NEXT_BOUNDARY = "PRC_ALL_MARKET_SHADOW_PROBABILITY_SETTLEMENT_ADAPTER"
+PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA = "fe132268d45ef61dac1316a2ee92f0f46cab1084"
 
 # These are source-contract identities, not caller-provided labels.  They are
 # intentionally calculated from the reviewed modules at import time so source
@@ -56,6 +57,7 @@ SOURCE_CONTRACT_IDENTITIES = types.MappingProxyType(
             "PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_EXACT_NATIVE_ID_"
             "SPECIFIER_OUTCOME_LABEL_V1"
         ),
+        "pr258_upcoming_discovery_source_blob": PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA,
     }
 )
 
@@ -130,6 +132,13 @@ def canonical_json_bytes(value: Any) -> bytes:
     """Return the registry's deterministic canonical JSON representation."""
 
     return _canonical_bytes(value)
+
+
+def _git_blob_sha(path: Path) -> str:
+    raw = Path(path).read_bytes()
+    return hashlib.sha1(
+        b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
+    ).hexdigest()
 
 
 def _sha(value: Any, label: str) -> str:
@@ -1585,6 +1594,15 @@ def scan_current_sportybet_semantic_registry(
     ]
     fallback_error: str | None = None
     if not candidate_rows:
+        fallback_source = root / "scripts/run_pr258_sportybet_live_transport_proof.py"
+        if (
+            not fallback_source.is_file()
+            or fallback_source.is_symlink()
+            or _git_blob_sha(fallback_source) != PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA
+        ):
+            raise CurrentSportyBetSemanticRegistryError(
+                "reviewed PR258 upcoming discovery source identity drifted"
+            )
         from scripts import run_pr258_sportybet_live_transport_proof as pr258_proof
 
         try:
@@ -1656,6 +1674,13 @@ def scan_current_sportybet_semantic_registry(
         if destination.exists():
             shutil.rmtree(destination)
         shutil.copytree(row.evidence_directory, destination)
+    retained_event_evidence = []
+    for row in evidence_rows:
+        serialized = row.to_dict()
+        serialized["evidence_directory"] = (
+            Path("event-evidence") / row.evidence_directory.name
+        ).as_posix()
+        retained_event_evidence.append(serialized)
     proof = {
         "schema_version": SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
@@ -1664,7 +1689,7 @@ def scan_current_sportybet_semantic_registry(
         "head_sha": head_sha,
         "base_sha": base_sha,
         "capture_evaluation_time": registry.to_dict()["evaluation_time"],
-        "discovery_directory": retained_discovery.as_posix(),
+        "discovery_directory": "discovery-evidence",
         "discovery_manifest_sha256": discovery_capture.canonical_sha256,
         "discovery_event_count": len(discovery_capture.events),
         "discovery_pages_fetched": len(discovery_capture.pages),
@@ -1675,7 +1700,7 @@ def scan_current_sportybet_semantic_registry(
         "registry_sha256": registry.canonical_sha256,
         "source_contract_identities": dict(SOURCE_CONTRACT_IDENTITIES),
         "authority": dict(_AUTHORITY),
-        "retained_event_evidence": [row.to_dict() for row in evidence_rows],
+        "retained_event_evidence": retained_event_evidence,
     }
     registry_path = output / "registry.json"
     proof_path = output / "proof.json"
@@ -1712,6 +1737,7 @@ __all__ = [
     "MAX_DISCOVERY_PAGES",
     "NEXT_BOUNDARY",
     "POLICY_ID",
+    "PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA",
     "ProviderCoverageRecord",
     "ProviderEventEvidence",
     "ProviderSemanticObservation",

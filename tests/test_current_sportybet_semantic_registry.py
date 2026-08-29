@@ -366,6 +366,13 @@ def test_registry_identity_is_independent_of_evidence_input_order(tmp_path):
     assert left.canonical_sha256 == right.canonical_sha256
 
 
+def test_reviewed_pr258_upcoming_discovery_source_is_pinned():
+    root = Path(__file__).resolve().parents[1]
+    source = root / "scripts/run_pr258_sportybet_live_transport_proof.py"
+    assert registry._git_blob_sha(source) == registry.PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA
+    assert registry.SOURCE_CONTRACT_IDENTITIES["pr258_upcoming_discovery_source_blob"] == registry.PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA
+
+
 def test_provider_policy_has_no_market_alias_rescue():
     policy = registry.provider_policy(MarketId.TOTAL_GOALS)
     assert policy["market_ids"] == ("18",)
