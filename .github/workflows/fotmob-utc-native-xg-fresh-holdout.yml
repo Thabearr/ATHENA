@@ -458,12 +458,7 @@ jobs:
 
       - name: Package durable state archive
         id: package
-        if: >-
-          always() &&
-          (
-            steps.state.outputs.schedule_disposition == 'RESOLVED' ||
-            steps.state.outputs.schedule_disposition == 'CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION'
-          )
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED'
         env:
           SUCCESS_ASSET: ${{ steps.state.outputs.success_asset }}
           FAILURE_ASSET: ${{ steps.state.outputs.failure_asset }}
@@ -486,14 +481,9 @@ jobs:
             echo "FATAL: nominal slot was not resolved; refusing to fabricate lineage archive identity"
             exit 1
           fi
-          if [ "${STATE_DISPOSITION}" = "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION" ]; then
-            effective_tick_exit=0
-            tar_name="${SUCCESS_ASSET}"
-          elif [ "${TICK_EXIT:-1}" = "0" ]; then
-            effective_tick_exit=0
+          if [ "${TICK_EXIT:-1}" = "0" ]; then
             tar_name="${SUCCESS_ASSET}"
           else
-            effective_tick_exit="${TICK_EXIT:-1}"
             tar_name="${FAILURE_ASSET}"
           fi
           if [ -z "${tar_name:-}" ]; then
@@ -521,10 +511,6 @@ jobs:
               except Exception:
                   receipt_data = {}
 
-          disposition = "${STATE_DISPOSITION}"
-          continuity_no_acquisition = (
-              disposition == "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION"
-          )
           source_watchdog = "${CONTINUITY_SOURCE_WATCHDOG_RUN_ID}"
           receipt_data["workflow_run_id"] = int("${WORKFLOW_RUN_ID}")
           receipt_data["workflow_event_name"] = "${EVENT_NAME}"
@@ -534,8 +520,8 @@ jobs:
           receipt_data["durable_asset_name"] = "${tar_name}"
           receipt_data["durable_asset_sha256"] = tar_sha
           receipt_data["durable_asset_size_bytes"] = tar_size
-          receipt_data["schedule_disposition"] = disposition
-          receipt_data["continuity_no_acquisition"] = continuity_no_acquisition
+          receipt_data["schedule_disposition"] = "${STATE_DISPOSITION}"
+          receipt_data["continuity_no_acquisition"] = False
           receipt_data["continuity_source_watchdog_run_id"] = (
               None if source_watchdog == "" else int(source_watchdog)
           )
@@ -545,10 +531,8 @@ jobs:
           receipt_data["continuity_confirmation"] = (
               None if "${CONTINUITY_CONFIRMATION}" == "" else "${CONTINUITY_CONFIRMATION}"
           )
-          receipt_data["tick_exit_code"] = int("${effective_tick_exit}")
-          receipt_data["tick_committed"] = (
-              disposition == "RESOLVED" and "${effective_tick_exit}" == "0"
-          )
+          receipt_data["tick_exit_code"] = int("${TICK_EXIT:-1}")
+          receipt_data["tick_committed"] = "${TICK_EXIT:-1}" == "0"
           receipt_data["backfill_authorized"] = False
           receipt_data["failure_lineage_reconcile_outcome"] = "${RECONCILE_OUTCOME:-skipped}"
 
@@ -568,16 +552,10 @@ jobs:
           PY
 
           echo "archive_name=${tar_name}" >> "${GITHUB_OUTPUT}"
-          echo "effective_tick_exit=${effective_tick_exit}" >> "${GITHUB_OUTPUT}"
 
       - name: Upload authoritative 90-day Actions artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        if: >-
-          always() &&
-          (
-            steps.state.outputs.schedule_disposition == 'RESOLVED' ||
-            steps.state.outputs.schedule_disposition == 'CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION'
-          )
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED'
         with:
           name: ${{ steps.package.outputs.archive_name }}
           path: |
@@ -587,18 +565,13 @@ jobs:
 
       - name: Publish and verify long-lived evidence release asset
         id: publish_release
-        if: >-
-          always() &&
-          (
-            steps.state.outputs.schedule_disposition == 'RESOLVED' ||
-            steps.state.outputs.schedule_disposition == 'CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION'
-          )
+        if: always() && steps.state.outputs.schedule_disposition == 'RESOLVED'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           RELEASE_TAG: ${{ steps.state.outputs.release_tag }}
           ARCHIVE_NAME: ${{ steps.package.outputs.archive_name }}
-          EFFECTIVE_TICK_EXIT: ${{ steps.package.outputs.effective_tick_exit }}
+          TICK_EXIT: ${{ steps.execute_tick.outputs.exit_code }}
         shell: bash
         run: |
           set -euo pipefail
@@ -664,7 +637,7 @@ jobs:
           )
           PY
 
-          if [ "${EFFECTIVE_TICK_EXIT:-1}" != "0" ]; then
-            echo "Tick execution failed with exit code ${EFFECTIVE_TICK_EXIT:-1}; failure archive published and retained for next-run lineage restore."
-            exit "${EFFECTIVE_TICK_EXIT:-1}"
+          if [ "${TICK_EXIT:-1}" != "0" ]; then
+            echo "Tick execution failed with exit code ${TICK_EXIT:-1}; failure archive published and retained for next-run lineage restore."
+            exit "${TICK_EXIT:-1}"
           fi
