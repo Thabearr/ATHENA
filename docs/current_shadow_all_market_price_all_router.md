@@ -8,42 +8,33 @@
 
 ```
 PR-C CurrentAllMarketShadowFixtureScan (15 MarketId rows)
-  + exact ShadowExactQuote rows (source-identity fields)
+  + source-bound ShadowExactQuote (inventory + selection join only)
   → price_all_shadow_fixture  (complete audit, no EV prefilter)
   → route_shadow_price_results (strongest robust value OR NO_BET)
 ```
 
-## What PR D does
+## Source-bound quotes
 
-- Price every analytically ready PR-C opportunity that has an exact current quote
-- Ordinary proportional de-vig only for mutually exclusive exhaustive same-snapshot partitions
-- Settlement-aware EV for DNB (WIN/PUSH/LOSS) and AH (full/half/push states)
-- Overlapping markets (Double Chance, 1UP/2UP): no false partition de-vig
-- Router compares **all** market families — no Total Goals privilege
-- Frozen thresholds: event_p ≥ 0.55, net EV > 0, robust EV > 0, robust edge > 0 (when fair exists)
-- Retain runner-up and strongest rejected counterfactual
-- NO_BET is a successful terminal decision
+`ShadowExactQuote` requires `source_bound_issuance == ATHENA_SHADOW_QUOTE_SOURCE_BOUND_V1`.
+Only `build_shadow_exact_quote(inventory, selection, ...)` may issue quotes.
+Source raw/manifest/inventory SHAs come exclusively from `SportyBetLiveEventQuoteInventory`.
 
-## What PR D deliberately does NOT do
+## Ancestry retained on every price row
 
-- Portfolio / target 20 / leg caps (PR E)
-- Final current runner
-- SportyBet share-code create/reload
-- Login / cookies / wallet / stake / wager
-- Phase-6 CalibratedValueCandidate minting
-- Fake calibration artifacts
-- WEH feature acquisition repair
-- Fabricating AH provider support when PR-B says unproven
+- `prc_scan_sha256`
+- sealed xG / history prefix (when present)
+- source raw / manifest / inventory SHAs
+- observation identity
+- `score_matrix_audit` (serialized in `to_dict`)
 
-## Quote identity
+## Router gates
 
-Exact match on:
-fixture, MarketId, OutcomeId, line, provider_event_id, provider_market_id,
-provider_specifier, provider_outcome_id, source raw/manifest/inventory SHA.
+- Ordinary partitions: require `PROPORTIONAL_COMPLETE_PARTITION` + fair + positive robust edge
+- Incomplete / cross-snapshot ordinary partitions: REJECTED
+- Event probability floor 0.55 applies to all non-full-settlement scalar markets (including Double Chance / 1UP / 2UP)
+- DNB/AH: settlement-aware EV; no fake fair/edge
+- Empty quote corpus → truthful NO_BET (fixture identity from PR-C scan)
 
-No fuzzy, nearest-line, or cross-snapshot joins.
+## Explicit non-goals
 
-## Authority map
-
-Research flags may be true. All production and execution flags remain false.
-`wager_placed = false`.
+Portfolio, share-code, stake/wager, Phase-6 candidate minting, WEH feature repair.
