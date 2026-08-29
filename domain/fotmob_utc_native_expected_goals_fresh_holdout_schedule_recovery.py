@@ -9,7 +9,9 @@ proves the reviewed collection path never reached acquisition or persistence.
 The same rule applies to the prospective continuity transport: if durable lineage
 already attempted the exact future target, the continuity dispatch must become a
 green zero-artifact no-op and may be stepped across only after exact job metadata
-proves every acquisition/persistence step was skipped.
+proves every acquisition/persistence step was skipped. A failed continuity dispatch
+may likewise be stepped across only when its exact job steps prove failure occurred
+before provider acquisition or persistence.
 """
 from __future__ import annotations
 
@@ -54,6 +56,29 @@ _CONTINUITY_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
     "Upload authoritative 90-day Actions artifact": "skipped",
     "Publish and verify long-lived evidence release asset": "skipped",
 }
+_CONTINUITY_PREACQUISITION_ALLOWED_STEP_OUTCOMES = (
+    {
+        "Authenticate continuity dispatch source": "failure",
+        "Restore newest durable lineage and resolve schedule slot": "skipped",
+        "Restore or materialize PR119 bootstrap projection": "skipped",
+        "Execute reviewed fresh-holdout collection tick": "skipped",
+        "Reconcile any staged capture lineage": "skipped",
+    },
+    {
+        "Authenticate continuity dispatch source": "success",
+        "Restore newest durable lineage and resolve schedule slot": "failure",
+        "Restore or materialize PR119 bootstrap projection": "skipped",
+        "Execute reviewed fresh-holdout collection tick": "skipped",
+        "Reconcile any staged capture lineage": "skipped",
+    },
+    {
+        "Authenticate continuity dispatch source": "success",
+        "Restore newest durable lineage and resolve schedule slot": "success",
+        "Restore or materialize PR119 bootstrap projection": "failure",
+        "Execute reviewed fresh-holdout collection tick": "skipped",
+        "Reconcile any staged capture lineage": "skipped",
+    },
+)
 
 
 def is_ambiguous_schedule_occurrence_error(exc: BaseException) -> bool:
@@ -169,6 +194,79 @@ def _prove_continuity_duplicate_no_acquisition_success(
     )
 
 
+def _prove_continuity_preacquisition_control_failure(
+    run: Mapping[str, Any],
+    artifact_data: Mapping[str, Any],
+    get_run_jobs: Callable[[int], Mapping[str, Any]],
+) -> bool:
+    """Prove a continuity dispatch failed before provider acquisition/persistence."""
+    run_id = run.get("id")
+    if type(run_id) is not int or run_id < 1 or run.get("conclusion") != "failure":
+        return False
+    created_at = lineage._run_created_at(run, run_id)
+    if created_at is None or created_at < control.holdout_start_utc():
+        return False
+    if run.get("event") != "workflow_dispatch" or run.get("head_branch") != "main":
+        return False
+    artifacts = artifact_data.get("artifacts")
+    if type(artifacts) is not list or artifacts:
+        return False
+
+    try:
+        jobs_data = get_run_jobs(run_id)
+    except lineage.FreshHoldoutFailureLineageError:
+        raise
+    except Exception as exc:
+        raise lineage._error(
+            f"failed to fetch jobs for completed run {run_id}"
+        ) from exc
+    if type(jobs_data) is not dict or type(jobs_data.get("jobs")) is not list:
+        raise lineage._error(f"malformed jobs metadata for completed run {run_id}")
+    jobs = [
+        job
+        for job in jobs_data["jobs"]
+        if type(job) is dict and job.get("name") == lineage._PREACQUISITION_JOB_NAME
+    ]
+    if len(jobs) != 1:
+        raise lineage._error(
+            f"completed run {run_id} must expose exactly one reviewed collection job"
+        )
+    job = jobs[0]
+    if job.get("status") != "completed" or job.get("conclusion") != "failure":
+        return False
+    steps = job.get("steps")
+    if type(steps) is not list:
+        raise lineage._error(f"completed run {run_id} job steps are missing")
+
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for step in steps:
+        if type(step) is not dict:
+            raise lineage._error(
+                f"completed run {run_id} job step metadata is malformed"
+            )
+        name = step.get("name")
+        if type(name) is not str:
+            raise lineage._error(f"completed run {run_id} job step name is invalid")
+        if name in by_name:
+            raise lineage._error(
+                f"completed run {run_id} duplicated job step {name!r}"
+            )
+        by_name[name] = step
+
+    reviewed_step_names = tuple(_CONTINUITY_PREACQUISITION_ALLOWED_STEP_OUTCOMES[0])
+    for name in reviewed_step_names:
+        step = by_name.get(name)
+        if step is None or step.get("status") != "completed":
+            return False
+    return any(
+        all(
+            by_name[name].get("conclusion") == expected[name]
+            for name in reviewed_step_names
+        )
+        for expected in _CONTINUITY_PREACQUISITION_ALLOWED_STEP_OUTCOMES
+    )
+
+
 def _has_pre_campaign_completed_run(
     prior_runs: Sequence[Mapping[str, Any]],
 ) -> bool:
@@ -260,6 +358,15 @@ def restore_latest_lineage_state(
                 skipped_noops.append(run_id)
                 continue
             stop_scanning = True
+        elif candidate.get("conclusion") == "failure":
+            if _prove_continuity_preacquisition_control_failure(
+                candidate,
+                artifact_data,
+                jobs_reader,
+            ):
+                eligible_noop_ids.add(run_id)
+                skipped_noops.append(run_id)
+                continue
 
     for run in prior_runs:
         run_id = run.get("id") if type(run) is dict else None
