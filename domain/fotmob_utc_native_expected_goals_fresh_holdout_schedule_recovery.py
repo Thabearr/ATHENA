@@ -43,6 +43,7 @@ _NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
     "Publish and verify long-lived evidence release asset": "skipped",
 }
 _CONTINUITY_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
+    "Authenticate continuity dispatch source": "success",
     "Restore newest durable lineage and resolve schedule slot": "success",
     _AMBIGUOUS_MARKER_STEP: "skipped",
     _CONTINUITY_MARKER_STEP: "success",
