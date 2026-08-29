@@ -1342,7 +1342,7 @@ def scan_current_sportybet_semantic_registry(
     output.mkdir(parents=True, exist_ok=True)
     discovery_capture = capture_bounded_current_event_discovery()
     scan_time = _utc(evaluation_time, "evaluation_time") if evaluation_time is not None else datetime.now(timezone.utc)
-    candidates = sorted(
+    discovery_candidates = sorted(
         (
             item
             for item in discovery_capture.events
@@ -1351,12 +1351,33 @@ def scan_current_sportybet_semantic_registry(
         ),
         key=lambda item: (item.kickoff_utc, item.event_id),
     )[:MAX_EVENT_DETAIL_READS]
+    # The live-or-prematch endpoint can legitimately contain only in-play rows
+    # at a given observation time.  Reuse PR258's already-reviewed anonymous
+    # upcoming-event discovery as a bounded, discovery-only fallback; it does
+    # not create/reload a share code or select by odds.
+    candidate_rows: list[tuple[str, discovery.SportyBetDiscoveredEvent | None, str]] = [
+        (item.event_id, item, "CURRENT_EVENT_DISCOVERY") for item in discovery_candidates
+    ]
+    fallback_error: str | None = None
+    if not candidate_rows:
+        from scripts import run_pr258_sportybet_live_transport_proof as pr258_proof
+
+        try:
+            upcoming_ids, _upcoming_metadata = pr258_proof._fetch_upcoming_sample(output)
+            candidate_rows = [
+                (event_id, None, "REVIEWED_UPCOMING_DISCOVERY_FALLBACK")
+                for event_id in upcoming_ids[:MAX_EVENT_DETAIL_READS]
+            ]
+        except (pr258_proof.PR258LiveTransportProofError, OSError) as exc:
+            # This fallback is best-effort discovery only.  Keep its failure in
+            # proof metadata and preserve an explicit all-unproven matrix.
+            fallback_error = type(exc).__name__
     evidence_rows: list[ProviderEventEvidence] = []
     attempts: list[dict[str, Any]] = []
-    for candidate in candidates:
+    for event_id, candidate, candidate_source in candidate_rows:
         try:
             event_dir, _manifest = live.capture_live_event_quote_evidence(
-                event_id=candidate.event_id,
+                event_id=event_id,
                 repository_root=root,
                 execute_live_network=True,
             )
@@ -1367,17 +1388,26 @@ def scan_current_sportybet_semantic_registry(
                     discovery_event=candidate,
                 )
             )
-            attempts.append({"event_id": candidate.event_id, "status": "CAPTURED"})
+            attempts.append(
+                {"event_id": event_id, "status": "CAPTURED", "candidate_source": candidate_source}
+            )
         except (live.SportyBetLiveEventQuoteEvidenceError, OSError) as exc:
             # Preserve failed attempts; do not retry silently.  Contract or
             # replay drift raises rather than being disguised as provider
             # absence.
-            attempts.append({"event_id": candidate.event_id, "status": "FAILED", "reason": type(exc).__name__})
+            attempts.append(
+                {
+                    "event_id": event_id,
+                    "status": "FAILED",
+                    "reason": type(exc).__name__,
+                    "candidate_source": candidate_source,
+                }
+            )
     registry = build_registry(
         evidence_rows,
         evaluation_time=scan_time,
         scan_cap=MAX_EVENT_DETAIL_READS,
-        scan_attempts=len(candidates),
+        scan_attempts=len(candidate_rows),
     )
     # Copy exact source evidence used by the proof; no generated cache is
     # committed to the repository and no successful event hides failed reads.
@@ -1411,6 +1441,7 @@ def scan_current_sportybet_semantic_registry(
         "discovery_pages_fetched": len(discovery_capture.pages),
         "discovery_terminal_empty_page_observed": discovery_capture.terminal_empty_page_observed,
         "attempts": attempts,
+        "upcoming_fallback_error": fallback_error,
         "registry": registry.to_dict(),
         "registry_sha256": registry.canonical_sha256,
         "source_contract_identities": dict(SOURCE_CONTRACT_IDENTITIES),
