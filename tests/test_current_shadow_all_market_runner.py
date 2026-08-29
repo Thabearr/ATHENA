@@ -173,6 +173,21 @@ def test_target_size_bounds_fail_before_any_source_network(monkeypatch, tmp_path
     assert called is False
 
 
+def test_shadow_price_failure_is_captured_as_source_incomplete(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+
+    def fail(**_kwargs):
+        raise runner.ShadowPriceError("synthetic price-chain failure")
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", fail)
+    result = runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    assert result.status == runner.STATUS_SOURCE_INCOMPLETE
+    assert result.share_code is None
+    assert result.reasons == (
+        "SOURCE_CHAIN_FAILED:ShadowPriceError:synthetic price-chain failure",
+    )
+
+
 def test_runner_authority_never_grants_production_or_wager():
     assert runner.AUTHORITY["research_shadow_current_runner"] is True
     for key in (
