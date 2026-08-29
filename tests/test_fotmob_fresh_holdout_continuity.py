@@ -149,6 +149,44 @@ def test_wait_helper_refuses_past_slot_instead_of_backfilling() -> None:
         )
 
 
+def test_dispatch_check_waits_through_natural_primary_grace_only() -> None:
+    plan = continuity.plan_from_watchdog_created_at("2026-08-29T07:03:02Z")
+    assert continuity.seconds_until_dispatch_check(
+        plan,
+        now=dt.datetime(2026, 8, 29, 7, 3, 2, tzinfo=dt.timezone.utc),
+    ) == 328
+    assert continuity.seconds_until_dispatch_check(
+        plan,
+        now=dt.datetime(2026, 8, 29, 7, 8, 30, tzinfo=dt.timezone.utc),
+    ) == 0
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="window already expired",
+    ):
+        continuity.seconds_until_dispatch_check(
+            plan,
+            now=dt.datetime(2026, 8, 29, 7, 12, 1, tzinfo=dt.timezone.utc),
+        )
+
+
+def test_durable_targets_are_bound_to_exact_future_slot_and_run() -> None:
+    plan = continuity.plan_from_watchdog_created_at("2026-08-29T07:03:02Z")
+    nominal, release, success, failure = continuity.durable_targets_for_plan(
+        plan,
+        run_id=456,
+    )
+    assert nominal == "2026-08-29T07:07:00.000000Z"
+    assert release == "athena-fresh-holdout-evidence-2026-W35"
+    assert success == "success-20260829T070700Z-run-456.tar.gz"
+    assert failure == "failure-20260829T070700Z-run-456.tar.gz"
+
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="workflow run id",
+    ):
+        continuity.durable_targets_for_plan(plan, run_id=0)
+
+
 def test_durable_last_attempted_prevents_duplicate_same_slot_acquisition() -> None:
     target = "2026-08-29T07:07:00Z"
     assert continuity.lineage_already_attempted_target(
