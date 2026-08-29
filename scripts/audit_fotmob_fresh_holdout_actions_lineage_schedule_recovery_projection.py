@@ -31,7 +31,7 @@ import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as pr
 
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
-POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "0920e76639d4f45061afa7e08594c677c8bb6dca"
+POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
 SCHEDULE_RECOVERY_BLOB_SHA = "e24929813e5666c5477aa8906cf36cc7ef6ffcc4"
 SCHEDULE_RECOVERY_PATH = (
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
