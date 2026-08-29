@@ -5,129 +5,221 @@ import datetime as dt
 
 import pytest
 
-from domain import score_matrix
-from domain import sportybet_live_event_quote_evidence as live
-from domain.current_shadow_sportybet_field_trial import (
-    AUTHORITY,
-    CurrentShadowSportyBetFieldTrialError,
-    ResearchFixtureDecision,
-    ResearchFixtureIdentity,
-    build_total_goals_research_decision,
-    optimize_research_shadow_portfolio,
+from domain import current_shadow_sportybet_field_trial as trial
+from domain.fotmob_data_matches_capture import (
+    sha256_data_matches_capture_manifest,
 )
-from tests.test_current_fotmob_utc_native_shadow_prediction import _handoff
+from domain.markets import MarketId, OutcomeId
+from tests import test_current_direct_provider_canonical_market_mapping_rebind as mapping_helpers
+from tests import test_current_fotmob_latest_durable_fresh_history as latest_helpers
+
 
 UTC = dt.timezone.utc
 
 
-def _sealed(tmp_path, monkeypatch):
-    handoff, *_rest = _handoff(tmp_path, monkeypatch)
-    row = handoff.rows[0]
-    assert row.sealed_prediction is not None
-    assert row.sealed_prediction_sha256 is not None
-    return row
-
-
-def _fixture(row, *, suffix: int = 1) -> ResearchFixtureIdentity:
-    return ResearchFixtureIdentity(
-        fixture_identifier=row.fixture_identifier,
-        event_id=str(700000 + suffix),
-        home_team="Home FC",
-        away_team="Away FC",
-        competition="Premier League",
-        kickoff_utc=row.fixture.kickoff_utc,
+def _complete_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source, _lower, _evidence = latest_helpers._source_bundle(
+        tmp_path / "latest-history",
+        monkeypatch,
     )
+    return latest_helpers._handoff(source)
 
 
-def _inventory(row, fixture: ResearchFixtureIdentity):
-    rates = dict(row.sealed_prediction.rates)
-    matrix = score_matrix.build_score_matrix(
-        rates["calibrated_home"],
-        rates["calibrated_away"],
-    )
-    line = next(
-        candidate
-        for candidate in (3.5, 4.5, 5.5, 6.5, 7.5, 8.5, 9.5)
-        if matrix.under(candidate) > 0.85
-    )
-    specifier = f"total={line:g}"
-    observed = fixture.kickoff_utc - dt.timedelta(hours=2)
-    selections = (
-        live.SportyBetLiveEventSelection(
-            event_id=fixture.event_id,
-            market_id="18",
+def _source_capture_identity(history) -> dict[str, object]:
+    manifest = history.selected_prefix.source_bundle.source_manifest
+    return {
+        "request_date": manifest.request_date,
+        "raw_sha256": history.shadow_handoff.source_raw_sha256,
+        "raw_size": manifest.raw_size,
+        "manifest_sha256": history.shadow_handoff.source_manifest_sha256,
+        "observed_at": manifest.observed_at.isoformat(
+            timespec="microseconds"
+        ).replace("+00:00", "Z"),
+    }
+
+
+def _selection(
+    *,
+    line: float,
+    outcome_id: str,
+    odds: float,
+    market_id: str = "18",
+):
+    return dataclasses.replace(
+        mapping_helpers._selection(
+            market_id=market_id,
             market_name="Total Goals",
-            specifier=specifier,
-            outcome_id="O",
-            outcome_name=f"Over {line:g}",
-            bookable=True,
-            bookability_basis="EXPLICIT_ACTIVE_FLAG",
-            odds_raw="5.0",
-            odds_decimal=5.0,
+            specifier=f"total={line:g}",
+            outcome_id=outcome_id,
+            outcome_name=(
+                f"Over {line:g}"
+                if outcome_id == "O"
+                else f"Under {line:g}"
+            ),
         ),
-        live.SportyBetLiveEventSelection(
-            event_id=fixture.event_id,
-            market_id="18",
-            market_name="Total Goals",
-            specifier=specifier,
-            outcome_id="U",
-            outcome_name=f"Under {line:g}",
-            bookable=True,
-            bookability_basis="EXPLICIT_ACTIVE_FLAG",
-            odds_raw="1.3",
-            odds_decimal=1.3,
-        ),
-    )
-    return live.SportyBetLiveEventQuoteInventory(
-        dataset_name=live.INVENTORY_DATASET_NAME,
-        event_id=fixture.event_id,
-        home_team_name=fixture.home_team,
-        away_team_name=fixture.away_team,
-        kickoff_utc=fixture.kickoff_utc,
-        booking_status=None,
-        event_status=0,
-        match_status="Not started",
-        prematch_bookable_observed=True,
-        observed_at=observed,
-        observation_authority=live.OBSERVATION_AUTHORITY,
-        provider_quote_at=None,
-        provider_snapshot_id=None,
-        source_manifest_sha256="a" * 64,
-        source_raw_sha256="b" * 64,
-        selections=selections,
+        odds_raw=f"{odds:g}",
+        odds_decimal=odds,
     )
 
 
-def _decision(tmp_path, monkeypatch):
-    row = _sealed(tmp_path, monkeypatch)
-    fixture = _fixture(row)
-    inventory = _inventory(row, fixture)
-    evaluation = inventory.observed_at + dt.timedelta(minutes=5)
-    decision = build_total_goals_research_decision(
-        fixture=fixture,
-        sealed_prediction=row.sealed_prediction,
-        sealed_prediction_sha256=row.sealed_prediction_sha256,
+def _source_row(
+    *,
+    line: float,
+    outcome_id: str,
+    market_id: str = "18",
+):
+    return mapping_helpers._source_row(
+        market_id=market_id,
+        market_name="Total Goals",
+        specifier=f"total={line:g}",
+        outcome_id=outcome_id,
+        outcome_name=(
+            f"Over {line:g}"
+            if outcome_id == "O"
+            else f"Under {line:g}"
+        ),
+        canonical_market=MarketId.TOTAL_GOALS,
+        canonical_outcome=(
+            OutcomeId.OVER if outcome_id == "O" else OutcomeId.UNDER
+        ),
+        line=line,
+    )
+
+
+def _current_mapping(
+    history,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    line: float = 6.5,
+    mapping_evaluation: dt.datetime | None = None,
+    include_unreviewed_line: bool = False,
+):
+    shadow_row = history.shadow_handoff.rows[0]
+    kickoff = shadow_row.kickoff_utc
+    source_observed = (
+        history.selected_prefix.source_bundle.source_manifest.observed_at
+    )
+    evaluation = mapping_evaluation or (
+        source_observed + dt.timedelta(minutes=5)
+    )
+
+    monkeypatch.setattr(mapping_helpers, "CURRENT_FIXTURE", "1001")
+    monkeypatch.setattr(mapping_helpers, "KICKOFF", kickoff)
+    monkeypatch.setattr(mapping_helpers, "EVALUATION", evaluation)
+
+    source_mapping = mapping_helpers._source_mapping(
+        _source_row(line=line, outcome_id="O"),
+        _source_row(line=line, outcome_id="U"),
+    )
+    selections = [
+        _selection(line=line, outcome_id="O", odds=6.0),
+        _selection(line=line, outcome_id="U", odds=1.25),
+    ]
+    if include_unreviewed_line:
+        selections.extend(
+            (
+                _selection(
+                    line=9.5,
+                    outcome_id="O",
+                    odds=50.0,
+                    market_id="19",
+                ),
+                _selection(
+                    line=9.5,
+                    outcome_id="U",
+                    odds=5.0,
+                    market_id="19",
+                ),
+            )
+        )
+    inventory = mapping_helpers._inventory(
+        *selections,
+        observed_at=evaluation - dt.timedelta(seconds=60),
+        kickoff=kickoff,
+    )
+    current_bundle = mapping_helpers._current_bundle(
+        inventory,
+        kickoff=kickoff,
+    )
+    current_bundle.fotmob_capture_identities = (
+        _source_capture_identity(history),
+    )
+    mapping, _calls = mapping_helpers._build(
+        monkeypatch,
         inventory=inventory,
+        source_mapping=source_mapping,
+        current_bundle=current_bundle,
+        evaluation=evaluation,
+    )
+    return mapping, inventory, evaluation
+
+
+def _decision(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    include_unreviewed_line: bool = False,
+    mapping_evaluation: dt.datetime | None = None,
+    decision_evaluation: dt.datetime | None = None,
+):
+    history = _complete_history(tmp_path, monkeypatch)
+    mapping, inventory, mapping_time = _current_mapping(
+        history,
+        monkeypatch,
+        include_unreviewed_line=include_unreviewed_line,
+        mapping_evaluation=mapping_evaluation,
+    )
+    evaluation = decision_evaluation or (
+        max(mapping_time, inventory.observed_at)
+        + dt.timedelta(seconds=30)
+    )
+    decision = trial.build_source_bound_total_goals_research_decision(
+        complete_current_history=history,
+        current_mapping_rebind=mapping,
         evaluation_time=evaluation,
     )
-    return row, fixture, inventory, evaluation, decision
+    return history, mapping, inventory, evaluation, decision
 
 
-def test_research_lane_never_claims_production_or_bet_authority(
+def test_source_bound_research_lane_never_claims_production_or_bet_authority(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    *_prefix, decision = _decision(tmp_path, monkeypatch)
+    history, mapping, _inventory, _evaluation, decision = _decision(
+        tmp_path,
+        monkeypatch,
+    )
     selected = decision.selected
 
+    assert history.current_fresh_history_prefix_complete is True
+    assert mapping.mapped_selection_count == 2
     assert decision.status == "SELECTED"
     assert selected is not None
     assert selected.provider_market_name == "Total Goals"
-    assert selected.outcome_id.value == "UNDER"
-    assert selected.event_probability > 0.85
+    assert selected.outcome_id is OutcomeId.UNDER
     assert selected.net_expected_value > 0.0
     assert selected.robust_edge > 0.0
-    assert AUTHORITY["research_market_probability"] is True
+    assert selected.latest_history_sha256 == decision.latest_history_sha256
+    assert (
+        selected.current_mapping_rebind_sha256
+        == decision.current_mapping_rebind_sha256
+    )
+
+    for key in (
+        "complete_current_fresh_history_proof",
+        "reviewed_current_fixture_identity",
+        "reviewed_shadow_expected_goals",
+        "exact_reviewed_current_market_mapping",
+        "research_score_matrix",
+        "research_market_probability",
+        "research_current_provider_value",
+        "research_field_trial_routing",
+        "research_field_trial_portfolio",
+    ):
+        assert trial.AUTHORITY[key] is True
     for key in (
         "production_model",
         "production_probability",
@@ -141,23 +233,87 @@ def test_research_lane_never_claims_production_or_bet_authority(
         "bet",
         "wager_placed",
     ):
-        assert AUTHORITY[key] is False
+        assert trial.AUTHORITY[key] is False
+
+
+def test_unreviewed_provider_total_line_is_never_generalized_into_research_surface(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    *_prefix, decision = _decision(
+        tmp_path,
+        monkeypatch,
+        include_unreviewed_line=True,
+    )
+    assert decision.opportunities
+    assert {item.line for item in decision.opportunities} == {6.5}
+    assert {
+        (item.provider_market_id, item.provider_specifier)
+        for item in decision.opportunities
+    } == {("18", "total=6.5")}
+
+
+def test_latest_history_and_mapping_must_share_exact_fotmob_capture_ancestry(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _complete_history(tmp_path, monkeypatch)
+    mapping, inventory, mapping_time = _current_mapping(
+        history,
+        monkeypatch,
+    )
+    mapping._current_bundle.fotmob_capture_identities = (
+        {
+            **_source_capture_identity(history),
+            "manifest_sha256": "f" * 64,
+        },
+    )
+    with pytest.raises(
+        trial.CurrentShadowSportyBetFieldTrialError,
+        match="share one exact FotMob capture ancestry",
+    ):
+        trial.build_source_bound_total_goals_research_decision(
+            complete_current_history=history,
+            current_mapping_rebind=mapping,
+            evaluation_time=max(mapping_time, inventory.observed_at)
+            + dt.timedelta(seconds=30),
+        )
+
+
+def test_incomplete_pr244_shadow_object_cannot_substitute_for_latest_history(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _complete_history(tmp_path, monkeypatch)
+    mapping, inventory, mapping_time = _current_mapping(
+        history,
+        monkeypatch,
+    )
+    with pytest.raises(
+        trial.CurrentShadowSportyBetFieldTrialError,
+        match="complete latest PR151 history",
+    ):
+        trial.build_source_bound_total_goals_research_decision(
+            complete_current_history=history.shadow_handoff,
+            current_mapping_rebind=mapping,
+            evaluation_time=max(mapping_time, inventory.observed_at)
+            + dt.timedelta(seconds=30),
+        )
 
 
 def test_stale_current_provider_quote_is_no_bet(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    row, fixture, inventory, evaluation, _decision_value = _decision(tmp_path, monkeypatch)
-    stale = dataclasses.replace(
-        inventory,
-        observed_at=evaluation - dt.timedelta(seconds=901),
+    history = _complete_history(tmp_path, monkeypatch)
+    mapping, inventory, _mapping_time = _current_mapping(
+        history,
+        monkeypatch,
     )
-    decision = build_total_goals_research_decision(
-        fixture=fixture,
-        sealed_prediction=row.sealed_prediction,
-        sealed_prediction_sha256=row.sealed_prediction_sha256,
-        inventory=stale,
+    evaluation = inventory.observed_at + dt.timedelta(seconds=901)
+    decision = trial.build_source_bound_total_goals_research_decision(
+        complete_current_history=history,
+        current_mapping_rebind=mapping,
         evaluation_time=evaluation,
     )
     assert decision.status == "NO_BET"
@@ -165,131 +321,184 @@ def test_stale_current_provider_quote_is_no_bet(
     assert "CURRENT_PROVIDER_QUOTE_STALE" in decision.decision_reasons
 
 
-def test_exact_120_second_kickoff_boundary_is_no_bet(
+def test_exact_120_second_kickoff_boundary_is_no_bet_with_fresh_quote(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    row = _sealed(tmp_path, monkeypatch)
-    fixture = _fixture(row)
-    inventory = _inventory(row, fixture)
-    evaluation = fixture.kickoff_utc - dt.timedelta(seconds=120)
-    fresh_inventory = dataclasses.replace(
-        inventory,
-        observed_at=evaluation - dt.timedelta(seconds=30),
+    history = _complete_history(tmp_path, monkeypatch)
+    kickoff = history.shadow_handoff.rows[0].kickoff_utc
+    mapping_time = kickoff - dt.timedelta(seconds=180)
+    mapping, _inventory, _ = _current_mapping(
+        history,
+        monkeypatch,
+        mapping_evaluation=mapping_time,
     )
-    decision = build_total_goals_research_decision(
-        fixture=fixture,
-        sealed_prediction=row.sealed_prediction,
-        sealed_prediction_sha256=row.sealed_prediction_sha256,
-        inventory=fresh_inventory,
-        evaluation_time=evaluation,
+    decision = trial.build_source_bound_total_goals_research_decision(
+        complete_current_history=history,
+        current_mapping_rebind=mapping,
+        evaluation_time=kickoff - dt.timedelta(seconds=120),
     )
     assert decision.status == "NO_BET"
     assert decision.selected is None
     assert "FIXTURE_TOO_CLOSE_TO_KICKOFF" in decision.decision_reasons
+    assert "CURRENT_PROVIDER_QUOTE_STALE" not in decision.decision_reasons
 
 
-def test_provider_semantic_label_drift_is_not_guessed(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    row = _sealed(tmp_path, monkeypatch)
-    fixture = _fixture(row)
-    inventory = _inventory(row, fixture)
-    selections = list(inventory.selections)
-    under_index = next(index for index, item in enumerate(selections) if item.outcome_id == "U")
-    selections[under_index] = dataclasses.replace(
-        selections[under_index],
-        outcome_name="Under Goals",
-    )
-    drifted = dataclasses.replace(inventory, selections=tuple(selections))
-    decision = build_total_goals_research_decision(
-        fixture=fixture,
-        sealed_prediction=row.sealed_prediction,
-        sealed_prediction_sha256=row.sealed_prediction_sha256,
-        inventory=drifted,
-        evaluation_time=inventory.observed_at + dt.timedelta(minutes=5),
-    )
-    assert decision.status == "NO_BET"
-    assert decision.selected is None
-    assert decision.opportunities == ()
-
-
-def test_provider_fixture_identity_mismatch_fails_closed(
-    tmp_path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    row = _sealed(tmp_path, monkeypatch)
-    fixture = _fixture(row)
-    inventory = dataclasses.replace(_inventory(row, fixture), home_team_name="Other FC")
-    with pytest.raises(CurrentShadowSportyBetFieldTrialError, match="provider event identity"):
-        build_total_goals_research_decision(
-            fixture=fixture,
-            sealed_prediction=row.sealed_prediction,
-            sealed_prediction_sha256=row.sealed_prediction_sha256,
-            inventory=inventory,
-            evaluation_time=inventory.observed_at + dt.timedelta(minutes=5),
+def test_invalid_sportybet_event_identity_is_rejected() -> None:
+    with pytest.raises(
+        trial.CurrentShadowSportyBetFieldTrialError,
+        match="sr:match",
+    ):
+        trial.ResearchFixtureIdentity(
+            fixture_identifier="FOTMOB:1001",
+            event_id="700001",
+            home_team="Home FC",
+            away_team="Away FC",
+            competition="Premier League",
+            kickoff_utc=dt.datetime(
+                2026,
+                8,
+                29,
+                15,
+                0,
+                tzinfo=UTC,
+            ),
         )
+
+
+def test_portfolio_rechecks_exact_120_second_boundary_and_preserves_exclusion(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history = _complete_history(tmp_path, monkeypatch)
+    kickoff = history.shadow_handoff.rows[0].kickoff_utc
+    mapping_time = kickoff - dt.timedelta(seconds=240)
+    *_prefix, decision = _decision(
+        tmp_path,
+        monkeypatch,
+        mapping_evaluation=mapping_time,
+        decision_evaluation=kickoff - dt.timedelta(seconds=180),
+    )
+    assert decision.selected is not None
+
+    portfolio = trial.optimize_research_shadow_portfolio(
+        (decision,),
+        target_size=1,
+        evaluation_time=kickoff - dt.timedelta(seconds=120),
+    )
+    assert portfolio.selected_legs == ()
+    assert portfolio.shortfall == 1
+    assert len(portfolio.exclusions) == 1
+    assert (
+        "FIXTURE_TOO_CLOSE_TO_KICKOFF_AT_PORTFOLIO_TIME"
+        in portfolio.exclusions[0].reasons
+    )
+
+
+def _clone_selected_decision(
+    base: trial.ResearchFixtureDecision,
+    *,
+    index: int,
+) -> trial.ResearchFixtureDecision:
+    selected = base.selected
+    assert selected is not None
+    fixture = dataclasses.replace(
+        selected.fixture,
+        fixture_identifier=f"FOTMOB:{9000 + index}",
+        event_id=f"sr:match:{800000 + index}",
+        home_team=f"Home {index}",
+        away_team=f"Away {index}",
+        competition=f"League {index}",
+    )
+    identity_payload = trial._opportunity_identity_payload(
+        fixture=fixture,
+        sealed_prediction_sha256=selected.sealed_prediction_sha256,
+        latest_history_sha256=selected.latest_history_sha256,
+        current_mapping_rebind_sha256=(
+            selected.current_mapping_rebind_sha256
+        ),
+        mapped_selection_sha256=selected.mapped_selection_sha256,
+        current_inventory_sha256=selected.current_inventory_sha256,
+        provider_market_id=selected.provider_market_id,
+        provider_specifier=selected.provider_specifier,
+        provider_outcome_id=selected.provider_outcome_id,
+        decimal_odds=selected.decimal_odds,
+        event_probability=selected.event_probability,
+        evaluation_time=selected.decision_evaluation_time,
+    )
+    opportunity = dataclasses.replace(
+        selected,
+        opportunity_id=trial._sha(identity_payload),
+        fixture=fixture,
+    )
+    return trial.ResearchFixtureDecision(
+        fixture=fixture,
+        evaluation_time=base.evaluation_time,
+        latest_history_sha256=base.latest_history_sha256,
+        current_mapping_rebind_sha256=(
+            base.current_mapping_rebind_sha256
+        ),
+        status="SELECTED",
+        selected_opportunity_id=opportunity.opportunity_id,
+        opportunities=(opportunity,),
+        decision_reasons=(
+            "RESEARCH_SHADOW_TOTAL_GOALS_ROBUST_VALUE_SELECTED",
+        ),
+    )
 
 
 def test_frozen_market_family_cap_preserves_shortfall_instead_of_padding(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    _row, _fixture_value, _inventory_value, evaluation, decision = _decision(
-        tmp_path, monkeypatch
+    *_prefix, evaluation, decision = _decision(
+        tmp_path,
+        monkeypatch,
     )
-    selected = decision.selected
-    assert selected is not None
-    decisions = []
-    for index in range(20):
-        fixture = dataclasses.replace(
-            selected.fixture,
-            fixture_identifier=f"FOTMOB:{9000 + index}",
-            event_id=str(800000 + index),
-            home_team=f"Home {index}",
-            away_team=f"Away {index}",
-            competition=f"League {index}",
-        )
-        opportunity = dataclasses.replace(
-            selected,
-            opportunity_id=f"{index + 1:064x}",
-            fixture=fixture,
-        )
-        decisions.append(
-            ResearchFixtureDecision(
-                fixture=fixture,
-                status="SELECTED",
-                selected_opportunity_id=opportunity.opportunity_id,
-                opportunities=(opportunity,),
-                decision_reasons=("RESEARCH_SHADOW_TOTAL_GOALS_ROBUST_VALUE_SELECTED",),
-            )
-        )
-
-    portfolio = optimize_research_shadow_portfolio(
+    assert decision.selected is not None
+    decisions = tuple(
+        _clone_selected_decision(decision, index=index)
+        for index in range(20)
+    )
+    portfolio = trial.optimize_research_shadow_portfolio(
         decisions,
         target_size=20,
         evaluation_time=evaluation,
     )
     assert len(portfolio.selected_legs) == 10
+    assert len(portfolio.reserve_legs) == 10
     assert portfolio.shortfall == 10
     assert portfolio.fulfilled is False
-    assert portfolio.field_trial_status == "RESEARCH_QUALIFIED_WITH_SHORTFALL"
+    assert (
+        portfolio.field_trial_status
+        == "RESEARCH_QUALIFIED_WITH_SHORTFALL"
+    )
     assert portfolio.caps["market_family"] == 10
     assert portfolio.to_dict()["wager_placed"] is False
+    assert portfolio.authority["production_selection"] is False
 
 
-def test_direct_transport_intent_contains_no_caller_odds(
+def test_transport_intent_is_semantic_and_contains_no_native_ids_or_odds(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     *_prefix, decision = _decision(tmp_path, monkeypatch)
     selected = decision.selected
     assert selected is not None
-    assert set(selected.direct_selection()) == {
+
+    intent = selected.semantic_intent()
+    assert set(intent) == {
         "eventId",
-        "marketId",
-        "outcomeId",
+        "homeTeamName",
+        "awayTeamName",
+        "marketName",
+        "outcomeName",
         "specifier",
     }
-    assert "odds" not in selected.direct_selection()
+    assert not {"marketId", "outcomeId", "odds"} & set(intent)
+    assert selected.expected_provider_native_identity() == {
+        "eventId": selected.fixture.event_id,
+        "marketId": selected.provider_market_id,
+        "outcomeId": selected.provider_outcome_id,
+        "specifier": selected.provider_specifier,
+    }
