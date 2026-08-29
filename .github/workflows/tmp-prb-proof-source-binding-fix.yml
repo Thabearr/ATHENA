@@ -1,0 +1,73 @@
+name: Temporary PR-B proof source-binding fix
+
+on:
+  push:
+    branches:
+      - feat/prb-sportybet-semantic-registry
+    paths:
+      - .github/workflows/tmp-prb-proof-source-binding-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/prb-sportybet-semantic-registry
+          fetch-depth: 0
+      - name: Apply exact reviewed source-binding replacements
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}: {old!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          path = "domain/current_sportybet_semantic_registry.py"
+          replace_once(path,
+              'NEXT_BOUNDARY = "PRC_ALL_MARKET_SHADOW_PROBABILITY_SETTLEMENT_ADAPTER"\n',
+              'NEXT_BOUNDARY = "PRC_ALL_MARKET_SHADOW_PROBABILITY_SETTLEMENT_ADAPTER"\nPR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA = "fe132268d45ef61dac1316a2ee92f0f46cab1084"\n')
+          replace_once(path,
+              '        "pr258_market18_reconciliation": (\n            "PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_EXACT_NATIVE_ID_"\n            "SPECIFIER_OUTCOME_LABEL_V1"\n        ),\n',
+              '        "pr258_market18_reconciliation": (\n            "PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_EXACT_NATIVE_ID_"\n            "SPECIFIER_OUTCOME_LABEL_V1"\n        ),\n        "pr258_upcoming_discovery_source_blob": PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA,\n')
+          replace_once(path,
+              'def _sha(value: Any, label: str) -> str:\n',
+              'def _git_blob_sha(path: Path) -> str:\n    raw = Path(path).read_bytes()\n    return hashlib.sha1(\n        b"blob " + str(len(raw)).encode("ascii") + b"\\0" + raw\n    ).hexdigest()\n\n\ndef _sha(value: Any, label: str) -> str:\n')
+          replace_once(path,
+              '    if not candidate_rows:\n        from scripts import run_pr258_sportybet_live_transport_proof as pr258_proof\n\n        try:\n',
+              '    if not candidate_rows:\n        fallback_source = root / "scripts/run_pr258_sportybet_live_transport_proof.py"\n        if (\n            not fallback_source.is_file()\n            or fallback_source.is_symlink()\n            or _git_blob_sha(fallback_source) != PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA\n        ):\n            raise CurrentSportyBetSemanticRegistryError(\n                "reviewed PR258 upcoming discovery source identity drifted"\n            )\n        from scripts import run_pr258_sportybet_live_transport_proof as pr258_proof\n\n        try:\n')
+          replace_once(path,
+              '    proof = {\n',
+              '    retained_event_evidence = []\n    for row in evidence_rows:\n        serialized = row.to_dict()\n        serialized["evidence_directory"] = (\n            Path("event-evidence") / row.evidence_directory.name\n        ).as_posix()\n        retained_event_evidence.append(serialized)\n    proof = {\n')
+          replace_once(path,
+              '        "discovery_directory": retained_discovery.as_posix(),\n',
+              '        "discovery_directory": "discovery-evidence",\n')
+          replace_once(path,
+              '        "retained_event_evidence": [row.to_dict() for row in evidence_rows],\n',
+              '        "retained_event_evidence": retained_event_evidence,\n')
+          replace_once(path,
+              '    "POLICY_ID",\n',
+              '    "POLICY_ID",\n    "PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA",\n')
+
+          test = "tests/test_current_sportybet_semantic_registry.py"
+          replace_once(test,
+              'def test_provider_policy_has_no_market_alias_rescue():\n',
+              'def test_reviewed_pr258_upcoming_discovery_source_is_pinned():\n    root = Path(__file__).resolve().parents[1]\n    source = root / "scripts/run_pr258_sportybet_live_transport_proof.py"\n    assert registry._git_blob_sha(source) == registry.PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA\n    assert registry.SOURCE_CONTRACT_IDENTITIES["pr258_upcoming_discovery_source_blob"] == registry.PR258_UPCOMING_DISCOVERY_SOURCE_BLOB_SHA\n\n\ndef test_provider_policy_has_no_market_alias_rescue():\n')
+
+          Path(".github/workflows/tmp-prb-proof-source-binding-fix.yml").unlink()
+      - name: Commit source-bound portable proof fix
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: bind and portably retain PR-B proof sources"
+          git push origin HEAD:feat/prb-sportybet-semantic-registry
