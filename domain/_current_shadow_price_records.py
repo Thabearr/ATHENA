@@ -147,6 +147,8 @@ class ShadowPriceResult:
     source_manifest_sha256: Optional[str] = None
     source_inventory_sha256: Optional[str] = None
     observation_identity_sha256: Optional[str] = None
+    registry_coverage_identity: Optional[str] = None
+    price_all_issuance: Optional[str] = None
     score_matrix_audit: Optional[Mapping[str, Any]] = None
 
     def __post_init__(self) -> None:
@@ -162,6 +164,21 @@ class ShadowPriceResult:
             object.__setattr__(
                 self, "net_expected_value", _finite(self.net_expected_value, "net_expected_value")
             )
+        if self.disposition is ShadowPriceDisposition.PRICED:
+            from domain._current_shadow_price_core import PRICE_ALL_ISSUANCE_TOKEN
+            if self.price_all_issuance != PRICE_ALL_ISSUANCE_TOKEN:
+                raise ShadowPriceError(
+                    "PRICED ShadowPriceResult must be issued by price_all_shadow_fixture"
+                )
+            for label, value in (
+                ("prc_scan_sha256", self.prc_scan_sha256),
+                ("source_raw_sha256", self.source_raw_sha256),
+                ("source_manifest_sha256", self.source_manifest_sha256),
+                ("source_inventory_sha256", self.source_inventory_sha256),
+                ("quote_identity_sha256", self.quote_identity_sha256),
+            ):
+                if value is None or (isinstance(value, str) and not value.strip()):
+                    raise ShadowPriceError(f"PRICED row requires {label}")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -197,6 +214,8 @@ class ShadowPriceResult:
             "source_manifest_sha256": self.source_manifest_sha256,
             "source_inventory_sha256": self.source_inventory_sha256,
             "observation_identity_sha256": self.observation_identity_sha256,
+            "registry_coverage_identity": self.registry_coverage_identity,
+            "price_all_issuance": self.price_all_issuance,
             "score_matrix_audit": (
                 dict(self.score_matrix_audit) if self.score_matrix_audit is not None else None
             ),
