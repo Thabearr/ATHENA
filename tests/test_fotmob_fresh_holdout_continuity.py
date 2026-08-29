@@ -23,6 +23,31 @@ def _watchdog(*, created_at: str, run_id: int = 123, sha: str = SHA):
     }
 
 
+def _watchdog_jobs(*, run_id: int = 123, sha: str = SHA):
+    return {
+        "jobs": [
+            {
+                "run_id": run_id,
+                "workflow_name": continuity.WATCHDOG_WORKFLOW_NAME,
+                "name": continuity.WATCHDOG_JOB_NAME,
+                "head_branch": "main",
+                "head_sha": sha,
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": "2026-08-29T07:03:04Z",
+                "steps": [
+                    {
+                        "name": name,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                    for name in continuity.WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS
+                ],
+            }
+        ]
+    }
+
+
 def _dispatch(*, created_at: str, sha: str = SHA):
     return {
         "id": 456,
@@ -76,6 +101,44 @@ def test_continuity_dispatch_requires_real_natural_watchdog_source() -> None:
             requested_target_slot="2026-08-29T07:07:00Z",
             requested_target_cron="7 * * * *",
             confirmation=continuity.CONTINUITY_CONFIRMATION,
+        )
+
+
+def test_independent_jobs_prove_schedule_only_watchdog_dispatch_path() -> None:
+    created = continuity.validate_watchdog_source_jobs(
+        _watchdog_jobs(),
+        expected_run_id=123,
+        expected_main_sha=SHA,
+    )
+    assert created == dt.datetime(2026, 8, 29, 7, 3, 4, tzinfo=dt.timezone.utc)
+
+
+def test_independent_jobs_fail_if_dispatch_record_step_did_not_succeed() -> None:
+    jobs = _watchdog_jobs()
+    steps = jobs["jobs"][0]["steps"]
+    for step in steps:
+        if step["name"] == "Record prospective continuity dispatch request":
+            step["conclusion"] = "skipped"
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="did not prove reviewed step",
+    ):
+        continuity.validate_watchdog_source_jobs(
+            jobs,
+            expected_run_id=123,
+            expected_main_sha=SHA,
+        )
+
+
+def test_independent_jobs_fail_on_wrong_source_head() -> None:
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="head differs",
+    ):
+        continuity.validate_watchdog_source_jobs(
+            _watchdog_jobs(sha="b" * 40),
+            expected_run_id=123,
+            expected_main_sha=SHA,
         )
 
 
