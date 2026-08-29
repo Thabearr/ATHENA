@@ -699,6 +699,28 @@ def create_current_shadow_sportybet_share_code(
         _write_receipt(output_dir, result.to_dict())
         return result
 
+    # Network time spent on semantic re-resolution counts against the original
+    # priced quote and kickoff window. Re-evaluate those exact gates immediately
+    # before the provider create request; never let the earlier pre-network time
+    # snapshot authorize a now-stale or now-too-close selection.
+    precreate_now = _now_utc()
+    if precreate_now < now:
+        raise CurrentShadowSportyBetShareCodeError(
+            "transport clock moved backwards during semantic resolution"
+        )
+    precreate_freshness = _fresh_at_transport(rebuilt, precreate_now)
+    if precreate_freshness:
+        result = _terminal(
+            portfolio=rebuilt,
+            observed_at=precreate_now,
+            status=STATUS_REPRICE_REQUIRED,
+            reasons=precreate_freshness,
+            semantic_receipt=semantic_receipt,
+        )
+        _write_receipt(output_dir, result.to_dict())
+        return result
+    now = precreate_now
+
     transport_dir = output_dir / "transport-roundtrip"
     try:
         transport_receipt = direct_bridge.create_and_roundtrip(
