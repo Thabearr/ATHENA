@@ -1,155 +1,133 @@
-"""Research-only Shadow Price-all for all 15 canonical markets (PR D).
+"""Research-only current Shadow Price-all for all 15 canonical markets (PR D).
 
-Consumes PR-C analytical assessments + source-bound ShadowExactQuote rows.
-Quotes must be issued by build_shadow_exact_quote (inventory+observation join).
-Does not mint Phase-6 CalibratedValueCandidate. Does not route or bet.
+The public current lane accepts only a builder-issued ``CurrentShadowPriceContext``.
+That context replays PR-C current history, the exact current FotMob<->SportyBet
+fixture bridge, and PR-B provider evidence. Callers cannot provide raw xG, a
+mathematical PR-C scan, provider status strings, or a prefiltered quote list.
 """
 from __future__ import annotations
 
-from datetime import datetime
-from typing import Sequence
+from typing import Any
 
 from domain.markets import MARKET_REGISTRY, MarketId
-from domain._all_market_shadow_types import (
-    SOURCE_LANE_CURRENT_SOURCE_BOUND,
-    CurrentAllMarketShadowFixtureScan,
-    ShadowDisposition,
-)
-from domain._current_shadow_price_types import (
-    SOURCE_BOUND_ISSUANCE_TOKEN,
-    ShadowExactQuote,
-    ShadowPriceDisposition,
-    ShadowPriceError,
+from domain._all_market_shadow_types import ShadowDisposition
+from domain._current_shadow_price_core import AUTHORITY_FLAGS, ShadowPriceDisposition, ShadowPriceError, _canonical_bytes
+from domain._current_shadow_price_helpers import _empty_result, price_one
+from domain._current_shadow_price_records import (
+    ShadowPriceAllBundle,
     ShadowPriceResult,
-    _sha256,
+    _issue_shadow_price_all_bundle,
 )
 from domain._current_shadow_quote_binding import (
-    build_shadow_exact_quote,
-    build_shadow_exact_quotes_from_registry,
+    CurrentShadowPriceContext,
+    build_current_shadow_exact_quotes,
+    build_current_shadow_price_context,
+    verify_current_shadow_price_context,
 )
-from domain._current_shadow_price_helpers import _empty, _price_one
 
 
-def _scan_sha(scan: CurrentAllMarketShadowFixtureScan) -> str:
-    return _sha256(scan.to_dict())
-
-
-def price_all_shadow_fixture(
-    scan: CurrentAllMarketShadowFixtureScan,
-    quotes: Sequence[ShadowExactQuote],
-    *,
-    evaluation_time: datetime,
-) -> tuple[ShadowPriceResult, ...]:
-    """Price every PR-C market/outcome/line against source-bound exact quotes.
-
-    Retains negative EV, blocked, and unpriced rows. No prefilter before Router.
-    Fixture identity always comes from the PR-C scan (never 'UNKNOWN').
-    Requires CURRENT_SOURCE_BOUND scan lane (scan_current_fixture_all_markets).
-    """
-
-    if type(scan) is not CurrentAllMarketShadowFixtureScan:
-        raise ShadowPriceError("scan must be exact CurrentAllMarketShadowFixtureScan")
-    if getattr(scan, "source_lane", None) != SOURCE_LANE_CURRENT_SOURCE_BOUND:
-        raise ShadowPriceError(
-            "price_all requires CURRENT_SOURCE_BOUND scan lane "
-            "(use scan_current_fixture_all_markets, not mathematical scan_fixture_all_markets)"
-        )
-    if not isinstance(quotes, Sequence) or isinstance(quotes, (str, bytes)):
-        raise ShadowPriceError("quotes must be a sequence of ShadowExactQuote")
-    fixture_identity = scan.fixture_identity
-    for quote in quotes:
-        if type(quote) is not ShadowExactQuote:
-            raise ShadowPriceError("quotes must be exact ShadowExactQuote instances")
-        if quote.source_bound_issuance != SOURCE_BOUND_ISSUANCE_TOKEN:
-            raise ShadowPriceError("quote is not source-bound issued")
-        if quote.fixture_identity != fixture_identity:
-            raise ShadowPriceError("quote fixture_identity does not match scan")
-
-    prc_sha = _scan_sha(scan)
-    sealed = None if scan.research_xg is None else scan.research_xg.sealed_prediction_sha256
-    history = None if scan.research_xg is None else scan.research_xg.history_prefix_identity
-
+def _price_context(context: CurrentShadowPriceContext) -> ShadowPriceAllBundle:
+    quotes = build_current_shadow_exact_quotes(context)
     results: list[ShadowPriceResult] = []
     seen_markets: set[MarketId] = set()
 
-    for assessment in scan.market_assessments:
+    for assessment in context.scan.market_assessments:
         seen_markets.add(assessment.market_id)
+
         if assessment.disposition not in {
             ShadowDisposition.ANALYTICAL_READY,
             ShadowDisposition.ANALYTICAL_READY_PROVIDER_BLOCKED,
         }:
             results.append(
-                _empty(
-                    fixture_identity=fixture_identity,
-                    market_id=assessment.market_id,
+                _empty_result(
+                    context=context,
+                    assessment=assessment,
                     outcome_id=MARKET_REGISTRY[assessment.market_id].supported_outcomes[0],
                     line=None,
                     disposition=ShadowPriceDisposition.AUDIT_ONLY_UPSTREAM_BLOCKED,
                     reason=assessment.blocker_reason or assessment.disposition.value,
-                    provider_semantic_status=assessment.provider_semantic_status,
-                    probability_method=assessment.probability_method,
-                    probability_input_namespace=assessment.probability_input_namespace,
-                    prc_scan_sha256=prc_sha,
-                    sealed_prediction_sha256=sealed,
-                    history_prefix_identity=history,
-                    score_matrix_audit=assessment.score_matrix_audit,
+                    model_probability=None,
                 )
             )
             continue
 
         if assessment.settlement_distributions:
             for item in assessment.settlement_distributions:
-                line = getattr(item.settlement, "line", None)
-                p_win = float(item.settlement.full_win) + 0.5 * float(item.settlement.half_win)
                 results.append(
-                    _price_one(
-                        assessment,
-                        item.outcome_id,
-                        line,
-                        quotes,
-                        evaluation_time,
-                        p_win,
-                        fixture_identity=fixture_identity,
-                        prc_scan_sha256=prc_sha,
-                        sealed_prediction_sha256=sealed,
-                        history_prefix_identity=history,
+                    price_one(
+                        context=context,
+                        assessment=assessment,
+                        outcome_id=item.outcome_id,
+                        line=getattr(item.settlement, "line", None),
+                        model_probability=None,
+                        quotes=quotes,
                     )
                 )
             continue
 
         for event in assessment.event_probabilities:
             results.append(
-                _price_one(
-                    assessment,
-                    event.outcome_id,
-                    event.line,
-                    quotes,
-                    evaluation_time,
-                    float(event.probability),
-                    fixture_identity=fixture_identity,
-                    prc_scan_sha256=prc_sha,
-                    sealed_prediction_sha256=sealed,
-                    history_prefix_identity=history,
+                price_one(
+                    context=context,
+                    assessment=assessment,
+                    outcome_id=event.outcome_id,
+                    line=event.line,
+                    model_probability=float(event.probability),
+                    quotes=quotes,
                 )
             )
 
-    if set(seen_markets) != set(MarketId):
-        missing = sorted(set(MarketId) - seen_markets, key=lambda m: m.value)
-        raise ShadowPriceError(f"PR-C scan missing markets: {missing}")
+    if seen_markets != set(MarketId):
+        missing = sorted(set(MarketId) - seen_markets, key=lambda item: item.value)
+        raise ShadowPriceError(f"PR-C current scan missing markets: {missing}")
 
-    results.sort(
-        key=lambda r: (
-            r.market_id.value,
-            r.outcome_id.value,
-            -1.0 if r.line is None else float(r.line),
-            r.disposition.value,
+    ordered = tuple(
+        sorted(
+            results,
+            key=lambda item: (
+                item.market_id.value,
+                item.outcome_id.value,
+                -1.0 if item.line is None else item.line,
+                item.disposition.value,
+                item.quote_identity_sha256 or "",
+            ),
         )
     )
-    return tuple(results)
+    return _issue_shadow_price_all_bundle(
+        fixture_identity=context.fixture_identity,
+        evaluation_time=context.evaluation_time,
+        prc_scan_sha256=context.prc_scan_sha256,
+        provider_registry_sha256=context.provider_registry_sha256,
+        fixture_reconciliation_sha256=context.fixture_reconciliation_sha256,
+        current_mapping_rebind_sha256=context.current_mapping_rebind_sha256,
+        bridge_bundle_sha256=context.bridge_bundle_sha256,
+        quote_count=len(quotes),
+        results=ordered,
+        authority=AUTHORITY_FLAGS,
+        _context=context,
+    )
+
+
+def price_all_shadow_fixture(context: CurrentShadowPriceContext) -> ShadowPriceAllBundle:
+    """Replay and price the complete current Shadow fixture audit surface."""
+    verified = verify_current_shadow_price_context(context)
+    return _price_context(verified)
+
+
+def verify_shadow_price_all_bundle(value: Any) -> ShadowPriceAllBundle:
+    """Rebuild Price-all from exact retained sources and require exact equality."""
+    if type(value) is not ShadowPriceAllBundle:
+        raise ShadowPriceError("value must be exact ShadowPriceAllBundle")
+    rebuilt = price_all_shadow_fixture(value._context)
+    if _canonical_bytes(value.to_dict()) != _canonical_bytes(rebuilt.to_dict()):
+        raise ShadowPriceError("Shadow Price-all bundle differs on exact source replay")
+    return rebuilt
 
 
 __all__ = [
-    "build_shadow_exact_quote",
-    "build_shadow_exact_quotes_from_registry",
+    "CurrentShadowPriceContext",
+    "ShadowPriceAllBundle",
+    "build_current_shadow_price_context",
     "price_all_shadow_fixture",
+    "verify_shadow_price_all_bundle",
 ]

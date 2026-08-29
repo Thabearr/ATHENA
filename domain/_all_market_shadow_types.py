@@ -218,11 +218,6 @@ class ShadowMarketAssessment:
         }
 
 
-# Research lane markers (PR D binds Price-all to CURRENT_SOURCE_BOUND only)
-SOURCE_LANE_MATHEMATICAL_TEST = "MATHEMATICAL_TEST"
-SOURCE_LANE_CURRENT_SOURCE_BOUND = "CURRENT_SOURCE_BOUND"
-
-
 @dataclass(frozen=True)
 class CurrentAllMarketShadowFixtureScan:
     fixture_identity: str
@@ -231,7 +226,6 @@ class CurrentAllMarketShadowFixtureScan:
     score_matrix_audit: Optional[Mapping[str, Any]]
     market_assessments: tuple[ShadowMarketAssessment, ...]
     authority: Mapping[str, bool]
-    source_lane: str = SOURCE_LANE_MATHEMATICAL_TEST
 
     def __post_init__(self) -> None:
         if type(self.fixture_identity) is not str or not self.fixture_identity.strip():
@@ -268,7 +262,6 @@ class CurrentAllMarketShadowFixtureScan:
             ),
             "market_assessments": [item.to_dict() for item in self.market_assessments],
             "authority": dict(self.authority),
-            "source_lane": self.source_lane,
         }
 
 

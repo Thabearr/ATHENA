@@ -1,4 +1,4 @@
-"""Shadow Price-all core constants and enums (PR D)."""
+"""Core policy/constants for research-only Shadow Price-all + Router (PR D)."""
 from __future__ import annotations
 
 from enum import Enum
@@ -7,19 +7,19 @@ import json
 import math
 import re
 from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional
 
 from domain.markets import MarketId, OutcomeId
 
-SCHEMA_VERSION = 1
-DATASET_NAME = "athena-current-shadow-all-market-price-all-router-v1"
+SCHEMA_VERSION = 2
+DATASET_NAME = "athena-current-shadow-all-market-price-all-router-v2"
 DEVIG_POLICY_ID = "PROPORTIONAL_ONLY_MUTUALLY_EXCLUSIVE_EXHAUSTIVE_PARTITIONS_V1"
 SETTLEMENT_RETURN_POLICY_ID = "UNIT_STAKE_FULL_PUSH_SPLIT_SETTLEMENT_RETURNS_V1"
 ROUTER_POLICY_ID = "SHADOW_CONSERVATIVE_FROZEN_THRESHOLDS_V1"
-QUOTE_POLICY_ID = "EXACT_SOURCE_BOUND_SPORTYBET_SELECTION_IDENTITY_V1"
-SOURCE_BOUND_ISSUANCE_TOKEN = "ATHENA_SHADOW_QUOTE_SOURCE_BOUND_V1"
-PRICE_ALL_ISSUANCE_TOKEN = "ATHENA_SHADOW_PRICE_ALL_ISSUANCE_V1"
+QUOTE_POLICY_ID = "PRB_EXACT_SEMANTICS_OVER_REPLAYED_CURRENT_PROVIDER_EVENT_V2"
+SOURCE_CONTEXT_POLICY_ID = "PRC_CURRENT_SCAN_PLUS_PR253_FIXTURE_BRIDGE_PLUS_PRB_REPLAY_V1"
 MAX_QUOTE_AGE_SECONDS = 900
+MINIMUM_LEAD_SECONDS = 120
 MINIMUM_EVENT_PROBABILITY = 0.55
 MINIMUM_NET_EXPECTED_VALUE = 0.0
 MINIMUM_ROBUST_NET_EXPECTED_VALUE = 0.0
@@ -64,12 +64,16 @@ ORDINARY_PARTITIONS: Mapping[MarketId, tuple[OutcomeId, ...]] = MappingProxyType
     MarketId.HOME_WIN_EITHER_HALF: (OutcomeId.YES, OutcomeId.NO),
     MarketId.AWAY_WIN_EITHER_HALF: (OutcomeId.YES, OutcomeId.NO),
 })
-OVERLAPPING_MARKETS = frozenset({MarketId.DOUBLE_CHANCE, MarketId.MATCH_RESULT_1UP, MarketId.MATCH_RESULT_2UP})
+OVERLAPPING_MARKETS = frozenset({
+    MarketId.DOUBLE_CHANCE,
+    MarketId.MATCH_RESULT_1UP,
+    MarketId.MATCH_RESULT_2UP,
+})
 PUSH_SPLIT_MARKETS = frozenset({MarketId.DRAW_NO_BET, MarketId.ASIAN_HANDICAP})
 
 
 class ShadowPriceError(ValueError):
-    """Raised when Shadow Price-all / Router input fails closed."""
+    """Raised when PR-D source/value/routing inputs fail closed."""
 
 
 class ShadowPriceDisposition(str, Enum):
@@ -78,11 +82,10 @@ class ShadowPriceDisposition(str, Enum):
     UNPRICED_AMBIGUOUS_QUOTE = "UNPRICED_AMBIGUOUS_QUOTE"
     UNPRICED_STALE_QUOTE = "UNPRICED_STALE_QUOTE"
     UNPRICED_FUTURE_QUOTE = "UNPRICED_FUTURE_QUOTE"
+    UNPRICED_TOO_CLOSE_TO_KICKOFF = "UNPRICED_TOO_CLOSE_TO_KICKOFF"
     UNPRICED_PROVIDER_BLOCKED = "UNPRICED_PROVIDER_BLOCKED"
     UNPRICED_UPSTREAM_BLOCKED = "UNPRICED_UPSTREAM_BLOCKED"
-    UNPRICED_INVALID_ODDS = "UNPRICED_INVALID_ODDS"
     UNPRICED_SETTLEMENT_INCOMPLETE = "UNPRICED_SETTLEMENT_INCOMPLETE"
-    UNPRICED_SOURCE_MISMATCH = "UNPRICED_SOURCE_MISMATCH"
     AUDIT_ONLY_UPSTREAM_BLOCKED = "AUDIT_ONLY_UPSTREAM_BLOCKED"
 
 
@@ -110,7 +113,16 @@ class ShadowModelAgreementStatus(str, Enum):
 
 
 def _canonical_bytes(value: Any) -> bytes:
-    return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False).encode("utf-8")
+    try:
+        return json.dumps(
+            value,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ShadowPriceError("canonical serialization failed") from exc
 
 
 def _sha256(value: Any) -> str:
@@ -120,40 +132,44 @@ def _sha256(value: Any) -> str:
 def _require_sha(value: Optional[str], label: str) -> Optional[str]:
     if value is None:
         return None
-    if type(value) is not str or not _SHA_RE.fullmatch(value):
-        raise ShadowPriceError(f"{label} must be exact 64-char lowercase hex SHA-256")
+    if type(value) is not str or _SHA_RE.fullmatch(value) is None:
+        raise ShadowPriceError(f"{label} must be exact lowercase SHA-256")
     return value
 
 
-def _finite(value: float, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+def _finite(value: Any, label: str) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ShadowPriceError(f"{label} must be finite numeric")
-    return float(value)
+    result = float(value)
+    if not math.isfinite(result):
+        raise ShadowPriceError(f"{label} must be finite numeric")
+    return result
 
 
-def _probability(value: float, label: str) -> float:
-    p = _finite(value, label)
-    if p < 0.0 or p > 1.0:
+def _probability(value: Any, label: str) -> float:
+    result = _finite(value, label)
+    if not 0.0 <= result <= 1.0:
         raise ShadowPriceError(f"{label} must be in [0, 1]")
-    return p
+    return result
 
 
-def _odds(value: float, label: str = "decimal_odds") -> float:
-    o = _finite(value, label)
-    if o <= 1.0:
+def _odds(value: Any, label: str = "decimal_odds") -> float:
+    result = _finite(value, label)
+    if result <= 1.0:
         raise ShadowPriceError(f"{label} must be > 1")
-    return o
+    return result
 
 
 def settlement_unit_return(state: str, decimal_odds: float) -> float:
+    odds = _odds(decimal_odds)
     if state == "WIN":
-        return decimal_odds - 1.0
+        return odds - 1.0
     if state == "HALF_WIN":
-        return (decimal_odds - 1.0) / 2.0
+        return (odds - 1.0) / 2.0
     if state == "PUSH":
         return 0.0
     if state == "HALF_LOSS":
         return -0.5
     if state == "LOSS":
         return -1.0
-    raise ShadowPriceError(f"unknown settlement state {state}")
+    raise ShadowPriceError(f"unknown settlement state {state!r}")

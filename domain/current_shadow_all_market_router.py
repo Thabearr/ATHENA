@@ -1,13 +1,14 @@
-"""Research-only Shadow all-market Router (PR D).
+"""Research-only all-market Shadow Router (PR D).
 
-Consumes complete Price-all output. Selects strongest robust opportunity or NO_BET.
-Does not implement Portfolio, share-code, stake, or production selection.
+Consumes only an exact source-replayable ``ShadowPriceAllBundle``. The Router
+cannot accept caller-authored/subset price rows, so all eligible current quotes
+are priced before any value selection occurs.
 """
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from typing import Optional
 
-from domain._current_shadow_price_types import (
+from domain._current_shadow_price_core import (
     AUTHORITY_FLAGS,
     MINIMUM_EVENT_PROBABILITY,
     MINIMUM_NET_EXPECTED_VALUE,
@@ -17,21 +18,23 @@ from domain._current_shadow_price_types import (
     PUSH_SPLIT_MARKETS,
     ROUTER_POLICY_ID,
     ShadowDevigStatus,
-    ShadowMarketRouterDecision,
     ShadowModelAgreementStatus,
     ShadowOpportunityEligibility,
     ShadowPriceDisposition,
     ShadowPriceError,
+    ShadowRouterDecisionStatus,
+)
+from domain._current_shadow_price_records import (
+    ShadowMarketRouterDecision,
+    ShadowPriceAllBundle,
     ShadowPriceResult,
     ShadowRoutedOpportunity,
-    ShadowRouterDecisionStatus,
-    PRICE_ALL_ISSUANCE_TOKEN,
+    _issue_shadow_router_decision,
 )
+from domain.current_shadow_all_market_price_all import verify_shadow_price_all_bundle
 
 
 def _event_floor(result: ShadowPriceResult) -> Optional[float]:
-    if result.model_probability is None:
-        return None
     return result.model_probability
 
 
@@ -44,40 +47,34 @@ def _robust_edge(result: ShadowPriceResult, event_floor: Optional[float]) -> Opt
 def _eligibility(result: ShadowPriceResult) -> tuple[ShadowOpportunityEligibility, tuple[str, ...]]:
     reasons: list[str] = []
     if result.disposition is not ShadowPriceDisposition.PRICED:
-        reasons.append(f"disposition={result.disposition.value}")
-        return ShadowOpportunityEligibility.REJECTED, tuple(reasons)
-
+        return ShadowOpportunityEligibility.REJECTED, (
+            result.rejection_reason or f"disposition={result.disposition.value}",
+        )
     if result.net_expected_value is None:
-        reasons.append("missing net_expected_value")
-        return ShadowOpportunityEligibility.REJECTED, tuple(reasons)
+        return ShadowOpportunityEligibility.REJECTED, ("missing net_expected_value",)
 
+    robust_ev = result.net_expected_value
     if result.net_expected_value <= MINIMUM_NET_EXPECTED_VALUE:
         reasons.append(
             f"net_expected_value {result.net_expected_value} <= {MINIMUM_NET_EXPECTED_VALUE}"
         )
-
-    robust_ev = result.net_expected_value  # single-model lower envelope
     if robust_ev <= MINIMUM_ROBUST_NET_EXPECTED_VALUE:
         reasons.append(
             f"robust_net_expected_value {robust_ev} <= {MINIMUM_ROBUST_NET_EXPECTED_VALUE}"
         )
 
     event_floor = _event_floor(result)
-    # Probability floor for every non-full-settlement market with a scalar event probability
-    # (ordinary partitions AND overlapping scalar markets such as Double Chance / 1UP / 2UP).
-    if result.market_id not in PUSH_SPLIT_MARKETS and event_floor is not None:
-        if event_floor < MINIMUM_EVENT_PROBABILITY:
+    if result.market_id not in PUSH_SPLIT_MARKETS:
+        if event_floor is None:
+            reasons.append("scalar-event market lacks model probability")
+        elif event_floor < MINIMUM_EVENT_PROBABILITY:
             reasons.append(
                 f"event probability floor {event_floor} < {MINIMUM_EVENT_PROBABILITY}"
             )
 
-    # Ordinary partition markets MUST have complete same-snapshot proportional de-vig.
     if result.market_id in ORDINARY_PARTITIONS:
         if result.devig_status is not ShadowDevigStatus.PROPORTIONAL_COMPLETE_PARTITION:
-            reasons.append(
-                f"ordinary partition requires PROPORTIONAL_COMPLETE_PARTITION, "
-                f"got {None if result.devig_status is None else result.devig_status.value}"
-            )
+            reasons.append("ordinary partition lacks complete same-snapshot proportional de-vig")
         if result.fair_probability is None:
             reasons.append("ordinary partition missing fair_probability")
         else:
@@ -94,116 +91,70 @@ def _eligibility(result: ShadowPriceResult) -> tuple[ShadowOpportunityEligibilit
     return ShadowOpportunityEligibility.ELIGIBLE, ()
 
 
-def _rank_key(item: ShadowRoutedOpportunity) -> tuple:
+def _rank_key(item: ShadowRoutedOpportunity) -> tuple[float, float, float, str]:
     if item.eligibility is not ShadowOpportunityEligibility.ELIGIBLE:
-        raise ShadowPriceError("rank key only for eligible opportunities")
-    robust = item.robust_net_expected_value
-    if robust is None:
+        raise ShadowPriceError("eligible rank key used for rejected opportunity")
+    if item.robust_net_expected_value is None:
         raise ShadowPriceError("eligible opportunity lacks robust EV")
-    edge = item.robust_edge
-    edge_key = edge if edge is not None else float("-inf")
-    floor = item.event_probability_floor
-    floor_key = floor if floor is not None else float("-inf")
-    return (-robust, -edge_key, -floor_key, item.opportunity_id)
+    edge = item.robust_edge if item.robust_edge is not None else float("-inf")
+    floor = item.event_probability_floor if item.event_probability_floor is not None else float("-inf")
+    return (-item.robust_net_expected_value, -edge, -floor, item.opportunity_id)
 
 
-def _rejected_rank_key(item: ShadowRoutedOpportunity) -> tuple:
-    robust = item.robust_net_expected_value
-    robust_key = robust if robust is not None else float("-inf")
-    return (-robust_key, item.opportunity_id)
+def _rejected_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, str]:
+    robust = item.robust_net_expected_value if item.robust_net_expected_value is not None else float("-inf")
+    return (-robust, item.opportunity_id)
 
 
-def route_shadow_price_results(
-    *,
-    fixture_identity: str,
-    price_results: Sequence[ShadowPriceResult],
-) -> ShadowMarketRouterDecision:
-    """Route complete Price-all output: select strongest robust value or NO_BET."""
-
-    if type(fixture_identity) is not str or not fixture_identity.strip():
-        raise ShadowPriceError("fixture_identity must be non-empty")
-    if not isinstance(price_results, Sequence) or isinstance(price_results, (str, bytes)):
-        raise ShadowPriceError("price_results must be a sequence")
-    for item in price_results:
-        if type(item) is not ShadowPriceResult:
-            raise ShadowPriceError("price_results must contain ShadowPriceResult")
-        if item.fixture_identity != fixture_identity:
-            raise ShadowPriceError("price result fixture_identity mismatch")
-        if item.disposition is ShadowPriceDisposition.PRICED:
-            if item.price_all_issuance != PRICE_ALL_ISSUANCE_TOKEN:
-                raise ShadowPriceError(
-                    "Router rejects caller-minted PRICED rows; "
-                    "only price_all_shadow_fixture may issue PRICED results"
-                )
-
+def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketRouterDecision:
+    """Select strongest robust current value or return truthful ``NO_BET``."""
+    verified = verify_shadow_price_all_bundle(price_all)
     opportunities: list[ShadowRoutedOpportunity] = []
-    for result in price_results:
-        if result.disposition is ShadowPriceDisposition.AUDIT_ONLY_UPSTREAM_BLOCKED:
-            eligibility = ShadowOpportunityEligibility.REJECTED
-            reasons = (result.rejection_reason or result.disposition.value,)
-            opp = ShadowRoutedOpportunity(
-                opportunity_id=result.opportunity_id(),
-                price_result=result,
-                eligibility=eligibility,
-                robust_net_expected_value=result.net_expected_value,
-                robust_edge=None,
-                event_probability_floor=result.model_probability,
-                model_agreement=ShadowModelAgreementStatus.SINGLE_MODEL_NO_DISAGREEMENT_EVIDENCE,
-                rejection_reasons=reasons,
-            )
-            opportunities.append(opp)
-            continue
-
+    for result in verified.results:
         eligibility, reasons = _eligibility(result)
         event_floor = _event_floor(result)
-        edge = _robust_edge(result, event_floor)
         opportunities.append(
             ShadowRoutedOpportunity(
-                opportunity_id=result.opportunity_id(),
+                opportunity_id=result.opportunity_id,
                 price_result=result,
                 eligibility=eligibility,
                 robust_net_expected_value=result.net_expected_value,
-                robust_edge=edge,
+                robust_edge=_robust_edge(result, event_floor),
                 event_probability_floor=event_floor,
                 model_agreement=ShadowModelAgreementStatus.SINGLE_MODEL_NO_DISAGREEMENT_EVIDENCE,
                 rejection_reasons=reasons,
             )
         )
 
-    ids = [item.opportunity_id for item in opportunities]
-    if len(ids) != len(set(ids)):
-        raise ShadowPriceError("duplicate opportunity IDs")
-
     eligible = sorted(
-        [item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.ELIGIBLE],
+        (item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.ELIGIBLE),
         key=_rank_key,
     )
     rejected = sorted(
-        [item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.REJECTED],
+        (item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.REJECTED),
         key=_rejected_rank_key,
     )
 
     if eligible:
-        selected = eligible[0].opportunity_id
-        runner = eligible[1].opportunity_id if len(eligible) > 1 else None
         status = ShadowRouterDecisionStatus.SELECTED
+        selected = eligible[0].opportunity_id
+        runner_up = eligible[1].opportunity_id if len(eligible) > 1 else None
     else:
-        selected = None
-        runner = None
         status = ShadowRouterDecisionStatus.NO_BET
+        selected = None
+        runner_up = None
 
     strongest_rejected = rejected[0].opportunity_id if rejected else None
-
-    return ShadowMarketRouterDecision(
-        fixture_identity=fixture_identity,
+    return _issue_shadow_router_decision(
+        fixture_identity=verified.fixture_identity,
         status=status,
         selected_opportunity_id=selected,
-        runner_up_opportunity_id=runner,
+        runner_up_opportunity_id=runner_up,
         strongest_rejected_opportunity_id=strongest_rejected,
         opportunities=tuple(opportunities),
-        price_results=tuple(price_results),
+        price_all_bundle_sha256=verified.canonical_sha256,
         router_policy_id=ROUTER_POLICY_ID,
-        authority=dict(AUTHORITY_FLAGS),
+        authority=AUTHORITY_FLAGS,
     )
 
 

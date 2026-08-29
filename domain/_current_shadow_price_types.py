@@ -1,4 +1,4 @@
-"""Research-only Shadow Price-all / Router types (PR D)."""
+"""Public research-only Shadow Price-all / Router contracts (PR D)."""
 from __future__ import annotations
 
 from domain._current_shadow_price_core import (
@@ -7,6 +7,7 @@ from domain._current_shadow_price_core import (
     DEVIG_POLICY_ID,
     MAX_QUOTE_AGE_SECONDS,
     MINIMUM_EVENT_PROBABILITY,
+    MINIMUM_LEAD_SECONDS,
     MINIMUM_NET_EXPECTED_VALUE,
     MINIMUM_ROBUST_EDGE,
     MINIMUM_ROBUST_NET_EXPECTED_VALUE,
@@ -17,31 +18,32 @@ from domain._current_shadow_price_core import (
     ROUTER_POLICY_ID,
     SCHEMA_VERSION,
     SETTLEMENT_RETURN_POLICY_ID,
-    SOURCE_BOUND_ISSUANCE_TOKEN,
-    PRICE_ALL_ISSUANCE_TOKEN,
+    SOURCE_CONTEXT_POLICY_ID,
     ShadowDevigStatus,
     ShadowModelAgreementStatus,
     ShadowOpportunityEligibility,
     ShadowPriceDisposition,
     ShadowPriceError,
     ShadowRouterDecisionStatus,
-    _canonical_bytes,
-    _sha256,
     settlement_unit_return,
 )
 from domain._current_shadow_price_records import (
     ShadowExactQuote,
     ShadowMarketRouterDecision,
+    ShadowPriceAllBundle,
     ShadowPriceResult,
     ShadowRoutedOpportunity,
 )
+from domain._current_shadow_quote_binding import CurrentShadowPriceContext
 
 __all__ = [
     "AUTHORITY_FLAGS",
+    "CurrentShadowPriceContext",
     "DATASET_NAME",
     "DEVIG_POLICY_ID",
     "MAX_QUOTE_AGE_SECONDS",
     "MINIMUM_EVENT_PROBABILITY",
+    "MINIMUM_LEAD_SECONDS",
     "MINIMUM_NET_EXPECTED_VALUE",
     "MINIMUM_ROBUST_EDGE",
     "MINIMUM_ROBUST_NET_EXPECTED_VALUE",
@@ -49,22 +51,20 @@ __all__ = [
     "OVERLAPPING_MARKETS",
     "PUSH_SPLIT_MARKETS",
     "QUOTE_POLICY_ID",
-    "SOURCE_BOUND_ISSUANCE_TOKEN",
-    "PRICE_ALL_ISSUANCE_TOKEN",
     "ROUTER_POLICY_ID",
     "SCHEMA_VERSION",
     "SETTLEMENT_RETURN_POLICY_ID",
+    "SOURCE_CONTEXT_POLICY_ID",
     "ShadowDevigStatus",
     "ShadowExactQuote",
     "ShadowMarketRouterDecision",
     "ShadowModelAgreementStatus",
     "ShadowOpportunityEligibility",
+    "ShadowPriceAllBundle",
     "ShadowPriceDisposition",
     "ShadowPriceError",
     "ShadowPriceResult",
     "ShadowRoutedOpportunity",
     "ShadowRouterDecisionStatus",
     "settlement_unit_return",
-    "_canonical_bytes",
-    "_sha256",
 ]
