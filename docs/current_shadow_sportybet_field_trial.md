@@ -20,9 +20,23 @@ The execution-capable package adds another boundary: `VerifiedResearchDecisionSo
 
 ## Initial market surface
 
-PR258 deliberately starts with only exact reviewed PR252-mapped `TOTAL_GOALS` half-goal partitions. A line is eligible for research pricing only when the reviewed mapping contains both exact Over and Under sides for the same provider market ID and exact specifier, both sides remain current/bookable, and the retained current event inventory reproduces the same provider IDs and labels.
+PR258 deliberately starts with exact reviewed `TOTAL_GOALS` half-goal partitions only. The normal path remains exact PR252-mapped semantics: both Over and Under sides must retain the same reviewed provider market ID and exact specifier, both sides must remain current/bookable, and the retained current event inventory must reproduce the same provider IDs and labels.
 
-No arbitrary SportyBet Total Goals line is scanned into the research surface. No alias, fuzzy match, cross-line generalization, or "close enough" provider label is accepted merely to increase coverage. Unreviewed current provider markets can exist in the raw event response without becoming ATHENA research opportunities.
+The real-provider proof established one current provider display-label change on native market ID `18`: the frozen reviewed source label is `Total Goals`, while the current SportyBet label is `Over/Under`. Frozen PR252 is not changed and continues to reject that label drift. PR258 adds one research-only reviewed reconciliation policy, `PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_EXACT_NATIVE_ID_SPECIFIER_OUTCOME_LABEL_V1`, which may admit the renamed current label only when all of the following remain exact:
+
+- PR252 source replay succeeds and the row is explicitly audited as `CURRENT_PROVIDER_LABEL_DRIFT_REJECTED`;
+- native market ID is exactly `18`;
+- reviewed market label is exactly `Total Goals` and current market label is exactly `Over/Under`;
+- native outcome ID and exact specifier are unchanged;
+- current outcome label exactly equals the reviewed outcome label;
+- canonical market remains `TOTAL_GOALS`, canonical outcome remains Over or Under, and the canonical line is the exact half-line encoded by the specifier;
+- the retained current inventory SHA-256 is exactly the inventory bound by PR252;
+- the exact provider-native `(market ID, specifier, outcome ID)` still exists in that retained inventory and is bookable; and
+- an exact Over/Under two-way pair exists for the same market ID, specifier, and line.
+
+This is not a general `Total Goals`/`Over/Under` alias. `Over/Under` on another native market ID is not admitted, outcome-label drift is not admitted, cross-line substitution is not admitted, and arbitrary current provider markets are not promoted into the research surface.
+
+No arbitrary SportyBet Total Goals line is scanned into the research surface. No fuzzy match, cross-line generalization, or "close enough" provider label is accepted merely to increase coverage. Unreviewed current provider markets can exist in the raw event response without becoming ATHENA research opportunities.
 
 For an admitted two-way Total Goals partition, the lane uses the normalized independent-Poisson `ScoreMatrix` built from the exact sealed PR149 `calibrated_home` and `calibrated_away` rates. Current SportyBet decimal odds are de-vigged only within that exact two-way provider partition. The research value record is:
 
@@ -65,14 +79,15 @@ The canonical network-capable entry point is `create_verified_current_shadow_spo
 For each selected research leg the transport then:
 
 1. rechecks the original priced quote age and kickoff lead at wall-clock transport time;
-2. sends only semantic intent to the existing SportyBet semantic bridge: event ID, home/away team, market name, outcome name, and exact specifier;
+2. sends only semantic intent to the existing SportyBet semantic bridge: event ID, home/away team, the exact current reviewed market label, outcome name, and exact specifier;
 3. does not supply provider market/outcome IDs or odds to semantic resolution;
 4. requires the freshly resolved SportyBet market ID, outcome ID, labels, specifier, and decimal odds to equal the exact values that the research field trial priced;
 5. if odds changed, returns `RESEARCH_NO_CODE_REPRICE_REQUIRED` before create;
 6. if native identity or semantics changed, returns `RESEARCH_NO_CODE_PROVIDER_CHANGED_REBIND_REQUIRED` before create;
-7. only after those gates calls the existing anonymous SportyBet `create -> reload` share transport;
-8. requires zero unavailable outcomes, exact selection counts, exact create/reload native identity, semantic equality, specifier equality, and exact odds equality;
-9. exposes a share code only after the whole round trip verifies.
+7. rechecks quote age and kickoff lead again immediately after semantic resolution and immediately before create;
+8. only after those gates calls the existing anonymous SportyBet `create -> reload` share transport;
+9. requires zero unavailable outcomes, exact selection counts, exact create/reload native identity, semantic equality, specifier equality, and exact odds equality; and
+10. exposes a share code only after the whole round trip verifies.
 
 If the research portfolio has selected legs but preserves a target-size shortfall, a code may still be verified with `RESEARCH_SHADOW_SHARE_CODE_VERIFIED_WITH_SHORTFALL`. No extra leg is invented or substituted. If there are no qualified legs, no provider network request is needed and no code is produced.
 
@@ -93,10 +108,10 @@ True authority in this lane is deliberately limited to reviewed research evidenc
 - BET authority;
 - wager placed.
 
-A share code is therefore a prospective research artifact. It can be recorded with its exact source/model/quote/decision/portfolio/transport identities and later settled for learning, but it is not evidence that ATHENA's production model has been promoted.
+The reviewed market-18 display-label reconciliation does not change any of those authority flags and does not mutate frozen PR252. A share code is therefore a prospective research artifact. It can be recorded with its exact source/model/quote/decision/portfolio/transport identities and later settled for learning, but it is not evidence that ATHENA's production model has been promoted.
 
 ## Current limitations and next reviewed expansions
 
-The first implementation intentionally covers only exact reviewed Total Goals half-lines. Adding 1X2, BTTS, double chance, DNB, Asian Handicap, early-payout products, or specialist semantics must preserve their own reviewed mapping and settlement rules. In particular, DNB/AH require settlement-aware expected value, and early-payout markets require their reviewed provider promotion-settlement evidence; they must not be squeezed into the simple two-way Total Goals path.
+The first implementation intentionally covers only exact reviewed Total Goals half-lines, including only the narrowly reviewed market-18 `Total Goals` -> `Over/Under` display-label rename described above. Adding 1X2, BTTS, double chance, DNB, Asian Handicap, early-payout products, other provider label changes, or specialist semantics must preserve their own reviewed mapping and settlement rules. In particular, DNB/AH require settlement-aware expected value, and early-payout markets require their reviewed provider promotion-settlement evidence; they must not be squeezed into the simple two-way Total Goals path.
 
 The next useful expansion is therefore coverage, not relaxed validation: add separately reviewed current market surfaces and exact probability/settlement adapters, then measure prospective shadow results by frozen artifact identity. Production promotion remains controlled by the formal untouched holdout and reviewed governance gates.
