@@ -1,7 +1,7 @@
 """Research-only Shadow Price-all for all 15 canonical markets (PR D).
 
 Consumes PR-C analytical assessments + source-bound ShadowExactQuote rows.
-Quotes must be issued by build_shadow_exact_quote (inventory join).
+Quotes must be issued by build_shadow_exact_quote (inventory+observation join).
 Does not mint Phase-6 CalibratedValueCandidate. Does not route or bet.
 """
 from __future__ import annotations
@@ -11,6 +11,7 @@ from typing import Sequence
 
 from domain.markets import MARKET_REGISTRY, MarketId
 from domain._all_market_shadow_types import (
+    SOURCE_LANE_CURRENT_SOURCE_BOUND,
     CurrentAllMarketShadowFixtureScan,
     ShadowDisposition,
 )
@@ -24,7 +25,7 @@ from domain._current_shadow_price_types import (
 )
 from domain._current_shadow_quote_binding import (
     build_shadow_exact_quote,
-    build_shadow_exact_quotes_from_observations,
+    build_shadow_exact_quotes_from_registry,
 )
 from domain._current_shadow_price_helpers import _empty, _price_one
 
@@ -43,10 +44,16 @@ def price_all_shadow_fixture(
 
     Retains negative EV, blocked, and unpriced rows. No prefilter before Router.
     Fixture identity always comes from the PR-C scan (never 'UNKNOWN').
+    Requires CURRENT_SOURCE_BOUND scan lane (scan_current_fixture_all_markets).
     """
 
     if type(scan) is not CurrentAllMarketShadowFixtureScan:
         raise ShadowPriceError("scan must be exact CurrentAllMarketShadowFixtureScan")
+    if getattr(scan, "source_lane", None) != SOURCE_LANE_CURRENT_SOURCE_BOUND:
+        raise ShadowPriceError(
+            "price_all requires CURRENT_SOURCE_BOUND scan lane "
+            "(use scan_current_fixture_all_markets, not mathematical scan_fixture_all_markets)"
+        )
     if not isinstance(quotes, Sequence) or isinstance(quotes, (str, bytes)):
         raise ShadowPriceError("quotes must be a sequence of ShadowExactQuote")
     fixture_identity = scan.fixture_identity
@@ -143,6 +150,6 @@ def price_all_shadow_fixture(
 
 __all__ = [
     "build_shadow_exact_quote",
-    "build_shadow_exact_quotes_from_observations",
+    "build_shadow_exact_quotes_from_registry",
     "price_all_shadow_fixture",
 ]
