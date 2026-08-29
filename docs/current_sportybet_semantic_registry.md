@@ -50,7 +50,8 @@ result-or-total union/complement; complementary BTTS, WEH, and win-to-nil;
 overlapping Double Chance and early-payout selections; DNB WIN/PUSH/LOSS; and
 full Asian-Handicap WIN/HALF-WIN/PUSH/HALF-LOSS/LOSS where applicable.  The
 registry does not authorize ordinary de-vig for push-capable or overlapping
-markets.
+markets.  The per-observation topology is serialized so later reviewed
+consumers cannot mistake an integer Total Goals line for a binary partition.
 
 ## Currentness and next boundary
 
