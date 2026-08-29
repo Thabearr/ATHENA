@@ -1,0 +1,55 @@
+name: PR258 Apply Reviewed Semantic Mapping V3
+
+on:
+  push:
+    branches:
+      - feature/pr258-research-shadow-sportybet-field-trial
+
+permissions:
+  contents: write
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feature/pr258-research-shadow-sportybet-field-trial
+          fetch-depth: 0
+
+      - name: Apply already-validated V2 transformation and commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          from pathlib import Path
+          import textwrap
+
+          workflow = Path('.github/workflows/pr258-apply-reviewed-semantic-mapping-v2.yml')
+          text = workflow.read_text(encoding='utf-8')
+          start_marker = "          python - <<'PY'\n"
+          end_marker = "          PY\n\n          rm -f "
+          start = text.index(start_marker) + len(start_marker)
+          end = text.index(end_marker, start)
+          script = textwrap.dedent(text[start:end])
+          namespace = {'__name__': '__main__'}
+          exec(compile(script, '<pr258-reviewed-semantic-mapping>', 'exec'), namespace, namespace)
+          PY
+
+          rm -f .athena/pr258-reviewed-semantic-mapping.patch.part1 \
+                .athena/pr258-reviewed-semantic-mapping.patch.part2 \
+                .athena/pr258-reviewed-semantic-mapping.patch.part3 \
+                .athena/pr258-reviewed-semantic-mapping.patch.part4 \
+                .github/workflows/pr258-apply-reviewed-semantic-mapping.yml \
+                .github/workflows/pr258-apply-reviewed-semantic-mapping-v2.yml \
+                .github/workflows/pr258-apply-reviewed-semantic-mapping-v3.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          python -m py_compile domain/current_shadow_sportybet_field_trial.py \
+              tests/test_current_shadow_sportybet_field_trial.py \
+              tests/test_current_shadow_sportybet_verified_package.py
+          git commit -m "Review current SportyBet Total Goals label rename"
+          git push origin HEAD:feature/pr258-research-shadow-sportybet-field-trial
