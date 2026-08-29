@@ -171,7 +171,8 @@ def test_workflow_has_explicit_ambiguous_no_acquisition_lane() -> None:
     ).read_text(encoding="utf-8")
     assert "fresh_holdout_schedule_recovery as lineage" in workflow
     assert "schedule_disposition=AMBIGUOUS_NO_ACQUISITION" in workflow
-    assert "schedule_disposition=RESOLVED" in workflow
+    assert 'disposition = "RESOLVED"' in workflow
+    assert 'fh.write(f"schedule_disposition={disposition}\\n")' in workflow
     assert "Acknowledge ambiguous schedule without acquisition" in workflow
     assert "steps.state.outputs.schedule_disposition == 'RESOLVED'" in workflow
     assert "refusing to fabricate a nominal slot or backfill evidence" in workflow
