@@ -41,7 +41,7 @@ class ShadowExactQuote:
     kickoff_utc: datetime; source_raw_sha256: str; source_manifest_sha256: str
     source_inventory_sha256: str; provider_semantic_status: str; provider_registry_sha256: str
     provider_observation_sha256: str; fixture_reconciliation_sha256: str
-    current_mapping_rebind_sha256: str; bridge_bundle_sha256: str; bookable: bool
+    current_mapping_rebind_sha256: Optional[str]; bridge_bundle_sha256: Optional[str]; bookable: bool
     def __init__(self, *_a: Any, **_k: Any) -> None:
         raise ShadowPriceError("ShadowExactQuote is builder-only")
     @property
@@ -81,7 +81,7 @@ class ShadowPriceResult:
     source_fixture_identity: Optional[str]; provider_registry_sha256: str; source_raw_sha256: Optional[str]
     source_manifest_sha256: Optional[str]; source_inventory_sha256: Optional[str]
     provider_observation_sha256: Optional[str]; fixture_reconciliation_sha256: str
-    current_mapping_rebind_sha256: str; bridge_bundle_sha256: str; score_matrix_audit: Optional[Mapping[str,Any]]
+    current_mapping_rebind_sha256: Optional[str]; bridge_bundle_sha256: Optional[str]; score_matrix_audit: Optional[Mapping[str,Any]]
     specialist_evidence: Optional[Mapping[str,Any]]
     def __init__(self, *_a: Any, **_k: Any) -> None: raise ShadowPriceError("ShadowPriceResult is builder-only")
     def to_dict(self):
@@ -115,7 +115,7 @@ class ShadowPriceResult:
 @dataclass(frozen=True, init=False)
 class ShadowPriceAllBundle:
     fixture_identity: str; evaluation_time: datetime; prc_scan_sha256: str; provider_registry_sha256: str
-    fixture_reconciliation_sha256: str; current_mapping_rebind_sha256: str; bridge_bundle_sha256: str
+    fixture_reconciliation_sha256: str; current_mapping_rebind_sha256: Optional[str]; bridge_bundle_sha256: Optional[str]
     quote_count: int; results: tuple[ShadowPriceResult,...]; authority: Mapping[str,bool]; _context: Any
     def __init__(self,*_a:Any,**_k:Any) -> None: raise ShadowPriceError("ShadowPriceAllBundle is builder-only")
     def to_dict(self):
@@ -160,13 +160,23 @@ class ShadowMarketRouterDecision:
     @property
     def decision_sha256(self): return _sha256(self.to_dict())
 
+def _validate_legacy_provenance_pair(v: Mapping[str, Any]) -> None:
+    mapping = v.get("current_mapping_rebind_sha256")
+    bridge = v.get("bridge_bundle_sha256")
+    if (mapping is None) != (bridge is None):
+        raise ShadowPriceError("legacy mapping and bridge identities must be present or absent together")
+    if mapping is not None:
+        _require_sha(mapping,"current_mapping_rebind_sha256")
+        _require_sha(bridge,"bridge_bundle_sha256")
+
 def _issue_shadow_exact_quote(**v: Any) -> ShadowExactQuote:
     o=object.__new__(ShadowExactQuote); v=dict(v)
     v["fixture_identity"]=_text(v["fixture_identity"],"fixture_identity"); v["provider_event_id"]=_text(v["provider_event_id"],"provider_event_id")
     if _EVENT_RE.fullmatch(v["provider_event_id"]) is None: raise ShadowPriceError("provider_event_id must use sr:match:N")
     if type(v["market_id"]) is not MarketId or type(v["outcome_id"]) is not OutcomeId: raise ShadowPriceError("canonical quote identity type mismatch")
     v["line"]=_line(v.get("line")); v["decimal_odds"]=_odds(v["decimal_odds"]); v["observed_at"]=_utc(v["observed_at"],"observed_at"); v["kickoff_utc"]=_utc(v["kickoff_utc"],"kickoff_utc")
-    for k in ("source_raw_sha256","source_manifest_sha256","source_inventory_sha256","provider_registry_sha256","provider_observation_sha256","fixture_reconciliation_sha256","current_mapping_rebind_sha256","bridge_bundle_sha256"): _require_sha(v[k],k)
+    for k in ("source_raw_sha256","source_manifest_sha256","source_inventory_sha256","provider_registry_sha256","provider_observation_sha256","fixture_reconciliation_sha256"): _require_sha(v[k],k)
+    _validate_legacy_provenance_pair(v)
     if v.get("bookable") is not True: raise ShadowPriceError("quote must be bookable")
     return _set(o,v)
 
@@ -174,7 +184,8 @@ def _issue_shadow_price_result(**v: Any) -> ShadowPriceResult:
     o=object.__new__(ShadowPriceResult); v=dict(v)
     if type(v["market_id"]) is not MarketId or type(v["outcome_id"]) is not OutcomeId or type(v["disposition"]) is not ShadowPriceDisposition: raise ShadowPriceError("price result identity type mismatch")
     v["line"]=_line(v.get("line"))
-    for k in ("prc_scan_sha256","prc_assessment_sha256","provider_registry_sha256","fixture_reconciliation_sha256","current_mapping_rebind_sha256","bridge_bundle_sha256"): _require_sha(v[k],k)
+    for k in ("prc_scan_sha256","prc_assessment_sha256","provider_registry_sha256","fixture_reconciliation_sha256"): _require_sha(v[k],k)
+    _validate_legacy_provenance_pair(v)
     if v.get("model_probability") is not None: v["model_probability"]=_probability(v["model_probability"],"model_probability")
     if v.get("decimal_odds") is not None: v["decimal_odds"]=_odds(v["decimal_odds"])
     for k in ("implied_probability","fair_probability"):
@@ -191,7 +202,8 @@ def _issue_shadow_price_result(**v: Any) -> ShadowPriceResult:
 def _issue_shadow_price_all_bundle(**v: Any) -> ShadowPriceAllBundle:
     from domain._current_shadow_quote_binding import CurrentShadowPriceContext
     o=object.__new__(ShadowPriceAllBundle); v=dict(v); v["evaluation_time"]=_utc(v["evaluation_time"],"evaluation_time")
-    for k in ("prc_scan_sha256","provider_registry_sha256","fixture_reconciliation_sha256","current_mapping_rebind_sha256","bridge_bundle_sha256"): _require_sha(v[k],k)
+    for k in ("prc_scan_sha256","provider_registry_sha256","fixture_reconciliation_sha256"): _require_sha(v[k],k)
+    _validate_legacy_provenance_pair(v)
     v["results"]=tuple(v["results"])
     if any(type(x) is not ShadowPriceResult or x.fixture_identity != v["fixture_identity"] for x in v["results"]): raise ShadowPriceError("invalid price-all results")
     if len({x.opportunity_id for x in v["results"]}) != len(v["results"]): raise ShadowPriceError("duplicate price-all opportunity")

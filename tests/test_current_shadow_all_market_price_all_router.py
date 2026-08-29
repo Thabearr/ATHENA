@@ -53,17 +53,18 @@ def test_context_builder_composes_verified_bridge_replayed_event_prb_and_real_pr
         calls.append("prc"); assert kwargs["complete_current_history"] is history; assert kwargs["provider_semantic_registry"] is registry; return scan
     monkeypatch.setattr("domain._current_shadow_quote_binding.prc.scan_current_fixture_all_markets",current)
     context=build_current_shadow_price_context(complete_current_history=history,fixture_identity=FIXTURE,provider_event_evidence=evidence_input,fixture_quote_bridge=bridge_input)
-    assert calls==["bridge","event","registry","prc"] and context.scan is scan and context.fixture_reconciliation_sha256==D
+    assert calls==["bridge","event","event","registry","prc"] and context.scan is scan and context.fixture_reconciliation_sha256==D
 
 def _retained_evidence(tmp_path:Path):
     payload={"bizCode":10000,"data":{"eventId":EVENT,"homeTeamName":"Home","awayTeamName":"Away","estimateStartTime":KICKOFF.timestamp()*1000,"bookingStatus":"Available","status":0,"matchStatus":"Not Started","markets":[{"id":"1","desc":"1X2","specifier":None,"outcomes":[{"id":"1","desc":"Home","odds":"1.45","isActive":1},{"id":"2","desc":"Draw","odds":"5.00","isActive":1},{"id":"3","desc":"Away","odds":"10.00","isActive":1}]}]}}
     root=tmp_path.resolve(); raw=live._canonical_json_bytes(payload); manifest=live._build_manifest(event_id=EVENT,raw=raw,status=200,observed_at=NOW); eroot=live._evidence_root(root,create=True); directory=eroot/live.capture_identifier(manifest); directory.mkdir(); (directory/live.RAW_FILENAME).write_bytes(raw); (directory/live.MANIFEST_FILENAME).write_bytes(live.canonical_manifest_bytes(manifest)); return prb.load_provider_event_evidence(directory,repository_root=root)
 
-def test_quotes_are_derived_from_typed_prb_semantics_over_replayed_inventory(tmp_path):
+def test_quotes_are_derived_from_typed_prb_semantics_over_replayed_inventory(tmp_path,monkeypatch):
     evidence=_retained_evidence(tmp_path); registry=prb.build_registry((evidence,),evaluation_time=NOW,scan_cap=1,scan_attempts=1)
     context=object.__new__(CurrentShadowPriceContext)
     fields={"fixture_identity":FIXTURE,"provider_event_id":EVENT,"provider_registry":registry,"provider_registry_sha256":registry.canonical_sha256,"provider_inventory":evidence.inventory,"source_raw_sha256":evidence.inventory.source_raw_sha256,"source_manifest_sha256":evidence.inventory.source_manifest_sha256,"source_inventory_sha256":evidence.inventory.canonical_sha256,"fixture_reconciliation_sha256":D,"current_mapping_rebind_sha256":E,"bridge_bundle_sha256":F}
     for k,v in fields.items(): object.__setattr__(context,k,v)
+    monkeypatch.setattr("domain._current_shadow_quote_binding.verify_current_shadow_price_context",lambda value:value)
     quotes=build_current_shadow_exact_quotes(context)
     assert {(q.market_id,q.outcome_id) for q in quotes}=={(MarketId.MATCH_RESULT,OutcomeId.HOME),(MarketId.MATCH_RESULT,OutcomeId.DRAW),(MarketId.MATCH_RESULT,OutcomeId.AWAY)}
     assert all(q.source_inventory_sha256==evidence.inventory.canonical_sha256 for q in quotes)
