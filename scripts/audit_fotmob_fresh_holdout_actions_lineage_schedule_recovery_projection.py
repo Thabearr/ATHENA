@@ -287,7 +287,6 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             continue
         plan = projected_continuities.get(record.get("run_id"))
         if plan is None:
-            record["execution_provenance"] = "NATURAL_SCHEDULE"
             continue
         if record.get("nominal_slot_utc") != plan.target_slot_text:
             raise audit.FreshHoldoutActionsLineageAuditError(
@@ -296,9 +295,10 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         record["execution_provenance"] = "PROSPECTIVE_CONTINUITY_DISPATCH"
         record["continuity_target_slot"] = plan.target_slot_text
         record["continuity_target_cron"] = plan.target_cron
-    result["verified_prospective_continuity_dispatch_count"] = len(
-        projected_continuities
-    )
+    if projected_continuities:
+        result["verified_prospective_continuity_dispatch_count"] = len(
+            projected_continuities
+        )
     ordered_noops = sorted(
         projected_noops.values(),
         key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
