@@ -15,6 +15,7 @@ from typing import Any
 
 WATCHDOG_WORKFLOW_NAME = "Watch FotMob Fresh-Holdout Scheduler Liveness"
 WATCHDOG_WORKFLOW_PATH = ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
+WATCHDOG_JOB_NAME = "verify and repair scheduler control plane"
 PRIMARY_WORKFLOW_NAME = "FotMob UTC-Native xG Fresh-Holdout Collection Runner"
 PRIMARY_WORKFLOW_PATH = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
 WATCHDOG_CRON = "3,33 * * * *"
@@ -25,6 +26,16 @@ MAXIMUM_ARM_HORIZON_SECONDS = 40 * 60
 MAXIMUM_DISPATCH_LATE_SECONDS = 5 * 60
 MAXIMUM_DISPATCH_EARLY_SECONDS = 30
 CONTINUITY_CONFIRMATION = "PROSPECTIVE_ONLY_NO_BACKFILL_V1"
+WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS = (
+    "Validate exact control trigger",
+    "Check out exact current main",
+    "Set up Python 3.12",
+    "Verify exact main and reviewed control dependencies",
+    "Plan one prospective continuity slot",
+    "Wait through natural primary delivery grace",
+    "Dispatch prospective continuity tick if primary delivery is absent",
+    "Record prospective continuity dispatch request",
+)
 
 
 class FreshHoldoutContinuityError(RuntimeError):
@@ -140,6 +151,64 @@ def validate_watchdog_source_run(
     ):
         raise _error("watchdog source head differs from the pinned main SHA")
     return _utc(value.get("created_at"), "watchdog created_at")
+
+
+def validate_watchdog_source_jobs(
+    value: Mapping[str, Any],
+    *,
+    expected_run_id: int,
+    expected_main_sha: str,
+) -> dt.datetime:
+    """Independently prove the watchdog took its reviewed scheduled dispatch path.
+
+    GitHub's jobs metadata is a separate read from the continuity receipt. Requiring
+    the schedule-only planning step and the conditional dispatch-record step to have
+    succeeded proves that the reviewed watchdog, on the same exact main SHA, reached
+    the branch that requested one prospective continuity dispatch.
+    """
+    if type(value) is not dict or type(value.get("jobs")) is not list:
+        raise _error("watchdog jobs metadata must expose an exact jobs list")
+    if type(expected_run_id) is not int or expected_run_id < 1:
+        raise _error("expected watchdog run id is invalid")
+    expected_sha = _sha(expected_main_sha, "expected main SHA")
+    jobs = [
+        job
+        for job in value["jobs"]
+        if type(job) is dict and job.get("name") == WATCHDOG_JOB_NAME
+    ]
+    if len(jobs) != 1:
+        raise _error("watchdog source must expose exactly one reviewed control job")
+    job = jobs[0]
+    if job.get("run_id") != expected_run_id:
+        raise _error("watchdog job run id differs from continuity source")
+    if job.get("workflow_name") != WATCHDOG_WORKFLOW_NAME:
+        raise _error("watchdog job workflow name drifted")
+    if job.get("head_branch") != "main":
+        raise _error("watchdog job must execute from main")
+    if _sha(job.get("head_sha"), "watchdog job head_sha") != expected_sha:
+        raise _error("watchdog job head differs from continuity dispatch head")
+    if job.get("status") != "completed" or job.get("conclusion") != "success":
+        raise _error("watchdog dispatch source job did not complete successfully")
+    steps = job.get("steps")
+    if type(steps) is not list:
+        raise _error("watchdog source job steps are missing")
+    by_name: dict[str, Mapping[str, Any]] = {}
+    for step in steps:
+        if type(step) is not dict or type(step.get("name")) is not str:
+            raise _error("watchdog source job step metadata is malformed")
+        name = step["name"]
+        if name in by_name:
+            raise _error(f"watchdog source duplicated job step {name!r}")
+        by_name[name] = step
+    for name in WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS:
+        step = by_name.get(name)
+        if (
+            step is None
+            or step.get("status") != "completed"
+            or step.get("conclusion") != "success"
+        ):
+            raise _error(f"watchdog source did not prove reviewed step {name!r}")
+    return _utc(job.get("created_at"), "watchdog job created_at")
 
 
 def validate_continuity_dispatch(
@@ -260,6 +329,8 @@ __all__ = [
     "PRIMARY_WORKFLOW_NAME",
     "PRIMARY_WORKFLOW_PATH",
     "WATCHDOG_CRON",
+    "WATCHDOG_JOB_NAME",
+    "WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS",
     "WATCHDOG_WORKFLOW_NAME",
     "WATCHDOG_WORKFLOW_PATH",
     "ContinuityPlan",
@@ -271,5 +342,6 @@ __all__ = [
     "seconds_until_target",
     "utc_text",
     "validate_continuity_dispatch",
+    "validate_watchdog_source_jobs",
     "validate_watchdog_source_run",
 ]
