@@ -1,10 +1,10 @@
 """Research-only all-market Shadow Portfolio (PR E).
 
-Consumes only replay-verifiable PR-D Price-all + Router outputs.  The portfolio
-never re-routes a fixture, never promotes a Router counterfactual, never pads a
-requested target, and never invents a dependence model.  It reuses the frozen
-Portfolio-v2 caps/fragility/survival semantics while keeping all authority in the
-research/shadow namespace.
+Consumes only source-replay-verifiable PR-D Price-all + Router outputs from the
+current reconciliation lane.  The optimizer never reroutes a fixture, never
+promotes a Router counterfactual, never pads a target, and never invents a
+statistical dependence model.  Frozen Portfolio-v2 caps, survival and fragility
+semantics remain the policy authority.
 """
 from __future__ import annotations
 
@@ -17,11 +17,9 @@ import math
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping, Optional, Sequence
 
-from domain import current_direct_provider_canonical_market_mapping_rebind as current_mapping
-from domain import current_direct_provider_live_quote_mapping_consumption as current_quotes
 from domain import current_shadow_all_market_price_all as price_all
 from domain import current_shadow_all_market_router as router
-from domain import sportybet_current_event_discovery_reconciliation as current_reconciliation
+from domain import sportybet_current_event_discovery_reconciliation as reconciliation
 from domain._accumulator_optimizer_contracts import (
     EXPECTED_ACCUMULATOR_OPTIMIZER_CONTRACT_SHA256_BY_VERSION,
     JOINT_DEPENDENCE_STATUS,
@@ -35,8 +33,8 @@ from domain._accumulator_optimizer_contracts import (
     MINIMUM_MARKET_FAMILY_CAP_WHEN_TARGET_GE_2,
     MINIMUM_ROBUST_NET_EXPECTED_VALUE_FOR_NON_FRAGILE,
     MINIMUM_SURVIVAL_FLOOR_FOR_NON_FRAGILE,
-    FragilityStatus,
     AccumulatorOptimizationStatus,
+    FragilityStatus,
     validate_accumulator_optimizer_contract,
 )
 from domain._current_shadow_price_core import (
@@ -54,7 +52,10 @@ from domain._current_shadow_price_records import (
     ShadowPriceResult,
     ShadowRoutedOpportunity,
 )
-from domain._current_shadow_quote_binding import build_current_shadow_exact_quotes
+from domain._current_shadow_quote_binding import (
+    CURRENT_RECONCILIATION_DIRECT,
+    build_current_shadow_exact_quotes,
+)
 from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
 
 SCHEMA_VERSION = 1
@@ -100,7 +101,7 @@ _AH_STATES = frozenset({"WIN", "HALF_WIN", "PUSH", "HALF_LOSS", "LOSS"})
 
 
 class CurrentShadowPortfolioError(ValueError):
-    """Raised when PR-E portfolio trust/policy cannot be preserved exactly."""
+    pass
 
 
 def _canonical(value: Any) -> bytes:
@@ -128,18 +129,11 @@ def _iso(value: datetime) -> str:
     return _utc(value, "timestamp").isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
-def _finite(value: Any, label: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise CurrentShadowPortfolioError(f"{label} must be finite numeric")
-    result = float(value)
-    if not math.isfinite(result):
-        raise CurrentShadowPortfolioError(f"{label} must be finite numeric")
-    return result
-
-
 def _probability(value: Any, label: str) -> float:
-    result = _finite(value, label)
-    if not 0.0 <= result <= 1.0:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CurrentShadowPortfolioError(f"{label} must be finite probability")
+    result = float(value)
+    if not math.isfinite(result) or not 0.0 <= result <= 1.0:
         raise CurrentShadowPortfolioError(f"{label} must be in [0,1]")
     return result
 
@@ -160,6 +154,7 @@ def _validate_frozen_policy() -> str:
         or MINIMUM_FRAGILE_CAP != 1
         or MINIMUM_ROBUST_NET_EXPECTED_VALUE_FOR_NON_FRAGILE != 0.02
         or MINIMUM_SURVIVAL_FLOOR_FOR_NON_FRAGILE != 0.60
+        or JOINT_DEPENDENCE_STATUS != "NO_VALIDATED_JOINT_CORRELATION_MODEL_V1"
     ):
         raise CurrentShadowPortfolioError("frozen Portfolio-v2 policy values drifted")
     return expected
@@ -167,8 +162,6 @@ def _validate_frozen_policy() -> str:
 
 @dataclass(frozen=True, init=False)
 class ShadowPortfolioRouterInput:
-    """Builder-only, source-replayed PR-D Router input for one fixture."""
-
     price_all_bundle: ShadowPriceAllBundle
     router_decision: ShadowMarketRouterDecision
     price_all_bundle_sha256: str
@@ -181,8 +174,6 @@ class ShadowPortfolioRouterInput:
     kickoff_utc: datetime
     source_observed_at: datetime
     fixture_reconciliation_sha256: str
-    current_mapping_rebind_sha256: str
-    bridge_bundle_sha256: str
     source_raw_sha256: str
     source_manifest_sha256: str
     source_inventory_sha256: str
@@ -204,8 +195,6 @@ class ShadowPortfolioRouterInput:
             "kickoff_utc": _iso(self.kickoff_utc),
             "source_observed_at": _iso(self.source_observed_at),
             "fixture_reconciliation_sha256": self.fixture_reconciliation_sha256,
-            "current_mapping_rebind_sha256": self.current_mapping_rebind_sha256,
-            "bridge_bundle_sha256": self.bridge_bundle_sha256,
             "source_raw_sha256": self.source_raw_sha256,
             "source_manifest_sha256": self.source_manifest_sha256,
             "source_inventory_sha256": self.source_inventory_sha256,
@@ -213,75 +202,78 @@ class ShadowPortfolioRouterInput:
 
 
 def build_shadow_portfolio_router_input(
-    *, price_all_bundle: ShadowPriceAllBundle, router_decision: ShadowMarketRouterDecision
+    *,
+    price_all_bundle: ShadowPriceAllBundle,
+    router_decision: ShadowMarketRouterDecision,
 ) -> ShadowPortfolioRouterInput:
     if type(price_all_bundle) is not ShadowPriceAllBundle:
         raise CurrentShadowPortfolioError("price_all_bundle must be exact ShadowPriceAllBundle")
     if type(router_decision) is not ShadowMarketRouterDecision:
         raise CurrentShadowPortfolioError("router_decision must be exact ShadowMarketRouterDecision")
     try:
-        verified_bundle = price_all.verify_shadow_price_all_bundle(price_all_bundle)
-        rebuilt_decision = router.route_shadow_price_results(verified_bundle)
+        checked_bundle = price_all.verify_shadow_price_all_bundle(price_all_bundle)
+        rebuilt_decision = router.route_shadow_price_results(checked_bundle)
     except ShadowPriceError as exc:
-        raise CurrentShadowPortfolioError("PR-D source replay failed") from exc
+        raise CurrentShadowPortfolioError("PR-D exact source/Router reconstruction failed") from exc
     if _canonical(rebuilt_decision.to_dict()) != _canonical(router_decision.to_dict()):
         raise CurrentShadowPortfolioError("Router decision differs from exact PR-D reconstruction")
-    if router_decision.price_all_bundle_sha256 != verified_bundle.canonical_sha256:
+    if rebuilt_decision.price_all_bundle_sha256 != checked_bundle.canonical_sha256:
         raise CurrentShadowPortfolioError("Router/Price-all SHA identity mismatch")
 
-    context = verified_bundle._context
+    context = checked_bundle._context
+    if context.source_context_mode != CURRENT_RECONCILIATION_DIRECT:
+        raise CurrentShadowPortfolioError(
+            "PR-E current Portfolio requires direct current-reconciliation PR-D context"
+        )
+    if context._current_reconciliation_bundle is None:
+        raise CurrentShadowPortfolioError("PR-D context omitted retained current reconciliation")
     try:
-        bridge = current_quotes.verify_current_direct_provider_mapped_quote_bundle(
-            context._bridge_bundle
+        reconciled = reconciliation.verify_current_event_discovery_reconciliation_bundle(
+            context._current_reconciliation_bundle
         )
-        mapping = current_mapping.verify_current_direct_provider_canonical_mapping_rebind(
-            bridge._source_mapping
-        )
-        reconciled = current_reconciliation.verify_current_event_discovery_reconciliation_bundle(
-            mapping._current_bundle
-        )
-    except Exception as exc:
-        raise CurrentShadowPortfolioError("current exposure source replay failed") from exc
-    rows = [item for item in reconciled.rows if item.event_id == bridge.event_id]
-    if len(rows) != 1:
-        raise CurrentShadowPortfolioError("provider event exposure identity is not unique")
+    except reconciliation.SportyBetCurrentEventDiscoveryError as exc:
+        raise CurrentShadowPortfolioError("current reconciliation source replay failed") from exc
+    if reconciled.canonical_sha256 != context.fixture_reconciliation_sha256:
+        raise CurrentShadowPortfolioError("retained reconciliation SHA differs from PR-D context")
+    rows = [
+        row for row in reconciled.rows
+        if row.event_id == context.provider_event_id
+        and row.matched_fotmob_fixture_id == context.fixture_identity
+    ]
+    if len(rows) != 1 or rows[0].fixture_reconciliation_authorized is not True:
+        raise CurrentShadowPortfolioError("Portfolio fixture/event exposure is not uniquely source-authorized")
     row = rows[0]
-    if row.fixture_reconciliation_authorized is not True or row.matched_fotmob_fixture_id != bridge.fixture_id:
-        raise CurrentShadowPortfolioError("fixture exposure lacks exact current reconciliation authority")
     if row.competition_name is None:
-        raise CurrentShadowPortfolioError("portfolio exposure requires source-proven competition")
+        raise CurrentShadowPortfolioError("Portfolio exposure requires source-proven competition")
+    inventory = context.provider_inventory
     if (
-        row.home_team_name != bridge.home_team_name
-        or row.away_team_name != bridge.away_team_name
-        or row.kickoff_utc != bridge.kickoff_utc
-        or bridge.fixture_id != verified_bundle.fixture_identity
-        or bridge.event_id != context.provider_event_id
-        or mapping.source_current_reconciliation_sha256 != context.fixture_reconciliation_sha256
-        or bridge.source_current_reconciliation_sha256 != context.fixture_reconciliation_sha256
-        or bridge.current_mapping_rebind_sha256 != context.current_mapping_rebind_sha256
-        or bridge.canonical_sha256 != context.bridge_bundle_sha256
+        row.home_team_name != inventory.home_team_name
+        or row.away_team_name != inventory.away_team_name
+        or row.kickoff_utc != inventory.kickoff_utc
+        or row.direct_event_observed_at != inventory.observed_at
+        or row.direct_event_raw_sha256 != inventory.source_raw_sha256
+        or row.direct_event_manifest_sha256 != inventory.source_manifest_sha256
+        or row.direct_event_inventory_sha256 != inventory.canonical_sha256
     ):
-        raise CurrentShadowPortfolioError("Portfolio exposure identity differs from PR-D retained ancestry")
+        raise CurrentShadowPortfolioError("Portfolio exposure differs from retained exact provider evidence")
 
     value = object.__new__(ShadowPortfolioRouterInput)
     for name, item in {
-        "price_all_bundle": verified_bundle,
+        "price_all_bundle": checked_bundle,
         "router_decision": rebuilt_decision,
-        "price_all_bundle_sha256": verified_bundle.canonical_sha256,
+        "price_all_bundle_sha256": checked_bundle.canonical_sha256,
         "router_decision_sha256": rebuilt_decision.decision_sha256,
-        "fixture_identity": verified_bundle.fixture_identity,
-        "provider_event_id": bridge.event_id,
+        "fixture_identity": context.fixture_identity,
+        "provider_event_id": context.provider_event_id,
         "home_team": row.home_team_name,
         "away_team": row.away_team_name,
         "competition": row.competition_name,
         "kickoff_utc": row.kickoff_utc,
-        "source_observed_at": context.provider_inventory.observed_at,
-        "fixture_reconciliation_sha256": context.fixture_reconciliation_sha256,
-        "current_mapping_rebind_sha256": context.current_mapping_rebind_sha256,
-        "bridge_bundle_sha256": context.bridge_bundle_sha256,
-        "source_raw_sha256": context.source_raw_sha256,
-        "source_manifest_sha256": context.source_manifest_sha256,
-        "source_inventory_sha256": context.source_inventory_sha256,
+        "source_observed_at": inventory.observed_at,
+        "fixture_reconciliation_sha256": reconciled.canonical_sha256,
+        "source_raw_sha256": inventory.source_raw_sha256,
+        "source_manifest_sha256": inventory.source_manifest_sha256,
+        "source_inventory_sha256": inventory.canonical_sha256,
     }.items():
         object.__setattr__(value, name, item)
     return value
@@ -295,7 +287,7 @@ def verify_shadow_portfolio_router_input(value: Any) -> ShadowPortfolioRouterInp
         router_decision=value.router_decision,
     )
     if _canonical(rebuilt.to_dict()) != _canonical(value.to_dict()):
-        raise CurrentShadowPortfolioError("Portfolio Router input differs on exact source replay")
+        raise CurrentShadowPortfolioError("Portfolio Router input differs on source replay")
     return rebuilt
 
 
@@ -328,8 +320,6 @@ class ShadowPortfolioLeg:
     provider_registry_sha256: str
     provider_observation_sha256: str
     fixture_reconciliation_sha256: str
-    current_mapping_rebind_sha256: str
-    bridge_bundle_sha256: str
     robust_net_expected_value: float
     robust_edge: Optional[float]
     event_probability_floor: Optional[float]
@@ -372,8 +362,6 @@ class ShadowPortfolioLeg:
             "provider_registry_sha256": self.provider_registry_sha256,
             "provider_observation_sha256": self.provider_observation_sha256,
             "fixture_reconciliation_sha256": self.fixture_reconciliation_sha256,
-            "current_mapping_rebind_sha256": self.current_mapping_rebind_sha256,
-            "bridge_bundle_sha256": self.bridge_bundle_sha256,
             "robust_net_expected_value": self.robust_net_expected_value,
             "robust_edge": self.robust_edge,
             "event_probability_floor": self.event_probability_floor,
@@ -487,11 +475,13 @@ class ShadowPortfolioOptimization:
         }
 
 
-def _selected_opportunity(value: ShadowPortfolioRouterInput) -> tuple[ShadowRoutedOpportunity, ShadowPriceResult, ShadowExactQuote]:
+def _selected_opportunity(
+    value: ShadowPortfolioRouterInput,
+) -> tuple[ShadowRoutedOpportunity, ShadowPriceResult, ShadowExactQuote]:
     decision = value.router_decision
     if decision.status is not ShadowRouterDecisionStatus.SELECTED or decision.selected_opportunity_id is None:
         raise CurrentShadowPortfolioError("only Router SELECTED decisions can become Portfolio legs")
-    rows = [item for item in decision.opportunities if item.opportunity_id == decision.selected_opportunity_id]
+    rows = [row for row in decision.opportunities if row.opportunity_id == decision.selected_opportunity_id]
     if len(rows) != 1:
         raise CurrentShadowPortfolioError("selected Router opportunity identity is not unique")
     opportunity = rows[0]
@@ -501,7 +491,7 @@ def _selected_opportunity(value: ShadowPortfolioRouterInput) -> tuple[ShadowRout
     if result.disposition is not ShadowPriceDisposition.PRICED or result.quote_identity_sha256 is None:
         raise CurrentShadowPortfolioError("Router selected opportunity lacks exact priced quote")
     quotes = build_current_shadow_exact_quotes(value.price_all_bundle._context)
-    matched = [item for item in quotes if item.identity_sha256 == result.quote_identity_sha256]
+    matched = [quote for quote in quotes if quote.identity_sha256 == result.quote_identity_sha256]
     if len(matched) != 1:
         raise CurrentShadowPortfolioError("selected price result does not bind one exact current quote")
     quote = matched[0]
@@ -531,12 +521,12 @@ def _survival(opportunity: ShadowRoutedOpportunity, result: ShadowPriceResult) -
     if result.market_id is MarketId.DRAW_NO_BET:
         if keys != _DNB_STATES:
             raise CurrentShadowPortfolioError("DNB settlement components drifted")
-        value = probabilities["WIN"] + probabilities["PUSH"]
+        survival = probabilities["WIN"] + probabilities["PUSH"]
     else:
         if keys != _AH_STATES:
             raise CurrentShadowPortfolioError("Asian Handicap settlement components drifted")
-        value = probabilities["WIN"] + probabilities["HALF_WIN"] + probabilities["PUSH"]
-    return _probability(value, "settlement survival probability")
+        survival = probabilities["WIN"] + probabilities["HALF_WIN"] + probabilities["PUSH"]
+    return _probability(survival, "settlement survival probability")
 
 
 def _fragility(robust_ev: float, survival: float) -> FragilityStatus:
@@ -567,14 +557,14 @@ def _build_leg(value: ShadowPortfolioRouterInput, *, now: datetime) -> ShadowPor
         raise CurrentShadowPortfolioError("Portfolio quote age cannot be younger than Price-all quote age")
     survival = _survival(opportunity, result)
     family = MARKET_REGISTRY[result.market_id].family
-    payload = {
+    leg_id = _sha({
         "router_decision_sha256": value.router_decision_sha256,
         "selected_opportunity_id": opportunity.opportunity_id,
         "quote_identity_sha256": quote.identity_sha256,
         "fixture_reconciliation_sha256": value.fixture_reconciliation_sha256,
-    }
+    })
     return ShadowPortfolioLeg(
-        leg_id=_sha(payload),
+        leg_id=leg_id,
         price_all_bundle_sha256=value.price_all_bundle_sha256,
         router_decision_sha256=value.router_decision_sha256,
         selected_opportunity_id=opportunity.opportunity_id,
@@ -601,8 +591,6 @@ def _build_leg(value: ShadowPortfolioRouterInput, *, now: datetime) -> ShadowPor
         provider_registry_sha256=quote.provider_registry_sha256,
         provider_observation_sha256=quote.provider_observation_sha256,
         fixture_reconciliation_sha256=quote.fixture_reconciliation_sha256,
-        current_mapping_rebind_sha256=quote.current_mapping_rebind_sha256,
-        bridge_bundle_sha256=quote.bridge_bundle_sha256,
         robust_net_expected_value=float(robust_ev),
         robust_edge=opportunity.robust_edge,
         event_probability_floor=opportunity.event_probability_floor,
@@ -634,12 +622,12 @@ def _counts(selected: Sequence[ShadowPortfolioLeg]) -> tuple[dict[str, int], dic
     competition: dict[str, int] = {}
     family: dict[str, int] = {}
     fragile = 0
-    for item in selected:
-        for name in (item.home_team, item.away_team):
-            team[name] = team.get(name, 0) + 1
-        competition[item.competition] = competition.get(item.competition, 0) + 1
-        family[item.market_family.value] = family.get(item.market_family.value, 0) + 1
-        fragile += int(item.fragile)
+    for leg in selected:
+        for team_name in (leg.home_team, leg.away_team):
+            team[team_name] = team.get(team_name, 0) + 1
+        competition[leg.competition] = competition.get(leg.competition, 0) + 1
+        family[leg.market_family.value] = family.get(leg.market_family.value, 0) + 1
+        fragile += int(leg.fragile)
     return team, competition, family, fragile
 
 
@@ -705,24 +693,27 @@ def _exposure_summary(selected: Sequence[ShadowPortfolioLeg], caps: Mapping[str,
 def _survival_product(selected: Sequence[ShadowPortfolioLeg]) -> Optional[float]:
     if not selected:
         return None
-    value = math.prod(item.survival_probability_floor for item in selected)
-    if not math.isfinite(value):
+    result = math.prod(leg.survival_probability_floor for leg in selected)
+    if not math.isfinite(result):
         raise CurrentShadowPortfolioError("independence survival baseline is non-finite")
-    return value
+    return result
 
 
 def _odds_product(selected: Sequence[ShadowPortfolioLeg]) -> Optional[float]:
     if not selected:
         return None
     value = Decimal("1")
-    for item in selected:
-        value *= Decimal(str(item.decimal_odds))
+    for leg in selected:
+        value *= Decimal(str(leg.decimal_odds))
     result = float(value)
     return result if math.isfinite(result) else None
 
 
 def optimize_shadow_portfolio(
-    router_inputs: Iterable[ShadowPortfolioRouterInput], *, target_size: int, evaluation_time: datetime
+    router_inputs: Iterable[ShadowPortfolioRouterInput],
+    *,
+    target_size: int,
+    evaluation_time: datetime,
 ) -> ShadowPortfolioOptimization:
     frozen_contract = _validate_frozen_policy()
     now = _utc(evaluation_time, "evaluation_time")
@@ -730,19 +721,19 @@ def optimize_shadow_portfolio(
         raise TypeError("target_size must be an integer")
     if not 1 <= target_size <= MAXIMUM_TARGET_SIZE:
         raise ValueError(f"target_size must be between 1 and {MAXIMUM_TARGET_SIZE}")
-    values = tuple(router_inputs)
-    if any(type(item) is not ShadowPortfolioRouterInput for item in values):
+    supplied = tuple(router_inputs)
+    if any(type(item) is not ShadowPortfolioRouterInput for item in supplied):
         raise CurrentShadowPortfolioError("router_inputs must contain exact ShadowPortfolioRouterInput values")
-    verified = tuple(verify_shadow_portfolio_router_input(item) for item in values)
-    fixtures = [item.fixture_identity for item in verified]
-    events = [item.provider_event_id for item in verified]
-    if len(fixtures) != len(set(fixtures)):
+    verified = tuple(verify_shadow_portfolio_router_input(item) for item in supplied)
+    fixture_ids = [item.fixture_identity for item in verified]
+    event_ids = [item.provider_event_id for item in verified]
+    if len(fixture_ids) != len(set(fixture_ids)):
         raise CurrentShadowPortfolioError("duplicate fixture inputs are not allowed")
-    if len(events) != len(set(events)):
+    if len(event_ids) != len(set(event_ids)):
         raise CurrentShadowPortfolioError("duplicate provider event inputs are not allowed")
 
     admitted: list[ShadowPortfolioLeg] = []
-    blocked_reserves: list[ShadowPortfolioReserveLeg] = []
+    blocked: list[ShadowPortfolioReserveLeg] = []
     audits: list[ShadowPortfolioRouteAudit] = []
     for source in sorted(verified, key=lambda item: item.fixture_identity):
         if source.price_all_bundle.evaluation_time > now:
@@ -762,7 +753,7 @@ def optimize_shadow_portfolio(
             if leg.portfolio_kickoff_lead_seconds <= MINIMUM_LEAD_SECONDS:
                 reasons.append("TOO_CLOSE_TO_KICKOFF")
             if reasons:
-                blocked_reserves.append(ShadowPortfolioReserveLeg(leg, tuple(sorted(set(reasons)))))
+                blocked.append(ShadowPortfolioReserveLeg(leg, tuple(sorted(set(reasons)))))
                 leg = None
             else:
                 admitted.append(leg)
@@ -784,35 +775,37 @@ def optimize_shadow_portfolio(
     remaining = sorted(admitted, key=lambda item: item.leg_id)
     selected: list[ShadowPortfolioLeg] = []
     while remaining and len(selected) < target_size:
-        admissible = [item for item in remaining if not _constraint_reasons(item, selected, caps)]
+        admissible = [leg for leg in remaining if not _constraint_reasons(leg, selected, caps)]
         if not admissible:
             break
-        chosen = min(admissible, key=lambda item: _marginal_key(item, selected, caps))
+        chosen = min(admissible, key=lambda leg: _marginal_key(leg, selected, caps))
         selected.append(chosen)
-        remaining = [item for item in remaining if item.leg_id != chosen.leg_id]
+        remaining = [leg for leg in remaining if leg.leg_id != chosen.leg_id]
 
     selected = sorted(selected, key=lambda item: item.leg_id)
     selected_ids = {item.leg_id for item in selected}
-    reserve_rows: list[ShadowPortfolioReserveLeg] = list(blocked_reserves)
-    for item in sorted((candidate for candidate in admitted if candidate.leg_id not in selected_ids), key=_reserve_key):
-        reasons = list(_constraint_reasons(item, selected, caps))
+    reserves: list[ShadowPortfolioReserveLeg] = list(blocked)
+    for leg in sorted((item for item in admitted if item.leg_id not in selected_ids), key=_reserve_key):
+        reasons = list(_constraint_reasons(leg, selected, caps))
         if len(selected) >= target_size:
             reasons.append("TARGET_ALREADY_FILLED")
         if not reasons:
             reasons.append("LOWER_MARGINAL_PORTFOLIO_PRIORITY")
-        reserve_rows.append(ShadowPortfolioReserveLeg(item, tuple(sorted(set(reasons)))))
-    reserve_rows.sort(key=lambda item: (_reserve_key(item.leg), item.reserve_reasons))
+        reserves.append(ShadowPortfolioReserveLeg(leg, tuple(sorted(set(reasons)))))
+    reserves.sort(key=lambda item: (_reserve_key(item.leg), item.reserve_reasons))
 
     shortfall = max(0, target_size - len(selected))
     optimization_status = (
-        AccumulatorOptimizationStatus.QUALIFIED_SET if selected else AccumulatorOptimizationStatus.NO_QUALIFIED_LEGS
+        AccumulatorOptimizationStatus.QUALIFIED_SET
+        if selected
+        else AccumulatorOptimizationStatus.NO_QUALIFIED_LEGS
     )
     value = object.__new__(ShadowPortfolioOptimization)
     for name, item in {
         "evaluation_time": now,
         "requested_target_size": target_size,
         "selected_legs": tuple(selected),
-        "reserve_legs": tuple(reserve_rows),
+        "reserve_legs": tuple(reserves),
         "route_audits": tuple(sorted(audits, key=lambda row: row.fixture_identity)),
         "optimization_status": optimization_status,
         "shortfall": shortfall,
