@@ -5,7 +5,7 @@ from types import MappingProxyType
 from typing import Any, Mapping, Optional
 
 from domain.early_payout_lead_path_probabilities import EarlyPayoutAnalyticalProjection
-from domain.markets import MARKET_REGISTRY, MarketId
+from domain.markets import MARKET_REGISTRY, MarketId, OutcomeId
 from domain.model_status import (
     AnalyticalProbabilityCapability,
     PricingAuthority,
