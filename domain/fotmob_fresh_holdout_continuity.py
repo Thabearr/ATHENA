@@ -2,7 +2,7 @@
 
 This module does not acquire provider data, choose an historical missed slot,
 backfill an observation, or grant model/production/pricing/selection/BET
-authority.  It only derives one future :07/:37 UTC slot from a real naturally
+authority. It only derives one future :07/:37 UTC slot from a real naturally
 scheduled watchdog delivery and validates the provenance of a continuity
 workflow dispatch for that exact future slot.
 """
@@ -20,6 +20,7 @@ PRIMARY_WORKFLOW_PATH = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.ym
 WATCHDOG_CRON = "3,33 * * * *"
 PRIMARY_CRON_BY_MINUTE = {7: "7 * * * *", 37: "37 * * * *"}
 MINIMUM_ARM_LEAD_SECONDS = 90
+PRIMARY_DELIVERY_GRACE_SECONDS = 90
 MAXIMUM_ARM_HORIZON_SECONDS = 40 * 60
 MAXIMUM_DISPATCH_LATE_SECONDS = 5 * 60
 MAXIMUM_DISPATCH_EARLY_SECONDS = 30
@@ -200,6 +201,45 @@ def seconds_until_target(plan: ContinuityPlan, *, now: Any) -> int:
     return int(remaining + 0.999999)
 
 
+def seconds_until_dispatch_check(plan: ContinuityPlan, *, now: Any) -> int:
+    """Wait through a short natural-primary grace period before continuity dispatch."""
+    if type(plan) is not ContinuityPlan:
+        raise _error("exact ContinuityPlan is required")
+    current = _utc(now, "now")
+    latest = plan.target_slot + dt.timedelta(seconds=MAXIMUM_DISPATCH_LATE_SECONDS)
+    if current > latest:
+        raise _error("continuity dispatch window already expired; no retrofill allowed")
+    dispatch_check = plan.target_slot + dt.timedelta(
+        seconds=PRIMARY_DELIVERY_GRACE_SECONDS
+    )
+    remaining = (dispatch_check - current).total_seconds()
+    if remaining <= 0:
+        return 0
+    if remaining > MAXIMUM_ARM_HORIZON_SECONDS + PRIMARY_DELIVERY_GRACE_SECONDS:
+        raise _error("continuity dispatch wait exceeds reviewed prospective horizon")
+    return int(remaining + 0.999999)
+
+
+def durable_targets_for_plan(
+    plan: ContinuityPlan,
+    *,
+    run_id: int,
+) -> tuple[str, str, str, str]:
+    """Derive exact durable identities for one already-reviewed future target slot."""
+    if type(plan) is not ContinuityPlan:
+        raise _error("exact ContinuityPlan is required")
+    if type(run_id) is not int or run_id < 1:
+        raise _error("workflow run id must be a positive integer")
+    nominal = plan.target_slot
+    nominal_iso = nominal.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    compact = nominal.strftime("%Y%m%dT%H%M%SZ")
+    iso_year, iso_week, _ = nominal.isocalendar()
+    release_tag = f"athena-fresh-holdout-evidence-{iso_year}-W{iso_week:02d}"
+    success_asset = f"success-{compact}-run-{run_id}.tar.gz"
+    failure_asset = f"failure-{compact}-run-{run_id}.tar.gz"
+    return nominal_iso, release_tag, success_asset, failure_asset
+
+
 def lineage_already_attempted_target(*, last_attempted_utc: Any, target_slot: Any) -> bool:
     """Return True when durable lineage proves the exact slot was already attempted."""
     if last_attempted_utc is None:
@@ -216,6 +256,7 @@ __all__ = [
     "MAXIMUM_DISPATCH_LATE_SECONDS",
     "MINIMUM_ARM_LEAD_SECONDS",
     "PRIMARY_CRON_BY_MINUTE",
+    "PRIMARY_DELIVERY_GRACE_SECONDS",
     "PRIMARY_WORKFLOW_NAME",
     "PRIMARY_WORKFLOW_PATH",
     "WATCHDOG_CRON",
@@ -223,8 +264,10 @@ __all__ = [
     "WATCHDOG_WORKFLOW_PATH",
     "ContinuityPlan",
     "FreshHoldoutContinuityError",
+    "durable_targets_for_plan",
     "lineage_already_attempted_target",
     "plan_from_watchdog_created_at",
+    "seconds_until_dispatch_check",
     "seconds_until_target",
     "utc_text",
     "validate_continuity_dispatch",
