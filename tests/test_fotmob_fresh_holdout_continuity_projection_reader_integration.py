@@ -148,5 +148,5 @@ def test_direct_projection_reader_fetches_exact_watchdog_run_only_for_continuity
 
 def test_raw_audit_source_remains_schedule_only_and_unmodified():
     text = RAW_AUDIT.read_text(encoding="utf-8")
-    assert 'run.get("event") != "schedule"' in text
+    assert 'run.get("event") == "schedule"' in text
     assert "get_run_by_id" not in text
