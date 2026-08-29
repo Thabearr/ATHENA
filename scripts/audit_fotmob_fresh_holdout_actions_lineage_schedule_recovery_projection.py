@@ -132,15 +132,32 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         raise audit.FreshHoldoutActionsLineageAuditError(
             "schedule-recovery projection requires keyword audit arguments"
         )
+
+    # get_run_by_id belongs to this compatibility projection only. Consume it
+    # before any delegation so the frozen raw audit signature stays untouched.
+    get_run_by_id = kwargs.pop("get_run_by_id", None)
     get_run_artifacts = kwargs.get("get_run_artifacts")
     get_run_jobs = kwargs.get("get_run_jobs")
-    get_run_by_id = kwargs.get("get_run_by_id")
-    if (
-        not callable(get_run_artifacts)
-        or not callable(get_run_jobs)
-        or not callable(get_run_by_id)
-    ):
+    if not callable(get_run_artifacts) or not callable(get_run_jobs):
         return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
+
+    if get_run_by_id is None:
+        repository = kwargs.get("repository")
+        if type(repository) is not str or not repository:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "continuity exact-run reader requires repository identity"
+            )
+
+        def get_run_by_id(run_id: int) -> Mapping[str, Any]:
+            if type(run_id) is not int or run_id <= 0:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "continuity source watchdog run id is invalid"
+                )
+            return audit._gh_json(f"/repos/{repository}/actions/runs/{run_id}")
+    elif not callable(get_run_by_id):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "continuity exact-run reader must be callable"
+        )
 
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
