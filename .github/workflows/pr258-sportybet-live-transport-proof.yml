@@ -35,7 +35,7 @@ jobs:
 
       - name: Run bounded real SportyBet transport proof
         run: |
-          python scripts/run_pr258_sportybet_live_transport_proof.py \
+          python -m scripts.run_pr258_sportybet_live_transport_proof \
             --repository-root . \
             --output-dir .cache/athena-research/pr258-live-transport-proof
 
