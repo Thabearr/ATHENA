@@ -1,13 +1,13 @@
 """Replayable current-source context and exact PR-B quote issuance.
 
 PR D originally admitted the reviewed PR253 mapped-quote bundle as its fixture
-bridge.  PR E keeps that path for compatibility and adds the actual current
-runner path: exact PR251 current-event reconciliation + retained event-detail
-source evidence.  The new path does not fabricate a PR252 mapping identity;
-those legacy-only identities are explicitly ``None`` while the exact current
-reconciliation SHA remains mandatory.
+bridge. PR E preserves that compatibility path and adds the real current-runner
+path: exact PR251 current-event reconciliation + retained event-detail evidence.
+No PR252 mapping identity is fabricated on the direct path; legacy-only mapping
+and bridge identities are explicitly ``None``.
 """
 from __future__ import annotations
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -53,7 +53,7 @@ class CurrentShadowPriceContext:
     _event_evidence: prb.ProviderEventEvidence
     _complete_current_history: CurrentLatestDurableFreshHistoryHandoff
 
-    def __init__(self, *_a: Any, **_k: Any) -> None:
+    def __init__(self, *_args: Any, **_kwargs: Any) -> None:
         raise ShadowPriceError("CurrentShadowPriceContext is builder-only")
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +102,14 @@ def _kickoff(value: str | None) -> datetime | None:
         raise ShadowPriceError("PR-C kickoff identity is invalid") from exc
 
 
+def _canonical_fixture_identity(source_fixture_id: str) -> str:
+    if type(source_fixture_id) is not str or not source_fixture_id.isdigit():
+        raise ShadowPriceError("reconciled FotMob source fixture ID is invalid")
+    if int(source_fixture_id) <= 0 or str(int(source_fixture_id)) != source_fixture_id:
+        raise ShadowPriceError("reconciled FotMob source fixture ID is not canonical")
+    return f"FOTMOB:{source_fixture_id}"
+
+
 def _compose(
     *,
     complete_current_history: CurrentLatestDurableFreshHistoryHandoff,
@@ -118,7 +126,9 @@ def _compose(
 ) -> CurrentShadowPriceContext:
     try:
         checked_evidence = prb.replay_event_evidence(evidence)
-        registry = prb.build_registry((checked_evidence,), evaluation_time=evaluation, scan_cap=1, scan_attempts=1)
+        registry = prb.build_registry(
+            (checked_evidence,), evaluation_time=evaluation, scan_cap=1, scan_attempts=1
+        )
         scan = prc.scan_current_fixture_all_markets(
             complete_current_history=complete_current_history,
             fixture_identity=fixture_identity,
@@ -162,7 +172,7 @@ def build_current_shadow_price_context(
     provider_event_evidence: prb.ProviderEventEvidence,
     fixture_quote_bridge: current_quotes.CurrentDirectProviderMappedQuoteBundle,
 ) -> CurrentShadowPriceContext:
-    """Compatibility path: compose from replayable PR151, PR253 and PR-B sources."""
+    """Compatibility path from exact PR151 + PR253 fixture bridge + PR-B evidence."""
     if type(complete_current_history) is not CurrentLatestDurableFreshHistoryHandoff:
         raise ShadowPriceError("complete_current_history type mismatch")
     if type(fixture_identity) is not str or not fixture_identity.strip():
@@ -173,16 +183,13 @@ def build_current_shadow_price_context(
         raise ShadowPriceError("fixture_quote_bridge type mismatch")
     try:
         bridge = current_quotes.verify_current_direct_provider_mapped_quote_bundle(fixture_quote_bridge)
-    except current_quotes.CurrentDirectProviderLiveQuoteMappingConsumptionError as exc:
-        raise ShadowPriceError("fixture bridge source replay failed") from exc
+        evidence = prb.replay_event_evidence(provider_event_evidence)
+    except Exception as exc:
+        raise ShadowPriceError("legacy fixture bridge/provider evidence source replay failed") from exc
     if bridge.proof_mode != current_quotes.LIVE_CURRENT:
         raise ShadowPriceError("current Shadow pricing requires LIVE_CURRENT fixture bridge")
     if bridge.fixture_id != fixture_identity:
         raise ShadowPriceError("fixture bridge does not match requested PR-C fixture")
-    try:
-        evidence = prb.replay_event_evidence(provider_event_evidence)
-    except prb.CurrentSportyBetSemanticRegistryError as exc:
-        raise ShadowPriceError("PR-B provider event replay failed") from exc
     inventory = evidence.inventory
     if (
         bridge.event_id,
@@ -235,16 +242,16 @@ def build_current_shadow_price_context_from_reconciliation(
         )
     except current_reconciliation.SportyBetCurrentEventDiscoveryError as exc:
         raise ShadowPriceError("current reconciliation source replay failed") from exc
-    rows = [
-        row for row in reconciled.rows
-        if row.event_id == provider_event_id
-        and row.matched_fotmob_fixture_id == fixture_identity
-    ]
-    if len(rows) != 1 or rows[0].fixture_reconciliation_authorized is not True:
-        raise ShadowPriceError("requested fixture/event lacks one exact current reconciliation")
-    row = rows[0]
-    detail_dirs = dict(reconciled._detail_directories)
-    directory = detail_dirs.get(provider_event_id)
+    event_rows = [row for row in reconciled.rows if row.event_id == provider_event_id]
+    if len(event_rows) != 1 or event_rows[0].fixture_reconciliation_authorized is not True:
+        raise ShadowPriceError("provider event lacks one exact current fixture reconciliation")
+    row = event_rows[0]
+    if row.matched_fotmob_fixture_id is None:
+        raise ShadowPriceError("current reconciliation omitted matched FotMob fixture identity")
+    canonical_fixture = _canonical_fixture_identity(row.matched_fotmob_fixture_id)
+    if fixture_identity != canonical_fixture:
+        raise ShadowPriceError("caller fixture identity differs from source-reconciled FotMob identity")
+    directory = dict(reconciled._detail_directories).get(provider_event_id)
     if directory is None:
         raise ShadowPriceError("current reconciliation omitted retained event-detail evidence")
     try:
@@ -269,7 +276,7 @@ def build_current_shadow_price_context_from_reconciliation(
         raise ShadowPriceError("reconciled event row differs from retained exact provider evidence")
     return _compose(
         complete_current_history=complete_current_history,
-        fixture_identity=fixture_identity,
+        fixture_identity=canonical_fixture,
         evidence=evidence,
         evaluation=_utc(reconciled.evaluation_time),
         fixture_reconciliation_sha256=reconciled.canonical_sha256,
@@ -310,20 +317,23 @@ def verify_current_shadow_price_context(value: Any) -> CurrentShadowPriceContext
     return rebuilt
 
 
-def _canonical_line(obs: prb.ProviderSemanticObservation) -> float | None:
-    if obs.line is None:
+def _canonical_line(observation: prb.ProviderSemanticObservation) -> float | None:
+    if observation.line is None:
         return None
     try:
-        line = float(obs.line)
+        line = float(observation.line)
     except (TypeError, ValueError, OverflowError) as exc:
         raise ShadowPriceError("provider line is invalid") from exc
-    if obs.canonical_market_id is MarketId.ASIAN_HANDICAP and obs.canonical_outcome_id is OutcomeId.AWAY:
+    if (
+        observation.canonical_market_id is MarketId.ASIAN_HANDICAP
+        and observation.canonical_outcome_id is OutcomeId.AWAY
+    ):
         return -line
     return line
 
 
 def build_current_shadow_exact_quotes(context: CurrentShadowPriceContext) -> tuple[ShadowExactQuote, ...]:
-    """Issue complete exact current quote rows from typed PR-B observations."""
+    """Issue exact current quotes only from replayed typed PR-B observations."""
     if type(context) is not CurrentShadowPriceContext:
         raise ShadowPriceError("context type mismatch")
     checked = verify_current_shadow_price_context(context)
@@ -396,17 +406,14 @@ def build_current_shadow_exact_quotes(context: CurrentShadowPriceContext) -> tup
                 bridge_bundle_sha256=checked.bridge_bundle_sha256,
                 bookable=True,
             ))
-    ordered = tuple(sorted(
-        output,
-        key=lambda item: (
-            item.market_id.value,
-            item.outcome_id.value,
-            -1.0 if item.line is None else item.line,
-            item.provider_market_id,
-            item.provider_specifier or "",
-            item.provider_outcome_id,
-        ),
-    ))
+    ordered = tuple(sorted(output, key=lambda item: (
+        item.market_id.value,
+        item.outcome_id.value,
+        -1.0 if item.line is None else item.line,
+        item.provider_market_id,
+        item.provider_specifier or "",
+        item.provider_outcome_id,
+    )))
     if len({item.identity_sha256 for item in ordered}) != len(ordered):
         raise ShadowPriceError("duplicate current Shadow quote identity")
     return ordered
