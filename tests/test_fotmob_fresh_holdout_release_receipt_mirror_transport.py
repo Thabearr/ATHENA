@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import datetime as dt
 from pathlib import Path
 import subprocess
 import sys
 
 import pytest
 
+import domain.fotmob_fresh_holdout_continuity as continuity
 import scripts.mirror_fotmob_fresh_holdout_release_receipt as mirror
 import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as transport
 
 
 RUN_ID = 32804045592
+CONTINUITY_RUN_ID = 456
+SOURCE_WATCHDOG_RUN_ID = 123
+SHA = "a" * 40
 REPOSITORY = "Thabearr/ATHENA"
 
 
@@ -51,6 +56,66 @@ def _ambiguous_no_acquisition_jobs() -> dict:
                         "conclusion": conclusion,
                     }
                     for name, conclusion in expected.items()
+                ],
+            }
+        ]
+    }
+
+
+def _continuity_run() -> dict:
+    return {
+        "id": CONTINUITY_RUN_ID,
+        "name": mirror.WORKFLOW_NAME,
+        "event": "workflow_dispatch",
+        "status": "completed",
+        "conclusion": "success",
+        "head_branch": "main",
+        "head_sha": SHA,
+        "path": mirror.WORKFLOW_PATH,
+        "created_at": "2026-08-29T07:07:08Z",
+        "display_title": (
+            "ATHENA fresh-holdout workflow_dispatch "
+            f"source={SOURCE_WATCHDOG_RUN_ID} "
+            "target=2026-08-29T07:07:00Z "
+            "cron=7 * * * * "
+            f"confirm={continuity.CONTINUITY_CONFIRMATION}"
+        ),
+    }
+
+
+def _source_watchdog() -> dict:
+    return {
+        "id": SOURCE_WATCHDOG_RUN_ID,
+        "name": continuity.WATCHDOG_WORKFLOW_NAME,
+        "path": continuity.WATCHDOG_WORKFLOW_PATH,
+        "event": "schedule",
+        "head_branch": "main",
+        "head_sha": SHA,
+        "created_at": "2026-08-29T07:03:02Z",
+        "status": "completed",
+        "conclusion": "success",
+    }
+
+
+def _source_watchdog_jobs() -> dict:
+    return {
+        "jobs": [
+            {
+                "run_id": SOURCE_WATCHDOG_RUN_ID,
+                "workflow_name": continuity.WATCHDOG_WORKFLOW_NAME,
+                "name": continuity.WATCHDOG_JOB_NAME,
+                "head_branch": "main",
+                "head_sha": SHA,
+                "status": "completed",
+                "conclusion": "success",
+                "created_at": "2026-08-29T07:03:04Z",
+                "steps": [
+                    {
+                        "name": name,
+                        "status": "completed",
+                        "conclusion": "success",
+                    }
+                    for name in continuity.WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS
                 ],
             }
         ]
@@ -204,12 +269,12 @@ def test_unproven_zero_artifact_success_still_fails_closed(
     monkeypatch.setattr(mirror, "_gh_json", fake_gh_json)
     with pytest.raises(
         mirror.FreshHoldoutReleaseReceiptMirrorError,
-        match="not a proven ambiguous no-acquisition success",
+        match="not a proven reviewed no-acquisition success",
     ):
         transport._reviewed_mirror_run(repository=REPOSITORY, run_id=RUN_ID)
 
 
-def test_nonempty_artifact_run_delegates_to_frozen_mirror(
+def test_nonempty_scheduled_artifact_run_delegates_to_frozen_mirror(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     run = _ambiguous_no_acquisition_run()
@@ -237,6 +302,115 @@ def test_nonempty_artifact_run_delegates_to_frozen_mirror(
     assert transport._reviewed_mirror_run(repository=REPOSITORY, run_id=RUN_ID) == expected
 
 
+def test_continuity_run_name_and_watchdog_jobs_replay_exact_plan(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _continuity_run()
+    source = _source_watchdog()
+    jobs = _source_watchdog_jobs()
+
+    def fake_gh_json(endpoint: str) -> dict:
+        if endpoint.endswith(f"/actions/runs/{SOURCE_WATCHDOG_RUN_ID}"):
+            return source
+        if endpoint.endswith(
+            f"/actions/runs/{SOURCE_WATCHDOG_RUN_ID}/jobs?per_page=100"
+        ):
+            return jobs
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(mirror, "_gh_json", fake_gh_json)
+    plan = transport._continuity_plan_from_run(repository=REPOSITORY, run=run)
+    assert plan.target_slot == dt.datetime(
+        2026, 8, 29, 7, 7, tzinfo=dt.timezone.utc
+    )
+    assert plan.target_cron == "7 * * * *"
+
+
+def test_continuity_source_step_drift_fails_before_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _continuity_run()
+    jobs = _source_watchdog_jobs()
+    for step in jobs["jobs"][0]["steps"]:
+        if step["name"] == "Record prospective continuity dispatch request":
+            step["conclusion"] = "skipped"
+
+    def fake_gh_json(endpoint: str) -> dict:
+        if endpoint.endswith(f"/actions/runs/{SOURCE_WATCHDOG_RUN_ID}"):
+            return _source_watchdog()
+        if endpoint.endswith(
+            f"/actions/runs/{SOURCE_WATCHDOG_RUN_ID}/jobs?per_page=100"
+        ):
+            return jobs
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(mirror, "_gh_json", fake_gh_json)
+    with pytest.raises(
+        mirror.FreshHoldoutReleaseReceiptMirrorError,
+        match="continuity workflow_dispatch provenance replay failed",
+    ):
+        transport._continuity_plan_from_run(repository=REPOSITORY, run=run)
+
+
+def test_unreviewed_continuity_run_name_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = {**_continuity_run(), "display_title": "manual dispatch"}
+    monkeypatch.setattr(
+        mirror,
+        "_gh_json",
+        lambda endpoint: (_ for _ in ()).throw(AssertionError(endpoint)),
+    )
+    with pytest.raises(
+        mirror.FreshHoldoutReleaseReceiptMirrorError,
+        match="run-name escaped reviewed provenance grammar",
+    ):
+        transport._continuity_plan_from_run(repository=REPOSITORY, run=run)
+
+
+def test_nonempty_continuity_artifact_uses_source_replayed_mirror(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    run = _continuity_run()
+    artifact_payload = {"artifacts": [{"name": "canonical-evidence-present"}]}
+    plan = continuity.plan_from_watchdog_created_at("2026-08-29T07:03:02Z")
+    expected = {"continuity_mirrored": True}
+
+    def fake_gh_json(endpoint: str) -> dict:
+        if endpoint.endswith(f"/actions/runs/{CONTINUITY_RUN_ID}"):
+            return run
+        if endpoint.endswith(f"/actions/runs/{CONTINUITY_RUN_ID}/artifacts"):
+            return artifact_payload
+        raise AssertionError(endpoint)
+
+    monkeypatch.setattr(mirror, "_gh_json", fake_gh_json)
+    monkeypatch.setattr(
+        transport,
+        "_continuity_plan_from_run",
+        lambda *, repository, run: plan,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_mirror_continuity_artifact",
+        lambda *, repository, run_id, artifacts, plan: expected,
+    )
+    monkeypatch.setattr(
+        transport,
+        "_ORIGINAL_MIRROR_RUN",
+        lambda **_kwargs: (_ for _ in ()).throw(
+            AssertionError("continuity must not delegate to schedule-only frozen entrypoint")
+        ),
+    )
+
+    assert (
+        transport._reviewed_mirror_run(
+            repository=REPOSITORY,
+            run_id=CONTINUITY_RUN_ID,
+        )
+        == expected
+    )
+
+
 def test_transport_module_entrypoint_imports_from_repo_root() -> None:
     repository_root = Path(__file__).resolve().parents[1]
     result = subprocess.run(
@@ -256,19 +430,19 @@ def test_transport_module_entrypoint_imports_from_repo_root() -> None:
     assert "--run-id" in result.stdout
 
 
-def test_workflow_pins_and_invokes_reviewed_transport_only_after_success() -> None:
+def test_workflow_pins_and_invokes_reviewed_transport_after_reviewed_success() -> None:
     workflow = Path(
         ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
     ).read_text(encoding="utf-8")
     assert "ddabb6ae83cbe6c81c9264119a121a54715df960" in workflow
-    assert "73ed6ef7cdcc79b43373a78c60b5f2b6dd601095" in workflow
-    assert "69166bf26c32f2385c9b26d651292754dae85be0" in workflow
+    assert "5c82f35722df89eee6f44b99a857c433d4babb2a" in workflow
+    assert "3f42e9f57af96d489cbc59db9c5c9df65750a5f4" in workflow
+    assert "57839269ff3968b38445112c16f5b3ab749eb997" in workflow
     assert (
         "python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror" in workflow
     )
     assert "python scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py" not in workflow
     assert "Accept: application/octet-stream" not in workflow
-    assert (
-        "github.event.workflow_run.event == 'schedule' && "
-        "github.event.workflow_run.conclusion == 'success'"
-    ) in workflow
+    assert "github.event.workflow_run.event == 'schedule'" in workflow
+    assert "github.event.workflow_run.event == 'workflow_dispatch'" in workflow
+    assert "github.event.workflow_run.conclusion == 'success'" in workflow
