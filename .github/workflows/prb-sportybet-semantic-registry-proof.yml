@@ -1,0 +1,95 @@
+name: PR-B SportyBet Semantic Registry Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  semantic-registry-proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.number != 0 &&
+       github.head_ref == 'feat/prb-sportybet-semantic-registry')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run bounded current-provider semantic proof
+        env:
+          PROOF_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          PROOF_BASE_SHA: ${{ github.event.pull_request.base.sha || '' }}
+        run: |
+          if [[ -z "${PROOF_BASE_SHA}" ]]; then
+            PROOF_BASE_SHA="$(git ls-remote origin refs/heads/main | awk '{print $1}')"
+          fi
+          if [[ ! "${PROOF_HEAD_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "proof head is not an exact 40-hex commit SHA" >&2
+            exit 1
+          fi
+          if [[ ! "${PROOF_BASE_SHA}" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "proof base is not an exact 40-hex commit SHA" >&2
+            exit 1
+          fi
+          python -m scripts.run_prb_sportybet_semantic_registry_proof \
+            --repository-root . \
+            --output-dir .cache/athena-research/prb-sportybet-semantic-registry-proof \
+            --head-sha "${PROOF_HEAD_SHA}" \
+            --base-sha "${PROOF_BASE_SHA}"
+
+      - name: Show registry digest and coverage
+        if: always()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('.cache/athena-research/prb-sportybet-semantic-registry-proof/proof.json')
+          if path.exists():
+              proof = json.loads(path.read_text(encoding='utf-8'))
+              print(json.dumps({
+                  'head_sha': proof.get('head_sha'),
+                  'base_sha': proof.get('base_sha'),
+                  'registry_sha256': proof.get('registry_sha256'),
+                  'discovery_manifest_sha256': proof.get('discovery_manifest_sha256'),
+                  'attempts': proof.get('attempts'),
+                  'authority': proof.get('authority'),
+                  'coverage': [
+                      {'market_id': row['canonical_market_id'],
+                       'provider_status': row['provider_status'],
+                       'blocker': row['blocker']}
+                      for row in proof['registry']['coverage']
+                  ],
+              }, sort_keys=True, indent=2))
+          else:
+              print('proof.json was not produced')
+          PY
+
+      - name: Upload semantic registry proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: prb-sportybet-semantic-registry-proof
+          path: .cache/athena-research/prb-sportybet-semantic-registry-proof
+          if-no-files-found: warn
+          retention-days: 14
