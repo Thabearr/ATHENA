@@ -47,6 +47,86 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Authenticate continuity dispatch source
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          CONTINUITY_SOURCE_WATCHDOG_RUN_ID: ${{ inputs.continuity_source_watchdog_run_id }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import time
+          import domain.fotmob_fresh_holdout_continuity as continuity
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          try:
+              source_run_id = int(os.environ["CONTINUITY_SOURCE_WATCHDOG_RUN_ID"])
+          except ValueError as exc:
+              raise SystemExit("continuity watchdog run id is not an integer") from exc
+
+          current_main = subprocess.check_output(
+              ["gh", "api", f"/repos/{repo}/git/ref/heads/main", "--jq", ".object.sha"],
+              text=True,
+          ).strip()
+          checkout_head = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          if checkout_head != current_main:
+              raise SystemExit("continuity dispatch checkout is not exact current main")
+
+          source_run = None
+          for _attempt in range(31):
+              source_run = json.loads(
+                  subprocess.check_output(
+                      ["gh", "api", f"/repos/{repo}/actions/runs/{source_run_id}"],
+                      text=True,
+                  )
+              )
+              if source_run.get("status") == "completed":
+                  break
+              time.sleep(2)
+          if source_run is None or source_run.get("status") != "completed":
+              raise SystemExit("continuity source watchdog did not complete within reviewed wait")
+          if source_run.get("conclusion") != "success":
+              raise SystemExit("continuity source watchdog did not complete successfully")
+
+          try:
+              continuity.validate_watchdog_source_run(
+                  source_run,
+                  expected_run_id=source_run_id,
+                  expected_main_sha=current_main,
+              )
+              jobs = json.loads(
+                  subprocess.check_output(
+                      [
+                          "gh", "api",
+                          f"/repos/{repo}/actions/runs/{source_run_id}/jobs?per_page=100",
+                      ],
+                      text=True,
+                  )
+              )
+              continuity.validate_watchdog_source_jobs(
+                  jobs,
+                  expected_run_id=source_run_id,
+                  expected_main_sha=current_main,
+              )
+          except continuity.FreshHoldoutContinuityError as exc:
+              raise SystemExit(
+                  f"continuity source watchdog did not prove the reviewed dispatch path: {exc}"
+              ) from exc
+
+          print(
+              "continuity dispatch source authenticated from completed natural watchdog "
+              f"run {source_run_id} on exact main {current_main}"
+          )
+          PY
+
       - name: Restore newest durable lineage and resolve schedule slot
         id: state
         env:
