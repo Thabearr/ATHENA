@@ -82,7 +82,7 @@ jobs:
           set -euo pipefail
           current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           test "$(git rev-parse HEAD)" = "${current_main}"
-          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "127fea37fb922f8de45db0523538139f5cc34265"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "0920e76639d4f45061afa7e08594c677c8bb6dca"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "3f42e9f57af96d489cbc59db9c5c9df65750a5f4"
           test "$(git rev-parse HEAD:scripts/check_fotmob_fresh_holdout_scheduler_liveness.py)" = "ba86f537b9c83930d84b8cab87844cc82e6f4dd8"
 
