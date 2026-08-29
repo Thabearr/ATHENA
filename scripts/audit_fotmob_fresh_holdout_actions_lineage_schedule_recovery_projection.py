@@ -9,6 +9,11 @@ could not contain a provider observation:
 * exact zero-artifact pre-acquisition failures admitted by the current reviewed
   producer-side proof.
 
+The current producer also contains the separately source-authenticated prospective
+continuity transport. This projection pins that current producer/helper identity but
+continues to classify only naturally scheduled collection candidates; continuity
+transport evidence is independently source-replayed by its receipt-mirror boundary.
+
 The second allowance matches the post-PR207 producer boundary. A proven
 pre-acquisition failure may be transparent even after canonical campaign evidence
 exists, but projecting it out never reopens Genesis: the unchanged audit engine
@@ -26,8 +31,8 @@ import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as pr
 
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
-POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
-SCHEDULE_RECOVERY_BLOB_SHA = "73ed6ef7cdcc79b43373a78c60b5f2b6dd601095"
+POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "0920e76639d4f45061afa7e08594c677c8bb6dca"
+SCHEDULE_RECOVERY_BLOB_SHA = "e24929813e5666c5477aa8906cf36cc7ef6ffcc4"
 SCHEDULE_RECOVERY_PATH = (
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
 )
