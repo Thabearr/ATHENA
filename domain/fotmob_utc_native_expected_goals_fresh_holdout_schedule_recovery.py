@@ -5,6 +5,11 @@ cron occurrence is plausible. ATHENA must not guess which occurrence produced th
 run. This module lets such a run finish as a proven no-acquisition control no-op,
 then permits a later run to step across that no-op only when GitHub job metadata
 proves the reviewed collection path never reached acquisition or persistence.
+
+The same rule applies to the prospective continuity transport: if durable lineage
+already attempted the exact future target, the continuity dispatch must become a
+green zero-artifact no-op and may be stepped across only after exact job metadata
+proves every acquisition/persistence step was skipped.
 """
 from __future__ import annotations
 
@@ -19,11 +24,28 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage as 
 
 
 AMBIGUOUS_NO_ACQUISITION_DISPOSITION = "AMBIGUOUS_NO_ACQUISITION"
+CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION = (
+    "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION"
+)
 RESOLVED_DISPOSITION = "RESOLVED"
 _AMBIGUOUS_MARKER_STEP = "Acknowledge ambiguous schedule without acquisition"
+_CONTINUITY_MARKER_STEP = (
+    "Acknowledge continuity slot already attempted without acquisition"
+)
 _NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
     "Restore newest durable lineage and resolve schedule slot": "success",
     _AMBIGUOUS_MARKER_STEP: "success",
+    "Restore or materialize PR119 bootstrap projection": "skipped",
+    "Execute reviewed fresh-holdout collection tick": "skipped",
+    "Reconcile any staged capture lineage": "skipped",
+    "Package durable state archive": "skipped",
+    "Upload authoritative 90-day Actions artifact": "skipped",
+    "Publish and verify long-lived evidence release asset": "skipped",
+}
+_CONTINUITY_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
+    "Restore newest durable lineage and resolve schedule slot": "success",
+    _AMBIGUOUS_MARKER_STEP: "skipped",
+    _CONTINUITY_MARKER_STEP: "success",
     "Restore or materialize PR119 bootstrap projection": "skipped",
     "Execute reviewed fresh-holdout collection tick": "skipped",
     "Reconcile any staged capture lineage": "skipped",
@@ -46,19 +68,21 @@ def is_ambiguous_schedule_occurrence_error(exc: BaseException) -> bool:
     )
 
 
-def _prove_ambiguous_no_acquisition_success(
+def _prove_green_zero_artifact_path(
     run: Mapping[str, Any],
     artifact_data: Mapping[str, Any],
     get_run_jobs: Callable[[int], Mapping[str, Any]],
+    *,
+    expected_event: str,
+    required_step_outcomes: Mapping[str, str],
 ) -> bool:
-    """Prove a completed green run was the exact reviewed ambiguous no-op path."""
     run_id = run.get("id")
     if type(run_id) is not int or run_id < 1 or run.get("conclusion") != "success":
         return False
     created_at = lineage._run_created_at(run, run_id)
     if created_at is None or created_at < control.holdout_start_utc():
         return False
-    if run.get("event") != "schedule" or run.get("head_branch") != "main":
+    if run.get("event") != expected_event or run.get("head_branch") != "main":
         return False
     artifacts = artifact_data.get("artifacts")
     if type(artifacts) is not list or artifacts:
@@ -105,13 +129,43 @@ def _prove_ambiguous_no_acquisition_success(
             )
         by_name[name] = step
 
-    for name, expected in _NO_ACQUISITION_REQUIRED_STEP_OUTCOMES.items():
+    for name, expected in required_step_outcomes.items():
         step = by_name.get(name)
         if step is None or step.get("status") != "completed":
             return False
         if step.get("conclusion") != expected:
             return False
     return True
+
+
+def _prove_ambiguous_no_acquisition_success(
+    run: Mapping[str, Any],
+    artifact_data: Mapping[str, Any],
+    get_run_jobs: Callable[[int], Mapping[str, Any]],
+) -> bool:
+    """Prove a completed green run was the exact reviewed ambiguous no-op path."""
+    return _prove_green_zero_artifact_path(
+        run,
+        artifact_data,
+        get_run_jobs,
+        expected_event="schedule",
+        required_step_outcomes=_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES,
+    )
+
+
+def _prove_continuity_duplicate_no_acquisition_success(
+    run: Mapping[str, Any],
+    artifact_data: Mapping[str, Any],
+    get_run_jobs: Callable[[int], Mapping[str, Any]],
+) -> bool:
+    """Prove an exact workflow-dispatch continuity duplicate made no observation."""
+    return _prove_green_zero_artifact_path(
+        run,
+        artifact_data,
+        get_run_jobs,
+        expected_event="workflow_dispatch",
+        required_step_outcomes=_CONTINUITY_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES,
+    )
 
 
 def _has_pre_campaign_completed_run(
@@ -139,7 +193,7 @@ def restore_latest_lineage_state(
     get_run_jobs: Callable[[int], Mapping[str, Any]] | None = None,
     repository_root: Path | None = None,
 ) -> lineage.RestoredFailureLineage:
-    """Restore canonical lineage while stepping over proven green ambiguity no-ops."""
+    """Restore lineage while stepping over exact proven zero-observation no-ops."""
     jobs_reader = get_run_jobs or lineage._github_run_jobs
     filtered: list[Mapping[str, Any]] = []
     skipped_noops: list[int] = []
@@ -191,11 +245,16 @@ def restore_latest_lineage_state(
             stop_scanning = True
             continue
         if candidate.get("conclusion") == "success":
-            if _prove_ambiguous_no_acquisition_success(
+            proven_noop = _prove_ambiguous_no_acquisition_success(
                 candidate,
                 artifact_data,
                 jobs_reader,
-            ):
+            ) or _prove_continuity_duplicate_no_acquisition_success(
+                candidate,
+                artifact_data,
+                jobs_reader,
+            )
+            if proven_noop:
                 eligible_noop_ids.add(run_id)
                 skipped_noops.append(run_id)
                 continue
@@ -260,6 +319,7 @@ FreshHoldoutFailureLineageError = lineage.FreshHoldoutFailureLineageError
 
 __all__ = [
     "AMBIGUOUS_NO_ACQUISITION_DISPOSITION",
+    "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION",
     "RESOLVED_DISPOSITION",
     "FreshHoldoutFailureLineageError",
     "RestoredFailureLineage",
