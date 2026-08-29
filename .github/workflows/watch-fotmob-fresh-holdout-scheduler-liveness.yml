@@ -310,25 +310,36 @@ jobs:
                       fh.write("dispatch_reason=MAIN_CHANGED_NO_DISPATCH\n")
               raise SystemExit(0)
 
-          target = dt.datetime.fromisoformat(target_text.replace("Z", "+00:00"))
-          plan = continuity.ContinuityPlan(
-              source_watchdog_created_at=target - dt.timedelta(minutes=4),
-              target_slot=target,
-              target_cron=target_cron,
+          source_run = json.loads(
+              subprocess.check_output(
+                  ["gh", "api", f"/repos/{repo}/actions/runs/{source_run_id}"],
+                  text=True,
+              )
           )
           try:
+              source_created = continuity.validate_watchdog_source_run(
+                  source_run,
+                  expected_run_id=source_run_id,
+                  expected_main_sha=main_sha,
+              )
+              plan = continuity.plan_from_watchdog_created_at(source_created)
+              if plan.target_slot_text != target_text or plan.target_cron != target_cron:
+                  raise continuity.FreshHoldoutContinuityError(
+                      "revalidated watchdog plan differs from originally planned target"
+                  )
               continuity.seconds_until_dispatch_check(
                   plan,
                   now=dt.datetime.now(dt.timezone.utc),
               )
           except continuity.FreshHoldoutContinuityError as exc:
-              print(f"dispatch window expired; no continuity dispatch: {exc}")
+              print(f"continuity provenance/window revalidation blocked dispatch: {exc}")
               if output:
                   with open(output, "a", encoding="utf-8") as fh:
                       fh.write("dispatch_requested=false\n")
-                      fh.write("dispatch_reason=WINDOW_EXPIRED_NO_DISPATCH\n")
+                      fh.write("dispatch_reason=PROVENANCE_OR_WINDOW_CHANGED_NO_DISPATCH\n")
               raise SystemExit(0)
 
+          target = plan.target_slot
           runs = json.loads(
               subprocess.check_output(
                   [
