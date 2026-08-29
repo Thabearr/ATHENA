@@ -2,7 +2,9 @@ name: Watch FotMob Fresh-Holdout Scheduler Liveness
 
 on:
   # Independent control-plane cadence, deliberately offset from the reviewed
-  # :07/:37 collection lattice. This workflow never performs collection.
+  # :07/:37 collection lattice. This workflow never calls FotMob itself. A
+  # naturally scheduled delivery may request one separately validated future
+  # primary-workflow continuity tick after a short primary-delivery grace.
   schedule:
     - cron: '3,33 * * * *'
   issue_comment:
@@ -29,7 +31,7 @@ jobs:
         startsWith(github.event.comment.body, '/athena-repair-fresh-holdout-scheduler')
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 45
 
     steps:
       - name: Validate exact control trigger
@@ -80,7 +82,8 @@ jobs:
           set -euo pipefail
           current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           test "$(git rev-parse HEAD)" = "${current_main}"
-          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
+          test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "3f42e9f57af96d489cbc59db9c5c9df65750a5f4"
           test "$(git rev-parse HEAD:scripts/check_fotmob_fresh_holdout_scheduler_liveness.py)" = "ba86f537b9c83930d84b8cab87844cc82e6f4dd8"
 
       - name: Fetch authoritative workflow liveness metadata
@@ -190,4 +193,232 @@ jobs:
         shell: bash
         run: |
           echo "Primary fresh-holdout scheduler is healthy or currently active; no control-plane mutation performed."
-          echo "No collection, acquisition, backfill, or authority change was authorized."
+          echo "No collection, acquisition, backfill, or authority change was authorized by the liveness decision."
+
+      - name: Plan one prospective continuity slot
+        id: continuity_plan
+        if: github.event_name == 'schedule'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WATCHDOG_RUN_ID: ${{ github.run_id }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import subprocess
+          import domain.fotmob_fresh_holdout_continuity as continuity
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          run_id = int(os.environ["WATCHDOG_RUN_ID"])
+          output = os.environ.get("GITHUB_OUTPUT")
+          main_sha = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          run_data = json.loads(
+              subprocess.check_output(
+                  ["gh", "api", f"/repos/{repo}/actions/runs/{run_id}"],
+                  text=True,
+              )
+          )
+          try:
+              created = continuity.validate_watchdog_source_run(
+                  run_data,
+                  expected_run_id=run_id,
+                  expected_main_sha=main_sha,
+              )
+          except continuity.FreshHoldoutContinuityError as exc:
+              if "watchdog source head differs from the pinned main SHA" in str(exc):
+                  if output:
+                      with open(output, "a", encoding="utf-8") as fh:
+                          fh.write("continuity_disposition=SOURCE_HEAD_CHANGED_NO_DISPATCH\n")
+                  print(f"SOURCE_HEAD_CHANGED_NO_DISPATCH: {exc}")
+                  raise SystemExit(0)
+              raise
+
+          plan = continuity.plan_from_watchdog_created_at(created)
+          wait_seconds = continuity.seconds_until_dispatch_check(
+              plan,
+              now=dt.datetime.now(dt.timezone.utc),
+          )
+          if output:
+              with open(output, "a", encoding="utf-8") as fh:
+                  fh.write("continuity_disposition=PLANNED\n")
+                  fh.write(f"target_slot={plan.target_slot_text}\n")
+                  fh.write(f"target_cron={plan.target_cron}\n")
+                  fh.write(f"wait_seconds={wait_seconds}\n")
+          print(
+              "prospective continuity plan: "
+              f"target={plan.target_slot_text} cron={plan.target_cron} "
+              f"wait_seconds={wait_seconds}"
+          )
+          PY
+
+      - name: Wait through natural primary delivery grace
+        if: steps.continuity_plan.outputs.continuity_disposition == 'PLANNED'
+        shell: bash
+        env:
+          WAIT_SECONDS: ${{ steps.continuity_plan.outputs.wait_seconds }}
+        run: |
+          set -euo pipefail
+          test "${WAIT_SECONDS}" -ge 0
+          test "${WAIT_SECONDS}" -le 2490
+          sleep "${WAIT_SECONDS}"
+
+      - name: Dispatch prospective continuity tick if primary delivery is absent
+        id: continuity_dispatch
+        if: steps.continuity_plan.outputs.continuity_disposition == 'PLANNED'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          WATCHDOG_RUN_ID: ${{ github.run_id }}
+          TARGET_SLOT: ${{ steps.continuity_plan.outputs.target_slot }}
+          TARGET_CRON: ${{ steps.continuity_plan.outputs.target_cron }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import subprocess
+          import domain.fotmob_fresh_holdout_continuity as continuity
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          target_text = os.environ["TARGET_SLOT"]
+          target_cron = os.environ["TARGET_CRON"]
+          source_run_id = int(os.environ["WATCHDOG_RUN_ID"])
+          output = os.environ.get("GITHUB_OUTPUT")
+
+          main_sha = subprocess.check_output(
+              ["gh", "api", f"/repos/{repo}/git/ref/heads/main", "--jq", ".object.sha"],
+              text=True,
+          ).strip()
+          checkout_sha = subprocess.check_output(
+              ["git", "rev-parse", "HEAD"], text=True
+          ).strip()
+          if main_sha != checkout_sha:
+              print("main changed after watchdog planning; no continuity dispatch")
+              if output:
+                  with open(output, "a", encoding="utf-8") as fh:
+                      fh.write("dispatch_requested=false\n")
+                      fh.write("dispatch_reason=MAIN_CHANGED_NO_DISPATCH\n")
+              raise SystemExit(0)
+
+          source_run = json.loads(
+              subprocess.check_output(
+                  ["gh", "api", f"/repos/{repo}/actions/runs/{source_run_id}"],
+                  text=True,
+              )
+          )
+          try:
+              source_created = continuity.validate_watchdog_source_run(
+                  source_run,
+                  expected_run_id=source_run_id,
+                  expected_main_sha=main_sha,
+              )
+              plan = continuity.plan_from_watchdog_created_at(source_created)
+              if plan.target_slot_text != target_text or plan.target_cron != target_cron:
+                  raise continuity.FreshHoldoutContinuityError(
+                      "revalidated watchdog plan differs from originally planned target"
+                  )
+              continuity.seconds_until_dispatch_check(
+                  plan,
+                  now=dt.datetime.now(dt.timezone.utc),
+              )
+          except continuity.FreshHoldoutContinuityError as exc:
+              print(f"continuity provenance/window revalidation blocked dispatch: {exc}")
+              if output:
+                  with open(output, "a", encoding="utf-8") as fh:
+                      fh.write("dispatch_requested=false\n")
+                      fh.write("dispatch_reason=PROVENANCE_OR_WINDOW_CHANGED_NO_DISPATCH\n")
+              raise SystemExit(0)
+
+          target = plan.target_slot
+          runs = json.loads(
+              subprocess.check_output(
+                  [
+                      "gh", "api",
+                      f"/repos/{repo}/actions/workflows/fotmob-utc-native-xg-fresh-holdout.yml/runs?event=schedule&per_page=20",
+                  ],
+                  text=True,
+              )
+          ).get("workflow_runs", [])
+          earliest = target - dt.timedelta(seconds=continuity.MAXIMUM_DISPATCH_EARLY_SECONDS)
+          latest = target + dt.timedelta(seconds=continuity.PRIMARY_DELIVERY_GRACE_SECONDS)
+          natural = []
+          for run in runs:
+              created_text = run.get("created_at")
+              if type(created_text) is not str:
+                  continue
+              created = dt.datetime.fromisoformat(
+                  created_text.replace("Z", "+00:00")
+              ).astimezone(dt.timezone.utc)
+              if earliest <= created <= latest:
+                  natural.append(run)
+          if natural:
+              print(
+                  "natural primary delivery exists in the exact target grace window; "
+                  "continuity dispatch not requested"
+              )
+              if output:
+                  with open(output, "a", encoding="utf-8") as fh:
+                      fh.write("dispatch_requested=false\n")
+                      fh.write("dispatch_reason=NATURAL_PRIMARY_DELIVERY_PRESENT\n")
+                      fh.write(f"natural_primary_run_id={natural[0].get('id')}\n")
+              raise SystemExit(0)
+
+          subprocess.check_call(
+              [
+                  "gh", "workflow", "run", "fotmob-utc-native-xg-fresh-holdout.yml",
+                  "--ref", "main",
+                  "--repo", repo,
+                  "-f", f"continuity_source_watchdog_run_id={source_run_id}",
+                  "-f", f"continuity_target_slot={target_text}",
+                  "-f", f"continuity_target_cron={target_cron}",
+                  "-f", f"continuity_confirmation={continuity.CONTINUITY_CONFIRMATION}",
+              ]
+          )
+          print(
+              "requested one prospective continuity dispatch for exact future slot "
+              f"{target_text}; no provider request was made by this watchdog"
+          )
+          if output:
+              with open(output, "a", encoding="utf-8") as fh:
+                  fh.write("dispatch_requested=true\n")
+                  fh.write("dispatch_reason=PRIMARY_DELIVERY_ABSENT\n")
+          PY
+
+      - name: Record prospective continuity dispatch request
+        if: steps.continuity_dispatch.outputs.dispatch_requested == 'true'
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const lines = [
+              'ATHENA FRESH-HOLDOUT PROSPECTIVE CONTINUITY DISPATCH',
+              '',
+              `source-watchdog-run-id: ${context.runId}`,
+              `target-slot: ${{ steps.continuity_plan.outputs.target_slot }}`,
+              `target-cron: ${{ steps.continuity_plan.outputs.target_cron }}`,
+              'primary-natural-delivery-present-in-grace-window: false',
+              'primary-workflow-dispatch-requested: true',
+              'provider-network-acquisition-performed-by-watchdog: false',
+              'historical-slot-selected: false',
+              'missed-observation-reconstruction-performed: false',
+              'backfill-authorized: false',
+              'production-authorized: false',
+              'pricing-authorized: false',
+              'selection-authorized: false',
+              'bet-authorized: false',
+            ];
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: 172,
+              body: lines.join('\n'),
+            });

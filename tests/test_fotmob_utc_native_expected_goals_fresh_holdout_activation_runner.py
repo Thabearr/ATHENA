@@ -808,7 +808,16 @@ def test_workflow_installs_no_pypi_packages() -> None:
     assert "cancel-in-progress: false" in text
     assert "actions: read" in text
     assert "contents: write" in text
-    assert "workflow_dispatch:" not in text
+    assert "workflow_dispatch:" in text
+    for required_input in (
+        "continuity_source_watchdog_run_id:",
+        "continuity_target_slot:",
+        "continuity_target_cron:",
+        "continuity_confirmation:",
+    ):
+        assert required_input in text
+    assert "Authenticate continuity dispatch source" in text
+    assert "PROSPECTIVE_ONLY_NO_BACKFILL_V1" in text
     assert "--execute-live-network" in text
     assert "athena-fresh-holdout-bootstrap-v1" in text
     assert "success_asset" in text

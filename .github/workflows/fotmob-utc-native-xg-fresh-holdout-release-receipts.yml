@@ -18,7 +18,12 @@ permissions:
 jobs:
   mirror:
     name: verify archive or proven no-acquisition disposition
-    if: ${{ github.event.workflow_run.event == 'schedule' && github.event.workflow_run.conclusion == 'success' }}
+    if: >-
+      ${{
+        (github.event.workflow_run.event == 'schedule' ||
+         github.event.workflow_run.event == 'workflow_dispatch') &&
+        github.event.workflow_run.conclusion == 'success'
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -42,13 +47,19 @@ jobs:
             exit 1
           }
           recovery_actual="$(git hash-object domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)"
-          recovery_expected="73ed6ef7cdcc79b43373a78c60b5f2b6dd601095"
+          recovery_expected="e24929813e5666c5477aa8906cf36cc7ef6ffcc4"
           test "${recovery_actual}" = "${recovery_expected}" || {
             echo "FATAL: reviewed no-acquisition proof implementation blob changed"
             exit 1
           }
+          continuity_actual="$(git hash-object domain/fotmob_fresh_holdout_continuity.py)"
+          continuity_expected="3f42e9f57af96d489cbc59db9c5c9df65750a5f4"
+          test "${continuity_actual}" = "${continuity_expected}" || {
+            echo "FATAL: reviewed prospective continuity provenance implementation blob changed"
+            exit 1
+          }
           transport_actual="$(git hash-object scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)"
-          transport_expected="69166bf26c32f2385c9b26d651292754dae85be0"
+          transport_expected="57839269ff3968b38445112c16f5b3ab749eb997"
           test "${transport_actual}" = "${transport_expected}" || {
             echo "FATAL: release-receipt Actions transport/compatibility blob changed"
             exit 1

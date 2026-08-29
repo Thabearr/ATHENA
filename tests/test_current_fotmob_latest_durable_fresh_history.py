@@ -160,6 +160,7 @@ def _fake_projected_audit(
     expected_main_sha,
     get_main_ref,
     get_runs_page,
+    get_run_by_id,
     get_run_artifacts,
     download_artifact_zip,
     get_release,
@@ -167,7 +168,7 @@ def _fake_projected_audit(
     get_run_jobs,
     repository_root=None,
 ):
-    del get_release, download_release_asset, get_run_jobs, repository_root
+    del get_run_by_id, get_release, download_release_asset, get_run_jobs, repository_root
     main = get_main_ref()
     observed = (
         main.get("object", {}).get("sha")
@@ -199,6 +200,11 @@ def _fake_projected_audit(
                     "created_at": run["created_at"],
                     "conclusion": run["conclusion"],
                     "evidence_state": state,
+                    "execution_provenance": (
+                        "PROSPECTIVE_CONTINUITY_DISPATCH"
+                        if run.get("event") == "workflow_dispatch"
+                        else "NATURAL_SCHEDULE"
+                    ),
                     "archive_name": artifact["name"],
                     "actions_artifact_zip_sha256": zip_sha,
                     "release_state": run["test_release_state"],
@@ -211,6 +217,11 @@ def _fake_projected_audit(
                     "created_at": run["created_at"],
                     "conclusion": run["conclusion"],
                     "evidence_state": state,
+                    "execution_provenance": (
+                        "PROSPECTIVE_CONTINUITY_DISPATCH"
+                        if run.get("event") == "workflow_dispatch"
+                        else "NATURAL_SCHEDULE"
+                    ),
                     "archive_name": None,
                     "actions_artifact_zip_sha256": None,
                     "release_state": run["test_release_state"],
@@ -246,6 +257,9 @@ def _readers(*, runs: list[dict], artifacts: dict[int, dict], zips: dict[int, by
             {"workflow_runs": list(runs)}
             if (page, per_page) == (1, 100)
             else {"workflow_runs": []}
+        ),
+        "get_run_by_id": lambda run_id: next(
+            run for run in runs if run.get("id") == run_id
         ),
         "get_run_artifacts": lambda run_id: {"artifacts": [artifacts[run_id]]},
         "download_artifact_zip": lambda artifact_id: zips[artifact_id],
@@ -292,6 +306,9 @@ def _github_evidence(
         get_runs_page=lambda page, per_page: recorder.json(
             f"runs:{page}:{per_page}",
             lambda: readers["get_runs_page"](page, per_page),
+        ),
+        get_run_by_id=lambda run_id: recorder.json(
+            f"run:{run_id}", lambda: readers["get_run_by_id"](run_id)
         ),
         get_run_artifacts=lambda run_id: recorder.json(
             f"artifacts:{run_id}",
@@ -493,6 +510,49 @@ def test_future_success_commit_does_not_displace_as_of_prefix(
         extra_materials=(future,),
     )
     assert source.selected_prefix == lower
+
+
+def test_newest_verified_continuity_success_is_selected_for_current_history(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_observed = dt.datetime(2026, 8, 27, 8, 0, tzinfo=UTC)
+    lower, *_rest = _lower(tmp_path, monkeypatch, observed_at=source_observed)
+    selected_artifact, selected_zip, selected_run = _selected_run_material(lower)
+    continuity_artifact, continuity_zip, continuity_run = _synthetic_success_artifact(
+        artifact_id=9005,
+        run_id=90005,
+        nominal=dt.datetime(2026, 8, 27, 7, 7, tzinfo=UTC),
+        committed_at=dt.datetime(2026, 8, 27, 7, 10, tzinfo=UTC),
+    )
+    continuity_run["event"] = "workflow_dispatch"
+    evidence = _github_evidence(
+        monkeypatch,
+        runs=[selected_run, continuity_run],
+        artifacts={
+            selected_run["id"]: selected_artifact,
+            continuity_run["id"]: continuity_artifact,
+        },
+        zips={
+            selected_artifact["id"]: selected_zip,
+            continuity_artifact["id"]: continuity_zip,
+        },
+    )
+
+    chosen, _artifact, _zip_bytes, _metadata_digest = latest._select_latest_material(
+        evidence=evidence,
+        source_observed_at=source_observed,
+    )
+
+    assert chosen.run_id == continuity_run["id"]
+    continuity_record = next(
+        record
+        for record in evidence.audit_result["runs"]
+        if record["run_id"] == continuity_run["id"]
+    )
+    assert continuity_record["execution_provenance"] == (
+        "PROSPECTIVE_CONTINUITY_DISPATCH"
+    )
 
 
 def test_stale_selected_prefix_is_rejected_when_newer_success_already_committed(

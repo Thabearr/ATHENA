@@ -270,7 +270,8 @@ def test_workflow_is_post_run_only_and_pins_implementation_blob() -> None:
         ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
     ).read_text(encoding="utf-8")
     assert "workflow_run:" in workflow
-    assert "workflow_dispatch" not in workflow
+    assert "\n  workflow_dispatch:\n" not in workflow
+    assert "github.event.workflow_run.event == 'workflow_dispatch'" in workflow
     assert "schedule:" not in workflow
     assert mirror.WORKFLOW_NAME in workflow
     assert "ddabb6ae83cbe6c81c9264119a121a54715df960" in workflow
