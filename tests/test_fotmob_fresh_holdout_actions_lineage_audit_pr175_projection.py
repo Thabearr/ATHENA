@@ -54,8 +54,10 @@ def test_projection_retains_historical_pr175_pin_and_recovery_owns_current_workf
         recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
         == _git_blob_sha(COLLECTION_WORKFLOW)
     )
-    assert recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA == (
-        "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb"
+    # Historical producer identity remains preserved as provenance, while the
+    # recovery projection owns the exact current continuity-capable producer.
+    assert "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb" != (
+        recovery_projection.POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA
     )
 
 
@@ -83,6 +85,7 @@ def test_control_workflow_verifies_current_collection_and_projection_blobs():
     parsed = yaml.safe_load(text)
     assert isinstance(parsed, dict)
     assert "eb6cfd3966d7040f630fc3a51c6cad41b171bcfb" in text
+    assert _git_blob_sha(COLLECTION_WORKFLOW) in text
     assert "d48b1ff823277445e3b496876caca6b01480ece9" in text
     assert _git_blob_sha(PROJECTION_SCRIPT) in text
     assert _git_blob_sha(RECOVERY_PROJECTION_SCRIPT) in text
