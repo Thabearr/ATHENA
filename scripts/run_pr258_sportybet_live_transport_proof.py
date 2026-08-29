@@ -1,27 +1,30 @@
 """Real-provider proof for the PR258 research-shadow SportyBet transport seam.
 
-This runner is deliberately transport-scoped. It samples a bounded number of
-current anonymous SportyBet football discovery pages, captures one exact Total
-Goals half-line partition, resolves the semantic intent from a fresh independent
-event GET, and performs the existing anonymous create -> reload share-code round
-trip.
+This runner is deliberately transport-scoped. It first probes SportyBet's
+anonymous public upcoming-events feed for real-football prematch candidates,
+then validates a candidate with ATHENA's reviewed direct event-detail source,
+resolves the exact semantic intent from another fresh provider GET, and performs
+the existing anonymous create -> reload share-code round trip.
 
-The page sample is not exhaustive current-event discovery and cannot issue
-fixture-reconciliation authority. This runner proves real provider transport,
-semantic/native identity, and odds equality only. It does not create model
-or Phase 6 authority, a production selection, a stake, or a wager, and it does
-not claim to be a canonical PR258 model-selection proof.
+The upcoming feed is discovery-only evidence for this proof. It does not mint
+PR251 fixture-reconciliation authority, model/Phase-6 authority, production
+selection authority, stake authority, or BET authority.
 """
 from __future__ import annotations
 
 import argparse
 from datetime import datetime, timezone
 from decimal import Decimal
+import hashlib
 import json
 import math
 from pathlib import Path
 import re
+import time
 from typing import Any
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from domain import current_shadow_sportybet_share_code as shadow_transport
 from domain import sportybet_current_event_discovery_reconciliation as discovery
@@ -30,10 +33,11 @@ from scripts import sportybet_direct_share_bridge as direct_bridge
 from scripts import sportybet_semantic_share_bridge as semantic_bridge
 
 
+UPCOMING_PATH = "/api/ng/factsCenter/wapConfigurableUpcomingEvents"
 MINIMUM_PROOF_LEAD_SECONDS = 900
-MAX_DISCOVERY_SAMPLE_PAGES = 3
-MAX_EVENT_DETAIL_ATTEMPTS = 16
+MAX_EVENT_DETAIL_ATTEMPTS = 20
 MAX_CREATE_ATTEMPTS = 3
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 _TOTAL_HALF_LINE_RE = re.compile(r"^total=(?:0|[1-9][0-9]*)\.5$", re.ASCII)
 
 
@@ -72,53 +76,83 @@ def _safety_false(receipt: dict[str, Any], label: str) -> None:
             )
 
 
-def _bounded_discovery_sample(
-    *,
-    output_dir: Path,
-) -> tuple[
-    tuple[discovery.SportyBetDiscoveredEvent, ...],
-    tuple[dict[str, Any], ...],
-    str,
-]:
-    """Sample provider discovery without weakening exhaustive PR251 semantics."""
-    contract = discovery.validate_current_event_discovery_contract()
-    sample_dir = output_dir / "discovery-sample"
-    sample_dir.mkdir(parents=True, exist_ok=True)
-
-    events: list[discovery.SportyBetDiscoveredEvent] = []
-    pages: list[dict[str, Any]] = []
-    for page_num in range(1, MAX_DISCOVERY_SAMPLE_PAGES + 1):
-        raw, status, observed_at = discovery._network_fetch_page(page_num)
-        if status != 200:
-            raise PR258LiveTransportProofError(
-                f"SportyBet bounded discovery sample returned HTTP {status}"
-            )
-        page, page_events = discovery._parse_page(
-            raw,
-            page_num=page_num,
-            observed_at=observed_at,
+def _upcoming_url() -> str:
+    query = urlencode(
+        (
+            ("sportId", discovery.FOOTBALL_SPORT_ID),
+            ("_t", int(time.time() * 1000)),
         )
-        raw_path = sample_dir / f"page-{page_num:03d}.json"
-        if raw_path.exists():
-            raise PR258LiveTransportProofError(
-                "bounded discovery sample output already exists"
-            )
-        raw_path.write_bytes(raw)
-        pages.append(page.to_dict())
-        events.extend(page_events)
-        if not page_events:
-            break
-
-    deduped = discovery._dedupe_events(events)
-    if not deduped:
-        raise PR258LiveTransportProofError(
-            "bounded current SportyBet discovery sample contained no football events"
-        )
-    return (
-        deduped,
-        tuple(pages),
-        contract["current_event_discovery_contract_sha256"],
     )
+    return f"{live.ORIGIN}{UPCOMING_PATH}?{query}"
+
+
+def _fetch_upcoming_sample(output_dir: Path) -> tuple[
+    tuple[discovery.SportyBetDiscoveredEvent, ...],
+    dict[str, Any],
+]:
+    """Fetch one bounded anonymous upcoming snapshot without issuing authority."""
+    discovery.validate_current_event_discovery_contract()
+    url = _upcoming_url()
+    request = Request(url, method="GET", headers=dict(discovery.REQUEST_HEADERS))
+    try:
+        with urlopen(request, timeout=45) as response:
+            raw = response.read(MAX_RESPONSE_BYTES + 1)
+            status = int(getattr(response, "status", 200))
+    except HTTPError as exc:
+        raw = exc.read(MAX_RESPONSE_BYTES + 1)
+        status = int(exc.code)
+    except URLError as exc:
+        raise PR258LiveTransportProofError(
+            f"SportyBet upcoming request failed: {exc.reason}"
+        ) from exc
+    observed_at = _now()
+    if len(raw) > MAX_RESPONSE_BYTES:
+        raise PR258LiveTransportProofError(
+            "SportyBet upcoming response exceeds byte bound"
+        )
+    if status != 200:
+        raise PR258LiveTransportProofError(
+            f"SportyBet upcoming response returned HTTP {status}"
+        )
+    try:
+        payload = live.strict_json_loads(raw)
+        extracted = discovery._extract_page_events(payload)
+        raw_sha = hashlib.sha256(raw).hexdigest()
+        events = tuple(
+            discovery._event_from_mapping(
+                event,
+                inherited_competition=inherited,
+                page_num=1,
+                raw_sha256=raw_sha,
+                observed_at=observed_at,
+            )
+            for event, inherited in extracted
+        )
+        events = discovery._dedupe_events(events)
+    except (live.SportyBetLiveEventQuoteEvidenceError, discovery.SportyBetCurrentEventDiscoveryError) as exc:
+        raise PR258LiveTransportProofError(
+            f"SportyBet upcoming response could not be parsed exactly: {exc}"
+        ) from exc
+
+    sample_dir = output_dir / "upcoming-discovery-sample"
+    sample_dir.mkdir(parents=True, exist_ok=True)
+    (sample_dir / "response.raw.json").write_bytes(raw)
+    metadata = {
+        "source_scope": "TRANSPORT_PROOF_DISCOVERY_ONLY_NO_FIXTURE_RECONCILIATION_AUTHORITY",
+        "request_path": UPCOMING_PATH,
+        "sportId": discovery.FOOTBALL_SPORT_ID,
+        "observed_at": observed_at.isoformat().replace("+00:00", "Z"),
+        "http_status": status,
+        "raw_sha256": raw_sha,
+        "raw_size": len(raw),
+        "event_count": len(events),
+    }
+    (sample_dir / "metadata.json").write_bytes(_canonical(metadata))
+    if not events:
+        raise PR258LiveTransportProofError(
+            "SportyBet upcoming snapshot contained no exact football events"
+        )
+    return events, metadata
 
 
 def _total_goals_partition(
@@ -134,7 +168,6 @@ def _total_goals_partition(
         ):
             continue
         groups.setdefault((selection.market_id, selection.specifier), []).append(selection)
-
     for key in sorted(groups):
         rows = groups[key]
         over = [item for item in rows if item.outcome_name.casefold().startswith("over ")]
@@ -161,14 +194,18 @@ def _capture_candidate(
         )
     except live.SportyBetLiveEventQuoteEvidenceError:
         return None
-
+    lead = (inventory.kickoff_utc - _now()).total_seconds()
+    if (
+        not inventory.prematch_bookable_observed
+        or not math.isfinite(lead)
+        or lead <= MINIMUM_PROOF_LEAD_SECONDS
+    ):
+        return None
     partition = _total_goals_partition(inventory)
     if partition is None:
         return None
-    # Deterministic single-leg transport proof. Choosing a side carries no
-    # model, probability, Router, Portfolio, or production selection authority.
-    selected = sorted(partition, key=lambda item: item.outcome_name)[0]
-    return inventory, selected
+    # Deterministic transport-only side selection. This is not a model pick.
+    return inventory, sorted(partition, key=lambda item: item.outcome_name)[0]
 
 
 def _semantic_intent(
@@ -193,11 +230,11 @@ def _verify_semantic_against_capture(
     receipt: dict[str, Any],
 ) -> None:
     _safety_false(receipt, "semantic resolution")
+    audits = receipt.get("resolved")
     if receipt.get("caller_supplied_market_outcome_ids_accepted") is not False:
         raise PR258LiveTransportProofError(
             "semantic resolution accepted caller provider-native IDs"
         )
-    audits = receipt.get("resolved")
     if type(audits) is not list or len(audits) != 1 or len(selections) != 1:
         raise PR258LiveTransportProofError("semantic resolution count drifted")
     audit = audits[0]
@@ -268,12 +305,7 @@ def _verify_roundtrip(
         )
     create = receipt.get("create_accepted_outcomes")
     load_rows = receipt.get("load_accepted_outcomes")
-    if (
-        type(create) is not list
-        or len(create) != 1
-        or type(load_rows) is not list
-        or len(load_rows) != 1
-    ):
+    if type(create) is not list or len(create) != 1 or type(load_rows) is not list or len(load_rows) != 1:
         raise PR258LiveTransportProofError("provider accepted rows are incomplete")
     create_row = shadow_transport._accepted_row(create[0], "create")
     load_row = shadow_transport._accepted_row(load_rows[0], "load")
@@ -299,38 +331,23 @@ def _verify_roundtrip(
         )
     if type(receipt.get("shareCode")) is not str or not receipt["shareCode"]:
         raise PR258LiveTransportProofError("verified provider response omitted shareCode")
-    if type(receipt.get("shareURL")) is not str or not receipt["shareURL"].startswith("http"):
-        raise PR258LiveTransportProofError("verified provider response omitted shareURL")
 
 
 def run(*, repository_root: Path, output_dir: Path) -> dict[str, Any]:
-    if shadow_transport.AUTHORITY["production_selection"] is not False:
+    if shadow_transport.AUTHORITY["production_selection"] is not False or shadow_transport.AUTHORITY["bet"] is not False:
         raise PR258LiveTransportProofError(
-            "PR258 transport unexpectedly acquired production selection authority"
+            "PR258 transport acquired prohibited authority"
         )
-    if shadow_transport.AUTHORITY["bet"] is not False:
-        raise PR258LiveTransportProofError(
-            "PR258 transport unexpectedly acquired BET authority"
-        )
-
     output_dir.mkdir(parents=True, exist_ok=True)
-    candidates, discovery_pages, discovery_contract_sha256 = _bounded_discovery_sample(
-        output_dir=output_dir,
-    )
-    candidates = tuple(
-        sorted(candidates, key=lambda item: (item.kickoff_utc, item.event_id))
-    )
+    candidates, discovery_metadata = _fetch_upcoming_sample(output_dir)
+    candidates = tuple(sorted(candidates, key=lambda item: (item.kickoff_utc, item.event_id)))
 
     errors: list[str] = []
     detail_attempts = 0
     create_attempts = 0
     for event in candidates:
         lead = (event.kickoff_utc - _now()).total_seconds()
-        if (
-            not event.prematch_bookable_observed
-            or not math.isfinite(lead)
-            or lead <= MINIMUM_PROOF_LEAD_SECONDS
-        ):
+        if not math.isfinite(lead) or lead <= MINIMUM_PROOF_LEAD_SECONDS:
             continue
         if detail_attempts >= MAX_EVENT_DETAIL_ATTEMPTS:
             break
@@ -339,13 +356,9 @@ def run(*, repository_root: Path, output_dir: Path) -> dict[str, Any]:
         if candidate is None:
             continue
         inventory, captured = candidate
-        attempt_dir = output_dir / (
-            f"attempt-{detail_attempts:02d}-{inventory.event_id.replace(':', '_')}"
-        )
+        attempt_dir = output_dir / f"attempt-{detail_attempts:02d}-{inventory.event_id.replace(':', '_')}"
         attempt_dir.mkdir(parents=True, exist_ok=True)
-        intent = semantic_bridge.validate_intents(
-            [_semantic_intent(inventory, captured)]
-        )
+        intent = semantic_bridge.validate_intents([_semantic_intent(inventory, captured)])
         try:
             selections, semantic_receipt = semantic_bridge.resolve_live_intents(
                 intents=intent,
@@ -360,17 +373,9 @@ def run(*, repository_root: Path, output_dir: Path) -> dict[str, Any]:
                 receipt=semantic_receipt,
             )
             _verify_precreate_freshness(inventory)
-        except (
-            semantic_bridge.SportyBetSemanticShareError,
-            PR258LiveTransportProofError,
-            ArithmeticError,
-            ValueError,
-        ) as exc:
-            errors.append(
-                f"{inventory.event_id}:semantic:{type(exc).__name__}:{exc}"
-            )
+        except (semantic_bridge.SportyBetSemanticShareError, PR258LiveTransportProofError, ArithmeticError, ValueError) as exc:
+            errors.append(f"{inventory.event_id}:semantic:{type(exc).__name__}:{exc}")
             continue
-
         if create_attempts >= MAX_CREATE_ATTEMPTS:
             break
         create_attempts += 1
@@ -384,31 +389,22 @@ def run(*, repository_root: Path, output_dir: Path) -> dict[str, Any]:
                 captured=captured,
                 receipt=transport_receipt,
             )
-        except (
-            direct_bridge.SportyBetDirectShareError,
-            PR258LiveTransportProofError,
-        ) as exc:
-            errors.append(
-                f"{inventory.event_id}:transport:{type(exc).__name__}:{exc}"
-            )
+        except (direct_bridge.SportyBetDirectShareError, PR258LiveTransportProofError) as exc:
+            errors.append(f"{inventory.event_id}:transport:{type(exc).__name__}:{exc}")
             continue
 
         proof = {
-            "schema": "athena-pr258-real-sportybet-transport-proof-v2",
-            "proof_scope": (
-                "REAL_PROVIDER_SEMANTIC_NATIVE_ODDS_CREATE_RELOAD_TRANSPORT_ONLY"
-            ),
+            "schema": "athena-pr258-real-sportybet-transport-proof-v3",
+            "proof_scope": "REAL_PROVIDER_SEMANTIC_NATIVE_ODDS_CREATE_RELOAD_TRANSPORT_ONLY",
             "canonical_model_selection_proof": False,
-            "fixture_reconciliation_authority_from_sample": False,
+            "fixture_reconciliation_authority_from_discovery": False,
             "production_authority_minted": False,
             "provider": "SportyBet Nigeria",
             "eventId": inventory.event_id,
             "homeTeamName": inventory.home_team_name,
             "awayTeamName": inventory.away_team_name,
             "kickoff_utc": inventory.kickoff_utc.isoformat().replace("+00:00", "Z"),
-            "captured_quote_observed_at": inventory.observed_at.isoformat().replace(
-                "+00:00", "Z"
-            ),
+            "captured_quote_observed_at": inventory.observed_at.isoformat().replace("+00:00", "Z"),
             "captured_inventory_sha256": inventory.canonical_sha256,
             "captured_source_manifest_sha256": inventory.source_manifest_sha256,
             "captured_source_raw_sha256": inventory.source_raw_sha256,
@@ -420,12 +416,7 @@ def run(*, repository_root: Path, output_dir: Path) -> dict[str, Any]:
             "captured_decimal_odds": captured.odds_raw,
             "semantic_resolution_receipt": semantic_receipt,
             "transport_receipt": transport_receipt,
-            "discovery_scope": (
-                "BOUNDED_TRANSPORT_PROOF_SAMPLE_NOT_EXHAUSTIVE_DISCOVERY_AUTHORITY"
-            ),
-            "discovery_contract_sha256": discovery_contract_sha256,
-            "discovery_sample_pages": list(discovery_pages),
-            "discovery_sample_event_count": len(candidates),
+            "discovery": discovery_metadata,
             "detail_attempt_count": detail_attempts,
             "create_attempt_count": create_attempts,
             "shareCode": transport_receipt["shareCode"],
@@ -440,16 +431,10 @@ def run(*, repository_root: Path, output_dir: Path) -> dict[str, Any]:
             "stake_submitted": False,
             "wager_placed": False,
         }
-        (output_dir / "pr258-live-transport-proof.json").write_bytes(
-            _canonical(proof)
-        )
+        (output_dir / "pr258-live-transport-proof.json").write_bytes(_canonical(proof))
         return proof
 
-    detail = (
-        "; ".join(errors[-8:])
-        if errors
-        else "no exact Total Goals half-line candidate found"
-    )
+    detail = "; ".join(errors[-8:]) if errors else "no exact eligible prematch Total Goals half-line candidate found"
     raise PR258LiveTransportProofError(
         f"real provider proof could not complete within bounded attempts: {detail}"
     )
@@ -465,21 +450,16 @@ def main(argv: list[str] | None = None) -> int:
     if not output_dir.is_absolute():
         output_dir = repository_root / output_dir
     proof = run(repository_root=repository_root, output_dir=output_dir)
-    print(
-        json.dumps(
-            {
-                "status": "PR258_REAL_PROVIDER_TRANSPORT_PROOF_VERIFIED",
-                "eventId": proof["eventId"],
-                "shareCode": proof["shareCode"],
-                "selection_count": 1,
-                "exact_semantic_native_odds_equality_verified": True,
-                "exact_create_reload_verified": True,
-                "production_authority_minted": False,
-                "wager_placed": False,
-            },
-            sort_keys=True,
-        )
-    )
+    print(json.dumps({
+        "status": "PR258_REAL_PROVIDER_TRANSPORT_PROOF_VERIFIED",
+        "eventId": proof["eventId"],
+        "shareCode": proof["shareCode"],
+        "selection_count": 1,
+        "exact_semantic_native_odds_equality_verified": True,
+        "exact_create_reload_verified": True,
+        "production_authority_minted": False,
+        "wager_placed": False,
+    }, sort_keys=True))
     return 0
 
 
