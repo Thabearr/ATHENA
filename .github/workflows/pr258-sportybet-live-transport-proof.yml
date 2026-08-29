@@ -1,0 +1,74 @@
+name: PR258 SportyBet Live Transport Proof
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-transport-proof:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.pull_request.number == 258 &&
+       github.head_ref == 'feature/pr258-research-shadow-sportybet-field-trial')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run bounded real SportyBet transport proof
+        run: |
+          python scripts/run_pr258_sportybet_live_transport_proof.py \
+            --repository-root . \
+            --output-dir .cache/athena-research/pr258-live-transport-proof
+
+      - name: Show verified proof summary
+        if: success()
+        run: |
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path('.cache/athena-research/pr258-live-transport-proof/pr258-live-transport-proof.json')
+          proof = json.loads(path.read_text(encoding='utf-8'))
+          print(json.dumps({
+              'proof_scope': proof['proof_scope'],
+              'eventId': proof['eventId'],
+              'marketName': proof['marketName'],
+              'specifier': proof['specifier'],
+              'outcomeName': proof['outcomeName'],
+              'captured_decimal_odds': proof['captured_decimal_odds'],
+              'shareCode': proof['shareCode'],
+              'combined_odds': proof['combined_odds'],
+              'exact_semantic_native_odds_equality_verified': proof['exact_semantic_native_odds_equality_verified'],
+              'exact_create_reload_verified': proof['exact_create_reload_verified'],
+              'production_authority_minted': proof['production_authority_minted'],
+              'wager_placed': proof['wager_placed'],
+          }, sort_keys=True))
+          PY
+
+      - name: Upload proof evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr258-sportybet-live-transport-proof
+          path: .cache/athena-research/pr258-live-transport-proof
+          if-no-files-found: warn
+          retention-days: 14
