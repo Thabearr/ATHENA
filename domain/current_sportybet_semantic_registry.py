@@ -281,7 +281,7 @@ def _expected_policy(market_id: MarketId) -> Mapping[str, Any]:
             "market_names": ("Over/Under", "Total Goals"),
             "outcomes": (("12", "Over", OutcomeId.OVER), ("13", "Under", OutcomeId.UNDER)),
             "specifier_prefix": "total",
-            "line_policy": "EXACT_OBSERVED_TOTAL_SPECIFIERS; HALF_LINES_ONLY_FOR_CURRENT_MODEL",
+            "line_policy": "EXACT_OBSERVED_TOTAL_SPECIFIERS_HALF_UNIT; HALF_LINES_ONLY_FOR_CURRENT_MODEL",
             "mapping_policy": "PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_EXACT_NATIVE_ID_SPECIFIER_OUTCOME_LABEL_V1",
             "settlement": SettlementClass.TOTALS_EXACT_LINE_PARTITION,
             "ordinary_partition": True,
@@ -295,7 +295,7 @@ def _expected_policy(market_id: MarketId) -> Mapping[str, Any]:
             "market_names": ("__EXACT_COMPUTED_ASIAN_HANDICAP_NAME__",),
             "outcomes": (("1714", "Home", OutcomeId.HOME), ("1715", "Away", OutcomeId.AWAY)),
             "specifier_prefix": "hcp",
-            "line_policy": "EXACT_OBSERVED_HCP_SPECIFIERS_WITH_PROVIDER_ORIENTATION",
+            "line_policy": "EXACT_OBSERVED_HCP_SPECIFIERS_QUARTER_UNIT_WITH_PROVIDER_ORIENTATION",
             "settlement": SettlementClass.ASIAN_HANDICAP_FULL_SETTLEMENT,
             "ordinary_partition": False,
             "overlap": False,
@@ -603,16 +603,26 @@ def _matching_market_line(
     if selection.market_id not in policy["market_ids"]:
         return None
     if market_id is MarketId.ASIAN_HANDICAP:
-        line = _line_from_specifier(selection.specifier, "hcp")
+        try:
+            line = _line_from_specifier(selection.specifier, "hcp")
+        except CurrentSportyBetSemanticRegistryError:
+            return None
         if line is None:
+            return None
+        if _signed_line_decimal(line) * 4 != (_signed_line_decimal(line) * 4).to_integral_value():
             return None
         expected_name = f"Asian Handicap {_format_ah_line(line)}"
         if selection.market_name != expected_name:
             return None
         return line, f"hcp={line}"
     if market_id is MarketId.TOTAL_GOALS:
-        line = _line_from_specifier(selection.specifier, "total")
+        try:
+            line = _line_from_specifier(selection.specifier, "total")
+        except CurrentSportyBetSemanticRegistryError:
+            return None
         if line is None or selection.market_name not in policy["market_names"]:
+            return None
+        if _line_decimal(line) % Decimal("0.5") != 0:
             return None
         return line, f"total={line}"
     if selection.market_name not in policy["market_names"]:
@@ -652,6 +662,12 @@ class ProviderSemanticObservation:
     evidence_freshness: EvidenceFreshnessState
 
     def __post_init__(self) -> None:
+        if type(self.canonical_market_id) is not MarketId:
+            raise CurrentSportyBetSemanticRegistryError("canonical market must be typed")
+        if type(self.canonical_outcome_id) is not OutcomeId:
+            raise CurrentSportyBetSemanticRegistryError("canonical outcome must be typed")
+        if type(self.canonical_family) is not MarketFamily:
+            raise CurrentSportyBetSemanticRegistryError("canonical family must be typed")
         market = _coerce_market_id(self.canonical_market_id)
         if self.canonical_family is not MARKET_REGISTRY[market].family:
             raise CurrentSportyBetSemanticRegistryError("canonical family identity drifted")
@@ -684,6 +700,73 @@ class ProviderSemanticObservation:
             raise CurrentSportyBetSemanticRegistryError("settlement review flag is invalid")
         if type(self.line_analytically_eligible) is not bool:
             raise CurrentSportyBetSemanticRegistryError("line analytical flag is invalid")
+
+        policy = _expected_policy(market)
+        if self.provider_market_id not in policy["market_ids"]:
+            raise CurrentSportyBetSemanticRegistryError("provider market ID is not reviewed")
+        if market is MarketId.ASIAN_HANDICAP:
+            try:
+                parsed_line = _line_from_specifier(self.provider_specifier, "hcp")
+            except CurrentSportyBetSemanticRegistryError as exc:
+                raise CurrentSportyBetSemanticRegistryError(
+                    "Asian Handicap specifier is not reviewed"
+                ) from exc
+            if parsed_line is None or parsed_line != self.line:
+                raise CurrentSportyBetSemanticRegistryError("Asian Handicap line identity drifted")
+            if _signed_line_decimal(parsed_line) * 4 != (
+                _signed_line_decimal(parsed_line) * 4
+            ).to_integral_value():
+                raise CurrentSportyBetSemanticRegistryError("Asian Handicap line grammar drifted")
+            if self.provider_market_name != f"Asian Handicap {_format_ah_line(parsed_line)}":
+                raise CurrentSportyBetSemanticRegistryError("Asian Handicap market name drifted")
+        elif market is MarketId.TOTAL_GOALS:
+            try:
+                parsed_line = _line_from_specifier(self.provider_specifier, "total")
+            except CurrentSportyBetSemanticRegistryError as exc:
+                raise CurrentSportyBetSemanticRegistryError(
+                    "Total Goals specifier is not reviewed"
+                ) from exc
+            if parsed_line is None or parsed_line != self.line:
+                raise CurrentSportyBetSemanticRegistryError("Total Goals line identity drifted")
+            if _line_decimal(parsed_line) % Decimal("0.5") != 0:
+                raise CurrentSportyBetSemanticRegistryError("Total Goals line grammar drifted")
+            if self.provider_market_name not in policy["market_names"]:
+                raise CurrentSportyBetSemanticRegistryError("Total Goals market name drifted")
+        else:
+            if self.provider_market_name not in policy["market_names"]:
+                raise CurrentSportyBetSemanticRegistryError("provider market name is not reviewed")
+            expected_specifier = policy.get("specifier")
+            if self.provider_specifier != expected_specifier or self.line is not None:
+                raise CurrentSportyBetSemanticRegistryError("provider specifier identity drifted")
+
+        expected_outcome = next(
+            (
+                item
+                for item in policy["outcomes"]
+                if item[2] is self.canonical_outcome_id
+            ),
+            None,
+        )
+        if expected_outcome is None or self.provider_outcome_id != expected_outcome[0]:
+            raise CurrentSportyBetSemanticRegistryError("provider outcome ID is not reviewed")
+        expected_label = expected_outcome[1]
+        if market is MarketId.TOTAL_GOALS:
+            expected_label = f"{expected_label} {self.line}"
+        elif market is MarketId.ASIAN_HANDICAP:
+            expected_label = f"{expected_label} ({_format_ah_outcome_line(self.line, home=self.canonical_outcome_id is OutcomeId.HOME)})"
+        if self.provider_outcome_name != expected_label:
+            raise CurrentSportyBetSemanticRegistryError("provider outcome label is not reviewed")
+        if self.source_contract_identity != live.EXPECTED_CONTRACT_SHA256:
+            raise CurrentSportyBetSemanticRegistryError("event-detail contract identity drifted")
+        if self.mapping_policy_identity != _mapping_policy(market):
+            raise CurrentSportyBetSemanticRegistryError("mapping policy identity drifted")
+        if self.settlement_class is not policy["settlement"]:
+            raise CurrentSportyBetSemanticRegistryError("observation settlement class drifted")
+        expected_line_eligibility = not (
+            market is MarketId.TOTAL_GOALS and not _is_half_line(self.line or "")
+        )
+        if self.line_analytically_eligible != expected_line_eligibility:
+            raise CurrentSportyBetSemanticRegistryError("line analytical eligibility drifted")
 
     @property
     def observation_identity(self) -> tuple[Any, ...]:
@@ -739,7 +822,9 @@ def _freshness(
         return EvidenceFreshnessState.STALE
     if not inventory.prematch_bookable_observed:
         return EvidenceFreshnessState.NOT_PREMATCH_BOOKABLE
-    if kickoff - evaluation < timedelta(seconds=live.MINIMUM_LEAD_SECONDS):
+    # Match the reviewed current-source contract exactly: an event at the
+    # minimum lead boundary is already too close (``now + lead >= kickoff``).
+    if kickoff - evaluation <= timedelta(seconds=live.MINIMUM_LEAD_SECONDS):
         return EvidenceFreshnessState.TOO_CLOSE_TO_KICKOFF
     return EvidenceFreshnessState.CURRENT
 
@@ -815,6 +900,32 @@ def _make_observations(
     return tuple(sorted(matches, key=lambda item: item.observation_identity))
 
 
+def _has_exact_native_semantic_conflict(
+    market_id: MarketId,
+    evidence: ProviderEventEvidence,
+) -> bool:
+    """Detect drift hidden by exact-match filtering.
+
+    A row under a reviewed native market ID is evidence about that market even
+    when its name/specifier/outcome identity is wrong.  It must therefore make
+    the coverage row conflicting rather than disappearing and allowing a
+    different event's valid row to issue support.
+    """
+
+    policy = _expected_policy(market_id)
+    native_ids = set(policy["market_ids"])
+    for selection in evidence.inventory.selections:
+        if selection.market_id not in native_ids:
+            continue
+        line_match = _matching_market_line(market_id, selection)
+        if line_match is None:
+            return True
+        line, _normalized_specifier = line_match
+        if _policy_outcome(market_id, selection, line) is None:
+            return True
+    return False
+
+
 def _model_fields(market_id: MarketId) -> dict[str, Any]:
     definition = MARKET_REGISTRY[market_id]
     status = MODEL_STATUS_REGISTRY[market_id]
@@ -872,10 +983,15 @@ class ProviderCoverageRecord:
     blocker: str | None
 
     def __post_init__(self) -> None:
+        if type(self.market_id) is not MarketId:
+            raise CurrentSportyBetSemanticRegistryError("coverage market must be typed")
+        if type(self.canonical_family) is not MarketFamily:
+            raise CurrentSportyBetSemanticRegistryError("coverage family must be typed")
         market = _coerce_market_id(self.market_id)
         expected = _model_fields(market)
         for field_name, expected_value in expected.items():
-            if getattr(self, field_name) != expected_value:
+            actual_value = getattr(self, field_name)
+            if type(actual_value) is not type(expected_value) or actual_value != expected_value:
                 raise CurrentSportyBetSemanticRegistryError(
                     f"{market.value} model/canonical field {field_name} drifted"
                 )
@@ -883,6 +999,10 @@ class ProviderCoverageRecord:
             raise CurrentSportyBetSemanticRegistryError("provider status must be typed")
         if type(self.supported_canonical_outcomes) is not tuple or not self.supported_canonical_outcomes:
             raise CurrentSportyBetSemanticRegistryError("canonical outcomes must be tuple")
+        if any(type(item) is not ProviderSemanticObservation for item in self.observations):
+            raise CurrentSportyBetSemanticRegistryError("observation type mismatch")
+        if any(type(item) is not OutcomeId for item in self.supported_canonical_outcomes):
+            raise CurrentSportyBetSemanticRegistryError("canonical outcome type mismatch")
         if type(self.observations) is not tuple:
             raise CurrentSportyBetSemanticRegistryError("observations must be tuple")
         identities = tuple(item.observation_identity for item in self.observations)
@@ -905,7 +1025,14 @@ class ProviderCoverageRecord:
         policy = _expected_policy(market)
         if self.settlement_class is not policy["settlement"]:
             raise CurrentSportyBetSemanticRegistryError("settlement class drifted")
-        if self.ordinary_devig_partition_valid != policy["ordinary_partition"]:
+        expected_ordinary_partition = policy["ordinary_partition"]
+        if market is MarketId.TOTAL_GOALS and self.observations:
+            # Whole-goal totals retain a PUSH state; an aggregate row that
+            # includes one cannot be treated as an ordinary binary partition.
+            expected_ordinary_partition = all(
+                item.line_analytically_eligible for item in self.observations
+            )
+        if self.ordinary_devig_partition_valid != expected_ordinary_partition:
             raise CurrentSportyBetSemanticRegistryError("ordinary partition flag drifted")
         if self.event_set_overlaps != policy["overlap"] or self.push_or_split_settlement != policy["push_split"]:
             raise CurrentSportyBetSemanticRegistryError("settlement topology flag drifted")
@@ -1014,7 +1141,9 @@ def build_coverage_record(
                 tuple(sorted((row.provider_outcome_id, row.provider_outcome_name) for row in group)),
             )
         )
-    conflicting = any(len(signatures) > 1 for signatures in semantic_by_key.values())
+    conflicting = any(len(signatures) > 1 for signatures in semantic_by_key.values()) or any(
+        _has_exact_native_semantic_conflict(market, item) for item in replayed
+    )
     if conflicting:
         status = ProviderSemanticStatus.CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN
         blocker = "CONFLICTING_CURRENT_PROVIDER_SEMANTICS"
@@ -1062,6 +1191,9 @@ def build_coverage_record(
         readiness = "SEMANTIC_AND_MODEL_READY"
     if line_blocked and blocker is None:
         blocker = "OBSERVED_PROVIDER_LINE_OUTSIDE_CURRENT_MODEL_CAPABILITY"
+    ordinary_partition = policy["ordinary_partition"]
+    if market is MarketId.TOTAL_GOALS and observations:
+        ordinary_partition = all(item.line_analytically_eligible for item in observations)
     observed_market_names = tuple(sorted({item.provider_market_name for item in observations}))
     if observed_market_names:
         market_patterns = observed_market_names
@@ -1089,7 +1221,7 @@ def build_coverage_record(
             )
         ),
         settlement_class=policy["settlement"],
-        ordinary_devig_partition_valid=policy["ordinary_partition"],
+        ordinary_devig_partition_valid=ordinary_partition,
         event_set_overlaps=policy["overlap"],
         push_or_split_settlement=policy["push_split"],
         evidence_freshness=freshness_state,
@@ -1134,6 +1266,8 @@ class CurrentSportyBetSemanticRegistry:
             raise CurrentSportyBetSemanticRegistryError("registry contract identity drifted")
         if self.policy_id != POLICY_ID:
             raise CurrentSportyBetSemanticRegistryError("registry policy identity drifted")
+        if self.next_boundary != NEXT_BOUNDARY:
+            raise CurrentSportyBetSemanticRegistryError("registry next boundary drifted")
         evaluation = _utc(self.evaluation_time, "evaluation_time")
         if type(self.scan_cap) is not int or self.scan_cap <= 0:
             raise CurrentSportyBetSemanticRegistryError("scan_cap is invalid")
@@ -1141,6 +1275,8 @@ class CurrentSportyBetSemanticRegistry:
             raise CurrentSportyBetSemanticRegistryError("scan_attempts is invalid")
         if type(self.coverage) is not tuple:
             raise CurrentSportyBetSemanticRegistryError("coverage must be tuple")
+        if any(type(item) is not ProviderCoverageRecord for item in self.coverage):
+            raise CurrentSportyBetSemanticRegistryError("coverage row type mismatch")
         ids = tuple(item.market_id for item in self.coverage)
         if len(ids) != len(set(ids)):
             raise CurrentSportyBetSemanticRegistryError("duplicate canonical market coverage")

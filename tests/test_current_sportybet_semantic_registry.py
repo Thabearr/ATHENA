@@ -35,7 +35,12 @@ def _market(market_id: str, name: str, outcomes, specifier=None):
     }
 
 
-def _payload(*, observed_at: datetime = NOW, kickoff: datetime | None = None):
+def _payload(
+    *,
+    observed_at: datetime = NOW,
+    kickoff: datetime | None = None,
+    event_id: str = "sr:match:99999999",
+):
     kickoff = kickoff or (observed_at + timedelta(hours=2))
     rows = [
         _market("1", "1X2", (("1", "Home"), ("2", "Draw"), ("3", "Away"))),
@@ -57,7 +62,7 @@ def _payload(*, observed_at: datetime = NOW, kickoff: datetime | None = None):
     return {
         "bizCode": 10000,
         "data": {
-            "eventId": "sr:match:99999999",
+            "eventId": event_id,
             "homeTeamName": "Synthetic Home",
             "awayTeamName": "Synthetic Away",
             "estimateStartTime": kickoff.timestamp() * 1000,
@@ -73,8 +78,9 @@ def _evidence(tmp_path: Path, *, payload=None, observed_at: datetime = NOW):
     root = tmp_path.resolve()
     root.mkdir(parents=True, exist_ok=True)
     raw = live._canonical_json_bytes(payload or _payload(observed_at=observed_at))
+    event_id = json.loads(raw)["data"]["eventId"]
     manifest = live._build_manifest(
-        event_id="sr:match:99999999",
+        event_id=event_id,
         raw=raw,
         status=200,
         observed_at=observed_at,
@@ -190,7 +196,50 @@ def test_integer_total_is_observed_but_not_model_eligible(tmp_path):
     row = next(item for item in value.coverage if item.market_id is MarketId.TOTAL_GOALS)
     assert row.provider_status is registry.ProviderSemanticStatus.SUPPORTED_WITH_EXACT_LINE_POLICY
     assert row.observations[0].line_analytically_eligible is False
+    assert row.ordinary_devig_partition_valid is False
     assert row.research_readiness == "SEMANTIC_READY_EXACT_LINE_MODEL_BLOCKED"
+
+
+@pytest.mark.parametrize(
+    ("market_index", "specifier", "market_name", "outcome_labels"),
+    [
+        (1, "total=0.25", "Over/Under", ("Over 0.25", "Under 0.25")),
+        (2, "hcp=0.1", "Asian Handicap 0.1", ("Home (+0.1)", "Away (-0.1)")),
+        (1, None, "Over/Under", ("Over 0.5", "Under 0.5")),
+    ],
+)
+def test_unproven_or_unsupported_line_grammar_fails_closed(
+    tmp_path, market_index, specifier, market_name, outcome_labels
+):
+    payload = _payload()
+    market = payload["data"]["markets"][market_index]
+    market["specifier"] = specifier
+    market["desc"] = market_name
+    for outcome, label in zip(market["outcomes"], outcome_labels, strict=True):
+        outcome["desc"] = label
+    value = registry.build_registry([_evidence(tmp_path, payload=payload)], evaluation_time=NOW)
+    market_id = MarketId.TOTAL_GOALS if market_index == 1 else MarketId.ASIAN_HANDICAP
+    row = next(item for item in value.coverage if item.market_id is market_id)
+    assert row.provider_status is registry.ProviderSemanticStatus.CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN
+    assert row.blocker in {
+        "CONFLICTING_CURRENT_PROVIDER_SEMANTICS",
+        "NO_EXACT_CURRENT_PROVIDER_SEMANTIC_EVIDENCE",
+    }
+
+
+def test_asian_handicap_quarter_line_retains_split_settlement_semantics(tmp_path):
+    payload = _payload()
+    market = payload["data"]["markets"][2]
+    market["specifier"] = "hcp=0.25"
+    market["desc"] = "Asian Handicap 0.25"
+    market["outcomes"][0]["desc"] = "Home (+0.25)"
+    market["outcomes"][1]["desc"] = "Away (-0.25)"
+    value = registry.build_registry([_evidence(tmp_path, payload=payload)], evaluation_time=NOW)
+    row = next(item for item in value.coverage if item.market_id is MarketId.ASIAN_HANDICAP)
+    assert row.provider_status is registry.ProviderSemanticStatus.SUPPORTED_WITH_EXACT_LINE_POLICY
+    assert row.proven_lines == ("hcp=0.25",)
+    assert row.push_or_split_settlement is True
+    assert row.settlement_class is registry.SettlementClass.ASIAN_HANDICAP_FULL_SETTLEMENT
 
 
 def test_stale_nonbookable_and_future_evidence_never_issues_current_support(tmp_path):
@@ -203,6 +252,15 @@ def test_stale_nonbookable_and_future_evidence_never_issues_current_support(tmp_
     row = next(item for item in future.coverage if item.market_id is MarketId.MATCH_RESULT)
     assert row.evidence_freshness is registry.EvidenceFreshnessState.FUTURE_DATED
 
+    boundary_payload = _payload(kickoff=NOW + timedelta(seconds=120))
+    boundary = registry.build_registry(
+        [_evidence(tmp_path / "boundary", payload=boundary_payload)],
+        evaluation_time=NOW,
+    )
+    row = next(item for item in boundary.coverage if item.market_id is MarketId.MATCH_RESULT)
+    assert row.provider_status is registry.ProviderSemanticStatus.CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN
+    assert row.evidence_freshness is registry.EvidenceFreshnessState.TOO_CLOSE_TO_KICKOFF
+
 
 def test_replay_rejects_mutated_retained_inventory_and_detached_hash(tmp_path):
     evidence = _evidence(tmp_path)
@@ -214,6 +272,73 @@ def test_replay_rejects_mutated_retained_inventory_and_detached_hash(tmp_path):
         registry.replay_event_evidence(changed_hash)
 
 
+def test_fixture_identity_and_source_contract_binding_fail_closed(tmp_path):
+    evidence = _evidence(tmp_path)
+    with pytest.raises(registry.CurrentSportyBetSemanticRegistryError):
+        registry.load_provider_event_evidence(
+            evidence.evidence_directory,
+            repository_root=evidence.repository_root,
+            fixture_identity="sr:match:12345678",
+        )
+
+    value = registry.build_registry([evidence], evaluation_time=NOW)
+    altered = dict(value.source_contract_identities)
+    altered["event_detail"] = "0" * 64
+    with pytest.raises(registry.CurrentSportyBetSemanticRegistryError):
+        registry.CurrentSportyBetSemanticRegistry(
+            schema_version=value.schema_version,
+            dataset_name=value.dataset_name,
+            contract_version=value.contract_version,
+            policy_id=value.policy_id,
+            evaluation_time=value.evaluation_time,
+            scan_cap=value.scan_cap,
+            scan_attempts=value.scan_attempts,
+            coverage=value.coverage,
+            source_contract_identities=altered,
+            authority=value.authority,
+        )
+
+
+def test_conflicting_same_native_semantics_fail_closed(tmp_path):
+    first = _evidence(tmp_path / "first", payload=_payload(event_id="sr:match:99999999"))
+    payload = _payload(event_id="sr:match:99999998")
+    payload["data"]["markets"][0]["desc"] = "1X2 near"
+    second = _evidence(tmp_path / "second", payload=payload)
+    value = registry.build_registry([first, second], evaluation_time=NOW)
+    row = next(item for item in value.coverage if item.market_id is MarketId.MATCH_RESULT)
+    assert row.provider_status is registry.ProviderSemanticStatus.CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN
+    assert row.evidence_freshness is registry.EvidenceFreshnessState.CONFLICTING
+    assert row.blocker == "CONFLICTING_CURRENT_PROVIDER_SEMANTICS"
+
+
+def test_empty_provider_evidence_is_explicitly_unproven_for_all_markets():
+    value = registry.build_registry([], evaluation_time=NOW)
+    assert len(value.coverage) == len(MarketId)
+    assert all(
+        row.provider_status is registry.ProviderSemanticStatus.CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN
+        for row in value.coverage
+    )
+    assert all(row.blocker == "NO_EXACT_CURRENT_PROVIDER_SEMANTIC_EVIDENCE" for row in value.coverage)
+
+
+def test_authority_cannot_be_granted_through_replace(tmp_path):
+    value = registry.build_registry([_evidence(tmp_path)], evaluation_time=NOW)
+    row = next(item for item in value.coverage if item.market_id is MarketId.MATCH_RESULT)
+    with pytest.raises(registry.CurrentSportyBetSemanticRegistryError):
+        replace(row, pricing_authority=PricingAuthority.AUTHORIZED)
+    with pytest.raises(registry.CurrentSportyBetSemanticRegistryError):
+        replace(value, authority={**value.authority, "bet": True})
+
+
+def test_provider_policy_is_literal_and_does_not_offer_generic_aliases():
+    for market_id in MarketId:
+        policy = registry.provider_policy(market_id)
+        assert policy["market_ids"]
+        assert policy["outcomes"]
+        assert "fuzzy" not in str(policy).lower()
+        assert "contains" not in str(policy).lower()
+
+
 def test_canonical_registry_bytes_are_deterministic_and_source_bound(tmp_path):
     value = registry.build_registry([_evidence(tmp_path)], evaluation_time=NOW)
     assert value.canonical_bytes.endswith(b"\n")
@@ -222,6 +347,15 @@ def test_canonical_registry_bytes_are_deterministic_and_source_bound(tmp_path):
     parsed = json.loads(value.canonical_bytes)
     assert set(parsed["coverage"][0]) >= {"canonical_market_id", "provider_status", "observations"}
     assert parsed["source_contract_identities"] == dict(registry.SOURCE_CONTRACT_IDENTITIES)
+
+
+def test_registry_identity_is_independent_of_evidence_input_order(tmp_path):
+    first = _evidence(tmp_path / "first", payload=_payload(event_id="sr:match:99999999"))
+    second = _evidence(tmp_path / "second", payload=_payload(event_id="sr:match:99999998"))
+    left = registry.build_registry([first, second], evaluation_time=NOW)
+    right = registry.build_registry([second, first], evaluation_time=NOW)
+    assert left.canonical_bytes == right.canonical_bytes
+    assert left.canonical_sha256 == right.canonical_sha256
 
 
 def test_provider_policy_has_no_market_alias_rescue():
