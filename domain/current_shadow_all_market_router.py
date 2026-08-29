@@ -25,6 +25,7 @@ from domain._current_shadow_price_types import (
     ShadowPriceResult,
     ShadowRoutedOpportunity,
     ShadowRouterDecisionStatus,
+    PRICE_ALL_ISSUANCE_TOKEN,
 )
 
 
@@ -128,6 +129,12 @@ def route_shadow_price_results(
             raise ShadowPriceError("price_results must contain ShadowPriceResult")
         if item.fixture_identity != fixture_identity:
             raise ShadowPriceError("price result fixture_identity mismatch")
+        if item.disposition is ShadowPriceDisposition.PRICED:
+            if item.price_all_issuance != PRICE_ALL_ISSUANCE_TOKEN:
+                raise ShadowPriceError(
+                    "Router rejects caller-minted PRICED rows; "
+                    "only price_all_shadow_fixture may issue PRICED results"
+                )
 
     opportunities: list[ShadowRoutedOpportunity] = []
     for result in price_results:
