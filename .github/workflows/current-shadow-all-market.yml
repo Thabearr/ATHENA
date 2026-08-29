@@ -56,7 +56,7 @@ jobs:
           ATHENA_EXPECTED_MAIN_SHA: ${{ github.sha }}
           ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
         run: |
-          python scripts/execute_current_shadow_all_market.py \
+          python -m scripts.execute_current_shadow_all_market \
             --target-size "${{ inputs.target_size }}" \
             --output-dir artifacts/current-shadow-all-market
 

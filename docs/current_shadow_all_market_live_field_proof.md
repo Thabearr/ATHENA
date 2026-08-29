@@ -46,4 +46,14 @@ produced only by the hosted live workflow on the exact final PR head. A verified
 share code may appear only after exact create/reload equality. A truthful no-code
 terminal state is an equally valid field-proof result.
 
+## Live defects hardened
+
+The first hosted run on PR F head `4edc010453da95069f7dda38198b5543a0cc2c70`
+(Actions run `33278608570`) failed before provider acquisition because the
+workflow executed the Python file by path. That made Python search from
+`scripts/` and the import of the top-level `domain` package failed. The workflow
+now invokes the existing runner as `python -m scripts.execute_current_shadow_all_market`.
+This changes no football, semantic, freshness, routing, portfolio, or transport
+policy.
+
 `wager_placed=false` is invariant.
