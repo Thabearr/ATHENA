@@ -76,7 +76,15 @@ def _source(token: str):
     object.__setattr__(value, "source_observed_at", NOW - timedelta(seconds=20))
     object.__setattr__(value, "kickoff_utc", NOW + timedelta(hours=3))
     object.__setattr__(value, "price_all_bundle", SimpleNamespace(evaluation_time=NOW - timedelta(seconds=10)))
-    object.__setattr__(value, "router_decision", SimpleNamespace(status=ShadowRouterDecisionStatus.SELECTED))
+    object.__setattr__(
+        value,
+        "router_decision",
+        SimpleNamespace(
+            status=ShadowRouterDecisionStatus.SELECTED,
+            selected_opportunity_id="c" * 64,
+        ),
+    )
+    object.__setattr__(value, "router_decision_sha256", "b" * 64)
     return value
 
 
@@ -136,7 +144,15 @@ def test_malformed_full_settlement_state_sets_fail_closed():
 
 def test_team_competition_family_and_fragility_caps_are_explicit():
     caps = {"team": 1, "competition": 1, "market_family": 1, "fragile": 1}
-    selected = [_leg("a", home="Shared", competition="League A")]
+    selected = [
+        _leg(
+            "a",
+            home="Shared",
+            competition="League A",
+            survival=0.55,
+            ev=0.01,
+        )
+    ]
     candidate = _leg(
         "b",
         home="Shared",
