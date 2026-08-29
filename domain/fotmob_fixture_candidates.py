@@ -766,41 +766,9 @@ def build_fotmob_fixture_candidate_bundle(
         seen_manifest_shas.add(manifest_sha)
         try:
             assessment = assess_fotmob_data_matches_schema(raw, manifest)
-        except FotMobDataMatchesSchemaError as base_exc:
-            # PR39 remains frozen.  Current provider responses may contain only
-            # the separately reviewed PR87/PR89 additive structural fields.
-            # Replay that exact later contract rather than broadening PR39 or
-            # accepting arbitrary extra keys.
-            from domain import (
-                fotmob_data_matches_eliminated_team_id_value_domain_extension as pr89_schema,
-            )
-
-            try:
-                extended = pr89_schema.assess_fotmob_data_matches_eliminated_team_id_value_domain(
-                    raw, manifest
-                )
-            except pr89_schema.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as exc:
-                raise FotMobFixtureCandidateError(
-                    "reviewed PR39/PR89 schema assessment failed"
-                ) from exc
-            if (
-                extended.status
-                is not pr89_schema.EliminatedTeamIdValueDomainStatus.QUALIFIED_STRUCTURAL_ELIMINATED_TEAM_ID_VALUE_DOMAIN
-                or extended.status_reason_semantics_qualified is not False
-                or extended.final_result_semantics_qualified is not False
-            ):
-                raise FotMobFixtureCandidateError(
-                    "reviewed PR89 structural assessment changed authority"
-                ) from base_exc
-            assessment_sha = (
-                pr89_schema.sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(
-                    extended
-                )
-            )
-            assessed_match_count = extended.pr87_match_count
-        else:
-            assessment_sha = sha256_data_matches_schema_assessment(assessment)
-            assessed_match_count = assessment.match_count
+        except FotMobDataMatchesSchemaError as exc:
+            raise FotMobFixtureCandidateError("PR #39 schema assessment failed") from exc
+        assessment_sha = sha256_data_matches_schema_assessment(assessment)
         payload = _strict_json(raw)
         source_candidates: list[FotMobFixtureCandidate] = []
         for league in payload["leagues"]:
@@ -829,7 +797,7 @@ def build_fotmob_fixture_candidate_bundle(
                         source_observed_at=manifest.observed_at,
                     )
                 )
-        if len(source_candidates) != assessed_match_count:
+        if len(source_candidates) != assessment.match_count:
             raise FotMobFixtureCandidateError("assessment and extraction match counts differ")
         sources.append(
             FotMobFixtureCandidateSource(
