@@ -29,6 +29,7 @@ from domain import current_shadow_all_market_price_all as price_module
 from domain import current_shadow_all_market_router as router_module
 from domain import current_shadow_all_market_share_code as share_module
 from domain import sportybet_current_event_discovery_reconciliation as reconciliation
+from domain._current_shadow_price_core import ShadowPriceError
 from domain.fotmob_data_matches_capture import (
     RAW_FILENAME,
     verify_data_matches_capture_directory,

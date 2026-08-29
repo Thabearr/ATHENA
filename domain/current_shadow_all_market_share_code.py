@@ -119,6 +119,77 @@ class ShadowAllMarketShareCodeReceipt:
     share_url: str | None
     combined_odds: str | None
 
+    def __post_init__(self) -> None:
+        allowed = {
+            STATUS_CODE_VERIFIED,
+            STATUS_CODE_VERIFIED_WITH_SHORTFALL,
+            STATUS_REPRICE_REQUIRED,
+            STATUS_PROVIDER_CHANGED,
+        }
+        if self.status not in allowed:
+            raise CurrentShadowAllMarketShareCodeError(
+                "share-code receipt status escaped reviewed vocabulary"
+            )
+        if (
+            type(self.observed_at) is not datetime
+            or self.observed_at.tzinfo is None
+            or self.observed_at.utcoffset() is None
+        ):
+            raise CurrentShadowAllMarketShareCodeError("observed_at must be timezone-aware")
+        object.__setattr__(self, "observed_at", self.observed_at.astimezone(timezone.utc))
+        if (
+            type(self.portfolio_sha256) is not str
+            or len(self.portfolio_sha256) != 64
+            or any(ch not in "0123456789abcdef" for ch in self.portfolio_sha256)
+        ):
+            raise CurrentShadowAllMarketShareCodeError("portfolio_sha256 is invalid")
+        if (
+            type(self.requested_target_size) is not int
+            or not 1 <= self.requested_target_size <= 50
+        ):
+            raise CurrentShadowAllMarketShareCodeError("requested_target_size is invalid")
+        if type(self.portfolio_shortfall) is not int or self.portfolio_shortfall < 0:
+            raise CurrentShadowAllMarketShareCodeError("portfolio_shortfall is invalid")
+        if type(self.selected_leg_count) is not int or self.selected_leg_count < 1:
+            raise CurrentShadowAllMarketShareCodeError("selected_leg_count is invalid")
+        if self.selected_leg_count + self.portfolio_shortfall != self.requested_target_size:
+            raise CurrentShadowAllMarketShareCodeError("selected leg count and shortfall do not match target")
+        if type(self.reasons) is not tuple or self.reasons != tuple(sorted(set(self.reasons))):
+            raise CurrentShadowAllMarketShareCodeError("reasons must be sorted unique tuple")
+        for value, label in (
+            (self.semantic_resolution_receipt_sha256, "semantic_resolution_receipt_sha256"),
+            (self.transport_receipt_sha256, "transport_receipt_sha256"),
+        ):
+            if value is not None and (
+                type(value) is not str
+                or len(value) != 64
+                or any(ch not in "0123456789abcdef" for ch in value)
+            ):
+                raise CurrentShadowAllMarketShareCodeError(f"{label} is invalid")
+        verified = self.status in {STATUS_CODE_VERIFIED, STATUS_CODE_VERIFIED_WITH_SHORTFALL}
+        if self.status == STATUS_CODE_VERIFIED and self.portfolio_shortfall != 0:
+            raise CurrentShadowAllMarketShareCodeError("fully verified code cannot carry shortfall")
+        if self.status == STATUS_CODE_VERIFIED_WITH_SHORTFALL and self.portfolio_shortfall <= 0:
+            raise CurrentShadowAllMarketShareCodeError("shortfall verified status requires positive shortfall")
+        if verified:
+            if (
+                type(self.share_code) is not str
+                or not self.share_code
+                or type(self.share_url) is not str
+                or not self.share_url.startswith(("http://", "https://"))
+                or type(self.combined_odds) is not str
+                or not self.combined_odds
+                or self.semantic_resolution_receipt_sha256 is None
+                or self.transport_receipt_sha256 is None
+            ):
+                raise CurrentShadowAllMarketShareCodeError("verified share-code receipt is incomplete")
+        elif any(
+            value is not None for value in (self.share_code, self.share_url, self.combined_odds)
+        ):
+            raise CurrentShadowAllMarketShareCodeError(
+                "non-verified receipt cannot expose provider code metadata"
+            )
+
     @property
     def code_verified(self) -> bool:
         return self.status in {STATUS_CODE_VERIFIED, STATUS_CODE_VERIFIED_WITH_SHORTFALL}
@@ -283,6 +354,14 @@ def _accepted_row(value: Any, label: str) -> dict[str, Any]:
     outcome = outcomes[0]
     market_id = market.get("id", market.get("marketId"))
     outcome_id = outcome.get("id", outcome.get("outcomeId"))
+    if market_id is None or outcome_id is None:
+        raise CurrentShadowAllMarketShareCodeError(
+            f"{label} accepted provider-native identity is missing"
+        )
+    if not str(market_id).strip() or not str(outcome_id).strip():
+        raise CurrentShadowAllMarketShareCodeError(
+            f"{label} accepted provider-native identity is empty"
+        )
     market_name = semantic_bridge._market_text(market)
     outcome_name = semantic_bridge._outcome_text(outcome)
     specifier = market.get("specifier")
@@ -399,6 +478,34 @@ def create_verified_shadow_all_market_share_code(
         return result
 
     try:
+        precreate_rebuilt = portfolio_module.verify_shadow_portfolio_optimization(rebuilt)
+    except portfolio_module.CurrentShadowPortfolioError as exc:
+        raise CurrentShadowAllMarketShareCodeError(
+            "Portfolio exact source replay failed immediately before transport"
+        ) from exc
+    if precreate_rebuilt.canonical_sha256 != rebuilt.canonical_sha256:
+        raise CurrentShadowAllMarketShareCodeError(
+            "Portfolio identity changed on immediate pre-transport replay"
+        )
+    precreate_now = _now()
+    if precreate_now < now:
+        raise CurrentShadowAllMarketShareCodeError(
+            "transport clock moved backwards during semantic resolution"
+        )
+    precreate_freshness = _freshness(precreate_rebuilt, precreate_now)
+    if precreate_freshness:
+        result = _terminal(
+            portfolio=precreate_rebuilt,
+            status=STATUS_REPRICE_REQUIRED,
+            reasons=precreate_freshness,
+            semantic_receipt=semantic_receipt,
+        )
+        _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
+        return result
+    rebuilt = precreate_rebuilt
+    now = precreate_now
+
+    try:
         transport_receipt = direct_bridge.create_and_roundtrip(
             selections=selections,
             output_dir=output_dir / "transport-roundtrip",
@@ -429,8 +536,23 @@ def create_verified_shadow_all_market_share_code(
     share_code = transport_receipt.get("shareCode")
     share_url = transport_receipt.get("shareURL")
     combined_odds = transport_receipt.get("combined_odds")
-    if type(share_code) is not str or not share_code or type(share_url) is not str or not share_url.startswith("http"):
-        raise CurrentShadowAllMarketShareCodeError("verified provider roundtrip omitted code metadata")
+    if (
+        type(share_code) is not str
+        or not share_code
+        or type(share_url) is not str
+        or not share_url.startswith(("http://", "https://"))
+        or type(combined_odds) is not str
+        or not combined_odds
+    ):
+        result = _terminal(
+            portfolio=rebuilt,
+            status=STATUS_PROVIDER_CHANGED,
+            reasons=("DIRECT_VERIFIED_RESPONSE_OMITTED_CODE_FIELDS",),
+            semantic_receipt=semantic_receipt,
+            transport_receipt=transport_receipt,
+        )
+        _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
+        return result
     status = STATUS_CODE_VERIFIED if rebuilt.shortfall == 0 else STATUS_CODE_VERIFIED_WITH_SHORTFALL
     result = ShadowAllMarketShareCodeReceipt(
         status=status,
@@ -444,7 +566,7 @@ def create_verified_shadow_all_market_share_code(
         transport_receipt_sha256=_sha(dict(transport_receipt)),
         share_code=share_code,
         share_url=share_url,
-        combined_odds=None if combined_odds is None else str(combined_odds),
+        combined_odds=combined_odds,
     )
     _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
     return result

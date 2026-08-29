@@ -238,11 +238,17 @@ def build_shadow_portfolio_router_input(
     rows = [
         row for row in reconciled.rows
         if row.event_id == context.provider_event_id
-        and row.matched_fotmob_fixture_id == context.fixture_identity
     ]
     if len(rows) != 1 or rows[0].fixture_reconciliation_authorized is not True:
         raise CurrentShadowPortfolioError("Portfolio fixture/event exposure is not uniquely source-authorized")
     row = rows[0]
+    if row.matched_fotmob_fixture_id is None:
+        raise CurrentShadowPortfolioError("Portfolio exposure omitted matched FotMob fixture identity")
+    source_fixture_identity = f"FOTMOB:{row.matched_fotmob_fixture_id}"
+    if source_fixture_identity != context.fixture_identity:
+        raise CurrentShadowPortfolioError(
+            "Portfolio fixture identity differs from source-reconciled FotMob identity"
+        )
     if row.competition_name is None:
         raise CurrentShadowPortfolioError("Portfolio exposure requires source-proven competition")
     inventory = context.provider_inventory
