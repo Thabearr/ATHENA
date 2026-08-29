@@ -62,18 +62,31 @@ def _eligibility(result: ShadowPriceResult) -> tuple[ShadowOpportunityEligibilit
         )
 
     event_floor = _event_floor(result)
-    if result.market_id in ORDINARY_PARTITIONS and event_floor is not None:
+    # Probability floor for every non-full-settlement market with a scalar event probability
+    # (ordinary partitions AND overlapping scalar markets such as Double Chance / 1UP / 2UP).
+    if result.market_id not in PUSH_SPLIT_MARKETS and event_floor is not None:
         if event_floor < MINIMUM_EVENT_PROBABILITY:
             reasons.append(
                 f"event probability floor {event_floor} < {MINIMUM_EVENT_PROBABILITY}"
             )
 
-    edge = _robust_edge(result, event_floor)
-    if result.fair_probability is not None:
-        if edge is None or edge <= MINIMUM_ROBUST_EDGE:
+    # Ordinary partition markets MUST have complete same-snapshot proportional de-vig.
+    if result.market_id in ORDINARY_PARTITIONS:
+        if result.devig_status is not ShadowDevigStatus.PROPORTIONAL_COMPLETE_PARTITION:
             reasons.append(
-                f"robust edge {edge} <= {MINIMUM_ROBUST_EDGE}"
+                f"ordinary partition requires PROPORTIONAL_COMPLETE_PARTITION, "
+                f"got {None if result.devig_status is None else result.devig_status.value}"
             )
+        if result.fair_probability is None:
+            reasons.append("ordinary partition missing fair_probability")
+        else:
+            edge = _robust_edge(result, event_floor)
+            if edge is None or edge <= MINIMUM_ROBUST_EDGE:
+                reasons.append(f"robust edge {edge} <= {MINIMUM_ROBUST_EDGE}")
+    elif result.fair_probability is not None:
+        edge = _robust_edge(result, event_floor)
+        if edge is None or edge <= MINIMUM_ROBUST_EDGE:
+            reasons.append(f"robust edge {edge} <= {MINIMUM_ROBUST_EDGE}")
 
     if reasons:
         return ShadowOpportunityEligibility.REJECTED, tuple(reasons)
