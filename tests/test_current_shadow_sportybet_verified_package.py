@@ -51,6 +51,38 @@ def test_verified_decision_source_is_builder_only_and_replays_exact_current_sour
         package.VerifiedResearchDecisionSource()
 
 
+def test_verified_source_replays_reviewed_current_over_under_label_rename(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    history, mapping, _inventory, evaluation, decision = _decision(
+        tmp_path,
+        monkeypatch,
+        current_market_name="Over/Under",
+    )
+    assert decision.selected is not None
+    assert decision.selected.provider_market_name == "Over/Under"
+    source = package.build_verified_research_decision_source(
+        complete_current_history=history,
+        current_mapping_rebind=mapping,
+        evaluation_time=evaluation,
+    )
+    assert source.decision.to_dict() == decision.to_dict()
+    assert (
+        package.verify_verified_research_decision_source(source).to_dict()
+        == source.to_dict()
+    )
+    verified = package.build_verified_research_shadow_portfolio(
+        (source,),
+        target_size=1,
+        evaluation_time=evaluation,
+    )
+    assert verified.portfolio.selected_legs
+    assert verified.portfolio.selected_legs[0].provider_market_name == "Over/Under"
+    assert verified.portfolio.authority["production_selection"] is False
+    assert verified.portfolio.to_dict()["wager_placed"] is False
+
+
 def test_tampered_verified_decision_receipt_fails_exact_source_replay(
     tmp_path,
     monkeypatch: pytest.MonkeyPatch,

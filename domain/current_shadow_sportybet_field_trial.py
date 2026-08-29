@@ -7,8 +7,12 @@ v3 -> Router v3 -> Portfolio v3 chain. It consumes only:
 
 It derives the exact PR149 sealed shadow prediction from that complete history,
 reconstructs the exact retained current SportyBet event-detail inventory, prices
-only exact PR252-mapped Total Goals half-line partitions, and applies the frozen
-Router/Portfolio policy constants for research evaluation.
+only exact reviewed Total Goals half-line partitions, and applies the frozen
+Router/Portfolio policy constants for research evaluation. PR252 exact semantics
+remain authoritative; one PR258 research-only review may additionally reconcile
+the current provider's market-18 display-label rename from ``Total Goals`` to
+``Over/Under`` when native IDs, specifier, outcome labels and line semantics all
+remain exact.
 
 It never mints CalibratedValueCandidate values, production Phase 6 authority,
 production selection authority, SportyBet execution authority, stake authority,
@@ -64,7 +68,16 @@ STATUS = "RESEARCH_ONLY_CURRENT_SHADOW_FIELD_TRIAL_SOURCE_BOUND"
 PROVIDER = "SportyBet"
 MAX_SOURCE_AGE_SECONDS = 900
 MINIMUM_LEAD_SECONDS = 120
-MARKET_POLICY_ID = "EXACT_PR252_MAPPED_TOTAL_GOALS_HALF_LINE_PARTITIONS_ONLY_V2"
+REVIEWED_TOTAL_GOALS_PROVIDER_MARKET_ID = "18"
+REVIEWED_TOTAL_GOALS_SOURCE_LABEL = "Total Goals"
+REVIEWED_TOTAL_GOALS_CURRENT_LABEL = "Over/Under"
+MARKET_LABEL_RENAME_POLICY_ID = (
+    "PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_"
+    "EXACT_NATIVE_ID_SPECIFIER_OUTCOME_LABEL_V1"
+)
+MARKET_POLICY_ID = (
+    "EXACT_PR252_TOTAL_GOALS_OR_REVIEWED_PR258_MARKET18_LABEL_RENAME_HALF_LINES_V3"
+)
 VALUE_POLICY_ID = (
     "COMPLETE_CURRENT_PR151_PR149_CALIBRATED_XG_POISSON_PLUS_"
     "EXACT_CURRENT_PROVIDER_DECIMAL_ODDS_RESEARCH_V2"
@@ -451,9 +464,19 @@ class ResearchTotalGoalsOpportunity:
         object.__setattr__(self, "quote_observed_at", observed)
         _provider_id(self.provider_market_id, "provider_market_id")
         _provider_id(self.provider_outcome_id, "provider_outcome_id")
-        if self.provider_market_name != "Total Goals":
+        if self.provider_market_name not in {
+            REVIEWED_TOTAL_GOALS_SOURCE_LABEL,
+            REVIEWED_TOTAL_GOALS_CURRENT_LABEL,
+        }:
             raise CurrentShadowSportyBetFieldTrialError(
-                "research opportunity escaped exact Total Goals market label"
+                "research opportunity escaped reviewed Total Goals provider labels"
+            )
+        if (
+            self.provider_market_name == REVIEWED_TOTAL_GOALS_CURRENT_LABEL
+            and self.provider_market_id != REVIEWED_TOTAL_GOALS_PROVIDER_MARKET_ID
+        ):
+            raise CurrentShadowSportyBetFieldTrialError(
+                "current Over/Under label is reviewed only for exact provider market 18"
             )
         _exact_text(self.provider_outcome_name, "provider_outcome_name")
         match = _TOTAL_SPECIFIER_RE.fullmatch(self.provider_specifier)
@@ -1102,22 +1125,165 @@ def _prove_shared_fotmob_capture(
         )
 
 
+@dataclasses.dataclass(frozen=True)
+class _ResearchCurrentTotalGoalsMapping:
+    provider_market_id: str
+    provider_market_name: str
+    provider_specifier: str
+    provider_outcome_id: str
+    provider_outcome_name: str
+    canonical_market_id: MarketId
+    canonical_outcome_id: OutcomeId
+    canonical_line: float
+    source_mapping_row_sha256: str
+    current_inventory_sha256: str
+    mapping_basis: str
+
+    def __post_init__(self) -> None:
+        _provider_id(self.provider_market_id, "research mapped provider_market_id")
+        _provider_id(self.provider_outcome_id, "research mapped provider_outcome_id")
+        _exact_text(self.provider_market_name, "research mapped provider_market_name")
+        _exact_text(self.provider_outcome_name, "research mapped provider_outcome_name")
+        _strict_sha(self.source_mapping_row_sha256, "source_mapping_row_sha256")
+        _strict_sha(self.current_inventory_sha256, "current_inventory_sha256")
+        if self.canonical_market_id is not MarketId.TOTAL_GOALS:
+            raise CurrentShadowSportyBetFieldTrialError(
+                "research current mapping escaped Total Goals"
+            )
+        if self.canonical_outcome_id not in {OutcomeId.OVER, OutcomeId.UNDER}:
+            raise CurrentShadowSportyBetFieldTrialError(
+                "research current Total Goals mapping has invalid outcome"
+            )
+        line = _finite(self.canonical_line, "research mapped canonical total line")
+        if line < 0 or not _half_line(line):
+            raise CurrentShadowSportyBetFieldTrialError(
+                "research current Total Goals mapping requires exact half line"
+            )
+        match = _TOTAL_SPECIFIER_RE.fullmatch(self.provider_specifier)
+        if match is None or not math.isclose(
+            float(match.group(1)), line, rel_tol=0.0, abs_tol=1e-12
+        ):
+            raise CurrentShadowSportyBetFieldTrialError(
+                "research current Total Goals mapping line/specifier differs"
+            )
+        expected_outcome = (
+            f"Over {line:g}"
+            if self.canonical_outcome_id is OutcomeId.OVER
+            else f"Under {line:g}"
+        )
+        if self.provider_outcome_name != expected_outcome:
+            raise CurrentShadowSportyBetFieldTrialError(
+                "research current Total Goals mapping outcome label differs"
+            )
+        if self.mapping_basis == "PR252_EXACT_REVIEWED_SEMANTICS":
+            if self.provider_market_name != REVIEWED_TOTAL_GOALS_SOURCE_LABEL:
+                raise CurrentShadowSportyBetFieldTrialError(
+                    "exact PR252 Total Goals row changed provider label"
+                )
+        elif self.mapping_basis == MARKET_LABEL_RENAME_POLICY_ID:
+            if (
+                self.provider_market_id != REVIEWED_TOTAL_GOALS_PROVIDER_MARKET_ID
+                or self.provider_market_name != REVIEWED_TOTAL_GOALS_CURRENT_LABEL
+            ):
+                raise CurrentShadowSportyBetFieldTrialError(
+                    "reviewed current market-label rename escaped exact market-18 rule"
+                )
+        else:
+            raise CurrentShadowSportyBetFieldTrialError(
+                "research current mapping basis is unreviewed"
+            )
+        object.__setattr__(self, "canonical_line", line)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "provider_market_id": self.provider_market_id,
+            "provider_market_name": self.provider_market_name,
+            "provider_specifier": self.provider_specifier,
+            "provider_outcome_id": self.provider_outcome_id,
+            "provider_outcome_name": self.provider_outcome_name,
+            "canonical_market_id": self.canonical_market_id.value,
+            "canonical_outcome_id": self.canonical_outcome_id.value,
+            "canonical_line": self.canonical_line,
+            "source_mapping_row_sha256": self.source_mapping_row_sha256,
+            "current_inventory_sha256": self.current_inventory_sha256,
+            "mapping_basis": self.mapping_basis,
+        }
+
+
+def _reviewed_total_goals_label_rename_rows(
+    mapping: current_mapping.CurrentDirectProviderCanonicalMarketMappingRebind,
+    inventory: live.SportyBetLiveEventQuoteInventory,
+) -> tuple[_ResearchCurrentTotalGoalsMapping, ...]:
+    if inventory.canonical_sha256 != mapping.current_inventory_sha256:
+        raise CurrentShadowSportyBetFieldTrialError(
+            "label-rename review is not bound to the PR252 current inventory"
+        )
+    native_index = {
+        (item.market_id, item.specifier, item.outcome_id): item
+        for item in inventory.selections
+    }
+    if len(native_index) != len(inventory.selections):
+        raise CurrentShadowSportyBetFieldTrialError(
+            "current inventory contains duplicate provider-native selection identity"
+        )
+    rows: list[_ResearchCurrentTotalGoalsMapping] = []
+    for audit in mapping.mapping_audits:
+        if (
+            audit.disposition
+            is not current_mapping.RebindAuditDisposition.CURRENT_PROVIDER_LABEL_DRIFT_REJECTED
+            or audit.provider_market_id != REVIEWED_TOTAL_GOALS_PROVIDER_MARKET_ID
+            or audit.reviewed_provider_market_name != REVIEWED_TOTAL_GOALS_SOURCE_LABEL
+            or audit.current_provider_market_name != REVIEWED_TOTAL_GOALS_CURRENT_LABEL
+            or audit.current_provider_outcome_name != audit.reviewed_provider_outcome_name
+            or audit.provider_specifier is None
+            or audit.canonical_market_id is not MarketId.TOTAL_GOALS
+            or audit.canonical_outcome_id not in {OutcomeId.OVER, OutcomeId.UNDER}
+            or audit.canonical_line is None
+        ):
+            continue
+        line = _finite(audit.canonical_line, "reviewed renamed canonical total line")
+        if line < 0 or not _half_line(line):
+            continue
+        selected = native_index.get(
+            (audit.provider_market_id, audit.provider_specifier, audit.provider_outcome_id)
+        )
+        if (
+            selected is None
+            or selected.market_name != REVIEWED_TOTAL_GOALS_CURRENT_LABEL
+            or selected.outcome_name != audit.reviewed_provider_outcome_name
+            or selected.bookable is not True
+        ):
+            continue
+        rows.append(
+            _ResearchCurrentTotalGoalsMapping(
+                provider_market_id=audit.provider_market_id,
+                provider_market_name=selected.market_name,
+                provider_specifier=audit.provider_specifier,
+                provider_outcome_id=audit.provider_outcome_id,
+                provider_outcome_name=selected.outcome_name,
+                canonical_market_id=audit.canonical_market_id,
+                canonical_outcome_id=audit.canonical_outcome_id,
+                canonical_line=line,
+                source_mapping_row_sha256=audit.source_mapping_row_sha256,
+                current_inventory_sha256=inventory.canonical_sha256,
+                mapping_basis=MARKET_LABEL_RENAME_POLICY_ID,
+            )
+        )
+    return tuple(rows)
+
+
 def _mapped_total_partitions(
     mapping: current_mapping.CurrentDirectProviderCanonicalMarketMappingRebind,
+    inventory: live.SportyBetLiveEventQuoteInventory,
 ) -> tuple[
-    tuple[
-        current_mapping.CurrentDirectProviderCanonicalMappedSelection,
-        current_mapping.CurrentDirectProviderCanonicalMappedSelection,
-    ],
+    tuple[_ResearchCurrentTotalGoalsMapping, _ResearchCurrentTotalGoalsMapping],
     ...,
 ]:
     grouped: dict[
         tuple[str, str, float],
-        dict[
-            OutcomeId,
-            current_mapping.CurrentDirectProviderCanonicalMappedSelection,
-        ],
+        dict[OutcomeId, _ResearchCurrentTotalGoalsMapping],
     ] = {}
+    rows: list[_ResearchCurrentTotalGoalsMapping] = []
     for row in mapping.mapped_selections:
         if row.canonical_market_id is not MarketId.TOTAL_GOALS:
             continue
@@ -1126,7 +1292,7 @@ def _mapped_total_partitions(
             or row.provider_specifier is None
             or row.current_bookable_observed is not True
             or row.bookmaker_equivalence_authorized is not True
-            or row.provider_market_name != "Total Goals"
+            or row.provider_market_name != REVIEWED_TOTAL_GOALS_SOURCE_LABEL
         ):
             continue
         line = _finite(row.canonical_line, "mapped canonical total line")
@@ -1134,22 +1300,35 @@ def _mapped_total_partitions(
             continue
         match = _TOTAL_SPECIFIER_RE.fullmatch(row.provider_specifier)
         if match is None or not math.isclose(
-            float(match.group(1)),
-            line,
-            rel_tol=0.0,
-            abs_tol=1e-12,
+            float(match.group(1)), line, rel_tol=0.0, abs_tol=1e-12
         ):
             continue
         if row.canonical_outcome_id not in {OutcomeId.OVER, OutcomeId.UNDER}:
             continue
-        key = (row.provider_market_id, row.provider_specifier, line)
+        rows.append(
+            _ResearchCurrentTotalGoalsMapping(
+                provider_market_id=row.provider_market_id,
+                provider_market_name=row.provider_market_name,
+                provider_specifier=row.provider_specifier,
+                provider_outcome_id=row.provider_outcome_id,
+                provider_outcome_name=row.provider_outcome_name,
+                canonical_market_id=row.canonical_market_id,
+                canonical_outcome_id=row.canonical_outcome_id,
+                canonical_line=line,
+                source_mapping_row_sha256=row.source_mapping_row_sha256,
+                current_inventory_sha256=row.current_inventory_sha256,
+                mapping_basis="PR252_EXACT_REVIEWED_SEMANTICS",
+            )
+        )
+    rows.extend(_reviewed_total_goals_label_rename_rows(mapping, inventory))
+    for row in rows:
+        key = (row.provider_market_id, row.provider_specifier, row.canonical_line)
         bucket = grouped.setdefault(key, {})
         if row.canonical_outcome_id in bucket:
             raise CurrentShadowSportyBetFieldTrialError(
-                "PR252 mapping contains duplicate canonical total partition side"
+                "reviewed current mapping contains duplicate canonical total partition side"
             )
         bucket[row.canonical_outcome_id] = row
-
     pairs = []
     for key in sorted(grouped):
         sides = grouped[key]
@@ -1253,7 +1432,7 @@ def build_source_bound_total_goals_research_decision(
         )
 
     opportunities: list[ResearchTotalGoalsOpportunity] = []
-    for over_map, under_map in _mapped_total_partitions(mapping):
+    for over_map, under_map in _mapped_total_partitions(mapping, inventory):
         if (
             over_map.provider_market_id != under_map.provider_market_id
             or over_map.provider_specifier != under_map.provider_specifier
@@ -1277,7 +1456,7 @@ def build_source_bound_total_goals_research_decision(
             )
             if selected is None:
                 raise CurrentShadowSportyBetFieldTrialError(
-                    "exact PR252 mapped selection is absent from retained current inventory"
+                    "reviewed mapped selection is absent from retained current inventory"
                 )
             if (
                 selected.market_name != mapped.provider_market_name
@@ -1285,7 +1464,7 @@ def build_source_bound_total_goals_research_decision(
                 or selected.bookable is not True
             ):
                 raise CurrentShadowSportyBetFieldTrialError(
-                    "current provider selection differs from exact PR252 mapped semantics"
+                    "current provider selection differs from reviewed mapped semantics"
                 )
             current_sides[mapped.canonical_outcome_id] = selected
 

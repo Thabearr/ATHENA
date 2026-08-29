@@ -47,11 +47,12 @@ def _selection(
     outcome_id: str,
     odds: float,
     market_id: str = "18",
+    market_name: str = "Total Goals",
 ):
     return dataclasses.replace(
         mapping_helpers._selection(
             market_id=market_id,
-            market_name="Total Goals",
+            market_name=market_name,
             specifier=f"total={line:g}",
             outcome_id=outcome_id,
             outcome_name=(
@@ -96,6 +97,8 @@ def _current_mapping(
     line: float = 6.5,
     mapping_evaluation: dt.datetime | None = None,
     include_unreviewed_line: bool = False,
+    market_id: str = "18",
+    current_market_name: str = "Total Goals",
 ):
     shadow_row = history.shadow_handoff.rows[0]
     kickoff = shadow_row.kickoff_utc
@@ -111,12 +114,12 @@ def _current_mapping(
     monkeypatch.setattr(mapping_helpers, "EVALUATION", evaluation)
 
     source_mapping = mapping_helpers._source_mapping(
-        _source_row(line=line, outcome_id="O"),
-        _source_row(line=line, outcome_id="U"),
+        _source_row(line=line, outcome_id="O", market_id=market_id),
+        _source_row(line=line, outcome_id="U", market_id=market_id),
     )
     selections = [
-        _selection(line=line, outcome_id="O", odds=6.0),
-        _selection(line=line, outcome_id="U", odds=1.25),
+        _selection(line=line, outcome_id="O", odds=6.0, market_id=market_id, market_name=current_market_name),
+        _selection(line=line, outcome_id="U", odds=1.25, market_id=market_id, market_name=current_market_name),
     ]
     if include_unreviewed_line:
         selections.extend(
@@ -164,6 +167,8 @@ def _decision(
     include_unreviewed_line: bool = False,
     mapping_evaluation: dt.datetime | None = None,
     decision_evaluation: dt.datetime | None = None,
+    market_id: str = "18",
+    current_market_name: str = "Total Goals",
 ):
     history = _complete_history(tmp_path, monkeypatch)
     mapping, inventory, mapping_time = _current_mapping(
@@ -171,6 +176,8 @@ def _decision(
         monkeypatch,
         include_unreviewed_line=include_unreviewed_line,
         mapping_evaluation=mapping_evaluation,
+        market_id=market_id,
+        current_market_name=current_market_name,
     )
     evaluation = decision_evaluation or (
         max(mapping_time, inventory.observed_at)
@@ -234,6 +241,50 @@ def test_source_bound_research_lane_never_claims_production_or_bet_authority(
         "wager_placed",
     ):
         assert trial.AUTHORITY[key] is False
+
+
+def test_reviewed_market18_total_goals_to_over_under_label_rename_is_source_bound(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _history, mapping, inventory, _evaluation, decision = _decision(
+        tmp_path,
+        monkeypatch,
+        current_market_name="Over/Under",
+    )
+    assert mapping.mapped_selection_count == 0
+    assert mapping.current_inventory_sha256 == inventory.canonical_sha256
+    assert {
+        audit.disposition for audit in mapping.mapping_audits
+    } == {
+        mapping_helpers.rebind.RebindAuditDisposition.CURRENT_PROVIDER_LABEL_DRIFT_REJECTED
+    }
+    selected = decision.selected
+    assert decision.status == "SELECTED"
+    assert selected is not None
+    assert selected.provider_market_id == "18"
+    assert selected.provider_market_name == "Over/Under"
+    assert selected.provider_specifier == "total=6.5"
+    assert {item.provider_market_name for item in decision.opportunities} == {"Over/Under"}
+    assert {item.provider_market_id for item in decision.opportunities} == {"18"}
+
+
+def test_over_under_label_rename_is_not_generalized_to_other_native_market_ids(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    *_prefix, decision = _decision(
+        tmp_path,
+        monkeypatch,
+        market_id="19",
+        current_market_name="Over/Under",
+    )
+    assert decision.status == "NO_BET"
+    assert decision.selected is None
+    assert decision.opportunities == ()
+    assert decision.decision_reasons == (
+        "NO_EXACT_REVIEWED_TOTAL_GOALS_PARTITION",
+    )
 
 
 def test_unreviewed_provider_total_line_is_never_generalized_into_research_surface(
