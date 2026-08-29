@@ -127,6 +127,7 @@ jobs:
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           # Pre-PR175 collection workflow blob retained as provenance: 2310d2253b00b8ddd995d7a28e0d67e6ea9381dd
           # PR175/pre-ambiguity-recovery workflow blob retained as provenance: d48b1ff823277445e3b496876caca6b01480ece9
+          # Pre-continuity current producer blob retained as provenance: eb6cfd3966d7040f630fc3a51c6cad41b171bcfb
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "0920e76639d4f45061afa7e08594c677c8bb6dca"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "e3cdb18845403d92f94933f68c2bd06e55660de0"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "522b99260137fbeea1914495b3aaa368961ba455"
