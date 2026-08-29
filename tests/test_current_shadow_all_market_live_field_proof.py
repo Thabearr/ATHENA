@@ -7,6 +7,10 @@ import json
 import pytest
 from types import SimpleNamespace
 
+from domain.current_fotmob_fixture_candidate_adapter import (
+    CurrentFotMobFixtureCandidateAdapterError,
+    build_current_fotmob_fixture_candidate_bundle,
+)
 from domain.fotmob_data_matches_capture import (
     CapturedFotMobDataMatchesResponse,
     build_data_matches_capture_manifest,
@@ -42,7 +46,9 @@ def test_hosted_shadow_workflow_uses_import_safe_module_entrypoint():
 
 def test_current_fixture_candidate_builder_replays_reviewed_additive_schema():
     raw, manifest = _reviewed_extended_capture()
-    bundle = build_fotmob_fixture_candidate_bundle(((raw, manifest),))
+    with pytest.raises(FotMobFixtureCandidateError, match="PR #39 schema assessment failed"):
+        build_fotmob_fixture_candidate_bundle(((raw, manifest),))
+    bundle = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
     assert bundle.candidate_count > 0
     assert bundle.sources[0].source_raw_sha256 == manifest.raw_sha256
 
@@ -71,8 +77,10 @@ def test_unreviewed_current_status_key_still_fails_closed():
         timezone=original.timezone,
         ccode3=original.ccode3,
     )
-    with pytest.raises(FotMobFixtureCandidateError, match="PR39/PR89"):
-        build_fotmob_fixture_candidate_bundle(((changed, manifest),))
+    with pytest.raises(
+        CurrentFotMobFixtureCandidateAdapterError, match="additive schema assessment failed"
+    ):
+        build_current_fotmob_fixture_candidate_bundle(changed, manifest)
 
 
 def test_current_fixture_universe_uses_earliest_nonempty_date_only(monkeypatch, tmp_path):
