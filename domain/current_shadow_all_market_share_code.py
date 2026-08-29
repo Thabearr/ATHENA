@@ -316,8 +316,9 @@ def _verify_semantic(
             "eventId": leg.provider_event_id,
             "marketId": leg.provider_market_id,
             "outcomeId": leg.provider_outcome_id,
-            "specifier": leg.provider_specifier,
         }
+        if leg.provider_specifier is not None:
+            expected_native["specifier"] = leg.provider_specifier
         if dict(selection) != expected_native:
             reasons.append(f"{leg.fixture_identity}:PROVIDER_NATIVE_IDENTITY_CHANGED")
         expected_semantics = {
@@ -447,7 +448,6 @@ def create_verified_shadow_all_market_share_code(
         result = _terminal(portfolio=rebuilt, status=STATUS_REPRICE_REQUIRED, reasons=freshness)
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
-
     intents = semantic_bridge.validate_intents(_semantic_intents(rebuilt))
     try:
         selections, semantic_receipt = semantic_bridge.resolve_live_intents(
