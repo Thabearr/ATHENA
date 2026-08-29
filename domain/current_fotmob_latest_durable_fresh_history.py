@@ -47,7 +47,7 @@ SOURCE_SCOPE = (
 
 RAW_AUDIT_BLOB_SHA = "e3cdb18845403d92f94933f68c2bd06e55660de0"
 PR175_PROJECTION_BLOB_SHA = "522b99260137fbeea1914495b3aaa368961ba455"
-SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "513ce4ee204065bc52c61657c4de30b315a5bc0c"
+SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "da2164d1cb23bb5569963d85fa47d3207bd2cff0"
 
 _ALLOWED_RELEASE_STATES = frozenset(
     {
@@ -256,6 +256,7 @@ def _run_reviewed_projected_audit(
     expected_main_sha: str,
     get_main_ref: Callable[[], Mapping[str, Any]],
     get_runs_page: Callable[[int, int], Mapping[str, Any]],
+    get_run_by_id: Callable[[int], Mapping[str, Any]],
     get_run_artifacts: Callable[[int], Mapping[str, Any]],
     download_artifact_zip: Callable[[int], bytes],
     get_release: Callable[[str], Mapping[str, Any]],
@@ -271,6 +272,7 @@ def _run_reviewed_projected_audit(
             expected_main_sha=expected_main_sha,
             get_main_ref=get_main_ref,
             get_runs_page=get_runs_page,
+            get_run_by_id=get_run_by_id,
             get_run_artifacts=get_run_artifacts,
             download_artifact_zip=download_artifact_zip,
             get_release=get_release,
@@ -493,6 +495,7 @@ def _replay_audit_from_evidence(
         get_runs_page=lambda page, per_page: source.json(
             f"runs:{page}:{per_page}"
         ),
+        get_run_by_id=lambda run_id: source.json(f"run:{run_id}"),
         get_run_artifacts=lambda run_id: source.json(f"artifacts:{run_id}"),
         download_artifact_zip=lambda artifact_id: source.binary(
             f"artifact_zip:{artifact_id}"
@@ -812,6 +815,7 @@ def _build_with_readers(
     expected_main_sha: str,
     get_main_ref: Callable[[], Mapping[str, Any]],
     get_runs_page: Callable[[int, int], Mapping[str, Any]],
+    get_run_by_id: Callable[[int], Mapping[str, Any]],
     get_run_artifacts: Callable[[int], Mapping[str, Any]],
     download_artifact_zip: Callable[[int], bytes],
     get_release: Callable[[str], Mapping[str, Any]],
@@ -826,6 +830,9 @@ def _build_with_readers(
         get_main_ref=lambda: recorder.json("main_ref", get_main_ref),
         get_runs_page=lambda page, per_page: recorder.json(
             f"runs:{page}:{per_page}", lambda: get_runs_page(page, per_page)
+        ),
+        get_run_by_id=lambda run_id: recorder.json(
+            f"run:{run_id}", lambda: get_run_by_id(run_id)
         ),
         get_run_artifacts=lambda run_id: recorder.json(
             f"artifacts:{run_id}", lambda: get_run_artifacts(run_id)
@@ -910,6 +917,9 @@ def build_current_fotmob_latest_durable_fresh_history_handoff(
             f"fotmob-utc-native-xg-fresh-holdout.yml/runs?per_page={per_page}&page={page}"
         )
 
+    def get_run_by_id(run_id: int) -> Mapping[str, Any]:
+        return lineage_audit._gh_json(f"/repos/{REPOSITORY}/actions/runs/{run_id}")
+
     def get_run_artifacts(run_id: int) -> Mapping[str, Any]:
         return lineage_audit._gh_json(f"/repos/{REPOSITORY}/actions/runs/{run_id}/artifacts")
 
@@ -939,6 +949,7 @@ def build_current_fotmob_latest_durable_fresh_history_handoff(
         expected_main_sha=expected_main_sha,
         get_main_ref=get_main_ref,
         get_runs_page=get_runs_page,
+        get_run_by_id=get_run_by_id,
         get_run_artifacts=get_run_artifacts,
         download_artifact_zip=download_artifact_zip,
         get_release=get_release,

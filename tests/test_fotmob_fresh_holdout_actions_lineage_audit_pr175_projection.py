@@ -89,9 +89,8 @@ def test_projection_proves_continuity_dispatch_before_candidate_admission():
     watchdog, dispatch, jobs = _continuity_runs()
     plan = recovery_projection._prove_continuity_candidate(
         dispatch,
-        runs_by_id={123: watchdog},
+        get_run_by_id=lambda run_id: watchdog,
         get_run_jobs=lambda run_id: jobs,
-        expected_main_sha=SHA,
     )
     assert plan.target_slot_text == "2026-08-29T07:07:00Z"
     assert plan.target_cron == "7 * * * *"
@@ -112,9 +111,8 @@ def test_projection_rejects_unproven_continuity_dispatch(mutation: str):
     with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
         recovery_projection._prove_continuity_candidate(
             dispatch,
-            runs_by_id=sources,
+            get_run_by_id=lambda run_id: sources[run_id],
             get_run_jobs=lambda run_id: jobs,
-            expected_main_sha=SHA,
         )
 
 

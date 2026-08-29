@@ -160,6 +160,7 @@ def _fake_projected_audit(
     expected_main_sha,
     get_main_ref,
     get_runs_page,
+    get_run_by_id,
     get_run_artifacts,
     download_artifact_zip,
     get_release,
@@ -167,7 +168,7 @@ def _fake_projected_audit(
     get_run_jobs,
     repository_root=None,
 ):
-    del get_release, download_release_asset, get_run_jobs, repository_root
+    del get_run_by_id, get_release, download_release_asset, get_run_jobs, repository_root
     main = get_main_ref()
     observed = (
         main.get("object", {}).get("sha")
@@ -247,6 +248,9 @@ def _readers(*, runs: list[dict], artifacts: dict[int, dict], zips: dict[int, by
             if (page, per_page) == (1, 100)
             else {"workflow_runs": []}
         ),
+        "get_run_by_id": lambda run_id: next(
+            run for run in runs if run.get("id") == run_id
+        ),
         "get_run_artifacts": lambda run_id: {"artifacts": [artifacts[run_id]]},
         "download_artifact_zip": lambda artifact_id: zips[artifact_id],
         "get_release": lambda _tag: {},
@@ -292,6 +296,9 @@ def _github_evidence(
         get_runs_page=lambda page, per_page: recorder.json(
             f"runs:{page}:{per_page}",
             lambda: readers["get_runs_page"](page, per_page),
+        ),
+        get_run_by_id=lambda run_id: recorder.json(
+            f"run:{run_id}", lambda: readers["get_run_by_id"](run_id)
         ),
         get_run_artifacts=lambda run_id: recorder.json(
             f"artifacts:{run_id}",

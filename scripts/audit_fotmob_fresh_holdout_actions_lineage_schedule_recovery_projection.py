@@ -87,9 +87,8 @@ def _projected_preacquisition_record(run: Mapping[str, Any]) -> dict[str, Any]:
 def _prove_continuity_candidate(
     run: Mapping[str, Any],
     *,
-    runs_by_id: Mapping[int, Mapping[str, Any]],
+    get_run_by_id,
     get_run_jobs,
-    expected_main_sha: str,
 ) -> continuity.ContinuityPlan:
     """Replay the immutable prospective dispatch provenance before audit admission."""
     title = run.get("display_title")
@@ -103,22 +102,20 @@ def _prove_continuity_candidate(
             "workflow_dispatch run escaped continuity provenance grammar"
         )
     source_run_id = int(match.group(1))
-    source = runs_by_id.get(source_run_id)
-    if source is None:
-        raise audit.FreshHoldoutActionsLineageAuditError(
-            "continuity watchdog source run is absent from authoritative lineage pages"
-        )
+    dispatch_sha = run.get("head_sha")
     try:
+        # A continuity observation remains historical evidence after main moves.
+        # Its exact execution SHA, not audit-time main, binds both executions.
         continuity.validate_watchdog_source_jobs(
             get_run_jobs(source_run_id),
             expected_run_id=source_run_id,
-            expected_main_sha=expected_main_sha,
+            expected_main_sha=dispatch_sha,
         )
         return continuity.validate_continuity_dispatch(
-            watchdog_run=source,
+            watchdog_run=get_run_by_id(source_run_id),
             dispatch_run=run,
             source_watchdog_run_id=source_run_id,
-            current_main_sha=expected_main_sha,
+            current_main_sha=dispatch_sha,
             requested_target_slot=match.group(2),
             requested_target_cron=match.group(3),
             confirmation=match.group(4),
@@ -137,12 +134,16 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         )
     get_run_artifacts = kwargs.get("get_run_artifacts")
     get_run_jobs = kwargs.get("get_run_jobs")
-    if not callable(get_run_artifacts) or not callable(get_run_jobs):
+    get_run_by_id = kwargs.get("get_run_by_id")
+    if (
+        not callable(get_run_artifacts)
+        or not callable(get_run_jobs)
+        or not callable(get_run_by_id)
+    ):
         return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
 
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
-    runs_by_id: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
     projected_continuities: dict[int, continuity.ContinuityPlan] = {}
@@ -156,19 +157,6 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         if run_id not in jobs_cache:
             jobs_cache[run_id] = get_run_jobs(run_id)
         return jobs_cache[run_id]
-
-    get_runs_page = kwargs.get("get_runs_page")
-    if not callable(get_runs_page):
-        return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
-
-    def cached_runs_page(page: int, per_page: int) -> Mapping[str, Any]:
-        payload = get_runs_page(page, per_page)
-        values = payload.get("workflow_runs") if type(payload) is dict else None
-        if type(values) is list:
-            for value in values:
-                if type(value) is dict and type(value.get("id")) is int:
-                    runs_by_id[value["id"]] = value
-        return payload
 
     def projected_candidate(run: Mapping[str, Any]) -> bool:
         if not _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE(run):
@@ -190,9 +178,8 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
                 )
             projected_continuities[run_id] = _prove_continuity_candidate(
                 run,
-                runs_by_id=runs_by_id,
+                get_run_by_id=get_run_by_id,
                 get_run_jobs=cached_jobs,
-                expected_main_sha=kwargs["expected_main_sha"],
             )
             return True
         run_id = run.get("id")
@@ -230,7 +217,6 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     previous_candidate = audit._run_is_collection_candidate
     audit._run_is_collection_candidate = projected_candidate
     projected_kwargs = dict(kwargs)
-    projected_kwargs["get_runs_page"] = cached_runs_page
     projected_kwargs["get_run_artifacts"] = cached_artifacts
     projected_kwargs["get_run_jobs"] = cached_jobs
     try:
