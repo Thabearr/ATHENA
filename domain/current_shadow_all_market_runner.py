@@ -153,6 +153,20 @@ def _write(path: Path, payload: Mapping[str, Any]) -> None:
     os.replace(temporary, path)
 
 
+def _failure_chain(exc: BaseException) -> str:
+    """Preserve bounded fail-closed cause identity without traceback or secrets."""
+
+    parts: list[str] = []
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen and len(parts) < 8:
+        seen.add(id(current))
+        message = str(current).replace("\r", " ").replace("\n", " ")
+        parts.append(f"{type(current).__name__}:{message}")
+        current = current.__cause__
+    return "<-".join(parts)
+
+
 @dataclass(frozen=True)
 class CurrentShadowRunnerSourceBundle:
     router_inputs: tuple[portfolio_module.ShadowPortfolioRouterInput, ...]
@@ -483,7 +497,7 @@ def execute_current_shadow_all_market(
             sources=sources,
             portfolio=portfolio,
             share_receipt=share_receipt,
-            reasons=(f"SOURCE_CHAIN_FAILED:{type(exc).__name__}:{exc}",),
+            reasons=(f"SOURCE_CHAIN_FAILED:{_failure_chain(exc)}",),
         )
     _write(output_dir / "current-shadow-all-market-run-receipt.json", result.to_dict())
     return result

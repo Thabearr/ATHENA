@@ -204,6 +204,22 @@ def test_shadow_price_failure_is_captured_as_source_incomplete(monkeypatch, tmp_
     )
 
 
+def test_source_failure_preserves_bounded_cause_identity(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+
+    def fail(**_kwargs):
+        try:
+            raise ValueError("exact inner cause")
+        except ValueError as inner:
+            raise runner.CurrentShadowAllMarketRunnerError("outer boundary") from inner
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", fail)
+    result = runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    assert result.reasons == (
+        "SOURCE_CHAIN_FAILED:CurrentShadowAllMarketRunnerError:outer boundary<-ValueError:exact inner cause",
+    )
+
+
 def test_runner_authority_never_grants_production_or_wager():
     assert runner.AUTHORITY["research_shadow_current_runner"] is True
     for key in (
