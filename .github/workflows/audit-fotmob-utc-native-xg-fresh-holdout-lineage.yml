@@ -131,7 +131,7 @@ jobs:
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "e3cdb18845403d92f94933f68c2bd06e55660de0"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "522b99260137fbeea1914495b3aaa368961ba455"
-          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "43c9de3f4857e151abcbd79b1ffc528bb33b93fa"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "76a85b95781436a770ae37c426a2369533de5221"
 
       - name: Execute read-only GitHub lineage audit
         id: lineage_audit
