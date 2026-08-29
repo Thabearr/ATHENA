@@ -43,11 +43,14 @@ line but marks integer/push-capable lines outside the current half-goal model
 capability.  Asian Handicap records exact signed specifiers and the observed
 home/away orientation, including quarter-line split settlement.
 
-Settlement classes remain explicit: 1X2 partition; exact-line totals;
+Settlement classes remain explicit: 1X2 partition; exact-line Total Goals
+settlement with per-line topology (half-goal lines are ordinary Over/Under
+partitions, while integer lines retain an explicit PUSH state);
 result-or-total union/complement; complementary BTTS, WEH, and win-to-nil;
 overlapping Double Chance and early-payout selections; DNB WIN/PUSH/LOSS; and
 full Asian-Handicap WIN/HALF-WIN/PUSH/HALF-LOSS/LOSS where applicable.  The
-registry does not authorize ordinary three-way de-vig for overlapping markets.
+registry does not authorize ordinary de-vig for push-capable or overlapping
+markets.
 
 ## Currentness and next boundary
 

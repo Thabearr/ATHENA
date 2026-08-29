@@ -164,6 +164,11 @@ def test_exact_provider_semantics_and_settlement_classes(tmp_path):
     two_up = next(row for row in value.coverage if row.market_id is MarketId.MATCH_RESULT_2UP)
     assert one_up.event_set_overlaps and two_up.event_set_overlaps
     assert not one_up.ordinary_devig_partition_valid and not two_up.ordinary_devig_partition_valid
+    totals = next(row for row in value.coverage if row.market_id is MarketId.TOTAL_GOALS)
+    assert totals.settlement_class is registry.SettlementClass.TOTALS_EXACT_LINE_SETTLEMENT
+    assert totals.ordinary_devig_partition_valid is True
+    assert totals.push_or_split_settlement is False
+    assert all(item.ordinary_devig_partition_valid and not item.push_or_split_settlement for item in totals.observations)
 
 
 @pytest.mark.parametrize(
@@ -196,7 +201,10 @@ def test_integer_total_is_observed_but_not_model_eligible(tmp_path):
     row = next(item for item in value.coverage if item.market_id is MarketId.TOTAL_GOALS)
     assert row.provider_status is registry.ProviderSemanticStatus.SUPPORTED_WITH_EXACT_LINE_POLICY
     assert row.observations[0].line_analytically_eligible is False
+    assert all(not item.ordinary_devig_partition_valid for item in row.observations)
+    assert all(item.push_or_split_settlement for item in row.observations)
     assert row.ordinary_devig_partition_valid is False
+    assert row.push_or_split_settlement is True
     assert row.research_readiness == "SEMANTIC_READY_EXACT_LINE_MODEL_BLOCKED"
 
 

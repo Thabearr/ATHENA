@@ -84,7 +84,7 @@ CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN = ProviderSemanticStatus.CURRENT_PROVIDER_
 
 class SettlementClass(str, Enum):
     REGULATION_1X2_PARTITION = "REGULATION_1X2_PARTITION"
-    TOTALS_EXACT_LINE_PARTITION = "TOTALS_EXACT_LINE_PARTITION"
+    TOTALS_EXACT_LINE_SETTLEMENT = "TOTALS_EXACT_LINE_SETTLEMENT"
     RESULT_OR_TOTAL_UNION_COMPLEMENT = "RESULT_OR_TOTAL_UNION_COMPLEMENT"
     WEH_COMPLEMENTARY_BINARY = "WEH_COMPLEMENTARY_BINARY"
     DOUBLE_CHANCE_OVERLAPPING_EVENTS = "DOUBLE_CHANCE_OVERLAPPING_EVENTS"
@@ -283,7 +283,7 @@ def _expected_policy(market_id: MarketId) -> Mapping[str, Any]:
             "specifier_prefix": "total",
             "line_policy": "EXACT_OBSERVED_TOTAL_SPECIFIERS_HALF_UNIT; HALF_LINES_ONLY_FOR_CURRENT_MODEL",
             "mapping_policy": "PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER_EXACT_NATIVE_ID_SPECIFIER_OUTCOME_LABEL_V1",
-            "settlement": SettlementClass.TOTALS_EXACT_LINE_PARTITION,
+            "settlement": SettlementClass.TOTALS_EXACT_LINE_SETTLEMENT,
             "ordinary_partition": True,
             "overlap": False,
             "push_split": False,
@@ -658,6 +658,9 @@ class ProviderSemanticObservation:
     mapping_policy_identity: str
     settlement_class: SettlementClass
     settlement_equivalence_reviewed: bool
+    ordinary_devig_partition_valid: bool
+    event_set_overlaps: bool
+    push_or_split_settlement: bool
     line_analytically_eligible: bool
     evidence_freshness: EvidenceFreshnessState
 
@@ -698,6 +701,12 @@ class ProviderSemanticObservation:
         _enum_value(self.evidence_freshness, EvidenceFreshnessState, "evidence_freshness")
         if type(self.settlement_equivalence_reviewed) is not bool:
             raise CurrentSportyBetSemanticRegistryError("settlement review flag is invalid")
+        if type(self.ordinary_devig_partition_valid) is not bool:
+            raise CurrentSportyBetSemanticRegistryError("observation partition flag is invalid")
+        if type(self.event_set_overlaps) is not bool:
+            raise CurrentSportyBetSemanticRegistryError("observation overlap flag is invalid")
+        if type(self.push_or_split_settlement) is not bool:
+            raise CurrentSportyBetSemanticRegistryError("observation push/split flag is invalid")
         if type(self.line_analytically_eligible) is not bool:
             raise CurrentSportyBetSemanticRegistryError("line analytical flag is invalid")
 
@@ -762,6 +771,19 @@ class ProviderSemanticObservation:
             raise CurrentSportyBetSemanticRegistryError("mapping policy identity drifted")
         if self.settlement_class is not policy["settlement"]:
             raise CurrentSportyBetSemanticRegistryError("observation settlement class drifted")
+        expected_ordinary_partition = policy["ordinary_partition"]
+        expected_push_split = policy["push_split"]
+        if market is MarketId.TOTAL_GOALS:
+            if self.line is None:
+                raise CurrentSportyBetSemanticRegistryError("Total Goals line is required")
+            expected_ordinary_partition = _is_half_line(self.line)
+            expected_push_split = not expected_ordinary_partition
+        if self.ordinary_devig_partition_valid != expected_ordinary_partition:
+            raise CurrentSportyBetSemanticRegistryError("observation partition topology drifted")
+        if self.event_set_overlaps != policy["overlap"]:
+            raise CurrentSportyBetSemanticRegistryError("observation overlap topology drifted")
+        if self.push_or_split_settlement != expected_push_split:
+            raise CurrentSportyBetSemanticRegistryError("observation push/split topology drifted")
         expected_line_eligibility = not (
             market is MarketId.TOTAL_GOALS and not _is_half_line(self.line or "")
         )
@@ -803,6 +825,9 @@ class ProviderSemanticObservation:
             "mapping_policy_identity": self.mapping_policy_identity,
             "settlement_class": self.settlement_class.value,
             "settlement_equivalence_reviewed": self.settlement_equivalence_reviewed,
+            "ordinary_devig_partition_valid": self.ordinary_devig_partition_valid,
+            "event_set_overlaps": self.event_set_overlaps,
+            "push_or_split_settlement": self.push_or_split_settlement,
             "line_analytically_eligible": self.line_analytically_eligible,
             "evidence_freshness": self.evidence_freshness.value,
         }
@@ -869,6 +894,8 @@ def _make_observations(
         line_eligible = True
         if market_id is MarketId.TOTAL_GOALS:
             line_eligible = line is not None and _is_half_line(line)
+        ordinary_partition = policy["ordinary_partition"] if market_id is not MarketId.TOTAL_GOALS else line_eligible
+        push_split = policy["push_split"] if market_id is not MarketId.TOTAL_GOALS else not line_eligible
         matches.append(
             ProviderSemanticObservation(
                 canonical_market_id=market_id,
@@ -893,6 +920,9 @@ def _make_observations(
                 mapping_policy_identity=_mapping_policy(market_id),
                 settlement_class=policy["settlement"],
                 settlement_equivalence_reviewed=_settlement_reviewed(market_id),
+                ordinary_devig_partition_valid=ordinary_partition,
+                event_set_overlaps=policy["overlap"],
+                push_or_split_settlement=push_split,
                 line_analytically_eligible=line_eligible,
                 evidence_freshness=freshness,
             )
@@ -1032,9 +1062,12 @@ class ProviderCoverageRecord:
             expected_ordinary_partition = all(
                 item.line_analytically_eligible for item in self.observations
             )
+        expected_push_split = policy["push_split"]
+        if market is MarketId.TOTAL_GOALS and self.observations:
+            expected_push_split = any(item.push_or_split_settlement for item in self.observations)
         if self.ordinary_devig_partition_valid != expected_ordinary_partition:
             raise CurrentSportyBetSemanticRegistryError("ordinary partition flag drifted")
-        if self.event_set_overlaps != policy["overlap"] or self.push_or_split_settlement != policy["push_split"]:
+        if self.event_set_overlaps != policy["overlap"] or self.push_or_split_settlement != expected_push_split:
             raise CurrentSportyBetSemanticRegistryError("settlement topology flag drifted")
         if self.pricing_authority.value != "NOT_AUTHORIZED" or self.selection_authority.value != "NOT_AUTHORIZED":
             raise CurrentSportyBetSemanticRegistryError("readiness row cannot grant authority")
@@ -1194,6 +1227,9 @@ def build_coverage_record(
     ordinary_partition = policy["ordinary_partition"]
     if market is MarketId.TOTAL_GOALS and observations:
         ordinary_partition = all(item.line_analytically_eligible for item in observations)
+    push_split = policy["push_split"]
+    if market is MarketId.TOTAL_GOALS and observations:
+        push_split = any(item.push_or_split_settlement for item in observations)
     observed_market_names = tuple(sorted({item.provider_market_name for item in observations}))
     if observed_market_names:
         market_patterns = observed_market_names
@@ -1223,7 +1259,7 @@ def build_coverage_record(
         settlement_class=policy["settlement"],
         ordinary_devig_partition_valid=ordinary_partition,
         event_set_overlaps=policy["overlap"],
-        push_or_split_settlement=policy["push_split"],
+        push_or_split_settlement=push_split,
         evidence_freshness=freshness_state,
         research_readiness=readiness,
         blocker=blocker,
