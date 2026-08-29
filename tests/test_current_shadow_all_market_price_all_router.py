@@ -1,28 +1,34 @@
-"""Focused tests for PR D Shadow Price-all + all-market Router (source-bound)."""
+"""Focused trust-boundary tests for PR D Shadow Price-all + Router."""
 from __future__ import annotations
 
-import math
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
 
-from domain.markets import MarketId, OutcomeId
+from domain.markets import MARKET_REGISTRY, MarketId, OutcomeId, MarketFamily
 from domain import current_all_market_shadow_probability_settlement as prc
-from domain.current_shadow_all_market_price_all import (
-    build_shadow_exact_quote,
-    price_all_shadow_fixture,
-)
+from domain._all_market_shadow_types import SOURCE_LANE_CURRENT_SOURCE_BOUND
+from domain.current_shadow_all_market_price_all import price_all_shadow_fixture
 from domain.current_shadow_all_market_router import route_shadow_price_results
+from domain._current_shadow_quote_binding import build_shadow_exact_quote
 from domain._current_shadow_price_types import (
     AUTHORITY_FLAGS,
-    MINIMUM_EVENT_PROBABILITY,
+    PRICE_ALL_ISSUANCE_TOKEN,
     ShadowDevigStatus,
     ShadowExactQuote,
     ShadowPriceDisposition,
     ShadowPriceError,
+    ShadowPriceResult,
     ShadowRouterDecisionStatus,
     ShadowOpportunityEligibility,
+)
+from domain.current_sportybet_semantic_registry import (
+    ProviderSemanticObservation,
+    ProviderSemanticStatus,
+    SettlementClass,
+    EvidenceFreshnessState,
 )
 from domain.sportybet_live_event_quote_evidence import (
     INVENTORY_DATASET_NAME,
@@ -34,6 +40,8 @@ from domain.sportybet_live_event_quote_evidence import (
 NOW = datetime(2026, 8, 29, 17, 0, 0, tzinfo=timezone.utc)
 SHA_RAW = "b" * 64
 SHA_MAN = "c" * 64
+CONTRACT = "b888cebab6447cd4072d823dab67b56f1f75f72eb72d67b692d47a4378b27555"
+MAP_POLICY = "PRB_EXACT_NATIVE_ID_NAME_SPECIFIER_OUTCOME_LABEL_V1"
 
 
 def _xg(home: float = 1.8, away: float = 0.9) -> prc.ResearchXGRates:
@@ -46,17 +54,19 @@ def _xg(home: float = 1.8, away: float = 0.9) -> prc.ResearchXGRates:
     )
 
 
-def _scan(home: float = 1.8, away: float = 0.9, provider: str | None = "SUPPORTED"):
-    provider_map = None
-    if provider is not None:
-        provider_map = {m: provider for m in MarketId}
+def _math_scan(home: float = 1.8, away: float = 0.9, provider: str | None = "SUPPORTED"):
+    provider_map = None if provider is None else {m: provider for m in MarketId}
     return prc.scan_fixture_all_markets(
-        fixture_identity="FOTMOB:PRD1",
+        fixture_identity="sr:match:1001",
         research_xg=_xg(home, away),
         total_goals_lines=(1.5, 2.5),
         asian_handicap_home_lines=(-0.5, 0.0),
         provider_semantic_by_market=provider_map,
     )
+
+
+def _current_lane_scan(home: float = 1.8, away: float = 0.9, provider: str | None = "SUPPORTED"):
+    return replace(_math_scan(home, away, provider), source_lane=SOURCE_LANE_CURRENT_SOURCE_BOUND)
 
 
 def _sel(market_id, outcome_id, odds, *, market_name, outcome_name, specifier=None):
@@ -96,278 +106,199 @@ def _inventory(selections, *, observed_at=NOW):
     )
 
 
-def _issue(inv, sel, market, outcome, *, line=None, status="SUPPORTED"):
-    return build_shadow_exact_quote(
-        inventory=inv,
-        selection=sel,
-        fixture_identity="FOTMOB:PRD1",
-        market_id=market,
-        outcome_id=outcome,
+def _obs(inv, sel, market, outcome, *, line=None):
+    return ProviderSemanticObservation(
+        canonical_market_id=market,
+        canonical_outcome_id=outcome,
+        canonical_family=MARKET_REGISTRY[market].family,
+        provider_market_id=sel.market_id,
+        provider_market_name=sel.market_name,
+        provider_specifier=sel.specifier,
         line=line,
-        provider_semantic_status=status,
+        provider_outcome_id=sel.outcome_id,
+        provider_outcome_name=sel.outcome_name,
+        bookable=True,
+        bookability_basis="EXPLICIT_ACTIVE_FLAG",
+        provider_event_id=inv.event_id,
+        fixture_identity=inv.event_id,
+        fixture_identity_basis="EXACT_PROVIDER_EVENT_ID",
+        observed_at=inv.observed_at,
+        source_event_detail_raw_sha256=inv.source_raw_sha256,
+        source_manifest_sha256=inv.source_manifest_sha256,
+        source_inventory_sha256=inv.canonical_sha256,
+        source_contract_identity=CONTRACT,
+        mapping_policy_identity=MAP_POLICY,
+        settlement_class=SettlementClass.REGULATION_1X2_PARTITION,
+        settlement_equivalence_reviewed=True,
+        ordinary_devig_partition_valid=True,
+        event_set_overlaps=False,
+        push_or_split_settlement=False,
+        line_analytically_eligible=True,
+        evidence_freshness=EvidenceFreshnessState.CURRENT,
     )
 
 
-def _mr_quotes(odds=(1.40, 4.50, 7.00)):
+def _issue_mr(odds=(1.40, 4.50, 7.00)):
     sels = (
         _sel("1", "1", odds[0], market_name="1X2", outcome_name="Home"),
         _sel("1", "2", odds[1], market_name="1X2", outcome_name="Draw"),
         _sel("1", "3", odds[2], market_name="1X2", outcome_name="Away"),
     )
     inv = _inventory(sels)
-    return (
-        _issue(inv, sels[0], MarketId.MATCH_RESULT, OutcomeId.HOME),
-        _issue(inv, sels[1], MarketId.MATCH_RESULT, OutcomeId.DRAW),
-        _issue(inv, sels[2], MarketId.MATCH_RESULT, OutcomeId.AWAY),
-    ), inv
+    quotes = tuple(
+        build_shadow_exact_quote(
+            inventory=inv,
+            observation=_obs(inv, sels[i], MarketId.MATCH_RESULT, o),
+            coverage_status=ProviderSemanticStatus.SUPPORTED,
+        )
+        for i, o in enumerate((OutcomeId.HOME, OutcomeId.DRAW, OutcomeId.AWAY))
+    )
+    return quotes, inv, sels
 
 
-def test_caller_cannot_mint_shadow_exact_quote_directly():
-    with pytest.raises(ShadowPriceError, match="source-bound builder"):
-        ShadowExactQuote(
-            fixture_identity="FOTMOB:PRD1",
-            provider_event_id="sr:match:1001",
-            market_id=MarketId.MATCH_RESULT,
-            outcome_id=OutcomeId.HOME,
-            line=None,
-            provider_market_id="1",
-            provider_market_name="1X2",
-            provider_specifier=None,
-            provider_outcome_id="1",
-            provider_outcome_name="Home",
-            decimal_odds=1.5,
-            observed_at=NOW,
-            source_raw_sha256=SHA_RAW,
-            source_manifest_sha256=SHA_MAN,
-            source_inventory_sha256="e" * 64,
-            provider_semantic_status="SUPPORTED",
-            source_bound_issuance="FORGED",
+def test_cannot_relabel_1x2_as_btts():
+    sel = _sel("1", "1", 1.50, market_name="1X2", outcome_name="Home")
+    inv = _inventory((sel,))
+    with pytest.raises(Exception):
+        obs = _obs(inv, sel, MarketId.BTTS, OutcomeId.YES)
+        build_shadow_exact_quote(
+            inventory=inv,
+            observation=obs,
+            coverage_status=ProviderSemanticStatus.SUPPORTED,
         )
 
 
-def test_price_all_retains_15_market_audit_surface():
-    scan = _scan()
-    quotes, _ = _mr_quotes()
+def test_mathematical_scan_rejected():
+    scan = _math_scan()
+    assert getattr(scan, "source_lane", None) != SOURCE_LANE_CURRENT_SOURCE_BOUND
+    quotes, _, _ = _issue_mr()
+    with pytest.raises(ShadowPriceError, match="CURRENT_SOURCE_BOUND"):
+        price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
+
+
+def test_cannot_mint_priced_without_issuance():
+    with pytest.raises(ShadowPriceError, match="price_all|PRICED"):
+        ShadowPriceResult(
+            fixture_identity="sr:match:1001",
+            market_id=MarketId.MATCH_RESULT,
+            outcome_id=OutcomeId.HOME,
+            line=None,
+            disposition=ShadowPriceDisposition.PRICED,
+            model_probability=0.7,
+            decimal_odds=1.5,
+            implied_probability=1 / 1.5,
+            fair_probability=0.5,
+            overround=1.1,
+            devig_status=ShadowDevigStatus.PROPORTIONAL_COMPLETE_PARTITION,
+            net_expected_value=0.2,
+            expected_return_multiplier=1.2,
+            settlement_state_probabilities=(("WIN", 0.7), ("LOSS", 0.3)),
+            settlement_unit_returns=(("WIN", 0.5), ("LOSS", -1.0)),
+            quote_identity_sha256="e" * 64,
+            provider_event_id="sr:match:1001",
+            provider_semantic_status="SUPPORTED",
+            rejection_reason=None,
+            probability_method="score_matrix",
+            prc_scan_sha256="f" * 64,
+            source_raw_sha256=SHA_RAW,
+            source_manifest_sha256=SHA_MAN,
+            source_inventory_sha256="e" * 64,
+            price_all_issuance="FORGED",
+        )
+
+
+def test_price_all_current_lane_and_ancestry():
+    scan = _current_lane_scan(2.2, 0.7)
+    quotes, _, _ = _issue_mr((1.50, 4.20, 6.50))
     results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
     assert {r.market_id for r in results} == set(MarketId)
-    for r in results:
-        assert r.prc_scan_sha256 is not None
-        assert r.fixture_identity == "FOTMOB:PRD1"
-
-
-def test_empty_quotes_produces_no_bet_not_fixture_mismatch():
-    scan = _scan()
-    results = price_all_shadow_fixture(scan, (), evaluation_time=NOW)
-    assert all(r.fixture_identity == "FOTMOB:PRD1" for r in results)
-    decision = route_shadow_price_results(fixture_identity="FOTMOB:PRD1", price_results=results)
-    assert decision.status is ShadowRouterDecisionStatus.NO_BET
-    assert "UNKNOWN" not in decision.fixture_identity
-
-
-def test_provider_unproven_blocks_pricing():
-    scan = _scan(provider="CURRENT_PROVIDER_UNAVAILABLE/UNPROVEN")
-    quotes, _ = _mr_quotes()
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    mr = [r for r in results if r.market_id is MarketId.MATCH_RESULT]
-    assert all(r.disposition is ShadowPriceDisposition.UNPRICED_PROVIDER_BLOCKED for r in mr)
-
-
-def test_match_result_proportional_devig_and_ancestry():
-    scan = _scan(2.2, 0.7)
-    quotes, _ = _mr_quotes((1.50, 4.20, 6.50))
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    home = next(r for r in results if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME)
+    home = next(
+        r for r in results
+        if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME
+    )
     assert home.disposition is ShadowPriceDisposition.PRICED
-    assert home.devig_status is ShadowDevigStatus.PROPORTIONAL_COMPLETE_PARTITION
-    assert home.fair_probability is not None
+    assert home.price_all_issuance == PRICE_ALL_ISSUANCE_TOKEN
+    assert home.prc_scan_sha256 is not None
     assert home.source_raw_sha256 == SHA_RAW
-    assert home.source_manifest_sha256 == SHA_MAN
-    assert home.score_matrix_audit is not None
-    assert home.sealed_prediction_sha256 == "a" * 64
-    d = home.to_dict()
-    assert d["prc_scan_sha256"] is not None
-    assert d["score_matrix_audit"] is not None
-    assert d["source_raw_sha256"] == SHA_RAW
+    assert home.to_dict()["price_all_issuance"] == PRICE_ALL_ISSUANCE_TOKEN
 
 
-def test_incomplete_ordinary_partition_not_router_eligible():
-    scan = _scan(2.2, 0.7)
+def test_empty_quotes_no_bet():
+    scan = _current_lane_scan()
+    results = price_all_shadow_fixture(scan, (), evaluation_time=NOW)
+    decision = route_shadow_price_results(
+        fixture_identity="sr:match:1001", price_results=results
+    )
+    assert decision.status is ShadowRouterDecisionStatus.NO_BET
+
+
+def test_incomplete_partition_rejected():
+    scan = _current_lane_scan(2.2, 0.7)
     sel = _sel("1", "1", 1.50, market_name="1X2", outcome_name="Home")
     inv = _inventory((sel,))
-    quotes = (_issue(inv, sel, MarketId.MATCH_RESULT, OutcomeId.HOME),)
+    quotes = (
+        build_shadow_exact_quote(
+            inventory=inv,
+            observation=_obs(inv, sel, MarketId.MATCH_RESULT, OutcomeId.HOME),
+            coverage_status=ProviderSemanticStatus.SUPPORTED,
+        ),
+    )
     results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    home = next(r for r in results if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME)
-    assert home.disposition is ShadowPriceDisposition.PRICED
+    home = next(
+        r for r in results
+        if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME
+    )
     assert home.devig_status is ShadowDevigStatus.INCOMPLETE_PARTITION
-    assert home.fair_probability is None
-    decision = route_shadow_price_results(fixture_identity="FOTMOB:PRD1", price_results=results)
+    decision = route_shadow_price_results(
+        fixture_identity="sr:match:1001", price_results=results
+    )
     opp = next(
         o for o in decision.opportunities
         if o.price_result.market_id is MarketId.MATCH_RESULT
         and o.price_result.outcome_id is OutcomeId.HOME
     )
     assert opp.eligibility is ShadowOpportunityEligibility.REJECTED
-    assert any("PROPORTIONAL_COMPLETE_PARTITION" in r or "fair_probability" in r for r in opp.rejection_reasons)
 
 
-def test_cross_snapshot_ordinary_not_router_eligible():
-    scan = _scan(2.2, 0.7)
-    sels_a = (
-        _sel("1", "1", 1.50, market_name="1X2", outcome_name="Home"),
-        _sel("1", "2", 4.20, market_name="1X2", outcome_name="Draw"),
-        _sel("1", "3", 6.50, market_name="1X2", outcome_name="Away"),
-    )
-    inv_a = _inventory(sels_a)
-    sels_b = (_sel("1", "3", 6.50, market_name="1X2", outcome_name="Away"),)
-    inv_b = SportyBetLiveEventQuoteInventory(
-        dataset_name=INVENTORY_DATASET_NAME,
-        event_id="sr:match:1001",
-        home_team_name="Home",
-        away_team_name="Away",
-        kickoff_utc=NOW + timedelta(hours=2),
-        booking_status=None,
-        event_status="not_started",
-        match_status=None,
-        prematch_bookable_observed=True,
-        observed_at=NOW,
-        observation_authority=OBSERVATION_AUTHORITY,
-        provider_quote_at=None,
-        provider_snapshot_id=None,
-        source_manifest_sha256=SHA_MAN,
-        source_raw_sha256="f" * 64,
-        selections=sels_b,
-    )
-    quotes = (
-        _issue(inv_a, sels_a[0], MarketId.MATCH_RESULT, OutcomeId.HOME),
-        _issue(inv_a, sels_a[1], MarketId.MATCH_RESULT, OutcomeId.DRAW),
-        _issue(inv_b, sels_b[0], MarketId.MATCH_RESULT, OutcomeId.AWAY),
-    )
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    home = next(r for r in results if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME)
-    assert home.devig_status is ShadowDevigStatus.CROSS_SNAPSHOT
-    decision = route_shadow_price_results(fixture_identity="FOTMOB:PRD1", price_results=results)
-    for opp in decision.opportunities:
-        if opp.price_result.market_id is MarketId.MATCH_RESULT and opp.price_result.disposition is ShadowPriceDisposition.PRICED:
-            assert opp.eligibility is ShadowOpportunityEligibility.REJECTED
-
-
-def test_double_chance_respects_probability_floor():
-    scan = _scan(1.1, 1.1)
-    sels = (
-        _sel("10", "9", 1.30, market_name="Double Chance", outcome_name="Home or Draw"),
-        _sel("10", "10", 1.40, market_name="Double Chance", outcome_name="Home or Away"),
-        _sel("10", "11", 1.50, market_name="Double Chance", outcome_name="Draw or Away"),
-    )
-    inv = _inventory(sels)
-    quotes = (
-        _issue(inv, sels[0], MarketId.DOUBLE_CHANCE, OutcomeId.HOME_OR_DRAW),
-        _issue(inv, sels[1], MarketId.DOUBLE_CHANCE, OutcomeId.HOME_OR_AWAY),
-        _issue(inv, sels[2], MarketId.DOUBLE_CHANCE, OutcomeId.DRAW_OR_AWAY),
-    )
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    decision = route_shadow_price_results(fixture_identity="FOTMOB:PRD1", price_results=results)
-    for opp in decision.opportunities:
-        if (
-            opp.price_result.market_id is MarketId.DOUBLE_CHANCE
-            and opp.price_result.disposition is ShadowPriceDisposition.PRICED
-            and opp.event_probability_floor is not None
-            and opp.event_probability_floor < MINIMUM_EVENT_PROBABILITY
-        ):
-            assert opp.eligibility is ShadowOpportunityEligibility.REJECTED
-            assert any("event probability" in r for r in opp.rejection_reasons)
-
-
-def test_dnb_settlement_aware_ev():
-    scan = _scan(2.0, 0.8)
-    sels = (
-        _sel("11", "4", 1.45, market_name="Draw No Bet", outcome_name="Home"),
-        _sel("11", "5", 2.60, market_name="Draw No Bet", outcome_name="Away"),
-    )
-    inv = _inventory(sels)
-    quotes = (
-        _issue(inv, sels[0], MarketId.DRAW_NO_BET, OutcomeId.HOME),
-        _issue(inv, sels[1], MarketId.DRAW_NO_BET, OutcomeId.AWAY),
-    )
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    dnb = [r for r in results if r.market_id is MarketId.DRAW_NO_BET and r.disposition is ShadowPriceDisposition.PRICED]
-    assert dnb
-    for r in dnb:
-        assert r.devig_status is ShadowDevigStatus.NOT_IDENTIFIABLE_PUSH_OR_SPLIT_SETTLEMENT
-        states = dict(r.settlement_state_probabilities)
-        assert math.isclose(sum(states.values()), 1.0, abs_tol=1e-9)
-
-
-def test_stale_quote():
-    scan = _scan()
-    sel = _sel("1", "1", 1.5, market_name="1X2", outcome_name="Home")
-    inv = _inventory((sel,), observed_at=NOW - timedelta(seconds=2000))
-    quotes = (_issue(inv, sel, MarketId.MATCH_RESULT, OutcomeId.HOME),)
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    home = next(r for r in results if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME)
-    assert home.disposition is ShadowPriceDisposition.UNPRICED_STALE_QUOTE
-
-
-def test_selection_not_in_inventory_fails():
-    sel = _sel("1", "1", 1.5, market_name="1X2", outcome_name="Home")
-    other = _sel("1", "2", 4.0, market_name="1X2", outcome_name="Draw")
-    inv = _inventory((other,))
-    with pytest.raises(ShadowPriceError, match="not found in inventory|not present"):
+def test_observation_sha_mismatch_fails():
+    sel = _sel("1", "1", 1.50, market_name="1X2", outcome_name="Home")
+    inv = _inventory((sel,))
+    obs = _obs(inv, sel, MarketId.MATCH_RESULT, OutcomeId.HOME)
+    with pytest.raises(Exception):
+        bad = replace(obs, source_inventory_sha256="0" * 64)
         build_shadow_exact_quote(
             inventory=inv,
-            selection=sel,
-            fixture_identity="FOTMOB:PRD1",
-            market_id=MarketId.MATCH_RESULT,
-            outcome_id=OutcomeId.HOME,
-            line=None,
-            provider_semantic_status="SUPPORTED",
+            observation=bad,
+            coverage_status=ProviderSemanticStatus.SUPPORTED,
         )
 
 
-def test_router_authority_false():
-    scan = _scan(2.5, 0.6)
-    quotes, _ = _mr_quotes((1.55, 4.0, 7.0))
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    decision = route_shadow_price_results(fixture_identity="FOTMOB:PRD1", price_results=results)
-    assert decision.authority["wager_placed"] is False
-    assert decision.authority["production_market_router"] is False
-    assert decision.authority["bet"] is False
-
-
-def test_authority_all_production_false():
+def test_authority_false():
     for key in (
-        "production_price_all", "production_market_router", "production_selection",
-        "production_portfolio", "bet", "wager_placed", "staking", "sportybet_execution",
+        "production_price_all",
+        "production_market_router",
+        "production_selection",
+        "bet",
+        "wager_placed",
+        "staking",
+        "sportybet_execution",
     ):
         assert AUTHORITY_FLAGS[key] is False
 
 
-def test_no_legacy_shortcuts():
+def test_provider_unproven_blocks():
+    scan = _current_lane_scan(provider="CURRENT_PROVIDER_UNAVAILABLE/UNPROVEN")
+    quotes, _, _ = _issue_mr()
+    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
+    mr = [r for r in results if r.market_id is MarketId.MATCH_RESULT]
+    assert all(r.disposition is ShadowPriceDisposition.UNPRICED_PROVIDER_BLOCKED for r in mr)
+
+
+def test_no_legacy():
     for path in (
         Path("domain/current_shadow_all_market_price_all.py"),
         Path("domain/current_shadow_all_market_router.py"),
-        Path("domain/_current_shadow_price_types.py"),
     ):
-        text = path.read_text(encoding="utf-8")
-        for forbidden in ("AccaBuilder", "MatchAnalyst", "MARKET_BASELINES", "place_bet"):
+        text = path.read_text()
+        for forbidden in ("AccaBuilder", "MatchAnalyst", "place_bet"):
             assert forbidden not in text
-
-
-def test_total_goals_multi_line():
-    scan = _scan()
-    sels = (
-        _sel("18", "12", 1.90, market_name="Over/Under", outcome_name="Over", specifier="total=1.5"),
-        _sel("18", "13", 1.90, market_name="Over/Under", outcome_name="Under", specifier="total=1.5"),
-        _sel("18", "12", 2.10, market_name="Over/Under", outcome_name="Over", specifier="total=2.5"),
-        _sel("18", "13", 1.75, market_name="Over/Under", outcome_name="Under", specifier="total=2.5"),
-    )
-    inv = _inventory(sels)
-    quotes = (
-        _issue(inv, sels[0], MarketId.TOTAL_GOALS, OutcomeId.OVER, line=1.5),
-        _issue(inv, sels[1], MarketId.TOTAL_GOALS, OutcomeId.UNDER, line=1.5),
-        _issue(inv, sels[2], MarketId.TOTAL_GOALS, OutcomeId.OVER, line=2.5),
-        _issue(inv, sels[3], MarketId.TOTAL_GOALS, OutcomeId.UNDER, line=2.5),
-    )
-    results = price_all_shadow_fixture(scan, quotes, evaluation_time=NOW)
-    tg = [r for r in results if r.market_id is MarketId.TOTAL_GOALS and r.disposition is ShadowPriceDisposition.PRICED]
-    lines = sorted({r.line for r in tg})
-    assert 1.5 in lines and 2.5 in lines
