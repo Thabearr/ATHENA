@@ -53,6 +53,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
           CONTINUITY_SOURCE_WATCHDOG_RUN_ID: ${{ inputs.continuity_source_watchdog_run_id }}
+          CONTINUITY_CONFIRMATION: ${{ inputs.continuity_confirmation }}
           PYTHONPATH: ${{ github.workspace }}
         shell: bash
         run: |
@@ -65,6 +66,11 @@ jobs:
           import domain.fotmob_fresh_holdout_continuity as continuity
 
           repo = os.environ["GITHUB_REPOSITORY"]
+          # Bind this workflow-dispatch surface to the reviewed prospective-only
+          # confirmation before reading any source metadata. The later exact
+          # continuity replay validates the same input again with its target.
+          if os.environ.get("CONTINUITY_CONFIRMATION") != "PROSPECTIVE_ONLY_NO_BACKFILL_V1":
+              raise SystemExit("continuity confirmation is not the reviewed prospective-only token")
           try:
               source_run_id = int(os.environ["CONTINUITY_SOURCE_WATCHDOG_RUN_ID"])
           except ValueError as exc:
