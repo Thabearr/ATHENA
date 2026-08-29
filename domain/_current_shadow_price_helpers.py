@@ -12,6 +12,7 @@ from domain._current_shadow_price_types import (
     ORDINARY_PARTITIONS,
     OVERLAPPING_MARKETS,
     PUSH_SPLIT_MARKETS,
+    PRICE_ALL_ISSUANCE_TOKEN,
     ShadowDevigStatus,
     ShadowExactQuote,
     ShadowPriceDisposition,
@@ -378,5 +379,7 @@ def _price_one(
         source_manifest_sha256=quote.source_manifest_sha256,
         source_inventory_sha256=quote.source_inventory_sha256,
         observation_identity_sha256=quote.observation_identity_sha256,
+        registry_coverage_identity=quote.registry_coverage_identity,
+        price_all_issuance=PRICE_ALL_ISSUANCE_TOKEN,
         score_matrix_audit=assessment.score_matrix_audit,
     )
