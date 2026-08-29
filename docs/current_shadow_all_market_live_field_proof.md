@@ -65,4 +65,12 @@ first and, only on that precise structural rejection, replays the existing
 strict PR87/PR89 extension chain. PR39 itself is unchanged; unknown fields,
 wrong types and semantic promotion still fail closed.
 
+That corrected run (`33279000638`) then produced the first durable terminal
+receipt. At 22:37 UTC the prior runner requested only `20260829`, whose fixtures
+had already started or finished; PR243 correctly approved none. The current
+fixture-universe issuer now checks a fixed three-date UTC horizon and chooses
+the earliest exact reviewed nonempty catalogue. It does not accept a caller
+date, merge hand-picked fixtures, skip a nonempty earlier date, or alter PR243's
+recency/kickoff-lead policy.
+
 `wager_placed=false` is invariant.

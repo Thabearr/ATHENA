@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from datetime import timedelta
 import hashlib
 import json
 import os
@@ -49,6 +50,7 @@ STATUS_SOURCE_INCOMPLETE = "RESEARCH_NO_CODE_SOURCE_INCOMPLETE"
 PR119_BOOTSTRAP_ASSET_SHA256 = "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2"
 PR119_BOOTSTRAP_ENV = "ATHENA_PR119_BOOTSTRAP_PATH"
 EXPECTED_MAIN_ENV = "ATHENA_EXPECTED_MAIN_SHA"
+CURRENT_FIXTURE_SEARCH_DAY_COUNT = 3
 
 AUTHORITY = MappingProxyType({
     "research_shadow_current_runner": True,
@@ -243,14 +245,38 @@ def _source_capture(execution: current_fotmob_source.CurrentFotMobReviewedSource
     return raw, manifest
 
 
+def _issue_current_fixture_source(
+    *, repository_root: Path,
+) -> tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str]:
+    """Select the earliest reviewed non-empty UTC catalogue in a fixed horizon."""
+
+    today = _now().date()
+    attempted: list[str] = []
+    for offset in range(CURRENT_FIXTURE_SEARCH_DAY_COUNT):
+        request_date = (today + timedelta(days=offset)).strftime("%Y%m%d")
+        attempted.append(request_date)
+        try:
+            execution = current_fotmob_source.issue_current_fotmob_reviewed_source(
+                request_date=request_date,
+                timezone="UTC",
+                ccode3="NGA",
+                execute_live_network=True,
+                repository_root=repository_root,
+            )
+        except current_fotmob_source.CurrentFotMobReviewedSourceError as exc:
+            if str(exc) == current_fotmob_source.STATUS_NO_FIXTURES:
+                continue
+            raise
+        return execution, request_date
+    raise CurrentShadowAllMarketRunnerError(
+        "NO_POLICY_APPROVED_CURRENT_FOTMOB_FIXTURES_IN_FIXED_HORIZON:"
+        + ",".join(attempted)
+    )
+
+
 def _acquire_router_inputs(*, repository_root: Path, exact_commit_sha: str) -> CurrentShadowRunnerSourceBundle:
-    request_date = _now().strftime("%Y%m%d")
-    execution = current_fotmob_source.issue_current_fotmob_reviewed_source(
-        request_date=request_date,
-        timezone="UTC",
-        ccode3="NGA",
-        execute_live_network=True,
-        repository_root=repository_root,
+    execution, request_date = _issue_current_fixture_source(
+        repository_root=repository_root
     )
     raw, manifest = _source_capture(execution, repository_root)
     admission = execution.bootstrap.verified_artifact.admission
@@ -297,6 +323,8 @@ def _acquire_router_inputs(*, repository_root: Path, exact_commit_sha: str) -> C
             router_decision=decision,
         ))
     summary = MappingProxyType({
+        "selected_fixture_request_date": request_date,
+        "fixture_search_day_count": CURRENT_FIXTURE_SEARCH_DAY_COUNT,
         "current_fotmob": execution.summary(),
         "complete_current_history_sha256": latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(history),
         "current_reconciliation_sha256": current_events.canonical_sha256,
@@ -454,6 +482,7 @@ __all__ = [
     "CurrentShadowAllMarketRunReceipt",
     "CurrentShadowAllMarketRunnerError",
     "CurrentShadowRunnerSourceBundle",
+    "CURRENT_FIXTURE_SEARCH_DAY_COUNT",
     "STATUS_CODE_VERIFIED",
     "STATUS_CODE_VERIFIED_WITH_SHORTFALL",
     "STATUS_INSUFFICIENT_SUPPORTED_MARKETS",

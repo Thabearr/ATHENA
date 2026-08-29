@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import datetime as dt
 import json
 import pytest
+from types import SimpleNamespace
 
 from domain.fotmob_data_matches_capture import (
     CapturedFotMobDataMatchesResponse,
@@ -15,6 +17,7 @@ from domain.fotmob_fixture_candidates import (
     FotMobFixtureCandidateError,
     build_fotmob_fixture_candidate_bundle,
 )
+from domain import current_shadow_all_market_runner as runner
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -70,3 +73,45 @@ def test_unreviewed_current_status_key_still_fails_closed():
     )
     with pytest.raises(FotMobFixtureCandidateError, match="PR39/PR89"):
         build_fotmob_fixture_candidate_bundle(((changed, manifest),))
+
+
+def test_current_fixture_universe_uses_earliest_nonempty_date_only(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner,
+        "_now",
+        lambda: dt.datetime(2026, 8, 29, 22, 0, tzinfo=dt.timezone.utc),
+    )
+    calls = []
+    expected = SimpleNamespace()
+
+    def issue(**kwargs):
+        calls.append(kwargs["request_date"])
+        if kwargs["request_date"] == "20260829":
+            raise runner.current_fotmob_source.CurrentFotMobReviewedSourceError(
+                runner.current_fotmob_source.STATUS_NO_FIXTURES
+            )
+        return expected
+
+    monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
+    actual, request_date = runner._issue_current_fixture_source(repository_root=tmp_path)
+    assert actual is expected
+    assert request_date == "20260830"
+    assert calls == ["20260829", "20260830"]
+
+
+def test_current_fixture_universe_does_not_step_over_other_source_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner,
+        "_now",
+        lambda: dt.datetime(2026, 8, 29, 22, 0, tzinfo=dt.timezone.utc),
+    )
+
+    def issue(**_kwargs):
+        raise runner.current_fotmob_source.CurrentFotMobReviewedSourceError("schema drift")
+
+    monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
+    with pytest.raises(
+        runner.current_fotmob_source.CurrentFotMobReviewedSourceError,
+        match="schema drift",
+    ):
+        runner._issue_current_fixture_source(repository_root=tmp_path)
