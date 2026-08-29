@@ -374,7 +374,7 @@ def test_portfolio_rechecks_exact_120_second_boundary_and_preserves_exclusion(
     kickoff = history.shadow_handoff.rows[0].kickoff_utc
     mapping_time = kickoff - dt.timedelta(seconds=240)
     *_prefix, decision = _decision(
-        tmp_path,
+        tmp_path / "decision",
         monkeypatch,
         mapping_evaluation=mapping_time,
         decision_evaluation=kickoff - dt.timedelta(seconds=180),
