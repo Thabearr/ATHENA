@@ -1341,13 +1341,18 @@ def scan_current_sportybet_semantic_registry(
         raise CurrentSportyBetSemanticRegistryError("proof output must not be repository root")
     output.mkdir(parents=True, exist_ok=True)
     discovery_capture = capture_bounded_current_event_discovery()
-    scan_time = _utc(evaluation_time, "evaluation_time") if evaluation_time is not None else datetime.now(timezone.utc)
+    evaluation_override = (
+        _utc(evaluation_time, "evaluation_time")
+        if evaluation_time is not None
+        else None
+    )
+    candidate_time = evaluation_override or datetime.now(timezone.utc)
     discovery_candidates = sorted(
         (
             item
             for item in discovery_capture.events
             if item.prematch_bookable_observed
-            and item.kickoff_utc - scan_time > timedelta(seconds=live.MINIMUM_LEAD_SECONDS)
+            and item.kickoff_utc - candidate_time > timedelta(seconds=live.MINIMUM_LEAD_SECONDS)
         ),
         key=lambda item: (item.kickoff_utc, item.event_id),
     )[:MAX_EVENT_DETAIL_READS]
@@ -1403,9 +1408,13 @@ def scan_current_sportybet_semantic_registry(
                     "candidate_source": candidate_source,
                 }
             )
+    # A live current claim is evaluated at the end of the reads it certifies,
+    # not at the beginning of discovery.  This avoids falsely classifying the
+    # retained captures as future-dated merely because the scan took time.
+    registry_time = evaluation_override or datetime.now(timezone.utc)
     registry = build_registry(
         evidence_rows,
-        evaluation_time=scan_time,
+        evaluation_time=registry_time,
         scan_cap=MAX_EVENT_DETAIL_READS,
         scan_attempts=len(candidate_rows),
     )

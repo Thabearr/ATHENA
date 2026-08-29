@@ -9,7 +9,6 @@ and every retained source identity used to derive it.
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 
@@ -34,7 +33,6 @@ def main(argv: list[str] | None = None) -> int:
     registry, proof_path = semantic.scan_current_sportybet_semantic_registry(
         repository_root=args.repository_root.resolve(strict=True),
         output_directory=args.output_dir,
-        evaluation_time=datetime.now(timezone.utc),
         head_sha=args.head_sha,
         base_sha=args.base_sha,
     )
