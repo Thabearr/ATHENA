@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import ast
+import inspect
 import math
 from pathlib import Path
 
 import pytest
 
+from domain.current_sportybet_semantic_registry import ProviderSemanticStatus
 from domain.markets import MarketId, OutcomeId
 from domain.model_status import PricingAuthority, SelectionAuthority
 from domain.score_matrix import build_score_matrix
@@ -71,6 +73,25 @@ def test_no_legacy_shortcut_imports():
     assert "MARKET_BASELINES" not in source
 
 
+def test_current_entrypoint_does_not_accept_raw_research_xg_or_caller_lines():
+    params = inspect.signature(adapter.scan_current_fixture_all_markets).parameters
+    assert "research_xg" not in params
+    assert "total_goals_line" not in params
+    assert "total_goals_lines" not in params
+    assert "asian_handicap_home_lines" not in params
+    assert "provider_semantic_by_market" not in params
+    assert "complete_current_history" in params
+    assert "provider_semantic_registry" in params
+
+
+def test_current_entrypoint_rejects_non_history_object():
+    with pytest.raises(adapter.AllMarketShadowError, match="CurrentLatestDurableFreshHistoryHandoff"):
+        adapter.scan_current_fixture_all_markets(
+            complete_current_history=object(),
+            fixture_identity="FOTMOB:12345",
+        )
+
+
 def test_score_matrix_integrity_and_match_result():
     xg = _research_xg(1.5, 1.2)
     scan = adapter.scan_fixture_all_markets(
@@ -101,6 +122,24 @@ def test_total_goals_half_line_and_btts():
     assert math.isclose(bprobs[OutcomeId.YES] + bprobs[OutcomeId.NO], 1.0, abs_tol=1e-12)
 
 
+def test_total_goals_multiple_exact_lines_are_all_preserved():
+    scan = adapter.scan_fixture_all_markets(
+        fixture_identity="FOTMOB:200",
+        research_xg=_research_xg(),
+        total_goals_lines=(1.5, 2.5, 3.5),
+    )
+    tg = next(a for a in scan.market_assessments if a.market_id is MarketId.TOTAL_GOALS)
+    assert tg.disposition is adapter.ShadowDisposition.ANALYTICAL_READY
+    assert len(tg.event_probabilities) == 6
+    assert {item.line for item in tg.event_probabilities} == {1.5, 2.5, 3.5}
+    for line in (1.5, 2.5, 3.5):
+        pair = [item for item in tg.event_probabilities if item.line == line]
+        assert {item.outcome_id for item in pair} == {OutcomeId.OVER, OutcomeId.UNDER}
+        assert math.isclose(
+            math.fsum(item.probability for item in pair), 1.0, abs_tol=1e-12
+        )
+
+
 def test_double_chance_overlapping_not_partition():
     scan = adapter.scan_fixture_all_markets(
         fixture_identity="FOTMOB:3",
@@ -108,7 +147,6 @@ def test_double_chance_overlapping_not_partition():
     )
     dc = next(a for a in scan.market_assessments if a.market_id is MarketId.DOUBLE_CHANCE)
     total = math.fsum(e.probability for e in dc.event_probabilities)
-    # Overlapping events: sum is near 2, not 1
     assert total > 1.5
 
 
@@ -126,10 +164,11 @@ def test_dnb_full_settlement_distribution():
 
 
 def test_asian_handicap_full_settlement_and_provider_separation():
+    lines = (-0.5, 0.0, 0.25, -0.25, 0.75, -0.75)
     scan = adapter.scan_fixture_all_markets(
         fixture_identity="FOTMOB:5",
         research_xg=_research_xg(),
-        asian_handicap_home_lines=(-0.5, 0.0, 0.25, -0.25, 0.75, -0.75),
+        asian_handicap_home_lines=lines,
         provider_semantic_by_market={
             MarketId.ASIAN_HANDICAP: "CURRENT_PROVIDER_UNPROVEN",
         },
@@ -137,17 +176,40 @@ def test_asian_handicap_full_settlement_and_provider_separation():
     ah = next(a for a in scan.market_assessments if a.market_id is MarketId.ASIAN_HANDICAP)
     assert ah.disposition is adapter.ShadowDisposition.ANALYTICAL_READY_PROVIDER_BLOCKED
     assert ah.provider_semantic_status == "CURRENT_PROVIDER_UNPROVEN"
-    assert ah.settlement_distributions
+    assert len(ah.settlement_distributions) == 2 * len(lines)
+    assert {
+        item.settlement.line
+        for item in ah.settlement_distributions
+        if item.outcome_id is OutcomeId.HOME
+    } == set(lines)
+    assert {
+        item.settlement.line
+        for item in ah.settlement_distributions
+        if item.outcome_id is OutcomeId.AWAY
+    } == {-line for line in lines}
     for item in ah.settlement_distributions:
         assert math.isclose(item.settlement.total_probability, 1.0, abs_tol=1e-12)
 
-    # Direct settlement math still works independently
     matrix = build_score_matrix(1.4, 1.1)
     for line in (-0.5, 0.0, 0.5, -0.25, 0.25, -0.75, 0.75):
         home = asian_handicap_settlement(matrix, "HOME", line)
         away = asian_handicap_settlement(matrix, "AWAY", -line)
         assert math.isclose(home.total_probability, 1.0, abs_tol=1e-12)
         assert math.isclose(away.total_probability, 1.0, abs_tol=1e-12)
+
+
+def test_real_prb_unproven_status_blocks_provider_axis():
+    status = ProviderSemanticStatus.CURRENT_PROVIDER_UNAVAILABLE_UNPROVEN.value
+    scan = adapter.scan_fixture_all_markets(
+        fixture_identity="FOTMOB:501",
+        research_xg=_research_xg(),
+        provider_semantic_by_market={MarketId.MATCH_RESULT: status},
+    )
+    row = next(
+        item for item in scan.market_assessments if item.market_id is MarketId.MATCH_RESULT
+    )
+    assert row.provider_semantic_status == "CURRENT_PROVIDER_UNAVAILABLE/UNPROVEN"
+    assert row.disposition is adapter.ShadowDisposition.ANALYTICAL_READY_PROVIDER_BLOCKED
 
 
 def test_win_to_nil_complementary():
@@ -172,7 +234,6 @@ def test_1up_2up_overlap_preserved():
         assert row.specialist_evidence is not None
         for event in row.event_probabilities:
             assert 0.0 <= event.probability <= 1.0
-        # Overlap: sum need not be 1
         total = math.fsum(e.probability for e in row.event_probabilities)
         assert total > 0.0
 
@@ -232,6 +293,8 @@ def test_serialization_stable():
     scan = adapter.scan_fixture_all_markets(
         fixture_identity="FOTMOB:12",
         research_xg=_research_xg(1.2, 1.0),
+        total_goals_lines=(1.5, 2.5, 3.5),
+        asian_handicap_home_lines=(-0.5, 0.0, 0.5),
     )
     full = adapter.build_current_all_market_shadow_scan([scan])
     b1 = adapter.canonical_current_all_market_shadow_scan_bytes(full)
