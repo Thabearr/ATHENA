@@ -1,0 +1,90 @@
+name: Temporary PR-B Total Goals settlement fix
+
+on:
+  push:
+    branches:
+      - feat/prb-sportybet-semantic-registry
+    paths:
+      - .github/workflows/tmp-prb-total-goals-settlement-fix.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/prb-sportybet-semantic-registry
+          fetch-depth: 0
+      - name: Apply exact reviewed replacements
+        shell: python
+        run: |
+          from pathlib import Path
+
+          def replace_once(path, old, new):
+              p = Path(path)
+              text = p.read_text()
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected exactly one match, got {count}: {old!r}")
+              p.write_text(text.replace(old, new, 1))
+
+          path = "domain/current_sportybet_semantic_registry.py"
+          replace_once(path,
+              '    TOTALS_EXACT_LINE_PARTITION = "TOTALS_EXACT_LINE_PARTITION"',
+              '    TOTALS_EXACT_LINE_SETTLEMENT = "TOTALS_EXACT_LINE_SETTLEMENT"')
+          replace_once(path,
+              '            "settlement": SettlementClass.TOTALS_EXACT_LINE_PARTITION,',
+              '            "settlement": SettlementClass.TOTALS_EXACT_LINE_SETTLEMENT,')
+          replace_once(path,
+              '    settlement_equivalence_reviewed: bool\n    line_analytically_eligible: bool\n    evidence_freshness: EvidenceFreshnessState',
+              '    settlement_equivalence_reviewed: bool\n    ordinary_devig_partition_valid: bool\n    event_set_overlaps: bool\n    push_or_split_settlement: bool\n    line_analytically_eligible: bool\n    evidence_freshness: EvidenceFreshnessState')
+          replace_once(path,
+              '        if type(self.settlement_equivalence_reviewed) is not bool:\n            raise CurrentSportyBetSemanticRegistryError("settlement review flag is invalid")\n        if type(self.line_analytically_eligible) is not bool:',
+              '        if type(self.settlement_equivalence_reviewed) is not bool:\n            raise CurrentSportyBetSemanticRegistryError("settlement review flag is invalid")\n        if type(self.ordinary_devig_partition_valid) is not bool:\n            raise CurrentSportyBetSemanticRegistryError("observation partition flag is invalid")\n        if type(self.event_set_overlaps) is not bool:\n            raise CurrentSportyBetSemanticRegistryError("observation overlap flag is invalid")\n        if type(self.push_or_split_settlement) is not bool:\n            raise CurrentSportyBetSemanticRegistryError("observation push/split flag is invalid")\n        if type(self.line_analytically_eligible) is not bool:')
+          replace_once(path,
+              '        if self.settlement_class is not policy["settlement"]:\n            raise CurrentSportyBetSemanticRegistryError("observation settlement class drifted")\n        expected_line_eligibility = not (',
+              '        if self.settlement_class is not policy["settlement"]:\n            raise CurrentSportyBetSemanticRegistryError("observation settlement class drifted")\n        expected_ordinary_partition = policy["ordinary_partition"]\n        expected_push_split = policy["push_split"]\n        if market is MarketId.TOTAL_GOALS:\n            if self.line is None:\n                raise CurrentSportyBetSemanticRegistryError("Total Goals line is required")\n            expected_ordinary_partition = _is_half_line(self.line)\n            expected_push_split = not expected_ordinary_partition\n        if self.ordinary_devig_partition_valid != expected_ordinary_partition:\n            raise CurrentSportyBetSemanticRegistryError("observation partition topology drifted")\n        if self.event_set_overlaps != policy["overlap"]:\n            raise CurrentSportyBetSemanticRegistryError("observation overlap topology drifted")\n        if self.push_or_split_settlement != expected_push_split:\n            raise CurrentSportyBetSemanticRegistryError("observation push/split topology drifted")\n        expected_line_eligibility = not (')
+          replace_once(path,
+              '            "settlement_class": self.settlement_class.value,\n            "settlement_equivalence_reviewed": self.settlement_equivalence_reviewed,\n            "line_analytically_eligible": self.line_analytically_eligible,',
+              '            "settlement_class": self.settlement_class.value,\n            "settlement_equivalence_reviewed": self.settlement_equivalence_reviewed,\n            "ordinary_devig_partition_valid": self.ordinary_devig_partition_valid,\n            "event_set_overlaps": self.event_set_overlaps,\n            "push_or_split_settlement": self.push_or_split_settlement,\n            "line_analytically_eligible": self.line_analytically_eligible,')
+          replace_once(path,
+              '        line_eligible = True\n        if market_id is MarketId.TOTAL_GOALS:\n            line_eligible = line is not None and _is_half_line(line)\n        matches.append(',
+              '        line_eligible = True\n        if market_id is MarketId.TOTAL_GOALS:\n            line_eligible = line is not None and _is_half_line(line)\n        ordinary_partition = policy["ordinary_partition"] if market_id is not MarketId.TOTAL_GOALS else line_eligible\n        push_split = policy["push_split"] if market_id is not MarketId.TOTAL_GOALS else not line_eligible\n        matches.append(')
+          replace_once(path,
+              '                settlement_class=policy["settlement"],\n                settlement_equivalence_reviewed=_settlement_reviewed(market_id),\n                line_analytically_eligible=line_eligible,',
+              '                settlement_class=policy["settlement"],\n                settlement_equivalence_reviewed=_settlement_reviewed(market_id),\n                ordinary_devig_partition_valid=ordinary_partition,\n                event_set_overlaps=policy["overlap"],\n                push_or_split_settlement=push_split,\n                line_analytically_eligible=line_eligible,')
+          replace_once(path,
+              '        if self.ordinary_devig_partition_valid != expected_ordinary_partition:\n            raise CurrentSportyBetSemanticRegistryError("ordinary partition flag drifted")\n        if self.event_set_overlaps != policy["overlap"] or self.push_or_split_settlement != policy["push_split"]:\n            raise CurrentSportyBetSemanticRegistryError("settlement topology flag drifted")',
+              '        expected_push_split = policy["push_split"]\n        if market is MarketId.TOTAL_GOALS and self.observations:\n            expected_push_split = any(item.push_or_split_settlement for item in self.observations)\n        if self.ordinary_devig_partition_valid != expected_ordinary_partition:\n            raise CurrentSportyBetSemanticRegistryError("ordinary partition flag drifted")\n        if self.event_set_overlaps != policy["overlap"] or self.push_or_split_settlement != expected_push_split:\n            raise CurrentSportyBetSemanticRegistryError("settlement topology flag drifted")')
+          replace_once(path,
+              '    ordinary_partition = policy["ordinary_partition"]\n    if market is MarketId.TOTAL_GOALS and observations:\n        ordinary_partition = all(item.line_analytically_eligible for item in observations)\n    observed_market_names = tuple(sorted({item.provider_market_name for item in observations}))',
+              '    ordinary_partition = policy["ordinary_partition"]\n    if market is MarketId.TOTAL_GOALS and observations:\n        ordinary_partition = all(item.line_analytically_eligible for item in observations)\n    push_split = policy["push_split"]\n    if market is MarketId.TOTAL_GOALS and observations:\n        push_split = any(item.push_or_split_settlement for item in observations)\n    observed_market_names = tuple(sorted({item.provider_market_name for item in observations}))')
+          replace_once(path,
+              '        event_set_overlaps=policy["overlap"],\n        push_or_split_settlement=policy["push_split"],',
+              '        event_set_overlaps=policy["overlap"],\n        push_or_split_settlement=push_split,')
+
+          test = "tests/test_current_sportybet_semantic_registry.py"
+          replace_once(test,
+              '    assert one_up.event_set_overlaps and two_up.event_set_overlaps\n    assert not one_up.ordinary_devig_partition_valid and not two_up.ordinary_devig_partition_valid',
+              '    assert one_up.event_set_overlaps and two_up.event_set_overlaps\n    assert not one_up.ordinary_devig_partition_valid and not two_up.ordinary_devig_partition_valid\n    totals = next(row for row in value.coverage if row.market_id is MarketId.TOTAL_GOALS)\n    assert totals.settlement_class is registry.SettlementClass.TOTALS_EXACT_LINE_SETTLEMENT\n    assert totals.ordinary_devig_partition_valid is True\n    assert totals.push_or_split_settlement is False\n    assert all(item.ordinary_devig_partition_valid and not item.push_or_split_settlement for item in totals.observations)')
+          replace_once(test,
+              '    assert row.observations[0].line_analytically_eligible is False\n    assert row.ordinary_devig_partition_valid is False\n    assert row.research_readiness == "SEMANTIC_READY_EXACT_LINE_MODEL_BLOCKED"',
+              '    assert row.observations[0].line_analytically_eligible is False\n    assert all(not item.ordinary_devig_partition_valid for item in row.observations)\n    assert all(item.push_or_split_settlement for item in row.observations)\n    assert row.ordinary_devig_partition_valid is False\n    assert row.push_or_split_settlement is True\n    assert row.research_readiness == "SEMANTIC_READY_EXACT_LINE_MODEL_BLOCKED"')
+
+          doc = "docs/current_sportybet_semantic_registry.md"
+          replace_once(doc,
+              'Settlement classes remain explicit: 1X2 partition; exact-line totals;\nresult-or-total union/complement; complementary BTTS, WEH, and win-to-nil;\noverlapping Double Chance and early-payout selections; DNB WIN/PUSH/LOSS; and\nfull Asian-Handicap WIN/HALF-WIN/PUSH/HALF-LOSS/LOSS where applicable.  The\nregistry does not authorize ordinary three-way de-vig for overlapping markets.',
+              'Settlement classes remain explicit: 1X2 partition; exact-line Total Goals\nsettlement with per-line topology (half-goal lines are ordinary Over/Under\npartitions, while integer lines retain an explicit PUSH state);\nresult-or-total union/complement; complementary BTTS, WEH, and win-to-nil;\noverlapping Double Chance and early-payout selections; DNB WIN/PUSH/LOSS; and\nfull Asian-Handicap WIN/HALF-WIN/PUSH/HALF-LOSS/LOSS where applicable.  The\nregistry does not authorize ordinary de-vig for push-capable or overlapping\nmarkets.')
+
+          Path(".github/workflows/tmp-prb-total-goals-settlement-fix.yml").unlink()
+      - name: Commit repaired settlement semantics
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix: preserve Total Goals push settlement topology"
+          git push origin HEAD:feat/prb-sportybet-semantic-registry
