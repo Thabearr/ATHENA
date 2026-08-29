@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from domain import fotmob_fresh_holdout_continuity as continuity
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as projection
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection as recovery_projection
@@ -27,6 +28,7 @@ RECOVERY_PROJECTION_SCRIPT = Path(
     "scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py"
 )
 AUDIT_SCRIPT = Path("scripts/audit_fotmob_fresh_holdout_actions_lineage.py")
+SHA = "a" * 40
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -36,6 +38,84 @@ def _git_blob_sha(path: Path) -> str:
     return hashlib.sha1(
         b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw
     ).hexdigest()
+
+
+def _continuity_runs(*, target: str = "2026-08-29T07:07:00Z"):
+    watchdog = {
+        "id": 123,
+        "name": continuity.WATCHDOG_WORKFLOW_NAME,
+        "path": continuity.WATCHDOG_WORKFLOW_PATH,
+        "event": "schedule",
+        "head_branch": "main",
+        "head_sha": SHA,
+        "created_at": "2026-08-29T07:03:02Z",
+        "status": "completed",
+        "conclusion": "success",
+    }
+    dispatch = {
+        "id": 456,
+        "name": continuity.PRIMARY_WORKFLOW_NAME,
+        "path": continuity.PRIMARY_WORKFLOW_PATH,
+        "event": "workflow_dispatch",
+        "head_branch": "main",
+        "head_sha": SHA,
+        "created_at": "2026-08-29T07:07:08Z",
+        "display_title": (
+            "ATHENA fresh-holdout workflow_dispatch source=123 "
+            f"target={target} cron=7 * * * * "
+            "confirm=PROSPECTIVE_ONLY_NO_BACKFILL_V1"
+        ),
+    }
+    jobs = {
+        "jobs": [{
+            "run_id": 123,
+            "workflow_name": continuity.WATCHDOG_WORKFLOW_NAME,
+            "name": continuity.WATCHDOG_JOB_NAME,
+            "head_branch": "main",
+            "head_sha": SHA,
+            "status": "completed",
+            "conclusion": "success",
+            "created_at": "2026-08-29T07:03:04Z",
+            "steps": [
+                {"name": name, "status": "completed", "conclusion": "success"}
+                for name in continuity.WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS
+            ],
+        }]
+    }
+    return watchdog, dispatch, jobs
+
+
+def test_projection_proves_continuity_dispatch_before_candidate_admission():
+    watchdog, dispatch, jobs = _continuity_runs()
+    plan = recovery_projection._prove_continuity_candidate(
+        dispatch,
+        runs_by_id={123: watchdog},
+        get_run_jobs=lambda run_id: jobs,
+        expected_main_sha=SHA,
+    )
+    assert plan.target_slot_text == "2026-08-29T07:07:00Z"
+    assert plan.target_cron == "7 * * * *"
+
+
+@pytest.mark.parametrize("mutation", ["malformed_title", "wrong_watchdog", "wrong_target"])
+def test_projection_rejects_unproven_continuity_dispatch(mutation: str):
+    watchdog, dispatch, jobs = _continuity_runs()
+    sources = {123: watchdog}
+    if mutation == "malformed_title":
+        dispatch["display_title"] = "manual dispatch"
+    elif mutation == "wrong_watchdog":
+        sources[123] = {**watchdog, "event": "workflow_dispatch"}
+    else:
+        dispatch["display_title"] = dispatch["display_title"].replace(
+            "target=2026-08-29T07:07:00Z", "target=2026-08-29T06:37:00Z"
+        )
+    with pytest.raises(audit.FreshHoldoutActionsLineageAuditError):
+        recovery_projection._prove_continuity_candidate(
+            dispatch,
+            runs_by_id=sources,
+            get_run_jobs=lambda run_id: jobs,
+            expected_main_sha=SHA,
+        )
 
 
 def test_projection_retains_historical_pr175_pin_and_recovery_owns_current_workflow():

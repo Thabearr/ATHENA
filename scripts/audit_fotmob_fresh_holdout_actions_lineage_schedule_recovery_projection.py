@@ -10,9 +10,9 @@ could not contain a provider observation:
   producer-side proof.
 
 The current producer also contains the separately source-authenticated prospective
-continuity transport. This projection pins that current producer/helper identity but
-continues to classify only naturally scheduled collection candidates; continuity
-transport evidence is independently source-replayed by its receipt-mirror boundary.
+continuity transport. This projection admits a continuity collection only after
+replaying its immutable dispatch/watchdog provenance; it never relabels that run as
+a natural schedule delivery.
 
 The second allowance matches the post-PR207 producer boundary. A proven
 pre-acquisition failure may be transparent even after canonical campaign evidence
@@ -26,8 +26,10 @@ from pathlib import Path
 from typing import Any
 
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as recovery
+import domain.fotmob_fresh_holdout_continuity as continuity
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as pr175
+import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror
 
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
@@ -82,6 +84,51 @@ def _projected_preacquisition_record(run: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _prove_continuity_candidate(
+    run: Mapping[str, Any],
+    *,
+    runs_by_id: Mapping[int, Mapping[str, Any]],
+    get_run_jobs,
+    expected_main_sha: str,
+) -> continuity.ContinuityPlan:
+    """Replay the immutable prospective dispatch provenance before audit admission."""
+    title = run.get("display_title")
+    match = (
+        receipt_mirror.CONTINUITY_RUN_NAME_RE.fullmatch(title)
+        if type(title) is str
+        else None
+    )
+    if match is None:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "workflow_dispatch run escaped continuity provenance grammar"
+        )
+    source_run_id = int(match.group(1))
+    source = runs_by_id.get(source_run_id)
+    if source is None:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "continuity watchdog source run is absent from authoritative lineage pages"
+        )
+    try:
+        continuity.validate_watchdog_source_jobs(
+            get_run_jobs(source_run_id),
+            expected_run_id=source_run_id,
+            expected_main_sha=expected_main_sha,
+        )
+        return continuity.validate_continuity_dispatch(
+            watchdog_run=source,
+            dispatch_run=run,
+            source_watchdog_run_id=source_run_id,
+            current_main_sha=expected_main_sha,
+            requested_target_slot=match.group(2),
+            requested_target_cron=match.group(3),
+            confirmation=match.group(4),
+        )
+    except continuity.FreshHoldoutContinuityError as exc:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "continuity dispatch provenance replay failed"
+        ) from exc
+
+
 def _audit_actions_lineage_compatible(*args, **kwargs):
     """Run the unchanged engine while projecting exact zero-observation runs."""
     if args:
@@ -95,8 +142,10 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
 
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
+    runs_by_id: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
+    projected_continuities: dict[int, continuity.ContinuityPlan] = {}
 
     def cached_artifacts(run_id: int) -> Mapping[str, Any]:
         if run_id not in artifact_cache:
@@ -108,9 +157,44 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             jobs_cache[run_id] = get_run_jobs(run_id)
         return jobs_cache[run_id]
 
+    get_runs_page = kwargs.get("get_runs_page")
+    if not callable(get_runs_page):
+        return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
+
+    def cached_runs_page(page: int, per_page: int) -> Mapping[str, Any]:
+        payload = get_runs_page(page, per_page)
+        values = payload.get("workflow_runs") if type(payload) is dict else None
+        if type(values) is list:
+            for value in values:
+                if type(value) is dict and type(value.get("id")) is int:
+                    runs_by_id[value["id"]] = value
+        return payload
+
     def projected_candidate(run: Mapping[str, Any]) -> bool:
         if not _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE(run):
-            return False
+            if run.get("event") != "workflow_dispatch":
+                return False
+            if (
+                run.get("name") != continuity.PRIMARY_WORKFLOW_NAME
+                or run.get("path") not in {
+                    continuity.PRIMARY_WORKFLOW_PATH,
+                    f"{continuity.PRIMARY_WORKFLOW_PATH}@{run.get('head_sha', '')}",
+                }
+                or run.get("head_branch") != "main"
+            ):
+                return False
+            run_id = run.get("id")
+            if type(run_id) is not int or run_id <= 0:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "continuity dispatch run id is invalid"
+                )
+            projected_continuities[run_id] = _prove_continuity_candidate(
+                run,
+                runs_by_id=runs_by_id,
+                get_run_jobs=cached_jobs,
+                expected_main_sha=kwargs["expected_main_sha"],
+            )
+            return True
         run_id = run.get("id")
         if run.get("status") != "completed" or type(run_id) is not int or run_id <= 0:
             return True
@@ -146,6 +230,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     previous_candidate = audit._run_is_collection_candidate
     audit._run_is_collection_candidate = projected_candidate
     projected_kwargs = dict(kwargs)
+    projected_kwargs["get_runs_page"] = cached_runs_page
     projected_kwargs["get_run_artifacts"] = cached_artifacts
     projected_kwargs["get_run_jobs"] = cached_jobs
     try:
@@ -154,6 +239,23 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         audit._run_is_collection_candidate = previous_candidate
 
     result = dict(result)
+    for record in result.get("runs", []):
+        if type(record) is not dict:
+            continue
+        plan = projected_continuities.get(record.get("run_id"))
+        if plan is None:
+            record["execution_provenance"] = "NATURAL_SCHEDULE"
+            continue
+        if record.get("nominal_slot_utc") != plan.target_slot_text:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "continuity artifact nominal slot differs from authenticated target"
+            )
+        record["execution_provenance"] = "PROSPECTIVE_CONTINUITY_DISPATCH"
+        record["continuity_target_slot"] = plan.target_slot_text
+        record["continuity_target_cron"] = plan.target_cron
+    result["verified_prospective_continuity_dispatch_count"] = len(
+        projected_continuities
+    )
     ordered_noops = sorted(
         projected_noops.values(),
         key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
