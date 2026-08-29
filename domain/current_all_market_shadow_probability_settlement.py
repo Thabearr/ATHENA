@@ -1,182 +1,297 @@
-"""Research-only all-market Shadow probability and settlement surface.
+"""Research-only all-market Shadow probability and settlement surface (PR C).
 
-Composes already-reviewed ATHENA components into one deterministic handoff:
-
-  sealed research xG rates
-    → one ScoreMatrix
-    → ScoreMatrix-derived markets (ordinary + full DNB/AH settlement)
-    → specialist WEH (frozen inference)
-    → specialist 1UP/2UP (lead-path)
-    → exactly 15 canonical MarketId rows
-    → optional PR-B provider-semantic readiness overlay
-    → all production / pricing / selection / BET authority false
-
-This module intentionally does NOT:
-  - import legacy accumulator builders or analyst compilers
-  - use global historical baseline tables or baseline-delta ranking
-  - rank markets, build accumulators, or call Price-all / Router / Portfolio
-  - create SportyBet share codes, stakes, or wagers
-  - grant production authority or promote the fresh-holdout xG model
+Composes reviewed ScoreMatrix, DNB/AH settlement, WEH specialist, and 1UP/2UP
+lead-path into one deterministic 15-market research-only Shadow surface.
+All production / pricing / selection / BET authority remains false.
 """
-
 from __future__ import annotations
 
-from dataclasses import dataclass
-from enum import Enum
 import hashlib
-import json
-import math
-from types import MappingProxyType
-from typing import Any, Mapping, Optional, Sequence
 
-from domain.early_payout_lead_path_probabilities import (
-    EarlyPayoutAnalyticalProjection,
-    project_early_payout_market,
-)
-from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
-from domain.model_status import (
-    AnalyticalProbabilityCapability,
-    PricingAuthority,
-    SelectionAuthority,
-    SettlementCapability,
-    get_model_status,
-)
-from domain.score_matrix import ScoreMatrix, build_score_matrix
-from domain.score_matrix_market_probabilities import (
-    AnalyticalEventProbability,
-    AnalyticalSettlementDistribution,
-    ScoreMatrixMarketProjection,
-    project_score_matrix_market,
-)
+from types import MappingProxyType
+from typing import Mapping, Optional, Sequence
+
+from domain.early_payout_lead_path_probabilities import project_early_payout_market
+from domain.markets import MarketId
+from domain.score_matrix import build_score_matrix
+from domain.score_matrix_market_probabilities import project_score_matrix_market
 from domain.win_either_half_features import PRE_MATCH_FEATURE_NAMES
 from domain.win_either_half_inference import (
-    WinEitherHalfAnalyticalPrediction,
     WinEitherHalfInferenceError,
     predict_win_either_half,
 )
-
-SCHEMA_VERSION = 1
-DATASET_NAME = "athena-current-all-market-shadow-probability-settlement-v1"
-DEFAULT_TOTAL_GOALS_LINE = 2.5
-DEFAULT_AH_HOME_LINES: tuple[float, ...] = (-0.5, 0.0, 0.5, -0.25, 0.25, -0.75, 0.75)
-SETTLEMENT_SUM_TOLERANCE = 1e-12
-
-_AUTHORITY_KEYS = (
-    "production_model",
-    "production_probability",
-    "score_matrix_production",
-    "phase6",
-    "production_price_all",
-    "production_market_router",
-    "production_portfolio",
-    "production_selection",
-    "sportybet_execution",
-    "staking",
-    "bet",
-    "wager_placed",
+from domain._all_market_shadow_types import (
+    DEFAULT_AH_HOME_LINES,
+    DEFAULT_TOTAL_GOALS_LINE,
+    DATASET_NAME,
+    SCHEMA_VERSION,
+    AllMarketShadowError,
+    CurrentAllMarketShadowFixtureScan,
+    CurrentAllMarketShadowScan,
+    ResearchXGRates,
+    ShadowDisposition,
+    ShadowMarketAssessment,
+    _authority_map,
+    _canonical_json_bytes,
+)
+from domain._all_market_shadow_helpers import (
+    _blocked_assessment,
+    _from_early_payout,
+    _from_score_matrix_projection,
+    _from_weh,
+    _provider_status,
 )
 
 
-class ShadowDisposition(str, Enum):
-    ANALYTICAL_READY = "ANALYTICAL_READY"
-    ANALYTICAL_READY_PROVIDER_BLOCKED = "ANALYTICAL_READY_PROVIDER_BLOCKED"
-    MISSING_REQUIRED_INPUT = "MISSING_REQUIRED_INPUT"
-    UNSUPPORTED_EXACT_LINE = "UNSUPPORTED_EXACT_LINE"
-    NO_REVIEWED_XG = "NO_REVIEWED_XG"
-    SPECIALIST_FEATURES_MISSING = "SPECIALIST_FEATURES_MISSING"
-    PROVIDER_UNPROVEN = "PROVIDER_UNPROVEN"
-    OUTSIDE_REVIEWED_XG_WINDOW = "OUTSIDE_REVIEWED_XG_WINDOW"
+def scan_fixture_all_markets(
+    *,
+    fixture_identity: str,
+    research_xg: Optional[ResearchXGRates],
+    kickoff_utc_iso: Optional[str] = None,
+    weh_feature_row: Optional[Mapping[str, object]] = None,
+    total_goals_line: float = DEFAULT_TOTAL_GOALS_LINE,
+    asian_handicap_home_lines: Sequence[float] = DEFAULT_AH_HOME_LINES,
+    provider_semantic_by_market: Optional[Mapping[MarketId, str]] = None,
+) -> CurrentAllMarketShadowFixtureScan:
+    """Build the exact 15-market research Shadow surface for one fixture."""
+    if type(fixture_identity) is not str or not fixture_identity.strip():
+        raise AllMarketShadowError("fixture_identity must be non-empty")
 
+    assessments: dict[MarketId, ShadowMarketAssessment] = {}
+    score_matrix = None
+    matrix_audit = None
 
-class AllMarketShadowError(ValueError):
-    """Raised when the Shadow surface cannot be constructed defensibly."""
-
-
-def _authority_map() -> Mapping[str, bool]:
-    return MappingProxyType({key: False for key in _AUTHORITY_KEYS})
-
-
-def _finite_non_negative(value: Any, label: str) -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(float(value))
-        or float(value) < 0.0
-    ):
-        raise AllMarketShadowError(f"{label} must be a finite non-negative number")
-    return float(value)
-
-
-def _probability(value: Any, label: str = "probability") -> float:
-    if (
-        isinstance(value, bool)
-        or not isinstance(value, (int, float))
-        or not math.isfinite(float(value))
-        or not 0.0 <= float(value) <= 1.0
-    ):
-        raise AllMarketShadowError(f"{label} must be a finite probability in [0, 1]")
-    return float(value)
-
-
-def _canonical_json_bytes(payload: Mapping[str, Any]) -> bytes:
-    try:
-        return (
-            json.dumps(
-                dict(payload),
-                ensure_ascii=False,
-                allow_nan=False,
-                sort_keys=True,
-                separators=(",", ":"),
+    if research_xg is None:
+        for market_id in MarketId:
+            if market_id in {
+                MarketId.HOME_WIN_EITHER_HALF,
+                MarketId.AWAY_WIN_EITHER_HALF,
+            }:
+                continue
+            assessments[market_id] = _blocked_assessment(
+                market_id,
+                ShadowDisposition.NO_REVIEWED_XG,
+                missing_inputs=("calibrated_home", "calibrated_away"),
+                blocker_reason="No reviewed research/shadow xG rates supplied",
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, market_id
+                ),
             )
-            + "\n"
-        ).encode("utf-8")
-    except (TypeError, ValueError, OverflowError) as exc:
-        raise AllMarketShadowError("canonical serialization failed") from exc
-
-
-@dataclass(frozen=True)
-class ResearchXGRates:
-    """Reviewed research/shadow expected-goals pair (not production authority)."""
-
-    calibrated_home: float
-    calibrated_away: float
-    sealed_prediction_sha256: Optional[str] = None
-    feature_projection_identity: Optional[str] = None
-    history_prefix_identity: Optional[str] = None
-    source_fixture_identity: Optional[str] = None
-    completeness_status: str = "SEALED_RESEARCH_RATES"
-
-    def __post_init__(self) -> None:
-        object.__setattr__(
-            self, "calibrated_home", _finite_non_negative(self.calibrated_home, "calibrated_home")
+    else:
+        score_matrix = build_score_matrix(
+            research_xg.calibrated_home,
+            research_xg.calibrated_away,
         )
-        object.__setattr__(
-            self, "calibrated_away", _finite_non_negative(self.calibrated_away, "calibrated_away")
-        )
-        for field in (
-            "sealed_prediction_sha256",
-            "feature_projection_identity",
-            "history_prefix_identity",
-            "source_fixture_identity",
+        matrix_audit = score_matrix.audit_dict()
+
+        for market_id in (
+            MarketId.MATCH_RESULT,
+            MarketId.DRAW_OR_OVER_2_5,
+            MarketId.AWAY_OR_OVER_2_5,
+            MarketId.HOME_OR_OVER_2_5,
+            MarketId.DOUBLE_CHANCE,
+            MarketId.BTTS,
+            MarketId.DRAW_NO_BET,
+            MarketId.HOME_WIN_TO_NIL,
+            MarketId.AWAY_WIN_TO_NIL,
         ):
-            value = getattr(self, field)
-            if value is not None and (type(value) is not str or not value.strip()):
-                raise AllMarketShadowError(f"{field} must be non-empty string or None")
-        if type(self.completeness_status) is not str or not self.completeness_status.strip():
-            raise AllMarketShadowError("completeness_status must be non-empty")
+            projection = project_score_matrix_market(score_matrix, market_id)
+            provider = _provider_status(provider_semantic_by_market, market_id)
+            disposition = (
+                ShadowDisposition.ANALYTICAL_READY_PROVIDER_BLOCKED
+                if provider
+                and provider
+                in {
+                    "CURRENT_PROVIDER_UNAVAILABLE",
+                    "CURRENT_PROVIDER_UNPROVEN",
+                    "PROVIDER_UNPROVEN",
+                }
+                else ShadowDisposition.ANALYTICAL_READY
+            )
+            assessments[market_id] = _from_score_matrix_projection(
+                projection,
+                disposition=disposition,
+                score_matrix_audit=matrix_audit,
+                provider_semantic_status=provider,
+            )
 
-    def to_dict(self) -> dict[str, Any]:
-        return {
-            "calibrated_home": self.calibrated_home,
-            "calibrated_away": self.calibrated_away,
-            "sealed_prediction_sha256": self.sealed_prediction_sha256,
-            "feature_projection_identity": self.feature_projection_identity,
-            "history_prefix_identity": self.history_prefix_identity,
-            "source_fixture_identity": self.source_fixture_identity,
-            "completeness_status": self.completeness_status,
-            "production_authority": False,
-        }
+        try:
+            tg_projection = project_score_matrix_market(
+                score_matrix, MarketId.TOTAL_GOALS, line=total_goals_line
+            )
+            provider = _provider_status(provider_semantic_by_market, MarketId.TOTAL_GOALS)
+            assessments[MarketId.TOTAL_GOALS] = _from_score_matrix_projection(
+                tg_projection,
+                disposition=ShadowDisposition.ANALYTICAL_READY,
+                score_matrix_audit=matrix_audit,
+                provider_semantic_status=provider,
+            )
+        except Exception as exc:
+            assessments[MarketId.TOTAL_GOALS] = _blocked_assessment(
+                MarketId.TOTAL_GOALS,
+                ShadowDisposition.UNSUPPORTED_EXACT_LINE,
+                missing_inputs=(),
+                blocker_reason=str(exc),
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, MarketId.TOTAL_GOALS
+                ),
+            )
+
+        ah_lines = tuple(float(line) for line in asian_handicap_home_lines)
+        if not ah_lines:
+            assessments[MarketId.ASIAN_HANDICAP] = _blocked_assessment(
+                MarketId.ASIAN_HANDICAP,
+                ShadowDisposition.UNSUPPORTED_EXACT_LINE,
+                blocker_reason="No Asian Handicap home lines supplied",
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, MarketId.ASIAN_HANDICAP
+                ),
+            )
+        else:
+            try:
+                preferred = -0.5 if -0.5 in ah_lines else ah_lines[0]
+                ah_projection = project_score_matrix_market(
+                    score_matrix, MarketId.ASIAN_HANDICAP, line=preferred
+                )
+                provider = _provider_status(
+                    provider_semantic_by_market, MarketId.ASIAN_HANDICAP
+                )
+                if provider in {
+                    "CURRENT_PROVIDER_UNAVAILABLE",
+                    "CURRENT_PROVIDER_UNPROVEN",
+                    "PROVIDER_UNPROVEN",
+                }:
+                    disposition = ShadowDisposition.ANALYTICAL_READY_PROVIDER_BLOCKED
+                else:
+                    disposition = ShadowDisposition.ANALYTICAL_READY
+                assessments[MarketId.ASIAN_HANDICAP] = _from_score_matrix_projection(
+                    ah_projection,
+                    disposition=disposition,
+                    score_matrix_audit=matrix_audit,
+                    provider_semantic_status=provider or "CURRENT_PROVIDER_UNPROVEN",
+                )
+            except Exception as exc:
+                assessments[MarketId.ASIAN_HANDICAP] = _blocked_assessment(
+                    MarketId.ASIAN_HANDICAP,
+                    ShadowDisposition.UNSUPPORTED_EXACT_LINE,
+                    blocker_reason=str(exc),
+                    provider_semantic_status=_provider_status(
+                        provider_semantic_by_market, MarketId.ASIAN_HANDICAP
+                    ),
+                )
+
+        for market_id in (MarketId.MATCH_RESULT_1UP, MarketId.MATCH_RESULT_2UP):
+            early = project_early_payout_market(score_matrix, market_id)
+            assessments[market_id] = _from_early_payout(
+                early,
+                disposition=ShadowDisposition.ANALYTICAL_READY,
+                score_matrix_audit=matrix_audit,
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, market_id
+                ),
+            )
+
+    for market_id in (MarketId.HOME_WIN_EITHER_HALF, MarketId.AWAY_WIN_EITHER_HALF):
+        if weh_feature_row is None:
+            assessments[market_id] = _blocked_assessment(
+                market_id,
+                ShadowDisposition.SPECIALIST_FEATURES_MISSING,
+                missing_inputs=PRE_MATCH_FEATURE_NAMES,
+                blocker_reason="Specialized WEH 74-feature vector not supplied",
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, market_id
+                ),
+            )
+            continue
+        try:
+            supplied = set(weh_feature_row)
+            expected = set(PRE_MATCH_FEATURE_NAMES)
+            if supplied != expected:
+                missing = tuple(sorted(expected - supplied))
+                assessments[market_id] = _blocked_assessment(
+                    market_id,
+                    ShadowDisposition.SPECIALIST_FEATURES_MISSING,
+                    missing_inputs=missing,
+                    blocker_reason=f"WEH feature namespace incomplete: missing={missing}",
+                    provider_semantic_status=_provider_status(
+                        provider_semantic_by_market, market_id
+                    ),
+                )
+                continue
+            prediction = predict_win_either_half(weh_feature_row)
+            assessments[market_id] = _from_weh(
+                prediction,
+                market_id,
+                disposition=ShadowDisposition.ANALYTICAL_READY,
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, market_id
+                ),
+            )
+        except WinEitherHalfInferenceError as exc:
+            assessments[market_id] = _blocked_assessment(
+                market_id,
+                ShadowDisposition.SPECIALIST_FEATURES_MISSING,
+                missing_inputs=(),
+                blocker_reason=str(exc),
+                provider_semantic_status=_provider_status(
+                    provider_semantic_by_market, market_id
+                ),
+            )
+
+    ordered = tuple(assessments[market_id] for market_id in MarketId)
+    return CurrentAllMarketShadowFixtureScan(
+        fixture_identity=fixture_identity,
+        kickoff_utc_iso=kickoff_utc_iso,
+        research_xg=research_xg,
+        score_matrix_audit=MappingProxyType(matrix_audit) if matrix_audit else None,
+        market_assessments=ordered,
+        authority=_authority_map(),
+    )
 
 
-# --- PARTIAL: remaining body continues in next commit ---
-# Placeholder markers removed; full body will be completed in sequential parts.
+def build_current_all_market_shadow_scan(
+    fixtures: Sequence[CurrentAllMarketShadowFixtureScan],
+) -> CurrentAllMarketShadowScan:
+    """Assemble one or more fixture scans into a deterministic handoff."""
+    return CurrentAllMarketShadowScan(
+        schema_version=SCHEMA_VERSION,
+        dataset_name=DATASET_NAME,
+        fixtures=tuple(fixtures),
+        authority=_authority_map(),
+    )
+
+
+def canonical_current_all_market_shadow_scan_bytes(
+    scan: CurrentAllMarketShadowScan,
+) -> bytes:
+    if type(scan) is not CurrentAllMarketShadowScan:
+        raise AllMarketShadowError("value must be exact CurrentAllMarketShadowScan")
+    rebuilt = CurrentAllMarketShadowScan(
+        schema_version=scan.schema_version,
+        dataset_name=scan.dataset_name,
+        fixtures=tuple(scan.fixtures),
+        authority=dict(scan.authority),
+    )
+    return _canonical_json_bytes(rebuilt.to_dict())
+
+
+def sha256_current_all_market_shadow_scan(scan: CurrentAllMarketShadowScan) -> str:
+    return hashlib.sha256(canonical_current_all_market_shadow_scan_bytes(scan)).hexdigest()
+
+
+__all__ = [
+    "DEFAULT_AH_HOME_LINES",
+    "DEFAULT_TOTAL_GOALS_LINE",
+    "DATASET_NAME",
+    "SCHEMA_VERSION",
+    "AllMarketShadowError",
+    "CurrentAllMarketShadowFixtureScan",
+    "CurrentAllMarketShadowScan",
+    "ResearchXGRates",
+    "ShadowDisposition",
+    "ShadowMarketAssessment",
+    "build_current_all_market_shadow_scan",
+    "canonical_current_all_market_shadow_scan_bytes",
+    "scan_fixture_all_markets",
+    "sha256_current_all_market_shadow_scan",
+]
