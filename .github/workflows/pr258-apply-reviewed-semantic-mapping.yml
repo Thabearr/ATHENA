@@ -1,0 +1,56 @@
+name: PR258 Apply Reviewed Semantic Mapping Patch
+
+on:
+  push:
+    branches:
+      - feature/pr258-research-shadow-sportybet-field-trial
+
+permissions:
+  contents: write
+
+jobs:
+  apply-reviewed-semantic-mapping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact PR branch
+        uses: actions/checkout@v4
+        with:
+          ref: feature/pr258-research-shadow-sportybet-field-trial
+          fetch-depth: 0
+
+      - name: Apply reviewed market-18 label-rename patch and self-remove
+        shell: bash
+        run: |
+          set -euo pipefail
+          marker='PR258_REVIEWED_MARKET18_TOTAL_GOALS_TO_OVER_UNDER'
+          if grep -q "${marker}" domain/current_shadow_sportybet_field_trial.py; then
+            echo "Reviewed semantic mapping patch already present; no mutation required."
+            exit 0
+          fi
+
+          cat .athena/pr258-reviewed-semantic-mapping.patch.part1 \
+              .athena/pr258-reviewed-semantic-mapping.patch.part2 \
+              .athena/pr258-reviewed-semantic-mapping.patch.part3 \
+              .athena/pr258-reviewed-semantic-mapping.patch.part4 \
+              > /tmp/pr258-reviewed-semantic-mapping.patch
+          git apply --check /tmp/pr258-reviewed-semantic-mapping.patch
+          git apply /tmp/pr258-reviewed-semantic-mapping.patch
+
+          rm .athena/pr258-reviewed-semantic-mapping.patch.part1 \
+             .athena/pr258-reviewed-semantic-mapping.patch.part2 \
+             .athena/pr258-reviewed-semantic-mapping.patch.part3 \
+             .athena/pr258-reviewed-semantic-mapping.patch.part4
+          rm .github/workflows/pr258-apply-reviewed-semantic-mapping.yml
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add domain/current_shadow_sportybet_field_trial.py \
+                  tests/test_current_shadow_sportybet_field_trial.py \
+                  tests/test_current_shadow_sportybet_verified_package.py \
+                  .athena/pr258-reviewed-semantic-mapping.patch.part1 \
+                  .athena/pr258-reviewed-semantic-mapping.patch.part2 \
+                  .athena/pr258-reviewed-semantic-mapping.patch.part3 \
+                  .athena/pr258-reviewed-semantic-mapping.patch.part4 \
+                  .github/workflows/pr258-apply-reviewed-semantic-mapping.yml
+          git commit -m "Review current SportyBet Total Goals label rename"
+          git push origin HEAD:feature/pr258-research-shadow-sportybet-field-trial

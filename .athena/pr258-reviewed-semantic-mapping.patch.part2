@@ -1,0 +1,121 @@
++                )
++        elif self.mapping_basis == MARKET_LABEL_RENAME_POLICY_ID:
++            if (
++                self.provider_market_id != REVIEWED_TOTAL_GOALS_PROVIDER_MARKET_ID
++                or self.provider_market_name != REVIEWED_TOTAL_GOALS_CURRENT_LABEL
++            ):
++                raise CurrentShadowSportyBetFieldTrialError(
++                    "reviewed current market-label rename escaped exact market-18 rule"
++                )
++        else:
++            raise CurrentShadowSportyBetFieldTrialError(
++                "research current mapping basis is unreviewed"
++            )
++        object.__setattr__(self, "canonical_line", line)
++
++    def to_dict(self) -> dict[str, Any]:
++        return {
++            "provider_market_id": self.provider_market_id,
++            "provider_market_name": self.provider_market_name,
++            "provider_specifier": self.provider_specifier,
++            "provider_outcome_id": self.provider_outcome_id,
++            "provider_outcome_name": self.provider_outcome_name,
++            "canonical_market_id": self.canonical_market_id.value,
++            "canonical_outcome_id": self.canonical_outcome_id.value,
++            "canonical_line": self.canonical_line,
++            "source_mapping_row_sha256": self.source_mapping_row_sha256,
++            "current_inventory_sha256": self.current_inventory_sha256,
++            "mapping_basis": self.mapping_basis,
++        }
++
++
++def _reviewed_total_goals_label_rename_rows(
++    mapping: current_mapping.CurrentDirectProviderCanonicalMarketMappingRebind,
++    inventory: live.SportyBetLiveEventQuoteInventory,
++) -> tuple[_ResearchCurrentTotalGoalsMapping, ...]:
++    if inventory.canonical_sha256 != mapping.current_inventory_sha256:
++        raise CurrentShadowSportyBetFieldTrialError(
++            "label-rename review is not bound to the PR252 current inventory"
++        )
++    native_index = {
++        (item.market_id, item.specifier, item.outcome_id): item
++        for item in inventory.selections
++    }
++    if len(native_index) != len(inventory.selections):
++        raise CurrentShadowSportyBetFieldTrialError(
++            "current inventory contains duplicate provider-native selection identity"
++        )
++    rows: list[_ResearchCurrentTotalGoalsMapping] = []
++    for audit in mapping.mapping_audits:
++        if (
++            audit.disposition
++            is not current_mapping.RebindAuditDisposition.CURRENT_PROVIDER_LABEL_DRIFT_REJECTED
++            or audit.provider_market_id != REVIEWED_TOTAL_GOALS_PROVIDER_MARKET_ID
++            or audit.reviewed_provider_market_name != REVIEWED_TOTAL_GOALS_SOURCE_LABEL
++            or audit.current_provider_market_name != REVIEWED_TOTAL_GOALS_CURRENT_LABEL
++            or audit.current_provider_outcome_name != audit.reviewed_provider_outcome_name
++            or audit.provider_specifier is None
++            or audit.canonical_market_id is not MarketId.TOTAL_GOALS
++            or audit.canonical_outcome_id not in {OutcomeId.OVER, OutcomeId.UNDER}
++            or audit.canonical_line is None
++            or not _half_line(float(audit.canonical_line))
++        ):
++            continue
++        selected = native_index.get(
++            (
++                audit.provider_market_id,
++                audit.provider_specifier,
++                audit.provider_outcome_id,
++            )
++        )
++        if (
++            selected is None
++            or selected.market_name != REVIEWED_TOTAL_GOALS_CURRENT_LABEL
++            or selected.outcome_name != audit.reviewed_provider_outcome_name
++            or selected.bookable is not True
++        ):
++            continue
++        rows.append(
++            _ResearchCurrentTotalGoalsMapping(
++                provider_market_id=audit.provider_market_id,
++                provider_market_name=selected.market_name,
++                provider_specifier=audit.provider_specifier,
++                provider_outcome_id=audit.provider_outcome_id,
++                provider_outcome_name=selected.outcome_name,
++                canonical_market_id=audit.canonical_market_id,
++                canonical_outcome_id=audit.canonical_outcome_id,
++                canonical_line=audit.canonical_line,
++                source_mapping_row_sha256=audit.source_mapping_row_sha256,
++                current_inventory_sha256=inventory.canonical_sha256,
++                mapping_basis=MARKET_LABEL_RENAME_POLICY_ID,
++            )
++        )
++    return tuple(rows)
++
++
+ def _mapped_total_partitions(
+     mapping: current_mapping.CurrentDirectProviderCanonicalMarketMappingRebind,
++    inventory: live.SportyBetLiveEventQuoteInventory,
+ ) -> tuple[
+     tuple[
+-        current_mapping.CurrentDirectProviderCanonicalMappedSelection,
+-        current_mapping.CurrentDirectProviderCanonicalMappedSelection,
++        _ResearchCurrentTotalGoalsMapping,
++        _ResearchCurrentTotalGoalsMapping,
+     ],
+     ...,
+ ]:
+     grouped: dict[
+         tuple[str, str, float],
+         dict[
+             OutcomeId,
+-            current_mapping.CurrentDirectProviderCanonicalMappedSelection,
++            _ResearchCurrentTotalGoalsMapping,
+         ],
+     ] = {}
++    reviewed_rows: list[_ResearchCurrentTotalGoalsMapping] = []
+     for row in mapping.mapped_selections:
+         if row.canonical_market_id is not MarketId.TOTAL_GOALS:
+             continue
+@@ -1130,7 +1292,7 @@ def _mapped_total_partitions(
+             or row.provider_specifier is None
