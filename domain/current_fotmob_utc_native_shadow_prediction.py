@@ -43,7 +43,7 @@ from domain.fotmob_fixture_candidate_review import (
     canonical_fotmob_fixture_candidate_review_bundle_bytes,
 )
 from domain.fotmob_fixture_candidates import (
-    build_fotmob_fixture_candidate_bundle,
+    FotMobFixtureCandidateBundle,
     sha256_fotmob_fixture_candidate_bundle,
 )
 from domain.reviewed_fixture_intelligence_bootstrap import (
