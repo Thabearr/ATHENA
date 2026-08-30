@@ -1,0 +1,87 @@
+name: PRF provider row variability diagnostic
+
+on:
+  push:
+    branches:
+      - feat/prf-shadow-live-all-market-field-proof
+    paths:
+      - .github/workflows/prf-provider-row-variability-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect repeated anonymous SportyBet page-1 row shape
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          import time
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          url = 'https://www.sportybet.com/api/ng/factsCenter/liveOrPrematchEvents?' + urlencode({
+              'sportId': 'sr:sport:1',
+              'pageSize': 100,
+              'pageNum': 1,
+          })
+          headers = {
+              'Accept': 'application/json',
+              'Accept-Language': 'en-NG,en;q=0.9',
+              'OperId': '2',
+              'User-Agent': 'ATHENA/1.0 prf-provider-row-variability-diagnostic',
+          }
+
+          def walk(value, rows):
+              if isinstance(value, list):
+                  for item in value:
+                      walk(item, rows)
+                  return
+              if not isinstance(value, dict):
+                  return
+              if value.get('eventId') is not None:
+                  rows.append(value)
+                  return
+              for key in ('events', 'tournaments', 'groups', 'items'):
+                  child = value.get(key)
+                  if isinstance(child, list):
+                      walk(child, rows)
+
+          for attempt in range(1, 13):
+              request = Request(url, headers=headers)
+              with urlopen(request, timeout=45) as response:
+                  raw = response.read(16 * 1024 * 1024 + 1)
+              payload = json.loads(raw)
+              rows = []
+              walk(payload.get('data'), rows)
+              invalid = []
+              for row in rows:
+                  home = row.get('homeTeamName')
+                  away = row.get('awayTeamName')
+                  home_ok = isinstance(home, str) and bool(home) and home == home.strip()
+                  away_ok = isinstance(away, str) and bool(away) and away == away.strip()
+                  if not home_ok or not away_ok:
+                      invalid.append({
+                          'eventId': row.get('eventId'),
+                          'homeTeamName': home,
+                          'awayTeamName': away,
+                          'bookingStatus': row.get('bookingStatus'),
+                          'status': row.get('status'),
+                          'matchStatus': row.get('matchStatus'),
+                          'estimateStartTime': row.get('estimateStartTime'),
+                          'keys': sorted(row.keys()),
+                      })
+              print(json.dumps({
+                  'attempt': attempt,
+                  'bizCode': payload.get('bizCode'),
+                  'event_rows': len(rows),
+                  'invalid_team_identity_rows': len(invalid),
+                  'invalid_rows': invalid[:20],
+              }, ensure_ascii=False, sort_keys=True))
+              if attempt != 12:
+                  time.sleep(1)
+          PY
