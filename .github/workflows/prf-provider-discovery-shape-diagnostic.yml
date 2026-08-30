@@ -1,0 +1,80 @@
+name: PRF provider discovery shape diagnostic
+
+on:
+  push:
+    branches:
+      - feat/prf-shadow-live-all-market-field-proof
+    paths:
+      - .github/workflows/prf-provider-discovery-shape-diagnostic.yml
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Inspect current anonymous SportyBet discovery row shape
+        shell: bash
+        run: |
+          python - <<'PY'
+          import json
+          from urllib.parse import urlencode
+          from urllib.request import Request, urlopen
+
+          url = 'https://www.sportybet.com/api/ng/factsCenter/liveOrPrematchEvents?' + urlencode({
+              'sportId': 'sr:sport:1',
+              'pageSize': 100,
+              'pageNum': 1,
+          })
+          request = Request(url, headers={
+              'Accept': 'application/json',
+              'Accept-Language': 'en-NG,en;q=0.9',
+              'OperId': '2',
+              'User-Agent': 'ATHENA/1.0 prf-provider-shape-diagnostic',
+          })
+          with urlopen(request, timeout=45) as response:
+              raw = response.read(16 * 1024 * 1024 + 1)
+          payload = json.loads(raw)
+          rows = []
+          visited = 0
+          def walk(value):
+              global visited
+              if isinstance(value, list):
+                  for item in value:
+                      walk(item)
+                  return
+              if not isinstance(value, dict):
+                  return
+              if value.get('eventId') is not None:
+                  rows.append(value)
+                  return
+              for key in ('events', 'tournaments', 'groups', 'items'):
+                  child = value.get(key)
+                  if isinstance(child, list):
+                      walk(child)
+          walk(payload.get('data'))
+          bad = []
+          for row in rows:
+              home = row.get('homeTeamName')
+              away = row.get('awayTeamName')
+              if not isinstance(home, str) or not home.strip() or not isinstance(away, str) or not away.strip():
+                  bad.append({
+                      'eventId': row.get('eventId'),
+                      'keys': sorted(row.keys()),
+                      'homeTeamName': row.get('homeTeamName'),
+                      'awayTeamName': row.get('awayTeamName'),
+                      'homeTeam': row.get('homeTeam'),
+                      'awayTeam': row.get('awayTeam'),
+                      'home': row.get('home'),
+                      'away': row.get('away'),
+                      'teams': row.get('teams'),
+                  })
+          print(json.dumps({
+              'bizCode': payload.get('bizCode'),
+              'event_rows': len(rows),
+              'invalid_team_identity_rows': len(bad),
+              'invalid_rows': bad[:10],
+          }, ensure_ascii=False, sort_keys=True))
+          PY
