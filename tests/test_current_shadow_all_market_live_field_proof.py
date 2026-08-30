@@ -204,28 +204,33 @@ def test_unreviewed_current_status_key_still_fails_closed():
         build_current_fotmob_fixture_candidate_bundle(changed, manifest)
 
 
-def test_current_fixture_universe_uses_earliest_nonempty_date_only(monkeypatch, tmp_path):
+def test_current_fixture_universe_scans_entire_fixed_horizon(monkeypatch, tmp_path):
     monkeypatch.setattr(
         runner,
         "_now",
         lambda: dt.datetime(2026, 8, 29, 22, 0, tzinfo=dt.timezone.utc),
     )
     calls = []
-    expected = SimpleNamespace()
+    expected_30 = SimpleNamespace()
+    expected_31 = SimpleNamespace()
 
     def issue(**kwargs):
-        calls.append(kwargs["request_date"])
-        if kwargs["request_date"] == "20260829":
+        request_date = kwargs["request_date"]
+        calls.append(request_date)
+        if request_date == "20260829":
             raise runner.current_fotmob_source.CurrentFotMobReviewedSourceError(
                 runner.current_fotmob_source.STATUS_NO_FIXTURES
             )
-        return expected
+        return expected_30 if request_date == "20260830" else expected_31
 
     monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
-    actual, request_date = runner._issue_current_fixture_source(repository_root=tmp_path)
-    assert actual is expected
-    assert request_date == "20260830"
-    assert calls == ["20260829", "20260830"]
+    actual, searched = runner._issue_current_fixture_sources(repository_root=tmp_path)
+    assert actual == (
+        (expected_30, "20260830"),
+        (expected_31, "20260831"),
+    )
+    assert searched == ("20260829", "20260830", "20260831")
+    assert calls == ["20260829", "20260830", "20260831"]
 
 
 def test_current_fixture_universe_does_not_step_over_other_source_failure(monkeypatch, tmp_path):
@@ -243,4 +248,30 @@ def test_current_fixture_universe_does_not_step_over_other_source_failure(monkey
         runner.current_fotmob_source.CurrentFotMobReviewedSourceError,
         match="schema drift",
     ):
-        runner._issue_current_fixture_source(repository_root=tmp_path)
+        runner._issue_current_fixture_sources(repository_root=tmp_path)
+
+
+def test_current_fixture_universe_all_empty_dates_fail_with_exact_horizon(monkeypatch, tmp_path):
+    monkeypatch.setattr(
+        runner,
+        "_now",
+        lambda: dt.datetime(2026, 8, 29, 22, 0, tzinfo=dt.timezone.utc),
+    )
+    calls = []
+
+    def issue(**kwargs):
+        calls.append(kwargs["request_date"])
+        raise runner.current_fotmob_source.CurrentFotMobReviewedSourceError(
+            runner.current_fotmob_source.STATUS_NO_FIXTURES
+        )
+
+    monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
+    with pytest.raises(
+        runner.CurrentShadowAllMarketRunnerError,
+        match=(
+            "NO_POLICY_APPROVED_CURRENT_FOTMOB_FIXTURES_IN_FIXED_HORIZON:"
+            "20260829,20260830,20260831"
+        ),
+    ):
+        runner._issue_current_fixture_sources(repository_root=tmp_path)
+    assert calls == ["20260829", "20260830", "20260831"]
