@@ -1,0 +1,172 @@
+name: PRF one-shot current FotMob replay hardening
+
+on:
+  push:
+    branches:
+      - feat/prf-shadow-live-all-market-field-proof
+    paths:
+      - .github/workflows/prf-one-shot-current-fotmob-replay.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-and-verify:
+    if: github.repository == 'Thabearr/ATHENA'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR F branch
+        uses: actions/checkout@v4
+        with:
+          ref: feat/prf-shadow-live-all-market-field-proof
+          fetch-depth: 0
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Apply narrow current-replay hardening
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          source_path = Path('domain/sportybet_current_event_discovery_reconciliation.py')
+          source = source_path.read_text(encoding='utf-8')
+
+          old_imports = (
+              'from domain import _portfolio_optimizer_v2_direct_provider_contracts as portfolio_v2_contracts\n'
+              'from domain import fotmob_fixture_candidate_review as fotmob_review\n'
+          )
+          new_imports = (
+              'from domain import _portfolio_optimizer_v2_direct_provider_contracts as portfolio_v2_contracts\n'
+              'from domain import current_fotmob_fixture_candidate_adapter as current_fotmob_candidates\n'
+              'from domain import fotmob_fixture_candidate_review as fotmob_review\n'
+          )
+          if source.count(old_imports) != 1:
+              raise SystemExit('unexpected reconciliation import block')
+          source = source.replace(old_imports, new_imports, 1)
+
+          helper_anchor = '\n\ndef _rederive_exact_fotmob_admission(\n'
+          helper = '''
+
+          def _build_replayed_fotmob_candidates(
+              capture_rows: Any,
+          ) -> fotmob_candidates.FotMobFixtureCandidateBundle:
+              """Replay current single-capture candidates through the reviewed adapter.
+
+              Current live issuance uses one exact FotMob capture.  Rebuild that capture
+              through the same current-only PR39-or-reviewed-additive adapter used by the
+              issuer, so deterministic admission replay preserves reviewed additive schema
+              handling and request-date projection.  Multi-capture replay remains on the
+              frozen PR39 builder.
+              """
+              if len(capture_rows) == 1:
+                  raw, manifest = capture_rows[0]
+                  return current_fotmob_candidates.build_current_fotmob_fixture_candidate_bundle(
+                      raw, manifest
+                  )
+              return fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)
+          '''
+          if source.count(helper_anchor) != 1:
+              raise SystemExit('unexpected rederive anchor')
+          source = source.replace(helper_anchor, helper + helper_anchor, 1)
+
+          old_builder = '        rebuilt_candidate = fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)\n'
+          new_builder = '        rebuilt_candidate = _build_replayed_fotmob_candidates(capture_rows)\n'
+          if source.count(old_builder) != 1:
+              raise SystemExit('unexpected frozen replay call count')
+          source = source.replace(old_builder, new_builder, 1)
+
+          old_except = (
+              '        fotmob_admission.ReviewedFixtureCatalogAdmissionError,\n'
+              '        fotmob_candidates.FotMobFixtureCandidateError,\n'
+          )
+          new_except = (
+              '        fotmob_admission.ReviewedFixtureCatalogAdmissionError,\n'
+              '        current_fotmob_candidates.CurrentFotMobFixtureCandidateAdapterError,\n'
+              '        fotmob_candidates.FotMobFixtureCandidateError,\n'
+          )
+          if source.count(old_except) != 1:
+              raise SystemExit('unexpected replay exception block')
+          source = source.replace(old_except, new_except, 1)
+          source_path.write_text(source, encoding='utf-8')
+
+          test_path = Path('tests/test_current_shadow_all_market_live_field_proof.py')
+          tests = test_path.read_text(encoding='utf-8')
+          old_test_import = 'from domain import current_shadow_all_market_runner as runner\n'
+          new_test_import = (
+              'from domain import current_shadow_all_market_runner as runner\n'
+              'from domain import sportybet_current_event_discovery_reconciliation as reconciliation\n'
+          )
+          if tests.count(old_test_import) != 1:
+              raise SystemExit('unexpected live-field test import block')
+          tests = tests.replace(old_test_import, new_test_import, 1)
+
+          test_anchor = '\n\ndef test_current_fixture_candidate_builder_excludes_live_cross_date_rows_only():\n'
+          added_tests = '''
+
+          def test_current_sportybet_replay_reuses_single_capture_current_adapter():
+              raw, manifest = _reviewed_extended_capture()
+              expected = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
+              actual = reconciliation._build_replayed_fotmob_candidates(((raw, manifest),))
+              assert actual == expected
+              assert actual.sources[0].source_raw_sha256 == manifest.raw_sha256
+
+
+          def test_current_sportybet_replay_keeps_multicapture_on_frozen_builder(monkeypatch):
+              sentinel = object()
+              rows = ((b"one", object()), (b"two", object()))
+
+              def frozen_builder(value):
+                  assert value is rows
+                  return sentinel
+
+              def current_builder(*_args, **_kwargs):
+                  raise AssertionError("current adapter must be singleton-only")
+
+              monkeypatch.setattr(
+                  reconciliation.fotmob_candidates,
+                  "build_fotmob_fixture_candidate_bundle",
+                  frozen_builder,
+              )
+              monkeypatch.setattr(
+                  reconciliation.current_fotmob_candidates,
+                  "build_current_fotmob_fixture_candidate_bundle",
+                  current_builder,
+              )
+              assert reconciliation._build_replayed_fotmob_candidates(rows) is sentinel
+          '''
+          if tests.count(test_anchor) != 1:
+              raise SystemExit('unexpected live-field test anchor')
+          tests = tests.replace(test_anchor, added_tests + test_anchor, 1)
+          test_path.write_text(tests, encoding='utf-8')
+          PY
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Run focused PR F verification
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          python -m pytest -q \
+            tests/test_current_shadow_all_market_live_field_proof.py \
+            tests/test_sportybet_current_event_discovery_reconciliation.py
+
+      - name: Commit verified hardening and remove one-shot workflow
+        shell: bash
+        run: |
+          git config user.name 'Moses Oluwasegun'
+          git config user.email '113853913+Thabearr@users.noreply.github.com'
+          git rm .github/workflows/prf-one-shot-current-fotmob-replay.yml
+          git add domain/sportybet_current_event_discovery_reconciliation.py \
+                  tests/test_current_shadow_all_market_live_field_proof.py
+          git diff --cached --check
+          git commit -m 'Harden current FotMob replay in SportyBet reconciliation'
+          git push origin HEAD:feat/prf-shadow-live-all-market-field-proof
