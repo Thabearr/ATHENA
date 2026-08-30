@@ -28,6 +28,9 @@ import types
 from collections.abc import Mapping
 from typing import Any
 
+from domain.current_fotmob_fixture_candidate_adapter import (
+    build_current_fotmob_fixture_candidate_bundle,
+)
 from domain.current_fotmob_fixture_review_policy import (
     POLICY_ID as PR243_POLICY_ID,
     build_current_fotmob_fixture_review_policy_result,
@@ -373,8 +376,8 @@ def _derive_shadow_state(
     bootstrap = source.current_bootstrap
 
     try:
-        candidates = build_fotmob_fixture_candidate_bundle(
-            ((source.source_raw_json, source.source_manifest),)
+        candidates = build_current_fotmob_fixture_candidate_bundle(
+            source.source_raw_json, source.source_manifest
         )
     except Exception as exc:
         raise _error("source failed reviewed fixture-candidate replay") from exc
