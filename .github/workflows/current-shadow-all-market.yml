@@ -16,7 +16,7 @@ permissions:
 jobs:
   current-shadow-all-market:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout exact requested commit
         uses: actions/checkout@v4
