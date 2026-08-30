@@ -22,8 +22,6 @@ import datetime as dt
 import hashlib
 import json
 import os
-import subprocess
-import time
 import types
 from collections.abc import Callable, Mapping
 from pathlib import Path
@@ -162,50 +160,6 @@ def _sha40(value: Any, label: str) -> str:
     ):
         raise _error(f"{label} must be exact lowercase 40-hex SHA")
     return value
-
-
-GITHUB_CLI_REQUEST_TIMEOUT_SECONDS = 30
-GITHUB_LINEAGE_TOTAL_TIMEOUT_SECONDS = 900
-
-
-def _remaining_github_timeout(deadline: float) -> float:
-    remaining = float(deadline) - time.monotonic()
-    if remaining <= 0:
-        raise _error("current PR151 GitHub lineage acquisition exceeded total time bound")
-    return min(float(GITHUB_CLI_REQUEST_TIMEOUT_SECONDS), remaining)
-
-
-def _bounded_gh_json(endpoint: str, *, deadline: float) -> dict[str, Any]:
-    try:
-        raw = subprocess.check_output(
-            ["gh", "api", endpoint],
-            timeout=_remaining_github_timeout(deadline),
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise _error(f"GitHub API request timed out: {endpoint}") from exc
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise _error(f"GitHub API request failed: {endpoint}") from exc
-    return lineage_audit._parse_json(raw, f"GitHub API response {endpoint}")
-
-
-def _bounded_gh_download(endpoint: str, *, deadline: float) -> bytes:
-    if type(endpoint) is not str:
-        raise _error("GitHub binary download endpoint must be an exact string")
-    if pr175_projection._ACTIONS_ARTIFACT_RE.fullmatch(endpoint):
-        accept = "application/vnd.github+json"
-    elif pr175_projection._RELEASE_ASSET_RE.fullmatch(endpoint):
-        accept = "application/octet-stream"
-    else:
-        raise _error(f"unsupported GitHub binary download endpoint: {endpoint}")
-    try:
-        return subprocess.check_output(
-            ["gh", "api", "-H", f"Accept: {accept}", endpoint],
-            timeout=_remaining_github_timeout(deadline),
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise _error(f"GitHub binary download timed out: {endpoint}") from exc
-    except (OSError, subprocess.CalledProcessError) as exc:
-        raise _error(f"GitHub binary download failed: {endpoint}") from exc
 
 
 def _blob(path: Path) -> str:
@@ -953,14 +907,6 @@ def build_current_fotmob_latest_durable_fresh_history_handoff(
     """Fixed read-only GitHub issuer for the reviewed ATHENA PR151 campaign."""
     if not os.environ.get("GH_TOKEN"):
         raise _error("GH_TOKEN is required for fixed GitHub PR151 lineage acquisition")
-
-    deadline = time.monotonic() + GITHUB_LINEAGE_TOTAL_TIMEOUT_SECONDS
-
-    def gh_json(endpoint: str) -> Mapping[str, Any]:
-        return _bounded_gh_json(endpoint, deadline=deadline)
-
-    def gh_download(endpoint: str) -> bytes:
-        return _bounded_gh_download(endpoint, deadline=deadline)
 
     def get_main_ref() -> Mapping[str, Any]:
         return lineage_audit._gh_json(f"/repos/{REPOSITORY}/git/ref/heads/main")
