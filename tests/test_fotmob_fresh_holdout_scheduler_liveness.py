@@ -8,6 +8,7 @@ from scripts.check_fotmob_fresh_holdout_scheduler_liveness import (
     ACTIVE_RUN_PRESENT,
     ENABLE_DISABLED,
     HEALTHY,
+    PRIMARY_SCHEDULE_RUN_NAME,
     PRIMARY_WORKFLOW_NAME,
     PRIMARY_WORKFLOW_PATH,
     REREGISTER_STALE_ACTIVE,
@@ -17,11 +18,12 @@ from scripts.check_fotmob_fresh_holdout_scheduler_liveness import (
 
 
 NOW = dt.datetime(2026, 8, 28, 23, 34, tzinfo=dt.timezone.utc)
+WORKFLOW_ID = 336875088
 
 
 def _workflow(*, state: str = "active") -> dict[str, object]:
     return {
-        "id": 336875088,
+        "id": WORKFLOW_ID,
         "name": PRIMARY_WORKFLOW_NAME,
         "path": PRIMARY_WORKFLOW_PATH,
         "state": state,
@@ -34,10 +36,13 @@ def _run(
     *,
     status: str = "completed",
     event: str = "schedule",
+    name: str = PRIMARY_SCHEDULE_RUN_NAME,
+    workflow_id: int = WORKFLOW_ID,
 ) -> dict[str, object]:
     return {
         "id": run_id,
-        "name": PRIMARY_WORKFLOW_NAME,
+        "workflow_id": workflow_id,
+        "name": name,
         "path": PRIMARY_WORKFLOW_PATH,
         "event": event,
         "status": status,
@@ -109,6 +114,37 @@ def test_non_schedule_runs_cannot_mask_missing_schedule_delivery():
     )
     assert result["decision"] == REREGISTER_STALE_ACTIVE
     assert result["latest_schedule_run_id"] == 10
+
+
+def test_reviewed_schedule_run_name_is_distinct_from_workflow_name():
+    assert PRIMARY_SCHEDULE_RUN_NAME != PRIMARY_WORKFLOW_NAME
+    result = decide_scheduler_liveness(
+        workflow=_workflow(),
+        runs_response=_runs(_run(33331701003, "2026-08-28T22:59:07Z")),
+        now=NOW,
+    )
+    assert result["decision"] == HEALTHY
+    assert result["latest_schedule_run_id"] == 33331701003
+
+
+def test_scheduled_run_name_or_workflow_id_drift_fails_closed():
+    with pytest.raises(SchedulerLivenessError, match="run-name drifted"):
+        decide_scheduler_liveness(
+            workflow=_workflow(),
+            runs_response=_runs(
+                _run(10, "2026-08-28T22:59:07Z", name=PRIMARY_WORKFLOW_NAME)
+            ),
+            now=NOW,
+        )
+
+    with pytest.raises(SchedulerLivenessError, match="workflow id drifted"):
+        decide_scheduler_liveness(
+            workflow=_workflow(),
+            runs_response=_runs(
+                _run(10, "2026-08-28T22:59:07Z", workflow_id=WORKFLOW_ID + 1)
+            ),
+            now=NOW,
+        )
 
 
 def test_malformed_or_drifted_metadata_fails_closed():
