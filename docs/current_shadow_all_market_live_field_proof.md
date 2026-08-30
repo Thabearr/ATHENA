@@ -98,8 +98,8 @@ though the reviewed request asks for 100. Requiring a later empty response made
 the capture loop hit its maximum without establishing a terminal condition.
 Discovery now records one of two exact, replay-verified termination bases:
 `EMPTY_PAGE` or `SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE`. A nonempty page is a
-terminal short page only when its exact extracted event count is strictly less
-than the requested page size. A full page still requires a later reviewed
+terminal short page only when its exact provider page item count is strictly
+less than the requested page size. A full page still requires a later reviewed
 terminal condition and still fails at the page cap. The manifest records the
 basis and keeps `terminal_empty_page_observed` truthful; repeated-page detection
 is not treated as completeness.
@@ -159,13 +159,12 @@ then proved the shadow-prediction wiring cannot fall back into frozen PR149's
 
 The exact-head rerun of workflow run `33328629573` on
 `a9cce1d55fa8f28261d2680fd21ac489e56ffdec` demonstrated that the prior
-25-minute worker budget could terminate during `PRICE_ALL_ROUTER`. The hosted
-entrypoint already carries a bounded 50-minute worker supervisor; PR F widened
-the surrounding GitHub Actions job ceiling from 30 to 60 minutes so that the
-supervisor, rather than the outer job, remains the reviewed fail-closed runtime
-boundary. Exact-head run `33334343547` on
-`7bf614cd4c33aacab46b4140aae9d86726e143e2` then completed normally in about
-29 minutes, proving that the outer hosted ceiling no longer caused the terminal
+25-minute worker budget could terminate during `PRICE_ALL_ROUTER`. PR F then
+raised the worker supervisor to a bounded 50 minutes and the surrounding GitHub
+Actions job ceiling to 60 minutes so that the worker remains the reviewed fail-
+closed runtime boundary. Exact-head run `33334343547` on
+`7bf614cd4c33aacab46b4140aae9d86726e143e2` completed normally in about 29
+minutes, proving that runtime budget exhaustion no longer caused the terminal
 state. Its durable artifact was `9738955502` with ZIP SHA-256
 `fb846332d53a9826bab1a70f09a9d687bad59eff9504f81e5c27f7295d6e0e24`.
 That run still had zero exact FotMob↔SportyBet reconciliations, which is the live
