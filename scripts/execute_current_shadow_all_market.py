@@ -12,6 +12,13 @@ import sys
 from domain import current_shadow_all_market_runner as runner
 
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
+HOSTED_SUPERVISOR_TIMEOUT_SECONDS = 50 * 60
+
+# Live PR-F evidence demonstrated that the reviewed current source chain can
+# legitimately consume ~20 minutes before Price-all/Router starts. Keep the
+# supervisor bounded and fail-closed, but give the exact source-bound chain
+# enough time to finish instead of timing out solely because of hosted runtime.
+runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS = HOSTED_SUPERVISOR_TIMEOUT_SECONDS
 
 
 def build_parser() -> argparse.ArgumentParser:
