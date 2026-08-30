@@ -11,6 +11,9 @@ from domain.current_fotmob_fixture_candidate_adapter import (
     CurrentFotMobFixtureCandidateAdapterError,
     build_current_fotmob_fixture_candidate_bundle,
 )
+from domain.current_fotmob_provider_native_qualification import (
+    qualify_current_fotmob_capture,
+)
 from domain.fotmob_data_matches_capture import (
     CapturedFotMobDataMatchesResponse,
     build_data_matches_capture_manifest,
