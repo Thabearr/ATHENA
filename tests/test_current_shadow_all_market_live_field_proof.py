@@ -90,6 +90,32 @@ def test_current_fixture_candidate_builder_replays_reviewed_additive_schema():
     assert bundle.sources[0].source_raw_sha256 == manifest.raw_sha256
 
 
+def test_current_provider_native_qualification_consumes_reviewed_candidate_subset():
+    raw, original = _reviewed_extended_capture()
+    _payload, changed, moved_match_id = _move_first_match_off_request_utc_date(raw)
+    manifest = _manifest_for_changed_raw(changed, original)
+    candidates = build_current_fotmob_fixture_candidate_bundle(changed, manifest)
+
+    qualified = qualify_current_fotmob_capture(
+        candidates,
+        raw_json=changed,
+        manifest=manifest,
+    )
+
+    assert len(qualified) == candidates.candidate_count
+    by_id = {item.fixture_id: item for item in qualified}
+    assert moved_match_id not in by_id
+    assert set(by_id) == {item.source_match_id for item in candidates.candidates}
+    for candidate in candidates.candidates:
+        fixture = by_id[candidate.source_match_id]
+        assert fixture.provider_primary_id == candidate.source_competition_primary_id
+        assert fixture.wrapper_id == candidate.source_league_id
+        assert fixture.home_team_id == candidate.home_source_team_id
+        assert fixture.away_team_id == candidate.away_source_team_id
+        assert fixture.kickoff_utc == candidate.kickoff_utc
+        assert fixture.capture_raw_sha256 == manifest.raw_sha256
+
+
 def test_current_sportybet_replay_reuses_single_capture_current_adapter():
     raw, manifest = _reviewed_extended_capture()
     expected = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
