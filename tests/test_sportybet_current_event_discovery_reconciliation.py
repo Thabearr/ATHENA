@@ -227,6 +227,22 @@ def _discovery_raw(events, *, tournament_name: str | None = "League Ω") -> byte
     ).encode("utf-8")
 
 
+def _grouped_discovery_raw(*, group_count: int, event_count: int) -> bytes:
+    groups = [
+        {"name": f"League {index}", "events": []}
+        for index in range(group_count)
+    ]
+    for index in range(event_count):
+        groups[index % group_count]["events"].append(
+            _event(event_id=f"sr:match:{123456789 + index}")
+        )
+    return json.dumps(
+        {"bizCode": 10000, "data": groups},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _empty_discovery_raw() -> bytes:
     return b'{"bizCode":10000,"data":[]}'
 
@@ -608,6 +624,7 @@ def test_discovery_capture_accepts_truthful_short_page_and_replays_raw(monkeypat
         execute_live_network=True,
     )
     assert len(manifest.pages) == 1
+    assert manifest.pages[-1].provider_page_item_count == 1
     assert manifest.pages[-1].event_count == 1
     assert manifest.terminal_empty_page_observed is False
     assert manifest.pagination_termination_basis == (
@@ -623,13 +640,68 @@ def test_discovery_capture_accepts_truthful_short_page_and_replays_raw(monkeypat
         current.verify_current_event_discovery(directory, repository_root=tmp_path)
 
 
+def test_grouped_provider_short_page_uses_top_level_item_count_not_nested_events(
+    monkeypatch,
+    tmp_path,
+):
+    raw = _grouped_discovery_raw(group_count=91, event_count=192)
+    calls = []
+
+    def fetch(page_num):
+        calls.append(page_num)
+        return raw, 200, DISCOVERY_OBSERVED
+
+    monkeypatch.setattr(current, "_network_fetch_page", fetch)
+    directory, manifest = current.capture_current_event_discovery(
+        repository_root=tmp_path,
+        execute_live_network=True,
+    )
+
+    assert calls == [1]
+    assert len(manifest.pages) == 1
+    assert manifest.pages[0].provider_page_item_count == 91
+    assert manifest.pages[0].event_count == 192
+    assert len(manifest.events) == 192
+    assert manifest.pagination_termination_basis == (
+        current.PAGINATION_TERMINATION_SHORT_PAGE
+    )
+    assert current.verify_current_event_discovery(
+        directory,
+        repository_root=tmp_path,
+    ).to_dict() == manifest.to_dict()
+
+
+def test_discovery_pagination_requires_top_level_provider_data_list(
+    monkeypatch,
+    tmp_path,
+):
+    raw = json.dumps(
+        {"bizCode": 10000, "data": {"events": [_event()]}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    monkeypatch.setattr(
+        current,
+        "_network_fetch_page",
+        lambda page_num: (raw, 200, DISCOVERY_OBSERVED),
+    )
+    with pytest.raises(
+        current.SportyBetCurrentEventDiscoveryError,
+        match="top-level data must be a list",
+    ):
+        current.capture_current_event_discovery(
+            repository_root=tmp_path,
+            execute_live_network=True,
+        )
+
+
 def test_conflicting_duplicate_provider_event_identity_fails_closed(monkeypatch, tmp_path):
     first_page = [
         _event(event_id=f"sr:match:{123456789 + index}")
         for index in range(current.PAGE_SIZE)
     ]
     pages = {
-        1: _discovery_raw(first_page),
+        1: _discovery_raw(first_page, tournament_name=None),
         2: _discovery_raw([_event(home="Other Home FC")]),
     }
 
@@ -654,7 +726,11 @@ def test_full_pages_without_reviewed_terminal_condition_fail_closed(monkeypatch,
             _event(event_id=f"sr:match:{123456789 + offset + index}")
             for index in range(current.PAGE_SIZE)
         ]
-        return _discovery_raw(events), 200, DISCOVERY_OBSERVED + timedelta(seconds=page_num)
+        return (
+            _discovery_raw(events, tournament_name=None),
+            200,
+            DISCOVERY_OBSERVED + timedelta(seconds=page_num),
+        )
 
     monkeypatch.setattr(current, "_network_fetch_page", fetch)
     with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="without an empty or short") as exc_info:
@@ -663,6 +739,7 @@ def test_full_pages_without_reviewed_terminal_condition_fail_closed(monkeypatch,
             execute_live_network=True,
         )
     message = str(exc_info.value)
+    assert "provider_page_item_counts=100,100" in message
     assert "page_event_counts=100,100" in message
     assert "unique_page_hash_count=2" in message
     assert "extracted_event_count=200" in message
@@ -676,7 +753,7 @@ def test_full_repeated_pages_report_cycle_diagnostics_without_gaining_authority(
         _event(event_id=f"sr:match:{123456789 + index}")
         for index in range(current.PAGE_SIZE)
     ]
-    repeated_raw = _discovery_raw(events)
+    repeated_raw = _discovery_raw(events, tournament_name=None)
 
     def fetch(page_num):
         return repeated_raw, 200, DISCOVERY_OBSERVED + timedelta(seconds=page_num)
@@ -688,6 +765,7 @@ def test_full_repeated_pages_report_cycle_diagnostics_without_gaining_authority(
             execute_live_network=True,
         )
     message = str(exc_info.value)
+    assert "provider_page_item_counts=100,100" in message
     assert "page_event_counts=100,100" in message
     assert "unique_page_hash_count=1" in message
     assert "extracted_event_count=200" in message

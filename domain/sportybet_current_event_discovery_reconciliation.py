@@ -419,6 +419,7 @@ class SportyBetDiscoveryPage:
     observed_at: datetime
     raw_sha256: str
     raw_size: int
+    provider_page_item_count: int
     event_count: int
 
     def __post_init__(self) -> None:
@@ -430,8 +431,19 @@ class SportyBetDiscoveryPage:
         _sha(self.raw_sha256, "page raw_sha256")
         if type(self.raw_size) is not int or not 0 < self.raw_size <= MAX_RESPONSE_BYTES:
             raise SportyBetCurrentEventDiscoveryError("page raw_size is invalid")
+        if (
+            type(self.provider_page_item_count) is not int
+            or self.provider_page_item_count < 0
+        ):
+            raise SportyBetCurrentEventDiscoveryError(
+                "page provider_page_item_count is invalid"
+            )
         if type(self.event_count) is not int or self.event_count < 0:
             raise SportyBetCurrentEventDiscoveryError("page event_count is invalid")
+        if self.provider_page_item_count == 0 and self.event_count != 0:
+            raise SportyBetCurrentEventDiscoveryError(
+                "empty provider page cannot contain extracted events"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -440,6 +452,7 @@ class SportyBetDiscoveryPage:
             "observed_at": serialize_utc(self.observed_at),
             "raw_sha256": self.raw_sha256,
             "raw_size": self.raw_size,
+            "provider_page_item_count": self.provider_page_item_count,
             "event_count": self.event_count,
         }
 
@@ -574,16 +587,21 @@ class SportyBetCurrentEventDiscoveryManifest:
             raise SportyBetCurrentEventDiscoveryError(
                 "discovery cannot invent provider event timestamp/snapshot identity"
             )
+        last_provider_item_count = self.pages[-1].provider_page_item_count
         last_event_count = self.pages[-1].event_count
         if self.pagination_termination_basis == PAGINATION_TERMINATION_EMPTY_PAGE:
-            if self.terminal_empty_page_observed is not True or last_event_count != 0:
+            if (
+                self.terminal_empty_page_observed is not True
+                or last_provider_item_count != 0
+                or last_event_count != 0
+            ):
                 raise SportyBetCurrentEventDiscoveryError(
                     "empty-page termination basis does not match the final page"
                 )
         elif self.pagination_termination_basis == PAGINATION_TERMINATION_SHORT_PAGE:
             if (
                 self.terminal_empty_page_observed is not False
-                or not 0 < last_event_count < PAGE_SIZE
+                or not 0 < last_provider_item_count < PAGE_SIZE
             ):
                 raise SportyBetCurrentEventDiscoveryError(
                     "short-page termination basis does not match the final page"
@@ -617,6 +635,19 @@ class SportyBetCurrentEventDiscoveryManifest:
     @property
     def canonical_sha256(self) -> str:
         return hashlib.sha256(_canonical_bytes(self.to_dict())).hexdigest()
+
+
+def _provider_page_item_count(payload: Any) -> int:
+    if type(payload) is not dict or payload.get("bizCode") != 10000:
+        raise SportyBetCurrentEventDiscoveryError(
+            "SportyBet discovery response must be a successful object"
+        )
+    data = payload.get("data")
+    if type(data) is not list:
+        raise SportyBetCurrentEventDiscoveryError(
+            "provider discovery top-level data must be a list for pagination"
+        )
+    return len(data)
 
 
 def _extract_page_events(payload: Any, *, page: SportyBetDiscoveryPage | None = None) -> list[tuple[dict[str, Any], str | None]]:
@@ -711,6 +742,7 @@ def _parse_page(raw: bytes, *, page_num: int, observed_at: datetime) -> tuple[Sp
     except live.SportyBetLiveEventQuoteEvidenceError as exc:
         raise SportyBetCurrentEventDiscoveryError(str(exc)) from exc
     raw_hash = sha256_bytes(raw)
+    provider_page_item_count = _provider_page_item_count(payload)
     extracted = _extract_page_events(payload)
     events = tuple(
         _event_from_mapping(
@@ -728,6 +760,7 @@ def _parse_page(raw: bytes, *, page_num: int, observed_at: datetime) -> tuple[Sp
         observed_at=observed_at,
         raw_sha256=raw_hash,
         raw_size=len(raw),
+        provider_page_item_count=provider_page_item_count,
         event_count=len(events),
     )
     return page, events
@@ -856,6 +889,7 @@ def _manifest_from_mapping(value: Any) -> SportyBetCurrentEventDiscoveryManifest
                 observed_at=parse_utc_timestamp(item["observed_at"], "page observed_at"),
                 raw_sha256=item["raw_sha256"],
                 raw_size=item["raw_size"],
+                provider_page_item_count=item["provider_page_item_count"],
                 event_count=item["event_count"],
             )
             for item in pages_raw
@@ -929,19 +963,23 @@ def capture_current_event_discovery(
         page_rows.append(page)
         all_events.extend(events)
         raw_pages.append(raw)
-        if not events:
+        if page.provider_page_item_count == 0:
             termination_basis = PAGINATION_TERMINATION_EMPTY_PAGE
             break
-        if len(events) < PAGE_SIZE:
+        if page.provider_page_item_count < PAGE_SIZE:
             termination_basis = PAGINATION_TERMINATION_SHORT_PAGE
             break
     if termination_basis is None:
+        provider_page_item_counts = tuple(
+            item.provider_page_item_count for item in page_rows
+        )
         page_event_counts = tuple(item.event_count for item in page_rows)
         unique_page_hash_count = len({item.raw_sha256 for item in page_rows})
         event_ids = tuple(item.event_id for item in all_events)
         raise SportyBetCurrentEventDiscoveryError(
             "discovery pagination reached reviewed maximum without an empty or short "
             "terminal page;"
+            f" provider_page_item_counts={','.join(str(value) for value in provider_page_item_counts)};"
             f" page_event_counts={','.join(str(value) for value in page_event_counts)};"
             f" unique_page_hash_count={unique_page_hash_count};"
             f" extracted_event_count={len(all_events)};"
