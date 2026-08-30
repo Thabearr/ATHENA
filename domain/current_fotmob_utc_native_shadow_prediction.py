@@ -31,6 +31,9 @@ from typing import Any
 from domain.current_fotmob_fixture_candidate_adapter import (
     build_current_fotmob_fixture_candidate_bundle,
 )
+from domain.current_fotmob_provider_native_qualification import (
+    qualify_current_fotmob_capture,
+)
 from domain.current_fotmob_fixture_review_policy import (
     POLICY_ID as PR243_POLICY_ID,
     build_current_fotmob_fixture_review_policy_result,
@@ -43,7 +46,6 @@ from domain.fotmob_fixture_candidate_review import (
     canonical_fotmob_fixture_candidate_review_bundle_bytes,
 )
 from domain.fotmob_fixture_candidates import (
-    FotMobFixtureCandidateBundle,
     sha256_fotmob_fixture_candidate_bundle,
 )
 from domain.reviewed_fixture_intelligence_bootstrap import (
@@ -401,9 +403,10 @@ def _derive_shadow_state(
         raise _error("PR243 approval count differs from current bootstrap fixture count")
 
     try:
-        qualified = fresh.qualify_capture_fixtures(
-            source.source_raw_json,
-            source.source_manifest,
+        qualified = qualify_current_fotmob_capture(
+            candidates,
+            raw_json=source.source_raw_json,
+            manifest=source.source_manifest,
         )
     except Exception as exc:
         raise _error("source failed reviewed PR149 provider-native qualification") from exc
