@@ -22,7 +22,7 @@ from pathlib import Path
 import subprocess
 import tempfile
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from domain import current_fotmob_latest_durable_fresh_history as latest_history
 from domain import current_shadow_all_market_portfolio as portfolio_module
@@ -51,6 +51,24 @@ PR119_BOOTSTRAP_ASSET_SHA256 = "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf58
 PR119_BOOTSTRAP_ENV = "ATHENA_PR119_BOOTSTRAP_PATH"
 EXPECTED_LINEAGE_MAIN_ENV = "ATHENA_EXPECTED_LINEAGE_MAIN_SHA"
 CURRENT_FIXTURE_SEARCH_DAY_COUNT = 3
+CURRENT_SHADOW_RUN_TIMEOUT_SECONDS = 25 * 60
+RUN_RECEIPT_FILENAME = "current-shadow-all-market-run-receipt.json"
+RUN_STAGE_FILENAME = "current-shadow-all-market-stage.json"
+
+STAGE_STARTED = "STARTED"
+STAGE_CURRENT_FOTMOB_SOURCE = "CURRENT_FOTMOB_SOURCE"
+STAGE_SPORTYBET_DISCOVERY_RECONCILIATION = "SPORTYBET_DISCOVERY_RECONCILIATION"
+STAGE_CURRENT_DURABLE_FRESH_HISTORY = "CURRENT_DURABLE_FRESH_HISTORY"
+STAGE_PRICE_ALL_ROUTER = "PRICE_ALL_ROUTER"
+STAGE_PORTFOLIO = "PORTFOLIO"
+STAGE_SHARE_CODE_CREATE_RELOAD = "SHARE_CODE_CREATE_RELOAD"
+STAGE_COMPLETE = "COMPLETE"
+STAGE_SEQUENCE = (
+    STAGE_STARTED, STAGE_CURRENT_FOTMOB_SOURCE,
+    STAGE_SPORTYBET_DISCOVERY_RECONCILIATION,
+    STAGE_CURRENT_DURABLE_FRESH_HISTORY, STAGE_PRICE_ALL_ROUTER,
+    STAGE_PORTFOLIO, STAGE_SHARE_CODE_CREATE_RELOAD, STAGE_COMPLETE,
+)
 
 AUTHORITY = MappingProxyType({
     "research_shadow_current_runner": True,
@@ -151,6 +169,37 @@ def _write(path: Path, payload: Mapping[str, Any]) -> None:
         handle.write(raw)
         temporary = Path(handle.name)
     os.replace(temporary, path)
+
+
+def _checkpoint_stage(
+    *, output_dir: Path, stage: str, exact_commit_sha: str, target_size: int,
+) -> None:
+    if stage not in STAGE_SEQUENCE:
+        raise CurrentShadowAllMarketRunnerError("current Shadow stage escaped reviewed vocabulary")
+    _write(output_dir / RUN_STAGE_FILENAME, {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_name": DATASET_NAME,
+        "stage": stage,
+        "stage_index": STAGE_SEQUENCE.index(stage),
+        "observed_at": _now().isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        "exact_commit_sha": exact_commit_sha,
+        "requested_target_size": target_size,
+        "wager_placed": False,
+    })
+
+
+def _read_checkpoint_stage(output_dir: Path) -> str:
+    path = output_dir / RUN_STAGE_FILENAME
+    try:
+        if path.is_symlink() or not path.is_file():
+            return "UNKNOWN"
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError):
+        return "UNKNOWN"
+    if type(value) is not dict:
+        return "UNKNOWN"
+    stage = value.get("stage")
+    return stage if stage in STAGE_SEQUENCE else "UNKNOWN"
 
 
 def _failure_chain(exc: BaseException) -> str:
@@ -294,14 +343,20 @@ def _issue_current_fixture_source(
 
 
 def _acquire_router_inputs(
-    *, repository_root: Path, lineage_main_sha: str
+    *,
+    repository_root: Path,
+    lineage_main_sha: str,
+    stage_callback: Callable[[str], None] | None = None,
 ) -> CurrentShadowRunnerSourceBundle:
+    emit = (lambda _stage: None) if stage_callback is None else stage_callback
+    emit(STAGE_CURRENT_FOTMOB_SOURCE)
     execution, request_date = _issue_current_fixture_source(
         repository_root=repository_root
     )
     raw, manifest = _source_capture(execution, repository_root)
     admission = execution.bootstrap.verified_artifact.admission
     captures = ((raw, manifest),)
+    emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
     current_events = reconciliation.discover_and_reconcile_current_events(
         repository_root=repository_root,
         fotmob_admission_value=admission,
@@ -309,6 +364,7 @@ def _acquire_router_inputs(
         execute_live_network=True,
     )
     legacy_bootstrap = _legacy_bootstrap_bytes()
+    emit(STAGE_CURRENT_DURABLE_FRESH_HISTORY)
     history = latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
         current_bootstrap=execution.bootstrap,
         source_raw_json=raw,
@@ -322,6 +378,7 @@ def _acquire_router_inputs(
     selected = 0
     no_bet = 0
     priced = 0
+    emit(STAGE_PRICE_ALL_ROUTER)
     for row in current_events.matched_rows:
         if row.matched_fotmob_fixture_id is None:
             continue
@@ -375,6 +432,7 @@ def _receipt(
     portfolio: portfolio_module.ShadowPortfolioOptimization | None,
     share_receipt: share_module.ShadowAllMarketShareCodeReceipt | None,
     reasons: tuple[str, ...],
+    source_summary: Mapping[str, Any] | None = None,
 ) -> CurrentShadowAllMarketRunReceipt:
     return CurrentShadowAllMarketRunReceipt(
         status=status,
@@ -387,7 +445,9 @@ def _receipt(
         priced_fixture_count=0 if sources is None else sources.priced_fixture_count,
         router_selected_count=0 if sources is None else sources.router_selected_count,
         router_no_bet_count=0 if sources is None else sources.router_no_bet_count,
-        source_summary=MappingProxyType({}) if sources is None else sources.source_summary,
+        source_summary=(
+            MappingProxyType({}) if source_summary is None else source_summary
+        ) if sources is None else sources.source_summary,
         portfolio=None if portfolio is None else portfolio.to_dict(),
         portfolio_sha256=None if portfolio is None else portfolio.canonical_sha256,
         selected_leg_count=0 if portfolio is None else len(portfolio.selected_legs),
@@ -398,6 +458,38 @@ def _receipt(
         share_url=None if share_receipt is None else share_receipt.share_url,
         reasons=tuple(sorted(set(reasons))),
     )
+
+
+def write_current_shadow_timeout_receipt(
+    *, target_size: int, output_dir: Path,
+) -> CurrentShadowAllMarketRunReceipt:
+    """Persist a fail-closed receipt after the CLI supervisor exhausts its budget."""
+    if type(target_size) is not int or not 1 <= target_size <= 50:
+        raise CurrentShadowAllMarketRunnerError("target_size must be an integer from 1 through 50")
+    if not isinstance(output_dir, Path):
+        raise CurrentShadowAllMarketRunnerError("output_dir must be Path")
+    repository_root = Path(__file__).resolve().parents[1]
+    exact_commit_sha = _git_head(repository_root)
+    output_dir.mkdir(parents=True, exist_ok=True)
+    stage = _read_checkpoint_stage(output_dir)
+    result = _receipt(
+        status=STATUS_SOURCE_INCOMPLETE,
+        exact_commit_sha=exact_commit_sha,
+        target_size=target_size,
+        sources=None,
+        portfolio=None,
+        share_receipt=None,
+        reasons=(
+            f"RUN_BUDGET_EXCEEDED:{CURRENT_SHADOW_RUN_TIMEOUT_SECONDS}:STAGE:{stage}",
+        ),
+        source_summary=MappingProxyType({
+            "timeout_stage": stage,
+            "run_budget_seconds": CURRENT_SHADOW_RUN_TIMEOUT_SECONDS,
+            "wager_placed": False,
+        }),
+    )
+    _write(output_dir / RUN_RECEIPT_FILENAME, result.to_dict())
+    return result
 
 
 def execute_current_shadow_all_market(
@@ -411,13 +503,33 @@ def execute_current_shadow_all_market(
     exact_commit_sha = _git_head(repository_root)
     lineage_main_sha = _expected_lineage_main_sha()
     output_dir.mkdir(parents=True, exist_ok=True)
+    receipt_path = output_dir / RUN_RECEIPT_FILENAME
     sources: CurrentShadowRunnerSourceBundle | None = None
     portfolio: portfolio_module.ShadowPortfolioOptimization | None = None
     share_receipt: share_module.ShadowAllMarketShareCodeReceipt | None = None
+    provisional = _receipt(
+        status=STATUS_SOURCE_INCOMPLETE,
+        exact_commit_sha=exact_commit_sha,
+        target_size=target_size,
+        sources=None,
+        portfolio=None,
+        share_receipt=None,
+        reasons=("SOURCE_CHAIN_PENDING:STARTED",),
+    )
+    _write(receipt_path, provisional.to_dict())
+
+    def checkpoint(stage: str) -> None:
+        _checkpoint_stage(
+            output_dir=output_dir, stage=stage,
+            exact_commit_sha=exact_commit_sha, target_size=target_size,
+        )
+
+    checkpoint(STAGE_STARTED)
     try:
         sources = _acquire_router_inputs(
             repository_root=repository_root,
             lineage_main_sha=lineage_main_sha,
+            stage_callback=checkpoint,
         )
         if sources.reconciled_fixture_count == 0:
             result = _receipt(
@@ -440,6 +552,7 @@ def execute_current_shadow_all_market(
                 reasons=("ALL_RECONCILED_FIXTURES_ROUTER_NO_BET",),
             )
         else:
+            checkpoint(STAGE_PORTFOLIO)
             portfolio = portfolio_module.optimize_shadow_portfolio(
                 sources.router_inputs,
                 target_size=target_size,
@@ -462,6 +575,7 @@ def execute_current_shadow_all_market(
                     reasons=tuple(sorted(blocked_reasons or {"NO_PORTFOLIO_LEGS_SURVIVED_FROZEN_CONSTRAINTS"})),
                 )
             else:
+                checkpoint(STAGE_SHARE_CODE_CREATE_RELOAD)
                 share_receipt = share_module.create_verified_shadow_all_market_share_code(
                     portfolio=portfolio,
                     output_dir=output_dir / "provider-verification",
@@ -499,7 +613,9 @@ def execute_current_shadow_all_market(
             share_receipt=share_receipt,
             reasons=(f"SOURCE_CHAIN_FAILED:{_failure_chain(exc)}",),
         )
-    _write(output_dir / "current-shadow-all-market-run-receipt.json", result.to_dict())
+    if result.status != STATUS_SOURCE_INCOMPLETE:
+        checkpoint(STAGE_COMPLETE)
+    _write(receipt_path, result.to_dict())
     return result
 
 
