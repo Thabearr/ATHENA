@@ -252,6 +252,29 @@ def test_supplied_reviewed_inputs_reach_exact_utc_native_shadow_replay(
     assert not any(handoff.authority.values())
 
 
+def test_current_shadow_prediction_does_not_reenter_frozen_pr149_capture_qualification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    execution, raw, manifest = _current(tmp_path)
+    history = _history(monkeypatch)
+
+    def frozen_qualifier(*_args, **_kwargs):
+        raise AssertionError(
+            "current shadow prediction must not re-enter frozen PR149 qualifier"
+        )
+
+    monkeypatch.setattr(fresh, "qualify_capture_fixtures", frozen_qualifier)
+    handoff = build_current_fotmob_utc_native_shadow_prediction_handoff(
+        current_bootstrap=execution.bootstrap,
+        source_raw_json=raw,
+        source_manifest=manifest,
+        legacy_bootstrap_projection_raw=history,
+    )
+    assert handoff.status == STATUS_REPLAYED
+    assert handoff.rows[0].fixture.fixture_id == 1001
+
+
 def test_empty_fresh_settlement_tuple_never_claims_current_history_completeness(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
