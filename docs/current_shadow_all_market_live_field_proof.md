@@ -116,4 +116,26 @@ through `str(...)`. The narrow hardening and its three regression tests passed
 all eight synthetic test shards plus syntax/tree validation in Patch Bridge run
 `33289331074` before the reviewed patch was pushed.
 
+The later exact-head live run `33296875635` on
+`b389cda48a97d2ce844303b864560db34778ee53` completed the hosted workflow and
+uploaded a durable no-code receipt, but the research chain correctly stopped
+before SportyBet discovery with `RESEARCH_NO_CODE_SOURCE_INCOMPLETE`. The
+retained cause was a frozen PR39 schema rejection reached during the UTC-native
+fresh-history/xG shadow replay after the same current FotMob capture had already
+passed the reviewed current PR87/PR89 adapter. This demonstrated two stale
+current-source replay boundaries rather than a reason to broaden accepted
+FotMob schema.
+
+The current shadow prediction lane now reuses the reviewed current candidate
+bundle and a current-only PR149 provider-native qualification bridge. The bridge
+keeps PR149 dependency verification and exact provider fixture/competition/team/
+kickoff/capture-lineage checks, while avoiding a second replay of the already-
+reviewed current capture through frozen PR39. Unknown current additive schema
+still fails at the reviewed current adapter, and rows excluded by the narrow
+UTC request-date projection cannot re-enter provider-native qualification.
+Patch Bridge run `33309953121` proved the candidate-subset regression across
+syntax/tree and all eight synthetic test shards; Patch Bridge run `33311370535`
+then proved the shadow-prediction wiring cannot fall back into frozen PR149's
+`qualify_capture_fixtures()` path, again with all eight synthetic shards green.
+
 `wager_placed=false` is invariant.
