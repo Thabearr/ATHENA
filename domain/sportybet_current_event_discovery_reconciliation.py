@@ -936,8 +936,16 @@ def capture_current_event_discovery(
             termination_basis = PAGINATION_TERMINATION_SHORT_PAGE
             break
     if termination_basis is None:
+        page_event_counts = tuple(item.event_count for item in page_rows)
+        unique_page_hash_count = len({item.raw_sha256 for item in page_rows})
+        event_ids = tuple(item.event_id for item in all_events)
         raise SportyBetCurrentEventDiscoveryError(
-            "discovery pagination reached reviewed maximum without an empty or short terminal page"
+            "discovery pagination reached reviewed maximum without an empty or short "
+            "terminal page;"
+            f" page_event_counts={','.join(str(value) for value in page_event_counts)};"
+            f" unique_page_hash_count={unique_page_hash_count};"
+            f" extracted_event_count={len(all_events)};"
+            f" unique_event_id_count={len(set(event_ids))}"
         )
     manifest = SportyBetCurrentEventDiscoveryManifest(
         schema_version=SCHEMA_VERSION,

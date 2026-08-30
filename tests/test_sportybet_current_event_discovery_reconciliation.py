@@ -657,11 +657,41 @@ def test_full_pages_without_reviewed_terminal_condition_fail_closed(monkeypatch,
         return _discovery_raw(events), 200, DISCOVERY_OBSERVED + timedelta(seconds=page_num)
 
     monkeypatch.setattr(current, "_network_fetch_page", fetch)
-    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="without an empty or short"):
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="without an empty or short") as exc_info:
         current.capture_current_event_discovery(
             repository_root=tmp_path,
             execute_live_network=True,
         )
+    message = str(exc_info.value)
+    assert "page_event_counts=100,100" in message
+    assert "unique_page_hash_count=2" in message
+    assert "extracted_event_count=200" in message
+    assert "unique_event_id_count=200" in message
+
+
+def test_full_repeated_pages_report_cycle_diagnostics_without_gaining_authority(monkeypatch, tmp_path):
+    monkeypatch.setattr(current, "MAX_PAGES", 2)
+    monkeypatch.setattr(current, "validate_current_event_discovery_contract", lambda: {})
+    events = [
+        _event(event_id=f"sr:match:{123456789 + index}")
+        for index in range(current.PAGE_SIZE)
+    ]
+    repeated_raw = _discovery_raw(events)
+
+    def fetch(page_num):
+        return repeated_raw, 200, DISCOVERY_OBSERVED + timedelta(seconds=page_num)
+
+    monkeypatch.setattr(current, "_network_fetch_page", fetch)
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError) as exc_info:
+        current.capture_current_event_discovery(
+            repository_root=tmp_path,
+            execute_live_network=True,
+        )
+    message = str(exc_info.value)
+    assert "page_event_counts=100,100" in message
+    assert "unique_page_hash_count=1" in message
+    assert "extracted_event_count=200" in message
+    assert "unique_event_id_count=100" in message
 
 
 def test_unreviewed_pagination_termination_basis_fails_closed(monkeypatch, tmp_path):
