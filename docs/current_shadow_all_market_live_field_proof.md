@@ -157,12 +157,16 @@ syntax/tree and all eight synthetic test shards; Patch Bridge run `33311370535`
 then proved the shadow-prediction wiring cannot fall back into frozen PR149's
 `qualify_capture_fixtures()` path, again with all eight synthetic shards green.
 
-The exact-head run `33328629573` later demonstrated that the former hosted
-runtime ceiling could terminate during `PRICE_ALL_ROUTER`. The workflow budget
-was widened while the worker remained bounded and fail-closed. Exact-head run
-`33334343547` then completed normally in about 29 minutes, proving that the
-runtime ceiling no longer caused the terminal state. Its durable artifact was
-`9738955502` with ZIP SHA-256
+The exact-head rerun of workflow run `33328629573` on
+`a9cce1d55fa8f28261d2680fd21ac489e56ffdec` demonstrated that the prior
+25-minute worker budget could terminate during `PRICE_ALL_ROUTER`. The hosted
+entrypoint already carries a bounded 50-minute worker supervisor; PR F widened
+the surrounding GitHub Actions job ceiling from 30 to 60 minutes so that the
+supervisor, rather than the outer job, remains the reviewed fail-closed runtime
+boundary. Exact-head run `33334343547` on
+`7bf614cd4c33aacab46b4140aae9d86726e143e2` then completed normally in about
+29 minutes, proving that the outer hosted ceiling no longer caused the terminal
+state. Its durable artifact was `9738955502` with ZIP SHA-256
 `fb846332d53a9826bab1a70f09a9d687bad59eff9504f81e5c27f7295d6e0e24`.
 That run still had zero exact FotMob↔SportyBet reconciliations, which is the live
 evidence that drove the bounded multi-date fixture-universe correction above.
