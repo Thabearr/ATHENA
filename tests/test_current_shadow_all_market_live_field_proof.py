@@ -120,7 +120,7 @@ def test_cross_date_projection_does_not_hide_unreviewed_status_drift():
 
     with pytest.raises(
         CurrentFotMobFixtureCandidateAdapterError,
-        match="additive structure changed before request-date projection",
+        match="additive schema assessment failed",
     ):
         build_current_fotmob_fixture_candidate_bundle(changed, manifest)
 
