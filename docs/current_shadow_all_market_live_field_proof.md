@@ -67,11 +67,30 @@ wrong types and semantic promotion still fail closed.
 
 That corrected run (`33279000638`) then produced the first durable terminal
 receipt. At 22:37 UTC the prior runner requested only `20260829`, whose fixtures
-had already started or finished; PR243 correctly approved none. The current
-fixture-universe issuer now checks a fixed three-date UTC horizon and chooses
-the earliest exact reviewed nonempty catalogue. It does not accept a caller
-date, merge hand-picked fixtures, skip a nonempty earlier date, or alter PR243's
-recency/kickoff-lead policy.
+had already started or finished; PR243 correctly approved none. PR F therefore
+introduced a fixed three-date UTC search horizon rather than accepting a caller
+fixture list or weakening PR243's recency/kickoff-lead policy.
+
+A later exact-head field run (`33334343547`) exposed a second, narrower fixture-
+universe defect in that implementation. The runner stopped as soon as the first
+policy-approved nonempty date was found. Late on `20260830`, that reduced a
+`target_size=20` request to exactly one reviewed FotMob fixture while the same
+bounded horizon still contained later UTC dates that had never been examined.
+The run observed 38 current SportyBet events, obtained zero exact reconciliations,
+and truthfully returned `RESEARCH_NO_CODE_INSUFFICIENT_SUPPORTED_MARKETS`.
+
+The current runner now scans **every date in the same fixed three-date UTC
+horizon**, retaining every date that independently passes the frozen PR243
+policy before any provider reconciliation. Each retained date is reconciled
+through the unchanged exact SportyBet boundary; no alias, fuzzy team matching,
+kickoff tolerance, nearest event, manual provider ID, or caller-supplied odds is
+introduced. Cross-date duplicate reconciliation of either a provider event or a
+FotMob fixture fails closed. The receipt preserves the searched dates, every
+policy-approved current FotMob source identity, per-date reconciliation SHA and
+disposition counts, and the exact matched provider IDs. Expensive PR151 fresh-
+history/model work is constructed only for date sources that actually earn an
+exact provider reconciliation, preserving source ancestry while avoiding work
+that cannot enter Price-all.
 
 The next exact-head provider run reached SportyBet discovery. The current
 anonymous endpoint returned 29 events for every requested page number even
@@ -137,5 +156,15 @@ Patch Bridge run `33309953121` proved the candidate-subset regression across
 syntax/tree and all eight synthetic test shards; Patch Bridge run `33311370535`
 then proved the shadow-prediction wiring cannot fall back into frozen PR149's
 `qualify_capture_fixtures()` path, again with all eight synthetic shards green.
+
+The exact-head run `33328629573` later demonstrated that the former hosted
+runtime ceiling could terminate during `PRICE_ALL_ROUTER`. The workflow budget
+was widened while the worker remained bounded and fail-closed. Exact-head run
+`33334343547` then completed normally in about 29 minutes, proving that the
+runtime ceiling no longer caused the terminal state. Its durable artifact was
+`9738955502` with ZIP SHA-256
+`fb846332d53a9826bab1a70f09a9d687bad59eff9504f81e5c27f7295d6e0e24`.
+That run still had zero exact FotMob↔SportyBet reconciliations, which is the live
+evidence that drove the bounded multi-date fixture-universe correction above.
 
 `wager_placed=false` is invariant.
