@@ -160,13 +160,13 @@ then proved the shadow-prediction wiring cannot fall back into frozen PR149's
 The exact-head rerun of workflow run `33328629573` on
 `a9cce1d55fa8f28261d2680fd21ac489e56ffdec` terminated fail-closed after 1500
 seconds while the last durable checkpoint was `PRICE_ALL_ROUTER`. That receipt
-demonstrated only the exhausted 1500-second execution budget and checkpoint; it
-did not prove which sub-operation inside or before that checkpoint consumed the
-budget. PR F then enlarged the bounded hosted execution allowance. Exact-head
-run `33334343547` on `7bf614cd4c33aacab46b4140aae9d86726e143e2`
-completed normally in about 29 minutes, proving that the enlarged allowance
-removed the timeout as the terminal result. Its durable artifact was
-`9738955502` with ZIP SHA-256
+proved only the exhausted 1500-second execution budget and checkpoint; it did
+not identify which sub-operation consumed the elapsed time. The hosted
+execution allowance was then enlarged while keeping a bounded fail-closed
+supervisor. Exact-head run `33334343547` on
+`7bf614cd4c33aacab46b4140aae9d86726e143e2` completed normally in about 29
+minutes, proving that runtime budget exhaustion no longer caused the terminal
+state. Its durable artifact was `9738955502` with ZIP SHA-256
 `fb846332d53a9826bab1a70f09a9d687bad59eff9504f81e5c27f7295d6e0e24`.
 That run still had zero exact FotMob↔SportyBet reconciliations, which is the live
 evidence that drove the bounded multi-date fixture-universe correction above.
