@@ -94,4 +94,26 @@ reviewed PR151 audit. The audit still fetches and requires exact equality with
 that main SHA; this does not accept the PR head as historical lineage and does
 not weaken the fresh-holdout gate.
 
+The later exact-head run `33288774115` on
+`5e03adf63f9d8ac0c7c07731061fc9fbab0c31a6` reached current SportyBet event
+discovery and truthfully returned `RESEARCH_NO_CODE_SOURCE_INCOMPLETE`. The
+retained cause was `SportyBetCurrentEventDiscoveryError: provider home team must
+be an exact non-empty trimmed string`; no provider row was authorized, no leg
+was selected, shortfall remained 20, no share code was created, and no wager
+was placed.
+
+A bounded anonymous diagnostic then reproduced the provider condition across
+12 consecutive page-1 observations: live event `sr:match:72474924` was returned
+with `homeTeamName` equal to `Comunicaciones FC ` (one trailing space),
+`bookingStatus=Booked`, `status=1`, and `matchStatus=H2`. The row was therefore
+not a prematch-bookable fixture and was ineligible for exact fixture
+reconciliation authority. The current discovery lane now preserves a bounded
+non-empty raw source team string for such nonbookable evidence without trimming,
+normalizing, aliasing, or fuzzy matching it. Exact trimmed team strings remain
+mandatory for every prematch-bookable event and every reconciliation-authorized
+row. Missing/non-string team identity also fails closed instead of being coerced
+through `str(...)`. The narrow hardening and its three regression tests passed
+all eight synthetic test shards plus syntax/tree validation in Patch Bridge run
+`33289331074` before the reviewed patch was pushed.
+
 `wager_placed=false` is invariant.
