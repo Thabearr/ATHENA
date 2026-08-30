@@ -36,6 +36,39 @@ def _reviewed_extended_capture():
     return (capture / "response.json").read_bytes(), manifest
 
 
+def _manifest_for_changed_raw(changed: bytes, original):
+    response = CapturedFotMobDataMatchesResponse(
+        status=200,
+        content_type="application/json; charset=utf-8",
+        content_length=len(changed),
+        body=changed,
+        observed_at=original.observed_at,
+        network_acquisition_performed=True,
+    )
+    return build_data_matches_capture_manifest(
+        response,
+        request_date=original.request_date,
+        timezone=original.timezone,
+        ccode3=original.ccode3,
+    )
+
+
+def _move_first_match_off_request_utc_date(raw: bytes):
+    payload = json.loads(raw)
+    match = payload["leagues"][0]["matches"][0]
+    kickoff = dt.datetime.fromisoformat(match["status"]["utcTime"].replace("Z", "+00:00"))
+    moved = kickoff + dt.timedelta(days=1)
+    match["status"]["utcTime"] = moved.isoformat().replace("+00:00", "Z")
+    match["timeTS"] = int(moved.timestamp() * 1000)
+    changed = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return payload, changed, match["id"]
+
+
 def test_hosted_shadow_workflow_uses_import_safe_module_entrypoint():
     workflow = (ROOT / ".github/workflows/current-shadow-all-market.yml").read_text(
         encoding="utf-8"
@@ -53,6 +86,45 @@ def test_current_fixture_candidate_builder_replays_reviewed_additive_schema():
     assert bundle.sources[0].source_raw_sha256 == manifest.raw_sha256
 
 
+def test_current_fixture_candidate_builder_excludes_live_cross_date_rows_only():
+    raw, original = _reviewed_extended_capture()
+    baseline = build_current_fotmob_fixture_candidate_bundle(raw, original)
+    _payload, changed, moved_match_id = _move_first_match_off_request_utc_date(raw)
+    manifest = _manifest_for_changed_raw(changed, original)
+
+    with pytest.raises(FotMobFixtureCandidateError, match="PR #39 schema assessment failed"):
+        build_fotmob_fixture_candidate_bundle(((changed, manifest),))
+
+    bundle = build_current_fotmob_fixture_candidate_bundle(changed, manifest)
+    assert bundle.candidate_count == baseline.candidate_count - 1
+    assert moved_match_id not in {item.source_match_id for item in bundle.candidates}
+    assert all(
+        item.kickoff_utc.strftime("%Y%m%d") == manifest.request_date
+        for item in bundle.candidates
+    )
+    assert bundle.sources[0].source_raw_sha256 == manifest.raw_sha256
+    assert all(item.source_raw_sha256 == manifest.raw_sha256 for item in bundle.candidates)
+
+
+def test_cross_date_projection_does_not_hide_unreviewed_status_drift():
+    raw, original = _reviewed_extended_capture()
+    payload, _changed, _moved_match_id = _move_first_match_off_request_utc_date(raw)
+    payload["leagues"][0]["matches"][0]["status"]["inventedLiveField"] = 1
+    changed = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    manifest = _manifest_for_changed_raw(changed, original)
+
+    with pytest.raises(
+        CurrentFotMobFixtureCandidateAdapterError,
+        match="additive structure changed before request-date projection",
+    ):
+        build_current_fotmob_fixture_candidate_bundle(changed, manifest)
+
+
 def test_unreviewed_current_status_key_still_fails_closed():
     raw, original = _reviewed_extended_capture()
     payload = json.loads(raw)
@@ -63,20 +135,7 @@ def test_unreviewed_current_status_key_still_fails_closed():
         allow_nan=False,
         separators=(",", ":"),
     ).encode("utf-8")
-    response = CapturedFotMobDataMatchesResponse(
-        status=200,
-        content_type="application/json; charset=utf-8",
-        content_length=len(changed),
-        body=changed,
-        observed_at=original.observed_at,
-        network_acquisition_performed=True,
-    )
-    manifest = build_data_matches_capture_manifest(
-        response,
-        request_date=original.request_date,
-        timezone=original.timezone,
-        ccode3=original.ccode3,
-    )
+    manifest = _manifest_for_changed_raw(changed, original)
     with pytest.raises(
         CurrentFotMobFixtureCandidateAdapterError, match="additive schema assessment failed"
     ):
