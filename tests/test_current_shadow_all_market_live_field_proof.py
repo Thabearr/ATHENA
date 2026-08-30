@@ -22,6 +22,7 @@ from domain.fotmob_fixture_candidates import (
     build_fotmob_fixture_candidate_bundle,
 )
 from domain import current_shadow_all_market_runner as runner
+from domain import sportybet_current_event_discovery_reconciliation as reconciliation
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,38 @@ def test_current_fixture_candidate_builder_replays_reviewed_additive_schema():
     bundle = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
     assert bundle.candidate_count > 0
     assert bundle.sources[0].source_raw_sha256 == manifest.raw_sha256
+
+
+def test_current_sportybet_replay_reuses_single_capture_current_adapter():
+    raw, manifest = _reviewed_extended_capture()
+    expected = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
+    actual = reconciliation._build_replayed_fotmob_candidates(((raw, manifest),))
+    assert actual == expected
+    assert actual.sources[0].source_raw_sha256 == manifest.raw_sha256
+
+
+def test_current_sportybet_replay_keeps_multicapture_on_frozen_builder(monkeypatch):
+    sentinel = object()
+    rows = ((b"one", object()), (b"two", object()))
+
+    def frozen_builder(value):
+        assert value is rows
+        return sentinel
+
+    def current_builder(*_args, **_kwargs):
+        raise AssertionError("current adapter must be singleton-only")
+
+    monkeypatch.setattr(
+        reconciliation.fotmob_candidates,
+        "build_fotmob_fixture_candidate_bundle",
+        frozen_builder,
+    )
+    monkeypatch.setattr(
+        reconciliation.current_fotmob_candidates,
+        "build_current_fotmob_fixture_candidate_bundle",
+        current_builder,
+    )
+    assert reconciliation._build_replayed_fotmob_candidates(rows) is sentinel
 
 
 def test_current_fixture_candidate_builder_excludes_live_cross_date_rows_only():

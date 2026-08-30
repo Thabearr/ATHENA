@@ -33,6 +33,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from domain import _portfolio_optimizer_v2_direct_provider_contracts as portfolio_v2_contracts
+from domain import current_fotmob_fixture_candidate_adapter as current_fotmob_candidates
 from domain import fotmob_fixture_candidate_review as fotmob_review
 from domain import fotmob_fixture_candidates as fotmob_candidates
 from domain import fotmob_fixture_catalog_handoff as fotmob_handoff
@@ -1070,6 +1071,25 @@ def _materialize_fotmob_captures(
     return tuple(rows)
 
 
+def _build_replayed_fotmob_candidates(
+    capture_rows: Any,
+) -> fotmob_candidates.FotMobFixtureCandidateBundle:
+    """Replay current single-capture candidates through the reviewed adapter.
+
+    Current live issuance uses one exact FotMob capture.  Rebuild that capture
+    through the same current-only PR39-or-reviewed-additive adapter used by the
+    issuer, so deterministic admission replay preserves reviewed additive schema
+    handling and request-date projection.  Multi-capture replay remains on the
+    frozen PR39 builder.
+    """
+    if len(capture_rows) == 1:
+        raw, manifest = capture_rows[0]
+        return current_fotmob_candidates.build_current_fotmob_fixture_candidate_bundle(
+            raw, manifest
+        )
+    return fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)
+
+
 def _rederive_exact_fotmob_admission(
     supplied: Any,
     captures: Any,
@@ -1081,7 +1101,7 @@ def _rederive_exact_fotmob_admission(
     capture_rows = _materialize_fotmob_captures(captures)
     try:
         checked = dataclasses.replace(supplied)
-        rebuilt_candidate = fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)
+        rebuilt_candidate = _build_replayed_fotmob_candidates(capture_rows)
         rebuilt_review = fotmob_review.build_fotmob_fixture_candidate_review_bundle(
             rebuilt_candidate,
             checked.handoff.review_bundle.decisions,
@@ -1098,6 +1118,7 @@ def _rederive_exact_fotmob_admission(
         )
     except (
         fotmob_admission.ReviewedFixtureCatalogAdmissionError,
+        current_fotmob_candidates.CurrentFotMobFixtureCandidateAdapterError,
         fotmob_candidates.FotMobFixtureCandidateError,
         fotmob_review.FotMobFixtureCandidateReviewError,
         fotmob_handoff.FotMobFixtureCatalogHandoffError,
