@@ -203,6 +203,20 @@ def _text(value: Any, label: str, *, maximum: int = 300) -> str:
     return value
 
 
+def _source_text(value: Any, label: str, *, maximum: int = 300) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or not value.strip()
+        or len(value) > maximum
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    ):
+        raise SportyBetCurrentEventDiscoveryError(
+            f"{label} must be a bounded non-empty source string"
+        )
+    return value
+
+
 def _optional_text(value: Any, label: str, *, maximum: int = 300) -> str | None:
     if value is None:
         return None
@@ -448,8 +462,15 @@ class SportyBetDiscoveredEvent:
 
     def __post_init__(self) -> None:
         _event_id(self.event_id)
-        _text(self.home_team_name, "home_team_name")
-        _text(self.away_team_name, "away_team_name")
+        _source_text(self.home_team_name, "home_team_name")
+        _source_text(self.away_team_name, "away_team_name")
+        if type(self.prematch_bookable_observed) is not bool:
+            raise SportyBetCurrentEventDiscoveryError(
+                "prematch_bookable_observed must be bool"
+            )
+        if self.prematch_bookable_observed:
+            _text(self.home_team_name, "home_team_name")
+            _text(self.away_team_name, "away_team_name")
         if self.home_team_name == self.away_team_name:
             raise SportyBetCurrentEventDiscoveryError(
                 "discovered home/away teams must differ"
@@ -462,10 +483,6 @@ class SportyBetDiscoveredEvent:
             _text(self.booking_status, "booking_status")
         if self.match_status is not None:
             _text(self.match_status, "match_status")
-        if type(self.prematch_bookable_observed) is not bool:
-            raise SportyBetCurrentEventDiscoveryError(
-                "prematch_bookable_observed must be bool"
-            )
         if type(self.source_page_num) is not int or not 1 <= self.source_page_num <= MAX_PAGES:
             raise SportyBetCurrentEventDiscoveryError("source_page_num is invalid")
         _sha(self.source_raw_sha256, "source_raw_sha256")
@@ -666,17 +683,18 @@ def _event_from_mapping(
             "football-scoped discovery returned a non-football event"
         )
     competition_name, basis = _competition(value, inherited_competition)
+    prematch_bookable = _event_is_prematch_bookable(value)
     return SportyBetDiscoveredEvent(
         event_id=_event_id(value.get("eventId")),
-        home_team_name=_text(str(value.get("homeTeamName")), "provider home team"),
-        away_team_name=_text(str(value.get("awayTeamName")), "provider away team"),
+        home_team_name=_source_text(value.get("homeTeamName"), "provider home team"),
+        away_team_name=_source_text(value.get("awayTeamName"), "provider away team"),
         competition_name=competition_name,
         competition_basis=basis,
         kickoff_utc=_kickoff(value.get("estimateStartTime")),
         booking_status=_optional_text(value.get("bookingStatus"), "booking_status"),
         event_status=value.get("status"),
         match_status=_optional_text(value.get("matchStatus"), "match_status"),
-        prematch_bookable_observed=_event_is_prematch_bookable(value),
+        prematch_bookable_observed=prematch_bookable,
         source_page_num=page_num,
         source_raw_sha256=raw_sha256,
         source_observed_at=observed_at,
@@ -1215,8 +1233,8 @@ class CurrentEventReconciliationRow:
 
     def __post_init__(self) -> None:
         _event_id(self.event_id)
-        _text(self.home_team_name, "row home_team_name")
-        _text(self.away_team_name, "row away_team_name")
+        _source_text(self.home_team_name, "row home_team_name")
+        _source_text(self.away_team_name, "row away_team_name")
         if self.competition_name is not None:
             _text(self.competition_name, "row competition_name")
         object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "row kickoff_utc"))
@@ -1262,6 +1280,9 @@ class CurrentEventReconciliationRow:
             raise SportyBetCurrentEventDiscoveryError(
                 "fixture_reconciliation_authorized must be bool"
             )
+        if self.fixture_reconciliation_authorized:
+            _text(self.home_team_name, "row home_team_name")
+            _text(self.away_team_name, "row away_team_name")
         if self.fixture_reconciliation_authorized != (
             self.disposition
             is CurrentEventReconciliationDisposition.UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILED

@@ -694,3 +694,51 @@ def test_bundle_is_builder_only_and_tamper_fails_exact_source_replay(monkeypatch
     object.__setattr__(result, "status", "FORGED")
     with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="differs"):
         current.verify_current_event_discovery_reconciliation_bundle(result)
+
+
+def test_nonbookable_live_event_preserves_untrimmed_source_identity_without_authority(
+    monkeypatch,
+    tmp_path,
+):
+    result = _run(
+        monkeypatch,
+        tmp_path,
+        events=[_event(home="Home FC ", status=1, booking_status="Booked")],
+    )
+    row = result.rows[0]
+    assert row.home_team_name == "Home FC "
+    assert row.disposition is (
+        current.CurrentEventReconciliationDisposition.DISCOVERY_EVENT_NOT_PREMATCH_BOOKABLE
+    )
+    assert row.fixture_reconciliation_authorized is False
+    assert row.exact_fotmob_match_count == 0
+    assert row.direct_event_manifest_sha256 is None
+    assert current.verify_current_event_discovery_reconciliation_bundle(
+        result
+    ).to_dict() == result.to_dict()
+
+
+def test_prematch_bookable_untrimmed_team_still_fails_closed(monkeypatch, tmp_path):
+    with pytest.raises(
+        current.SportyBetCurrentEventDiscoveryError,
+        match="exact non-empty trimmed string",
+    ):
+        _run(
+            monkeypatch,
+            tmp_path,
+            events=[_event(home="Home FC ")],
+        )
+
+
+def test_missing_team_identity_is_not_string_coerced(monkeypatch, tmp_path):
+    event = _event()
+    event["homeTeamName"] = None
+    with pytest.raises(
+        current.SportyBetCurrentEventDiscoveryError,
+        match="bounded non-empty source string",
+    ):
+        _run(
+            monkeypatch,
+            tmp_path,
+            events=[event],
+        )
