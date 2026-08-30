@@ -313,13 +313,25 @@ def _source_capture(execution: current_fotmob_source.CurrentFotMobReviewedSource
     return raw, manifest
 
 
-def _issue_current_fixture_source(
+def _issue_current_fixture_sources(
     *, repository_root: Path,
-) -> tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str]:
-    """Select the earliest reviewed non-empty UTC catalogue in a fixed horizon."""
+) -> tuple[
+    tuple[tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str], ...],
+    tuple[str, ...],
+]:
+    """Collect every reviewed non-empty UTC catalogue in the fixed horizon.
+
+    PR-F live evidence proved that stopping on the first non-empty date can leave
+    the runner with a one-fixture universe late in the UTC day while later dates
+    inside the already reviewed bounded horizon remain unexamined.  The current
+    runner therefore acquires every policy-approved date in the fixed horizon
+    before any SportyBet reconciliation.  Empty dates remain explicit and other
+    source failures still fail closed.
+    """
 
     today = _now().date()
     attempted: list[str] = []
+    sources: list[tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str]] = []
     for offset in range(CURRENT_FIXTURE_SEARCH_DAY_COUNT):
         request_date = (today + timedelta(days=offset)).strftime("%Y%m%d")
         attempted.append(request_date)
@@ -335,11 +347,23 @@ def _issue_current_fixture_source(
             if str(exc) == current_fotmob_source.STATUS_NO_FIXTURES:
                 continue
             raise
-        return execution, request_date
-    raise CurrentShadowAllMarketRunnerError(
-        "NO_POLICY_APPROVED_CURRENT_FOTMOB_FIXTURES_IN_FIXED_HORIZON:"
-        + ",".join(attempted)
-    )
+        sources.append((execution, request_date))
+    if not sources:
+        raise CurrentShadowAllMarketRunnerError(
+            "NO_POLICY_APPROVED_CURRENT_FOTMOB_FIXTURES_IN_FIXED_HORIZON:"
+            + ",".join(attempted)
+        )
+    return tuple(sources), tuple(attempted)
+
+
+def _disposition_counts(
+    current_events: reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle,
+) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for row in current_events.rows:
+        key = row.disposition.value
+        counts[key] = counts.get(key, 0) + 1
+    return {key: counts[key] for key in sorted(counts)}
 
 
 def _acquire_router_inputs(
@@ -350,72 +374,163 @@ def _acquire_router_inputs(
 ) -> CurrentShadowRunnerSourceBundle:
     emit = (lambda _stage: None) if stage_callback is None else stage_callback
     emit(STAGE_CURRENT_FOTMOB_SOURCE)
-    execution, request_date = _issue_current_fixture_source(
+    fixture_sources, searched_dates = _issue_current_fixture_sources(
         repository_root=repository_root
     )
-    raw, manifest = _source_capture(execution, repository_root)
-    admission = execution.bootstrap.verified_artifact.admission
-    captures = ((raw, manifest),)
+
+    source_rows: list[tuple[
+        str,
+        current_fotmob_source.CurrentFotMobReviewedSourceExecution,
+        bytes,
+        Any,
+        reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle,
+    ]] = []
     emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
-    current_events = reconciliation.discover_and_reconcile_current_events(
-        repository_root=repository_root,
-        fotmob_admission_value=admission,
-        fotmob_captures=captures,
-        execute_live_network=True,
-    )
-    legacy_bootstrap = _legacy_bootstrap_bytes()
-    emit(STAGE_CURRENT_DURABLE_FRESH_HISTORY)
-    history = latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
-        current_bootstrap=execution.bootstrap,
-        source_raw_json=raw,
-        source_manifest=manifest,
-        legacy_bootstrap_projection_raw=legacy_bootstrap,
-        expected_main_sha=lineage_main_sha,
-        repository_root=repository_root,
-    )
+    for execution, request_date in fixture_sources:
+        raw, manifest = _source_capture(execution, repository_root)
+        admission = execution.bootstrap.verified_artifact.admission
+        current_events = reconciliation.discover_and_reconcile_current_events(
+            repository_root=repository_root,
+            fotmob_admission_value=admission,
+            fotmob_captures=((raw, manifest),),
+            execute_live_network=True,
+        )
+        source_rows.append((request_date, execution, raw, manifest, current_events))
+
+    provider_event_ids = {
+        row.event_id
+        for _date, _execution, _raw, _manifest, current_events in source_rows
+        for row in current_events.rows
+    }
+    matched_provider_dates: dict[str, str] = {}
+    matched_fixture_dates: dict[str, str] = {}
+    for request_date, _execution, _raw, _manifest, current_events in source_rows:
+        for row in current_events.matched_rows:
+            fixture_id = row.matched_fotmob_fixture_id
+            if fixture_id is None:
+                raise CurrentShadowAllMarketRunnerError(
+                    "authorized current reconciliation omitted FotMob fixture identity"
+                )
+            prior_provider_date = matched_provider_dates.get(row.event_id)
+            if prior_provider_date is not None and prior_provider_date != request_date:
+                raise CurrentShadowAllMarketRunnerError(
+                    "provider event reconciled across multiple current FotMob request dates"
+                )
+            prior_fixture_date = matched_fixture_dates.get(fixture_id)
+            if prior_fixture_date is not None and prior_fixture_date != request_date:
+                raise CurrentShadowAllMarketRunnerError(
+                    "FotMob fixture reconciled across multiple current request dates"
+                )
+            matched_provider_dates[row.event_id] = request_date
+            matched_fixture_dates[fixture_id] = request_date
+
+    legacy_bootstrap: bytes | None = None
+    histories: dict[str, Any] = {}
+    matched_source_rows = [
+        item for item in source_rows if item[4].matched_rows
+    ]
+    if matched_source_rows:
+        emit(STAGE_CURRENT_DURABLE_FRESH_HISTORY)
+        legacy_bootstrap = _legacy_bootstrap_bytes()
+        for request_date, execution, raw, manifest, _current_events in matched_source_rows:
+            histories[request_date] = (
+                latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
+                    current_bootstrap=execution.bootstrap,
+                    source_raw_json=raw,
+                    source_manifest=manifest,
+                    legacy_bootstrap_projection_raw=legacy_bootstrap,
+                    expected_main_sha=lineage_main_sha,
+                    repository_root=repository_root,
+                )
+            )
 
     inputs: list[portfolio_module.ShadowPortfolioRouterInput] = []
     selected = 0
     no_bet = 0
     priced = 0
-    emit(STAGE_PRICE_ALL_ROUTER)
-    for row in current_events.matched_rows:
-        if row.matched_fotmob_fixture_id is None:
-            continue
-        fixture_identity = f"FOTMOB:{row.matched_fotmob_fixture_id}"
-        context = price_module.build_current_shadow_price_context_from_reconciliation(
-            complete_current_history=history,
-            fixture_identity=fixture_identity,
-            provider_event_id=row.event_id,
-            current_reconciliation_bundle=current_events,
-        )
-        priced_bundle = price_module.price_all_shadow_fixture(context)
-        decision = router_module.route_shadow_price_results(priced_bundle)
-        priced += 1
-        if decision.status.value == "SELECTED":
-            selected += 1
-        else:
-            no_bet += 1
-        inputs.append(portfolio_module.build_shadow_portfolio_router_input(
-            price_all_bundle=priced_bundle,
-            router_decision=decision,
-        ))
+    if matched_source_rows:
+        emit(STAGE_PRICE_ALL_ROUTER)
+    for request_date, _execution, _raw, _manifest, current_events in matched_source_rows:
+        history = histories[request_date]
+        for row in current_events.matched_rows:
+            if row.matched_fotmob_fixture_id is None:
+                continue
+            fixture_identity = f"FOTMOB:{row.matched_fotmob_fixture_id}"
+            context = price_module.build_current_shadow_price_context_from_reconciliation(
+                complete_current_history=history,
+                fixture_identity=fixture_identity,
+                provider_event_id=row.event_id,
+                current_reconciliation_bundle=current_events,
+            )
+            priced_bundle = price_module.price_all_shadow_fixture(context)
+            decision = router_module.route_shadow_price_results(priced_bundle)
+            priced += 1
+            if decision.status.value == "SELECTED":
+                selected += 1
+            else:
+                no_bet += 1
+            inputs.append(portfolio_module.build_shadow_portfolio_router_input(
+                price_all_bundle=priced_bundle,
+                router_decision=decision,
+            ))
+
+    first_matched = next((item for item in source_rows if item[4].matched_rows), None)
+    primary = first_matched or source_rows[0]
+    primary_date, primary_execution, _primary_raw, _primary_manifest, primary_events = primary
+    primary_history = histories.get(primary_date)
+    history_sha_by_date = {
+        request_date: latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(history)
+        for request_date, history in sorted(histories.items())
+    }
+    reconciliation_by_date = {
+        request_date: {
+            "current_reconciliation_sha256": current_events.canonical_sha256,
+            "current_reconciliation_contract_sha256": current_events.contract_sha256,
+            "provider_event_count": len(current_events.rows),
+            "reconciled_fixture_count": len(current_events.matched_rows),
+            "disposition_counts": _disposition_counts(current_events),
+        }
+        for request_date, _execution, _raw, _manifest, current_events in source_rows
+    }
     summary = MappingProxyType({
-        "selected_fixture_request_date": request_date,
+        "selected_fixture_request_date": primary_date,
         "fixture_search_day_count": CURRENT_FIXTURE_SEARCH_DAY_COUNT,
+        "searched_fixture_request_dates": list(searched_dates),
+        "policy_approved_fixture_request_dates": [
+            request_date for request_date, _execution, _raw, _manifest, _events in source_rows
+        ],
         "lineage_expected_main_sha": lineage_main_sha,
-        "current_fotmob": execution.summary(),
-        "complete_current_history_sha256": latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(history),
-        "current_reconciliation_sha256": current_events.canonical_sha256,
-        "current_reconciliation_contract_sha256": current_events.contract_sha256,
-        "matched_provider_event_ids": [row.event_id for row in current_events.matched_rows],
+        "current_fotmob": primary_execution.summary(),
+        "current_fotmob_sources": {
+            request_date: execution.summary()
+            for request_date, execution, _raw, _manifest, _events in source_rows
+        },
+        "complete_current_history_sha256": (
+            None
+            if primary_history is None
+            else latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(
+                primary_history
+            )
+        ),
+        "complete_current_history_sha256_by_request_date": history_sha_by_date,
+        "current_reconciliation_sha256": primary_events.canonical_sha256,
+        "current_reconciliation_contract_sha256": primary_events.contract_sha256,
+        "current_reconciliation_by_request_date": reconciliation_by_date,
+        "matched_provider_event_ids": sorted(matched_provider_dates),
+        "provider_discovery_observation_count": len(source_rows),
         "wager_placed": False,
     })
     return CurrentShadowRunnerSourceBundle(
         router_inputs=tuple(inputs),
-        reviewed_fixture_count=len(execution.bootstrap.fixtures),
-        reconciled_fixture_count=len(current_events.matched_rows),
-        provider_event_count=len(current_events.rows),
+        reviewed_fixture_count=sum(
+            len(execution.bootstrap.fixtures)
+            for _request_date, execution, _raw, _manifest, _events in source_rows
+        ),
+        reconciled_fixture_count=sum(
+            len(current_events.matched_rows)
+            for _request_date, _execution, _raw, _manifest, current_events in source_rows
+        ),
+        provider_event_count=len(provider_event_ids),
         priced_fixture_count=priced,
         router_selected_count=selected,
         router_no_bet_count=no_bet,
