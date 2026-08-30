@@ -158,11 +158,11 @@ then proved the shadow-prediction wiring cannot fall back into frozen PR149's
 `qualify_capture_fixtures()` path, again with all eight synthetic shards green.
 
 The exact-head rerun of workflow run `33328629573` on
-`a9cce1d55fa8f28261d2680fd21ac489e56ffdec` demonstrated that the prior
-25-minute worker budget could terminate during `PRICE_ALL_ROUTER`. PR F then
-raised the worker supervisor to a bounded 50 minutes and the surrounding GitHub
-Actions job ceiling to 60 minutes so that the worker remains the reviewed fail-
-closed runtime boundary. Exact-head run `33334343547` on
+`a9cce1d55fa8f28261d2680fd21ac489e56ffdec` terminated fail-closed after the
+bounded worker budget was exhausted while the last durable checkpoint was
+`PRICE_ALL_ROUTER`. PR F then hardened hosted execution so that the current
+worker receives a bounded 50-minute supervisor budget and the surrounding
+GitHub Actions job has a 60-minute ceiling. Exact-head run `33334343547` on
 `7bf614cd4c33aacab46b4140aae9d86726e143e2` completed normally in about 29
 minutes, proving that runtime budget exhaustion no longer caused the terminal
 state. Its durable artifact was `9738955502` with ZIP SHA-256
