@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
 
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
@@ -84,14 +85,51 @@ def _install_history_lineage_reuse():
     return original
 
 
+def _install_price_context_verification_reuse():
+    """Memoize one exact source replay per immutable Shadow price context.
+
+    The public Price-all boundary verifies a freshly builder-issued context and
+    exact-quote issuance verifies that same immutable context again. Run #25
+    proved that repeating the full PR151/PR-C replay for the same canonical
+    context across eight reconciled fixtures can exhaust the bounded live-run
+    budget. Preserve the first exact verification unchanged, then reuse only its
+    verified result for the same canonical SHA-256 during this worker process.
+    """
+
+    original_price_verify = runner.price_module.verify_current_shadow_price_context
+    original_quote_verify = quote_binding.verify_current_shadow_price_context
+    verified_by_identity: dict[str, object] = {}
+
+    def verify(value):
+        identity = value.canonical_sha256
+        cached = verified_by_identity.get(identity)
+        if cached is not None:
+            return cached
+
+        checked = original_quote_verify(value)
+        if checked.canonical_sha256 != identity:
+            raise runner.CurrentShadowAllMarketRunnerError(
+                "verified Shadow price context identity drifted"
+            )
+        verified_by_identity[identity] = checked
+        return checked
+
+    runner.price_module.verify_current_shadow_price_context = verify
+    quote_binding.verify_current_shadow_price_context = verify
+    return original_price_verify, original_quote_verify
+
+
 def _execute_once(args: argparse.Namespace) -> int:
     original_history_builder = _install_history_lineage_reuse()
+    original_price_verify, original_quote_verify = _install_price_context_verification_reuse()
     try:
         result = runner.execute_current_shadow_all_market(
             target_size=args.target_size,
             output_dir=args.output_dir,
         )
     finally:
+        runner.price_module.verify_current_shadow_price_context = original_price_verify
+        quote_binding.verify_current_shadow_price_context = original_quote_verify
         runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = (
             original_history_builder
         )
