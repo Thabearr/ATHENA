@@ -3,6 +3,8 @@ from __future__ import annotations
 from argparse import Namespace
 from types import SimpleNamespace
 
+import pytest
+
 from domain import current_shadow_all_market_runner as runner
 from scripts import execute_current_shadow_all_market as cli
 
@@ -135,3 +137,65 @@ def test_worker_does_not_reuse_lineage_snapshot_across_main_identity(monkeypatch
         runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = original
 
     assert len(histories) == 2
+
+
+def test_worker_reuses_only_a_successfully_verified_price_context(monkeypatch):
+    calls = []
+    source = SimpleNamespace(canonical_sha256="c" * 64)
+    verified = SimpleNamespace(canonical_sha256="c" * 64)
+
+    def exact_verify(value):
+        calls.append(value)
+        return verified
+
+    monkeypatch.setattr(
+        runner.price_module,
+        "verify_current_shadow_price_context",
+        exact_verify,
+    )
+    monkeypatch.setattr(
+        cli.quote_binding,
+        "verify_current_shadow_price_context",
+        exact_verify,
+    )
+
+    original_price, original_quote = cli._install_price_context_verification_reuse()
+    try:
+        first = runner.price_module.verify_current_shadow_price_context(source)
+        second = cli.quote_binding.verify_current_shadow_price_context(source)
+        third = runner.price_module.verify_current_shadow_price_context(verified)
+    finally:
+        runner.price_module.verify_current_shadow_price_context = original_price
+        cli.quote_binding.verify_current_shadow_price_context = original_quote
+
+    assert first is verified
+    assert second is verified
+    assert third is verified
+    assert calls == [source]
+
+
+def test_worker_price_context_reuse_fails_closed_on_identity_drift(monkeypatch):
+    source = SimpleNamespace(canonical_sha256="c" * 64)
+    changed = SimpleNamespace(canonical_sha256="d" * 64)
+
+    monkeypatch.setattr(
+        runner.price_module,
+        "verify_current_shadow_price_context",
+        lambda _value: changed,
+    )
+    monkeypatch.setattr(
+        cli.quote_binding,
+        "verify_current_shadow_price_context",
+        lambda _value: changed,
+    )
+
+    original_price, original_quote = cli._install_price_context_verification_reuse()
+    try:
+        with pytest.raises(
+            runner.CurrentShadowAllMarketRunnerError,
+            match="verified Shadow price context identity drifted",
+        ):
+            runner.price_module.verify_current_shadow_price_context(source)
+    finally:
+        runner.price_module.verify_current_shadow_price_context = original_price
+        cli.quote_binding.verify_current_shadow_price_context = original_quote
