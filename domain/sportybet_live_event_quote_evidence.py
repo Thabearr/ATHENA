@@ -1079,7 +1079,7 @@ class SportyBetLiveMappedQuote:
             "provider_outcome_id": self.provider_outcome_id,
             "provider_outcome_name": self.provider_outcome_name,
             "odds_raw": self.odds_raw,
-            "decimal_odds": self.odds_decimal,
+            "decimal_odds": self.decimal_odds,
             "observed_at": serialize_utc(self.observed_at),
             "observation_authority": self.observation_authority,
             "provider_quote_at": None,
