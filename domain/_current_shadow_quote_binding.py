@@ -17,6 +17,7 @@ from domain import current_all_market_shadow_probability_settlement as prc
 from domain import current_direct_provider_live_quote_mapping_consumption as current_quotes
 from domain import current_sportybet_semantic_registry as prb
 from domain import sportybet_current_event_discovery_reconciliation as current_reconciliation
+from domain import current_shadow_sportybet_upcoming_reconciliation as shadow_reconciliation
 from domain import sportybet_live_event_quote_evidence as live
 from domain.current_fotmob_latest_durable_fresh_history import CurrentLatestDurableFreshHistoryHandoff
 from domain.markets import MarketId, OutcomeId
@@ -49,7 +50,11 @@ class CurrentShadowPriceContext:
     source_context_mode: str
     source_context_policy_id: str
     _bridge_bundle: current_quotes.CurrentDirectProviderMappedQuoteBundle | None
-    _current_reconciliation_bundle: current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle | None
+    _current_reconciliation_bundle: (
+        current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
+        | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | None
+    )
     _event_evidence: prb.ProviderEventEvidence
     _complete_current_history: CurrentLatestDurableFreshHistoryHandoff
 
@@ -122,7 +127,11 @@ def _compose(
     source_context_mode: str,
     source_context_policy_id: str,
     bridge_bundle: current_quotes.CurrentDirectProviderMappedQuoteBundle | None,
-    reconciliation_bundle: current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle | None,
+    reconciliation_bundle: (
+        current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
+        | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | None
+    ),
 ) -> CurrentShadowPriceContext:
     try:
         checked_evidence = prb.replay_event_evidence(evidence)
@@ -225,22 +234,31 @@ def build_current_shadow_price_context_from_reconciliation(
     complete_current_history: CurrentLatestDurableFreshHistoryHandoff,
     fixture_identity: str,
     provider_event_id: str,
-    current_reconciliation_bundle: current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle,
+    current_reconciliation_bundle: (
+        current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
+        | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+    ),
 ) -> CurrentShadowPriceContext:
-    """Current runner path from exact PR251 reconciliation + retained PR-B evidence."""
+    """Current runner path from exact reviewed reconciliation + retained PR-B evidence."""
     if type(complete_current_history) is not CurrentLatestDurableFreshHistoryHandoff:
         raise ShadowPriceError("complete_current_history type mismatch")
     if type(fixture_identity) is not str or not fixture_identity.strip():
         raise ShadowPriceError("fixture_identity must be non-empty")
     if type(provider_event_id) is not str or not provider_event_id.strip():
         raise ShadowPriceError("provider_event_id must be non-empty")
-    if type(current_reconciliation_bundle) is not current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
+    if type(current_reconciliation_bundle) is current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
+        verifier = current_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        reconciliation_error = current_reconciliation.SportyBetCurrentEventDiscoveryError
+        fixture_basis = "PR251_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(current_reconciliation_bundle) is shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
+        verifier = shadow_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        reconciliation_error = shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
+        fixture_basis = "PRF_PR258_UPCOMING_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    else:
         raise ShadowPriceError("current_reconciliation_bundle type mismatch")
     try:
-        reconciled = current_reconciliation.verify_current_event_discovery_reconciliation_bundle(
-            current_reconciliation_bundle
-        )
-    except current_reconciliation.SportyBetCurrentEventDiscoveryError as exc:
+        reconciled = verifier(current_reconciliation_bundle)
+    except reconciliation_error as exc:
         raise ShadowPriceError("current reconciliation source replay failed") from exc
     event_rows = [row for row in reconciled.rows if row.event_id == provider_event_id]
     if len(event_rows) != 1 or event_rows[0].fixture_reconciliation_authorized is not True:
@@ -259,7 +277,7 @@ def build_current_shadow_price_context_from_reconciliation(
             Path(directory),
             repository_root=reconciled._repository_root,
             fixture_identity=provider_event_id,
-            fixture_identity_basis="PR251_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION",
+            fixture_identity_basis=fixture_basis,
         )
     except prb.CurrentSportyBetSemanticRegistryError as exc:
         raise ShadowPriceError("PR-B provider event evidence replay failed") from exc
