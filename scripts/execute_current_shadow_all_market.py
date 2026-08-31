@@ -81,6 +81,135 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _lineage_reads_cache_key(expected_main_sha, reads):
+    """Return an exact immutable in-process identity for captured GitHub reads."""
+
+    if type(expected_main_sha) is not str or type(reads) is not tuple:
+        return None
+    rows = []
+    for item in reads:
+        if type(item) is not runner.latest_history.GitHubReadSnapshot:
+            return None
+        rows.append((item.key, item.payload_kind, item.succeeded, item.payload))
+    return expected_main_sha, tuple(rows)
+
+
+def _lineage_evidence_cache_key(evidence):
+    if type(evidence) is not runner.latest_history.GitHubActionsLineageEvidenceBundle:
+        return None
+    reads_key = _lineage_reads_cache_key(evidence.expected_main_sha, evidence.reads)
+    if reads_key is None:
+        return None
+    return reads_key, evidence.audit_result_bytes
+
+
+def _install_history_validation_reuse():
+    """Reuse only successful exact PR151/history validation inside one worker.
+
+    Run #29 proved that provider/FotMob acquisition finished early while repeated
+    immutable PR151 evidence and durable-prefix revalidation consumed nearly the
+    whole fixed supervisor budget. The underlying dataclasses intentionally
+    revalidate on ``dataclasses.replace``; PR-F creates several such copies while
+    building one already-reviewed history object.
+
+    Preserve the first exact replay for each immutable identity, cache only after
+    it succeeds, and let every surrounding constructor continue its structural,
+    type, SHA, timestamp and authority checks. Different GitHub reads, different
+    evidence bytes, or a different current-source object cannot share a result.
+    """
+
+    original_replay = runner.latest_history._replay_audit_from_evidence
+    original_success_materials = runner.latest_history._success_materials
+    original_derive = runner.latest_history.prefix._derive
+
+    replay_by_reads: dict[object, tuple[bytes, frozenset[str]]] = {}
+    success_by_evidence: dict[object, object] = {}
+    derive_by_source: dict[object, tuple[tuple[object, ...], object]] = {}
+
+    def replay(*, expected_main_sha, reads):
+        key = _lineage_reads_cache_key(expected_main_sha, reads)
+        if key is not None:
+            cached = replay_by_reads.get(key)
+            if cached is not None:
+                replay_raw, used = cached
+                return (
+                    runner.latest_history._parse_object(
+                        replay_raw, "cached captured Actions lineage audit"
+                    ),
+                    set(used),
+                )
+
+        result, used = original_replay(
+            expected_main_sha=expected_main_sha,
+            reads=reads,
+        )
+        if key is not None:
+            replay_by_reads[key] = (
+                runner.latest_history._canonical(result),
+                frozenset(used),
+            )
+        return result, used
+
+    def success_materials(evidence):
+        key = _lineage_evidence_cache_key(evidence)
+        if key is not None:
+            cached = success_by_evidence.get(key)
+            if cached is not None:
+                return cached
+
+        result = original_success_materials(evidence)
+        if key is not None:
+            success_by_evidence[key] = result
+        return result
+
+    def derive(source):
+        if (
+            type(source)
+            is not runner.latest_history.prefix.CurrentDurableFreshHistoryPrefixSourceBundle
+        ):
+            return original_derive(source)
+
+        key = (
+            id(source.current_bootstrap),
+            id(source.source_manifest),
+            id(source.source_raw_json),
+            id(source.legacy_bootstrap_projection_raw),
+            source.workflow_run_id,
+            source.artifact_name,
+            id(source.artifact_zip_bytes),
+            source.artifact_zip_metadata_digest,
+        )
+        cached = derive_by_source.get(key)
+        if cached is not None:
+            refs, value = cached
+            if (
+                refs[0] is source.current_bootstrap
+                and refs[1] is source.source_manifest
+                and refs[2] is source.source_raw_json
+                and refs[3] is source.legacy_bootstrap_projection_raw
+                and refs[4] is source.artifact_zip_bytes
+            ):
+                return value
+
+        value = original_derive(source)
+        derive_by_source[key] = (
+            (
+                source.current_bootstrap,
+                source.source_manifest,
+                source.source_raw_json,
+                source.legacy_bootstrap_projection_raw,
+                source.artifact_zip_bytes,
+            ),
+            value,
+        )
+        return value
+
+    runner.latest_history._replay_audit_from_evidence = replay
+    runner.latest_history._success_materials = success_materials
+    runner.latest_history.prefix._derive = derive
+    return original_replay, original_success_materials, original_derive
+
+
 def _install_history_lineage_reuse():
     """Reuse one exact reviewed PR151 GitHub snapshot across this worker run.
 
@@ -388,6 +517,11 @@ def _install_price_stage_diagnostics(output_dir: Path):
 
 
 def _execute_once(args: argparse.Namespace) -> int:
+    (
+        original_history_replay,
+        original_success_materials,
+        original_prefix_derive,
+    ) = _install_history_validation_reuse()
     original_history_builder = _install_history_lineage_reuse()
     _tracked_history_builder, issued_histories = _install_builder_issued_history_tracking()
     original_research_xg = _install_builder_issued_history_xg_reuse(issued_histories)
@@ -416,6 +550,9 @@ def _execute_once(args: argparse.Namespace) -> int:
         runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = (
             original_history_builder
         )
+        runner.latest_history._replay_audit_from_evidence = original_history_replay
+        runner.latest_history._success_materials = original_success_materials
+        runner.latest_history.prefix._derive = original_prefix_derive
     print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
     return 0
 
