@@ -15,6 +15,7 @@ from typing import Any, Mapping, Sequence
 
 PRIMARY_WORKFLOW_NAME = "FotMob UTC-Native xG Fresh-Holdout Collection Runner"
 PRIMARY_WORKFLOW_PATH = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+PRIMARY_SCHEDULE_RUN_NAME = "ATHENA fresh-holdout schedule source= target= cron= confirm="
 DEFAULT_STALE_MINUTES = 90
 
 HEALTHY = "HEALTHY"
@@ -51,7 +52,9 @@ def _utc_text(value: dt.datetime) -> str:
     )
 
 
-def _scheduled_runs(value: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+def _scheduled_runs(
+    value: Mapping[str, Any], *, workflow_id: int
+) -> list[Mapping[str, Any]]:
     runs = value.get("workflow_runs")
     if type(runs) is not list:
         raise _error("workflow-runs response is malformed")
@@ -66,8 +69,10 @@ def _scheduled_runs(value: Mapping[str, Any]) -> list[Mapping[str, Any]]:
         seen_ids.add(run_id)
         if run.get("event") != "schedule":
             continue
-        if run.get("name") != PRIMARY_WORKFLOW_NAME:
-            raise _error(f"scheduled workflow run {run_id} name drifted")
+        if run.get("workflow_id") != workflow_id:
+            raise _error(f"scheduled workflow run {run_id} workflow id drifted")
+        if run.get("name") != PRIMARY_SCHEDULE_RUN_NAME:
+            raise _error(f"scheduled workflow run {run_id} run-name drifted")
         path = run.get("path")
         if path != PRIMARY_WORKFLOW_PATH:
             raise _error(f"scheduled workflow run {run_id} path drifted")
@@ -112,7 +117,7 @@ def decide_scheduler_liveness(
         raise _error("now must be timezone-aware")
     now_utc = now.astimezone(dt.timezone.utc)
 
-    scheduled = _scheduled_runs(runs_response)
+    scheduled = _scheduled_runs(runs_response, workflow_id=workflow_id)
     active = [run for run in scheduled if run["status"] != "completed"]
     if active:
         newest_active = active[0]
