@@ -67,6 +67,23 @@ def test_recent_scheduled_delivery_is_healthy_without_mutation():
     assert result["production_authority_changed"] is False
 
 
+def test_historical_legacy_run_name_does_not_poison_recent_current_delivery():
+    result = decide_scheduler_liveness(
+        workflow=_workflow(),
+        runs_response=_runs(
+            _run(20, "2026-08-28T22:59:07Z"),
+            _run(
+                10,
+                "2026-08-28T17:59:07Z",
+                name=PRIMARY_WORKFLOW_NAME,
+            ),
+        ),
+        now=NOW,
+    )
+    assert result["decision"] == HEALTHY
+    assert result["latest_schedule_run_id"] == 20
+
+
 def test_in_progress_schedule_prevents_control_plane_mutation_even_when_old():
     result = decide_scheduler_liveness(
         workflow=_workflow(),
@@ -78,6 +95,22 @@ def test_in_progress_schedule_prevents_control_plane_mutation_even_when_old():
     )
     assert result["decision"] == ACTIVE_RUN_PRESENT
     assert result["control_plane_mutation_required"] is False
+
+
+def test_active_legacy_run_name_still_fails_closed():
+    with pytest.raises(SchedulerLivenessError, match="run-name drifted"):
+        decide_scheduler_liveness(
+            workflow=_workflow(),
+            runs_response=_runs(
+                _run(
+                    11,
+                    "2026-08-28T20:00:00Z",
+                    status="in_progress",
+                    name=PRIMARY_WORKFLOW_NAME,
+                )
+            ),
+            now=NOW,
+        )
 
 
 def test_disabled_primary_workflow_requires_enable_only():
@@ -101,6 +134,23 @@ def test_stale_active_primary_requires_schedule_reregistration():
     assert result["control_plane_mutation_required"] is True
     assert result["provider_network_acquisition_authorized"] is False
     assert result["backfill_authorized"] is False
+
+
+def test_stale_legacy_run_name_can_drive_control_plane_reregistration():
+    result = decide_scheduler_liveness(
+        workflow=_workflow(),
+        runs_response=_runs(
+            _run(
+                33201796983,
+                "2026-08-28T18:59:07Z",
+                name=PRIMARY_WORKFLOW_NAME,
+            )
+        ),
+        now=NOW,
+    )
+    assert result["decision"] == REREGISTER_STALE_ACTIVE
+    assert result["latest_schedule_run_id"] == 33201796983
+    assert result["control_plane_mutation_required"] is True
 
 
 def test_non_schedule_runs_cannot_mask_missing_schedule_delivery():
