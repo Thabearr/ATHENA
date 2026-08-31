@@ -15,13 +15,13 @@ def _raw(value):
     return json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(",", ":")).encode("utf-8")
 
 
-def _catalog(*, duplicate=False, bool_event_size=False):
+def _catalog(*, duplicate=False, bool_event_size=False, tournament_id="sr:tournament:100"):
     tournaments = [
-        {"id": "sr:tournament:100", "name": "League A", "eventSize": True if bool_event_size else 2},
+        {"id": tournament_id, "name": "League A", "eventSize": True if bool_event_size else 2},
         {"id": "sr:tournament:101", "name": "League B", "eventSize": 0},
     ]
     if duplicate:
-        tournaments.append({"id": "sr:tournament:100", "name": "League A", "eventSize": 2})
+        tournaments.append({"id": tournament_id, "name": "League A", "eventSize": 2})
     return _raw({
         "bizCode": 10000,
         "data": [{
@@ -63,6 +63,20 @@ def test_catalog_uses_only_positive_provider_eventsize_pairs():
     assert [(row.category_id, row.tournament_id, row.event_size) for row in rows] == [
         ("sr:category:1", "sr:tournament:100", 2)
     ]
+
+
+def test_catalog_accepts_exact_provider_simple_tournament_identity():
+    rows = fanout._parse_catalog(
+        _catalog(tournament_id="sr:simple_tournament:100")
+    )
+    assert len(rows) == 1
+    assert rows[0].tournament_id == "sr:simple_tournament:100"
+    target = fanout.tournament_request_target(
+        category_id="sr:category:1",
+        tournament_id="sr:simple_tournament:100",
+        request_nonce_ms=int(OBSERVED.timestamp() * 1000) - 1000,
+    )
+    assert "tournamentId=sr%3Asimple_tournament%3A100" in target
 
 
 def test_catalog_duplicate_pair_and_boolean_eventsize_fail_closed():
