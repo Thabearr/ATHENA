@@ -29,7 +29,7 @@ from domain import current_shadow_all_market_portfolio as portfolio_module
 from domain import current_shadow_all_market_price_all as price_module
 from domain import current_shadow_all_market_router as router_module
 from domain import current_shadow_all_market_share_code as share_module
-from domain import current_shadow_sportybet_upcoming_reconciliation as reconciliation
+from domain import current_shadow_sportybet_catalog_fanout_reconciliation as reconciliation
 from domain._current_shadow_price_core import ShadowPriceError
 from domain.fotmob_data_matches_capture import (
     RAW_FILENAME,
@@ -386,11 +386,16 @@ def _acquire_router_inputs(
         reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle,
     ]] = []
     emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
+    fanout_directory, fanout_snapshot = reconciliation.capture_current_catalog_fanout_discovery(
+        repository_root=repository_root,
+        execute_live_network=True,
+    )
     for execution, request_date in fixture_sources:
         raw, manifest = _source_capture(execution, repository_root)
         admission = execution.bootstrap.verified_artifact.admission
-        current_events = reconciliation.discover_and_reconcile_current_events(
+        current_events = reconciliation.reconcile_current_events_from_catalog_fanout(
             repository_root=repository_root,
+            fanout_evidence_directory=fanout_directory,
             fotmob_admission_value=admission,
             fotmob_captures=((raw, manifest),),
             execute_live_network=True,
@@ -488,6 +493,7 @@ def _acquire_router_inputs(
             "current_reconciliation_contract_sha256": current_events.contract_sha256,
             "provider_event_count": len(current_events.rows),
             "reconciled_fixture_count": len(current_events.matched_rows),
+            "provider_catalog_fanout_snapshot_sha256": current_events.fanout_snapshot_sha256,
             "disposition_counts": _disposition_counts(current_events),
         }
         for request_date, _execution, _raw, _manifest, current_events in source_rows
@@ -517,7 +523,10 @@ def _acquire_router_inputs(
         "current_reconciliation_contract_sha256": primary_events.contract_sha256,
         "current_reconciliation_by_request_date": reconciliation_by_date,
         "matched_provider_event_ids": sorted(matched_provider_dates),
-        "provider_discovery_observation_count": len(source_rows),
+        "provider_catalog_fanout_snapshot_sha256": fanout_snapshot.canonical_sha256,
+        "provider_catalog_active_tournament_count": len(fanout_snapshot.tournaments),
+        "provider_catalog_tournament_observation_count": len(fanout_snapshot.observations),
+        "provider_discovery_observation_count": 1 + len(fanout_snapshot.observations),
         "wager_placed": False,
     })
     return CurrentShadowRunnerSourceBundle(

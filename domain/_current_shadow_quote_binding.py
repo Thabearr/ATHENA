@@ -17,6 +17,7 @@ from domain import current_all_market_shadow_probability_settlement as prc
 from domain import current_direct_provider_live_quote_mapping_consumption as current_quotes
 from domain import current_sportybet_semantic_registry as prb
 from domain import sportybet_current_event_discovery_reconciliation as current_reconciliation
+from domain import current_shadow_sportybet_catalog_fanout_reconciliation as catalog_fanout_reconciliation
 from domain import current_shadow_sportybet_upcoming_reconciliation as shadow_reconciliation
 from domain import sportybet_live_event_quote_evidence as live
 from domain.current_fotmob_latest_durable_fresh_history import CurrentLatestDurableFreshHistoryHandoff
@@ -53,6 +54,7 @@ class CurrentShadowPriceContext:
     _current_reconciliation_bundle: (
         current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
         | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
         | None
     )
     _event_evidence: prb.ProviderEventEvidence
@@ -130,6 +132,7 @@ def _compose(
     reconciliation_bundle: (
         current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
         | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
         | None
     ),
 ) -> CurrentShadowPriceContext:
@@ -237,6 +240,7 @@ def build_current_shadow_price_context_from_reconciliation(
     current_reconciliation_bundle: (
         current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
         | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
     ),
 ) -> CurrentShadowPriceContext:
     """Current runner path from exact reviewed reconciliation + retained PR-B evidence."""
@@ -254,6 +258,12 @@ def build_current_shadow_price_context_from_reconciliation(
         verifier = shadow_reconciliation.verify_current_event_discovery_reconciliation_bundle
         reconciliation_error = shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
         fixture_basis = "PRF_PR258_UPCOMING_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(current_reconciliation_bundle) is catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
+        verifier = catalog_fanout_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        reconciliation_error = catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationError
+        fixture_basis = (
+            "PRF_PROVIDER_CATALOG_FANOUT_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+        )
     else:
         raise ShadowPriceError("current_reconciliation_bundle type mismatch")
     try:
