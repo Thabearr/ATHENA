@@ -927,15 +927,25 @@ def build_live_event_quote_inventory(
     for market in event.get("markets"):
         if type(market) is not dict:
             continue
+        outcomes = market.get("outcomes")
+        if type(outcomes) is not list or not outcomes:
+            continue
+        market_name_value = (
+            market.get("desc") or market.get("description") or market.get("name")
+        )
+        if market_name_value is None or market_name_value == "":
+            # SportyBet may include placeholder market rows in direct event detail.
+            # An unnamed row cannot acquire semantic/quote authority, but it must
+            # not poison independently exact named sibling markets.  This mirrors
+            # the reviewed semantic share gate, where an unnamed market is simply
+            # ineligible to match a caller's exact human-readable market intent.
+            continue
         market_native = market.get("id", market.get("marketId"))
         if market_native is None:
             continue
         market_id = _native_id(market_native, "provider market ID")
         market_name = _market_name(market)
         specifier = _specifier(market.get("specifier"))
-        outcomes = market.get("outcomes")
-        if type(outcomes) is not list:
-            continue
         for outcome in outcomes:
             if type(outcome) is not dict:
                 continue
@@ -1069,7 +1079,7 @@ class SportyBetLiveMappedQuote:
             "provider_outcome_id": self.provider_outcome_id,
             "provider_outcome_name": self.provider_outcome_name,
             "odds_raw": self.odds_raw,
-            "decimal_odds": self.decimal_odds,
+            "decimal_odds": self.odds_decimal,
             "observed_at": serialize_utc(self.observed_at),
             "observation_authority": self.observation_authority,
             "provider_quote_at": None,
