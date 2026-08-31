@@ -71,8 +71,6 @@ def _scheduled_runs(
             continue
         if run.get("workflow_id") != workflow_id:
             raise _error(f"scheduled workflow run {run_id} workflow id drifted")
-        if run.get("name") != PRIMARY_SCHEDULE_RUN_NAME:
-            raise _error(f"scheduled workflow run {run_id} run-name drifted")
         path = run.get("path")
         if path != PRIMARY_WORKFLOW_PATH:
             raise _error(f"scheduled workflow run {run_id} path drifted")
@@ -89,6 +87,12 @@ def _scheduled_runs(
         reverse=True,
     )
     return out
+
+
+def _require_current_schedule_run_name(run: Mapping[str, Any]) -> None:
+    run_id = run.get("id")
+    if run.get("name") != PRIMARY_SCHEDULE_RUN_NAME:
+        raise _error(f"scheduled workflow run {run_id} run-name drifted")
 
 
 def decide_scheduler_liveness(
@@ -120,6 +124,8 @@ def decide_scheduler_liveness(
     scheduled = _scheduled_runs(runs_response, workflow_id=workflow_id)
     active = [run for run in scheduled if run["status"] != "completed"]
     if active:
+        for run in active:
+            _require_current_schedule_run_name(run)
         newest_active = active[0]
         return {
             "decision": ACTIVE_RUN_PRESENT,
@@ -146,6 +152,8 @@ def decide_scheduler_liveness(
         if delta.total_seconds() < 0:
             raise _error("latest scheduled workflow run is in the future")
         age_minutes = delta.total_seconds() / 60.0
+        if age_minutes <= stale_minutes:
+            _require_current_schedule_run_name(latest)
 
     if state != "active":
         decision = ENABLE_DISABLED
