@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
 
+from domain import _all_market_shadow_current_binding as current_binding
 from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
 
@@ -93,6 +95,78 @@ def _install_history_lineage_reuse():
         )
 
     runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = build
+    return original
+
+
+def _install_builder_issued_history_tracking():
+    """Track only exact history objects issued by the reviewed builder in this worker."""
+
+    original = runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff
+    issued_by_identity: dict[int, object] = {}
+
+    def build(**kwargs):
+        history = original(**kwargs)
+        issued_by_identity[id(history)] = history
+        return history
+
+    runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = build
+    return original, issued_by_identity
+
+
+def _install_builder_issued_history_xg_reuse(issued_by_identity: dict[int, object]):
+    """Reuse main-style verified history only for same-worker builder outputs.
+
+    The public PR-C boundary must replay arbitrary caller-supplied histories.
+    PR-F does not accept such a history: it builds the exact PR151 handoff itself
+    immediately before pricing. Main's current field-trial boundary already
+    verifies a complete history once and then consumes its verified shadow row.
+    Mirror that pattern narrowly here: only the exact object returned by the
+    reviewed builder in this worker may skip a second deep PR151 replay. Unknown
+    objects fall back to PR-C's original exact replay unchanged.
+
+    The canonical history SHA is still derived from the exact reviewed canonical
+    JSON vocabulary and the fixture row/sealed prediction are still revalidated
+    by PR-C's private validated-history extractor on every fixture.
+    """
+
+    original = quote_binding.prc._research_xg_from_complete_current_history
+    sha_by_identity: dict[int, tuple[object, str]] = {}
+
+    def research(complete_current_history, fixture_identity):
+        issued = issued_by_identity.get(id(complete_current_history))
+        if issued is not complete_current_history:
+            return original(complete_current_history, fixture_identity)
+        if (
+            type(complete_current_history)
+            is not runner.latest_history.CurrentLatestDurableFreshHistoryHandoff
+        ):
+            return original(complete_current_history, fixture_identity)
+
+        cached = sha_by_identity.get(id(complete_current_history))
+        if cached is not None and cached[0] is complete_current_history:
+            history_sha = cached[1]
+        else:
+            try:
+                canonical = runner.latest_history._canonical(
+                    complete_current_history.to_dict()
+                )
+            except Exception as exc:
+                raise runner.CurrentShadowAllMarketRunnerError(
+                    "builder-issued PR151 history canonicalization failed"
+                ) from exc
+            history_sha = hashlib.sha256(canonical).hexdigest()
+            sha_by_identity[id(complete_current_history)] = (
+                complete_current_history,
+                history_sha,
+            )
+
+        return current_binding._research_xg_from_validated_current_history(
+            complete_current_history,
+            fixture_identity,
+            history_sha=history_sha,
+        )
+
+    quote_binding.prc._research_xg_from_complete_current_history = research
     return original
 
 
@@ -272,6 +346,8 @@ def _install_price_stage_diagnostics(output_dir: Path):
 
 def _execute_once(args: argparse.Namespace) -> int:
     original_history_builder = _install_history_lineage_reuse()
+    _tracked_history_builder, issued_histories = _install_builder_issued_history_tracking()
+    original_research_xg = _install_builder_issued_history_xg_reuse(issued_histories)
     original_price_verify, original_quote_verify = _install_price_context_verification_reuse()
     (
         original_context,
@@ -291,6 +367,7 @@ def _execute_once(args: argparse.Namespace) -> int:
         runner.portfolio_module.build_shadow_portfolio_router_input = original_portfolio_input
         runner.price_module.verify_current_shadow_price_context = original_price_verify
         quote_binding.verify_current_shadow_price_context = original_quote_verify
+        quote_binding.prc._research_xg_from_complete_current_history = original_research_xg
         runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = (
             original_history_builder
         )
