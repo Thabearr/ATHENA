@@ -88,7 +88,7 @@ NEXT_BOUNDARY = "CURRENT_SHADOW_PRICE_ALL_EXACT_PROVIDER_EVENT_EVIDENCE_REQUIRED
 EXPECTED_CONTRACT_SHA256 = "421613388a13ca6000e83e988fd34cb6ea93dca15ca4b0bab3b04c72a7e4d438"
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 _CATEGORY_RE = re.compile(r"^sr:category:.+$", re.ASCII)
-_TOURNAMENT_RE = re.compile(r"^sr:tournament:.+$", re.ASCII)
+_TOURNAMENT_RE = re.compile(r"^sr:(?:tournament|simple_tournament):.+$", re.ASCII)
 
 AUTHORITY = types.MappingProxyType(
     {
