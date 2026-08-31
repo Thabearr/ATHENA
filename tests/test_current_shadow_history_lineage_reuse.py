@@ -1,0 +1,137 @@
+from __future__ import annotations
+
+from argparse import Namespace
+from types import SimpleNamespace
+
+from domain import current_shadow_all_market_runner as runner
+from scripts import execute_current_shadow_all_market as cli
+
+
+MAIN_SHA = "a" * 40
+
+
+class _Evidence:
+    expected_main_sha = MAIN_SHA
+
+    def __init__(self):
+        self.reads = []
+
+    def json(self, key):
+        self.reads.append(("json", key))
+        return {"key": key}
+
+    def binary(self, key):
+        self.reads.append(("binary", key))
+        return key.encode("ascii")
+
+
+def test_worker_reuses_first_exact_pr151_lineage_snapshot(monkeypatch, tmp_path, capsys):
+    evidence = _Evidence()
+    first_history = SimpleNamespace(
+        source_bundle=SimpleNamespace(github_evidence=evidence)
+    )
+    second_history = object()
+    live_calls = []
+    replay_calls = []
+
+    def live_builder(**kwargs):
+        live_calls.append(kwargs)
+        return first_history
+
+    def replay_builder(**kwargs):
+        replay_calls.append(kwargs)
+        assert kwargs["get_main_ref"]() == {"key": "main_ref"}
+        assert kwargs["get_runs_page"](2, 100) == {"key": "runs:2:100"}
+        assert kwargs["get_run_by_id"](7) == {"key": "run:7"}
+        assert kwargs["get_run_artifacts"](7) == {"key": "artifacts:7"}
+        assert kwargs["download_artifact_zip"](8) == b"artifact_zip:8"
+        assert kwargs["get_release"]("tag") == {"key": "release:tag"}
+        assert kwargs["download_release_asset"](9) == b"release_asset:9"
+        assert kwargs["get_run_jobs"](7) == {"key": "jobs:7"}
+        return second_history
+
+    monkeypatch.setattr(
+        runner.latest_history,
+        "build_current_fotmob_latest_durable_fresh_history_handoff",
+        live_builder,
+    )
+    monkeypatch.setattr(runner.latest_history, "_build_with_readers", replay_builder)
+
+    def execute(*, target_size, output_dir):
+        assert target_size == 20
+        assert output_dir == tmp_path
+        common = {
+            "current_bootstrap": object(),
+            "source_raw_json": b"source",
+            "source_manifest": object(),
+            "legacy_bootstrap_projection_raw": b"legacy",
+            "expected_main_sha": MAIN_SHA,
+            "repository_root": tmp_path,
+        }
+        first = runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
+            **common
+        )
+        second = runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
+            **common
+        )
+        assert first is first_history
+        assert second is second_history
+        return SimpleNamespace(to_dict=lambda: {"status": "test", "wager_placed": False})
+
+    monkeypatch.setattr(runner, "execute_current_shadow_all_market", execute)
+
+    rc = cli._execute_once(Namespace(target_size=20, output_dir=tmp_path))
+
+    assert rc == 0
+    assert len(live_calls) == 1
+    assert len(replay_calls) == 1
+    assert replay_calls[0]["expected_main_sha"] == MAIN_SHA
+    assert replay_calls[0]["repository_root"] == tmp_path
+    assert runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff is live_builder
+    assert capsys.readouterr().out
+    assert evidence.reads == [
+        ("json", "main_ref"),
+        ("json", "runs:2:100"),
+        ("json", "run:7"),
+        ("json", "artifacts:7"),
+        ("binary", "artifact_zip:8"),
+        ("json", "release:tag"),
+        ("binary", "release_asset:9"),
+        ("json", "jobs:7"),
+    ]
+
+
+def test_worker_does_not_reuse_lineage_snapshot_across_main_identity(monkeypatch):
+    histories = []
+
+    def live_builder(**kwargs):
+        evidence = SimpleNamespace(expected_main_sha=kwargs["expected_main_sha"])
+        history = SimpleNamespace(
+            source_bundle=SimpleNamespace(github_evidence=evidence)
+        )
+        histories.append(history)
+        return history
+
+    monkeypatch.setattr(
+        runner.latest_history,
+        "build_current_fotmob_latest_durable_fresh_history_handoff",
+        live_builder,
+    )
+    original = cli._install_history_lineage_reuse()
+    try:
+        common = {
+            "current_bootstrap": object(),
+            "source_raw_json": b"source",
+            "source_manifest": object(),
+            "legacy_bootstrap_projection_raw": b"legacy",
+        }
+        runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
+            **common, expected_main_sha="a" * 40
+        )
+        runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff(
+            **common, expected_main_sha="b" * 40
+        )
+    finally:
+        runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = original
+
+    assert len(histories) == 2
