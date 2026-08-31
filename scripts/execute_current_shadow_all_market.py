@@ -14,6 +14,17 @@ from domain import current_shadow_all_market_runner as runner
 
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
 HOSTED_SUPERVISOR_TIMEOUT_SECONDS = 50 * 60
+PRICE_DIAGNOSTIC_FILENAME = "current-shadow-price-stage-diagnostic.json"
+PRICE_DIAGNOSTIC_STAGES = frozenset({
+    "CONTEXT_BUILD_STARTED",
+    "CONTEXT_BUILD_COMPLETED",
+    "PRICE_ALL_STARTED",
+    "PRICE_ALL_COMPLETED",
+    "ROUTER_STARTED",
+    "ROUTER_COMPLETED",
+    "PORTFOLIO_INPUT_STARTED",
+    "PORTFOLIO_INPUT_COMPLETED",
+})
 
 # Live PR-F evidence demonstrated that the reviewed current source chain can
 # legitimately consume ~20 minutes before Price-all/Router starts. Keep the
@@ -119,15 +130,165 @@ def _install_price_context_verification_reuse():
     return original_price_verify, original_quote_verify
 
 
+def _install_price_stage_diagnostics(output_dir: Path):
+    """Persist the exact in-flight operation inside PRICE_ALL_ROUTER.
+
+    This is evidence-only instrumentation. It does not change source admission,
+    pricing, routing, portfolio policy, timeouts, or authority. A supervisor
+    timeout leaves the last started/completed operation durable in the artifact.
+    """
+
+    original_context = runner.price_module.build_current_shadow_price_context_from_reconciliation
+    original_price_all = runner.price_module.price_all_shadow_fixture
+    original_router = runner.router_module.route_shadow_price_results
+    original_portfolio_input = runner.portfolio_module.build_shadow_portfolio_router_input
+    fixture_index_by_identity: dict[tuple[str, str], int] = {}
+    next_fixture_index = 0
+
+    def write(
+        stage: str,
+        *,
+        fixture_index: int,
+        fixture_identity: str | None,
+        provider_event_id: str | None,
+    ) -> None:
+        if stage not in PRICE_DIAGNOSTIC_STAGES:
+            raise runner.CurrentShadowAllMarketRunnerError(
+                "price diagnostic stage escaped reviewed vocabulary"
+            )
+        runner._write(
+            output_dir / PRICE_DIAGNOSTIC_FILENAME,
+            {
+                "schema_version": runner.SCHEMA_VERSION,
+                "dataset_name": runner.DATASET_NAME,
+                "stage": stage,
+                "fixture_index": fixture_index,
+                "fixture_identity": fixture_identity,
+                "provider_event_id": provider_event_id,
+                "observed_at": runner._now().isoformat(
+                    timespec="microseconds"
+                ).replace("+00:00", "Z"),
+                "wager_placed": False,
+            },
+        )
+
+    def identity(value) -> tuple[str | None, str | None]:
+        return (
+            getattr(value, "fixture_identity", None),
+            getattr(value, "provider_event_id", None),
+        )
+
+    def fixture_index(fixture_identity: str | None, provider_event_id: str | None) -> int:
+        key = (fixture_identity or "", provider_event_id or "")
+        return fixture_index_by_identity.get(key, 0)
+
+    def build_context(*args, **kwargs):
+        nonlocal next_fixture_index
+        fixture_identity = kwargs.get("fixture_identity")
+        provider_event_id = kwargs.get("provider_event_id")
+        next_fixture_index += 1
+        index = next_fixture_index
+        fixture_index_by_identity[(fixture_identity or "", provider_event_id or "")] = index
+        write(
+            "CONTEXT_BUILD_STARTED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        value = original_context(*args, **kwargs)
+        write(
+            "CONTEXT_BUILD_COMPLETED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        return value
+
+    def price_all(context, *args, **kwargs):
+        fixture_identity, provider_event_id = identity(context)
+        index = fixture_index(fixture_identity, provider_event_id)
+        write(
+            "PRICE_ALL_STARTED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        value = original_price_all(context, *args, **kwargs)
+        write(
+            "PRICE_ALL_COMPLETED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        return value
+
+    def route(bundle, *args, **kwargs):
+        context = getattr(bundle, "_context", None)
+        fixture_identity, provider_event_id = identity(context)
+        index = fixture_index(fixture_identity, provider_event_id)
+        write(
+            "ROUTER_STARTED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        value = original_router(bundle, *args, **kwargs)
+        write(
+            "ROUTER_COMPLETED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        return value
+
+    def build_portfolio_input(*args, **kwargs):
+        bundle = kwargs.get("price_all_bundle")
+        if bundle is None and args:
+            bundle = args[0]
+        context = getattr(bundle, "_context", None)
+        fixture_identity, provider_event_id = identity(context)
+        index = fixture_index(fixture_identity, provider_event_id)
+        write(
+            "PORTFOLIO_INPUT_STARTED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        value = original_portfolio_input(*args, **kwargs)
+        write(
+            "PORTFOLIO_INPUT_COMPLETED",
+            fixture_index=index,
+            fixture_identity=fixture_identity,
+            provider_event_id=provider_event_id,
+        )
+        return value
+
+    runner.price_module.build_current_shadow_price_context_from_reconciliation = build_context
+    runner.price_module.price_all_shadow_fixture = price_all
+    runner.router_module.route_shadow_price_results = route
+    runner.portfolio_module.build_shadow_portfolio_router_input = build_portfolio_input
+    return original_context, original_price_all, original_router, original_portfolio_input
+
+
 def _execute_once(args: argparse.Namespace) -> int:
     original_history_builder = _install_history_lineage_reuse()
     original_price_verify, original_quote_verify = _install_price_context_verification_reuse()
+    (
+        original_context,
+        original_price_all,
+        original_router,
+        original_portfolio_input,
+    ) = _install_price_stage_diagnostics(args.output_dir)
     try:
         result = runner.execute_current_shadow_all_market(
             target_size=args.target_size,
             output_dir=args.output_dir,
         )
     finally:
+        runner.price_module.build_current_shadow_price_context_from_reconciliation = original_context
+        runner.price_module.price_all_shadow_fixture = original_price_all
+        runner.router_module.route_shadow_price_results = original_router
+        runner.portfolio_module.build_shadow_portfolio_router_input = original_portfolio_input
         runner.price_module.verify_current_shadow_price_context = original_price_verify
         quote_binding.verify_current_shadow_price_context = original_quote_verify
         runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = (
