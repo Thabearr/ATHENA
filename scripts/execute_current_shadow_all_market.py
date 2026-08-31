@@ -13,6 +13,9 @@ import sys
 from domain import _all_market_shadow_current_binding as current_binding
 from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
+from domain import current_shadow_sportybet_catalog_fanout_reconciliation as catalog_reconciliation
+from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_reconciliation
+from domain import sportybet_current_event_discovery_reconciliation as pr251_reconciliation
 
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
 HOSTED_SUPERVISOR_TIMEOUT_SECONDS = 50 * 60
@@ -33,6 +36,38 @@ PRICE_DIAGNOSTIC_STAGES = frozenset({
 # supervisor bounded and fail-closed, but give the exact source-bound chain
 # enough time to finish instead of timing out solely because of hosted runtime.
 runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS = HOSTED_SUPERVISOR_TIMEOUT_SECONDS
+
+
+class _PortfolioReconciliationFacade:
+    """Mirror the exact current-reconciliation dispatch already used by PR-D.
+
+    PR-E predates PR-F's reviewed upcoming/catalog reconciliation wrappers and
+    imports only the original PR251 verifier. The retained PR-D context can now
+    legitimately hold any one of those three exact reviewed bundle types. This
+    facade changes no reconciliation semantics: it dispatches only by exact type
+    to the corresponding reviewed verifier and preserves each verifier's native
+    fail-closed error.
+    """
+
+    SportyBetCurrentEventDiscoveryError = (
+        pr251_reconciliation.SportyBetCurrentEventDiscoveryError,
+        upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError,
+        catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationError,
+    )
+
+    @staticmethod
+    def verify_current_event_discovery_reconciliation_bundle(value):
+        if type(value) is pr251_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
+            verifier = pr251_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        elif type(value) is upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
+            verifier = upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        elif type(value) is catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
+            verifier = catalog_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        else:
+            raise pr251_reconciliation.SportyBetCurrentEventDiscoveryError(
+                "value must be an exact reviewed current reconciliation bundle"
+            )
+        return verifier(value)
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -204,6 +239,14 @@ def _install_price_context_verification_reuse():
     return original_price_verify, original_quote_verify
 
 
+def _install_portfolio_reconciliation_dispatch():
+    """Let PR-E replay exactly the reviewed reconciliation type retained by PR-D."""
+
+    original = runner.portfolio_module.reconciliation
+    runner.portfolio_module.reconciliation = _PortfolioReconciliationFacade
+    return original
+
+
 def _install_price_stage_diagnostics(output_dir: Path):
     """Persist the exact in-flight operation inside PRICE_ALL_ROUTER.
 
@@ -349,6 +392,7 @@ def _execute_once(args: argparse.Namespace) -> int:
     _tracked_history_builder, issued_histories = _install_builder_issued_history_tracking()
     original_research_xg = _install_builder_issued_history_xg_reuse(issued_histories)
     original_price_verify, original_quote_verify = _install_price_context_verification_reuse()
+    original_portfolio_reconciliation = _install_portfolio_reconciliation_dispatch()
     (
         original_context,
         original_price_all,
@@ -365,6 +409,7 @@ def _execute_once(args: argparse.Namespace) -> int:
         runner.price_module.price_all_shadow_fixture = original_price_all
         runner.router_module.route_shadow_price_results = original_router
         runner.portfolio_module.build_shadow_portfolio_router_input = original_portfolio_input
+        runner.portfolio_module.reconciliation = original_portfolio_reconciliation
         runner.price_module.verify_current_shadow_price_context = original_price_verify
         quote_binding.verify_current_shadow_price_context = original_quote_verify
         quote_binding.prc._research_xg_from_complete_current_history = original_research_xg
