@@ -84,7 +84,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "${current_main}"
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "3f42e9f57af96d489cbc59db9c5c9df65750a5f4"
-          test "$(git rev-parse HEAD:scripts/check_fotmob_fresh_holdout_scheduler_liveness.py)" = "9f9c261d320cbbb9f5971d2c3431bffd742fbe78"
+          test "$(git rev-parse HEAD:scripts/check_fotmob_fresh_holdout_scheduler_liveness.py)" = "7a355716d4478aa172f717039b70eea7a4ca0491"
 
       - name: Fetch authoritative workflow liveness metadata
         shell: bash
