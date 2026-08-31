@@ -73,6 +73,7 @@ jobs:
           evidence_root='artifacts/current-shadow-all-market/source-evidence'
           mkdir -p "${evidence_root}"
           for source_dir in \
+            '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
             '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
             '.cache/athena-research/fotmob-data-matches-captures'
           do
