@@ -295,3 +295,73 @@ def test_worker_price_context_reuse_fails_closed_on_identity_drift(monkeypatch):
     finally:
         runner.price_module.verify_current_shadow_price_context = original_price
         cli.quote_binding.verify_current_shadow_price_context = original_quote
+
+
+def test_worker_portfolio_reconciliation_dispatch_uses_exact_reviewed_verifier(monkeypatch):
+    pr251_bundle = object.__new__(
+        cli.pr251_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
+    )
+    upcoming_bundle = object.__new__(
+        cli.upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+    )
+    catalog_bundle = object.__new__(
+        cli.catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
+    )
+    pr251_checked = object()
+    upcoming_checked = object()
+    catalog_checked = object()
+
+    monkeypatch.setattr(
+        cli.pr251_reconciliation,
+        "verify_current_event_discovery_reconciliation_bundle",
+        lambda value: pr251_checked if value is pr251_bundle else None,
+    )
+    monkeypatch.setattr(
+        cli.upcoming_reconciliation,
+        "verify_current_event_discovery_reconciliation_bundle",
+        lambda value: upcoming_checked if value is upcoming_bundle else None,
+    )
+    monkeypatch.setattr(
+        cli.catalog_reconciliation,
+        "verify_current_event_discovery_reconciliation_bundle",
+        lambda value: catalog_checked if value is catalog_bundle else None,
+    )
+
+    assert (
+        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
+            pr251_bundle
+        )
+        is pr251_checked
+    )
+    assert (
+        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
+            upcoming_bundle
+        )
+        is upcoming_checked
+    )
+    assert (
+        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
+            catalog_bundle
+        )
+        is catalog_checked
+    )
+
+
+def test_worker_portfolio_reconciliation_dispatch_rejects_unknown_type():
+    with pytest.raises(
+        cli.pr251_reconciliation.SportyBetCurrentEventDiscoveryError,
+        match="exact reviewed current reconciliation bundle",
+    ):
+        cli._PortfolioReconciliationFacade.verify_current_event_discovery_reconciliation_bundle(
+            object()
+        )
+
+
+def test_worker_installs_and_restores_portfolio_reconciliation_dispatch():
+    original = runner.portfolio_module.reconciliation
+    installed_over = cli._install_portfolio_reconciliation_dispatch()
+    try:
+        assert installed_over is original
+        assert runner.portfolio_module.reconciliation is cli._PortfolioReconciliationFacade
+    finally:
+        runner.portfolio_module.reconciliation = original
