@@ -67,6 +67,20 @@ jobs:
             --target-size "${{ inputs.target_size }}" \
             --output-dir artifacts/current-shadow-all-market
 
+      - name: Preserve exact current source evidence
+        if: always()
+        run: |
+          evidence_root='artifacts/current-shadow-all-market/source-evidence'
+          mkdir -p "${evidence_root}"
+          for source_dir in \
+            '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
+            '.cache/athena-research/fotmob-data-matches-captures'
+          do
+            if [ -d "${source_dir}" ]; then
+              cp -a "${source_dir}" "${evidence_root}/"
+            fi
+          done
+
       - name: Upload durable research receipt
         if: always()
         uses: actions/upload-artifact@v4
