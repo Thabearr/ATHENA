@@ -34,7 +34,7 @@ jobs:
           python -m pip install -r requirements.txt
 
       - name: Apply narrow PR F upcoming adapter
-        run: python .github/prf_apply_upcoming_mirror.py
+        run: PYTHONPATH=. python .github/prf_apply_upcoming_mirror.py
 
       - name: Verify targeted Shadow boundaries
         run: |
