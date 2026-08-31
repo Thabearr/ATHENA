@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from argparse import Namespace
+import hashlib
 from types import SimpleNamespace
 
 import pytest
 
+from domain import _all_market_shadow_current_binding as current_binding
 from domain import current_shadow_all_market_runner as runner
 from scripts import execute_current_shadow_all_market as cli
 
@@ -137,6 +139,100 @@ def test_worker_does_not_reuse_lineage_snapshot_across_main_identity(monkeypatch
         runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = original
 
     assert len(histories) == 2
+
+
+def test_worker_tracks_only_histories_issued_by_installed_builder(monkeypatch):
+    issued_history = object()
+
+    def builder(**_kwargs):
+        return issued_history
+
+    monkeypatch.setattr(
+        runner.latest_history,
+        "build_current_fotmob_latest_durable_fresh_history_handoff",
+        builder,
+    )
+    original, issued = cli._install_builder_issued_history_tracking()
+    try:
+        result = runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff()
+    finally:
+        runner.latest_history.build_current_fotmob_latest_durable_fresh_history_handoff = original
+
+    assert result is issued_history
+    assert issued == {id(issued_history): issued_history}
+
+
+def test_worker_reuses_builder_issued_history_without_second_deep_replay(monkeypatch):
+    class FakeHistory:
+        def __init__(self, marker):
+            self.marker = marker
+            self.to_dict_calls = 0
+
+        def to_dict(self):
+            self.to_dict_calls += 1
+            return {"marker": self.marker}
+
+    issued_history = FakeHistory("issued")
+    unknown_history = FakeHistory("unknown")
+    fallback_calls = []
+    validated_calls = []
+
+    def fallback(history, fixture_identity):
+        fallback_calls.append((history, fixture_identity))
+        return ("fallback", fixture_identity)
+
+    def validated(history, fixture_identity, *, history_sha):
+        validated_calls.append((history, fixture_identity, history_sha))
+        return ("validated", fixture_identity, history_sha)
+
+    monkeypatch.setattr(
+        runner.latest_history,
+        "CurrentLatestDurableFreshHistoryHandoff",
+        FakeHistory,
+    )
+    monkeypatch.setattr(
+        cli.quote_binding.prc,
+        "_research_xg_from_complete_current_history",
+        fallback,
+    )
+    monkeypatch.setattr(
+        current_binding,
+        "_research_xg_from_validated_current_history",
+        validated,
+    )
+
+    original = cli._install_builder_issued_history_xg_reuse(
+        {id(issued_history): issued_history}
+    )
+    try:
+        first = cli.quote_binding.prc._research_xg_from_complete_current_history(
+            issued_history,
+            "FOTMOB:1",
+        )
+        second = cli.quote_binding.prc._research_xg_from_complete_current_history(
+            issued_history,
+            "FOTMOB:2",
+        )
+        fallback_result = cli.quote_binding.prc._research_xg_from_complete_current_history(
+            unknown_history,
+            "FOTMOB:3",
+        )
+    finally:
+        cli.quote_binding.prc._research_xg_from_complete_current_history = original
+
+    expected_sha = hashlib.sha256(
+        runner.latest_history._canonical({"marker": "issued"})
+    ).hexdigest()
+    assert first == ("validated", "FOTMOB:1", expected_sha)
+    assert second == ("validated", "FOTMOB:2", expected_sha)
+    assert fallback_result == ("fallback", "FOTMOB:3")
+    assert issued_history.to_dict_calls == 1
+    assert unknown_history.to_dict_calls == 0
+    assert validated_calls == [
+        (issued_history, "FOTMOB:1", expected_sha),
+        (issued_history, "FOTMOB:2", expected_sha),
+    ]
+    assert fallback_calls == [(unknown_history, "FOTMOB:3")]
 
 
 def test_worker_reuses_only_a_successfully_verified_price_context(monkeypatch):
