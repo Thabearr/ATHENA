@@ -4,6 +4,8 @@ from datetime import datetime, timedelta, timezone
 import json
 from types import SimpleNamespace
 
+import pytest
+
 from domain import current_shadow_fixture_identity_v2 as identity
 
 
@@ -95,7 +97,7 @@ def _reviewed(*, match_id: int, kickoff: datetime, competition: str, home: str, 
 
 def test_registry_identity_is_pinned_to_retained_run38_evidence():
     assert identity.POLICY_ID == "ATHENA_CURRENT_SHADOW_STABLE_SOURCE_PROVIDER_IDENTITY_V2"
-    assert identity.REGISTRY_SHA256 == "46375f5a7e594c2814ccf6d16576b9f540b7c9822a7417d697d94f0a74363d7e"
+    assert identity.REGISTRY_SHA256 == "a0dfd70b2750612498133393b0ff556c818008778d51f8a5cbd9bf005704b3f4"
     assert identity.registry_sha256() == identity.REGISTRY_SHA256
     assert len(identity.TEAM_IDENTITY_SEEDS) == 64
     assert len(identity.COMPETITION_IDENTITY_SEEDS) == 12
@@ -189,8 +191,10 @@ def test_home_away_orientation_and_full_utc_remain_exact():
     assert identity.match_event(exact_event, (reviewed,)) == ()
 
 
-def test_new_exact_identity_bootstraps_once_then_survives_later_name_and_competition_drift():
+def test_new_exact_identity_persists_across_fresh_runtime_then_survives_display_drift(tmp_path):
+    state_path = tmp_path / identity.STATE_FILENAME
     identity.reset_runtime_evidence()
+    identity.configure_persistent_state(state_path)
     first = datetime(2026, 9, 10, 18, 0, tzinfo=UTC)
     second = datetime(2026, 9, 17, 18, 0, tzinfo=UTC)
     identity.observe_fotmob_payload(_fotmob_raw(
@@ -209,7 +213,10 @@ def test_new_exact_identity_bootstraps_once_then_survives_later_name_and_competi
     first_reviewed = _reviewed(match_id=900001, kickoff=first, competition="Test League",
                                home="Alpha", away="Beta")
     assert identity.match_event(first_event, (first_reviewed,)) == (first_reviewed,)
+    assert state_path.is_file()
 
+    identity.reset_runtime_evidence()
+    identity.configure_persistent_state(state_path)
     identity.observe_fotmob_payload(_fotmob_raw(
         match_id=900002, kickoff=second, ccode="TST", primary_id=777,
         competition="Test League", home_id=900001, home="Alpha", home_long="Alpha United",
@@ -226,3 +233,35 @@ def test_new_exact_identity_bootstraps_once_then_survives_later_name_and_competi
     second_reviewed = _reviewed(match_id=900002, kickoff=second, competition="Test League",
                                 home="Alpha", away="Beta")
     assert identity.match_event(second_event, (second_reviewed,)) == (second_reviewed,)
+
+
+def test_failed_partial_bootstrap_does_not_persist_identity_state(tmp_path):
+    state_path = tmp_path / identity.STATE_FILENAME
+    identity.reset_runtime_evidence()
+    identity.configure_persistent_state(state_path)
+    kickoff = datetime(2026, 9, 10, 18, 0, tzinfo=UTC)
+    identity.observe_fotmob_payload(_fotmob_raw(
+        match_id=910001, kickoff=kickoff, ccode="NEW", primary_id=888,
+        competition="New League", home_id=910001, home="Alpha", home_long="Alpha United",
+        away_id=910002, away="Beta", away_long="Beta City",
+    ))
+    identity.observe_provider_payload(_provider_raw(
+        event_id="sr:match:99100001", kickoff=kickoff,
+        category_id="sr:category:998", tournament_id="sr:tournament:998",
+        competition="New League", home_id="sr:competitor:991001", home="Alpha United",
+        away_id="sr:competitor:991002", away="Unrelated Away",
+    ))
+    event = _event(event_id="sr:match:99100001", kickoff=kickoff, competition="New League",
+                   home="Alpha United", away="Unrelated Away")
+    reviewed = _reviewed(match_id=910001, kickoff=kickoff, competition="New League",
+                         home="Alpha", away="Beta")
+    assert identity.match_event(event, (reviewed,)) == ()
+    assert not state_path.exists()
+
+
+def test_corrupt_persistent_identity_state_fails_closed(tmp_path):
+    state_path = tmp_path / identity.STATE_FILENAME
+    state_path.write_text("{}\n", encoding="utf-8")
+    identity.reset_runtime_evidence()
+    with pytest.raises(identity.CurrentShadowFixtureIdentityStateError):
+        identity.configure_persistent_state(state_path)
