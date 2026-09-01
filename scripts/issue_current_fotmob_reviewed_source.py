@@ -38,9 +38,14 @@ from domain.current_fotmob_fixture_review_policy import (
     DEFAULT_MINIMUM_LEAD_SECONDS,
     POLICY_ID,
     REVIEWER_REFERENCE,
+    SHADOW_MINIMUM_LEAD_SECONDS,
+    SHADOW_POLICY_ID,
+    SHADOW_REVIEWER_REFERENCE,
     CurrentFotMobFixtureReviewPolicyResult,
     build_current_fotmob_fixture_review_policy_result,
+    build_current_shadow_fotmob_fixture_review_policy_result,
     canonical_current_fotmob_fixture_review_policy_result_bytes,
+    reviewer_reference_for_policy_id,
 )
 from domain.fixture_catalog import compile_fixture_catalog, sha256_bytes
 from domain.fotmob_data_matches_capture import (
@@ -95,6 +100,9 @@ NEXT_REQUIRED_BOUNDARY = (
 )
 ADMISSION_REVIEWER_REFERENCE = (
     "athena-policy:pr243-current-fotmob-catalog-admission-v1"
+)
+SHADOW_ADMISSION_REVIEWER_REFERENCE = (
+    "athena-policy:current-shadow-fotmob-catalog-admission-v2"
 )
 WORK_ROOT = Path(".cache/athena-research/current-fotmob-reviewed-source")
 
@@ -260,12 +268,39 @@ class CurrentFotMobReviewedSourceExecution:
         object.__setattr__(self, "issued_at", issued_at)
 
     def summary(self) -> dict[str, Any]:
+        policy_id = self.policy_result.policy_id
+        reviewer_reference = reviewer_reference_for_policy_id(policy_id)
+        if policy_id == POLICY_ID:
+            policy_authority = {
+                "pr243_fixture_identity_policy_decisions": True,
+            }
+        elif policy_id == SHADOW_POLICY_ID:
+            policy_authority = {
+                "current_shadow_fixture_identity_policy_v2_decisions": True,
+            }
+        else:
+            raise CurrentFotMobReviewedSourceError(
+                "execution contains an unknown current fixture policy"
+            )
+        authority = {
+            "transparent_fotmob_network_capture": True,
+            **policy_authority,
+            "reviewed_fixture_bootstrap": True,
+            "fixture_intelligence_fact": False,
+            "fixture_intelligence_snapshot": False,
+            "model_feature": False,
+            "probability": False,
+            "pricing": False,
+            "selection": False,
+            "sportybet_execution": False,
+            "bet": False,
+        }
         return {
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
             "status": self.status,
-            "policy_id": POLICY_ID,
-            "policy_reviewer_reference": REVIEWER_REFERENCE,
+            "policy_id": policy_id,
+            "policy_reviewer_reference": reviewer_reference,
             "source_capture_directory": self.source_capture_directory.as_posix(),
             "source_capture_manifest_sha256": self.source_capture_manifest_sha256,
             "source_raw_sha256": self.source_raw_sha256,
@@ -301,19 +336,7 @@ class CurrentFotMobReviewedSourceExecution:
                 item.fixture_identifier for item in self.bootstrap.fixtures
             ],
             "next_required_boundary": self.next_required_boundary,
-            "authority": {
-                "transparent_fotmob_network_capture": True,
-                "pr243_fixture_identity_policy_decisions": True,
-                "reviewed_fixture_bootstrap": True,
-                "fixture_intelligence_fact": False,
-                "fixture_intelligence_snapshot": False,
-                "model_feature": False,
-                "probability": False,
-                "pricing": False,
-                "selection": False,
-                "sportybet_execution": False,
-                "bet": False,
-            },
+            "authority": authority,
             "wager_placed": False,
         }
 
