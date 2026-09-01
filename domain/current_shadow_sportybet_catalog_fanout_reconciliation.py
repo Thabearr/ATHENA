@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, Sequence
@@ -28,8 +29,6 @@ from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
 from domain import sportybet_current_event_discovery_reconciliation as _reviewed
 
 
-# Preserve the reviewed implementation's public constants/types unless this
-# overlay explicitly versions the identity boundary below.
 SCHEMA_VERSION = legacy.SCHEMA_VERSION
 DATASET_NAME = legacy.DATASET_NAME
 DISCOVERY_DATASET_NAME = legacy.DISCOVERY_DATASET_NAME
@@ -66,7 +65,7 @@ FIXTURE_TEAM_ALIAS_REGISTRY_SHA256 = fixture_aliases.REGISTRY_SHA256
 FIXTURE_STABLE_IDENTITY_POLICY_ID = fixture_identity_v2.POLICY_ID
 FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256 = fixture_identity_v2.REGISTRY_SHA256
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "fcd16f090aaa8428174edca500e855540c492375d99f280132216c46576611a9"
+EXPECTED_CONTRACT_SHA256 = "c9f238039f14202159d055fadc3236684832403f74637323eb3b2cf83e836a33"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -86,8 +85,6 @@ CurrentShadowSportyBetCatalogFanoutReconciliationError = (
 )
 SportyBetCurrentEventDiscoveryError = legacy.SportyBetCurrentEventDiscoveryError
 
-# Keep low-level helpers available to existing tests/callers.  ``_network_get``
-# is intentionally a wrapper-local hook because tests replace it on this module.
 time = legacy.time
 _canonical = legacy._canonical
 _now_utc = legacy._now_utc
@@ -120,8 +117,6 @@ class _ReviewedShadowProxy:
         return getattr(_reviewed, name)
 
 
-# Only the copied candidate-local module sees this proxy.  The frozen reviewed
-# module itself is not mutated, so non-Shadow consumers retain literal matching.
 legacy.reviewed = _ReviewedShadowProxy()
 
 
@@ -170,18 +165,12 @@ def validate_contract() -> Mapping[str, str]:
     }
 
 
-# Make the copied candidate-local implementation resolve the new reviewed Shadow
-# contract at runtime.  Its data structures and candidate-local transport logic
-# remain unchanged.
 legacy.MATCHING_BASIS = MATCHING_BASIS
 legacy.EXPECTED_CONTRACT_SHA256 = EXPECTED_CONTRACT_SHA256
 legacy.calculate_contract_sha256 = calculate_contract_sha256
 legacy.validate_contract = validate_contract
 
 
-# Extend the durable bundle representation with the exact alias contract identity.
-# Both original and replay-built bundles use this method, preserving equality and
-# canonical hashing without changing the frozen low-level discovery evidence.
 _legacy_bundle_to_dict = CurrentShadowSportyBetCatalogFanoutReconciliationBundle.to_dict
 
 
@@ -192,6 +181,11 @@ def _bundle_to_dict_with_stable_identity(self: Any) -> dict[str, Any]:
     payload["fixture_team_alias_registry_sha256"] = FIXTURE_TEAM_ALIAS_REGISTRY_SHA256
     payload["fixture_stable_identity_policy_id"] = FIXTURE_STABLE_IDENTITY_POLICY_ID
     payload["fixture_stable_identity_registry_sha256"] = FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256
+    payload["fixture_stable_identity_state_sha256"] = getattr(
+        self,
+        "_fixture_stable_identity_state_sha256",
+        fixture_identity_v2.state_sha256(),
+    )
     return payload
 
 
@@ -211,15 +205,24 @@ def _begin_identity_scope(
     fanout_evidence_directory: Path | None = None,
 ) -> None:
     fixture_identity_v2.reset_runtime_evidence()
+    fixture_identity_v2.configure_persistent_state(
+        os.environ.get("ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH")
+    )
     fixture_identity_v2.observe_fotmob_captures(fotmob_captures)
     if fanout_evidence_directory is not None:
         fixture_identity_v2.observe_provider_directory(fanout_evidence_directory)
 
 
+def _bind_identity_state(bundle: Any) -> Any:
+    object.__setattr__(
+        bundle,
+        "_fixture_stable_identity_state_sha256",
+        fixture_identity_v2.state_sha256(),
+    )
+    return bundle
+
+
 def _sync_wrapper_hooks() -> None:
-    # Preserve the existing test seam where callers monkeypatch this module's
-    # network function, while retaining provider-native identity evidence.
-    # ``time`` is the same module object in both modules.
     legacy._network_get = _identity_observing_network_get
     legacy.time = time
 
@@ -256,13 +259,14 @@ def reconcile_current_events_from_catalog_fanout(
     validate_contract()
     _begin_identity_scope(fotmob_captures, fanout_evidence_directory)
     _sync_wrapper_hooks()
-    return legacy.reconcile_current_events_from_catalog_fanout(
+    result = legacy.reconcile_current_events_from_catalog_fanout(
         repository_root=repository_root,
         fanout_evidence_directory=fanout_evidence_directory,
         fotmob_admission_value=fotmob_admission_value,
         fotmob_captures=fotmob_captures,
         execute_live_network=execute_live_network,
     )
+    return _bind_identity_state(result)
 
 
 def discover_and_reconcile_current_events(
@@ -275,15 +279,13 @@ def discover_and_reconcile_current_events(
     validate_contract()
     _begin_identity_scope(fotmob_captures)
     _sync_wrapper_hooks()
-    # Call the copied implementation directly after syncing the wrapper test seam;
-    # its reviewed proxy supplies the stable-ID matcher at every provisional and
-    # replay boundary.
-    return legacy.discover_and_reconcile_current_events(
+    result = legacy.discover_and_reconcile_current_events(
         repository_root=repository_root,
         fotmob_admission_value=fotmob_admission_value,
         fotmob_captures=fotmob_captures,
         execute_live_network=execute_live_network,
     )
+    return _bind_identity_state(result)
 
 
 def verify_current_event_discovery_reconciliation_bundle(value: Any):
@@ -292,6 +294,14 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
     fanout_directory = getattr(value, "_fanout_directory", None)
     if fanout_directory is not None:
         _begin_identity_scope(captures, fanout_directory)
+    expected_state = getattr(value, "_fixture_stable_identity_state_sha256", None)
+    if (
+        expected_state is not None
+        and expected_state != fixture_identity_v2.state_sha256()
+    ):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "persisted Shadow fixture identity state differs from retained bundle"
+        )
     return legacy.verify_current_event_discovery_reconciliation_bundle(value)
 
 
