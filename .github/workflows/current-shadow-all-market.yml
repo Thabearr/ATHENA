@@ -16,7 +16,7 @@ permissions:
 jobs:
   current-shadow-all-market:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout exact requested commit
         uses: actions/checkout@v4
@@ -50,15 +50,38 @@ jobs:
             '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
             | sha256sum --check --strict
 
+      - name: Resolve exact lineage main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lineage_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "${#lineage_main_sha}" -eq 40
+          printf 'ATHENA_EXPECTED_LINEAGE_MAIN_SHA=%s\n' "${lineage_main_sha}" >> "${GITHUB_ENV}"
+
       - name: Execute current research Shadow request
         env:
           GH_TOKEN: ${{ github.token }}
-          ATHENA_EXPECTED_MAIN_SHA: ${{ github.sha }}
           ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
         run: |
-          python scripts/execute_current_shadow_all_market.py \
+          python -m scripts.execute_current_shadow_all_market_fresh_reprice_bound \
             --target-size "${{ inputs.target_size }}" \
             --output-dir artifacts/current-shadow-all-market
+
+      - name: Preserve exact current source evidence
+        if: always()
+        run: |
+          evidence_root='artifacts/current-shadow-all-market/source-evidence'
+          mkdir -p "${evidence_root}"
+          for source_dir in \
+            '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
+            '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
+            '.cache/athena-research/sportybet-live-event-quote-evidence' \
+            '.cache/athena-research/fotmob-data-matches-captures'
+          do
+            if [ -d "${source_dir}" ]; then
+              cp -a "${source_dir}" "${evidence_root}/"
+            fi
+          done
 
       - name: Upload durable research receipt
         if: always()

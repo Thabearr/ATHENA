@@ -48,7 +48,9 @@ from domain.fotmob_data_matches_capture import (
     FotMobDataMatchesCaptureError,
     verify_data_matches_capture_directory,
 )
-from domain.fotmob_fixture_candidates import build_fotmob_fixture_candidate_bundle
+from domain.current_fotmob_fixture_candidate_adapter import (
+    build_current_fotmob_fixture_candidate_bundle,
+)
 from domain.fotmob_fixture_catalog_handoff import (
     FotMobFixtureCatalogHandoff,
     build_fotmob_fixture_catalog_handoff,
@@ -338,7 +340,7 @@ def build_verified_current_fotmob_bootstrap_from_capture(
             "current data-matches capture failed exact PR38 replay"
         ) from exc
     raw = _read_capture_raw(Path(capture_directory))
-    candidate_bundle = build_fotmob_fixture_candidate_bundle(((raw, manifest),))
+    candidate_bundle = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
     issued = _utc(issued_at, "issued_at")
     policy_result = build_current_fotmob_fixture_review_policy_result(
         candidate_bundle,

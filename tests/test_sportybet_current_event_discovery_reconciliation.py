@@ -227,6 +227,22 @@ def _discovery_raw(events, *, tournament_name: str | None = "League Ω") -> byte
     ).encode("utf-8")
 
 
+def _grouped_discovery_raw(*, group_count: int, event_count: int) -> bytes:
+    groups = [
+        {"name": f"League {index}", "events": []}
+        for index in range(group_count)
+    ]
+    for index in range(event_count):
+        groups[index % group_count]["events"].append(
+            _event(event_id=f"sr:match:{123456789 + index}")
+        )
+    return json.dumps(
+        {"bizCode": 10000, "data": groups},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
 def _empty_discovery_raw() -> bytes:
     return b'{"bizCode":10000,"data":[]}'
 
@@ -601,14 +617,19 @@ def test_successful_empty_provider_feed_is_explicit_zero_event_evidence(monkeypa
     assert result.to_dict()["event_count"] == 0
 
 
-def test_discovery_capture_requires_terminal_empty_page_and_replays_raw(monkeypatch, tmp_path):
+def test_discovery_capture_accepts_truthful_short_page_and_replays_raw(monkeypatch, tmp_path):
     _install_discovery(monkeypatch, [_event()])
     directory, manifest = current.capture_current_event_discovery(
         repository_root=tmp_path,
         execute_live_network=True,
     )
-    assert len(manifest.pages) == 2
-    assert manifest.pages[-1].event_count == 0
+    assert len(manifest.pages) == 1
+    assert manifest.pages[-1].provider_page_item_count == 1
+    assert manifest.pages[-1].event_count == 1
+    assert manifest.terminal_empty_page_observed is False
+    assert manifest.pagination_termination_basis == (
+        current.PAGINATION_TERMINATION_SHORT_PAGE
+    )
     assert current.verify_current_event_discovery(
         directory,
         repository_root=tmp_path,
@@ -619,11 +640,69 @@ def test_discovery_capture_requires_terminal_empty_page_and_replays_raw(monkeypa
         current.verify_current_event_discovery(directory, repository_root=tmp_path)
 
 
+def test_grouped_provider_short_page_uses_top_level_item_count_not_nested_events(
+    monkeypatch,
+    tmp_path,
+):
+    raw = _grouped_discovery_raw(group_count=91, event_count=192)
+    calls = []
+
+    def fetch(page_num):
+        calls.append(page_num)
+        return raw, 200, DISCOVERY_OBSERVED
+
+    monkeypatch.setattr(current, "_network_fetch_page", fetch)
+    directory, manifest = current.capture_current_event_discovery(
+        repository_root=tmp_path,
+        execute_live_network=True,
+    )
+
+    assert calls == [1]
+    assert len(manifest.pages) == 1
+    assert manifest.pages[0].provider_page_item_count == 91
+    assert manifest.pages[0].event_count == 192
+    assert len(manifest.events) == 192
+    assert manifest.pagination_termination_basis == (
+        current.PAGINATION_TERMINATION_SHORT_PAGE
+    )
+    assert current.verify_current_event_discovery(
+        directory,
+        repository_root=tmp_path,
+    ).to_dict() == manifest.to_dict()
+
+
+def test_discovery_pagination_requires_top_level_provider_data_list(
+    monkeypatch,
+    tmp_path,
+):
+    raw = json.dumps(
+        {"bizCode": 10000, "data": {"events": [_event()]}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    monkeypatch.setattr(
+        current,
+        "_network_fetch_page",
+        lambda page_num: (raw, 200, DISCOVERY_OBSERVED),
+    )
+    with pytest.raises(
+        current.SportyBetCurrentEventDiscoveryError,
+        match="top-level data must be a list",
+    ):
+        current.capture_current_event_discovery(
+            repository_root=tmp_path,
+            execute_live_network=True,
+        )
+
+
 def test_conflicting_duplicate_provider_event_identity_fails_closed(monkeypatch, tmp_path):
+    first_page = [
+        _event(event_id=f"sr:match:{123456789 + index}")
+        for index in range(current.PAGE_SIZE)
+    ]
     pages = {
-        1: _discovery_raw([_event()]),
+        1: _discovery_raw(first_page, tournament_name=None),
         2: _discovery_raw([_event(home="Other Home FC")]),
-        3: _empty_discovery_raw(),
     }
 
     def fetch(page_num):
@@ -635,6 +714,72 @@ def test_conflicting_duplicate_provider_event_identity_fails_closed(monkeypatch,
             repository_root=tmp_path,
             execute_live_network=True,
         )
+
+
+def test_full_pages_without_reviewed_terminal_condition_fail_closed(monkeypatch, tmp_path):
+    monkeypatch.setattr(current, "MAX_PAGES", 2)
+    monkeypatch.setattr(current, "validate_current_event_discovery_contract", lambda: {})
+
+    def fetch(page_num):
+        offset = page_num * 1000
+        events = [
+            _event(event_id=f"sr:match:{123456789 + offset + index}")
+            for index in range(current.PAGE_SIZE)
+        ]
+        return (
+            _discovery_raw(events, tournament_name=None),
+            200,
+            DISCOVERY_OBSERVED + timedelta(seconds=page_num),
+        )
+
+    monkeypatch.setattr(current, "_network_fetch_page", fetch)
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="without an empty or short") as exc_info:
+        current.capture_current_event_discovery(
+            repository_root=tmp_path,
+            execute_live_network=True,
+        )
+    message = str(exc_info.value)
+    assert "provider_page_item_counts=100,100" in message
+    assert "page_event_counts=100,100" in message
+    assert "unique_page_hash_count=2" in message
+    assert "extracted_event_count=200" in message
+    assert "unique_event_id_count=200" in message
+
+
+def test_full_repeated_pages_report_cycle_diagnostics_without_gaining_authority(monkeypatch, tmp_path):
+    monkeypatch.setattr(current, "MAX_PAGES", 2)
+    monkeypatch.setattr(current, "validate_current_event_discovery_contract", lambda: {})
+    events = [
+        _event(event_id=f"sr:match:{123456789 + index}")
+        for index in range(current.PAGE_SIZE)
+    ]
+    repeated_raw = _discovery_raw(events, tournament_name=None)
+
+    def fetch(page_num):
+        return repeated_raw, 200, DISCOVERY_OBSERVED + timedelta(seconds=page_num)
+
+    monkeypatch.setattr(current, "_network_fetch_page", fetch)
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError) as exc_info:
+        current.capture_current_event_discovery(
+            repository_root=tmp_path,
+            execute_live_network=True,
+        )
+    message = str(exc_info.value)
+    assert "provider_page_item_counts=100,100" in message
+    assert "page_event_counts=100,100" in message
+    assert "unique_page_hash_count=1" in message
+    assert "extracted_event_count=200" in message
+    assert "unique_event_id_count=100" in message
+
+
+def test_unreviewed_pagination_termination_basis_fails_closed(monkeypatch, tmp_path):
+    _install_discovery(monkeypatch, [_event()])
+    _directory, manifest = current.capture_current_event_discovery(
+        repository_root=tmp_path,
+        execute_live_network=True,
+    )
+    with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="not reviewed"):
+        dataclasses.replace(manifest, pagination_termination_basis="REPEATED_PAGE")
 
 
 def test_caller_cannot_run_network_without_exact_opt_in(monkeypatch, tmp_path):
@@ -657,3 +802,51 @@ def test_bundle_is_builder_only_and_tamper_fails_exact_source_replay(monkeypatch
     object.__setattr__(result, "status", "FORGED")
     with pytest.raises(current.SportyBetCurrentEventDiscoveryError, match="differs"):
         current.verify_current_event_discovery_reconciliation_bundle(result)
+
+
+def test_nonbookable_live_event_preserves_untrimmed_source_identity_without_authority(
+    monkeypatch,
+    tmp_path,
+):
+    result = _run(
+        monkeypatch,
+        tmp_path,
+        events=[_event(home="Home FC ", status=1, booking_status="Booked")],
+    )
+    row = result.rows[0]
+    assert row.home_team_name == "Home FC "
+    assert row.disposition is (
+        current.CurrentEventReconciliationDisposition.DISCOVERY_EVENT_NOT_PREMATCH_BOOKABLE
+    )
+    assert row.fixture_reconciliation_authorized is False
+    assert row.exact_fotmob_match_count == 0
+    assert row.direct_event_manifest_sha256 is None
+    assert current.verify_current_event_discovery_reconciliation_bundle(
+        result
+    ).to_dict() == result.to_dict()
+
+
+def test_prematch_bookable_untrimmed_team_still_fails_closed(monkeypatch, tmp_path):
+    with pytest.raises(
+        current.SportyBetCurrentEventDiscoveryError,
+        match="exact non-empty trimmed string",
+    ):
+        _run(
+            monkeypatch,
+            tmp_path,
+            events=[_event(home="Home FC ")],
+        )
+
+
+def test_missing_team_identity_is_not_string_coerced(monkeypatch, tmp_path):
+    event = _event()
+    event["homeTeamName"] = None
+    with pytest.raises(
+        current.SportyBetCurrentEventDiscoveryError,
+        match="bounded non-empty source string",
+    ):
+        _run(
+            monkeypatch,
+            tmp_path,
+            events=[event],
+        )

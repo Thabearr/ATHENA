@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import inspect
+import json
 from pathlib import Path
+import subprocess
 from types import MappingProxyType, SimpleNamespace
 
 import pytest
@@ -61,7 +63,17 @@ def _share(status: str, *, code: str | None = None, url: str | None = None, reas
 
 def _install_common(monkeypatch):
     monkeypatch.setattr(runner, "_git_head", lambda _root: SHA)
+    monkeypatch.setattr(runner, "_expected_lineage_main_sha", lambda: "b" * 40)
     monkeypatch.setattr(runner, "_now", lambda: NOW)
+
+
+def _receipt_payload(path: Path):
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _fake_terminal_receipt():
+    return SimpleNamespace(to_dict=lambda: {"status": runner.STATUS_SOURCE_INCOMPLETE,
+                                            "wager_placed": False})
 
 
 def test_public_runner_and_cli_accept_no_provider_native_ids_odds_or_preselected_legs():
@@ -78,6 +90,91 @@ def test_public_runner_and_cli_accept_no_provider_native_ids_odds_or_preselected
     assert forbidden.isdisjoint(option_strings)
 
 
+def test_provisional_receipt_exists_before_source_work(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+
+    def acquire(**_kwargs):
+        payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+        assert payload["status"] == runner.STATUS_SOURCE_INCOMPLETE
+        assert payload["reasons"] == ["SOURCE_CHAIN_PENDING:STARTED"]
+        assert payload["wager_placed"] is False
+        return _sources(reconciled=0, selected=0, no_bet=0)
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", acquire)
+    runner.execute_current_shadow_all_market(target_size=20, output_dir=tmp_path)
+
+
+def test_stage_sequence_tracks_the_exact_source_bound_chain(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    observed = []
+    monkeypatch.setattr(
+        runner,
+        "_checkpoint_stage",
+        lambda **kwargs: observed.append(kwargs["stage"]),
+    )
+    sources = _sources(reconciled=1, selected=1, no_bet=0, router_inputs=(object(),))
+    chosen = _portfolio(target=1, selected=1)
+
+    def acquire(**kwargs):
+        callback = kwargs["stage_callback"]
+        for stage in runner.STAGE_SEQUENCE[1:5]:
+            callback(stage)
+        return sources
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", acquire)
+    monkeypatch.setattr(runner.portfolio_module, "optimize_shadow_portfolio", lambda *_a, **_k: chosen)
+    monkeypatch.setattr(
+        runner.share_module,
+        "create_verified_shadow_all_market_share_code",
+        lambda **_kwargs: _share(runner.share_module.STATUS_CODE_VERIFIED,
+                                 code="CHAIN", url="https://example.test/chain"),
+    )
+    runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    assert tuple(observed) == runner.STAGE_SEQUENCE
+
+
+def test_timeout_receipt_is_durable_fail_closed_and_identifies_stage(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    runner._checkpoint_stage(
+        output_dir=tmp_path,
+        stage=runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY,
+        exact_commit_sha=SHA,
+        target_size=20,
+    )
+    result = runner.write_current_shadow_timeout_receipt(target_size=20, output_dir=tmp_path)
+    payload = _receipt_payload(tmp_path / runner.RUN_RECEIPT_FILENAME)
+    assert result.status == runner.STATUS_SOURCE_INCOMPLETE
+    assert result.share_code is None
+    assert result.shortfall == 20
+    assert result.source_summary["timeout_stage"] == runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY
+    assert result.reasons == (
+        f"RUN_BUDGET_EXCEEDED:{runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS}:"
+        f"STAGE:{runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY}",
+    )
+    assert payload["wager_placed"] is False
+    assert payload["stake_submitted"] is False
+
+
+def test_cli_supervisor_times_out_worker_and_emits_durable_receipt(monkeypatch, tmp_path, capsys):
+    monkeypatch.delenv(cli.WORKER_ENV, raising=False)
+    captured = {}
+
+    def timeout(command, **kwargs):
+        captured["command"] = command
+        captured.update(kwargs)
+        raise subprocess.TimeoutExpired(command, kwargs["timeout"])
+
+    monkeypatch.setattr(cli.subprocess, "run", timeout)
+    monkeypatch.setattr(runner, "write_current_shadow_timeout_receipt",
+                        lambda **_kwargs: _fake_terminal_receipt())
+    rc = cli.main(["--target-size", "20", "--output-dir", str(tmp_path)])
+    assert rc == 0
+    assert captured["timeout"] == runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS
+    assert captured["env"][cli.WORKER_ENV] == "1"
+    assert captured["command"][0] == cli.sys.executable
+    assert json.loads(capsys.readouterr().out)["wager_placed"] is False
+
+
 def test_zero_exact_reconciliations_is_truthful_insufficient_supported_markets(monkeypatch, tmp_path):
     _install_common(monkeypatch)
     monkeypatch.setattr(runner, "_acquire_router_inputs", lambda **_kwargs: _sources(reconciled=0, selected=0, no_bet=0))
@@ -85,6 +182,21 @@ def test_zero_exact_reconciliations_is_truthful_insufficient_supported_markets(m
     assert result.status == runner.STATUS_INSUFFICIENT_SUPPORTED_MARKETS
     assert result.share_code is None
     assert result.shortfall == 20
+
+
+def test_executed_head_and_audited_main_are_distinct_exact_identities(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    captured = {}
+
+    def acquire(**kwargs):
+        captured.update(kwargs)
+        return _sources(reconciled=0, selected=0, no_bet=0)
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", acquire)
+    result = runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    assert result.exact_commit_sha == SHA
+    assert captured["lineage_main_sha"] == "b" * 40
+    assert captured["lineage_main_sha"] != result.exact_commit_sha
 
 
 def test_all_router_no_bet_is_first_class_successful_no_code_state(monkeypatch, tmp_path):
@@ -185,6 +297,22 @@ def test_shadow_price_failure_is_captured_as_source_incomplete(monkeypatch, tmp_
     assert result.share_code is None
     assert result.reasons == (
         "SOURCE_CHAIN_FAILED:ShadowPriceError:synthetic price-chain failure",
+    )
+
+
+def test_source_failure_preserves_bounded_cause_identity(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+
+    def fail(**_kwargs):
+        try:
+            raise ValueError("exact inner cause")
+        except ValueError as inner:
+            raise runner.CurrentShadowAllMarketRunnerError("outer boundary") from inner
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", fail)
+    result = runner.execute_current_shadow_all_market(target_size=1, output_dir=tmp_path)
+    assert result.reasons == (
+        "SOURCE_CHAIN_FAILED:CurrentShadowAllMarketRunnerError:outer boundary<-ValueError:exact inner cause",
     )
 
 

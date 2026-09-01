@@ -293,30 +293,34 @@ def _provider_inputs(
     )
 
 
-def _research_xg_from_complete_current_history(
-    complete_current_history: latest_history.CurrentLatestDurableFreshHistoryHandoff,
+def _research_xg_from_validated_current_history(
+    history: latest_history.CurrentLatestDurableFreshHistoryHandoff,
     fixture_identity: str,
+    *,
+    history_sha: str,
 ) -> tuple[
     Optional[ResearchXGRates],
     Optional[ShadowDisposition],
     tuple[str, ...],
     str,
 ]:
-    """Replay complete current history and extract one exact current sealed xG pair."""
+    """Extract one exact sealed xG pair from an already validated PR151 handoff.
 
-    if type(complete_current_history) is not latest_history.CurrentLatestDurableFreshHistoryHandoff:
+    This helper is private so public current-source callers cannot bypass the
+    reviewed replay boundary. PR-F may reuse it only for an exact history object
+    issued by the reviewed history builder in the same worker process.
+    """
+
+    if type(history) is not latest_history.CurrentLatestDurableFreshHistoryHandoff:
         raise AllMarketShadowError(
-            "complete_current_history must be exact CurrentLatestDurableFreshHistoryHandoff"
+            "validated current history must be exact CurrentLatestDurableFreshHistoryHandoff"
         )
-    try:
-        history = dataclasses.replace(complete_current_history)
-        latest_history.canonical_current_fotmob_latest_durable_fresh_history_handoff_bytes(
-            history
-        )
-    except Exception as exc:
-        raise AllMarketShadowError(
-            "complete current PR151 history failed exact replay"
-        ) from exc
+    if (
+        type(history_sha) is not str
+        or len(history_sha) != 64
+        or any(character not in "0123456789abcdef" for character in history_sha)
+    ):
+        raise AllMarketShadowError("validated current history SHA identity is invalid")
     if (
         history.latest_applicable_success_selection_proven is not True
         or history.current_fresh_history_prefix_complete is not True
@@ -339,9 +343,6 @@ def _research_xg_from_complete_current_history(
     row = rows[0]
     kickoff = row.kickoff_utc.isoformat(timespec="microseconds").replace(
         "+00:00", "Z"
-    )
-    history_sha = latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(
-        history
     )
 
     if row.disposition == current_shadow.MISSING_REVIEWED_FEATURES:
@@ -392,4 +393,34 @@ def _research_xg_from_complete_current_history(
         None,
         (),
         kickoff,
+    )
+
+
+def _research_xg_from_complete_current_history(
+    complete_current_history: latest_history.CurrentLatestDurableFreshHistoryHandoff,
+    fixture_identity: str,
+) -> tuple[
+    Optional[ResearchXGRates],
+    Optional[ShadowDisposition],
+    tuple[str, ...],
+    str,
+]:
+    """Replay complete current history and extract one exact current sealed xG pair."""
+
+    if type(complete_current_history) is not latest_history.CurrentLatestDurableFreshHistoryHandoff:
+        raise AllMarketShadowError(
+            "complete_current_history must be exact CurrentLatestDurableFreshHistoryHandoff"
+        )
+    try:
+        history = dataclasses.replace(complete_current_history)
+        canonical = latest_history._canonical(history.to_dict())
+    except Exception as exc:
+        raise AllMarketShadowError(
+            "complete current PR151 history failed exact replay"
+        ) from exc
+    history_sha = hashlib.sha256(canonical).hexdigest()
+    return _research_xg_from_validated_current_history(
+        history,
+        fixture_identity,
+        history_sha=history_sha,
     )

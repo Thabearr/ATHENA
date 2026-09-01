@@ -33,6 +33,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from domain import _portfolio_optimizer_v2_direct_provider_contracts as portfolio_v2_contracts
+from domain import current_fotmob_fixture_candidate_adapter as current_fotmob_candidates
 from domain import fotmob_fixture_candidate_review as fotmob_review
 from domain import fotmob_fixture_candidates as fotmob_candidates
 from domain import fotmob_fixture_catalog_handoff as fotmob_handoff
@@ -71,6 +72,11 @@ DISCOVERY_PATH = "/api/ng/factsCenter/liveOrPrematchEvents"
 FOOTBALL_SPORT_ID = "sr:sport:1"
 PAGE_SIZE = 100
 MAX_PAGES = 20
+PAGINATION_TERMINATION_POLICY = (
+    "EMPTY_PAGE_OR_SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE_V2"
+)
+PAGINATION_TERMINATION_EMPTY_PAGE = "EMPTY_PAGE"
+PAGINATION_TERMINATION_SHORT_PAGE = "SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE"
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
 MAX_MANIFEST_BYTES = 4 * 1024 * 1024
 MAX_SOURCE_AGE_SECONDS = 900
@@ -193,6 +199,20 @@ def _text(value: Any, label: str, *, maximum: int = 300) -> str:
     ):
         raise SportyBetCurrentEventDiscoveryError(
             f"{label} must be an exact non-empty trimmed string"
+        )
+    return value
+
+
+def _source_text(value: Any, label: str, *, maximum: int = 300) -> str:
+    if (
+        type(value) is not str
+        or not value
+        or not value.strip()
+        or len(value) > maximum
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
+    ):
+        raise SportyBetCurrentEventDiscoveryError(
+            f"{label} must be a bounded non-empty source string"
         )
     return value
 
@@ -399,6 +419,7 @@ class SportyBetDiscoveryPage:
     observed_at: datetime
     raw_sha256: str
     raw_size: int
+    provider_page_item_count: int
     event_count: int
 
     def __post_init__(self) -> None:
@@ -410,8 +431,19 @@ class SportyBetDiscoveryPage:
         _sha(self.raw_sha256, "page raw_sha256")
         if type(self.raw_size) is not int or not 0 < self.raw_size <= MAX_RESPONSE_BYTES:
             raise SportyBetCurrentEventDiscoveryError("page raw_size is invalid")
+        if (
+            type(self.provider_page_item_count) is not int
+            or self.provider_page_item_count < 0
+        ):
+            raise SportyBetCurrentEventDiscoveryError(
+                "page provider_page_item_count is invalid"
+            )
         if type(self.event_count) is not int or self.event_count < 0:
             raise SportyBetCurrentEventDiscoveryError("page event_count is invalid")
+        if self.provider_page_item_count == 0 and self.event_count != 0:
+            raise SportyBetCurrentEventDiscoveryError(
+                "empty provider page cannot contain extracted events"
+            )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -420,6 +452,7 @@ class SportyBetDiscoveryPage:
             "observed_at": serialize_utc(self.observed_at),
             "raw_sha256": self.raw_sha256,
             "raw_size": self.raw_size,
+            "provider_page_item_count": self.provider_page_item_count,
             "event_count": self.event_count,
         }
 
@@ -442,8 +475,15 @@ class SportyBetDiscoveredEvent:
 
     def __post_init__(self) -> None:
         _event_id(self.event_id)
-        _text(self.home_team_name, "home_team_name")
-        _text(self.away_team_name, "away_team_name")
+        _source_text(self.home_team_name, "home_team_name")
+        _source_text(self.away_team_name, "away_team_name")
+        if type(self.prematch_bookable_observed) is not bool:
+            raise SportyBetCurrentEventDiscoveryError(
+                "prematch_bookable_observed must be bool"
+            )
+        if self.prematch_bookable_observed:
+            _text(self.home_team_name, "home_team_name")
+            _text(self.away_team_name, "away_team_name")
         if self.home_team_name == self.away_team_name:
             raise SportyBetCurrentEventDiscoveryError(
                 "discovered home/away teams must differ"
@@ -456,10 +496,6 @@ class SportyBetDiscoveredEvent:
             _text(self.booking_status, "booking_status")
         if self.match_status is not None:
             _text(self.match_status, "match_status")
-        if type(self.prematch_bookable_observed) is not bool:
-            raise SportyBetCurrentEventDiscoveryError(
-                "prematch_bookable_observed must be bool"
-            )
         if type(self.source_page_num) is not int or not 1 <= self.source_page_num <= MAX_PAGES:
             raise SportyBetCurrentEventDiscoveryError("source_page_num is invalid")
         _sha(self.source_raw_sha256, "source_raw_sha256")
@@ -509,6 +545,7 @@ class SportyBetCurrentEventDiscoveryManifest:
     provider_event_timestamp: None
     provider_snapshot_id: None
     terminal_empty_page_observed: bool
+    pagination_termination_basis: str
 
     def __post_init__(self) -> None:
         if self.schema_version != SCHEMA_VERSION or type(self.schema_version) is not int:
@@ -550,9 +587,28 @@ class SportyBetCurrentEventDiscoveryManifest:
             raise SportyBetCurrentEventDiscoveryError(
                 "discovery cannot invent provider event timestamp/snapshot identity"
             )
-        if self.terminal_empty_page_observed is not True or self.pages[-1].event_count != 0:
+        last_provider_item_count = self.pages[-1].provider_page_item_count
+        last_event_count = self.pages[-1].event_count
+        if self.pagination_termination_basis == PAGINATION_TERMINATION_EMPTY_PAGE:
+            if (
+                self.terminal_empty_page_observed is not True
+                or last_provider_item_count != 0
+                or last_event_count != 0
+            ):
+                raise SportyBetCurrentEventDiscoveryError(
+                    "empty-page termination basis does not match the final page"
+                )
+        elif self.pagination_termination_basis == PAGINATION_TERMINATION_SHORT_PAGE:
+            if (
+                self.terminal_empty_page_observed is not False
+                or not 0 < last_provider_item_count < PAGE_SIZE
+            ):
+                raise SportyBetCurrentEventDiscoveryError(
+                    "short-page termination basis does not match the final page"
+                )
+        else:
             raise SportyBetCurrentEventDiscoveryError(
-                "discovery must prove pagination termination with an empty page"
+                "discovery pagination termination basis is not reviewed"
             )
         object.__setattr__(self, "first_observed_at", first)
         object.__setattr__(self, "last_observed_at", last)
@@ -572,12 +628,26 @@ class SportyBetCurrentEventDiscoveryManifest:
             "observation_authority": self.observation_authority,
             "provider_event_timestamp": None,
             "provider_snapshot_id": None,
-            "terminal_empty_page_observed": True,
+            "terminal_empty_page_observed": self.terminal_empty_page_observed,
+            "pagination_termination_basis": self.pagination_termination_basis,
         }
 
     @property
     def canonical_sha256(self) -> str:
         return hashlib.sha256(_canonical_bytes(self.to_dict())).hexdigest()
+
+
+def _provider_page_item_count(payload: Any) -> int:
+    if type(payload) is not dict or payload.get("bizCode") != 10000:
+        raise SportyBetCurrentEventDiscoveryError(
+            "SportyBet discovery response must be a successful object"
+        )
+    data = payload.get("data")
+    if type(data) is not list:
+        raise SportyBetCurrentEventDiscoveryError(
+            "provider discovery top-level data must be a list for pagination"
+        )
+    return len(data)
 
 
 def _extract_page_events(payload: Any, *, page: SportyBetDiscoveryPage | None = None) -> list[tuple[dict[str, Any], str | None]]:
@@ -644,17 +714,18 @@ def _event_from_mapping(
             "football-scoped discovery returned a non-football event"
         )
     competition_name, basis = _competition(value, inherited_competition)
+    prematch_bookable = _event_is_prematch_bookable(value)
     return SportyBetDiscoveredEvent(
         event_id=_event_id(value.get("eventId")),
-        home_team_name=_text(str(value.get("homeTeamName")), "provider home team"),
-        away_team_name=_text(str(value.get("awayTeamName")), "provider away team"),
+        home_team_name=_source_text(value.get("homeTeamName"), "provider home team"),
+        away_team_name=_source_text(value.get("awayTeamName"), "provider away team"),
         competition_name=competition_name,
         competition_basis=basis,
         kickoff_utc=_kickoff(value.get("estimateStartTime")),
         booking_status=_optional_text(value.get("bookingStatus"), "booking_status"),
         event_status=value.get("status"),
         match_status=_optional_text(value.get("matchStatus"), "match_status"),
-        prematch_bookable_observed=_event_is_prematch_bookable(value),
+        prematch_bookable_observed=prematch_bookable,
         source_page_num=page_num,
         source_raw_sha256=raw_sha256,
         source_observed_at=observed_at,
@@ -671,6 +742,7 @@ def _parse_page(raw: bytes, *, page_num: int, observed_at: datetime) -> tuple[Sp
     except live.SportyBetLiveEventQuoteEvidenceError as exc:
         raise SportyBetCurrentEventDiscoveryError(str(exc)) from exc
     raw_hash = sha256_bytes(raw)
+    provider_page_item_count = _provider_page_item_count(payload)
     extracted = _extract_page_events(payload)
     events = tuple(
         _event_from_mapping(
@@ -688,6 +760,7 @@ def _parse_page(raw: bytes, *, page_num: int, observed_at: datetime) -> tuple[Sp
         observed_at=observed_at,
         raw_sha256=raw_hash,
         raw_size=len(raw),
+        provider_page_item_count=provider_page_item_count,
         event_count=len(events),
     )
     return page, events
@@ -800,6 +873,7 @@ def _manifest_from_mapping(value: Any) -> SportyBetCurrentEventDiscoveryManifest
         "provider_event_timestamp",
         "provider_snapshot_id",
         "terminal_empty_page_observed",
+        "pagination_termination_basis",
     }
     if type(value) is not dict or set(value) != expected:
         raise SportyBetCurrentEventDiscoveryError("discovery manifest keys mismatch")
@@ -815,6 +889,7 @@ def _manifest_from_mapping(value: Any) -> SportyBetCurrentEventDiscoveryManifest
                 observed_at=parse_utc_timestamp(item["observed_at"], "page observed_at"),
                 raw_sha256=item["raw_sha256"],
                 raw_size=item["raw_size"],
+                provider_page_item_count=item["provider_page_item_count"],
                 event_count=item["event_count"],
             )
             for item in pages_raw
@@ -858,6 +933,7 @@ def _manifest_from_mapping(value: Any) -> SportyBetCurrentEventDiscoveryManifest
             provider_event_timestamp=value["provider_event_timestamp"],
             provider_snapshot_id=value["provider_snapshot_id"],
             terminal_empty_page_observed=value["terminal_empty_page_observed"],
+            pagination_termination_basis=value["pagination_termination_basis"],
         )
     except (KeyError, TypeError, ValueError, SportyBetLiteCaptureError) as exc:
         raise SportyBetCurrentEventDiscoveryError(
@@ -876,7 +952,7 @@ def capture_current_event_discovery(
     page_rows: list[SportyBetDiscoveryPage] = []
     all_events: list[SportyBetDiscoveredEvent] = []
     raw_pages: list[bytes] = []
-    terminated = False
+    termination_basis: str | None = None
     for page_num in range(1, MAX_PAGES + 1):
         raw, status, observed_at = _network_fetch_page(page_num)
         if status != 200:
@@ -887,12 +963,27 @@ def capture_current_event_discovery(
         page_rows.append(page)
         all_events.extend(events)
         raw_pages.append(raw)
-        if not events:
-            terminated = True
+        if page.provider_page_item_count == 0:
+            termination_basis = PAGINATION_TERMINATION_EMPTY_PAGE
             break
-    if not terminated:
+        if page.provider_page_item_count < PAGE_SIZE:
+            termination_basis = PAGINATION_TERMINATION_SHORT_PAGE
+            break
+    if termination_basis is None:
+        provider_page_item_counts = tuple(
+            item.provider_page_item_count for item in page_rows
+        )
+        page_event_counts = tuple(item.event_count for item in page_rows)
+        unique_page_hash_count = len({item.raw_sha256 for item in page_rows})
+        event_ids = tuple(item.event_id for item in all_events)
         raise SportyBetCurrentEventDiscoveryError(
-            "discovery pagination reached reviewed maximum without terminal empty page"
+            "discovery pagination reached reviewed maximum without an empty or short "
+            "terminal page;"
+            f" provider_page_item_counts={','.join(str(value) for value in provider_page_item_counts)};"
+            f" page_event_counts={','.join(str(value) for value in page_event_counts)};"
+            f" unique_page_hash_count={unique_page_hash_count};"
+            f" extracted_event_count={len(all_events)};"
+            f" unique_event_id_count={len(set(event_ids))}"
         )
     manifest = SportyBetCurrentEventDiscoveryManifest(
         schema_version=SCHEMA_VERSION,
@@ -908,7 +999,10 @@ def capture_current_event_discovery(
         observation_authority=OBSERVATION_AUTHORITY,
         provider_event_timestamp=None,
         provider_snapshot_id=None,
-        terminal_empty_page_observed=True,
+        terminal_empty_page_observed=(
+            termination_basis == PAGINATION_TERMINATION_EMPTY_PAGE
+        ),
+        pagination_termination_basis=termination_basis,
     )
     root = _evidence_root(Path(repository_root), create=True)
     directory = root / manifest.canonical_sha256[:24]
@@ -1041,6 +1135,25 @@ def _materialize_fotmob_captures(
     return tuple(rows)
 
 
+def _build_replayed_fotmob_candidates(
+    capture_rows: Any,
+) -> fotmob_candidates.FotMobFixtureCandidateBundle:
+    """Replay current single-capture candidates through the reviewed adapter.
+
+    Current live issuance uses one exact FotMob capture.  Rebuild that capture
+    through the same current-only PR39-or-reviewed-additive adapter used by the
+    issuer, so deterministic admission replay preserves reviewed additive schema
+    handling and request-date projection.  Multi-capture replay remains on the
+    frozen PR39 builder.
+    """
+    if len(capture_rows) == 1:
+        raw, manifest = capture_rows[0]
+        return current_fotmob_candidates.build_current_fotmob_fixture_candidate_bundle(
+            raw, manifest
+        )
+    return fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)
+
+
 def _rederive_exact_fotmob_admission(
     supplied: Any,
     captures: Any,
@@ -1052,7 +1165,7 @@ def _rederive_exact_fotmob_admission(
     capture_rows = _materialize_fotmob_captures(captures)
     try:
         checked = dataclasses.replace(supplied)
-        rebuilt_candidate = fotmob_candidates.build_fotmob_fixture_candidate_bundle(capture_rows)
+        rebuilt_candidate = _build_replayed_fotmob_candidates(capture_rows)
         rebuilt_review = fotmob_review.build_fotmob_fixture_candidate_review_bundle(
             rebuilt_candidate,
             checked.handoff.review_bundle.decisions,
@@ -1069,6 +1182,7 @@ def _rederive_exact_fotmob_admission(
         )
     except (
         fotmob_admission.ReviewedFixtureCatalogAdmissionError,
+        current_fotmob_candidates.CurrentFotMobFixtureCandidateAdapterError,
         fotmob_candidates.FotMobFixtureCandidateError,
         fotmob_review.FotMobFixtureCandidateReviewError,
         fotmob_handoff.FotMobFixtureCatalogHandoffError,
@@ -1165,8 +1279,8 @@ class CurrentEventReconciliationRow:
 
     def __post_init__(self) -> None:
         _event_id(self.event_id)
-        _text(self.home_team_name, "row home_team_name")
-        _text(self.away_team_name, "row away_team_name")
+        _source_text(self.home_team_name, "row home_team_name")
+        _source_text(self.away_team_name, "row away_team_name")
         if self.competition_name is not None:
             _text(self.competition_name, "row competition_name")
         object.__setattr__(self, "kickoff_utc", _utc(self.kickoff_utc, "row kickoff_utc"))
@@ -1212,6 +1326,9 @@ class CurrentEventReconciliationRow:
             raise SportyBetCurrentEventDiscoveryError(
                 "fixture_reconciliation_authorized must be bool"
             )
+        if self.fixture_reconciliation_authorized:
+            _text(self.home_team_name, "row home_team_name")
+            _text(self.away_team_name, "row away_team_name")
         if self.fixture_reconciliation_authorized != (
             self.disposition
             is CurrentEventReconciliationDisposition.UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILED
@@ -1663,6 +1780,9 @@ __all__ = [
     "MINIMUM_LEAD_SECONDS",
     "NEXT_BOUNDARY",
     "PAGE_SIZE",
+    "PAGINATION_TERMINATION_EMPTY_PAGE",
+    "PAGINATION_TERMINATION_POLICY",
+    "PAGINATION_TERMINATION_SHORT_PAGE",
     "SCHEMA_VERSION",
     "STATUS",
     "SportyBetCurrentEventDiscoveryError",
