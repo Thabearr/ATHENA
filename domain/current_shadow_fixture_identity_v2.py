@@ -657,6 +657,10 @@ def registry_sha256() -> str:
     return hashlib.sha256(_canonical(registry_payload())).hexdigest()
 
 
+def state_sha256() -> str:
+    return hashlib.sha256(_canonical(_state_payload())).hexdigest()
+
+
 REGISTRY_SHA256 = registry_sha256()
 
 __all__ = [
@@ -679,4 +683,5 @@ __all__ = [
     "registry_payload",
     "registry_sha256",
     "reset_runtime_evidence",
+    "state_sha256",
 ]
