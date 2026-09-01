@@ -1,12 +1,13 @@
 """PR-F provider-catalog fanout using main's proven candidate-local SportyBet handling.
 
 The low-level catalogue/fanout acquisition contract remains the reviewed PR-F
-boundary.  This wrapper changes only the direct-event confirmation failure
-scope: after a unique exact FotMob/provider identity candidate has been found,
-a malformed direct event-detail market inventory cannot poison unrelated
-candidates.  The candidate is retained as an explicit non-authorized failure
-row and the remaining exact candidates continue, matching the already-proven
-PR258 candidate-local transport behavior on main.
+boundary. This wrapper keeps candidate-local direct-event failure handling and
+adds one narrow current-Shadow identity bridge: after exact competition, exact
+full-UTC kickoff and home/away orientation are fixed, a provider team name may
+match either the exact FotMob short name, the exact FotMob long name from that
+same reviewed fixture, or one explicitly reviewed competition-scoped alias.
+There is no fuzzy matching, suffix stripping, substring matching, reversal,
+rounding or tolerance.
 
 No failed candidate receives fixture reconciliation, canonical-market, price,
 selection, execution, staking, BET, or wager authority.
@@ -24,6 +25,10 @@ from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from config.current_shadow_team_identity_aliases import (
+    POLICY_ID as TEAM_ALIAS_REGISTRY_POLICY_ID,
+    exact_provider_team_alias_matches,
+)
 from domain import _current_shadow_sportybet_catalog_fanout_reconciliation_base as base
 from domain import sportybet_current_event_discovery_reconciliation as reviewed
 from domain import sportybet_live_event_quote_evidence as live
@@ -53,7 +58,10 @@ ALLOWED_OUTPUT_RELATIVE = base.ALLOWED_OUTPUT_RELATIVE
 CATALOG_RAW_FILENAME = base.CATALOG_RAW_FILENAME
 MANIFEST_FILENAME = base.MANIFEST_FILENAME
 TOURNAMENT_DIRNAME = base.TOURNAMENT_DIRNAME
-MATCHING_BASIS = base.MATCHING_BASIS
+MATCHING_BASIS = (
+    "EXACT_HOME_AWAY_COMPETITION_FULL_UTC_SOURCE_SHORT_OR_LONG_NAME_OR_REVIEWED_SCOPED_ALIAS_"
+    "NO_FUZZY_NO_REVERSAL_NO_ROUNDING_NO_TOLERANCE"
+)
 DETAIL_CONFIRMATION_POLICY = base.DETAIL_CONFIRMATION_POLICY
 CATALOG_IDENTITY_POLICY = base.CATALOG_IDENTITY_POLICY
 FANOUT_POLICY = base.FANOUT_POLICY
@@ -65,7 +73,10 @@ CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY = (
     "PR258_CANDIDATE_LOCAL_DIRECT_DETAIL_PARSE_FAILURE_"
     "NO_RECONCILIATION_AUTHORITY_V1"
 )
-EXPECTED_CONTRACT_SHA256 = "cb0811d844150e873011c2f57b5d57f7eff663ab72d2912d1afd94217a0d4f2b"
+SOURCE_NATIVE_TEAM_IDENTITY_POLICY = (
+    "ATHENA_CURRENT_SHADOW_EXACT_SOURCE_NATIVE_AND_SCOPED_TEAM_ALIAS_V1"
+)
+EXPECTED_CONTRACT_SHA256 = "2ed82c4f362c3bcb6278995a35137128b2231dcf0e7f47316e9f0b0bd35e4a26"
 
 CurrentEventReconciliationDisposition = reviewed.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = reviewed.CurrentEventReconciliationRow
@@ -102,6 +113,9 @@ def calculate_contract_sha256() -> str:
     payload = {
         "base_contract_sha256": base.EXPECTED_CONTRACT_SHA256,
         "candidate_local_direct_detail_policy": CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY,
+        "source_native_team_identity_policy": SOURCE_NATIVE_TEAM_IDENTITY_POLICY,
+        "team_alias_registry_policy_id": TEAM_ALIAS_REGISTRY_POLICY_ID,
+        "matching_basis": MATCHING_BASIS,
     }
     raw = json.dumps(
         payload,
@@ -118,12 +132,13 @@ def validate_contract() -> Mapping[str, str]:
     actual = calculate_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
-            "catalog fanout candidate-local contract drifted"
+            "catalog fanout source-native identity contract drifted"
         )
     return types.MappingProxyType(
         {
             "contract_sha256": actual,
             "base_contract_sha256": base.EXPECTED_CONTRACT_SHA256,
+            "team_alias_registry_policy_id": TEAM_ALIAS_REGISTRY_POLICY_ID,
         }
     )
 
@@ -376,6 +391,9 @@ class CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
             "next_boundary": self.next_boundary,
             "contract_sha256": self.contract_sha256,
             "candidate_local_direct_detail_policy": CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY,
+            "source_native_team_identity_policy": SOURCE_NATIVE_TEAM_IDENTITY_POLICY,
+            "team_alias_registry_policy_id": TEAM_ALIAS_REGISTRY_POLICY_ID,
+            "matching_basis": MATCHING_BASIS,
             "provider_event_timestamp": None,
             "provider_snapshot_id": None,
             "wager_placed": False,
@@ -429,6 +447,95 @@ def _standard_row(
     )
 
 
+def _candidate_by_fixture_id(admission: Any) -> Mapping[str, Any]:
+    """Bind reviewed catalog rows back to the exact source candidate objects."""
+
+    try:
+        candidates = admission.handoff.candidate_bundle.candidates
+    except AttributeError as exc:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "reviewed FotMob admission candidate ancestry is unavailable"
+        ) from exc
+    if type(candidates) is not tuple or not candidates:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "reviewed FotMob candidate ancestry is invalid"
+        )
+    result: dict[str, Any] = {}
+    for candidate in candidates:
+        fixture_id = str(candidate.source_match_id)
+        if fixture_id in result:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "reviewed FotMob candidate ancestry contains duplicate fixture IDs"
+            )
+        result[fixture_id] = candidate
+    return types.MappingProxyType(result)
+
+
+def _provider_team_name_matches(
+    *, competition: str, source_name: str, source_long_name: str, provider_name: str
+) -> bool:
+    """Match only exact source-native names or an exact reviewed scoped alias."""
+
+    if provider_name == source_name or provider_name == source_long_name:
+        return True
+    return exact_provider_team_alias_matches(
+        competition=competition,
+        source_name=source_name,
+        provider_name=provider_name,
+    )
+
+
+def _match_event(
+    event: reviewed.SportyBetDiscoveredEvent,
+    reviewed_rows: Sequence[Any],
+    admission: Any,
+) -> tuple[Any, ...]:
+    """Reconcile without fuzzy matching while preserving source-native aliases."""
+
+    exact = reviewed._match_event(event, reviewed_rows)
+    if exact or event.competition_name is None:
+        return exact
+
+    candidates = _candidate_by_fixture_id(admission)
+    matches: list[Any] = []
+    for item in reviewed_rows:
+        if (
+            item.competition != event.competition_name
+            or item.kickoff.astimezone(base.timezone.utc) != event.kickoff_utc
+        ):
+            continue
+        candidate = candidates.get(item.source_fixture_identifier)
+        if candidate is None:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "reviewed FotMob row is missing exact source candidate ancestry"
+            )
+        if (
+            candidate.home_name != item.home_team
+            or candidate.away_name != item.away_team
+            or candidate.source_competition_name != item.competition
+            or candidate.kickoff_utc.astimezone(base.timezone.utc) != item.kickoff.astimezone(base.timezone.utc)
+        ):
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "reviewed FotMob row differs from exact source candidate ancestry"
+            )
+        if not _provider_team_name_matches(
+            competition=item.competition,
+            source_name=candidate.home_name,
+            source_long_name=candidate.home_long_name,
+            provider_name=event.home_team_name,
+        ):
+            continue
+        if not _provider_team_name_matches(
+            competition=item.competition,
+            source_name=candidate.away_name,
+            source_long_name=candidate.away_long_name,
+            provider_name=event.away_team_name,
+        ):
+            continue
+        matches.append(item)
+    return tuple(matches)
+
+
 def _build_bundle(
     *,
     repository_root: Path,
@@ -448,7 +555,7 @@ def _build_bundle(
         elif event.competition_name is None:
             provisional[event.event_id] = ("NO_COMPETITION", ())
         else:
-            matches = reviewed._match_event(event, reviewed_rows)
+            matches = _match_event(event, reviewed_rows, admission)
             if not matches:
                 provisional[event.event_id] = ("NO_MATCH", ())
             elif len(matches) > 1:
@@ -669,7 +776,7 @@ def reconcile_current_events_from_catalog_fanout(
         elif event.competition_name is None:
             provisional[event.event_id] = ("NO_COMPETITION", ())
         else:
-            matches = reviewed._match_event(event, reviewed_rows)
+            matches = _match_event(event, reviewed_rows, admission)
             if not matches:
                 provisional[event.event_id] = ("NO_MATCH", ())
             elif len(matches) > 1:
@@ -775,10 +882,13 @@ __all__ = [
     "CurrentShadowSportyBetCatalogFanoutSnapshot",
     "EXPECTED_CONTRACT_SHA256",
     "FANOUT_POLICY",
+    "MATCHING_BASIS",
     "ProviderCatalogTournament",
     "ProviderTournamentObservation",
+    "SOURCE_NATIVE_TEAM_IDENTITY_POLICY",
     "SportyBetCurrentEventDiscoveryError",
     "SportyBetCurrentEventDiscoveryReconciliationBundle",
+    "TEAM_ALIAS_REGISTRY_POLICY_ID",
     "calculate_contract_sha256",
     "capture_current_catalog_fanout_discovery",
     "catalog_request_target",
