@@ -60,6 +60,8 @@ CLUB_COMPETITIONS: tuple[Competition, ...] = (
     Competition("sui_superleague", "Swiss Super League", "club", "Switzerland", "UEFA", "league", 170, "B3", ("Swiss Superleague",)),
     Competition("gre_superleague", "Super League Greece", "club", "Greece", "UEFA", "league", 180, "B3", ("Greek Super League", "G1")),
     Competition("eng_championship", "EFL Championship", "club", "England", "UEFA", "league", 190, "C1", ("Championship", "E1")),
+    Competition("eng_league_one", "EFL League One", "club", "England", "UEFA", "league", 191, "C1", ("League One", "E2")),
+    Competition("eng_league_two", "EFL League Two", "club", "England", "UEFA", "league", 192, "C1", ("League Two", "E3")),
     Competition("usa_mls", "Major League Soccer", "club", "United States", "CONCACAF", "league", 200, "C2", ("MLS",)),
     Competition("sau_proleague", "Saudi Pro League", "club", "Saudi Arabia", "AFC", "league", 210, "C2", ("Saudi League", "Roshn Saudi League")),
     Competition("other_euro_topflight", "Other European Top Flights", "club", None, "UEFA", "league", 220, "C3"),
@@ -211,6 +213,8 @@ def resolve_competition(name: str, scope: Optional[str] = None) -> Competition:
 FOOTBALL_DATA_CODES = {
     "E0": "eng_premier",
     "E1": "eng_championship",
+    "E2": "eng_league_one",
+    "E3": "eng_league_two",
     "SP1": "esp_laliga",
     "I1": "ita_serie_a",
     "D1": "ger_bundesliga",

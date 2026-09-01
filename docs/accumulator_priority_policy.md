@@ -12,7 +12,7 @@ Club and international country football have separate priority spaces. They must
 
 The club hierarchy is versioned as:
 
-- competition policy: `athena-competition-review-priority-v2`
+- competition policy: `athena-competition-review-priority-v3`
 - league-only compatibility policy: `athena-league-priority-v3`
 - accumulator priority envelope: `athena-acca-priority-v4`
 
@@ -30,9 +30,9 @@ The policy basis is `ATHENA_FOOTBALL_COMPETITION_HIERARCHY_V1`.
 | 6 | D | 58 | EFL Championship |
 | 7 | E | 54 | Major League Soccer |
 | 8 | F | 50 | Saudi Pro League |
-| 9 | G | 45 or lower | other explicitly approved leagues |
+| 9 | G | 45 or lower | Scottish Premiership → EFL League One → EFL League Two → other explicitly approved leagues |
 
-Scottish Premiership is retained as an already-reviewed historical competition in Tier G. That does **not** make every unknown league a Tier-G league. Unrecognized competitions remain rank/tier `999` unless explicitly approved.
+Scottish Premiership, EFL League One and EFL League Two are explicit Tier-G entries. That does **not** make every unknown league a Tier-G league. Unrecognized competitions remain rank/tier `999` unless explicitly approved.
 
 The resolved order is therefore UEFA → Big Five → Big Five cups → preferred European top flights → Championship → MLS → Saudi → explicitly approved long tail.
 
@@ -50,11 +50,13 @@ Reviewed FotMob pairs include, among others:
 - `ENG + League Cup` or `ENG + EFL Cup` → EFL Cup;
 - `NED + Eredivisie` → Eredivisie;
 - `ENG + Championship` → EFL Championship;
+- `ENG + League One` → EFL League One;
+- `ENG + League Two` → EFL League Two;
 - `USA + Major League Soccer` → MLS;
 - `KSA + Saudi Pro League` → Saudi Pro League;
 - `SCO + Premiership` → Scottish Premiership.
 
-Examples such as `BLR + Premier League`, `ECU + Serie A` and `AUT + Bundesliga` remain unprioritized. There is no substring, fuzzy, prestige or country-free source fallback.
+The League One/League Two additions are country-qualified exact-source expansions. `SCO + League One`, for example, does not inherit the English EFL identity. Examples such as `BLR + Premier League`, `ECU + Serie A` and `AUT + Bundesliga` remain unprioritized. There is no substring, fuzzy, prestige or country-free source fallback.
 
 ## Domestic cup stage modifiers
 

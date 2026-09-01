@@ -55,7 +55,7 @@ below succeeds.
 A candidate is policy-reviewable only when:
 
 1. its exact FotMob `(ccode, source competition name)` resolves through the
-   existing `athena-competition-review-priority-v2` source-identity registry;
+   existing `athena-competition-review-priority-v3` source-identity registry;
 2. PR #41's own deterministic blocker derivation does not block the candidate;
 3. the source observation is not later than the policy evaluation timestamp;
 4. ATHENA acquired the exact source response no more than **900 seconds** before
@@ -63,6 +63,10 @@ A candidate is policy-reviewable only when:
 5. the fixture kickoff resolves to the exact requested source date in the exact
    source timezone; and
 6. kickoff remains at least **3600 seconds** after policy evaluation.
+
+Competition policy v3 adds only explicit reviewed Tier-G source identities for
+`ENG + League One` and `ENG + League Two`; it does not auto-admit similarly named
+competitions from another country or any other unknown competition.
 
 The 900-second rule is explicitly **ATHENA acquisition recency**. It is not
 provider-native freshness metadata and must never be relabelled as such.
