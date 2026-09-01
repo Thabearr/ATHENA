@@ -127,6 +127,41 @@ jobs:
             '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
             | sha256sum --check --strict
 
+      - name: Restore prior persistent Shadow identity state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          state_dir='.cache/athena-research/current-shadow-fixture-identity-v2'
+          state_name='current-shadow-fixture-identity-v2-state.json'
+          state_path="${state_dir}/${state_name}"
+          mkdir -p "${state_dir}"
+          printf 'ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH=%s\n' "${state_path}" >> "${GITHUB_ENV}"
+
+          mapfile -t prior_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-all-market.yml/runs?status=success&per_page=5" \
+              --jq '.workflow_runs[].id'
+          )
+          for run_id in "${prior_runs[@]}"; do
+            if [ "${run_id}" = "${GITHUB_RUN_ID}" ]; then
+              continue
+            fi
+            rm -rf /tmp/athena-prior-shadow
+            mkdir -p /tmp/athena-prior-shadow
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-all-market-request \
+              --dir /tmp/athena-prior-shadow >/dev/null 2>&1
+            then
+              candidate="$(find /tmp/athena-prior-shadow -type f -name "${state_name}" -print -quit)"
+              if [ -n "${candidate}" ]; then
+                cp "${candidate}" "${state_path}"
+                echo "Restored persistent Shadow identity state from run ${run_id}."
+                break
+              fi
+            fi
+          done
+
       - name: Resolve exact lineage main
         env:
           GH_TOKEN: ${{ github.token }}
@@ -160,6 +195,14 @@ jobs:
               cp -a "${source_dir}" "${evidence_root}/"
             fi
           done
+
+          if [ -n "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}" ] \
+            && [ -f "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" ]
+          then
+            identity_root='artifacts/current-shadow-all-market/identity-state'
+            mkdir -p "${identity_root}"
+            cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" "${identity_root}/"
+          fi
 
       - name: Email durable Shadow result when configured
         if: always()
