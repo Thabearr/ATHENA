@@ -17,7 +17,7 @@ from enum import Enum
 from config.league_priority import normalize_league_name
 
 
-COMPETITION_REVIEW_PRIORITY_POLICY_VERSION = "athena-competition-review-priority-v2"
+COMPETITION_REVIEW_PRIORITY_POLICY_VERSION = "athena-competition-review-priority-v3"
 COMPETITION_REVIEW_PRIORITY_BASIS = "ATHENA_FOOTBALL_COMPETITION_HIERARCHY_V1"
 UNPRIORITIZED_COMPETITION_TIER = 99
 UNPRIORITIZED_COMPETITION_RANK = 999
@@ -141,7 +141,9 @@ def _intl(
 # Scottish Premiership is retained only as Tier G. It already exists in ATHENA's
 # historical approved competition registry, but the attached hierarchy does not
 # place it in C1/C2. This keeps it available without silently restoring its older
-# higher review rank.
+# higher review rank. EFL League One and League Two are explicit Tier-G source
+# expansions; their exact English source identities do not authorize any other
+# competition named League One/League Two.
 DEFAULT_COMPETITION_REVIEW_PRIORITY: tuple[CompetitionReviewPriorityEntry, ...] = (
     _club(
         "UEFA Champions League",
@@ -412,6 +414,26 @@ DEFAULT_COMPETITION_REVIEW_PRIORITY: tuple[CompetitionReviewPriorityEntry, ...] 
         ),
         ("Scotland Premiership", "Scottish Premier League"),
         "Existing reviewed historical top flight retained in Tier G only.",
+    ),
+    _club(
+        "EFL League One",
+        CompetitionKind.DOMESTIC_LEAGUE,
+        9,
+        44,
+        81,
+        (SourceCompetitionIdentity("ENG", "League One"),),
+        ("League One", "English League One"),
+        "Explicit Tier-G exact-source expansion; hierarchy orders review only.",
+    ),
+    _club(
+        "EFL League Two",
+        CompetitionKind.DOMESTIC_LEAGUE,
+        9,
+        43,
+        82,
+        (SourceCompetitionIdentity("ENG", "League Two"),),
+        ("League Two", "English League Two"),
+        "Explicit Tier-G exact-source expansion; hierarchy orders review only.",
     ),
 )
 
