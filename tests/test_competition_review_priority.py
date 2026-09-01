@@ -48,7 +48,7 @@ def _candidate(
 
 def test_registry_is_exact_pdf_v1_consideration_order_not_bet_authority():
     assert COMPETITION_REVIEW_PRIORITY_POLICY_VERSION == (
-        "athena-competition-review-priority-v2"
+        "athena-competition-review-priority-v3"
     )
     assert COMPETITION_REVIEW_PRIORITY_BASIS == (
         "ATHENA_FOOTBALL_COMPETITION_HIERARCHY_V1"
@@ -84,6 +84,8 @@ def test_club_master_order_matches_pdf_bands():
         ("Major League Soccer", 7, "E", 60, 54),
         ("Saudi Pro League", 8, "F", 70, 50),
         ("Scottish Premiership", 9, "G", 80, 45),
+        ("EFL League One", 9, "G", 81, 44),
+        ("EFL League Two", 9, "G", 82, 43),
     ]
     actual = []
     for name, *_ in expected:
@@ -112,6 +114,8 @@ def test_exact_fotmob_source_pairs_cover_uefa_and_domestic_hierarchy():
         ("NED", "Eredivisie"): "Eredivisie",
         ("NOR", "Eliteserien"): "Eliteserien",
         ("ENG", "Championship"): "EFL Championship",
+        ("ENG", "League One"): "EFL League One",
+        ("ENG", "League Two"): "EFL League Two",
         ("USA", "Major League Soccer"): "Major League Soccer",
         ("KSA", "Saudi Pro League"): "Saudi Pro League",
         ("SCO", "Premiership"): "Scottish Premiership",
@@ -120,6 +124,16 @@ def test_exact_fotmob_source_pairs_cover_uefa_and_domestic_hierarchy():
         entry = resolve_source_competition_review_priority(*key)
         assert entry is not None
         assert entry.canonical_name == canonical
+
+
+def test_efl_lower_league_source_expansion_is_exactly_english_and_tier_g():
+    league_one = resolve_source_competition_review_priority("ENG", "League One")
+    league_two = resolve_source_competition_review_priority("ENG", "League Two")
+    assert league_one is not None and league_two is not None
+    assert (league_one.tier, league_one.priority_band, league_one.rank) == (9, "G", 81)
+    assert (league_two.tier, league_two.priority_band, league_two.rank) == (9, "G", 82)
+    assert resolve_source_competition_review_priority("SCO", "League One") is None
+    assert resolve_source_competition_review_priority("SCO", "League Two") is None
 
 
 def test_source_identity_blocks_same_name_foreign_leagues():
