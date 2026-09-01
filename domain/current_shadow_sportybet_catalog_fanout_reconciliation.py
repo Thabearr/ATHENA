@@ -62,7 +62,7 @@ CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY = legacy.CANDIDATE_LOCAL_DIRECT_DETAIL_POLI
 FIXTURE_TEAM_ALIAS_POLICY_ID = fixture_aliases.POLICY_ID
 FIXTURE_TEAM_ALIAS_REGISTRY_SHA256 = fixture_aliases.REGISTRY_SHA256
 MATCHING_BASIS = fixture_aliases.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "74a0d1ce4c9773a692dd94330814d52c8f02ab4153f8bd8bec738c19f71d574e"
+EXPECTED_CONTRACT_SHA256 = "d38d4ba40bcb85f7b45db4881fa00729d18aaf7c80fa039fe1de6fde6ad9aa8b"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
