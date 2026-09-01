@@ -1,15 +1,15 @@
-"""Shadow reconciliation overlay with explicit evidence-backed team aliases.
+"""Shadow reconciliation overlay with evidence-backed fixture identity V2.
 
-The previously reviewed candidate-local PR258/PR-F implementation is preserved
-byte-for-byte in ``_current_shadow_sportybet_catalog_fanout_reconciliation_candidate_local``.
-This module adds one narrow identity capability: literal FotMob/SportyBet team
-name drift may reconcile only through the versioned, competition-scoped explicit
-registry in ``current_shadow_fixture_identity_aliases``.
+The reviewed candidate-local PR258/PR-F implementation remains the transport and
+replay authority.  This wrapper replaces run-specific display-name matching with a
+versioned Shadow-only identity boundary that can use exact retained FotMob team IDs,
+SportyBet competitor IDs, FotMob short/long names, explicit reviewed aliases and
+reviewed competition-name equivalences.
 
-Everything else stays exact: competition, full UTC kickoff, home/away orientation,
-unique-match enforcement, current provider discovery, direct provider event-detail
-confirmation, freshness, lead window and downstream authority.  No fuzzy matching,
-generic suffix stripping, substring matching, reversal or time tolerance is added.
+Everything else stays exact: full UTC kickoff, home/away orientation, unique-match
+enforcement, current provider discovery, direct provider event-detail confirmation,
+freshness, lead window and downstream authority.  No fuzzy matching, substring
+matching, generic suffix stripping, reversal, rounding or time tolerance is added.
 """
 from __future__ import annotations
 
@@ -23,11 +23,10 @@ from domain import (
     _current_shadow_sportybet_catalog_fanout_reconciliation_candidate_local as legacy,
 )
 from domain import current_shadow_fixture_identity_aliases as fixture_aliases
+from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
 from domain import sportybet_current_event_discovery_reconciliation as _reviewed
 
 
-# Preserve the reviewed implementation's public constants/types unless this
-# overlay explicitly versions the identity boundary below.
 SCHEMA_VERSION = legacy.SCHEMA_VERSION
 DATASET_NAME = legacy.DATASET_NAME
 DISCOVERY_DATASET_NAME = legacy.DISCOVERY_DATASET_NAME
@@ -61,8 +60,12 @@ CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY = legacy.CANDIDATE_LOCAL_DIRECT_DETAIL_POLI
 
 FIXTURE_TEAM_ALIAS_POLICY_ID = fixture_aliases.POLICY_ID
 FIXTURE_TEAM_ALIAS_REGISTRY_SHA256 = fixture_aliases.REGISTRY_SHA256
-MATCHING_BASIS = fixture_aliases.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "d38d4ba40bcb85f7b45db4881fa00729d18aaf7c80fa039fe1de6fde6ad9aa8b"
+FIXTURE_IDENTITY_POLICY_ID = fixture_identity_v2.POLICY_ID
+FIXTURE_IDENTITY_REGISTRY_SHA256 = fixture_identity_v2.REGISTRY_SHA256
+FIXTURE_IDENTITY_SOURCE_REPLAY_POLICY_ID = fixture_identity_v2.SOURCE_REPLAY_POLICY_ID
+FIXTURE_IDENTITY_PROVIDER_ID_POLICY_ID = fixture_identity_v2.PROVIDER_ID_POLICY_ID
+MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
+EXPECTED_CONTRACT_SHA256 = "7dc03972f1ac9ef63a023508fa28439db30fe6c31a3a2c00523ca61aad4a93b4"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -83,7 +86,7 @@ CurrentShadowSportyBetCatalogFanoutReconciliationError = (
 SportyBetCurrentEventDiscoveryError = legacy.SportyBetCurrentEventDiscoveryError
 
 # Keep low-level helpers available to existing tests/callers.  ``_network_get``
-# is intentionally a wrapper-local hook because tests replace it on this module.
+# remains a wrapper-local test seam.
 time = legacy.time
 _canonical = legacy._canonical
 _now_utc = legacy._now_utc
@@ -112,12 +115,12 @@ class _ReviewedShadowProxy:
 
     def __getattr__(self, name: str) -> Any:
         if name == "_match_event":
-            return fixture_aliases.match_event
+            return fixture_identity_v2.match_event
         return getattr(_reviewed, name)
 
 
-# Only the copied candidate-local module sees this proxy.  The frozen reviewed
-# module itself is not mutated, so non-Shadow consumers retain literal matching.
+# Only the copied candidate-local module sees this proxy.  Non-Shadow consumers of
+# the reviewed module retain their original literal matcher.
 legacy.reviewed = _ReviewedShadowProxy()
 
 
@@ -127,6 +130,10 @@ def calculate_contract_sha256() -> str:
         "candidate_local_direct_detail_policy": CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY,
         "fixture_team_alias_policy_id": FIXTURE_TEAM_ALIAS_POLICY_ID,
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
+        "fixture_identity_policy_id": FIXTURE_IDENTITY_POLICY_ID,
+        "fixture_identity_registry_sha256": FIXTURE_IDENTITY_REGISTRY_SHA256,
+        "fixture_identity_source_replay_policy_id": FIXTURE_IDENTITY_SOURCE_REPLAY_POLICY_ID,
+        "fixture_identity_provider_id_policy_id": FIXTURE_IDENTITY_PROVIDER_ID_POLICY_ID,
         "matching_basis": MATCHING_BASIS,
     }
     raw = json.dumps(
@@ -145,50 +152,53 @@ def validate_contract() -> Mapping[str, str]:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
             "Shadow fixture alias registry identity drifted"
         )
+    if fixture_identity_v2.registry_sha256() != FIXTURE_IDENTITY_REGISTRY_SHA256:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "Shadow fixture identity V2 registry drifted"
+        )
     actual = calculate_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
-            "catalog fanout Shadow alias contract drifted"
+            "catalog fanout Shadow fixture identity V2 contract drifted"
         )
     return {
         "contract_sha256": actual,
         "base_contract_sha256": legacy.base.EXPECTED_CONTRACT_SHA256,
         "fixture_team_alias_policy_id": FIXTURE_TEAM_ALIAS_POLICY_ID,
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
+        "fixture_identity_policy_id": FIXTURE_IDENTITY_POLICY_ID,
+        "fixture_identity_registry_sha256": FIXTURE_IDENTITY_REGISTRY_SHA256,
     }
 
 
-# Make the copied candidate-local implementation resolve the new reviewed Shadow
-# contract at runtime.  Its data structures and candidate-local transport logic
-# remain unchanged.
 legacy.MATCHING_BASIS = MATCHING_BASIS
 legacy.EXPECTED_CONTRACT_SHA256 = EXPECTED_CONTRACT_SHA256
 legacy.calculate_contract_sha256 = calculate_contract_sha256
 legacy.validate_contract = validate_contract
 
 
-# Extend the durable bundle representation with the exact alias contract identity.
-# Both original and replay-built bundles use this method, preserving equality and
-# canonical hashing without changing the frozen low-level discovery evidence.
+# Extend the durable bundle representation with both the retained alias identity
+# and the new ID/source-replay identity.  The underlying source evidence remains
+# unchanged and replayed byte-for-byte.
 _legacy_bundle_to_dict = CurrentShadowSportyBetCatalogFanoutReconciliationBundle.to_dict
 
 
-def _bundle_to_dict_with_alias_identity(self: Any) -> dict[str, Any]:
+def _bundle_to_dict_with_identity(self: Any) -> dict[str, Any]:
     payload = _legacy_bundle_to_dict(self)
     payload["matching_basis"] = MATCHING_BASIS
     payload["fixture_team_alias_policy_id"] = FIXTURE_TEAM_ALIAS_POLICY_ID
     payload["fixture_team_alias_registry_sha256"] = FIXTURE_TEAM_ALIAS_REGISTRY_SHA256
+    payload["fixture_identity_policy_id"] = FIXTURE_IDENTITY_POLICY_ID
+    payload["fixture_identity_registry_sha256"] = FIXTURE_IDENTITY_REGISTRY_SHA256
+    payload["fixture_identity_source_replay_policy_id"] = FIXTURE_IDENTITY_SOURCE_REPLAY_POLICY_ID
+    payload["fixture_identity_provider_id_policy_id"] = FIXTURE_IDENTITY_PROVIDER_ID_POLICY_ID
     return payload
 
 
-CurrentShadowSportyBetCatalogFanoutReconciliationBundle.to_dict = (
-    _bundle_to_dict_with_alias_identity
-)
+CurrentShadowSportyBetCatalogFanoutReconciliationBundle.to_dict = _bundle_to_dict_with_identity
 
 
 def _sync_wrapper_hooks() -> None:
-    # Preserve the existing test seam where callers monkeypatch this module's
-    # network function.  ``time`` is the same module object in both modules.
     legacy._network_get = _network_get
     legacy.time = time
 
@@ -224,13 +234,22 @@ def reconcile_current_events_from_catalog_fanout(
 ):
     validate_contract()
     _sync_wrapper_hooks()
-    return legacy.reconcile_current_events_from_catalog_fanout(
+    fanout_snapshot = legacy.verify_current_catalog_fanout_discovery(
+        fanout_evidence_directory,
         repository_root=repository_root,
-        fanout_evidence_directory=fanout_evidence_directory,
-        fotmob_admission_value=fotmob_admission_value,
-        fotmob_captures=fotmob_captures,
-        execute_live_network=execute_live_network,
     )
+    with fixture_identity_v2.identity_context(
+        fotmob_captures=fotmob_captures,
+        fanout_evidence_directory=fanout_evidence_directory,
+        fanout_snapshot=fanout_snapshot,
+    ):
+        return legacy.reconcile_current_events_from_catalog_fanout(
+            repository_root=repository_root,
+            fanout_evidence_directory=fanout_evidence_directory,
+            fotmob_admission_value=fotmob_admission_value,
+            fotmob_captures=fotmob_captures,
+            execute_live_network=execute_live_network,
+        )
 
 
 def discover_and_reconcile_current_events(
@@ -240,13 +259,13 @@ def discover_and_reconcile_current_events(
     fotmob_captures: Sequence[Any],
     execute_live_network: bool,
 ):
-    validate_contract()
-    _sync_wrapper_hooks()
-    # Call the copied implementation directly after syncing the wrapper test seam;
-    # its reviewed proxy supplies the explicit alias matcher at every provisional
-    # and replay boundary.
-    return legacy.discover_and_reconcile_current_events(
+    directory, _snapshot = capture_current_catalog_fanout_discovery(
         repository_root=repository_root,
+        execute_live_network=execute_live_network,
+    )
+    return reconcile_current_events_from_catalog_fanout(
+        repository_root=repository_root,
+        fanout_evidence_directory=directory,
         fotmob_admission_value=fotmob_admission_value,
         fotmob_captures=fotmob_captures,
         execute_live_network=execute_live_network,
@@ -255,7 +274,16 @@ def discover_and_reconcile_current_events(
 
 def verify_current_event_discovery_reconciliation_bundle(value: Any):
     validate_contract()
-    return legacy.verify_current_event_discovery_reconciliation_bundle(value)
+    fanout_snapshot = legacy.verify_current_catalog_fanout_discovery(
+        value._fanout_directory,
+        repository_root=value._repository_root,
+    )
+    with fixture_identity_v2.identity_context(
+        fotmob_captures=value._fotmob_captures,
+        fanout_evidence_directory=value._fanout_directory,
+        fanout_snapshot=fanout_snapshot,
+    ):
+        return legacy.verify_current_event_discovery_reconciliation_bundle(value)
 
 
 __all__ = [
@@ -272,6 +300,10 @@ __all__ = [
     "CurrentShadowSportyBetCatalogFanoutSnapshot",
     "EXPECTED_CONTRACT_SHA256",
     "FANOUT_POLICY",
+    "FIXTURE_IDENTITY_POLICY_ID",
+    "FIXTURE_IDENTITY_PROVIDER_ID_POLICY_ID",
+    "FIXTURE_IDENTITY_REGISTRY_SHA256",
+    "FIXTURE_IDENTITY_SOURCE_REPLAY_POLICY_ID",
     "FIXTURE_TEAM_ALIAS_POLICY_ID",
     "FIXTURE_TEAM_ALIAS_REGISTRY_SHA256",
     "MATCHING_BASIS",
