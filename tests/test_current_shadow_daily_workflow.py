@@ -6,8 +6,12 @@ def test_current_shadow_workflow_is_single_daily_and_on_demand_surface():
     text = path.read_text(encoding="utf-8")
 
     assert 'cron: "0 9 * * *"' in text
-    assert "10:00 WAT (UTC+1)" in text
     assert "workflow_dispatch:" in text
+    assert "issue_comment:" in text
+    assert "github.event.issue.number == 276" in text
+    assert "github.event.comment.user.login == github.repository_owner" in text
+    assert "'/athena-shadow '" in text
+    assert r"/athena-shadow target=([0-9]+) scope=(today|three-day)" in text
     assert 'default: "20"' in text
     assert "fixture_scope:" in text
     assert "- today" in text
