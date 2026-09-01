@@ -6,6 +6,7 @@ import pytest
 
 from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
+from scripts import execute_current_shadow_all_market as cli
 from scripts import execute_current_shadow_all_market_fresh_reprice as fresh_cli
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
@@ -57,3 +58,36 @@ def test_bound_worker_does_not_replace_frozen_portfolio_freshness_policy():
 
     assert original_max_age == 900
     assert runner.portfolio_module.optimize_shadow_portfolio is original_optimizer
+
+
+def test_bound_main_uses_bounded_create_reload_tail_without_weakening_freshness(
+    monkeypatch, tmp_path
+):
+    seen = {}
+
+    monkeypatch.delenv(cli.WORKER_ENV, raising=False)
+    monkeypatch.setattr(runner, "CURRENT_SHADOW_RUN_TIMEOUT_SECONDS", 25 * 60)
+
+    def fake_run(command, *, env, check, timeout):
+        seen["command"] = command
+        seen["env"] = env
+        seen["check"] = check
+        seen["timeout"] = timeout
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(bound.subprocess, "run", fake_run)
+
+    assert bound.main(
+        [
+            "--target-size",
+            "20",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    ) == 0
+    assert bound.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 60 * 60
+    assert seen["timeout"] == 60 * 60
+    assert seen["check"] is False
+    assert seen["env"][cli.WORKER_ENV] == "1"
+    assert runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS == 60 * 60
+    assert runner.portfolio_module.MAX_QUOTE_AGE_SECONDS == 900
