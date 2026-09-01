@@ -60,34 +60,71 @@ def test_bound_worker_does_not_replace_frozen_portfolio_freshness_policy():
     assert runner.portfolio_module.optimize_shadow_portfolio is original_optimizer
 
 
-def test_bound_main_uses_bounded_create_reload_tail_without_weakening_freshness(
-    monkeypatch, tmp_path
-):
-    seen = {}
+def test_bound_supervisor_extends_generic_budget_but_preserves_workflow_margin():
+    assert cli.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 50 * 60
+    assert bound.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 55 * 60
+    assert bound._supervisor_timeout_seconds() == 55 * 60
+    assert bound._supervisor_timeout_seconds() < bound.WORKFLOW_JOB_TIMEOUT_SECONDS
+    assert bound.WORKFLOW_JOB_TIMEOUT_SECONDS == 60 * 60
+    assert runner.portfolio_module.MAX_QUOTE_AGE_SECONDS == 900
 
+
+def test_bound_main_uses_exact_prf_supervisor_budget(monkeypatch, tmp_path):
+    seen = {}
     monkeypatch.delenv(cli.WORKER_ENV, raising=False)
-    monkeypatch.setattr(runner, "CURRENT_SHADOW_RUN_TIMEOUT_SECONDS", 25 * 60)
 
     def fake_run(command, *, env, check, timeout):
         seen["command"] = command
         seen["env"] = env
         seen["check"] = check
         seen["timeout"] = timeout
-        return SimpleNamespace(returncode=0)
+        return SimpleNamespace(returncode=23)
 
     monkeypatch.setattr(bound.subprocess, "run", fake_run)
 
-    assert bound.main(
+    result = bound.main(
         [
             "--target-size",
             "20",
             "--output-dir",
             str(tmp_path),
         ]
-    ) == 0
-    assert bound.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 60 * 60
-    assert seen["timeout"] == 60 * 60
+    )
+
+    assert result == 23
+    assert seen["timeout"] == 55 * 60
     assert seen["check"] is False
     assert seen["env"][cli.WORKER_ENV] == "1"
-    assert runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS == 60 * 60
+    assert seen["command"][0] == bound.sys.executable
+    assert seen["command"][1:3] == ["-m", bound.WORKER_MODULE]
     assert runner.portfolio_module.MAX_QUOTE_AGE_SECONDS == 900
+
+
+def test_timeout_receipt_reports_exact_prf_budget_and_restores_generic_budget(
+    monkeypatch, tmp_path
+):
+    original = runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS
+    observed = {}
+    sentinel = SimpleNamespace(to_dict=lambda: {"status": "timeout"})
+
+    def fake_timeout_receipt(*, target_size, output_dir):
+        observed["target_size"] = target_size
+        observed["output_dir"] = output_dir
+        observed["budget"] = runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS
+        return sentinel
+
+    monkeypatch.setattr(
+        runner,
+        "write_current_shadow_timeout_receipt",
+        fake_timeout_receipt,
+    )
+
+    result = bound._write_timeout_receipt(target_size=20, output_dir=tmp_path)
+
+    assert result is sentinel
+    assert observed == {
+        "target_size": 20,
+        "output_dir": tmp_path,
+        "budget": 55 * 60,
+    }
+    assert runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS == original
