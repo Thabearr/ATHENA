@@ -5,7 +5,8 @@ def test_current_shadow_workflow_is_single_daily_and_on_demand_surface():
     path = Path(".github/workflows/current-shadow-all-market.yml")
     text = path.read_text(encoding="utf-8")
 
-    assert 'cron: "0 7 * * *"' in text
+    assert 'cron: "0 9 * * *"' in text
+    assert "10:00 WAT (UTC+1)" in text
     assert "workflow_dispatch:" in text
     assert 'default: "20"' in text
     assert "fixture_scope:" in text
