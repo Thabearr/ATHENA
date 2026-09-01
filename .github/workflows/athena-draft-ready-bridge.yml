@@ -1,0 +1,99 @@
+name: ATHENA Draft Ready Bridge
+
+on:
+  issue_comment:
+    types: [created]
+
+concurrency:
+  group: athena-ready-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  mark_ready:
+    if: >-
+      github.event.issue.pull_request &&
+      github.event.comment.user.login == 'Thabearr' &&
+      startsWith(github.event.comment.body, '/athena-ready')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: write
+
+    steps:
+      - name: Validate exact PR head and mark ready
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
+        with:
+          script: |
+            const body = context.payload.comment.body.trim();
+            const match = /^\/athena-ready head=([0-9a-f]{40})$/.exec(body);
+            if (!match) {
+              core.setFailed('Expected exact command: /athena-ready head=<40-char lowercase SHA>');
+              return;
+            }
+            const expectedHead = match[1];
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+
+            const expectedRepo = `${context.repo.owner}/${context.repo.repo}`;
+            if (pr.head.repo?.full_name !== expectedRepo) {
+              core.setFailed('Ready Bridge only accepts same-repository pull requests.');
+              return;
+            }
+            if (pr.base.ref !== 'main') {
+              core.setFailed(`Ready Bridge requires base=main; found ${pr.base.ref}.`);
+              return;
+            }
+            if (pr.state !== 'open') {
+              core.setFailed('Pull request must still be open.');
+              return;
+            }
+            if (!pr.draft) {
+              core.setFailed('Pull request is already ready for review.');
+              return;
+            }
+            if (pr.head.sha !== expectedHead) {
+              core.setFailed(`Stale ready command: expected ${expectedHead}, current ${pr.head.sha}.`);
+              return;
+            }
+
+            const mutation = `
+              mutation MarkReady($pullRequestId: ID!) {
+                markPullRequestReadyForReview(input: {pullRequestId: $pullRequestId}) {
+                  pullRequest {
+                    id
+                    number
+                    isDraft
+                    state
+                  }
+                }
+              }
+            `;
+            const result = await github.graphql(mutation, {
+              pullRequestId: pr.node_id,
+            });
+            const marked = result.markPullRequestReadyForReview?.pullRequest;
+            if (!marked || marked.isDraft || marked.state !== 'OPEN') {
+              core.setFailed('GitHub did not confirm the pull request as ready for review.');
+              return;
+            }
+
+            const { data: after } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: context.issue.number,
+            });
+            if (after.head.sha !== expectedHead) {
+              core.setFailed('Pull-request head changed during ready transition.');
+              return;
+            }
+            if (after.draft || after.state !== 'open') {
+              core.setFailed('REST verification did not confirm an open ready pull request.');
+              return;
+            }
+
+            core.info(`PR #${after.number} is ready at exact head ${after.head.sha}.`);
