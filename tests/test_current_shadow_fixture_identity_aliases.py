@@ -46,10 +46,10 @@ def _reviewed(
 def test_registry_identity_is_deterministic_and_pinned():
     assert aliases.POLICY_ID == "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V1"
     assert aliases.REGISTRY_SHA256 == (
-        "e39bcae6b4162a68ab82c067c5cf5658a0f95a1948c8715a2317b5827fa800f8"
+        "9615b71a563b3704c607fb7cd1ebd652165ebd36d50971570486f7f6fab24d07"
     )
     assert aliases.registry_sha256() == aliases.REGISTRY_SHA256
-    assert len(aliases.TEAM_ALIASES) == 40
+    assert len(aliases.TEAM_ALIASES) == 44
 
 
 def test_literal_identity_still_matches_without_registry_entry():
@@ -91,6 +91,40 @@ def test_observed_league_two_alias_pair_matches():
         away="Grimsby Town",
         competition="League Two",
         kickoff=KICKOFF,
+    )
+    assert aliases.match_event(event, (row,)) == (row,)
+
+
+def test_existing_reviewed_saudi_alias_pair_matches():
+    kickoff = datetime(2026, 9, 1, 18, 0, tzinfo=UTC)
+    row = _reviewed(
+        home="Al Hilal",
+        away="Al Ahli",
+        competition="Saudi Pro League",
+        kickoff=kickoff,
+    )
+    event = _event(
+        home="Al Hilal SFC",
+        away="Al Ahli Saudi FC",
+        competition="Saudi Pro League",
+        kickoff=kickoff,
+    )
+    assert aliases.match_event(event, (row,)) == (row,)
+
+
+def test_existing_reviewed_swiss_alias_pair_matches():
+    kickoff = datetime(2026, 9, 1, 18, 30, tzinfo=UTC)
+    row = _reviewed(
+        home="FC Zürich",
+        away="Young Boys",
+        competition="Super League",
+        kickoff=kickoff,
+    )
+    event = _event(
+        home="FC Zurich",
+        away="Young Boys Bern",
+        competition="Super League",
+        kickoff=kickoff,
     )
     assert aliases.match_event(event, (row,)) == (row,)
 
