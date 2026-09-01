@@ -10,13 +10,20 @@ UTC = timezone.utc
 KICKOFF = datetime(2026, 9, 1, 18, 45, tzinfo=UTC)
 
 
-def _row(*, fixture_id="5836791", home="Lincoln", away="Blackburn", competition="Championship"):
+def _row(
+    *,
+    fixture_id="5836791",
+    home="Lincoln",
+    away="Blackburn",
+    competition="Championship",
+    kickoff=KICKOFF,
+):
     return SimpleNamespace(
         source_fixture_identifier=fixture_id,
         home_team=home,
         away_team=away,
         competition=competition,
-        kickoff=KICKOFF,
+        kickoff=kickoff,
     )
 
 
@@ -28,6 +35,7 @@ def _candidate(
     away="Blackburn",
     away_long="Blackburn Rovers",
     competition="Championship",
+    kickoff=KICKOFF,
 ):
     return SimpleNamespace(
         source_match_id=fixture_id,
@@ -36,7 +44,7 @@ def _candidate(
         away_name=away,
         away_long_name=away_long,
         source_competition_name=competition,
-        kickoff_utc=KICKOFF,
+        kickoff_utc=kickoff,
     )
 
 
@@ -91,6 +99,51 @@ def test_reviewed_scoped_alias_covers_provider_only_name_variant():
         source_name="Portsmouth",
         provider_name="Portsmouth FC",
     ) is True
+
+
+def test_run34_evidence_matrix_recovers_eleven_reviewed_provider_fixtures():
+    cases = (
+        (5836791, "Championship", KICKOFF, "Lincoln", "Lincoln City", "Lincoln City", "Blackburn", "Blackburn Rovers", "Blackburn Rovers"),
+        (5836792, "Championship", KICKOFF, "Portsmouth", "Portsmouth", "Portsmouth FC", "Derby", "Derby County", "Derby County"),
+        (5836793, "Championship", KICKOFF, "Preston", "Preston North End", "Preston North End", "Bristol City", "Bristol City", "Bristol City"),
+        (5836794, "Championship", KICKOFF, "Sheff Utd", "Sheffield United", "Sheffield United", "Bolton", "Bolton Wanderers", "Bolton Wanderers"),
+        (5836796, "Championship", KICKOFF, "Swansea", "Swansea City", "Swansea City", "Watford", "Watford", "Watford"),
+        (5836797, "Championship", KICKOFF, "West Ham", "West Ham United", "West Ham", "Wolves", "Wolverhampton Wanderers", "Wolves"),
+        (5836790, "Championship", datetime(2026, 9, 1, 19, 0, tzinfo=UTC), "Birmingham", "Birmingham City", "Birmingham City", "Southampton", "Southampton", "Southampton"),
+        (5836795, "Championship", datetime(2026, 9, 1, 19, 0, tzinfo=UTC), "Stoke", "Stoke City", "Stoke City", "Norwich", "Norwich City", "Norwich"),
+        (6003654, "Coppa Italia", datetime(2026, 9, 1, 19, 0, tzinfo=UTC), "Torino", "Torino", "Torino", "Monza", "Monza", "Monza"),
+        (5970116, "Saudi Pro League", datetime(2026, 9, 1, 18, 0, tzinfo=UTC), "Al Hilal", "Al Hilal", "Al Hilal SFC", "Al Ahli", "Al Ahli", "Al Ahli Saudi FC"),
+        (5804250, "Super League", datetime(2026, 9, 1, 18, 30, tzinfo=UTC), "FC Zürich", "FC Zürich", "FC Zurich", "Young Boys", "Young Boys", "Young Boys Bern"),
+    )
+
+    recovered = 0
+    for fixture_id, competition, kickoff, home, home_long, provider_home, away, away_long, provider_away in cases:
+        row = _row(
+            fixture_id=str(fixture_id),
+            home=home,
+            away=away,
+            competition=competition,
+            kickoff=kickoff,
+        )
+        candidate = _candidate(
+            fixture_id=fixture_id,
+            home=home,
+            home_long=home_long,
+            away=away,
+            away_long=away_long,
+            competition=competition,
+            kickoff=kickoff,
+        )
+        event = _event(
+            home=provider_home,
+            away=provider_away,
+            competition=competition,
+            kickoff=kickoff,
+        )
+        if fanout._match_event(event, (row,), _admission(candidate)) == (row,):
+            recovered += 1
+
+    assert recovered == 11
 
 
 def test_alias_is_competition_scoped_and_not_fuzzy():
