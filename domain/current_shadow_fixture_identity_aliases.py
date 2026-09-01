@@ -103,6 +103,12 @@ TEAM_ALIASES: tuple[TeamAlias, ...] = tuple(sorted((
     TeamAlias("League Two", "Shrewsbury", "Shrewsbury Town"),
     TeamAlias("League Two", "Salford", "Salford City"),
     TeamAlias("League Two", "Newport", "Newport County"),
+
+    # Existing reviewed top-flight identities that also drifted in run #34
+    TeamAlias("Saudi Pro League", "Al Hilal", "Al Hilal SFC"),
+    TeamAlias("Saudi Pro League", "Al Ahli", "Al Ahli Saudi FC"),
+    TeamAlias("Super League", "FC Zürich", "FC Zurich"),
+    TeamAlias("Super League", "Young Boys", "Young Boys Bern"),
 )))
 
 
