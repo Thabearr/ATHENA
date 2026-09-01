@@ -1,17 +1,31 @@
-name: Current ATHENA Shadow all-market request
+name: ATHENA Current Shadow daily + on-demand
 
 on:
+  schedule:
+    - cron: "0 7 * * *"
   workflow_dispatch:
     inputs:
       target_size:
-        description: Requested research fold target (never padded)
+        description: Requested research fold target, 1..50 (never padded)
         required: true
         default: "20"
         type: string
+      fixture_scope:
+        description: Today only, or the existing three-day research horizon
+        required: true
+        default: today
+        type: choice
+        options:
+          - today
+          - three-day
 
 permissions:
   contents: read
   actions: read
+
+concurrency:
+  group: current-shadow-all-market
+  cancel-in-progress: false
 
 jobs:
   current-shadow-all-market:
@@ -34,6 +48,36 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
+
+      - name: Resolve daily/on-demand request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET_SIZE: ${{ inputs.target_size }}
+          INPUT_FIXTURE_SCOPE: ${{ inputs.fixture_scope }}
+        run: |
+          if [ "${EVENT_NAME}" = "schedule" ]; then
+            target_size="20"
+            fixture_scope="today"
+          else
+            target_size="${INPUT_TARGET_SIZE}"
+            fixture_scope="${INPUT_FIXTURE_SCOPE}"
+          fi
+
+          if ! [[ "${target_size}" =~ ^[0-9]+$ ]] || [ "${target_size}" -lt 1 ] || [ "${target_size}" -gt 50 ]; then
+            echo "target_size must be an integer from 1 through 50" >&2
+            exit 2
+          fi
+          case "${fixture_scope}" in
+            today|three-day) ;;
+            *)
+              echo "fixture_scope must be today or three-day" >&2
+              exit 2
+              ;;
+          esac
+
+          printf 'ATHENA_TARGET_SIZE=%s\n' "${target_size}" >> "${GITHUB_ENV}"
+          printf 'ATHENA_FIXTURE_SCOPE=%s\n' "${fixture_scope}" >> "${GITHUB_ENV}"
+          printf 'Resolved ATHENA request: target=%s scope=%s\n' "${target_size}" "${fixture_scope}"
 
       - name: Restore fixed PR119 materialized bootstrap
         env:
@@ -63,8 +107,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
         run: |
-          python -m scripts.execute_current_shadow_all_market_fresh_reprice_bound \
-            --target-size "${{ inputs.target_size }}" \
+          python -m scripts.execute_current_shadow_daily \
+            --target-size "${ATHENA_TARGET_SIZE}" \
+            --fixture-scope "${ATHENA_FIXTURE_SCOPE}" \
             --output-dir artifacts/current-shadow-all-market
 
       - name: Preserve exact current source evidence
@@ -82,6 +127,25 @@ jobs:
               cp -a "${source_dir}" "${evidence_root}/"
             fi
           done
+
+      - name: Email durable Shadow result when configured
+        if: always()
+        continue-on-error: true
+        env:
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
+        run: |
+          if [ -z "${GMAIL_ADDRESS}" ] || [ -z "${GMAIL_APP_PASSWORD}" ] || [ -z "${RECIPIENT_EMAIL}" ]; then
+            echo "ATHENA email delivery skipped: repository email secrets are not fully configured."
+            exit 0
+          fi
+          receipt='artifacts/current-shadow-all-market/current-shadow-all-market-run-receipt.json'
+          if [ ! -f "${receipt}" ]; then
+            echo "ATHENA email delivery skipped: durable Shadow run receipt is unavailable."
+            exit 0
+          fi
+          python -m scripts.send_current_shadow_email --receipt "${receipt}"
 
       - name: Upload durable research receipt
         if: always()
