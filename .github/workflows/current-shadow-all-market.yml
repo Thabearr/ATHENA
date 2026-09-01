@@ -63,7 +63,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
         run: |
-          python -m scripts.execute_current_shadow_all_market_summary_reuse \
+          python -m scripts.execute_current_shadow_all_market_fresh_reprice \
             --target-size "${{ inputs.target_size }}" \
             --output-dir artifacts/current-shadow-all-market
 
