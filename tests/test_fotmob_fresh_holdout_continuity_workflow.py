@@ -56,3 +56,16 @@ def test_watchdog_pins_exact_current_primary_continuity_workflow_blob() -> None:
         'git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" '
         f'= "{expected}"'
     ) in watchdog
+
+
+def test_watchdog_pins_exact_current_continuity_module_blob() -> None:
+    root = _repo_root()
+    continuity_module = root / "domain/fotmob_fresh_holdout_continuity.py"
+    watchdog = (
+        root / ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
+    ).read_text(encoding="utf-8")
+    expected = _git_blob_sha(continuity_module)
+    assert (
+        'git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" '
+        f'= "{expected}"'
+    ) in watchdog

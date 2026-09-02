@@ -65,14 +65,18 @@ def _reviewed_gh_download(endpoint: str) -> bytes:
 
 
 def _validate_reviewed_collection_run(run: dict, *, run_id: int) -> str:
-    if run.get("name") != mirror.WORKFLOW_NAME:
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "workflow run name escaped reviewed collection workflow"
-        )
     event = run.get("event")
     if event not in {"schedule", "workflow_dispatch"} or run.get("status") != "completed":
         raise mirror.FreshHoldoutReleaseReceiptMirrorError(
             "receipt mirroring requires one completed reviewed collection run"
+        )
+    if run.get("workflow_id") != continuity.PRIMARY_WORKFLOW_ID:
+        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
+            "workflow run id escaped reviewed collection workflow"
+        )
+    if event == "schedule" and run.get("name") != continuity.PRIMARY_SCHEDULE_RUN_NAME:
+        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
+            "scheduled workflow run-name escaped reviewed collection workflow"
         )
     if run.get("head_branch") != "main":
         raise mirror.FreshHoldoutReleaseReceiptMirrorError(

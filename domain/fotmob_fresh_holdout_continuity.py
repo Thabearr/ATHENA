@@ -17,7 +17,9 @@ WATCHDOG_WORKFLOW_NAME = "Watch FotMob Fresh-Holdout Scheduler Liveness"
 WATCHDOG_WORKFLOW_PATH = ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
 WATCHDOG_JOB_NAME = "verify and repair scheduler control plane"
 PRIMARY_WORKFLOW_NAME = "FotMob UTC-Native xG Fresh-Holdout Collection Runner"
+PRIMARY_WORKFLOW_ID = 336875088
 PRIMARY_WORKFLOW_PATH = ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml"
+PRIMARY_SCHEDULE_RUN_NAME = "ATHENA fresh-holdout schedule source= target= cron= confirm="
 WATCHDOG_CRON = "3,33 * * * *"
 PRIMARY_CRON_BY_MINUTE = {7: "7 * * * *", 37: "37 * * * *"}
 MINIMUM_ARM_LEAD_SECONDS = 90
@@ -237,8 +239,17 @@ def validate_continuity_dispatch(
 
     if type(dispatch_run) is not dict:
         raise _error("dispatch run metadata must be an exact object")
-    if dispatch_run.get("name") != PRIMARY_WORKFLOW_NAME:
-        raise _error("dispatch workflow name drifted")
+    if dispatch_run.get("workflow_id") != PRIMARY_WORKFLOW_ID:
+        raise _error("dispatch workflow id drifted")
+    expected_run_name = (
+        "ATHENA fresh-holdout workflow_dispatch "
+        f"source={source_watchdog_run_id} "
+        f"target={plan.target_slot_text} "
+        f"cron={plan.target_cron} "
+        f"confirm={CONTINUITY_CONFIRMATION}"
+    )
+    if dispatch_run.get("name") != expected_run_name:
+        raise _error("dispatch workflow run-name drifted")
     if dispatch_run.get("path") != PRIMARY_WORKFLOW_PATH:
         raise _error("dispatch workflow path drifted")
     if dispatch_run.get("event") != "workflow_dispatch":
@@ -326,6 +337,8 @@ __all__ = [
     "MINIMUM_ARM_LEAD_SECONDS",
     "PRIMARY_CRON_BY_MINUTE",
     "PRIMARY_DELIVERY_GRACE_SECONDS",
+    "PRIMARY_SCHEDULE_RUN_NAME",
+    "PRIMARY_WORKFLOW_ID",
     "PRIMARY_WORKFLOW_NAME",
     "PRIMARY_WORKFLOW_PATH",
     "WATCHDOG_CRON",
