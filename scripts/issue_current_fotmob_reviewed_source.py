@@ -341,14 +341,15 @@ class CurrentFotMobReviewedSourceExecution:
         }
 
 
-def build_verified_current_fotmob_bootstrap_from_capture(
+def _build_verified_current_fotmob_bootstrap_from_capture(
     capture_directory: Path,
     *,
     issued_at: Any,
     repository_root: Path | None = None,
     code_state: Mapping[str, Any] | None = None,
+    shadow_policy: bool,
 ) -> CurrentFotMobReviewedSourceExecution:
-    """Replay one exact PR38 capture through the frozen PR243 identity policy."""
+    """Replay one exact PR38 capture through one fixed reviewed current policy."""
 
     repository = _repo_root(repository_root)
     capture_root = repository / DATA_MATCHES_CAPTURE_ROOT
@@ -365,10 +366,30 @@ def build_verified_current_fotmob_bootstrap_from_capture(
     raw = _read_capture_raw(Path(capture_directory))
     candidate_bundle = build_current_fotmob_fixture_candidate_bundle(raw, manifest)
     issued = _utc(issued_at, "issued_at")
-    policy_result = build_current_fotmob_fixture_review_policy_result(
-        candidate_bundle,
-        reviewed_at=issued,
-    )
+    if type(shadow_policy) is not bool:
+        raise CurrentFotMobReviewedSourceError("shadow_policy must be exact bool")
+    if shadow_policy:
+        policy_result = build_current_shadow_fotmob_fixture_review_policy_result(
+            candidate_bundle,
+            reviewed_at=issued,
+        )
+        minimum_lead_seconds = SHADOW_MINIMUM_LEAD_SECONDS
+        admission_reviewer_reference = SHADOW_ADMISSION_REVIEWER_REFERENCE
+        admission_notes = (
+            f"{SHADOW_POLICY_ID}; deterministic catalog admission for every and only "
+            "current Shadow V2 policy-approved FotMob fixture"
+        )
+    else:
+        policy_result = build_current_fotmob_fixture_review_policy_result(
+            candidate_bundle,
+            reviewed_at=issued,
+        )
+        minimum_lead_seconds = DEFAULT_MINIMUM_LEAD_SECONDS
+        admission_reviewer_reference = ADMISSION_REVIEWER_REFERENCE
+        admission_notes = (
+            f"{POLICY_ID}; deterministic catalog admission for every and only "
+            "PR243 policy-approved current FotMob fixture"
+        )
     if policy_result.policy_approved_count == 0:
         raise CurrentFotMobReviewedSourceError(STATUS_NO_FIXTURES)
 
@@ -393,7 +414,7 @@ def build_verified_current_fotmob_bootstrap_from_capture(
             input_path=temporary_path,
             evidence_root=capture_root,
             as_of=issued,
-            minimum_lead_seconds=DEFAULT_MINIMUM_LEAD_SECONDS,
+            minimum_lead_seconds=minimum_lead_seconds,
             code_state=code_state,
         )
     finally:
@@ -414,11 +435,8 @@ def build_verified_current_fotmob_bootstrap_from_capture(
         source_capability_sha256=sha256_reviewed_source_capability(),
         disposition=ReviewedFixtureCatalogAdmissionDisposition.ADMITTED,
         reviewed_at=issued,
-        reviewer_reference=ADMISSION_REVIEWER_REFERENCE,
-        notes=(
-            f"{POLICY_ID}; deterministic catalog admission for every and only "
-            "PR243 policy-approved current FotMob fixture"
-        ),
+        reviewer_reference=admission_reviewer_reference,
+        notes=admission_notes,
     )
     admission = build_reviewed_fixture_catalog_admission(
         handoff,
@@ -464,7 +482,43 @@ def build_verified_current_fotmob_bootstrap_from_capture(
     )
 
 
-def issue_current_fotmob_reviewed_source(
+def build_verified_current_fotmob_bootstrap_from_capture(
+    capture_directory: Path,
+    *,
+    issued_at: Any,
+    repository_root: Path | None = None,
+    code_state: Mapping[str, Any] | None = None,
+) -> CurrentFotMobReviewedSourceExecution:
+    """Replay one exact PR38 capture through the frozen PR243 identity policy."""
+
+    return _build_verified_current_fotmob_bootstrap_from_capture(
+        capture_directory,
+        issued_at=issued_at,
+        repository_root=repository_root,
+        code_state=code_state,
+        shadow_policy=False,
+    )
+
+
+def build_verified_current_shadow_fotmob_bootstrap_from_capture(
+    capture_directory: Path,
+    *,
+    issued_at: Any,
+    repository_root: Path | None = None,
+    code_state: Mapping[str, Any] | None = None,
+) -> CurrentFotMobReviewedSourceExecution:
+    """Replay one exact PR38 capture through the fixed Shadow V2 1800s policy."""
+
+    return _build_verified_current_fotmob_bootstrap_from_capture(
+        capture_directory,
+        issued_at=issued_at,
+        repository_root=repository_root,
+        code_state=code_state,
+        shadow_policy=True,
+    )
+
+
+def _issue_current_fotmob_reviewed_source(
     *,
     request_date: str,
     timezone: str,
@@ -473,8 +527,9 @@ def issue_current_fotmob_reviewed_source(
     repository_root: Path | None = None,
     connection_factory: Callable[..., Any] | None = None,
     clock: Callable[[], dt.datetime] | None = None,
+    replay_builder: Callable[..., CurrentFotMobReviewedSourceExecution],
 ) -> CurrentFotMobReviewedSourceExecution:
-    """Capture one current transparent source response using frozen PR243 policy."""
+    """Capture one transparent source response then apply a fixed policy."""
 
     if type(execute_live_network) is not bool or execute_live_network is not True:
         raise CurrentFotMobReviewedSourceError(
@@ -504,10 +559,58 @@ def issue_current_fotmob_reviewed_source(
             "transparent current FotMob data-matches acquisition failed"
         ) from exc
     issued = clock() if clock is not None else dt.datetime.now(dt.timezone.utc)
-    return build_verified_current_fotmob_bootstrap_from_capture(
+    return replay_builder(
         capture_directory,
         issued_at=issued,
         repository_root=repository,
+    )
+
+
+def issue_current_fotmob_reviewed_source(
+    *,
+    request_date: str,
+    timezone: str,
+    ccode3: str,
+    execute_live_network: bool,
+    repository_root: Path | None = None,
+    connection_factory: Callable[..., Any] | None = None,
+    clock: Callable[[], dt.datetime] | None = None,
+) -> CurrentFotMobReviewedSourceExecution:
+    """Capture one current transparent source response using frozen PR243 policy."""
+
+    return _issue_current_fotmob_reviewed_source(
+        request_date=request_date,
+        timezone=timezone,
+        ccode3=ccode3,
+        execute_live_network=execute_live_network,
+        repository_root=repository_root,
+        connection_factory=connection_factory,
+        clock=clock,
+        replay_builder=build_verified_current_fotmob_bootstrap_from_capture,
+    )
+
+
+def issue_current_shadow_fotmob_reviewed_source(
+    *,
+    request_date: str,
+    timezone: str,
+    ccode3: str,
+    execute_live_network: bool,
+    repository_root: Path | None = None,
+    connection_factory: Callable[..., Any] | None = None,
+    clock: Callable[[], dt.datetime] | None = None,
+) -> CurrentFotMobReviewedSourceExecution:
+    """Capture one source response using the fixed current Shadow V2 policy."""
+
+    return _issue_current_fotmob_reviewed_source(
+        request_date=request_date,
+        timezone=timezone,
+        ccode3=ccode3,
+        execute_live_network=execute_live_network,
+        repository_root=repository_root,
+        connection_factory=connection_factory,
+        clock=clock,
+        replay_builder=build_verified_current_shadow_fotmob_bootstrap_from_capture,
     )
 
 
