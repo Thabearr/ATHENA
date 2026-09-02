@@ -1,12 +1,12 @@
-# Current Shadow Price-all + all-market Router (PR D)
+# Current Shadow Price-all + Prediction-first all-market Router (PR 3 of #280)
 
-**Master issue:** #261 Track E  
-**Boundary:** research / Shadow only  
+**Master issue:** #280 Shadow hardening
+**Boundary:** research / Shadow only
 **Production / selection / Portfolio / execution authority:** false
 
 ## Current source lane
 
-PR D does not accept a caller-authored PR-C scan, xG pair, provider-status map,
+PR 3 does not accept a caller-authored PR-C scan, xG pair, provider-status map,
 quote list, source-lane string, or issuance token.
 
 The current chain is:
@@ -25,7 +25,7 @@ The current chain is:
 7. Price-all over the complete PR-C audit surface;
 8. Router over the complete builder-issued Price-all bundle after source replay.
 
-PR D does **not** modify `CurrentAllMarketShadowFixtureScan`; PR-C canonical
+PR 3 does **not** modify `CurrentAllMarketShadowFixtureScan`; PR-C canonical
 serialization/hash semantics therefore remain the merged PR-C contract.
 
 ## Exact provider identity
@@ -36,7 +36,7 @@ The join is exact on event ID, market ID, specifier and outcome ID, and also che
 market/outcome names plus raw/manifest/inventory SHAs. There is no fuzzy matching,
 case-fold fallback, nearest line or cross-snapshot join.
 
-For Asian Handicap, PR-B's provider `hcp=` is the HOME line. PR D preserves that
+For Asian Handicap, PR-B's provider `hcp=` is the HOME line. PR 3 preserves that
 provider line and uses PR-C orientation: HOME keeps it; AWAY uses its exact
 opposite. Current AH remains unavailable whenever PR-B remains unproven.
 
@@ -55,7 +55,9 @@ zero EV rows are retained.
 
 Proportional de-vig is permitted only for a complete mutually-exclusive,
 exhaustive, same-snapshot ordinary partition. Incomplete/cross-snapshot ordinary
-partitions remain explicit price audit rows but are Router-ineligible.
+partitions remain explicit price audit rows; they are rejected by the retained
+value-first counterfactual, while Prediction-first uses the exact model event
+probability and current odds.
 
 Double Chance and 1UP/2UP are overlapping event sets and are never normalized as
 an ordinary partition. DNB uses WIN/PUSH/LOSS unit-stake settlement EV. Asian
@@ -67,28 +69,38 @@ present, PR-B registry/observation identity, exact provider raw/manifest/invento
 current fixture reconciliation, current mapping rebind, bridge bundle, score-matrix
 audit and specialist evidence where applicable.
 
-## Router
+## Prediction-first Router V2
 
 Router input is only the builder-issued `ShadowPriceAllBundle`; it is replayed from
 its retained source context before selection, so a caller cannot route a hand-picked
 subset of rows.
 
-Frozen conservative thresholds remain:
+The former value-first Router remains available as an explicit diagnostic
+counterfactual, but it has no selection authority. Prediction-first V2 records
+both policies and preserves model, quote, value, eligibility, rejection and rank
+fields for audit/replay.
 
-- scalar-event model probability ≥ **0.55**;
-- net EV > **0**;
-- robust net EV > **0**;
-- robust edge > **0** where ordinary fair probability is identifiable;
-- ordinary partitions require complete same-snapshot de-vig.
+Prediction confidence is comparable across the reviewed market semantics:
 
-Ranking is deterministic: robust EV, then identified robust edge, then scalar-event
-probability floor, then stable opportunity ID. The result retains selected (if any),
-runner-up eligible and strongest rejected/counterfactual. `NO_BET` is a successful
-terminal research result.
+- scalar event markets: the exact model event probability;
+- DNB: `P(WIN) + P(PUSH)`;
+- Asian Handicap: `P(WIN) + P(HALF_WIN) + P(PUSH)`.
 
-## Explicitly outside PR D
+Incomplete or malformed settlement evidence is not comparable. The common
+prediction-confidence floor is **0.55** (inclusive), and the exact current
+decimal-odds floor is **1.09** (inclusive). Positive EV, robust EV, robust edge,
+fair probability, overround and bookmaker-implied probability remain diagnostics;
+they are not Prediction-first eligibility or ranking authority.
+
+Ranking is deterministic: prediction confidence descending, then stable canonical
+opportunity ID. The result retains the Prediction-first selection/rank and the
+former value-first selected/runner-up/counterfactual outcome. `NO_BET` is a
+successful terminal research result.
+
+## Explicitly outside PR 3
 
 No Portfolio/target-20/caps, final current runner, share-code create/reload, login,
 cookies, wallet, stake or wager. All production/execution flags remain false and
-`wager_placed=false`. PR E is the later Portfolio/current-runner mission; PR F is
-the later live all-market field-proof/hardening mission.
+`wager_placed=false`. Portfolio selection semantics remain the separate PR 4
+boundary; this Router output remains source-replayable for existing downstream
+consumers.

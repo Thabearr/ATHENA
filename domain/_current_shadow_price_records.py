@@ -7,9 +7,16 @@ from typing import Any, Mapping, Optional
 import math
 from domain.markets import MarketId, OutcomeId
 from domain._current_shadow_price_core import (
-    AUTHORITY_FLAGS, DATASET_NAME, ROUTER_POLICY_ID, SCHEMA_VERSION,
+    AH_PREDICTION_CONFIDENCE_METHOD,
+    AUTHORITY_FLAGS,
+    DATASET_NAME,
+    DNB_PREDICTION_CONFIDENCE_METHOD,
+    ROUTER_POLICY_ID,
+    SCALAR_PREDICTION_CONFIDENCE_METHOD,
+    SCHEMA_VERSION,
     ShadowDevigStatus, ShadowModelAgreementStatus, ShadowOpportunityEligibility,
     ShadowPriceDisposition, ShadowPriceError, ShadowRouterDecisionStatus,
+    VALUE_FIRST_ROUTER_POLICY_ID,
     _EVENT_RE, _finite, _odds, _probability, _require_sha, _sha256,
 )
 
@@ -134,14 +141,68 @@ class ShadowRoutedOpportunity:
     opportunity_id: str; price_result: ShadowPriceResult; eligibility: ShadowOpportunityEligibility
     robust_net_expected_value: Optional[float]; robust_edge: Optional[float]; event_probability_floor: Optional[float]
     model_agreement: ShadowModelAgreementStatus; rejection_reasons: tuple[str,...]
+    prediction_confidence: Optional[float] = None
+    prediction_confidence_method: Optional[str] = None
+    prediction_first_rank: Optional[int] = None
+    value_first_eligibility: Optional[ShadowOpportunityEligibility] = None
+    value_first_rejection_reasons: tuple[str,...] = ()
+    value_first_rank: Optional[int] = None
     def __post_init__(self) -> None:
         _require_sha(self.opportunity_id,"opportunity_id")
         if type(self.price_result) is not ShadowPriceResult: raise ShadowPriceError("price_result type mismatch")
+        if type(self.eligibility) is not ShadowOpportunityEligibility:
+            raise ShadowPriceError("prediction-first eligibility type mismatch")
+        if type(self.model_agreement) is not ShadowModelAgreementStatus:
+            raise ShadowPriceError("model agreement type mismatch")
+        if self.prediction_confidence is not None:
+            _probability(self.prediction_confidence, "prediction_confidence")
+        if self.prediction_confidence_method is not None:
+            if type(self.prediction_confidence_method) is not str or not self.prediction_confidence_method.strip():
+                raise ShadowPriceError("prediction_confidence_method must be non-empty")
+            if self.prediction_confidence_method not in {
+                SCALAR_PREDICTION_CONFIDENCE_METHOD,
+                DNB_PREDICTION_CONFIDENCE_METHOD,
+                AH_PREDICTION_CONFIDENCE_METHOD,
+            }:
+                raise ShadowPriceError("unknown prediction confidence method")
+        if (self.prediction_confidence is None) != (self.prediction_confidence_method is None):
+            raise ShadowPriceError("prediction confidence and method must be paired")
+        if self.prediction_first_rank is not None and (
+            type(self.prediction_first_rank) is not int or self.prediction_first_rank < 1
+        ):
+            raise ShadowPriceError("prediction_first_rank must be a positive integer or None")
+        if self.value_first_eligibility is not None and type(self.value_first_eligibility) is not ShadowOpportunityEligibility:
+            raise ShadowPriceError("value-first eligibility type mismatch")
+        if type(self.rejection_reasons) is not tuple or any(type(x) is not str for x in self.rejection_reasons):
+            raise ShadowPriceError("prediction-first rejection reasons must be a tuple of strings")
+        if type(self.value_first_rejection_reasons) is not tuple or any(type(x) is not str for x in self.value_first_rejection_reasons):
+            raise ShadowPriceError("value-first rejection reasons must be a tuple of strings")
+        if self.value_first_rank is not None and (
+            type(self.value_first_rank) is not int or self.value_first_rank < 1
+        ):
+            raise ShadowPriceError("value_first_rank must be a positive integer or None")
+
+    @property
+    def prediction_first_eligibility(self) -> ShadowOpportunityEligibility:
+        return self.eligibility
+
+    @property
+    def prediction_first_rejection_reasons(self) -> tuple[str, ...]:
+        return self.rejection_reasons
+
     def to_dict(self):
         return {"opportunity_id":self.opportunity_id,"price_result":self.price_result.to_dict(),
                 "eligibility":self.eligibility.value,"robust_net_expected_value":self.robust_net_expected_value,
                 "robust_edge":self.robust_edge,"event_probability_floor":self.event_probability_floor,
-                "model_agreement":self.model_agreement.value,"rejection_reasons":list(self.rejection_reasons)}
+                "model_agreement":self.model_agreement.value,"rejection_reasons":list(self.rejection_reasons),
+                "prediction_first_eligibility":self.eligibility.value,
+                "prediction_first_rejection_reasons":list(self.rejection_reasons),
+                "prediction_confidence":self.prediction_confidence,
+                "prediction_confidence_method":self.prediction_confidence_method,
+                "prediction_first_rank":self.prediction_first_rank,
+                "value_first_eligibility":None if self.value_first_eligibility is None else self.value_first_eligibility.value,
+                "value_first_rejection_reasons":list(self.value_first_rejection_reasons),
+                "value_first_rank":self.value_first_rank}
 
 @dataclass(frozen=True, init=False)
 class ShadowMarketRouterDecision:
@@ -149,6 +210,10 @@ class ShadowMarketRouterDecision:
     runner_up_opportunity_id: Optional[str]; strongest_rejected_opportunity_id: Optional[str]
     opportunities: tuple[ShadowRoutedOpportunity,...]; price_all_bundle_sha256: str; router_policy_id: str
     authority: Mapping[str,bool]
+    value_first_selected_opportunity_id: Optional[str] = None
+    value_first_runner_up_opportunity_id: Optional[str] = None
+    value_first_counterfactual_opportunity_id: Optional[str] = None
+    value_first_policy_id: str = VALUE_FIRST_ROUTER_POLICY_ID
     def __init__(self,*_a:Any,**_k:Any) -> None: raise ShadowPriceError("ShadowMarketRouterDecision is builder-only")
     def to_dict(self):
         return {"schema_version":SCHEMA_VERSION,"dataset_name":DATASET_NAME,"fixture_identity":self.fixture_identity,
@@ -156,7 +221,12 @@ class ShadowMarketRouterDecision:
                 "runner_up_opportunity_id":self.runner_up_opportunity_id,
                 "strongest_rejected_opportunity_id":self.strongest_rejected_opportunity_id,
                 "opportunities":[x.to_dict() for x in self.opportunities],"price_all_bundle_sha256":self.price_all_bundle_sha256,
-                "router_policy_id":self.router_policy_id,"authority":dict(self.authority),"wager_placed":False}
+                "router_policy_id":self.router_policy_id,"authority":dict(self.authority),
+                "value_first_selected_opportunity_id":self.value_first_selected_opportunity_id,
+                "value_first_runner_up_opportunity_id":self.value_first_runner_up_opportunity_id,
+                "value_first_counterfactual_opportunity_id":self.value_first_counterfactual_opportunity_id,
+                "value_first_policy_id":self.value_first_policy_id,
+                "wager_placed":False}
     @property
     def decision_sha256(self): return _sha256(self.to_dict())
 
@@ -219,10 +289,17 @@ def _issue_shadow_router_decision(**v: Any) -> ShadowMarketRouterDecision:
     for k in ("selected_opportunity_id","runner_up_opportunity_id","strongest_rejected_opportunity_id"):
         x=v.get(k)
         if x is not None and x not in ids: raise ShadowPriceError(f"{k} absent from opportunities")
+    for k in (
+        "value_first_selected_opportunity_id",
+        "value_first_runner_up_opportunity_id",
+        "value_first_counterfactual_opportunity_id",
+    ):
+        x=v.get(k)
+        if x is not None and x not in ids: raise ShadowPriceError(f"{k} absent from opportunities")
     if v["status"] is ShadowRouterDecisionStatus.SELECTED and v.get("selected_opportunity_id") is None: raise ShadowPriceError("SELECTED requires selection")
     if v["status"] is ShadowRouterDecisionStatus.NO_BET and v.get("selected_opportunity_id") is not None: raise ShadowPriceError("NO_BET cannot select")
     _require_sha(v["price_all_bundle_sha256"],"price_all_bundle_sha256")
-    if v.get("router_policy_id") != ROUTER_POLICY_ID or dict(v.get("authority",{})) != dict(AUTHORITY_FLAGS): raise ShadowPriceError("router policy/authority drifted")
+    if v.get("router_policy_id") != ROUTER_POLICY_ID or v.get("value_first_policy_id") != VALUE_FIRST_ROUTER_POLICY_ID or dict(v.get("authority",{})) != dict(AUTHORITY_FLAGS): raise ShadowPriceError("router policy/authority drifted")
     v["authority"]=MappingProxyType(dict(AUTHORITY_FLAGS)); return _set(o,v)
 
 __all__=["ShadowExactQuote","ShadowPriceResult","ShadowPriceAllBundle","ShadowRoutedOpportunity","ShadowMarketRouterDecision"]
