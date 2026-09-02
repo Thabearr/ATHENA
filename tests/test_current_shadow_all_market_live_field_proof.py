@@ -224,7 +224,16 @@ def test_current_fixture_universe_scans_entire_fixed_horizon(monkeypatch, tmp_pa
             )
         return expected_30 if request_date == "20260830" else expected_31
 
-    monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
+    monkeypatch.setattr(
+        runner.current_fotmob_source,
+        "issue_current_fotmob_reviewed_source",
+        lambda **_kwargs: pytest.fail("Shadow runner used the legacy PR243 issuer"),
+    )
+    monkeypatch.setattr(
+        runner.current_fotmob_source,
+        "issue_current_shadow_fotmob_reviewed_source",
+        issue,
+    )
     actual, searched = runner._issue_current_fixture_sources(repository_root=tmp_path)
     assert actual == (
         (expected_30, "20260830"),
@@ -244,7 +253,11 @@ def test_current_fixture_universe_does_not_step_over_other_source_failure(monkey
     def issue(**_kwargs):
         raise runner.current_fotmob_source.CurrentFotMobReviewedSourceError("schema drift")
 
-    monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
+    monkeypatch.setattr(
+        runner.current_fotmob_source,
+        "issue_current_shadow_fotmob_reviewed_source",
+        issue,
+    )
     with pytest.raises(
         runner.current_fotmob_source.CurrentFotMobReviewedSourceError,
         match="schema drift",
@@ -266,7 +279,11 @@ def test_current_fixture_universe_all_empty_dates_fail_with_exact_horizon(monkey
             runner.current_fotmob_source.STATUS_NO_FIXTURES
         )
 
-    monkeypatch.setattr(runner.current_fotmob_source, "issue_current_fotmob_reviewed_source", issue)
+    monkeypatch.setattr(
+        runner.current_fotmob_source,
+        "issue_current_shadow_fotmob_reviewed_source",
+        issue,
+    )
     with pytest.raises(
         runner.CurrentShadowAllMarketRunnerError,
         match=(

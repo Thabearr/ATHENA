@@ -13,8 +13,12 @@ from domain.current_fotmob_fixture_review_policy import (
     DEFAULT_MINIMUM_LEAD_SECONDS,
     POLICY_ID,
     REVIEWER_REFERENCE,
+    SHADOW_MINIMUM_LEAD_SECONDS,
+    SHADOW_POLICY_ID,
+    SHADOW_REVIEWER_REFERENCE,
     CurrentFotMobFixtureReviewPolicyError,
     build_current_fotmob_fixture_review_policy_result,
+    build_current_shadow_fotmob_fixture_review_policy_result,
     canonical_current_fotmob_fixture_review_policy_result_bytes,
 )
 from domain.fotmob_data_matches_capture import (
@@ -173,6 +177,70 @@ def test_exact_reviewed_source_competition_is_policy_approved() -> None:
     assert all(value is False for value in result.safety.values())
 
 
+def test_current_shadow_v2_accepts_exactly_1800_seconds() -> None:
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                kickoff=REVIEWED + dt.timedelta(seconds=SHADOW_MINIMUM_LEAD_SECONDS),
+            ),
+        )
+    )
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+
+    assert result.policy_id == SHADOW_POLICY_ID
+    assert result.minimum_lead_seconds == SHADOW_MINIMUM_LEAD_SECONDS
+    assert result.max_source_age_seconds == DEFAULT_MAX_SOURCE_AGE_SECONDS
+    assert result.lead_window_excluded_count == 0
+    assert result.policy_approved_count == 1
+    assert result.review_bundle.decisions[0].reviewer_reference == (
+        SHADOW_REVIEWER_REFERENCE
+    )
+    assert SHADOW_POLICY_ID in result.review_bundle.decisions[0].notes
+    assert "minimum_lead_seconds=1800" in result.review_bundle.decisions[0].notes
+    assert all(value is False for value in result.safety.values())
+
+
+def test_current_shadow_v2_rejects_1799_seconds() -> None:
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                kickoff=REVIEWED + dt.timedelta(seconds=SHADOW_MINIMUM_LEAD_SECONDS - 1),
+            ),
+        )
+    )
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+
+    assert result.policy_id == SHADOW_POLICY_ID
+    assert result.lead_window_excluded_count == 1
+    assert result.policy_approved_count == 0
+    assert result.review_bundle.unreviewed_count == 1
+
+
+def test_legacy_pr243_accepts_exactly_3600_seconds() -> None:
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                kickoff=REVIEWED + dt.timedelta(seconds=DEFAULT_MINIMUM_LEAD_SECONDS),
+            ),
+        )
+    )
+    result = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+
+    assert result.policy_id == POLICY_ID
+    assert result.minimum_lead_seconds == DEFAULT_MINIMUM_LEAD_SECONDS
+    assert result.lead_window_excluded_count == 0
+    assert result.policy_approved_count == 1
+
+
 def test_unreviewed_source_competition_remains_unreviewed() -> None:
     bundle = _bundle(
         (
@@ -205,6 +273,18 @@ def test_stale_source_remains_unreviewed_without_claiming_provider_freshness() -
     assert result.stale_source_excluded_count == 1
     assert result.policy_approved_count == 0
     assert result.review_bundle.unreviewed_count == 1
+
+
+def test_source_age_exactly_900_seconds_remains_eligible() -> None:
+    bundle = _bundle((_seed_candidate(),))
+    reviewed = OBSERVED + dt.timedelta(seconds=DEFAULT_MAX_SOURCE_AGE_SECONDS)
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=reviewed,
+    )
+
+    assert result.stale_source_excluded_count == 0
+    assert result.policy_approved_count == 1
 
 
 def test_source_date_spillover_remains_unreviewed() -> None:
@@ -314,3 +394,23 @@ def test_result_cannot_relabel_weaker_policy_bounds() -> None:
         dataclasses.replace(result, minimum_lead_seconds=0)
     with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="frozen PR243"):
         dataclasses.replace(result, max_source_age_seconds=3600)
+
+
+def test_shadow_policy_identity_and_bound_fail_closed() -> None:
+    bundle = _bundle((_seed_candidate(),))
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+
+    assert result.policy_id == SHADOW_POLICY_ID
+    assert result.review_bundle.decisions[0].reviewer_reference == (
+        SHADOW_REVIEWER_REFERENCE
+    )
+    with pytest.raises(
+        CurrentFotMobFixtureReviewPolicyError,
+        match="frozen current Shadow",
+    ):
+        dataclasses.replace(result, minimum_lead_seconds=DEFAULT_MINIMUM_LEAD_SECONDS)
+    with pytest.raises(CurrentFotMobFixtureReviewPolicyError, match="policy_id mismatch"):
+        dataclasses.replace(result, policy_id="UNKNOWN_CURRENT_POLICY")

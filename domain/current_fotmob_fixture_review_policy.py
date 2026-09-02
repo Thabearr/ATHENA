@@ -58,7 +58,10 @@ SCHEMA_VERSION = 1
 DATASET_NAME = "athena-current-fotmob-fixture-review-policy-v1"
 POLICY_ID = "ATHENA_PR243_CURRENT_FOTMOB_FIXTURE_IDENTITY_POLICY_V1"
 REVIEWER_REFERENCE = "athena-policy:pr243-current-fotmob-fixture-identity-v1"
+SHADOW_POLICY_ID = "ATHENA_CURRENT_SHADOW_FOTMOB_FIXTURE_IDENTITY_POLICY_V2"
+SHADOW_REVIEWER_REFERENCE = "athena-policy:current-shadow-fotmob-fixture-identity-v2"
 DEFAULT_MINIMUM_LEAD_SECONDS = 60 * 60
+SHADOW_MINIMUM_LEAD_SECONDS = 30 * 60
 DEFAULT_MAX_SOURCE_AGE_SECONDS = 15 * 60
 
 _SAFETY_KEYS = frozenset(
@@ -79,6 +82,19 @@ _SAFETY_KEYS = frozenset(
 
 class CurrentFotMobFixtureReviewPolicyError(ValueError):
     """Raised when the reviewed current fixture policy cannot fail closed."""
+
+
+def _policy_contract(policy_id: str) -> tuple[int, str]:
+    if policy_id == POLICY_ID:
+        return DEFAULT_MINIMUM_LEAD_SECONDS, REVIEWER_REFERENCE
+    if policy_id == SHADOW_POLICY_ID:
+        return SHADOW_MINIMUM_LEAD_SECONDS, SHADOW_REVIEWER_REFERENCE
+    raise CurrentFotMobFixtureReviewPolicyError("policy_id mismatch")
+
+
+def reviewer_reference_for_policy_id(policy_id: str) -> str:
+    """Return the fixed reviewer reference for one reviewed current policy."""
+    return _policy_contract(policy_id)[1]
 
 
 def _utc(value: Any, label: str) -> dt.datetime:
@@ -153,8 +169,7 @@ class CurrentFotMobFixtureReviewPolicyResult:
             raise CurrentFotMobFixtureReviewPolicyError("schema_version mismatch")
         if self.dataset_name != DATASET_NAME:
             raise CurrentFotMobFixtureReviewPolicyError("dataset_name mismatch")
-        if self.policy_id != POLICY_ID:
-            raise CurrentFotMobFixtureReviewPolicyError("policy_id mismatch")
+        expected_minimum_lead, expected_reviewer = _policy_contract(self.policy_id)
         if self.competition_policy_version != COMPETITION_REVIEW_PRIORITY_POLICY_VERSION:
             raise CurrentFotMobFixtureReviewPolicyError(
                 "competition policy version mismatch"
@@ -170,10 +185,15 @@ class CurrentFotMobFixtureReviewPolicyResult:
         reviewed_at = _utc(self.reviewed_at, "reviewed_at")
         if (
             type(self.minimum_lead_seconds) is not int
-            or self.minimum_lead_seconds != DEFAULT_MINIMUM_LEAD_SECONDS
+            or self.minimum_lead_seconds != expected_minimum_lead
         ):
+            boundary_name = (
+                "frozen PR243 policy bound"
+                if self.policy_id == POLICY_ID
+                else "frozen current Shadow policy bound"
+            )
             raise CurrentFotMobFixtureReviewPolicyError(
-                "minimum_lead_seconds must equal the frozen PR243 policy bound"
+                f"minimum_lead_seconds must equal the {boundary_name}"
             )
         if (
             type(self.max_source_age_seconds) is not int
@@ -239,12 +259,12 @@ class CurrentFotMobFixtureReviewPolicyResult:
                 "current policy must never manufacture REJECTED decisions"
             )
         required_note_tokens = (
-            POLICY_ID,
-            f"minimum_lead_seconds={DEFAULT_MINIMUM_LEAD_SECONDS}",
+            self.policy_id,
+            f"minimum_lead_seconds={expected_minimum_lead}",
             f"max_source_age_seconds={DEFAULT_MAX_SOURCE_AGE_SECONDS}",
         )
         for decision in self.review_bundle.decisions:
-            if decision.reviewer_reference != REVIEWER_REFERENCE:
+            if decision.reviewer_reference != expected_reviewer:
                 raise CurrentFotMobFixtureReviewPolicyError(
                     "review bundle contains non-policy reviewer authority"
                 )
@@ -282,19 +302,22 @@ class CurrentFotMobFixtureReviewPolicyResult:
         }
 
 
-def build_current_fotmob_fixture_review_policy_result(
+def _build_current_fotmob_fixture_review_policy_result(
     candidate_bundle: Any,
     *,
     reviewed_at: Any,
+    policy_id: str,
+    reviewer_reference: str,
+    minimum_lead_seconds: int,
 ) -> CurrentFotMobFixtureReviewPolicyResult:
-    """Issue exact PR #41 decisions under the frozen reviewed PR243 policy."""
+    """Issue exact PR #41 decisions under one fixed reviewed current policy."""
 
     if type(candidate_bundle) is not FotMobFixtureCandidateBundle:
         raise CurrentFotMobFixtureReviewPolicyError(
             "candidate_bundle must be exact FotMobFixtureCandidateBundle"
         )
     reviewed = _utc(reviewed_at, "reviewed_at")
-    minimum_lead = DEFAULT_MINIMUM_LEAD_SECONDS
+    minimum_lead = minimum_lead_seconds
     max_source_age = DEFAULT_MAX_SOURCE_AGE_SECONDS
 
     try:
@@ -360,9 +383,9 @@ def build_current_fotmob_fixture_review_policy_result(
                 candidate_sha256=candidate_sha,
                 disposition=FixtureCandidateReviewDisposition.APPROVED,
                 reviewed_at=reviewed,
-                reviewer_reference=REVIEWER_REFERENCE,
+                reviewer_reference=reviewer_reference,
                 notes=(
-                    f"{POLICY_ID}; exact reviewed source competition "
+                    f"{policy_id}; exact reviewed source competition "
                     f"{candidate.source_competition_ccode}:{candidate.source_competition_name}; "
                     f"canonical={priority.canonical_name}; rank={priority.rank}; "
                     f"minimum_lead_seconds={minimum_lead}; "
@@ -386,7 +409,7 @@ def build_current_fotmob_fixture_review_policy_result(
     return CurrentFotMobFixtureReviewPolicyResult(
         schema_version=SCHEMA_VERSION,
         dataset_name=DATASET_NAME,
-        policy_id=POLICY_ID,
+        policy_id=policy_id,
         competition_policy_version=COMPETITION_REVIEW_PRIORITY_POLICY_VERSION,
         candidate_bundle_sha256=sha256_fotmob_fixture_candidate_bundle(candidate_bundle),
         reviewed_at=reviewed,
@@ -402,6 +425,38 @@ def build_current_fotmob_fixture_review_policy_result(
         review_bundle=review_bundle,
         review_bundle_sha256=hashlib.sha256(review_bytes).hexdigest(),
         safety=_safety(),
+    )
+
+
+def build_current_fotmob_fixture_review_policy_result(
+    candidate_bundle: Any,
+    *,
+    reviewed_at: Any,
+) -> CurrentFotMobFixtureReviewPolicyResult:
+    """Issue exact PR #41 decisions under the frozen reviewed PR243 policy."""
+
+    return _build_current_fotmob_fixture_review_policy_result(
+        candidate_bundle,
+        reviewed_at=reviewed_at,
+        policy_id=POLICY_ID,
+        reviewer_reference=REVIEWER_REFERENCE,
+        minimum_lead_seconds=DEFAULT_MINIMUM_LEAD_SECONDS,
+    )
+
+
+def build_current_shadow_fotmob_fixture_review_policy_result(
+    candidate_bundle: Any,
+    *,
+    reviewed_at: Any,
+) -> CurrentFotMobFixtureReviewPolicyResult:
+    """Issue current all-market Shadow decisions with the fixed 1800s lead."""
+
+    return _build_current_fotmob_fixture_review_policy_result(
+        candidate_bundle,
+        reviewed_at=reviewed_at,
+        policy_id=SHADOW_POLICY_ID,
+        reviewer_reference=SHADOW_REVIEWER_REFERENCE,
+        minimum_lead_seconds=SHADOW_MINIMUM_LEAD_SECONDS,
     )
 
 
@@ -433,9 +488,14 @@ __all__ = [
     "DEFAULT_MINIMUM_LEAD_SECONDS",
     "POLICY_ID",
     "REVIEWER_REFERENCE",
+    "SHADOW_MINIMUM_LEAD_SECONDS",
+    "SHADOW_POLICY_ID",
+    "SHADOW_REVIEWER_REFERENCE",
     "SCHEMA_VERSION",
     "CurrentFotMobFixtureReviewPolicyError",
     "CurrentFotMobFixtureReviewPolicyResult",
     "build_current_fotmob_fixture_review_policy_result",
+    "build_current_shadow_fotmob_fixture_review_policy_result",
     "canonical_current_fotmob_fixture_review_policy_result_bytes",
+    "reviewer_reference_for_policy_id",
 ]

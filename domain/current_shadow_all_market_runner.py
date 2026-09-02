@@ -336,7 +336,7 @@ def _issue_current_fixture_sources(
         request_date = (today + timedelta(days=offset)).strftime("%Y%m%d")
         attempted.append(request_date)
         try:
-            execution = current_fotmob_source.issue_current_fotmob_reviewed_source(
+            execution = current_fotmob_source.issue_current_shadow_fotmob_reviewed_source(
                 request_date=request_date,
                 timezone="UTC",
                 ccode3="NGA",

@@ -12,6 +12,9 @@ import scripts.issue_current_fotmob_reviewed_source as issuer_module
 from domain.current_fotmob_fixture_review_policy import (
     DEFAULT_MAX_SOURCE_AGE_SECONDS,
     DEFAULT_MINIMUM_LEAD_SECONDS,
+    SHADOW_MINIMUM_LEAD_SECONDS,
+    SHADOW_POLICY_ID,
+    SHADOW_REVIEWER_REFERENCE,
 )
 from domain.reviewed_fixture_intelligence_bootstrap import (
     canonical_reviewed_fixture_intelligence_bootstrap_bytes,
@@ -25,7 +28,9 @@ from scripts.issue_current_fotmob_reviewed_source import (
     CurrentFotMobReviewedSourceError,
     build_parser,
     build_verified_current_fotmob_bootstrap_from_capture,
+    build_verified_current_shadow_fotmob_bootstrap_from_capture,
     issue_current_fotmob_reviewed_source,
+    issue_current_shadow_fotmob_reviewed_source,
 )
 
 
@@ -133,6 +138,16 @@ def _execution(tmp_path: Path):
     )
 
 
+def _shadow_execution(tmp_path: Path):
+    capture = _capture(tmp_path)
+    return build_verified_current_shadow_fotmob_bootstrap_from_capture(
+        capture,
+        issued_at=ISSUED,
+        repository_root=tmp_path,
+        code_state=_code_state(),
+    )
+
+
 def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> None:
     execution = _execution(tmp_path)
 
@@ -163,6 +178,44 @@ def test_exact_capture_reaches_verified_current_bootstrap(tmp_path: Path) -> Non
         "sportybet_execution": False,
         "bet": False,
     }
+    assert summary["wager_placed"] is False
+
+
+def test_explicit_shadow_path_uses_fixed_v2_policy_and_no_authority(
+    tmp_path: Path,
+) -> None:
+    execution = _shadow_execution(tmp_path)
+
+    assert execution.policy_result.policy_id == SHADOW_POLICY_ID
+    assert execution.policy_result.minimum_lead_seconds == SHADOW_MINIMUM_LEAD_SECONDS
+    assert execution.policy_result.max_source_age_seconds == DEFAULT_MAX_SOURCE_AGE_SECONDS
+    assert execution.policy_result.review_bundle.decisions[0].reviewer_reference == (
+        SHADOW_REVIEWER_REFERENCE
+    )
+    admission = execution.bootstrap.verified_artifact.admission
+    assert admission.decision.reviewer_reference == (
+        issuer_module.SHADOW_ADMISSION_REVIEWER_REFERENCE
+    )
+    assert SHADOW_POLICY_ID in admission.decision.notes
+    assert "current Shadow V2 policy-approved" in admission.decision.notes
+    summary = execution.summary()
+    assert summary["policy_id"] == SHADOW_POLICY_ID
+    assert summary["policy_reviewer_reference"] == SHADOW_REVIEWER_REFERENCE
+    assert summary["minimum_lead_seconds"] == SHADOW_MINIMUM_LEAD_SECONDS
+    assert summary["authority"] == {
+        "transparent_fotmob_network_capture": True,
+        "current_shadow_fixture_identity_policy_v2_decisions": True,
+        "reviewed_fixture_bootstrap": True,
+        "fixture_intelligence_fact": False,
+        "fixture_intelligence_snapshot": False,
+        "model_feature": False,
+        "probability": False,
+        "pricing": False,
+        "selection": False,
+        "sportybet_execution": False,
+        "bet": False,
+    }
+    assert all(value is False for value in execution.policy_result.safety.values())
     assert summary["wager_placed"] is False
 
 
@@ -255,10 +308,26 @@ def test_live_entry_point_requires_explicit_network_authorization() -> None:
         )
 
 
+def test_shadow_entry_point_requires_explicit_network_authorization() -> None:
+    with pytest.raises(CurrentFotMobReviewedSourceError, match="execute_live_network=True"):
+        issue_current_shadow_fotmob_reviewed_source(
+            request_date="20260827",
+            timezone="UTC",
+            ccode3="NGA",
+            execute_live_network=False,
+        )
+
+
 def test_live_entry_point_does_not_expose_policy_bound_overrides() -> None:
-    parameters = inspect.signature(issue_current_fotmob_reviewed_source).parameters
-    assert "minimum_lead_seconds" not in parameters
-    assert "max_source_age_seconds" not in parameters
+    for entry_point in (
+        issue_current_fotmob_reviewed_source,
+        issue_current_shadow_fotmob_reviewed_source,
+        build_verified_current_fotmob_bootstrap_from_capture,
+        build_verified_current_shadow_fotmob_bootstrap_from_capture,
+    ):
+        parameters = inspect.signature(entry_point).parameters
+        assert "minimum_lead_seconds" not in parameters
+        assert "max_source_age_seconds" not in parameters
 
     option_strings = {
         option
