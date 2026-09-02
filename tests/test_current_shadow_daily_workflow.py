@@ -18,6 +18,8 @@ def test_current_shadow_workflow_is_single_daily_and_on_demand_surface():
     assert "- three-day" in text
     assert "python -m scripts.execute_current_shadow_daily" in text
     assert "python -m scripts.send_current_shadow_email" in text
+    assert "current-shadow-email-delivery-receipt.json" in text
+    assert 'if [ -z "${GMAIL_ADDRESS}" ]' not in text
     assert "--target-size \"${ATHENA_TARGET_SIZE}\"" in text
     assert "--fixture-scope \"${ATHENA_FIXTURE_SCOPE}\"" in text
     assert "cancel-in-progress: false" in text

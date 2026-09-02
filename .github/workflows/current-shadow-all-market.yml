@@ -212,16 +212,14 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}
         run: |
-          if [ -z "${GMAIL_ADDRESS}" ] || [ -z "${GMAIL_APP_PASSWORD}" ] || [ -z "${RECIPIENT_EMAIL}" ]; then
-            echo "ATHENA email delivery skipped: repository email secrets are not fully configured."
-            exit 0
-          fi
           receipt='artifacts/current-shadow-all-market/current-shadow-all-market-run-receipt.json'
           if [ ! -f "${receipt}" ]; then
             echo "ATHENA email delivery skipped: durable Shadow run receipt is unavailable."
             exit 0
           fi
-          python -m scripts.send_current_shadow_email --receipt "${receipt}"
+          python -m scripts.send_current_shadow_email \
+            --receipt "${receipt}" \
+            --delivery-receipt 'artifacts/current-shadow-all-market/current-shadow-email-delivery-receipt.json'
 
       - name: Upload durable research receipt
         if: always()

@@ -1,10 +1,9 @@
-"""Research-only all-market Shadow Portfolio (PR E).
+"""Research-only all-market Shadow Prediction-first Portfolio V2.
 
 Consumes only source-replay-verifiable PR-D Price-all + Router outputs from the
-current reconciliation lane.  The optimizer never reroutes a fixture, never
-promotes a Router counterfactual, never pads a target, and never invents a
-statistical dependence model.  Frozen Portfolio-v2 caps, survival and fragility
-semantics remain the policy authority.
+current reconciliation lane.  Router V2 prediction confidence remains the
+selection authority; price/value/fragility fields are retained as diagnostics
+only.  The optimizer never pads a target or invents a dependence model.
 """
 from __future__ import annotations
 
@@ -39,7 +38,9 @@ from domain._accumulator_optimizer_contracts import (
 )
 from domain._current_shadow_price_core import (
     MAX_QUOTE_AGE_SECONDS,
+    MINIMUM_DECIMAL_ODDS,
     MINIMUM_LEAD_SECONDS,
+    MINIMUM_PREDICTION_CONFIDENCE,
     ShadowOpportunityEligibility,
     ShadowPriceDisposition,
     ShadowPriceError,
@@ -58,18 +59,19 @@ from domain._current_shadow_quote_binding import (
 )
 from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
 
-SCHEMA_VERSION = 1
-DATASET_NAME = "athena-current-shadow-all-market-portfolio-v1"
-STATUS = "RESEARCH_ONLY_CURRENT_SHADOW_ALL_MARKET_PORTFOLIO"
+SCHEMA_VERSION = 2
+DATASET_NAME = "athena-current-shadow-all-market-portfolio-v2"
+STATUS = "RESEARCH_ONLY_CURRENT_SHADOW_PREDICTION_FIRST_PORTFOLIO_V2"
+PORTFOLIO_POLICY_ID = "SHADOW_PREDICTION_FIRST_PORTFOLIO_V2"
 ROUTER_REPLAY_POLICY_ID = "REBUILD_EXACT_PRD_ROUTER_FROM_SOURCE_REPLAYED_PRICE_ALL_V1"
 FIXTURE_EXPOSURE_POLICY_ID = "PRD_RETAINED_PR251_CURRENT_RECONCILIATION_EXPOSURE_IDENTITY_V1"
 PORTFOLIO_FRESHNESS_POLICY_ID = "RECHECK_PRD_QUOTE_AGE_AND_KICKOFF_LEAD_AT_PORTFOLIO_TIME_V1"
-JOINT_SELECTION_POLICY_ID = "DETERMINISTIC_MARGINAL_DIVERSIFICATION_WITH_HARD_CAPS_V1"
+JOINT_SELECTION_POLICY_ID = "PREDICTION_CONFIDENCE_THEN_CANONICAL_IDENTITY_WITH_HARD_CAPS_V2"
 CORRELATION_POLICY_ID = "EXPOSURE_FLAGS_AND_CAPS_NO_FABRICATED_STATISTICAL_RHO_V1"
 SURVIVAL_POLICY_ID = "WORST_MODEL_NON_NEGATIVE_SETTLEMENT_FLOOR_INDEPENDENCE_BASELINE_V1"
 RESERVE_POLICY_ID = "PRESERVE_ROUTER_QUALIFIED_UNSELECTED_LEGS_WITH_REASONS_V1"
 SHORTFALL_POLICY_ID = "REQUESTED_SIZE_IS_TARGET_NOT_REQUIREMENT_NEVER_PAD_V1"
-FRAGILITY_POLICY_ID = "THIN_VALUE_OR_THIN_SURVIVAL_OPERATIONAL_FLAG_V1"
+FRAGILITY_POLICY_ID = "LEGACY_THIN_VALUE_OR_SURVIVAL_DIAGNOSTIC_ONLY_V2"
 NEXT_BOUNDARY = "CURRENT_SHADOW_ALL_MARKET_RUNNER_AND_ANONYMOUS_CREATE_RELOAD_VERIFICATION"
 
 AUTHORITY = MappingProxyType({
@@ -326,6 +328,13 @@ class ShadowPortfolioLeg:
     provider_registry_sha256: str
     provider_observation_sha256: str
     fixture_reconciliation_sha256: str
+    prediction_confidence: float
+    prediction_confidence_method: str
+    prediction_first_rank: int
+    canonical_prediction_identity: str
+    router_policy_id: str
+    portfolio_policy_id: str
+    selection_reason: str
     robust_net_expected_value: float
     robust_edge: Optional[float]
     event_probability_floor: Optional[float]
@@ -368,6 +377,13 @@ class ShadowPortfolioLeg:
             "provider_registry_sha256": self.provider_registry_sha256,
             "provider_observation_sha256": self.provider_observation_sha256,
             "fixture_reconciliation_sha256": self.fixture_reconciliation_sha256,
+            "prediction_confidence": self.prediction_confidence,
+            "prediction_confidence_method": self.prediction_confidence_method,
+            "prediction_first_rank": self.prediction_first_rank,
+            "canonical_prediction_identity": self.canonical_prediction_identity,
+            "router_policy_id": self.router_policy_id,
+            "portfolio_policy_id": self.portfolio_policy_id,
+            "selection_reason": self.selection_reason,
             "robust_net_expected_value": self.robust_net_expected_value,
             "robust_edge": self.robust_edge,
             "event_probability_floor": self.event_probability_floor,
@@ -427,6 +443,10 @@ class ShadowPortfolioOptimization:
     expected_slip_survival: Optional[float]
     combined_decimal_odds_product: Optional[float]
     exposure_summary: Mapping[str, Any]
+    market_diagnostics: tuple[Mapping[str, Any], ...]
+    market_family_diagnostics: tuple[Mapping[str, Any], ...]
+    fixture_funnel: Mapping[str, Any]
+    opportunity_funnel: Mapping[str, Any]
     authority: Mapping[str, bool]
     frozen_portfolio_v2_contract_sha256: str
     _router_inputs: tuple[ShadowPortfolioRouterInput, ...]
@@ -463,8 +483,13 @@ class ShadowPortfolioOptimization:
             ),
             "combined_decimal_odds_product": self.combined_decimal_odds_product,
             "exposure_summary": dict(self.exposure_summary),
+            "market_diagnostics": [dict(item) for item in self.market_diagnostics],
+            "market_family_diagnostics": [dict(item) for item in self.market_family_diagnostics],
+            "fixture_funnel": dict(self.fixture_funnel),
+            "opportunity_funnel": dict(self.opportunity_funnel),
             "joint_dependence_status": JOINT_DEPENDENCE_STATUS,
             "statistical_correlation_coefficients": None,
+            "portfolio_policy_id": PORTFOLIO_POLICY_ID,
             "router_replay_policy_id": ROUTER_REPLAY_POLICY_ID,
             "fixture_exposure_policy_id": FIXTURE_EXPOSURE_POLICY_ID,
             "portfolio_freshness_policy_id": PORTFOLIO_FRESHNESS_POLICY_ID,
@@ -550,8 +575,17 @@ def _fragility(robust_ev: float, survival: float) -> FragilityStatus:
 def _build_leg(value: ShadowPortfolioRouterInput, *, now: datetime) -> ShadowPortfolioLeg:
     opportunity, result, quote = _selected_opportunity(value)
     robust_ev = opportunity.robust_net_expected_value
-    if robust_ev is None or not math.isfinite(robust_ev) or robust_ev <= 0.0:
-        raise CurrentShadowPortfolioError("selected Router opportunity lacks positive robust EV")
+    if robust_ev is None or not math.isfinite(robust_ev):
+        raise CurrentShadowPortfolioError("selected Router opportunity lacks finite EV diagnostic")
+    if (
+        opportunity.prediction_confidence is None
+        or not math.isfinite(opportunity.prediction_confidence)
+        or opportunity.prediction_confidence_method is None
+        or opportunity.prediction_first_rank is None
+    ):
+        raise CurrentShadowPortfolioError("selected Router opportunity lacks Prediction-first authority")
+    canonical_parts = router._prediction_canonical_key(result)
+    canonical_prediction_identity = "|".join(canonical_parts)
     router_age = (value.price_all_bundle.evaluation_time - quote.observed_at).total_seconds()
     portfolio_age = (now - quote.observed_at).total_seconds()
     lead = (value.kickoff_utc - now).total_seconds()
@@ -597,6 +631,13 @@ def _build_leg(value: ShadowPortfolioRouterInput, *, now: datetime) -> ShadowPor
         provider_registry_sha256=quote.provider_registry_sha256,
         provider_observation_sha256=quote.provider_observation_sha256,
         fixture_reconciliation_sha256=quote.fixture_reconciliation_sha256,
+        prediction_confidence=opportunity.prediction_confidence,
+        prediction_confidence_method=opportunity.prediction_confidence_method,
+        prediction_first_rank=opportunity.prediction_first_rank,
+        canonical_prediction_identity=canonical_prediction_identity,
+        router_policy_id=value.router_decision.router_policy_id,
+        portfolio_policy_id=PORTFOLIO_POLICY_ID,
+        selection_reason="PREDICTION_FIRST_AUTHORITY",
         robust_net_expected_value=float(robust_ev),
         robust_edge=opportunity.robust_edge,
         event_probability_floor=opportunity.event_probability_floor,
@@ -619,7 +660,6 @@ def _caps(target: int) -> dict[str, int]:
         "team": MAXIMUM_TEAM_APPEARANCES,
         "competition": _target_cap(target, MAXIMUM_COMPETITION_SHARE, MINIMUM_COMPETITION_CAP_WHEN_TARGET_GE_2),
         "market_family": _target_cap(target, MAXIMUM_MARKET_FAMILY_SHARE, MINIMUM_MARKET_FAMILY_CAP_WHEN_TARGET_GE_2),
-        "fragile": min(target, max(MINIMUM_FRAGILE_CAP, int(math.ceil(target * MAXIMUM_FRAGILE_SHARE)))),
     }
 
 
@@ -638,7 +678,7 @@ def _counts(selected: Sequence[ShadowPortfolioLeg]) -> tuple[dict[str, int], dic
 
 
 def _constraint_reasons(candidate: ShadowPortfolioLeg, selected: Sequence[ShadowPortfolioLeg], caps: Mapping[str, int]) -> tuple[str, ...]:
-    team, competition, family, fragile = _counts(selected)
+    team, competition, family, _fragile = _counts(selected)
     reasons: list[str] = []
     for name in (candidate.home_team, candidate.away_team):
         if team.get(name, 0) >= caps["team"]:
@@ -647,40 +687,20 @@ def _constraint_reasons(candidate: ShadowPortfolioLeg, selected: Sequence[Shadow
         reasons.append(f"COMPETITION_CAP:{candidate.competition}")
     if family.get(candidate.market_family.value, 0) >= caps["market_family"]:
         reasons.append(f"MARKET_FAMILY_CAP:{candidate.market_family.value}")
-    if candidate.fragile and fragile >= caps["fragile"]:
-        reasons.append("FRAGILITY_CAP")
     return tuple(sorted(set(reasons)))
 
 
-def _marginal_key(candidate: ShadowPortfolioLeg, selected: Sequence[ShadowPortfolioLeg], caps: Mapping[str, int]) -> tuple[Any, ...]:
-    _team, competition, family, fragile = _counts(selected)
-    penalty = (
-        competition.get(candidate.competition, 0) / caps["competition"]
-        + family.get(candidate.market_family.value, 0) / caps["market_family"]
-        + ((fragile / caps["fragile"]) if candidate.fragile else 0.0)
-    )
-    edge_present = candidate.robust_edge is not None
+def _prediction_selection_key(candidate: ShadowPortfolioLeg) -> tuple[Any, ...]:
+    """Quote/value-independent Prediction-first Portfolio ordering."""
     return (
-        penalty,
-        -candidate.survival_probability_floor,
-        -candidate.robust_net_expected_value,
-        0 if edge_present else 1,
-        -(candidate.robust_edge if candidate.robust_edge is not None else 0.0),
-        candidate.portfolio_quote_age_seconds,
-        candidate.leg_id,
+        -candidate.prediction_confidence,
+        candidate.fixture_identity,
+        candidate.canonical_prediction_identity,
     )
 
 
 def _reserve_key(candidate: ShadowPortfolioLeg) -> tuple[Any, ...]:
-    edge_present = candidate.robust_edge is not None
-    return (
-        -candidate.survival_probability_floor,
-        -candidate.robust_net_expected_value,
-        0 if edge_present else 1,
-        -(candidate.robust_edge if candidate.robust_edge is not None else 0.0),
-        candidate.portfolio_quote_age_seconds,
-        candidate.leg_id,
-    )
+    return _prediction_selection_key(candidate)
 
 
 def _exposure_summary(selected: Sequence[ShadowPortfolioLeg], caps: Mapping[str, int]) -> Mapping[str, Any]:
@@ -713,6 +733,151 @@ def _odds_product(selected: Sequence[ShadowPortfolioLeg]) -> Optional[float]:
         value *= Decimal(str(leg.decimal_odds))
     result = float(value)
     return result if math.isfinite(result) else None
+
+
+def _diagnostics(
+    inputs: Sequence[ShadowPortfolioRouterInput],
+    selected: Sequence[ShadowPortfolioLeg],
+    reserves: Sequence[ShadowPortfolioReserveLeg],
+) -> tuple[tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...], Mapping[str, Any], Mapping[str, Any]]:
+    selected_ids = {leg.selected_opportunity_id for leg in selected}
+    reserve_reasons = {
+        item.leg.selected_opportunity_id: item.reserve_reasons for item in reserves
+    }
+    by_market: dict[MarketId, list[dict[str, Any]]] = {market: [] for market in MarketId}
+    for source in inputs:
+        for opportunity in source.router_decision.opportunities:
+            result = opportunity.price_result
+            model_ready = opportunity.prediction_confidence is not None
+            provider_present = result.quote_identity_sha256 is not None
+            priced = result.disposition is ShadowPriceDisposition.PRICED
+            prediction_qualified = (
+                priced and model_ready
+                and opportunity.prediction_confidence >= MINIMUM_PREDICTION_CONFIDENCE
+            )
+            odds_qualified = (
+                prediction_qualified and result.decimal_odds is not None
+                and result.decimal_odds >= MINIMUM_DECIMAL_ODDS
+            )
+            if opportunity.opportunity_id in selected_ids:
+                state = "PORTFOLIO_SELECTED"
+                reasons: tuple[str, ...] = ()
+            elif opportunity.opportunity_id in reserve_reasons:
+                state = "PORTFOLIO_EXCLUDED"
+                reasons = reserve_reasons[opportunity.opportunity_id]
+            elif opportunity.eligibility is ShadowOpportunityEligibility.ELIGIBLE:
+                state = "ROUTER_RESERVE"
+                reasons = ("NOT_ROUTER_TOP_PREDICTION",)
+            else:
+                state = "ROUTER_REJECTED"
+                reasons = opportunity.rejection_reasons
+            by_market[result.market_id].append({
+                "fixture_identity": source.fixture_identity,
+                "provider_event_id": source.provider_event_id,
+                "market_id": result.market_id.value,
+                "outcome_id": result.outcome_id.value,
+                "line": result.line,
+                "model_ready": model_ready,
+                "provider_present": provider_present,
+                "reconciliation_state": "IDENTITY_RECONCILED",
+                "price_disposition": result.disposition.value,
+                "prediction_confidence": opportunity.prediction_confidence,
+                "prediction_confidence_method": opportunity.prediction_confidence_method,
+                "exact_current_odds": result.decimal_odds,
+                "ev_diagnostic": opportunity.robust_net_expected_value,
+                "robust_edge_diagnostic": opportunity.robust_edge,
+                "prediction_qualified": prediction_qualified,
+                "odds_qualified": odds_qualified,
+                "router_rank": opportunity.prediction_first_rank,
+                "portfolio_state": state,
+                "rejection_reasons": list(reasons),
+            })
+
+    market_rows: list[Mapping[str, Any]] = []
+    for market in MarketId:
+        details = sorted(
+            by_market[market],
+            key=lambda item: (
+                item["fixture_identity"], item["outcome_id"],
+                "NONE" if item["line"] is None else float(item["line"]).hex(),
+            ),
+        )
+        reason_counts: dict[str, int] = {}
+        for item in details:
+            for reason in item["rejection_reasons"]:
+                reason_counts[reason] = reason_counts.get(reason, 0) + 1
+        market_rows.append(MappingProxyType({
+            "market_id": market.value,
+            "market_family": MARKET_REGISTRY[market].family.value,
+            "model_ready_count": sum(item["model_ready"] for item in details),
+            "provider_quoted_count": sum(item["provider_present"] for item in details),
+            "priced_count": sum(item["price_disposition"] == ShadowPriceDisposition.PRICED.value for item in details),
+            "prediction_qualified_count": sum(item["prediction_qualified"] for item in details),
+            "odds_qualified_count": sum(item["odds_qualified"] for item in details),
+            "portfolio_selected_count": sum(item["portfolio_state"] == "PORTFOLIO_SELECTED" for item in details),
+            "rejection_reason_counts": dict(sorted(reason_counts.items())),
+            "observed_prediction_confidences": [item["prediction_confidence"] for item in details if item["prediction_confidence"] is not None],
+            "exact_current_odds": [item["exact_current_odds"] for item in details if item["exact_current_odds"] is not None],
+            "ev_diagnostics": [item["ev_diagnostic"] for item in details if item["ev_diagnostic"] is not None],
+            "router_ranks": [item["router_rank"] for item in details if item["router_rank"] is not None],
+            "opportunities": details,
+        }))
+
+    family_rows: list[Mapping[str, Any]] = []
+    for family in MarketFamily:
+        details = [item for market in MarketId if MARKET_REGISTRY[market].family is family for item in by_market[market]]
+        exclusions: dict[str, int] = {}
+        for item in details:
+            if item["portfolio_state"] != "PORTFOLIO_SELECTED":
+                reasons = item["rejection_reasons"] or [item["portfolio_state"]]
+                for reason in reasons:
+                    exclusions[reason] = exclusions.get(reason, 0) + 1
+        family_rows.append(MappingProxyType({
+            "market_family": family.value,
+            "candidate_count": len(details),
+            "prediction_eligible_count": sum(item["prediction_qualified"] for item in details),
+            "prediction_rejected_count": sum(not item["prediction_qualified"] for item in details),
+            "odds_qualified_count": sum(item["odds_qualified"] for item in details),
+            "portfolio_selected_count": sum(item["portfolio_state"] == "PORTFOLIO_SELECTED" for item in details),
+            "portfolio_excluded_count": sum(item["portfolio_state"] != "PORTFOLIO_SELECTED" for item in details),
+            "exclusion_reason_counts": dict(sorted(exclusions.items())),
+        }))
+
+    all_details = [item for market in MarketId for item in by_market[market]]
+    selected_fixture_count = len({leg.fixture_identity for leg in selected})
+    provider_present_fixtures = sum(any(o.price_result.quote_identity_sha256 is not None for o in source.router_decision.opportunities) for source in inputs)
+    model_ready_fixtures = sum(any(o.price_result.quote_identity_sha256 is not None and o.prediction_confidence is not None for o in source.router_decision.opportunities) for source in inputs)
+    priced_fixtures = sum(any(o.price_result.quote_identity_sha256 is not None and o.prediction_confidence is not None and o.price_result.disposition is ShadowPriceDisposition.PRICED for o in source.router_decision.opportunities) for source in inputs)
+    fixture_funnel = MappingProxyType({
+        "unit": "fixture",
+        "policy_approved": len(inputs),
+        "provider_present": provider_present_fixtures,
+        "identity_reconciled": provider_present_fixtures,
+        "model_ready": model_ready_fixtures,
+        "priced": priced_fixtures,
+        "prediction_qualified": sum(any(o.price_result.quote_identity_sha256 is not None and o.prediction_confidence is not None and o.prediction_confidence >= MINIMUM_PREDICTION_CONFIDENCE for o in source.router_decision.opportunities) for source in inputs),
+        "odds_qualified": sum(any(o.eligibility is ShadowOpportunityEligibility.ELIGIBLE for o in source.router_decision.opportunities) for source in inputs),
+        "portfolio_selected": selected_fixture_count,
+    })
+    opportunity_funnel = MappingProxyType({
+        "unit": "opportunity",
+        "policy_approved": len(all_details),
+        "provider_present": sum(item["provider_present"] for item in all_details),
+        "identity_reconciled": sum(item["provider_present"] for item in all_details),
+        "model_ready": sum(item["provider_present"] and item["model_ready"] for item in all_details),
+        "priced": sum(item["provider_present"] and item["model_ready"] and item["price_disposition"] == ShadowPriceDisposition.PRICED.value for item in all_details),
+        "prediction_qualified": sum(item["prediction_qualified"] for item in all_details),
+        "odds_qualified": sum(item["odds_qualified"] for item in all_details),
+        "portfolio_selected": len(selected),
+    })
+    for funnel in (fixture_funnel, opportunity_funnel):
+        counts = [funnel[key] for key in (
+            "policy_approved", "provider_present", "identity_reconciled", "model_ready",
+            "priced", "prediction_qualified", "odds_qualified", "portfolio_selected",
+        )]
+        if any(right > left for left, right in zip(counts, counts[1:])):
+            raise CurrentShadowPortfolioError(f"{funnel['unit']} funnel is not monotone")
+    return tuple(market_rows), tuple(family_rows), fixture_funnel, opportunity_funnel
 
 
 def optimize_shadow_portfolio(
@@ -778,17 +943,17 @@ def optimize_shadow_portfolio(
         ))
 
     caps = _caps(target_size)
-    remaining = sorted(admitted, key=lambda item: item.leg_id)
+    remaining = sorted(admitted, key=_prediction_selection_key)
     selected: list[ShadowPortfolioLeg] = []
     while remaining and len(selected) < target_size:
         admissible = [leg for leg in remaining if not _constraint_reasons(leg, selected, caps)]
         if not admissible:
             break
-        chosen = min(admissible, key=lambda leg: _marginal_key(leg, selected, caps))
+        chosen = min(admissible, key=_prediction_selection_key)
         selected.append(chosen)
         remaining = [leg for leg in remaining if leg.leg_id != chosen.leg_id]
 
-    selected = sorted(selected, key=lambda item: item.leg_id)
+    selected = sorted(selected, key=_prediction_selection_key)
     selected_ids = {item.leg_id for item in selected}
     reserves: list[ShadowPortfolioReserveLeg] = list(blocked)
     for leg in sorted((item for item in admitted if item.leg_id not in selected_ids), key=_reserve_key):
@@ -796,9 +961,12 @@ def optimize_shadow_portfolio(
         if len(selected) >= target_size:
             reasons.append("TARGET_ALREADY_FILLED")
         if not reasons:
-            reasons.append("LOWER_MARGINAL_PORTFOLIO_PRIORITY")
+            reasons.append("LOWER_PREDICTION_FIRST_PRIORITY")
         reserves.append(ShadowPortfolioReserveLeg(leg, tuple(sorted(set(reasons)))))
     reserves.sort(key=lambda item: (_reserve_key(item.leg), item.reserve_reasons))
+    market_diagnostics, family_diagnostics, fixture_funnel, opportunity_funnel = _diagnostics(
+        verified, selected, reserves
+    )
 
     shortfall = max(0, target_size - len(selected))
     optimization_status = (
@@ -818,6 +986,10 @@ def optimize_shadow_portfolio(
         "expected_slip_survival": _survival_product(selected),
         "combined_decimal_odds_product": _odds_product(selected),
         "exposure_summary": _exposure_summary(selected, caps),
+        "market_diagnostics": market_diagnostics,
+        "market_family_diagnostics": family_diagnostics,
+        "fixture_funnel": fixture_funnel,
+        "opportunity_funnel": opportunity_funnel,
         "authority": MappingProxyType(dict(AUTHORITY)),
         "frozen_portfolio_v2_contract_sha256": frozen_contract,
         "_router_inputs": verified,
@@ -843,6 +1015,7 @@ __all__ = [
     "AUTHORITY",
     "CurrentShadowPortfolioError",
     "DATASET_NAME",
+    "PORTFOLIO_POLICY_ID",
     "ShadowPortfolioLeg",
     "ShadowPortfolioOptimization",
     "ShadowPortfolioReserveLeg",
