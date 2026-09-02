@@ -48,10 +48,20 @@ def _watchdog_jobs(*, run_id: int = 123, sha: str = SHA):
     }
 
 
-def _dispatch(*, created_at: str, sha: str = SHA):
+def _dispatch(
+    *,
+    created_at: str,
+    sha: str = SHA,
+    workflow_id: int = continuity.PRIMARY_WORKFLOW_ID,
+):
     return {
         "id": 456,
-        "name": continuity.PRIMARY_WORKFLOW_NAME,
+        "workflow_id": workflow_id,
+        "name": (
+            "ATHENA fresh-holdout workflow_dispatch source=123 "
+            "target=2026-08-29T07:07:00Z cron=7 * * * * "
+            f"confirm={continuity.CONTINUITY_CONFIRMATION}"
+        ),
         "path": continuity.PRIMARY_WORKFLOW_PATH,
         "event": "workflow_dispatch",
         "head_branch": "main",
@@ -96,6 +106,44 @@ def test_continuity_dispatch_requires_real_natural_watchdog_source() -> None:
         continuity.validate_continuity_dispatch(
             watchdog_run=forged,
             dispatch_run=dispatch,
+            source_watchdog_run_id=123,
+            current_main_sha=SHA,
+            requested_target_slot="2026-08-29T07:07:00Z",
+            requested_target_cron="7 * * * *",
+            confirmation=continuity.CONTINUITY_CONFIRMATION,
+        )
+
+
+def test_continuity_dispatch_requires_exact_dynamic_run_name_and_workflow_id() -> None:
+    watchdog = _watchdog(created_at="2026-08-29T06:56:42Z")
+    dispatch = _dispatch(created_at="2026-08-29T07:07:08Z")
+
+    wrong_name = {**dispatch, "name": continuity.PRIMARY_WORKFLOW_NAME}
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="dispatch workflow run-name drifted",
+    ):
+        continuity.validate_continuity_dispatch(
+            watchdog_run=watchdog,
+            dispatch_run=wrong_name,
+            source_watchdog_run_id=123,
+            current_main_sha=SHA,
+            requested_target_slot="2026-08-29T07:07:00Z",
+            requested_target_cron="7 * * * *",
+            confirmation=continuity.CONTINUITY_CONFIRMATION,
+        )
+
+    wrong_workflow = {
+        **dispatch,
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID + 1,
+    }
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="dispatch workflow id drifted",
+    ):
+        continuity.validate_continuity_dispatch(
+            watchdog_run=watchdog,
+            dispatch_run=wrong_workflow,
             source_watchdog_run_id=123,
             current_main_sha=SHA,
             requested_target_slot="2026-08-29T07:07:00Z",
