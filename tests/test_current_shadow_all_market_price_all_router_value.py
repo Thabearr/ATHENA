@@ -304,9 +304,42 @@ def test_prediction_rank_is_deterministic_and_invariant_to_ev(monkeypatch):
     changed_first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b", confidence=0.70, odds=1.20, ev=0.10)
     changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c", confidence=0.70, odds=1.20, ev=0.90)
     _bundle, second_decision = _route_custom(monkeypatch, changed_first, changed_second)
-    expected = min(first.opportunity_id, second.opportunity_id)
-    assert first_decision.selected_opportunity_id == expected
-    assert second_decision.selected_opportunity_id == expected
+    expected = min(
+        router._prediction_canonical_key(first),
+        router._prediction_canonical_key(second),
+    )
+    first_selected = next(item for item in first_decision.opportunities if item.opportunity_id == first_decision.selected_opportunity_id)
+    second_selected = next(item for item in second_decision.opportunities if item.opportunity_id == second_decision.selected_opportunity_id)
+    assert router._prediction_canonical_key(first_selected.price_result) == expected
+    assert router._prediction_canonical_key(second_selected.price_result) == expected
+
+
+def test_prediction_rank_is_invariant_to_odds_and_quote_identity(monkeypatch):
+    first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b1", confidence=0.70, odds=1.20, ev=0.90)
+    second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c1", confidence=0.70, odds=1.50, ev=0.10)
+    _bundle, first_decision = _route_custom(monkeypatch, first, second)
+
+    changed_first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b2", confidence=0.70, odds=1.50, ev=0.10)
+    changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c2", confidence=0.70, odds=1.20, ev=0.90)
+    _bundle, second_decision = _route_custom(monkeypatch, changed_first, changed_second)
+
+    assert first.opportunity_id != changed_first.opportunity_id
+    assert second.opportunity_id != changed_second.opportunity_id
+    first_selected = next(item for item in first_decision.opportunities if item.opportunity_id == first_decision.selected_opportunity_id)
+    second_selected = next(item for item in second_decision.opportunities if item.opportunity_id == second_decision.selected_opportunity_id)
+    assert router._prediction_canonical_key(first_selected.price_result) == router._prediction_canonical_key(second_selected.price_result)
+    assert first_decision.selected_opportunity_id != second_decision.selected_opportunity_id
+    assert first_decision.value_first_selected_opportunity_id == first.opportunity_id
+    assert second_decision.value_first_selected_opportunity_id == changed_second.opportunity_id
+
+
+def test_prediction_rank_collision_fails_closed(monkeypatch):
+    first = _router_result(MarketId.BTTS, OutcomeId.YES, token="d1", confidence=0.70, odds=1.20)
+    second = _router_result(MarketId.BTTS, OutcomeId.YES, token="d2", confidence=0.70, odds=1.30)
+    bundle = _router_bundle((first, second))
+    monkeypatch.setattr(router, "verify_shadow_price_all_bundle", lambda value: value)
+    with pytest.raises(ShadowPriceError, match="ambiguous canonical prediction identity"):
+        router.route_shadow_price_results(bundle)
 
 
 def test_incomplete_or_malformed_settlement_is_not_prediction_comparable(monkeypatch):

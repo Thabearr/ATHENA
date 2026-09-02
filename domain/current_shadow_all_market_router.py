@@ -47,7 +47,7 @@ from domain._current_shadow_price_records import (
     _issue_shadow_router_decision,
 )
 from domain.current_shadow_all_market_price_all import verify_shadow_price_all_bundle
-from domain.markets import MarketId
+from domain.markets import MarketId, OutcomeId
 
 
 _SCALAR_MARKETS = frozenset(ORDINARY_PARTITIONS) | OVERLAPPING_MARKETS
@@ -55,6 +55,21 @@ _SCALAR_MARKETS = frozenset(ORDINARY_PARTITIONS) | OVERLAPPING_MARKETS
 
 def _event_floor(result: ShadowPriceResult) -> Optional[float]:
     return result.model_probability
+
+
+def _prediction_canonical_key(result: ShadowPriceResult) -> tuple[str, str, str]:
+    """Return the quote-independent identity of one football prediction."""
+
+    if type(result.market_id) is not MarketId or type(result.outcome_id) is not OutcomeId:
+        raise ShadowPriceError("prediction canonical identity is malformed")
+    if result.line is None:
+        line_identity = "NONE"
+    elif type(result.line) is float and math.isfinite(result.line):
+        line = 0.0 if result.line == 0.0 else result.line
+        line_identity = line.hex()
+    else:
+        raise ShadowPriceError("prediction canonical line identity is malformed")
+    return (result.market_id.value, result.outcome_id.value, line_identity)
 
 
 def _robust_edge(result: ShadowPriceResult, event_floor: Optional[float]) -> Optional[float]:
@@ -267,12 +282,14 @@ def _value_first_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, float, 
     return (-item.robust_net_expected_value, -edge, -floor, item.opportunity_id)
 
 
-def _prediction_first_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, str]:
+def _prediction_first_rank_key(
+    item: ShadowRoutedOpportunity,
+) -> tuple[float, tuple[str, str, str]]:
     if item.eligibility is not ShadowOpportunityEligibility.ELIGIBLE:
         raise ShadowPriceError("prediction-first rank key used for rejected opportunity")
     if item.prediction_confidence is None:
         raise ShadowPriceError("prediction-first eligible opportunity lacks confidence")
-    return (-item.prediction_confidence, item.opportunity_id)
+    return (-item.prediction_confidence, _prediction_canonical_key(item.price_result))
 
 
 def _rejected_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, str]:
@@ -288,10 +305,18 @@ def _apply_ranks(
     list[ShadowRoutedOpportunity],
     list[ShadowRoutedOpportunity],
 ]:
-    prediction_eligible = sorted(
-        (item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.ELIGIBLE),
-        key=_prediction_first_rank_key,
-    )
+    prediction_eligible = [
+        item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.ELIGIBLE
+    ]
+    canonical_keys: dict[tuple[str, str, str], str] = {}
+    for item in prediction_eligible:
+        key = _prediction_canonical_key(item.price_result)
+        if key in canonical_keys:
+            raise ShadowPriceError(
+                "ambiguous canonical prediction identity for Prediction-first ranking"
+            )
+        canonical_keys[key] = item.opportunity_id
+    prediction_eligible.sort(key=_prediction_first_rank_key)
     value_eligible = sorted(
         (
             item
@@ -384,16 +409,10 @@ def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketR
         status = ShadowRouterDecisionStatus.SELECTED
         selected = prediction_eligible[0].opportunity_id
         runner_up = prediction_eligible[1].opportunity_id if len(prediction_eligible) > 1 else None
-        decision_reasons = (
-            "highest prediction-confidence opportunity selected after complete exact Price-all validation",
-        )
     else:
         status = ShadowRouterDecisionStatus.NO_BET
         selected = None
         runner_up = None
-        decision_reasons = (
-            "no canonical opportunity cleared the Prediction-first Router V2 policy",
-        )
 
     strongest_rejected = prediction_rejected[0].opportunity_id if prediction_rejected else None
     return _issue_shadow_router_decision(
