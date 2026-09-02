@@ -22,7 +22,8 @@ REPOSITORY = "Thabearr/ATHENA"
 def _ambiguous_no_acquisition_run() -> dict:
     return {
         "id": RUN_ID,
-        "name": mirror.WORKFLOW_NAME,
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "name": continuity.PRIMARY_SCHEDULE_RUN_NAME,
         "event": "schedule",
         "status": "completed",
         "conclusion": "success",
@@ -63,9 +64,17 @@ def _ambiguous_no_acquisition_jobs() -> dict:
 
 
 def _continuity_run() -> dict:
+    run_name = (
+        "ATHENA fresh-holdout workflow_dispatch "
+        f"source={SOURCE_WATCHDOG_RUN_ID} "
+        "target=2026-08-29T07:07:00Z "
+        "cron=7 * * * * "
+        f"confirm={continuity.CONTINUITY_CONFIRMATION}"
+    )
     return {
         "id": CONTINUITY_RUN_ID,
-        "name": mirror.WORKFLOW_NAME,
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "name": run_name,
         "event": "workflow_dispatch",
         "status": "completed",
         "conclusion": "success",
@@ -73,13 +82,7 @@ def _continuity_run() -> dict:
         "head_sha": SHA,
         "path": mirror.WORKFLOW_PATH,
         "created_at": "2026-08-29T07:07:08Z",
-        "display_title": (
-            "ATHENA fresh-holdout workflow_dispatch "
-            f"source={SOURCE_WATCHDOG_RUN_ID} "
-            "target=2026-08-29T07:07:00Z "
-            "cron=7 * * * * "
-            f"confirm={continuity.CONTINUITY_CONFIRMATION}"
-        ),
+        "display_title": run_name,
     }
 
 

@@ -208,7 +208,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             if run.get("event") != "workflow_dispatch":
                 return False
             if (
-                run.get("name") != continuity.PRIMARY_WORKFLOW_NAME
+                run.get("workflow_id") != continuity.PRIMARY_WORKFLOW_ID
                 or run.get("path") not in {
                     continuity.PRIMARY_WORKFLOW_PATH,
                     f"{continuity.PRIMARY_WORKFLOW_PATH}@{run.get('head_sha', '')}",

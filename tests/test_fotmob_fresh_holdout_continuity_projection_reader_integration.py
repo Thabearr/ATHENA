@@ -31,9 +31,15 @@ def _watchdog() -> dict[str, Any]:
 
 
 def _dispatch() -> dict[str, Any]:
+    run_name = (
+        "ATHENA fresh-holdout workflow_dispatch source=123 "
+        "target=2026-08-29T07:07:00Z cron=7 * * * * "
+        "confirm=PROSPECTIVE_ONLY_NO_BACKFILL_V1"
+    )
     return {
         "id": 456,
-        "name": continuity.PRIMARY_WORKFLOW_NAME,
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "name": run_name,
         "path": continuity.PRIMARY_WORKFLOW_PATH,
         "event": "workflow_dispatch",
         "head_branch": "main",
@@ -41,11 +47,7 @@ def _dispatch() -> dict[str, Any]:
         "created_at": "2026-08-29T07:07:08Z",
         "status": "completed",
         "conclusion": "success",
-        "display_title": (
-            "ATHENA fresh-holdout workflow_dispatch source=123 "
-            "target=2026-08-29T07:07:00Z cron=7 * * * * "
-            "confirm=PROSPECTIVE_ONLY_NO_BACKFILL_V1"
-        ),
+        "display_title": run_name,
     }
 
 
@@ -105,6 +107,7 @@ def _continuity_audit_inputs(*, current_sha: str = SHA):
     dispatch["display_title"] = dispatch["display_title"].replace(
         "target=2026-08-29T07:07:00Z", "target=2026-08-19T00:07:00Z"
     )
+    dispatch["name"] = dispatch["display_title"]
     artifact = {
         "id": 9001,
         "name": bundle["artifact_name"],
