@@ -433,6 +433,8 @@ def _fresh_resolve_portfolio(
     source_hashes: list[dict[str, Any]] = []
     candidate_audits: list[dict[str, Any]] = []
     selected_ids = {leg.fixture_identity: leg.selected_opportunity_id for leg in portfolio.selected_legs}
+    family_cap = portfolio_module._caps(portfolio.requested_target_size)["market_family"]
+    family_counts: dict[str, int] = {}
 
     for index, leg in enumerate(portfolio.selected_legs):
         if index and delay_seconds:
@@ -468,12 +470,20 @@ def _fresh_resolve_portfolio(
             ),
             key=_fresh_candidate_key,
         )
-        chosen: tuple[Any, Any, dict[str, str], dict[str, Any], Decimal] | None = None
+        chosen: tuple[Any, Any, dict[str, str], dict[str, Any], Decimal, str] | None = None
         per_fixture: list[dict[str, Any]] = []
         for opportunity in candidates:
             quote = _opportunity_quote(source, opportunity)
             if quote is None:
                 continue
+            market_definition = portfolio_module.MARKET_REGISTRY.get(
+                opportunity.price_result.market_id
+            )
+            if market_definition is None:
+                raise CurrentShadowAllMarketShareCodeError(
+                    "fresh candidate market has no canonical family"
+                )
+            family = market_definition.family.value
             intent = {
                 "eventId": leg.provider_event_id,
                 "homeTeamName": leg.home_team,
@@ -493,20 +503,30 @@ def _fresh_resolve_portfolio(
                 per_fixture.append({
                     "opportunity_id": opportunity.opportunity_id,
                     "prediction_confidence": opportunity.prediction_confidence,
+                    "market_family": family,
                     "eligible": False,
                     "reason": f"EXACT_PROVIDER_SEMANTICS_UNAVAILABLE:{exc}",
                 })
                 continue
-            eligible = odds >= Decimal(str(MINIMUM_DECIMAL_ODDS))
+            odds_eligible = odds >= Decimal(str(MINIMUM_DECIMAL_ODDS))
+            family_eligible = family_counts.get(family, 0) < family_cap
+            if not odds_eligible:
+                reason = "EXACT_CURRENT_ODDS_BELOW_1_09"
+            elif not family_eligible:
+                reason = f"CURRENT_MARKET_FAMILY_CAP:{family}"
+            else:
+                reason = None
+            eligible = odds_eligible and family_eligible
             per_fixture.append({
                 "opportunity_id": opportunity.opportunity_id,
                 "prediction_confidence": opportunity.prediction_confidence,
+                "market_family": family,
                 "exact_current_odds": str(odds),
                 "eligible": eligible,
-                "reason": None if eligible else "EXACT_CURRENT_ODDS_BELOW_1_09",
+                "reason": reason,
             })
             if eligible:
-                chosen = opportunity, quote, selection, audit, odds
+                chosen = opportunity, quote, selection, audit, odds, family
                 break
         candidate_audits.append({
             "fixture_identity": leg.fixture_identity,
@@ -520,7 +540,8 @@ def _fresh_resolve_portfolio(
                 "reason": "NO_CURRENT_PREDICTION_QUALIFIED_FALLBACK",
             }))
             continue
-        opportunity, quote, selection, audit, odds = chosen
+        opportunity, quote, selection, audit, odds, family = chosen
+        family_counts[family] = family_counts.get(family, 0) + 1
         prediction_identity = "|".join(
             portfolio_module.router._prediction_canonical_key(opportunity.price_result)
         )
@@ -533,6 +554,7 @@ def _fresh_resolve_portfolio(
             "market_id": opportunity.price_result.market_id.value,
             "outcome_id": opportunity.price_result.outcome_id.value,
             "line": opportunity.price_result.line,
+            "market_family": family,
             "canonical_prediction_identity": prediction_identity,
             "selected_opportunity_id": opportunity.opportunity_id,
             "prediction_confidence": opportunity.prediction_confidence,
@@ -568,6 +590,8 @@ def _fresh_resolve_portfolio(
         "observed_at": semantic_bridge._utc_now(),
         "minimum_prediction_confidence": MINIMUM_PREDICTION_CONFIDENCE,
         "minimum_decimal_odds": MINIMUM_DECIMAL_ODDS,
+        "market_family_cap": family_cap,
+        "fresh_market_family_counts": dict(sorted(family_counts.items())),
         "intent_count": len(portfolio.selected_legs),
         "resolved_count": len(selections),
         "source_hashes": sorted(source_hashes, key=lambda item: item["eventId"]),
