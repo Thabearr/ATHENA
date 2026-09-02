@@ -54,6 +54,37 @@ def _portfolio(opportunities):
     )
 
 
+def _portfolio_many(opportunity_sets, *, target_size):
+    legs = []
+    sources = []
+    for index, opportunities in enumerate(opportunity_sets, start=1):
+        top = opportunities[0]
+        leg = SimpleNamespace(
+            fixture_identity=f"FOTMOB:{index}",
+            provider_event_id=f"sr:match:{index}",
+            home_team=f"Home {index}",
+            away_team=f"Away {index}",
+            competition=f"League {index}",
+            kickoff_utc=NOW + timedelta(hours=4),
+            selected_opportunity_id=top.opportunity_id,
+            decimal_odds=1.20,
+        )
+        source = SimpleNamespace(
+            fixture_identity=leg.fixture_identity,
+            router_decision=SimpleNamespace(
+                opportunities=tuple(opportunities),
+                router_policy_id="SHADOW_PREDICTION_FIRST_ROUTER_V2",
+            ),
+        )
+        legs.append(leg)
+        sources.append(source)
+    return SimpleNamespace(
+        selected_legs=tuple(legs),
+        _router_inputs=tuple(sources),
+        requested_target_size=target_size,
+    )
+
+
 def _install_live(monkeypatch, odds_by_market):
     monkeypatch.setattr(
         share.semantic_bridge,
@@ -129,6 +160,51 @@ def test_no_fallback_drops_fixture_and_records_honest_event(tmp_path, monkeypatc
     assert legs == ()
     assert events[0]["to_opportunity_id"] is None
     assert events[0]["reason"] == "NO_CURRENT_PREDICTION_QUALIFIED_FALLBACK"
+
+
+def test_fresh_fallback_preserves_market_family_cap_and_uses_next_prediction(
+    tmp_path, monkeypatch,
+):
+    first = (
+        _opportunity("a", 0.95, MarketId.MATCH_RESULT, OutcomeId.HOME, 3.0),
+        _opportunity("b", 0.85, MarketId.BTTS, OutcomeId.YES, -1.0),
+    )
+    second = (
+        _opportunity("c", 0.94, MarketId.DOUBLE_CHANCE, OutcomeId.HOME_OR_DRAW, 4.0),
+        _opportunity("d", 0.84, MarketId.BTTS, OutcomeId.YES, -2.0),
+    )
+    third = (
+        _opportunity("e", 0.93, MarketId.TOTAL_GOALS, OutcomeId.OVER, 5.0),
+        _opportunity("f", 0.83, MarketId.BTTS, OutcomeId.YES, 50.0),
+        _opportunity("g", 0.70, MarketId.HOME_WIN_TO_NIL, OutcomeId.YES, -4.0),
+    )
+    _install_live(monkeypatch, {
+        "MATCH_RESULT": 1.08,
+        "DOUBLE_CHANCE": 1.08,
+        "TOTAL_GOALS": 1.08,
+        "BTTS": 1.15,
+        "HOME_WIN_TO_NIL": 1.12,
+    })
+    portfolio = _portfolio_many((first, second, third), target_size=4)
+    selections, receipt, legs, events = share._fresh_resolve_portfolio(
+        portfolio, output_dir=tmp_path, delay_seconds=0,
+    )
+
+    assert len(selections) == 3
+    assert receipt["market_family_cap"] == 2
+    assert receipt["fresh_market_family_counts"] == {"BTTS": 2, "WIN_TO_NIL": 1}
+    assert [leg["market_family"] for leg in legs] == ["BTTS", "BTTS", "WIN_TO_NIL"]
+    third_candidates = next(
+        row["candidates"] for row in receipt["candidate_audits"]
+        if row["fixture_identity"] == "FOTMOB:3"
+    )
+    assert any(
+        item["opportunity_id"] == "f" * 64
+        and item["reason"] == "CURRENT_MARKET_FAMILY_CAP:BTTS"
+        for item in third_candidates
+    )
+    assert legs[2]["selected_opportunity_id"] == "g" * 64
+    assert all(event["reason"] == "PREDICTION_FIRST_FRESH_FALLBACK" for event in events)
 
 
 def test_ambiguous_provider_semantics_fail_closed_without_nearby_substitution(tmp_path, monkeypatch):
