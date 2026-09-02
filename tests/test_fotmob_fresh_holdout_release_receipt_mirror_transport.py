@@ -439,8 +439,8 @@ def test_workflow_pins_and_invokes_reviewed_transport_after_reviewed_success() -
     ).read_text(encoding="utf-8")
     assert "ddabb6ae83cbe6c81c9264119a121a54715df960" in workflow
     assert "e24929813e5666c5477aa8906cf36cc7ef6ffcc4" in workflow
-    assert "3f42e9f57af96d489cbc59db9c5c9df65750a5f4" in workflow
-    assert "57839269ff3968b38445112c16f5b3ab749eb997" in workflow
+    assert "6d768a506d579ef88f1d321102cb9c53d846c72a" in workflow
+    assert "9e09e13d145f9ad2419b11073d4219aec14e54a8" in workflow
     assert (
         "python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror" in workflow
     )
