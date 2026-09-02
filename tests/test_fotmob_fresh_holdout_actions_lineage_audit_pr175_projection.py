@@ -52,19 +52,21 @@ def _continuity_runs(*, target: str = "2026-08-29T07:07:00Z"):
         "status": "completed",
         "conclusion": "success",
     }
+    run_name = (
+        "ATHENA fresh-holdout workflow_dispatch source=123 "
+        f"target={target} cron=7 * * * * "
+        "confirm=PROSPECTIVE_ONLY_NO_BACKFILL_V1"
+    )
     dispatch = {
         "id": 456,
-        "name": continuity.PRIMARY_WORKFLOW_NAME,
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "name": run_name,
         "path": continuity.PRIMARY_WORKFLOW_PATH,
         "event": "workflow_dispatch",
         "head_branch": "main",
         "head_sha": SHA,
         "created_at": "2026-08-29T07:07:08Z",
-        "display_title": (
-            "ATHENA fresh-holdout workflow_dispatch source=123 "
-            f"target={target} cron=7 * * * * "
-            "confirm=PROSPECTIVE_ONLY_NO_BACKFILL_V1"
-        ),
+        "display_title": run_name,
     }
     jobs = {
         "jobs": [{
