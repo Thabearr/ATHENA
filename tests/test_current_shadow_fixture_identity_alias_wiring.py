@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -99,6 +100,37 @@ def test_reviewed_shadow_projection_admits_exact_observed_away_label():
     )
     assert event.home_team_name == "Deportivo Mixco"
     assert event.away_team_name == "Comunicaciones FC"
+
+
+def test_fanout_parser_uses_exact_reviewed_projection_and_preserves_response_ancestry():
+    observed = datetime(2026, 9, 3, 10, 20, tzinfo=UTC)
+    nonce = int(observed.timestamp() * 1000) - 1000
+    raw = json.dumps(
+        {
+            "bizCode": 10000,
+            "data": [
+                _provider_event(
+                    event_id="sr:match:73831434",
+                    home="Jeugd Royal Francs Borains ",
+                    away="KVC Westerlo",
+                    kickoff_ms=1788546600000,
+                )
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    observation, events = fanout._parse_tournament_response(
+        raw,
+        category_id="sr:category:33",
+        tournament_id="sr:tournament:1117",
+        request_nonce_ms=nonce,
+        observed_at=observed,
+    )
+    assert len(events) == 1
+    assert events[0].home_team_name == "Jeugd Royal Francs Borains"
+    assert events[0].source_raw_sha256 == observation.raw_sha256
+    assert observation.event_ids == ("sr:match:73831434",)
 
 
 def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
