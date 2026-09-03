@@ -442,11 +442,14 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         projected_legacy_queued.values(),
         key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
     )
-    result["verified_legacy_queued_no_execution_count"] = len(ordered_legacy_queued)
-    result["projected_legacy_queued_no_execution_runs"] = [
-        _projected_legacy_queued_no_execution_record(run)
-        for run in ordered_legacy_queued
-    ]
+    if ordered_legacy_queued:
+        result["verified_legacy_queued_no_execution_count"] = len(
+            ordered_legacy_queued
+        )
+        result["projected_legacy_queued_no_execution_runs"] = [
+            _projected_legacy_queued_no_execution_record(run)
+            for run in ordered_legacy_queued
+        ]
 
     existing_preacquisition = result.get(
         "verified_preacquisition_control_failure_count", 0
