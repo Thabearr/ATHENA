@@ -14,10 +14,11 @@ substring matching, reversal or time tolerance is added.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -228,7 +229,20 @@ def _shadow_parse_tournament_response(
 
 
 _parse_tournament_response = _shadow_parse_tournament_response
-legacy._parse_tournament_response = _shadow_parse_tournament_response
+
+
+@contextmanager
+def _shadow_parser_scope() -> Iterator[None]:
+    """Use the compatibility parser only while the Shadow wrapper is executing."""
+    previous_legacy_parser = legacy._parse_tournament_response
+    previous_base_parser = base._parse_tournament_response
+    legacy._parse_tournament_response = _shadow_parse_tournament_response
+    base._parse_tournament_response = _shadow_parse_tournament_response
+    try:
+        yield
+    finally:
+        legacy._parse_tournament_response = previous_legacy_parser
+        base._parse_tournament_response = previous_base_parser
 
 
 def calculate_contract_sha256() -> str:
@@ -348,8 +362,6 @@ def _bind_identity_state(bundle: Any) -> Any:
 
 def _sync_wrapper_hooks() -> None:
     legacy._network_get = _identity_observing_network_get
-    legacy._parse_tournament_response = _shadow_parse_tournament_response
-    base._parse_tournament_response = _shadow_parse_tournament_response
     legacy.time = time
 
 
@@ -358,10 +370,11 @@ def capture_current_catalog_fanout_discovery(
 ):
     validate_contract()
     _sync_wrapper_hooks()
-    return legacy.capture_current_catalog_fanout_discovery(
-        repository_root=repository_root,
-        execute_live_network=execute_live_network,
-    )
+    with _shadow_parser_scope():
+        return legacy.capture_current_catalog_fanout_discovery(
+            repository_root=repository_root,
+            execute_live_network=execute_live_network,
+        )
 
 
 def verify_current_catalog_fanout_discovery(
@@ -369,10 +382,11 @@ def verify_current_catalog_fanout_discovery(
 ):
     validate_contract()
     _sync_wrapper_hooks()
-    return legacy.verify_current_catalog_fanout_discovery(
-        evidence_directory,
-        repository_root=repository_root,
-    )
+    with _shadow_parser_scope():
+        return legacy.verify_current_catalog_fanout_discovery(
+            evidence_directory,
+            repository_root=repository_root,
+        )
 
 
 def reconcile_current_events_from_catalog_fanout(
@@ -386,13 +400,14 @@ def reconcile_current_events_from_catalog_fanout(
     validate_contract()
     _begin_identity_scope(fotmob_captures, fanout_evidence_directory)
     _sync_wrapper_hooks()
-    result = legacy.reconcile_current_events_from_catalog_fanout(
-        repository_root=repository_root,
-        fanout_evidence_directory=fanout_evidence_directory,
-        fotmob_admission_value=fotmob_admission_value,
-        fotmob_captures=fotmob_captures,
-        execute_live_network=execute_live_network,
-    )
+    with _shadow_parser_scope():
+        result = legacy.reconcile_current_events_from_catalog_fanout(
+            repository_root=repository_root,
+            fanout_evidence_directory=fanout_evidence_directory,
+            fotmob_admission_value=fotmob_admission_value,
+            fotmob_captures=fotmob_captures,
+            execute_live_network=execute_live_network,
+        )
     return _bind_identity_state(result)
 
 
@@ -406,12 +421,13 @@ def discover_and_reconcile_current_events(
     validate_contract()
     _begin_identity_scope(fotmob_captures)
     _sync_wrapper_hooks()
-    result = legacy.discover_and_reconcile_current_events(
-        repository_root=repository_root,
-        fotmob_admission_value=fotmob_admission_value,
-        fotmob_captures=fotmob_captures,
-        execute_live_network=execute_live_network,
-    )
+    with _shadow_parser_scope():
+        result = legacy.discover_and_reconcile_current_events(
+            repository_root=repository_root,
+            fotmob_admission_value=fotmob_admission_value,
+            fotmob_captures=fotmob_captures,
+            execute_live_network=execute_live_network,
+        )
     return _bind_identity_state(result)
 
 
@@ -430,7 +446,8 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
             "persisted Shadow fixture identity state differs from retained bundle"
         )
-    return legacy.verify_current_event_discovery_reconciliation_bundle(value)
+    with _shadow_parser_scope():
+        return legacy.verify_current_event_discovery_reconciliation_bundle(value)
 
 
 __all__ = [
