@@ -98,7 +98,6 @@ _text = legacy._text
 _sha = legacy._sha
 _network_get = legacy._network_get
 _parse_catalog = legacy._parse_catalog
-_parse_tournament_response = legacy._parse_tournament_response
 _evidence_root = legacy._evidence_root
 _write_exclusive = legacy._write_exclusive
 _raw_filename = legacy._raw_filename
@@ -158,6 +157,78 @@ class _ReviewedShadowProxy:
 
 
 legacy.reviewed = _ReviewedShadowProxy()
+
+
+def _shadow_parse_tournament_response(
+    raw: bytes,
+    *,
+    category_id: str,
+    tournament_id: str,
+    request_nonce_ms: int,
+    observed_at: Any,
+):
+    """Frozen fanout parser plus the exact reviewed team-label projection only."""
+    if type(raw) is not bytes or not raw or len(raw) > MAX_RESPONSE_BYTES:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout response must be bounded non-empty bytes"
+        )
+    try:
+        payload = live.strict_json_loads(raw)
+    except live.SportyBetLiveEventQuoteEvidenceError as exc:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(str(exc)) from exc
+    if type(payload) is not dict or payload.get("bizCode") != 10000:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout provider response must be successful"
+        )
+    data = payload.get("data")
+    if type(data) is not list:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout data must be a list"
+        )
+    raw_hash = base.sha256_bytes(raw)
+    observed = _utc(observed_at, "observed_at")
+    events = []
+    for row in data:
+        if type(row) is not dict:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "fanout event row must be object"
+            )
+        try:
+            event = _reviewed_shadow_event_from_mapping(
+                row,
+                inherited_competition=None,
+                page_num=1,
+                raw_sha256=raw_hash,
+                observed_at=observed,
+            )
+        except _reviewed.SportyBetCurrentEventDiscoveryError as exc:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(str(exc)) from exc
+        events.append(event)
+    ids = [item.event_id for item in events]
+    if len(ids) != len(set(ids)):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout response contains duplicate event IDs"
+        )
+    target = tournament_request_target(
+        category_id=category_id,
+        tournament_id=tournament_id,
+        request_nonce_ms=request_nonce_ms,
+    )
+    observation = ProviderTournamentObservation(
+        category_id=category_id,
+        tournament_id=tournament_id,
+        request_target=target,
+        request_nonce_ms=request_nonce_ms,
+        observed_at=observed,
+        raw_sha256=raw_hash,
+        raw_size=len(raw),
+        event_ids=tuple(sorted(ids)),
+    )
+    return observation, tuple(sorted(events, key=lambda item: item.event_id))
+
+
+_parse_tournament_response = _shadow_parse_tournament_response
+legacy._parse_tournament_response = _shadow_parse_tournament_response
 
 
 def calculate_contract_sha256() -> str:
@@ -277,6 +348,7 @@ def _bind_identity_state(bundle: Any) -> Any:
 
 def _sync_wrapper_hooks() -> None:
     legacy._network_get = _identity_observing_network_get
+    legacy._parse_tournament_response = _shadow_parse_tournament_response
     legacy.time = time
 
 
