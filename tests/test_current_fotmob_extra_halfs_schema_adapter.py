@@ -156,7 +156,7 @@ def test_unreviewed_halfs_key_still_fails_closed():
 
     with pytest.raises(
         CurrentFotMobFixtureCandidateAdapterError,
-        match="additive schema assessment failed",
+        match="extra-halfs compatibility path entered without a reviewed extra-halfs key",
     ):
         build_current_fotmob_fixture_candidate_bundle(changed, manifest)
 
