@@ -14,16 +14,24 @@ import hashlib
 import json
 import math
 from pathlib import Path
+import time
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
 from domain import current_shadow_all_market_portfolio as portfolio_module
-from domain._current_shadow_price_core import MAX_QUOTE_AGE_SECONDS, MINIMUM_LEAD_SECONDS
+from domain._current_shadow_price_core import (
+    MAX_QUOTE_AGE_SECONDS,
+    MINIMUM_DECIMAL_ODDS,
+    MINIMUM_LEAD_SECONDS,
+    MINIMUM_PREDICTION_CONFIDENCE,
+    ShadowPriceDisposition,
+)
+from domain._current_shadow_quote_binding import build_current_shadow_exact_quotes
 from scripts import sportybet_direct_share_bridge as direct_bridge
 from scripts import sportybet_semantic_share_bridge as semantic_bridge
 
-SCHEMA_VERSION = 1
-DATASET_NAME = "athena-current-shadow-all-market-share-code-v1"
+SCHEMA_VERSION = 2
+DATASET_NAME = "athena-current-shadow-all-market-share-code-v2"
 STATUS_CODE_VERIFIED = "RESEARCH_SHADOW_CODE_VERIFIED"
 STATUS_CODE_VERIFIED_WITH_SHORTFALL = "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL"
 STATUS_REPRICE_REQUIRED = "RESEARCH_NO_CODE_REPRICE_REQUIRED"
@@ -118,6 +126,9 @@ class ShadowAllMarketShareCodeReceipt:
     share_code: str | None
     share_url: str | None
     combined_odds: str | None
+    fresh_selected_legs: tuple[Mapping[str, Any], ...] = ()
+    fallback_events: tuple[Mapping[str, Any], ...] = ()
+    exact_create_reload_equality: bool = False
 
     def __post_init__(self) -> None:
         allowed = {
@@ -150,7 +161,7 @@ class ShadowAllMarketShareCodeReceipt:
             raise CurrentShadowAllMarketShareCodeError("requested_target_size is invalid")
         if type(self.portfolio_shortfall) is not int or self.portfolio_shortfall < 0:
             raise CurrentShadowAllMarketShareCodeError("portfolio_shortfall is invalid")
-        if type(self.selected_leg_count) is not int or self.selected_leg_count < 1:
+        if type(self.selected_leg_count) is not int or self.selected_leg_count < 0:
             raise CurrentShadowAllMarketShareCodeError("selected_leg_count is invalid")
         if self.selected_leg_count + self.portfolio_shortfall != self.requested_target_size:
             raise CurrentShadowAllMarketShareCodeError("selected leg count and shortfall do not match target")
@@ -183,6 +194,8 @@ class ShadowAllMarketShareCodeReceipt:
                 or self.transport_receipt_sha256 is None
             ):
                 raise CurrentShadowAllMarketShareCodeError("verified share-code receipt is incomplete")
+            if self.exact_create_reload_equality is not True:
+                raise CurrentShadowAllMarketShareCodeError("verified receipt requires exact create/reload equality")
         elif any(
             value is not None for value in (self.share_code, self.share_url, self.combined_odds)
         ):
@@ -210,6 +223,9 @@ class ShadowAllMarketShareCodeReceipt:
             "shareCode": self.share_code,
             "shareURL": self.share_url,
             "combined_odds": self.combined_odds,
+            "fresh_selected_legs": [dict(item) for item in self.fresh_selected_legs],
+            "fallback_events": [dict(item) for item in self.fallback_events],
+            "exact_create_reload_equality": self.exact_create_reload_equality,
             "code_verified": self.code_verified,
             "authority": dict(AUTHORITY),
             "sportybet_login_used": False,
@@ -224,20 +240,29 @@ def _terminal(
     *, portfolio: portfolio_module.ShadowPortfolioOptimization, status: str,
     reasons: Sequence[str], semantic_receipt: Mapping[str, Any] | None = None,
     transport_receipt: Mapping[str, Any] | None = None,
+    fresh_selected_legs: Sequence[Mapping[str, Any]] | None = None,
+    fallback_events: Sequence[Mapping[str, Any]] = (),
 ) -> ShadowAllMarketShareCodeReceipt:
+    selected_count = len(portfolio.selected_legs) if fresh_selected_legs is None else len(fresh_selected_legs)
+    shortfall = portfolio.requested_target_size - selected_count
     return ShadowAllMarketShareCodeReceipt(
         status=status,
         observed_at=_now(),
         portfolio_sha256=portfolio.canonical_sha256,
         requested_target_size=portfolio.requested_target_size,
-        portfolio_shortfall=portfolio.shortfall,
-        selected_leg_count=len(portfolio.selected_legs),
+        portfolio_shortfall=shortfall,
+        selected_leg_count=selected_count,
         reasons=tuple(sorted(set(reasons))),
         semantic_resolution_receipt_sha256=None if semantic_receipt is None else _sha(dict(semantic_receipt)),
         transport_receipt_sha256=None if transport_receipt is None else _sha(dict(transport_receipt)),
         share_code=None,
         share_url=None,
         combined_odds=None,
+        fresh_selected_legs=tuple(
+            MappingProxyType(dict(item)) for item in (fresh_selected_legs or ())
+        ),
+        fallback_events=tuple(MappingProxyType(dict(item)) for item in fallback_events),
+        exact_create_reload_equality=False,
     )
 
 
@@ -337,6 +362,249 @@ def _verify_semantic(
     return tuple(sorted(set(reasons)))
 
 
+def _transport_lead_reasons(
+    portfolio: portfolio_module.ShadowPortfolioOptimization,
+    now: datetime,
+) -> tuple[str, ...]:
+    reasons = []
+    for leg in portfolio.selected_legs:
+        lead = (leg.kickoff_utc - now).total_seconds()
+        if not math.isfinite(lead) or lead <= MINIMUM_LEAD_SECONDS:
+            reasons.append(f"{leg.fixture_identity}:FIXTURE_TOO_CLOSE_TO_KICKOFF")
+    return tuple(sorted(set(reasons)))
+
+
+def _opportunity_quote(source: portfolio_module.ShadowPortfolioRouterInput, opportunity: Any):
+    result = opportunity.price_result
+    if result.disposition is not ShadowPriceDisposition.PRICED or result.quote_identity_sha256 is None:
+        return None
+    matches = [
+        quote for quote in build_current_shadow_exact_quotes(source.price_all_bundle._context)
+        if quote.identity_sha256 == result.quote_identity_sha256
+    ]
+    if len(matches) != 1:
+        raise CurrentShadowAllMarketShareCodeError(
+            "prediction candidate does not bind one exact retained provider quote"
+        )
+    return matches[0]
+
+
+def _fresh_candidate_key(opportunity: Any) -> tuple[Any, ...]:
+    if opportunity.prediction_confidence is None:
+        raise CurrentShadowAllMarketShareCodeError("fresh candidate lacks prediction confidence")
+    return (
+        -opportunity.prediction_confidence,
+        portfolio_module.router._prediction_canonical_key(opportunity.price_result),
+    )
+
+
+def _fresh_ev_diagnostic(opportunity: Any, odds: Decimal) -> float | None:
+    result = opportunity.price_result
+    settlement_probabilities = getattr(result, "settlement_state_probabilities", ())
+    if settlement_probabilities:
+        try:
+            return math.fsum(
+                probability * portfolio_module.router.settlement_unit_return(state, float(odds))
+                for state, probability in settlement_probabilities
+            )
+        except (TypeError, ValueError):
+            return None
+    model_probability = getattr(result, "model_probability", None)
+    if model_probability is None:
+        return None
+    return model_probability * float(odds) - 1.0
+
+
+def _fresh_resolve_portfolio(
+    portfolio: portfolio_module.ShadowPortfolioOptimization,
+    *,
+    output_dir: Path,
+    delay_seconds: float,
+) -> tuple[tuple[dict[str, str], ...], dict[str, Any], tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
+    """Resolve each fixture once and apply current Prediction-first fallback."""
+
+    output_dir.mkdir(parents=True, exist_ok=True)
+    event_dir = output_dir / "events"
+    event_dir.mkdir(parents=True, exist_ok=True)
+    source_by_fixture = {item.fixture_identity: item for item in portfolio._router_inputs}
+    selections: list[dict[str, str]] = []
+    fresh_legs: list[Mapping[str, Any]] = []
+    fallback_events: list[Mapping[str, Any]] = []
+    source_hashes: list[dict[str, Any]] = []
+    candidate_audits: list[dict[str, Any]] = []
+    selected_ids = {leg.fixture_identity: leg.selected_opportunity_id for leg in portfolio.selected_legs}
+    family_cap = portfolio_module._caps(portfolio.requested_target_size)["market_family"]
+    family_counts: dict[str, int] = {}
+
+    for index, leg in enumerate(portfolio.selected_legs):
+        if index and delay_seconds:
+            time.sleep(delay_seconds)
+        source = source_by_fixture.get(leg.fixture_identity)
+        if source is None:
+            raise CurrentShadowAllMarketShareCodeError("selected fixture lost Router evidence")
+        payload, raw, status, url = semantic_bridge._fetch_event(leg.provider_event_id)
+        (event_dir / f"{leg.provider_event_id.replace(':', '_')}.raw.json").write_bytes(raw)
+        if status != 200 or payload.get("bizCode") != 10000:
+            fallback_events.append(MappingProxyType({
+                "fixture_identity": leg.fixture_identity,
+                "from_opportunity_id": leg.selected_opportunity_id,
+                "to_opportunity_id": None,
+                "reason": "FRESH_PROVIDER_EVENT_UNAVAILABLE",
+            }))
+            continue
+        event = semantic_bridge._event_with_markets(payload, leg.provider_event_id)
+        source_hashes.append({
+            "eventId": leg.provider_event_id,
+            "request_url": url,
+            "http_status": status,
+            "raw_sha256": hashlib.sha256(raw).hexdigest(),
+            "raw_size": len(raw),
+        })
+        candidates = sorted(
+            (
+                opportunity for opportunity in source.router_decision.opportunities
+                if opportunity.prediction_confidence is not None
+                and opportunity.prediction_confidence >= MINIMUM_PREDICTION_CONFIDENCE
+                and opportunity.prediction_confidence_method is not None
+                and opportunity.price_result.disposition is ShadowPriceDisposition.PRICED
+            ),
+            key=_fresh_candidate_key,
+        )
+        chosen: tuple[Any, Any, dict[str, str], dict[str, Any], Decimal, str] | None = None
+        per_fixture: list[dict[str, Any]] = []
+        for opportunity in candidates:
+            quote = _opportunity_quote(source, opportunity)
+            if quote is None:
+                continue
+            market_definition = portfolio_module.MARKET_REGISTRY.get(
+                opportunity.price_result.market_id
+            )
+            if market_definition is None:
+                raise CurrentShadowAllMarketShareCodeError(
+                    "fresh candidate market has no canonical family"
+                )
+            family = market_definition.family.value
+            intent = {
+                "eventId": leg.provider_event_id,
+                "homeTeamName": leg.home_team,
+                "awayTeamName": leg.away_team,
+                "marketName": quote.provider_market_name,
+                "outcomeName": quote.provider_outcome_name,
+                "specifier": quote.provider_specifier,
+            }
+            try:
+                selection, audit = semantic_bridge.resolve_intent(
+                    event=event,
+                    intent=intent,
+                    minimum_lead_seconds=MINIMUM_LEAD_SECONDS,
+                )
+                odds = _decimal(audit.get("odds"), "fresh semantic resolved")
+            except semantic_bridge.SportyBetSemanticShareError as exc:
+                per_fixture.append({
+                    "opportunity_id": opportunity.opportunity_id,
+                    "prediction_confidence": opportunity.prediction_confidence,
+                    "market_family": family,
+                    "eligible": False,
+                    "reason": f"EXACT_PROVIDER_SEMANTICS_UNAVAILABLE:{exc}",
+                })
+                continue
+            odds_eligible = odds >= Decimal(str(MINIMUM_DECIMAL_ODDS))
+            family_eligible = family_counts.get(family, 0) < family_cap
+            if not odds_eligible:
+                reason = "EXACT_CURRENT_ODDS_BELOW_1_09"
+            elif not family_eligible:
+                reason = f"CURRENT_MARKET_FAMILY_CAP:{family}"
+            else:
+                reason = None
+            eligible = odds_eligible and family_eligible
+            per_fixture.append({
+                "opportunity_id": opportunity.opportunity_id,
+                "prediction_confidence": opportunity.prediction_confidence,
+                "market_family": family,
+                "exact_current_odds": str(odds),
+                "eligible": eligible,
+                "reason": reason,
+            })
+            if eligible:
+                chosen = opportunity, quote, selection, audit, odds, family
+                break
+        candidate_audits.append({
+            "fixture_identity": leg.fixture_identity,
+            "candidates": per_fixture,
+        })
+        if chosen is None:
+            fallback_events.append(MappingProxyType({
+                "fixture_identity": leg.fixture_identity,
+                "from_opportunity_id": leg.selected_opportunity_id,
+                "to_opportunity_id": None,
+                "reason": "NO_CURRENT_PREDICTION_QUALIFIED_FALLBACK",
+            }))
+            continue
+        opportunity, quote, selection, audit, odds, family = chosen
+        family_counts[family] = family_counts.get(family, 0) + 1
+        prediction_identity = "|".join(
+            portfolio_module.router._prediction_canonical_key(opportunity.price_result)
+        )
+        fresh = MappingProxyType({
+            "fixture_identity": leg.fixture_identity,
+            "provider_event_id": leg.provider_event_id,
+            "home_team": leg.home_team,
+            "away_team": leg.away_team,
+            "competition": leg.competition,
+            "market_id": opportunity.price_result.market_id.value,
+            "outcome_id": opportunity.price_result.outcome_id.value,
+            "line": opportunity.price_result.line,
+            "market_family": family,
+            "canonical_prediction_identity": prediction_identity,
+            "selected_opportunity_id": opportunity.opportunity_id,
+            "prediction_confidence": opportunity.prediction_confidence,
+            "prediction_confidence_method": opportunity.prediction_confidence_method,
+            "router_policy_id": source.router_decision.router_policy_id,
+            "portfolio_policy_id": portfolio_module.PORTFOLIO_POLICY_ID,
+            "provider_market_id": selection["marketId"],
+            "provider_market_name": audit["observed_market_name"],
+            "provider_specifier": audit["observed_specifier"],
+            "provider_outcome_id": selection["outcomeId"],
+            "provider_outcome_name": audit["observed_outcome_name"],
+            "decimal_odds": str(odds),
+            "stale_portfolio_decimal_odds": leg.decimal_odds,
+            "fresh_net_expected_value_diagnostic": _fresh_ev_diagnostic(opportunity, odds),
+            "fresh_robust_edge_diagnostic": None,
+            "fresh_robust_edge_unavailable_reason": "FULL_CURRENT_MARKET_PARTITION_NOT_FETCHED_BY_TRANSPORT_GATE",
+            "stale_router_net_expected_value_diagnostic": opportunity.robust_net_expected_value,
+            "stale_router_robust_edge_diagnostic": opportunity.robust_edge,
+            "fresh_provider_source_sha256": source_hashes[-1]["raw_sha256"],
+        })
+        selections.append(selection)
+        fresh_legs.append(fresh)
+        if opportunity.opportunity_id != selected_ids[leg.fixture_identity]:
+            fallback_events.append(MappingProxyType({
+                "fixture_identity": leg.fixture_identity,
+                "from_opportunity_id": leg.selected_opportunity_id,
+                "to_opportunity_id": opportunity.opportunity_id,
+                "reason": "PREDICTION_FIRST_FRESH_FALLBACK",
+            }))
+
+    receipt = {
+        "schema": "athena-sportybet-prediction-first-fresh-resolution-v2",
+        "observed_at": semantic_bridge._utc_now(),
+        "minimum_prediction_confidence": MINIMUM_PREDICTION_CONFIDENCE,
+        "minimum_decimal_odds": MINIMUM_DECIMAL_ODDS,
+        "market_family_cap": family_cap,
+        "fresh_market_family_counts": dict(sorted(family_counts.items())),
+        "intent_count": len(portfolio.selected_legs),
+        "resolved_count": len(selections),
+        "source_hashes": sorted(source_hashes, key=lambda item: item["eventId"]),
+        "candidate_audits": sorted(candidate_audits, key=lambda item: item["fixture_identity"]),
+        "fresh_selected_legs": [dict(item) for item in fresh_legs],
+        "fallback_events": [dict(item) for item in fallback_events],
+        "caller_supplied_market_outcome_ids_accepted": False,
+        "wager_placed": False,
+    }
+    _write(output_dir / "fresh-prediction-resolution-receipt.json", receipt)
+    return tuple(selections), receipt, tuple(fresh_legs), tuple(fallback_events)
+
+
 def _accepted_row(value: Any, label: str) -> dict[str, Any]:
     if type(value) is not dict:
         raise CurrentShadowAllMarketShareCodeError(f"{label} accepted event is invalid")
@@ -380,11 +648,11 @@ def _accepted_row(value: Any, label: str) -> dict[str, Any]:
 
 
 def _verify_roundtrip(
-    portfolio: portfolio_module.ShadowPortfolioOptimization,
+    fresh_selected_legs: Sequence[Mapping[str, Any]],
     receipt: Mapping[str, Any],
 ) -> tuple[str, ...]:
     _safety_false(receipt, "direct transport")
-    count = len(portfolio.selected_legs)
+    count = len(fresh_selected_legs)
     if (
         receipt.get("create_unavailable_outcomes") != 0
         or receipt.get("load_unavailable_outcomes") != 0
@@ -408,25 +676,25 @@ def _verify_roundtrip(
     if len(load_rows) != count:
         return ("DIRECT_TRANSPORT_ACCEPTED_ROWS_CHANGED",)
     reasons: list[str] = []
-    for leg in portfolio.selected_legs:
-        row = load_rows.get(leg.provider_event_id)
+    for leg in fresh_selected_legs:
+        row = load_rows.get(leg["provider_event_id"])
         if row is None:
-            reasons.append(f"{leg.fixture_identity}:DIRECT_EVENT_MISSING")
+            reasons.append(f"{leg['fixture_identity']}:DIRECT_EVENT_MISSING")
             continue
         expected = {
-            "eventId": leg.provider_event_id,
-            "homeTeamName": leg.home_team,
-            "awayTeamName": leg.away_team,
-            "marketId": leg.provider_market_id,
-            "marketName": leg.provider_market_name,
-            "specifier": leg.provider_specifier,
-            "outcomeId": leg.provider_outcome_id,
-            "outcomeName": leg.provider_outcome_name,
+            "eventId": leg["provider_event_id"],
+            "homeTeamName": leg["home_team"],
+            "awayTeamName": leg["away_team"],
+            "marketId": leg["provider_market_id"],
+            "marketName": leg["provider_market_name"],
+            "specifier": leg["provider_specifier"],
+            "outcomeId": leg["provider_outcome_id"],
+            "outcomeName": leg["provider_outcome_name"],
         }
         if any(row[key] != value for key, value in expected.items()):
-            reasons.append(f"{leg.fixture_identity}:DIRECT_PROVIDER_SEMANTICS_CHANGED")
-        if row["odds"] != _decimal(leg.decimal_odds, "priced"):
-            reasons.append(f"{leg.fixture_identity}:DIRECT_PROVIDER_ODDS_CHANGED")
+            reasons.append(f"{leg['fixture_identity']}:DIRECT_PROVIDER_SEMANTICS_CHANGED")
+        if row["odds"] != _decimal(leg["decimal_odds"], "fresh priced"):
+            reasons.append(f"{leg['fixture_identity']}:DIRECT_PROVIDER_ODDS_CHANGED")
     return tuple(sorted(set(reasons)))
 
 
@@ -443,17 +711,15 @@ def create_verified_shadow_all_market_share_code(
     now = _now()
     if now < rebuilt.evaluation_time:
         raise CurrentShadowAllMarketShareCodeError("transport time predates Portfolio")
-    freshness = _freshness(rebuilt, now)
+    freshness = _transport_lead_reasons(rebuilt, now)
     if freshness:
         result = _terminal(portfolio=rebuilt, status=STATUS_REPRICE_REQUIRED, reasons=freshness)
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
-    intents = semantic_bridge.validate_intents(_semantic_intents(rebuilt))
     try:
-        selections, semantic_receipt = semantic_bridge.resolve_live_intents(
-            intents=intents,
+        selections, semantic_receipt, fresh_legs, fallback_events = _fresh_resolve_portfolio(
+            rebuilt,
             output_dir=output_dir / "semantic-resolution",
-            minimum_lead_seconds=MINIMUM_LEAD_SECONDS,
             delay_seconds=delay_seconds,
         )
     except semantic_bridge.SportyBetSemanticShareError as exc:
@@ -464,15 +730,14 @@ def create_verified_shadow_all_market_share_code(
         )
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
-
-    semantic_reasons = _verify_semantic(rebuilt, selections, semantic_receipt)
-    if semantic_reasons:
-        status = STATUS_REPRICE_REQUIRED if all("ODDS_CHANGED" in item for item in semantic_reasons) else STATUS_PROVIDER_CHANGED
+    if not selections:
         result = _terminal(
             portfolio=rebuilt,
-            status=status,
-            reasons=semantic_reasons,
+            status=STATUS_REPRICE_REQUIRED,
+            reasons=("NO_CURRENT_PREDICTION_QUALIFIED_SELECTIONS",),
             semantic_receipt=semantic_receipt,
+            fresh_selected_legs=(),
+            fallback_events=fallback_events,
         )
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
@@ -492,13 +757,15 @@ def create_verified_shadow_all_market_share_code(
         raise CurrentShadowAllMarketShareCodeError(
             "transport clock moved backwards during semantic resolution"
         )
-    precreate_freshness = _freshness(precreate_rebuilt, precreate_now)
+    precreate_freshness = _transport_lead_reasons(precreate_rebuilt, precreate_now)
     if precreate_freshness:
         result = _terminal(
             portfolio=precreate_rebuilt,
             status=STATUS_REPRICE_REQUIRED,
             reasons=precreate_freshness,
             semantic_receipt=semantic_receipt,
+            fresh_selected_legs=fresh_legs,
+            fallback_events=fallback_events,
         )
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
@@ -516,11 +783,13 @@ def create_verified_shadow_all_market_share_code(
             status=STATUS_PROVIDER_CHANGED,
             reasons=(f"CREATE_RELOAD_FAILED:{exc}",),
             semantic_receipt=semantic_receipt,
+            fresh_selected_legs=fresh_legs,
+            fallback_events=fallback_events,
         )
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
 
-    roundtrip_reasons = _verify_roundtrip(rebuilt, transport_receipt)
+    roundtrip_reasons = _verify_roundtrip(fresh_legs, transport_receipt)
     if roundtrip_reasons:
         status = STATUS_REPRICE_REQUIRED if all("ODDS_CHANGED" in item for item in roundtrip_reasons) else STATUS_PROVIDER_CHANGED
         result = _terminal(
@@ -529,6 +798,8 @@ def create_verified_shadow_all_market_share_code(
             reasons=roundtrip_reasons,
             semantic_receipt=semantic_receipt,
             transport_receipt=transport_receipt,
+            fresh_selected_legs=fresh_legs,
+            fallback_events=fallback_events,
         )
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
@@ -550,23 +821,29 @@ def create_verified_shadow_all_market_share_code(
             reasons=("DIRECT_VERIFIED_RESPONSE_OMITTED_CODE_FIELDS",),
             semantic_receipt=semantic_receipt,
             transport_receipt=transport_receipt,
+            fresh_selected_legs=fresh_legs,
+            fallback_events=fallback_events,
         )
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
-    status = STATUS_CODE_VERIFIED if rebuilt.shortfall == 0 else STATUS_CODE_VERIFIED_WITH_SHORTFALL
+    fresh_shortfall = rebuilt.requested_target_size - len(fresh_legs)
+    status = STATUS_CODE_VERIFIED if fresh_shortfall == 0 else STATUS_CODE_VERIFIED_WITH_SHORTFALL
     result = ShadowAllMarketShareCodeReceipt(
         status=status,
         observed_at=_now(),
         portfolio_sha256=rebuilt.canonical_sha256,
         requested_target_size=rebuilt.requested_target_size,
-        portfolio_shortfall=rebuilt.shortfall,
-        selected_leg_count=len(rebuilt.selected_legs),
+        portfolio_shortfall=fresh_shortfall,
+        selected_leg_count=len(fresh_legs),
         reasons=(),
         semantic_resolution_receipt_sha256=_sha(dict(semantic_receipt)),
         transport_receipt_sha256=_sha(dict(transport_receipt)),
         share_code=share_code,
         share_url=share_url,
         combined_odds=combined_odds,
+        fresh_selected_legs=fresh_legs,
+        fallback_events=fallback_events,
+        exact_create_reload_equality=True,
     )
     _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
     return result

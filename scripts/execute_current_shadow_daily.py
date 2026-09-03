@@ -22,6 +22,9 @@ import subprocess
 import sys
 
 from domain import current_shadow_all_market_runner as runner
+from domain.current_fotmob_fixture_candidate_adapter import (
+    CurrentFotMobFixtureCandidateAdapterError,
+)
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
 
@@ -62,12 +65,47 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _finalize_source_adapter_failure(
+    *,
+    args: argparse.Namespace,
+    exc: CurrentFotMobFixtureCandidateAdapterError,
+):
+    """Replace a provisional receipt when reviewed current source parsing fails closed."""
+
+    output_dir = args.output_dir
+    output_dir.mkdir(parents=True, exist_ok=True)
+    repository_root = Path(__file__).resolve().parents[1]
+    exact_commit_sha = runner._git_head(repository_root)
+    stage = runner._read_checkpoint_stage(output_dir)
+    result = runner._receipt(
+        status=runner.STATUS_SOURCE_INCOMPLETE,
+        exact_commit_sha=exact_commit_sha,
+        target_size=args.target_size,
+        sources=None,
+        portfolio=None,
+        share_receipt=None,
+        reasons=(f"SOURCE_CHAIN_FAILED:{runner._failure_chain(exc)}",),
+        source_summary={
+            "source_failure_stage": stage,
+            "source_failure_type": type(exc).__name__,
+            "wager_placed": False,
+        },
+    )
+    runner._write(output_dir / runner.RUN_RECEIPT_FILENAME, result.to_dict())
+    return result
+
+
 def _execute_worker(args: argparse.Namespace) -> int:
     day_count = SCOPE_DAY_COUNT[args.fixture_scope]
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = day_count
     try:
-        return bound._execute_worker(args)
+        try:
+            return bound._execute_worker(args)
+        except CurrentFotMobFixtureCandidateAdapterError as exc:
+            result = _finalize_source_adapter_failure(args=args, exc=exc)
+            print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
+            return 0
     finally:
         runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
 

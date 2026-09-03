@@ -212,3 +212,25 @@ def test_verified_receipt_cannot_claim_wrong_shortfall_arithmetic():
             share_url="https://example.test/ABC123",
             combined_odds="2.0",
         )
+
+
+def test_verified_receipt_requires_exact_create_reload_equality():
+    with pytest.raises(
+        share.CurrentShadowAllMarketShareCodeError,
+        match="exact create/reload equality",
+    ):
+        share.ShadowAllMarketShareCodeReceipt(
+            status=share.STATUS_CODE_VERIFIED,
+            observed_at=NOW,
+            portfolio_sha256=A,
+            requested_target_size=1,
+            portfolio_shortfall=0,
+            selected_leg_count=1,
+            reasons=(),
+            semantic_resolution_receipt_sha256=B,
+            transport_receipt_sha256=C,
+            share_code="ABC123",
+            share_url="https://example.test/ABC123",
+            combined_odds="2.0",
+            exact_create_reload_equality=False,
+        )

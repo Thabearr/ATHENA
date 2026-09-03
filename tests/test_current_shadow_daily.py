@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
@@ -70,6 +71,66 @@ def test_scope_restores_runner_after_worker_failure(monkeypatch):
 
     with pytest.raises(RuntimeError, match="failed"):
         daily._execute_worker(args)
+    assert runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT == original
+
+
+def test_source_adapter_failure_finalizes_durable_source_incomplete(monkeypatch, tmp_path):
+    original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
+    exact_sha = "c" * 40
+    monkeypatch.setattr(runner, "_git_head", lambda _root: exact_sha)
+    runner._checkpoint_stage(
+        output_dir=tmp_path,
+        stage=runner.STAGE_CURRENT_FOTMOB_SOURCE,
+        exact_commit_sha=exact_sha,
+        target_size=15,
+    )
+    provisional = runner._receipt(
+        status=runner.STATUS_SOURCE_INCOMPLETE,
+        exact_commit_sha=exact_sha,
+        target_size=15,
+        sources=None,
+        portfolio=None,
+        share_receipt=None,
+        reasons=("SOURCE_CHAIN_PENDING:STARTED",),
+    )
+    runner._write(tmp_path / runner.RUN_RECEIPT_FILENAME, provisional.to_dict())
+
+    def source_adapter_failure(_args):
+        try:
+            raise ValueError("status.halfs has keys outside reviewed allowlist")
+        except ValueError as inner:
+            raise daily.CurrentFotMobFixtureCandidateAdapterError(
+                "reviewed PR87/PR89 additive schema assessment failed"
+            ) from inner
+
+    monkeypatch.setattr(bound, "_execute_worker", source_adapter_failure)
+    args = daily.build_parser().parse_args(
+        [
+            "--target-size",
+            "15",
+            "--fixture-scope",
+            "three-day",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+
+    assert daily._execute_worker(args) == 0
+    payload = json.loads((tmp_path / runner.RUN_RECEIPT_FILENAME).read_text(encoding="utf-8"))
+    assert payload["status"] == runner.STATUS_SOURCE_INCOMPLETE
+    assert payload["reasons"] == [
+        "SOURCE_CHAIN_FAILED:CurrentFotMobFixtureCandidateAdapterError:"
+        "reviewed PR87/PR89 additive schema assessment failed<-ValueError:"
+        "status.halfs has keys outside reviewed allowlist"
+    ]
+    assert payload["reasons"] != ["SOURCE_CHAIN_PENDING:STARTED"]
+    assert payload["source_summary"] == {
+        "source_failure_stage": runner.STAGE_CURRENT_FOTMOB_SOURCE,
+        "source_failure_type": "CurrentFotMobFixtureCandidateAdapterError",
+        "wager_placed": False,
+    }
+    assert payload["shareCode"] is None
+    assert payload["wager_placed"] is False
     assert runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT == original
 
 

@@ -267,6 +267,33 @@ class CurrentShadowAllMarketRunReceipt:
             raise CurrentShadowAllMarketRunnerError("shortfall verified status requires positive shortfall")
 
     def to_dict(self) -> dict[str, Any]:
+        portfolio_value = None if self.portfolio is None else dict(self.portfolio)
+        share_value = None if self.share_code_receipt is None else dict(self.share_code_receipt)
+        if portfolio_value is None:
+            empty_markets, empty_families, _empty_fixtures, empty_opportunities = (
+                portfolio_module._diagnostics((), (), ())
+            )
+            market_diagnostics = [dict(item) for item in empty_markets]
+            family_diagnostics = [dict(item) for item in empty_families]
+            opportunity_funnel = dict(empty_opportunities)
+            portfolio_fixture_funnel = {
+                "unit": "fixture", "policy_approved": 0, "provider_present": 0,
+                "identity_reconciled": 0, "model_ready": 0, "priced": 0,
+                "prediction_qualified": 0, "odds_qualified": 0,
+                "portfolio_selected": 0,
+            }
+        else:
+            market_diagnostics = portfolio_value.get("market_diagnostics", [])
+            family_diagnostics = portfolio_value.get("market_family_diagnostics", [])
+            opportunity_funnel = portfolio_value.get("opportunity_funnel")
+            portfolio_fixture_funnel = dict(portfolio_value.get("fixture_funnel", {}))
+        fixture_funnel = {
+            **portfolio_fixture_funnel,
+            "unit": "fixture",
+            "policy_approved": self.reviewed_fixture_count,
+            "provider_present": self.reconciled_fixture_count,
+            "identity_reconciled": self.reconciled_fixture_count,
+        }
         return {
             "schema_version": SCHEMA_VERSION,
             "dataset_name": DATASET_NAME,
@@ -281,12 +308,18 @@ class CurrentShadowAllMarketRunReceipt:
             "router_selected_count": self.router_selected_count,
             "router_no_bet_count": self.router_no_bet_count,
             "source_summary": dict(self.source_summary),
-            "portfolio": None if self.portfolio is None else dict(self.portfolio),
+            "portfolio": portfolio_value,
             "portfolio_sha256": self.portfolio_sha256,
             "selected_leg_count": self.selected_leg_count,
             "reserve_leg_count": self.reserve_leg_count,
             "shortfall": self.shortfall,
-            "share_code_receipt": None if self.share_code_receipt is None else dict(self.share_code_receipt),
+            "share_code_receipt": share_value,
+            "fixture_funnel": fixture_funnel,
+            "opportunity_funnel": opportunity_funnel,
+            "market_diagnostics": market_diagnostics,
+            "market_family_diagnostics": family_diagnostics,
+            "final_selected_legs": [] if share_value is None else share_value.get("fresh_selected_legs", []),
+            "fresh_fallback_events": [] if share_value is None else share_value.get("fallback_events", []),
             "shareCode": self.share_code,
             "shareURL": self.share_url,
             "reasons": list(self.reasons),
@@ -574,9 +607,15 @@ def _receipt(
         ) if sources is None else sources.source_summary,
         portfolio=None if portfolio is None else portfolio.to_dict(),
         portfolio_sha256=None if portfolio is None else portfolio.canonical_sha256,
-        selected_leg_count=0 if portfolio is None else len(portfolio.selected_legs),
+        selected_leg_count=(
+            getattr(share_receipt, "selected_leg_count", len(portfolio.selected_legs) if portfolio is not None else 0) if share_receipt is not None
+            else 0 if portfolio is None else len(portfolio.selected_legs)
+        ),
         reserve_leg_count=0 if portfolio is None else len(portfolio.reserve_legs),
-        shortfall=target_size if portfolio is None else portfolio.shortfall,
+        shortfall=(
+            getattr(share_receipt, "portfolio_shortfall", portfolio.shortfall if portfolio is not None else target_size) if share_receipt is not None
+            else target_size if portfolio is None else portfolio.shortfall
+        ),
         share_code_receipt=None if share_receipt is None else share_receipt.to_dict(),
         share_code=None if share_receipt is None else share_receipt.share_code,
         share_url=None if share_receipt is None else share_receipt.share_url,
@@ -666,12 +705,18 @@ def execute_current_shadow_all_market(
                 reasons=("NO_EXACT_CURRENT_FOTMOB_SPORTYBET_RECONCILIATED_FIXTURES",),
             )
         elif sources.router_inputs and sources.router_selected_count == 0:
+            checkpoint(STAGE_PORTFOLIO)
+            portfolio = portfolio_module.optimize_shadow_portfolio(
+                sources.router_inputs,
+                target_size=target_size,
+                evaluation_time=_now(),
+            )
             result = _receipt(
                 status=STATUS_NO_BET,
                 exact_commit_sha=exact_commit_sha,
                 target_size=target_size,
                 sources=sources,
-                portfolio=None,
+                portfolio=portfolio,
                 share_receipt=None,
                 reasons=("ALL_RECONCILED_FIXTURES_ROUTER_NO_BET",),
             )

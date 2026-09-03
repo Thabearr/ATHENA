@@ -182,6 +182,10 @@ def test_zero_exact_reconciliations_is_truthful_insufficient_supported_markets(m
     assert result.status == runner.STATUS_INSUFFICIENT_SUPPORTED_MARKETS
     assert result.share_code is None
     assert result.shortfall == 20
+    payload = result.to_dict()
+    assert len(payload["market_diagnostics"]) == 15
+    assert payload["fixture_funnel"]["unit"] == "fixture"
+    assert payload["opportunity_funnel"]["unit"] == "opportunity"
 
 
 def test_executed_head_and_audited_main_are_distinct_exact_identities(monkeypatch, tmp_path):
@@ -205,6 +209,11 @@ def test_all_router_no_bet_is_first_class_successful_no_code_state(monkeypatch, 
         runner,
         "_acquire_router_inputs",
         lambda **_kwargs: _sources(reconciled=3, selected=0, no_bet=3, router_inputs=(object(), object(), object())),
+    )
+    monkeypatch.setattr(
+        runner.portfolio_module,
+        "optimize_shadow_portfolio",
+        lambda *_args, **_kwargs: _portfolio(target=20, selected=0),
     )
     result = runner.execute_current_shadow_all_market(target_size=20, output_dir=tmp_path)
     assert result.status == runner.STATUS_NO_BET
