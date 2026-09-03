@@ -183,6 +183,51 @@ jobs:
                       expected_run_id=watchdog_run_id,
                       expected_main_sha=watchdog_head_sha,
                   )
+              except continuity.FreshHoldoutContinuityError as exc:
+                  raise SystemExit(
+                      f"watchdog run provenance replay failed before receipt binding: {exc}"
+                  ) from exc
+
+              values = jobs.get("jobs")
+              if type(values) is not list:
+                  raise SystemExit("watchdog jobs metadata is malformed")
+              reviewed_jobs = [
+                  job
+                  for job in values
+                  if type(job) is dict and job.get("name") == continuity.WATCHDOG_JOB_NAME
+              ]
+              if len(reviewed_jobs) != 1:
+                  raise SystemExit("watchdog must expose exactly one reviewed control job")
+              steps = reviewed_jobs[0].get("steps")
+              if type(steps) is not list:
+                  raise SystemExit("watchdog reviewed control job steps are missing")
+              record_steps = [
+                  step
+                  for step in steps
+                  if type(step) is dict
+                  and step.get("name") == "Record prospective continuity dispatch request"
+              ]
+              if len(record_steps) != 1:
+                  raise SystemExit("watchdog dispatch-record step identity drifted")
+              record = record_steps[0]
+              if (
+                  record.get("status") == "completed"
+                  and record.get("conclusion") == "skipped"
+              ):
+                  with open(output, "a", encoding="utf-8") as fh:
+                      fh.write("bridge_required=false\n")
+                  print(
+                      "watchdog completed without requesting a prospective continuity dispatch; "
+                      "receipt bridge is a verified no-op"
+                  )
+                  raise SystemExit(0)
+              if (
+                  record.get("status") != "completed"
+                  or record.get("conclusion") != "success"
+              ):
+                  raise SystemExit("watchdog dispatch-record step escaped success/skipped boundary")
+
+              try:
                   continuity.validate_watchdog_source_jobs(
                       jobs,
                       expected_run_id=watchdog_run_id,
@@ -190,8 +235,9 @@ jobs:
                   )
               except continuity.FreshHoldoutContinuityError as exc:
                   raise SystemExit(
-                      f"watchdog provenance replay failed before receipt binding: {exc}"
+                      f"watchdog dispatch provenance replay failed before receipt binding: {exc}"
                   ) from exc
+
               plan = continuity.plan_from_watchdog_created_at(created)
               expected_name = (
                   "ATHENA fresh-holdout workflow_dispatch "
@@ -256,6 +302,7 @@ jobs:
               ) from exc
 
           with open(output, "a", encoding="utf-8") as fh:
+              fh.write("bridge_required=true\n")
               fh.write(f"source_run_id={source_run_id}\n")
           print(
               "bound exact completed continuity collection run "
@@ -263,7 +310,15 @@ jobs:
           )
           PY
 
+      - name: Acknowledge watchdog completion without continuity dispatch
+        if: steps.source.outputs.bridge_required == 'false'
+        shell: bash
+        run: |
+          echo "No prospective continuity dispatch was requested by this watchdog."
+          echo "Receipt bridge no-op: no evidence mutation and no provider acquisition."
+
       - name: Mirror exact canonical receipt into existing long-lived release
+        if: steps.source.outputs.bridge_required == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
