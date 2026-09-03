@@ -1,0 +1,281 @@
+name: Bridge FotMob Fresh-Holdout Continuity Receipt Durability
+
+on:
+  workflow_run:
+    workflows:
+      - Watch FotMob Fresh-Holdout Scheduler Liveness
+    types:
+      - completed
+  issue_comment:
+    types:
+      - created
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: fotmob-fresh-holdout-continuity-receipt-${{ github.event.workflow_run.id || github.event.comment.id }}
+  cancel-in-progress: false
+
+jobs:
+  mirror_continuity_receipt:
+    name: bind exact continuity run and mirror durable receipt
+    if: >-
+      (
+        github.event_name == 'workflow_run' &&
+        github.event.workflow_run.event == 'schedule' &&
+        github.event.workflow_run.conclusion == 'success' &&
+        github.event.workflow_run.head_branch == 'main'
+      ) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.number == 172 &&
+        github.event.issue.pull_request == null &&
+        github.event.comment.user.login == github.repository_owner &&
+        startsWith(github.event.comment.body, '/athena-mirror-fresh-holdout-continuity-receipt')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Validate exact trigger and resolve source identity
+        id: trigger
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          WORKFLOW_RUN_JSON: ${{ toJSON(github.event.workflow_run) }}
+          COMMENT_BODY: ${{ github.event.comment.body }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import re
+
+          event = os.environ.get("EVENT_NAME", "")
+          output = os.environ["GITHUB_OUTPUT"]
+          if event == "workflow_run":
+              run = json.loads(os.environ.get("WORKFLOW_RUN_JSON") or "null")
+              if type(run) is not dict:
+                  raise SystemExit("workflow_run payload is unavailable")
+              expected = {
+                  "name": "Watch FotMob Fresh-Holdout Scheduler Liveness",
+                  "workflow_id": 345006851,
+                  "event": "schedule",
+                  "status": "completed",
+                  "conclusion": "success",
+                  "head_branch": "main",
+              }
+              for key, value in expected.items():
+                  if run.get(key) != value:
+                      raise SystemExit(f"watchdog workflow_run metadata drifted: {key}")
+              path = run.get("path")
+              if type(path) is not str or not path.startswith(
+                  ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
+              ):
+                  raise SystemExit("watchdog workflow_run path drifted")
+              run_id = run.get("id")
+              head_sha = run.get("head_sha")
+              if type(run_id) is not int or run_id <= 0:
+                  raise SystemExit("watchdog workflow_run id is invalid")
+              if type(head_sha) is not str or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None:
+                  raise SystemExit("watchdog workflow_run head SHA is invalid")
+              with open(output, "a", encoding="utf-8") as fh:
+                  fh.write("mode=watchdog\n")
+                  fh.write(f"watchdog_run_id={run_id}\n")
+                  fh.write(f"watchdog_head_sha={head_sha}\n")
+              raise SystemExit(0)
+
+          if event == "issue_comment":
+              body = os.environ.get("COMMENT_BODY", "").replace("\r\n", "\n")
+              match = re.fullmatch(
+                  r"/athena-mirror-fresh-holdout-continuity-receipt\n"
+                  r"run-id: ([1-9][0-9]*)\n"
+                  r"confirm: DURABILITY_ONLY_NO_ACQUISITION_V1",
+                  body,
+              )
+              if match is None:
+                  raise SystemExit(
+                      "manual durability command must be the exact reviewed three-line command"
+                  )
+              with open(output, "a", encoding="utf-8") as fh:
+                  fh.write("mode=manual\n")
+                  fh.write(f"source_run_id={int(match.group(1))}\n")
+              raise SystemExit(0)
+
+          raise SystemExit(f"forbidden trigger event: {event!r}")
+          PY
+
+      - name: Check out exact current main
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: main
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065
+        with:
+          python-version: "3.12"
+
+      - name: Verify exact main and reviewed durability dependencies
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "$(git rev-parse HEAD)" = "${current_main}"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
+          test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "6d768a506d579ef88f1d321102cb9c53d846c72a"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "e24929813e5666c5477aa8906cf36cc7ef6ffcc4"
+          test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
+          test "$(git rev-parse HEAD:scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)" = "9e09e13d145f9ad2419b11073d4219aec14e54a8"
+
+      - name: Bind exact reviewed continuity collection run
+        id: source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          MODE: ${{ steps.trigger.outputs.mode }}
+          WATCHDOG_RUN_ID: ${{ steps.trigger.outputs.watchdog_run_id }}
+          WATCHDOG_HEAD_SHA: ${{ steps.trigger.outputs.watchdog_head_sha }}
+          MANUAL_SOURCE_RUN_ID: ${{ steps.trigger.outputs.source_run_id }}
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          import time
+
+          import domain.fotmob_fresh_holdout_continuity as continuity
+          import scripts.mirror_fotmob_fresh_holdout_release_receipt as mirror
+          import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as transport
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          mode = os.environ["MODE"]
+          output = os.environ["GITHUB_OUTPUT"]
+
+          def gh_json(endpoint: str) -> dict:
+              raw = subprocess.check_output(["gh", "api", endpoint], text=True)
+              value = json.loads(raw)
+              if type(value) is not dict:
+                  raise SystemExit(f"GitHub response is not an object: {endpoint}")
+              return value
+
+          if mode == "manual":
+              source_run_id = int(os.environ["MANUAL_SOURCE_RUN_ID"])
+          elif mode == "watchdog":
+              watchdog_run_id = int(os.environ["WATCHDOG_RUN_ID"])
+              watchdog_head_sha = os.environ["WATCHDOG_HEAD_SHA"]
+              watchdog = gh_json(f"/repos/{repo}/actions/runs/{watchdog_run_id}")
+              jobs = gh_json(
+                  f"/repos/{repo}/actions/runs/{watchdog_run_id}/jobs?per_page=100"
+              )
+              try:
+                  created = continuity.validate_watchdog_source_run(
+                      watchdog,
+                      expected_run_id=watchdog_run_id,
+                      expected_main_sha=watchdog_head_sha,
+                  )
+                  continuity.validate_watchdog_source_jobs(
+                      jobs,
+                      expected_run_id=watchdog_run_id,
+                      expected_main_sha=watchdog_head_sha,
+                  )
+              except continuity.FreshHoldoutContinuityError as exc:
+                  raise SystemExit(
+                      f"watchdog provenance replay failed before receipt binding: {exc}"
+                  ) from exc
+              plan = continuity.plan_from_watchdog_created_at(created)
+              expected_name = (
+                  "ATHENA fresh-holdout workflow_dispatch "
+                  f"source={watchdog_run_id} "
+                  f"target={plan.target_slot_text} "
+                  f"cron={plan.target_cron} "
+                  f"confirm={continuity.CONTINUITY_CONFIRMATION}"
+              )
+
+              source_run_id = None
+              for _attempt in range(31):
+                  runs = gh_json(
+                      f"/repos/{repo}/actions/workflows/"
+                      "fotmob-utc-native-xg-fresh-holdout.yml/runs"
+                      "?event=workflow_dispatch&branch=main&per_page=100"
+                  ).get("workflow_runs")
+                  if type(runs) is not list:
+                      raise SystemExit("primary workflow runs payload is malformed")
+                  matches = [
+                      run
+                      for run in runs
+                      if type(run) is dict
+                      and run.get("name") == expected_name
+                      and run.get("display_title") == expected_name
+                      and run.get("workflow_id") == continuity.PRIMARY_WORKFLOW_ID
+                      and run.get("event") == "workflow_dispatch"
+                      and run.get("head_branch") == "main"
+                      and run.get("head_sha") == watchdog_head_sha
+                      and type(run.get("path")) is str
+                      and run["path"].startswith(continuity.PRIMARY_WORKFLOW_PATH)
+                  ]
+                  if len(matches) > 1:
+                      raise SystemExit("duplicate exact continuity dispatch runs detected")
+                  if len(matches) == 1:
+                      source_run_id = matches[0].get("id")
+                      break
+                  time.sleep(2)
+              if type(source_run_id) is not int or source_run_id <= 0:
+                  raise SystemExit("exact continuity dispatch run did not appear")
+          else:
+              raise SystemExit(f"unknown receipt bridge mode: {mode!r}")
+
+          source = None
+          for _attempt in range(301):
+              source = gh_json(f"/repos/{repo}/actions/runs/{source_run_id}")
+              if source.get("status") == "completed":
+                  break
+              time.sleep(2)
+          if source is None or source.get("status") != "completed":
+              raise SystemExit("continuity collection run did not complete within reviewed wait")
+          if source.get("conclusion") != "success":
+              raise SystemExit("continuity collection run did not complete successfully")
+          if source.get("event") != "workflow_dispatch":
+              raise SystemExit("durability bridge only accepts prospective continuity dispatch runs")
+
+          try:
+              transport._validate_reviewed_collection_run(source, run_id=source_run_id)
+              transport._continuity_plan_from_run(repository=repo, run=source)
+          except mirror.FreshHoldoutReleaseReceiptMirrorError as exc:
+              raise SystemExit(
+                  f"continuity source failed reviewed mirror provenance: {exc}"
+              ) from exc
+
+          with open(output, "a", encoding="utf-8") as fh:
+              fh.write(f"source_run_id={source_run_id}\n")
+          print(
+              "bound exact completed continuity collection run "
+              f"{source_run_id}; no provider acquisition or backfill was performed"
+          )
+          PY
+
+      - name: Mirror exact canonical receipt into existing long-lived release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          SOURCE_RUN_ID: ${{ steps.source.outputs.source_run_id }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror \
+            --repository "${GITHUB_REPOSITORY}" \
+            --run-id "${SOURCE_RUN_ID}"
+          echo "Receipt durability repair completed from existing verified evidence only."
+          echo "Provider acquisition: false"
+          echo "Backfill: false"
+          echo "Model/pricing/selection/BET authority change: false"
