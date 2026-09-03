@@ -70,3 +70,21 @@ def test_bridge_exactly_binds_bot_dispatched_continuity_identity() -> None:
     assert 'run.get("display_title") == expected_name' in workflow
     assert "duplicate exact continuity dispatch runs detected" in workflow
     assert "transport._continuity_plan_from_run" in workflow
+
+
+def test_watchdog_without_dispatch_is_green_noop_before_receipt_mirror() -> None:
+    workflow = _workflow_text()
+    assert 'step.get("name") == "Record prospective continuity dispatch request"' in workflow
+    assert 'record.get("conclusion") == "skipped"' in workflow
+    assert 'fh.write("bridge_required=false\\n")' in workflow
+    assert "receipt bridge is a verified no-op" in workflow
+    assert "if: steps.source.outputs.bridge_required == 'true'" in workflow
+    assert "if: steps.source.outputs.bridge_required == 'false'" in workflow
+
+
+def test_watchdog_dispatch_requires_full_reviewed_jobs_provenance() -> None:
+    workflow = _workflow_text()
+    assert "continuity.validate_watchdog_source_jobs(" in workflow
+    assert 'record.get("conclusion") != "success"' in workflow
+    assert "watchdog dispatch-record step escaped success/skipped boundary" in workflow
+    assert 'fh.write("bridge_required=true\\n")' in workflow
