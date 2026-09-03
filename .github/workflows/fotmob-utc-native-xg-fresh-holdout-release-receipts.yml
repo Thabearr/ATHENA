@@ -47,7 +47,7 @@ jobs:
             exit 1
           }
           recovery_actual="$(git hash-object domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)"
-          recovery_expected="e24929813e5666c5477aa8906cf36cc7ef6ffcc4"
+          recovery_expected="1752fd5b96823f8b52e99a2dbbf84250676809d8"
           test "${recovery_actual}" = "${recovery_expected}" || {
             echo "FATAL: reviewed no-acquisition proof implementation blob changed"
             exit 1
