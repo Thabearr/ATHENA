@@ -37,7 +37,7 @@ def test_bridge_pins_existing_reviewed_evidence_and_mirror_implementations() -> 
     for digest in (
         "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8",
         "6d768a506d579ef88f1d321102cb9c53d846c72a",
-        "e24929813e5666c5477aa8906cf36cc7ef6ffcc4",
+        "1752fd5b96823f8b52e99a2dbbf84250676809d8",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "9e09e13d145f9ad2419b11073d4219aec14e54a8",
     ):
