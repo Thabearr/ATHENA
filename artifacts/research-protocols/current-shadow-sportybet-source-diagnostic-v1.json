@@ -1,0 +1,38 @@
+{
+  "schema_version": 1,
+  "dataset_name": "athena-current-shadow-sportybet-source-diagnostic-v1",
+  "trigger": "/athena-shadow-source-diagnostic",
+  "control_issue": 276,
+  "source": {
+    "provider": "SportyBet",
+    "region": "Nigeria",
+    "catalog_identity": "EXACT_CURRENT_PROVIDER_SPORTLIST_FOOTBALL_CATEGORY_TOURNAMENT_IDENTITIES_ONLY",
+    "fanout_identity": "PROVIDER_CATALOG_SUPPLIED_CATEGORY_TOURNAMENT_UPCOMING_GET",
+    "network_mode": "PUBLIC_ANONYMOUS_READ_ONLY"
+  },
+  "evidence": {
+    "write_raw_before_reviewed_parse": true,
+    "sha256_bound": true,
+    "preserve_exact_source_strings": true,
+    "normalization_authorized": false,
+    "alias_authorized": false,
+    "fuzzy_authorized": false,
+    "reversal_authorized": false,
+    "kickoff_tolerance_authorized": false
+  },
+  "authority": {
+    "fixture_reconciliation": false,
+    "canonical_market_mapping": false,
+    "price_all": false,
+    "market_router": false,
+    "portfolio_optimization": false,
+    "final_selection": false,
+    "share_code_transport": false,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false
+  }
+}
