@@ -1,0 +1,49 @@
+name: ATHENA Current Shadow SportyBet source diagnostic
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+jobs:
+  current-shadow-sportybet-source-diagnostic:
+    if: >-
+      github.event.issue.number == 276 &&
+      github.event.comment.user.login == github.repository_owner &&
+      github.event.comment.body == '/athena-shadow-source-diagnostic'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout exact requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Capture exact anonymous provider source diagnostics
+        run: |
+          python -m scripts.capture_current_shadow_sportybet_source_diagnostic \
+            --output-dir artifacts/current-shadow-sportybet-source-diagnostic
+
+      - name: Upload exact diagnostic evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-shadow-sportybet-source-diagnostic
+          path: artifacts/current-shadow-sportybet-source-diagnostic
+          if-no-files-found: error
+          retention-days: 30
