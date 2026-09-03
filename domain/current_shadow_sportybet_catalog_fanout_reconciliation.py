@@ -14,10 +14,11 @@ substring matching, reversal or time tolerance is added.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import os
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -26,6 +27,7 @@ from domain import (
 )
 from domain import current_shadow_fixture_identity_aliases as fixture_aliases
 from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
+from domain import current_shadow_sportybet_team_label_compatibility as team_label_compatibility
 from domain import sportybet_current_event_discovery_reconciliation as _reviewed
 
 
@@ -64,8 +66,12 @@ FIXTURE_TEAM_ALIAS_POLICY_ID = fixture_aliases.POLICY_ID
 FIXTURE_TEAM_ALIAS_REGISTRY_SHA256 = fixture_aliases.REGISTRY_SHA256
 FIXTURE_STABLE_IDENTITY_POLICY_ID = fixture_identity_v2.POLICY_ID
 FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256 = fixture_identity_v2.REGISTRY_SHA256
+TEAM_LABEL_COMPATIBILITY_POLICY_ID = team_label_compatibility.POLICY_ID
+TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
+    team_label_compatibility.EXPECTED_POLICY_SHA256
+)
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "c9f238039f14202159d055fadc3236684832403f74637323eb3b2cf83e836a33"
+EXPECTED_CONTRACT_SHA256 = "32330a19d26d527a2296fa00626a7237b1abd8c1dbcb170cea3aac1619fe6520"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -93,7 +99,6 @@ _text = legacy._text
 _sha = legacy._sha
 _network_get = legacy._network_get
 _parse_catalog = legacy._parse_catalog
-_parse_tournament_response = legacy._parse_tournament_response
 _evidence_root = legacy._evidence_root
 _write_exclusive = legacy._write_exclusive
 _raw_filename = legacy._raw_filename
@@ -108,16 +113,136 @@ base = legacy.base
 reviewed = _reviewed
 
 
+def _reviewed_shadow_event_from_mapping(
+    value: Mapping[str, Any],
+    *,
+    inherited_competition: str | None,
+    page_num: int,
+    raw_sha256: str,
+    observed_at: Any,
+):
+    """Project only exact evidence-reviewed provider label whitespace cases."""
+    event_id = _reviewed._event_id(value.get("eventId"))
+    projected = dict(value)
+    try:
+        projected["homeTeamName"] = team_label_compatibility.project_team_label(
+            event_id=event_id,
+            field="homeTeamName",
+            value=value.get("homeTeamName"),
+        )
+        projected["awayTeamName"] = team_label_compatibility.project_team_label(
+            event_id=event_id,
+            field="awayTeamName",
+            value=value.get("awayTeamName"),
+        )
+    except team_label_compatibility.CurrentShadowSportyBetTeamLabelCompatibilityError as exc:
+        raise _reviewed.SportyBetCurrentEventDiscoveryError(str(exc)) from exc
+    return _reviewed._event_from_mapping(
+        projected,
+        inherited_competition=inherited_competition,
+        page_num=page_num,
+        raw_sha256=raw_sha256,
+        observed_at=observed_at,
+    )
+
+
 class _ReviewedShadowProxy:
-    """Delegate the frozen reviewed module except for Shadow fixture matching."""
+    """Delegate the frozen reviewed module except for Shadow-specific compatibility."""
 
     def __getattr__(self, name: str) -> Any:
         if name == "_match_event":
             return fixture_identity_v2.match_event
+        if name == "_event_from_mapping":
+            return _reviewed_shadow_event_from_mapping
         return getattr(_reviewed, name)
 
 
 legacy.reviewed = _ReviewedShadowProxy()
+
+
+def _shadow_parse_tournament_response(
+    raw: bytes,
+    *,
+    category_id: str,
+    tournament_id: str,
+    request_nonce_ms: int,
+    observed_at: Any,
+):
+    """Frozen fanout parser plus the exact reviewed team-label projection only."""
+    if type(raw) is not bytes or not raw or len(raw) > MAX_RESPONSE_BYTES:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout response must be bounded non-empty bytes"
+        )
+    try:
+        payload = live.strict_json_loads(raw)
+    except live.SportyBetLiveEventQuoteEvidenceError as exc:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(str(exc)) from exc
+    if type(payload) is not dict or payload.get("bizCode") != 10000:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout provider response must be successful"
+        )
+    data = payload.get("data")
+    if type(data) is not list:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout data must be a list"
+        )
+    raw_hash = base.sha256_bytes(raw)
+    observed = _utc(observed_at, "observed_at")
+    events = []
+    for row in data:
+        if type(row) is not dict:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "fanout event row must be object"
+            )
+        try:
+            event = _reviewed_shadow_event_from_mapping(
+                row,
+                inherited_competition=None,
+                page_num=1,
+                raw_sha256=raw_hash,
+                observed_at=observed,
+            )
+        except _reviewed.SportyBetCurrentEventDiscoveryError as exc:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(str(exc)) from exc
+        events.append(event)
+    ids = [item.event_id for item in events]
+    if len(ids) != len(set(ids)):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "fanout response contains duplicate event IDs"
+        )
+    target = tournament_request_target(
+        category_id=category_id,
+        tournament_id=tournament_id,
+        request_nonce_ms=request_nonce_ms,
+    )
+    observation = ProviderTournamentObservation(
+        category_id=category_id,
+        tournament_id=tournament_id,
+        request_target=target,
+        request_nonce_ms=request_nonce_ms,
+        observed_at=observed,
+        raw_sha256=raw_hash,
+        raw_size=len(raw),
+        event_ids=tuple(sorted(ids)),
+    )
+    return observation, tuple(sorted(events, key=lambda item: item.event_id))
+
+
+_parse_tournament_response = _shadow_parse_tournament_response
+
+
+@contextmanager
+def _shadow_parser_scope() -> Iterator[None]:
+    """Use the compatibility parser only while the Shadow wrapper is executing."""
+    previous_legacy_parser = legacy._parse_tournament_response
+    previous_base_parser = base._parse_tournament_response
+    legacy._parse_tournament_response = _shadow_parse_tournament_response
+    base._parse_tournament_response = _shadow_parse_tournament_response
+    try:
+        yield
+    finally:
+        legacy._parse_tournament_response = previous_legacy_parser
+        base._parse_tournament_response = previous_base_parser
 
 
 def calculate_contract_sha256() -> str:
@@ -129,6 +254,8 @@ def calculate_contract_sha256() -> str:
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
         "fixture_stable_identity_registry_sha256": FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256,
         "matching_basis": MATCHING_BASIS,
+        "team_label_compatibility_policy_id": TEAM_LABEL_COMPATIBILITY_POLICY_ID,
+        "team_label_compatibility_policy_sha256": TEAM_LABEL_COMPATIBILITY_POLICY_SHA256,
     }
     raw = json.dumps(
         payload,
@@ -150,6 +277,13 @@ def validate_contract() -> Mapping[str, str]:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
             "Shadow stable fixture identity registry drifted"
         )
+    if (
+        team_label_compatibility.policy_sha256()
+        != TEAM_LABEL_COMPATIBILITY_POLICY_SHA256
+    ):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "Shadow SportyBet team-label compatibility identity drifted"
+        )
     actual = calculate_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
@@ -162,6 +296,8 @@ def validate_contract() -> Mapping[str, str]:
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
         "fixture_stable_identity_registry_sha256": FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256,
+        "team_label_compatibility_policy_id": TEAM_LABEL_COMPATIBILITY_POLICY_ID,
+        "team_label_compatibility_policy_sha256": TEAM_LABEL_COMPATIBILITY_POLICY_SHA256,
     }
 
 
@@ -181,6 +317,8 @@ def _bundle_to_dict_with_stable_identity(self: Any) -> dict[str, Any]:
     payload["fixture_team_alias_registry_sha256"] = FIXTURE_TEAM_ALIAS_REGISTRY_SHA256
     payload["fixture_stable_identity_policy_id"] = FIXTURE_STABLE_IDENTITY_POLICY_ID
     payload["fixture_stable_identity_registry_sha256"] = FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256
+    payload["team_label_compatibility_policy_id"] = TEAM_LABEL_COMPATIBILITY_POLICY_ID
+    payload["team_label_compatibility_policy_sha256"] = TEAM_LABEL_COMPATIBILITY_POLICY_SHA256
     payload["fixture_stable_identity_state_sha256"] = getattr(
         self,
         "_fixture_stable_identity_state_sha256",
@@ -232,20 +370,23 @@ def capture_current_catalog_fanout_discovery(
 ):
     validate_contract()
     _sync_wrapper_hooks()
-    return legacy.capture_current_catalog_fanout_discovery(
-        repository_root=repository_root,
-        execute_live_network=execute_live_network,
-    )
+    with _shadow_parser_scope():
+        return legacy.capture_current_catalog_fanout_discovery(
+            repository_root=repository_root,
+            execute_live_network=execute_live_network,
+        )
 
 
 def verify_current_catalog_fanout_discovery(
     evidence_directory: Path, *, repository_root: Path
 ):
     validate_contract()
-    return legacy.verify_current_catalog_fanout_discovery(
-        evidence_directory,
-        repository_root=repository_root,
-    )
+    _sync_wrapper_hooks()
+    with _shadow_parser_scope():
+        return legacy.verify_current_catalog_fanout_discovery(
+            evidence_directory,
+            repository_root=repository_root,
+        )
 
 
 def reconcile_current_events_from_catalog_fanout(
@@ -259,13 +400,14 @@ def reconcile_current_events_from_catalog_fanout(
     validate_contract()
     _begin_identity_scope(fotmob_captures, fanout_evidence_directory)
     _sync_wrapper_hooks()
-    result = legacy.reconcile_current_events_from_catalog_fanout(
-        repository_root=repository_root,
-        fanout_evidence_directory=fanout_evidence_directory,
-        fotmob_admission_value=fotmob_admission_value,
-        fotmob_captures=fotmob_captures,
-        execute_live_network=execute_live_network,
-    )
+    with _shadow_parser_scope():
+        result = legacy.reconcile_current_events_from_catalog_fanout(
+            repository_root=repository_root,
+            fanout_evidence_directory=fanout_evidence_directory,
+            fotmob_admission_value=fotmob_admission_value,
+            fotmob_captures=fotmob_captures,
+            execute_live_network=execute_live_network,
+        )
     return _bind_identity_state(result)
 
 
@@ -279,12 +421,13 @@ def discover_and_reconcile_current_events(
     validate_contract()
     _begin_identity_scope(fotmob_captures)
     _sync_wrapper_hooks()
-    result = legacy.discover_and_reconcile_current_events(
-        repository_root=repository_root,
-        fotmob_admission_value=fotmob_admission_value,
-        fotmob_captures=fotmob_captures,
-        execute_live_network=execute_live_network,
-    )
+    with _shadow_parser_scope():
+        result = legacy.discover_and_reconcile_current_events(
+            repository_root=repository_root,
+            fotmob_admission_value=fotmob_admission_value,
+            fotmob_captures=fotmob_captures,
+            execute_live_network=execute_live_network,
+        )
     return _bind_identity_state(result)
 
 
@@ -294,6 +437,7 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
     fanout_directory = getattr(value, "_fanout_directory", None)
     if fanout_directory is not None:
         _begin_identity_scope(captures, fanout_directory)
+    _sync_wrapper_hooks()
     expected_state = getattr(value, "_fixture_stable_identity_state_sha256", None)
     if (
         expected_state is not None
@@ -302,7 +446,8 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
             "persisted Shadow fixture identity state differs from retained bundle"
         )
-    return legacy.verify_current_event_discovery_reconciliation_bundle(value)
+    with _shadow_parser_scope():
+        return legacy.verify_current_event_discovery_reconciliation_bundle(value)
 
 
 __all__ = [
@@ -328,6 +473,8 @@ __all__ = [
     "ProviderTournamentObservation",
     "SportyBetCurrentEventDiscoveryError",
     "SportyBetCurrentEventDiscoveryReconciliationBundle",
+    "TEAM_LABEL_COMPATIBILITY_POLICY_ID",
+    "TEAM_LABEL_COMPATIBILITY_POLICY_SHA256",
     "calculate_contract_sha256",
     "capture_current_catalog_fanout_discovery",
     "catalog_request_target",
