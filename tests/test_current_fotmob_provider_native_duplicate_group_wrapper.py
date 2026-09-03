@@ -141,7 +141,21 @@ def test_reviewed_duplicate_wrapper_labels_are_exact_not_fuzzy():
 
     with pytest.raises(
         current.CurrentFotMobProviderNativeQualificationError,
-        match="groupName set changed",
+        match="label pairing changed",
+    ):
+        _qualify(payload)
+
+
+def test_reviewed_duplicate_wrapper_group_and_name_pairing_cannot_be_swapped():
+    payload = _payload()
+    payload["leagues"][0]["name"], payload["leagues"][1]["name"] = (
+        payload["leagues"][1]["name"],
+        payload["leagues"][0]["name"],
+    )
+
+    with pytest.raises(
+        current.CurrentFotMobProviderNativeQualificationError,
+        match="label pairing changed",
     ):
         _qualify(payload)
 
