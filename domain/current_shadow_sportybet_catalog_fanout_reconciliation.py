@@ -14,6 +14,7 @@ substring matching, reversal or time tolerance is added.
 """
 from __future__ import annotations
 
+from collections import Counter
 from contextlib import contextmanager
 import hashlib
 import json
@@ -332,6 +333,103 @@ CurrentShadowSportyBetCatalogFanoutReconciliationBundle.to_dict = (
 )
 
 
+_IDENTITY_STATE_PAYLOAD_KEYS = frozenset({
+    "schema_version",
+    "policy_id",
+    "matching_basis",
+    "seed_registry_sha256",
+    "learned_team_identities",
+    "learned_competition_identities",
+    "evidence_records",
+    "authority",
+})
+_IDENTITY_STATE_IMMUTABLE_KEYS = (
+    "schema_version",
+    "policy_id",
+    "matching_basis",
+    "seed_registry_sha256",
+    "authority",
+)
+_IDENTITY_STATE_APPEND_ONLY_KEYS = (
+    "learned_team_identities",
+    "learned_competition_identities",
+    "evidence_records",
+)
+
+
+def _identity_state_snapshot() -> dict[str, Any]:
+    """Retain an exact JSON-safe copy of the current stable-identity state."""
+    payload = fixture_identity_v2._state_payload()
+    return json.loads(json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ))
+
+
+def _identity_state_sha256(payload: Mapping[str, Any]) -> str:
+    raw = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _verify_identity_state_append_only_extension(
+    retained: Mapping[str, Any],
+    current: Mapping[str, Any],
+) -> None:
+    """Require current persistent learning to preserve every retained fact exactly."""
+    if (
+        set(retained) != _IDENTITY_STATE_PAYLOAD_KEYS
+        or set(current) != _IDENTITY_STATE_PAYLOAD_KEYS
+    ):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "Shadow fixture identity state payload shape drifted"
+        )
+    for key in _IDENTITY_STATE_IMMUTABLE_KEYS:
+        if retained[key] != current[key]:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "persisted Shadow fixture identity state changed retained policy ancestry"
+            )
+    for key in _IDENTITY_STATE_APPEND_ONLY_KEYS:
+        retained_rows = retained[key]
+        current_rows = current[key]
+        if type(retained_rows) is not list or type(current_rows) is not list:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "Shadow fixture identity append-only state collection drifted"
+            )
+        retained_counter = Counter(
+            json.dumps(
+                row,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for row in retained_rows
+        )
+        current_counter = Counter(
+            json.dumps(
+                row,
+                ensure_ascii=False,
+                allow_nan=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            )
+            for row in current_rows
+        )
+        if retained_counter - current_counter:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "persisted Shadow fixture identity state is not an append-only extension of retained bundle"
+            )
+
+
 def _identity_observing_network_get(target: str):
     raw, observed = _network_get(target)
     fixture_identity_v2.observe_provider_payload(raw)
@@ -352,11 +450,13 @@ def _begin_identity_scope(
 
 
 def _bind_identity_state(bundle: Any) -> Any:
+    snapshot = _identity_state_snapshot()
     object.__setattr__(
         bundle,
         "_fixture_stable_identity_state_sha256",
-        fixture_identity_v2.state_sha256(),
+        _identity_state_sha256(snapshot),
     )
+    object.__setattr__(bundle, "_fixture_stable_identity_state_snapshot", snapshot)
     return bundle
 
 
@@ -439,13 +539,18 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
         _begin_identity_scope(captures, fanout_directory)
     _sync_wrapper_hooks()
     expected_state = getattr(value, "_fixture_stable_identity_state_sha256", None)
-    if (
-        expected_state is not None
-        and expected_state != fixture_identity_v2.state_sha256()
-    ):
-        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
-            "persisted Shadow fixture identity state differs from retained bundle"
-        )
+    if expected_state is not None:
+        retained_state = getattr(value, "_fixture_stable_identity_state_snapshot", None)
+        if type(retained_state) is not dict:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "retained Shadow fixture identity state snapshot is unavailable"
+            )
+        if _identity_state_sha256(retained_state) != expected_state:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "retained Shadow fixture identity state snapshot hash drifted"
+            )
+        current_state = _identity_state_snapshot()
+        _verify_identity_state_append_only_extension(retained_state, current_state)
     with _shadow_parser_scope():
         return legacy.verify_current_event_discovery_reconciliation_bundle(value)
 
