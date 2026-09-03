@@ -60,6 +60,10 @@ REVIEWED_DUPLICATE_GROUP_LEAGUE_NAMES = (
     "Women's World Cup U20 Grp. A",
     "Women's World Cup U20 Grp. B",
 )
+REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS = (
+    ("A", "Women's World Cup U20 Grp. A"),
+    ("B", "Women's World Cup U20 Grp. B"),
+)
 REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME = "FIFA U-20 World Cup"
 
 
@@ -108,8 +112,7 @@ def _reviewed_duplicate_group_wrapper_present(
         raise _error("reviewed duplicate group wrapper occurrence count changed")
 
     metadata = []
-    group_names = []
-    league_names = []
+    label_pairs = []
     for league in wrappers:
         if type(league.get("matches")) is not list:
             raise _error("reviewed duplicate group wrapper matches shape changed")
@@ -127,8 +130,7 @@ def _reviewed_duplicate_group_wrapper_present(
         league_name = league.get("name")
         if type(group_name) is not str or type(league_name) is not str:
             raise _error("reviewed duplicate group wrapper labels changed type")
-        group_names.append(group_name)
-        league_names.append(league_name)
+        label_pairs.append((group_name, league_name))
         metadata.append(
             {
                 key: value
@@ -137,10 +139,8 @@ def _reviewed_duplicate_group_wrapper_present(
             }
         )
 
-    if tuple(sorted(group_names)) != REVIEWED_DUPLICATE_GROUP_NAMES:
-        raise _error("reviewed duplicate group wrapper groupName set changed")
-    if tuple(sorted(league_names)) != REVIEWED_DUPLICATE_GROUP_LEAGUE_NAMES:
-        raise _error("reviewed duplicate group wrapper name set changed")
+    if tuple(sorted(label_pairs)) != REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS:
+        raise _error("reviewed duplicate group wrapper label pairing changed")
     if metadata[0] != metadata[1]:
         raise _error("reviewed duplicate group wrappers differ outside opaque group labels")
     return True
