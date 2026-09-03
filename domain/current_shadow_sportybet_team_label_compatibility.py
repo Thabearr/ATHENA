@@ -183,8 +183,11 @@ def project_team_label(*, event_id: Any, field: str, value: Any) -> str:
         raise CurrentShadowSportyBetTeamLabelCompatibilityError(
             "team-label compatibility event_id is invalid"
         )
-    if type(value) is not str or not value or any(
-        ord(ch) < 32 or ord(ch) == 127 for ch in value
+    if (
+        type(value) is not str
+        or not value
+        or len(value) > 300
+        or any(ord(ch) < 32 or ord(ch) == 127 for ch in value)
     ):
         raise CurrentShadowSportyBetTeamLabelCompatibilityError(
             "provider team label must be bounded source text"
