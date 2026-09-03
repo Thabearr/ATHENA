@@ -51,7 +51,7 @@ ATHENA combines data engineering, statistical modelling, machine learning, provi
 
 ### Evidence and football-state layer
 
-- Builds and audits historical football evidence for model research and backtesting.
+- Builds and audits a historical football warehouse with a **1.2M+ global result backbone**, enriched by higher-priority and richer sources where available.
 - Preserves raw/source lineage and deterministic identities across reviewed evidence boundaries.
 - Reconciles current fixtures across source systems instead of assuming names or IDs are globally interchangeable.
 - Represents fixture intelligence such as form, performance, schedule load, availability, lineup/context, venue, weather, and competition state without allowing discovery-only information to silently become trusted evidence.
@@ -205,6 +205,8 @@ The project deliberately does **not** treat a green test suite, a high historica
 ATHENA is **proprietary software**. Public visibility of this repository does **not** make it open source and does not grant permission to copy, redistribute, modify, sublicense, reverse engineer, create derivative works from, or commercially use the project.
 
 The repository's [LICENSE](LICENSE) applies to the source code, documentation, algorithms, trained models, database schemas, analytical methodologies, proprietary datasets, and generated analytical outputs. Separate written permission or a commercial license is required where specified by that license.
+
+Third-party datasets, APIs, services, trademarks, and source material remain subject to their respective owners' licenses, terms, and rights. ATHENA's proprietary license does not supersede those third-party terms.
 
 Copyright © 2025–2026 ATHENA Project. All Rights Reserved.
 
