@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/athena_logo.jpg" alt="ATHENA logo" width="440"/>
+  <img src="docs/athena_logo.webp" alt="ATHENA logo" width="360"/>
 </p>
 
 <h1 align="center">ATHENA</h1>
