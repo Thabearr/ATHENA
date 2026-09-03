@@ -68,6 +68,7 @@ def test_bridge_exactly_binds_bot_dispatched_continuity_identity() -> None:
     assert 'run.get("head_sha") == watchdog_head_sha' in workflow
     assert 'run.get("name") == expected_name' in workflow
     assert 'run.get("display_title") == expected_name' in workflow
+    assert 'run.get("path") == continuity.PRIMARY_WORKFLOW_PATH' in workflow
     assert "duplicate exact continuity dispatch runs detected" in workflow
     assert "transport._continuity_plan_from_run" in workflow
 
@@ -80,6 +81,17 @@ def test_watchdog_without_dispatch_is_green_noop_before_receipt_mirror() -> None
     assert "receipt bridge is a verified no-op" in workflow
     assert "if: steps.source.outputs.bridge_required == 'true'" in workflow
     assert "if: steps.source.outputs.bridge_required == 'false'" in workflow
+
+
+def test_watchdog_noop_still_binds_exact_independent_job_provenance() -> None:
+    workflow = _workflow_text()
+    assert 'job.get("run_id") != watchdog_run_id' in workflow
+    assert 'job.get("workflow_name") != continuity.WATCHDOG_WORKFLOW_NAME' in workflow
+    assert 'job.get("head_branch") != "main"' in workflow
+    assert 'job.get("head_sha") != watchdog_head_sha' in workflow
+    assert 'job.get("status") != "completed"' in workflow
+    assert 'job.get("conclusion") != "success"' in workflow
+    assert "watchdog reviewed job did not complete successfully" in workflow
 
 
 def test_watchdog_dispatch_requires_full_reviewed_jobs_provenance() -> None:
