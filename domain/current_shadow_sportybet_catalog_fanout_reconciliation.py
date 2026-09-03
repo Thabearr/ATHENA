@@ -26,6 +26,7 @@ from domain import (
 )
 from domain import current_shadow_fixture_identity_aliases as fixture_aliases
 from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
+from domain import current_shadow_sportybet_team_label_compatibility as team_label_compatibility
 from domain import sportybet_current_event_discovery_reconciliation as _reviewed
 
 
@@ -64,8 +65,12 @@ FIXTURE_TEAM_ALIAS_POLICY_ID = fixture_aliases.POLICY_ID
 FIXTURE_TEAM_ALIAS_REGISTRY_SHA256 = fixture_aliases.REGISTRY_SHA256
 FIXTURE_STABLE_IDENTITY_POLICY_ID = fixture_identity_v2.POLICY_ID
 FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256 = fixture_identity_v2.REGISTRY_SHA256
+TEAM_LABEL_COMPATIBILITY_POLICY_ID = team_label_compatibility.POLICY_ID
+TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
+    team_label_compatibility.EXPECTED_POLICY_SHA256
+)
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "c9f238039f14202159d055fadc3236684832403f74637323eb3b2cf83e836a33"
+EXPECTED_CONTRACT_SHA256 = "32330a19d26d527a2296fa00626a7237b1abd8c1dbcb170cea3aac1619fe6520"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -108,12 +113,47 @@ base = legacy.base
 reviewed = _reviewed
 
 
+def _reviewed_shadow_event_from_mapping(
+    value: Mapping[str, Any],
+    *,
+    inherited_competition: str | None,
+    page_num: int,
+    raw_sha256: str,
+    observed_at: Any,
+):
+    """Project only exact evidence-reviewed provider label whitespace cases."""
+    event_id = _reviewed._event_id(value.get("eventId"))
+    projected = dict(value)
+    try:
+        projected["homeTeamName"] = team_label_compatibility.project_team_label(
+            event_id=event_id,
+            field="homeTeamName",
+            value=value.get("homeTeamName"),
+        )
+        projected["awayTeamName"] = team_label_compatibility.project_team_label(
+            event_id=event_id,
+            field="awayTeamName",
+            value=value.get("awayTeamName"),
+        )
+    except team_label_compatibility.CurrentShadowSportyBetTeamLabelCompatibilityError as exc:
+        raise _reviewed.SportyBetCurrentEventDiscoveryError(str(exc)) from exc
+    return _reviewed._event_from_mapping(
+        projected,
+        inherited_competition=inherited_competition,
+        page_num=page_num,
+        raw_sha256=raw_sha256,
+        observed_at=observed_at,
+    )
+
+
 class _ReviewedShadowProxy:
-    """Delegate the frozen reviewed module except for Shadow fixture matching."""
+    """Delegate the frozen reviewed module except for Shadow-specific compatibility."""
 
     def __getattr__(self, name: str) -> Any:
         if name == "_match_event":
             return fixture_identity_v2.match_event
+        if name == "_event_from_mapping":
+            return _reviewed_shadow_event_from_mapping
         return getattr(_reviewed, name)
 
 
@@ -129,6 +169,8 @@ def calculate_contract_sha256() -> str:
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
         "fixture_stable_identity_registry_sha256": FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256,
         "matching_basis": MATCHING_BASIS,
+        "team_label_compatibility_policy_id": TEAM_LABEL_COMPATIBILITY_POLICY_ID,
+        "team_label_compatibility_policy_sha256": TEAM_LABEL_COMPATIBILITY_POLICY_SHA256,
     }
     raw = json.dumps(
         payload,
@@ -150,6 +192,13 @@ def validate_contract() -> Mapping[str, str]:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
             "Shadow stable fixture identity registry drifted"
         )
+    if (
+        team_label_compatibility.policy_sha256()
+        != TEAM_LABEL_COMPATIBILITY_POLICY_SHA256
+    ):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "Shadow SportyBet team-label compatibility identity drifted"
+        )
     actual = calculate_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
@@ -162,6 +211,8 @@ def validate_contract() -> Mapping[str, str]:
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
         "fixture_stable_identity_registry_sha256": FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256,
+        "team_label_compatibility_policy_id": TEAM_LABEL_COMPATIBILITY_POLICY_ID,
+        "team_label_compatibility_policy_sha256": TEAM_LABEL_COMPATIBILITY_POLICY_SHA256,
     }
 
 
@@ -181,6 +232,8 @@ def _bundle_to_dict_with_stable_identity(self: Any) -> dict[str, Any]:
     payload["fixture_team_alias_registry_sha256"] = FIXTURE_TEAM_ALIAS_REGISTRY_SHA256
     payload["fixture_stable_identity_policy_id"] = FIXTURE_STABLE_IDENTITY_POLICY_ID
     payload["fixture_stable_identity_registry_sha256"] = FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256
+    payload["team_label_compatibility_policy_id"] = TEAM_LABEL_COMPATIBILITY_POLICY_ID
+    payload["team_label_compatibility_policy_sha256"] = TEAM_LABEL_COMPATIBILITY_POLICY_SHA256
     payload["fixture_stable_identity_state_sha256"] = getattr(
         self,
         "_fixture_stable_identity_state_sha256",
@@ -328,6 +381,8 @@ __all__ = [
     "ProviderTournamentObservation",
     "SportyBetCurrentEventDiscoveryError",
     "SportyBetCurrentEventDiscoveryReconciliationBundle",
+    "TEAM_LABEL_COMPATIBILITY_POLICY_ID",
+    "TEAM_LABEL_COMPATIBILITY_POLICY_SHA256",
     "calculate_contract_sha256",
     "capture_current_catalog_fanout_discovery",
     "catalog_request_target",
