@@ -349,6 +349,7 @@ def _bind_identity_state(bundle: Any) -> Any:
 def _sync_wrapper_hooks() -> None:
     legacy._network_get = _identity_observing_network_get
     legacy._parse_tournament_response = _shadow_parse_tournament_response
+    base._parse_tournament_response = _shadow_parse_tournament_response
     legacy.time = time
 
 
@@ -367,6 +368,7 @@ def verify_current_catalog_fanout_discovery(
     evidence_directory: Path, *, repository_root: Path
 ):
     validate_contract()
+    _sync_wrapper_hooks()
     return legacy.verify_current_catalog_fanout_discovery(
         evidence_directory,
         repository_root=repository_root,
@@ -419,6 +421,7 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
     fanout_directory = getattr(value, "_fanout_directory", None)
     if fanout_directory is not None:
         _begin_identity_scope(captures, fanout_directory)
+    _sync_wrapper_hooks()
     expected_state = getattr(value, "_fixture_stable_identity_state_sha256", None)
     if (
         expected_state is not None
