@@ -1,10 +1,11 @@
-"""Compose PR243 current fixture identity with the reviewed UTC-native shadow path.
+"""Compose current fixture identity with the reviewed UTC-native shadow path.
 
 This is a research/replay boundary only. It replays the exact transparent
-`/api/data/matches` response behind a current PR243 bootstrap, re-runs PR243,
-reconstructs UTC-native history from the exact PR119 bootstrap bytes plus the
-reviewed fresh settlements supplied to this call, and delegates all feature/xG
-construction to the existing PR149 fresh-holdout implementation.
+`/api/data/matches` response behind a reviewed current bootstrap, re-runs the
+exact fixture-review policy proven by that bootstrap ancestry, reconstructs
+UTC-native history from the exact PR119 bootstrap bytes plus the reviewed fresh
+settlements supplied to this call, and delegates all feature/xG construction to
+the existing PR149 fresh-holdout implementation.
 
 Important: this module does not prove that the supplied fresh-settlement tuple is
 the complete active PR151 durable history prefix. Therefore a derived row is a
@@ -36,7 +37,11 @@ from domain.current_fotmob_provider_native_qualification import (
 )
 from domain.current_fotmob_fixture_review_policy import (
     POLICY_ID as PR243_POLICY_ID,
+    REVIEWER_REFERENCE as PR243_REVIEWER_REFERENCE,
+    SHADOW_POLICY_ID,
+    SHADOW_REVIEWER_REFERENCE,
     build_current_fotmob_fixture_review_policy_result,
+    build_current_shadow_fotmob_fixture_review_policy_result,
 )
 from domain.fotmob_data_matches_capture import (
     FotMobDataMatchesCaptureManifest,
@@ -331,12 +336,15 @@ class CurrentUtcNativeShadowPredictionRow:
 class _DerivedShadowState:
     candidate_bundle_sha256: str
     review_bundle_sha256: str
+    fixture_review_policy_id: str
     fresh_legacy_update_count: int
     rows: tuple[CurrentUtcNativeShadowPredictionRow, ...]
 
     def __post_init__(self) -> None:
         _sha(self.candidate_bundle_sha256, "candidate_bundle_sha256")
         _sha(self.review_bundle_sha256, "review_bundle_sha256")
+        if self.fixture_review_policy_id not in {PR243_POLICY_ID, SHADOW_POLICY_ID}:
+            raise _error("fixture_review_policy_id escaped reviewed policy vocabulary")
         if (
             type(self.fresh_legacy_update_count) is not int
             or self.fresh_legacy_update_count < 0
@@ -369,6 +377,34 @@ def _history_ledger(
     return ledger, update_count
 
 
+def _review_policy_for_bootstrap(
+    candidates: Any,
+    bootstrap: ReviewedFixtureIntelligenceBootstrap,
+):
+    """Replay only the exact reviewed fixture policy proven by the bootstrap."""
+    try:
+        review_bundle = bootstrap.verified_artifact.admission.handoff.review_bundle
+        decisions = review_bundle.decisions
+    except AttributeError as exc:
+        raise _error("current bootstrap fixture-review provenance is unavailable") from exc
+    reviewer_references = {decision.reviewer_reference for decision in decisions}
+    if reviewer_references == {PR243_REVIEWER_REFERENCE}:
+        builder = build_current_fotmob_fixture_review_policy_result
+        expected_policy_id = PR243_POLICY_ID
+    elif reviewer_references == {SHADOW_REVIEWER_REFERENCE}:
+        builder = build_current_shadow_fotmob_fixture_review_policy_result
+        expected_policy_id = SHADOW_POLICY_ID
+    else:
+        raise _error("current bootstrap fixture-review provenance is unknown or mixed")
+    try:
+        policy = builder(candidates, reviewed_at=bootstrap.admission_reviewed_at)
+    except Exception as exc:
+        raise _error("source failed reviewed current fixture policy replay") from exc
+    if policy.policy_id != expected_policy_id:
+        raise _error("replayed fixture-review policy identity changed")
+    return policy
+
+
 def _derive_shadow_state(
     source_bundle: CurrentUtcNativeShadowPredictionSourceBundle,
 ) -> _DerivedShadowState:
@@ -387,20 +423,14 @@ def _derive_shadow_state(
     if candidate_sha != bootstrap.candidate_bundle_sha256:
         raise _error("source candidate bundle differs from current bootstrap ancestry")
 
-    try:
-        policy = build_current_fotmob_fixture_review_policy_result(
-            candidates,
-            reviewed_at=bootstrap.admission_reviewed_at,
-        )
-    except Exception as exc:
-        raise _error("source failed frozen PR243 policy replay") from exc
+    policy = _review_policy_for_bootstrap(candidates, bootstrap)
     review_sha = hashlib.sha256(
         canonical_fotmob_fixture_candidate_review_bundle_bytes(policy.review_bundle)
     ).hexdigest()
     if review_sha != bootstrap.review_bundle_sha256:
-        raise _error("PR243 review bundle differs from current bootstrap ancestry")
+        raise _error("fixture-review bundle differs from current bootstrap ancestry")
     if policy.policy_approved_count != len(bootstrap.fixtures):
-        raise _error("PR243 approval count differs from current bootstrap fixture count")
+        raise _error("fixture-review approval count differs from current bootstrap fixture count")
 
     try:
         qualified = qualify_current_fotmob_capture(
@@ -482,6 +512,7 @@ def _derive_shadow_state(
     return _DerivedShadowState(
         candidate_bundle_sha256=candidate_sha,
         review_bundle_sha256=review_sha,
+        fixture_review_policy_id=policy.policy_id,
         fresh_legacy_update_count=update_count,
         rows=ordered,
     )
@@ -495,6 +526,7 @@ class CurrentUtcNativeShadowPredictionHandoff:
     source_bundle: CurrentUtcNativeShadowPredictionSourceBundle
     candidate_bundle_sha256: str
     review_bundle_sha256: str
+    fixture_review_policy_id: str
     reviewed_fresh_legacy_update_count: int
     rows: tuple[CurrentUtcNativeShadowPredictionRow, ...]
     next_required_boundary: str
@@ -513,7 +545,9 @@ class CurrentUtcNativeShadowPredictionHandoff:
         if self.candidate_bundle_sha256 != derived.candidate_bundle_sha256:
             raise _error("candidate_bundle_sha256 differs from exact source replay")
         if self.review_bundle_sha256 != derived.review_bundle_sha256:
-            raise _error("review_bundle_sha256 differs from exact PR243 replay")
+            raise _error("review_bundle_sha256 differs from exact fixture-policy replay")
+        if self.fixture_review_policy_id != derived.fixture_review_policy_id:
+            raise _error("fixture_review_policy_id differs from bootstrap ancestry replay")
         if self.reviewed_fresh_legacy_update_count != derived.fresh_legacy_update_count:
             raise _error("fresh legacy update count differs from exact history replay")
         if self.rows != derived.rows:
@@ -583,7 +617,9 @@ class CurrentUtcNativeShadowPredictionHandoff:
             "schema_version": self.schema_version,
             "dataset_name": self.dataset_name,
             "status": self.status,
-            "pr243_policy_id": PR243_POLICY_ID,
+            # Keep the historical key for schema compatibility; its value now
+            # identifies the exact reviewed policy carried by bootstrap ancestry.
+            "pr243_policy_id": self.fixture_review_policy_id,
             "current_bootstrap_sha256": self.current_bootstrap_sha256,
             "candidate_bundle_sha256": self.candidate_bundle_sha256,
             "review_bundle_sha256": self.review_bundle_sha256,
@@ -639,6 +675,7 @@ def build_current_fotmob_utc_native_shadow_prediction_handoff(
         source_bundle=source,
         candidate_bundle_sha256=derived.candidate_bundle_sha256,
         review_bundle_sha256=derived.review_bundle_sha256,
+        fixture_review_policy_id=derived.fixture_review_policy_id,
         reviewed_fresh_legacy_update_count=derived.fresh_legacy_update_count,
         rows=derived.rows,
         next_required_boundary=NEXT_REQUIRED_BOUNDARY,
