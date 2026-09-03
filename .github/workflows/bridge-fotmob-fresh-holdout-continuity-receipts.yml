@@ -71,7 +71,7 @@ jobs:
                   if run.get(key) != value:
                       raise SystemExit(f"watchdog workflow_run metadata drifted: {key}")
               path = run.get("path")
-              if type(path) is not str or not path.startswith(
+              if type(path) is not str or path != (
                   ".github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml"
               ):
                   raise SystemExit("watchdog workflow_run path drifted")
@@ -198,7 +198,18 @@ jobs:
               ]
               if len(reviewed_jobs) != 1:
                   raise SystemExit("watchdog must expose exactly one reviewed control job")
-              steps = reviewed_jobs[0].get("steps")
+              job = reviewed_jobs[0]
+              if job.get("run_id") != watchdog_run_id:
+                  raise SystemExit("watchdog reviewed job run id drifted")
+              if job.get("workflow_name") != continuity.WATCHDOG_WORKFLOW_NAME:
+                  raise SystemExit("watchdog reviewed job workflow name drifted")
+              if job.get("head_branch") != "main":
+                  raise SystemExit("watchdog reviewed job branch drifted")
+              if job.get("head_sha") != watchdog_head_sha:
+                  raise SystemExit("watchdog reviewed job head SHA drifted")
+              if job.get("status") != "completed" or job.get("conclusion") != "success":
+                  raise SystemExit("watchdog reviewed job did not complete successfully")
+              steps = job.get("steps")
               if type(steps) is not list:
                   raise SystemExit("watchdog reviewed control job steps are missing")
               record_steps = [
@@ -266,8 +277,7 @@ jobs:
                       and run.get("event") == "workflow_dispatch"
                       and run.get("head_branch") == "main"
                       and run.get("head_sha") == watchdog_head_sha
-                      and type(run.get("path")) is str
-                      and run["path"].startswith(continuity.PRIMARY_WORKFLOW_PATH)
+                      and run.get("path") == continuity.PRIMARY_WORKFLOW_PATH
                   ]
                   if len(matches) > 1:
                       raise SystemExit("duplicate exact continuity dispatch runs detected")
