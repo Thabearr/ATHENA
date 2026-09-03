@@ -1,272 +1,221 @@
 <p align="center">
-  <img src="docs/athena_banner.png" alt="ATHENA" width="600"/>
+  <img src="docs/athena_logo.jpg" alt="ATHENA logo" width="440"/>
 </p>
 
 <h1 align="center">ATHENA</h1>
-<h3 align="center">Fullproof Strategy Engine for Football Accumulator Prediction</h3>
 
 <p align="center">
-  <img src="https://img.shields.io/badge/Python-3.12+-blue?logo=python&logoColor=white" alt="Python"/>
-  <img src="https://img.shields.io/badge/ML-scikit--learn-orange?logo=scikit-learn&logoColor=white" alt="scikit-learn"/>
-  <img src="https://img.shields.io/badge/Data-FotMob%20%7C%20OpenFootball-green" alt="Data Sources"/>
-  <img src="https://img.shields.io/badge/License-Proprietary-red" alt="License"/>
-  <img src="https://img.shields.io/badge/Status-Active%20Development-brightgreen" alt="Status"/>
+  <strong>Evidence-driven football intelligence and decision-support research system.</strong><br/>
+  Turning information overload into auditable, reproducible decisions.
 </p>
 
----
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.12%2B-3776AB?logo=python&logoColor=white" alt="Python 3.12+"/>
+  <img src="https://img.shields.io/badge/Research-Shadow%20Mode-5B5BD6" alt="Research / Shadow Mode"/>
+  <img src="https://img.shields.io/badge/CI-GitHub%20Actions-2088FF?logo=githubactions&logoColor=white" alt="GitHub Actions"/>
+  <img src="https://img.shields.io/badge/License-Proprietary-B91C1C" alt="Proprietary License"/>
+</p>
 
-> **⚠️ PROPRIETARY SOFTWARE** — This repository and all its contents are protected under a proprietary license. Unauthorized copying, distribution, or use is strictly prohibited. See [LICENSE](LICENSE) for details.
+> **Current boundary:** ATHENA is under active research and Shadow validation. Production wagering authority is deliberately disabled. A valid outcome can be **NO BET** when the evidence does not justify a selection.
 
----
+## The problem ATHENA is solving
 
-## 🧠 What Is ATHENA?
+Modern football analysis is increasingly an **information-overload problem**.
 
-**ATHENA** is an AI-powered football prediction engine that generates high-confidence accumulator betting slips by analysing thousands of data points across dozens of leagues worldwide.
+Before kickoff, useful evidence can span historical results, expected goals, team strength, tactical context, availability, schedule load, competition stage, live fixture state, bookmaker market semantics, quote freshness, settlement rules, and source-specific identifiers. Across many fixtures and markets, there is simply **more relevant data to process, reconcile, and keep fresh than a human can realistically track with consistent accuracy and provenance**.
 
-Unlike simple odds-comparison tools, ATHENA runs a **multi-engine intelligence pipeline** that combines statistical modelling, machine learning, and real-time data enrichment to identify edges that the market undervalues.
+ATHENA is being built to make that problem tractable.
 
-### Key Capabilities
+The system collects and reconciles source evidence, preserves where each fact came from, converts qualified information into model features, evaluates supported football markets, checks current prices and settlement semantics, and produces a traceable decision. Its objective is not to manufacture a pick for every match; it is to surface the most defensible opportunity **only when the complete evidence chain supports one**.
 
-- **10,000+ Historical Matches** seeded from 25+ leagues across Europe, South America, Africa, and Asia
-- **Reasoning-Based Fixture Selection (`fixture_reasoner.py`)** — Shin's (1993) de-vigging method, Wilson score confidence discounting, percentage point edge ranking (\(\text{edge}_{\text{pp}}\)), and fractional Kelly bankroll sizing (\(\frac{1}{8}\) Kelly)
-- **Dual Prediction Engine (`prediction_engine.py`)** — Fuses Base-Rate pattern memory (System 1) with Bounded Contextual LLM Research Overlay (System 2) in logit space with source-tier fact weighting (`official`: 1.0, `reported`: 0.6, `rumor`: 0.25)
-- **Market Coherence & Uncertainty Feedback** — Renormalizes mutually exclusive markets to 1.0 and discounts effective sample size (\(n_{\text{effective}}\)) when fresh news nudges base rates
-- **Strict Gender & Women's Match Safety Filter (`services/gender_filter.py`)** — Multi-lingual regex service guaranteeing 100% men's-only accumulator selection
-- **Live NLP Context Engine** using real-time Google Search data to gauge team fatigue, pressure, and motivation based on current news cycles
-- **ELO Rating System** with chronological backfill — every match is rated using only data available *before* kick-off
-- **Expected Goals (xG) & Possession** scraped from FotMob's live API via anti-detection bypass
-- **Random Forest ML Models** trained on rolling 5-match team form, xG differentials, and ELO gaps
-- **Auditable Desktop UI & Selenium E2E Suite** powered by FastAPI, Pywebview, Vanilla JS with live audit traces, and Edge WebDriver automation
+In practical terms, ATHENA aims to inspect a fixture more thoroughly, consistently, and recently than an unaided person can — and to explain why it selected an opportunity or why it refused the fixture.
 
----
+## Design philosophy
 
-## 🏗️ Architecture
+ATHENA is built around a small set of non-negotiable engineering principles:
 
+| Principle | What it means in ATHENA |
+| --- | --- |
+| **Evidence before inference** | Important facts retain source lineage, observation time, and evidence identity. Missing evidence is not invented to complete a pipeline. |
+| **Fail closed** | Unknown, stale, malformed, conflicted, or unverified state blocks authority instead of being silently guessed. |
+| **Time-aware modelling** | Historical features and evaluation are constructed as-of the information that existed before the target kickoff. |
+| **Exact identity** | Reviewed provider paths use deterministic fixture, market, outcome, line, snapshot, and hash identities rather than convenient fuzzy matches. |
+| **Market coherence** | Related markets are derived from coherent probability/settlement semantics instead of being treated as unrelated labels. |
+| **Price discipline** | Football probability and bookmaker value are separate questions. Quote freshness, source consistency, and settlement semantics remain explicit. |
+| **Reproducibility** | Canonical serialization, SHA-256 identities, deterministic ordering, immutable inputs, and replayable artifacts are used throughout reviewed boundaries. |
+| **Abstention is valid** | `NO_BET`, `MISSING`, `BLOCKED`, `STALE`, and `CONFLICTED` are meaningful outcomes — not errors to hide. |
+
+## What ATHENA does
+
+ATHENA combines data engineering, statistical modelling, machine learning, provider reconciliation, and decision governance in one auditable workflow.
+
+### Evidence and football-state layer
+
+- Builds and audits a historical football warehouse with a **1.2M+ global result backbone**, enriched by higher-priority and richer sources where available.
+- Preserves raw/source lineage and deterministic identities across reviewed evidence boundaries.
+- Reconciles current fixtures across source systems instead of assuming names or IDs are globally interchangeable.
+- Represents fixture intelligence such as form, performance, schedule load, availability, lineup/context, venue, weather, and competition state without allowing discovery-only information to silently become trusted evidence.
+- Keeps missingness, conflicts, freshness, and uncertainty explicit.
+
+### Probability and market layer
+
+- Uses a shared score/goal-distribution foundation for markets that can be derived coherently from the same football state.
+- Supports specialist treatment where settlement or match-path semantics require different information.
+- Maintains a canonical **15-market** analytical surface rather than building one disconnected model per bookmaker option.
+- Preserves settlement-aware logic for ordinary event markets and non-binary structures such as **Draw No Bet** and **Asian Handicap**.
+- Keeps probability quality, calibration, bookmaker pricing, and portfolio behaviour as separate research questions.
+
+### Current-price and routing layer
+
+- Replays reviewed current-source context before market evaluation.
+- Maps provider events, markets, outcomes, lines, and quotes through exact source identities.
+- Enforces explicit freshness and currentness gates before a quote is considered usable.
+- Prices the complete eligible audit surface before routing, preserving rejected and unpriced opportunities for analysis.
+- Uses deterministic ranking and retains counterfactual/diagnostic information so a final selection can be reproduced and inspected.
+
+### Research and validation layer
+
+- Uses chronological and rolling-origin evaluation rather than random future-leaking splits for time-dependent research.
+- Runs heavy validation and reproducibility checks through GitHub-hosted workflows so the local machine is not the critical path.
+- Treats new models, features, routers, and policies as challengers that must earn authority through frozen evidence rather than complexity alone.
+- Keeps Shadow results separate from production authority.
+
+## Architecture
+
+```text
+Historical + current source evidence
+                |
+                v
+       Raw evidence + provenance
+                |
+                v
+      Source / schema qualification
+                |
+                v
+     Fixture identity + reconciliation
+                |
+                v
+        Fixture intelligence state
+                |
+                v
+      Verified model-feature snapshot
+                |
+                v
+   Probability models + calibration research
+                |
+                v
+    15-market probability / settlement layer
+                |
+                v
+   Exact current provider quote reconciliation
+                |
+                v
+        Price-all audit + diagnostics
+                |
+                v
+        Deterministic Shadow router
+                |
+                v
+     Candidate / NO BET + audit trail
 ```
+
+Each layer is deliberately separated so that trust cannot jump directly from raw data to a betting decision.
+
+## Engineering highlights
+
+- **Provenance-first data contracts** with deterministic hashes and source ancestry.
+- **Strict schema validation** with explicit rejection of malformed or semantically ambiguous inputs.
+- **Cross-source fixture reconciliation** and current-provider semantic registries.
+- **Chronological historical replay** for leakage-resistant feature and model research.
+- **Normalized score-distribution modelling** for coherent result/goal market probabilities.
+- **Settlement-aware evaluation** for push and split-settlement markets.
+- **Freshness-aware current quote handling** with exact snapshot identity.
+- **Shadow-first deployment discipline**: research success does not automatically become production authority.
+- **Hosted CI and research workflows** for repeatable tests, audits, evidence campaigns, and large backtests.
+- **Auditable UI/API tooling** for inspecting the system rather than hiding its reasoning behind a single score.
+
+## Technology
+
+| Area | Stack |
+| --- | --- |
+| Core | Python 3.12+ |
+| Data | SQLite, SQLAlchemy, pandas, NumPy, PyArrow |
+| Modelling | SciPy, scikit-learn, joblib |
+| Validation | Pydantic, pytest, deterministic JSON/hash contracts |
+| API / UI | FastAPI, Uvicorn, Pywebview, JavaScript |
+| Acquisition / parsing | HTTPX, aiohttp, requests, BeautifulSoup, lxml |
+| Automation | GitHub Actions |
+| Research outputs | JSON, CSV, SQLite, Markdown, reproducible artifacts |
+
+## Repository guide
+
+```text
 ATHENA/
-├── build_acca.py              # CLI entry point — generates daily acca slips
-├── intelligence/
-│   ├── fixture_reasoner.py    # Shin de-vigging, Wilson CI, single market selection, correlation flags
-│   ├── prediction_engine.py   # Dual-Engine: Base-rate + Logit contextual overlay + uncertainty discount
-│   ├── match_analyst.py       # Master prediction engine (Poisson + ML + Reasoner blend)
-│   ├── ml_engine.py           # scikit-learn model loader and predictor
-│   ├── elo_engine.py          # Dynamic ELO rating system
-│   ├── accumulator.py         # Multi-fold accumulator builder
-│   ├── acca_filter.py         # Edge & confidence filters
-│   ├── correlation_analyzer.py# Cross-match correlation detection
-│   ├── h2h_analyzer.py        # Head-to-head historical analysis
-│   ├── form.py                # Team form scoring
-│   ├── fatigue.py             # Match congestion & fatigue modelling
-│   ├── motivation.py          # Seasonal motivation signals
-│   ├── weather.py             # Weather impact analysis
-│   ├── injuries.py            # Squad availability engine
-│   ├── referee.py             # Referee volatility profiling
-│   ├── venue_adjuster.py      # Home advantage calibration
-│   └── league_adjuster.py     # Cross-league strength normalisation
-├── engine/
-│   ├── risk_engine.py         # Risk scoring and upset detection
-│   └── kelly_criterion.py     # Optimal stake calculation
-├── workers/
-│   ├── fotmob_scraper.py      # FotMob fixture scraper
-│   ├── fotmob_advanced_scraper.py  # Deep stats extraction (xG, lineups, form)
-│   └── openfootball_loader.py # OpenFootball historical data loader
-├── services/
-│   ├── gender_filter.py       # Multi-lingual regex gender & women's match filter
-│   ├── analysis_pipeline.py   # Orchestrates the full analysis flow
-│   ├── team_form_service.py   # Rolling form calculations
-│   ├── prediction_tracker.py  # Tracks prediction accuracy over time
-│   └── nlp_engine.py          # Google search and NLP context scoring
-├── api/
-│   └── server.py              # FastAPI backend for the Desktop UI
-├── ui/
-│   ├── app.js                 # Frontend logic for accumulator building
-│   ├── index.html             # Main desktop UI layout
-│   └── styles.css             # UI styling
-├── run_desktop.py             # Desktop entry point (Pywebview + FastAPI)
-├── database/
-│   ├── schema.sql             # Full database schema
-│   ├── database.py            # SQLite connection manager
-│   └── athena.db              # Local database (10,000+ matches)
-├── tools/
-│   ├── train_model.py         # ML model training pipeline
-│   ├── backtester.py          # Historical prediction backtesting
-│   └── model_improver.py      # Model performance analysis
-├── models/
-│   ├── outcome_model.joblib   # Trained match outcome classifier
-│   └── goals_model.joblib     # Trained total goals regressor
-├── scripts/
-│   ├── backfill_xg.py         # Historical xG data enrichment
-│   └── send_email.py          # HTML email notification sender
-├── .github/workflows/
-│   └── daily_acca.yml         # GitHub Actions daily automation
-└── config/
-    └── settings.yaml          # Configurable thresholds and parameters
+├── domain/              # Canonical contracts, market semantics and reviewed boundaries
+├── intelligence/        # Football analysis, probability and contextual intelligence
+├── engine/              # Risk / decision-support engines
+├── workers/             # Source acquisition and ingestion workers
+├── services/            # Application and analysis services
+├── database/            # Local persistence and schema layer
+├── api/                 # FastAPI application surface
+├── ui/                  # Desktop/web interface assets
+├── tools/               # Training, backtesting and research utilities
+├── scripts/             # Audits, migrations, evidence and operational helpers
+├── docs/                # Architecture decisions, contracts and current-state documentation
+├── tests/               # Unit, integration, replay and adversarial regression tests
+└── .github/workflows/   # Hosted CI, research, acquisition and validation workflows
 ```
 
----
+ATHENA has evolved through narrow, reviewable boundaries. The `docs/` directory records the contracts and rationale behind those boundaries; the code and exact current Git state remain authoritative for implementation.
 
-## ⚡ Quick Start
+## Development environment
 
-### Prerequisites
+ATHENA is primarily developed against Python 3.12+.
 
-- Python 3.12+
-- pip / venv
+From an **authorized local checkout**:
 
-### Installation
-
-```bash
-git clone <your-private-repo-url>
-cd ATHENA
-```
-
-**For Windows:**
 ```bash
 python -m venv .venv
-.\.venv\Scripts\activate
-pip install -e .
 ```
 
-**For Linux / macOS (or WSL):**
-```bash
-python3 -m venv .venv_linux
-source .venv_linux/bin/activate
-pip install -e .
-```
-
-### Seed the Database
+Activate the environment for your platform, then install the repository dependencies:
 
 ```bash
-python seed_historical_matches.py    # Fetch 10,000+ historical matches
-python scripts/backfill_xg.py       # Enrich with xG & possession from FotMob
+pip install -r requirements.txt
 ```
 
-### Train the ML Models
+ATHENA's normal engineering workflow favors **targeted local tests and compile/syntax checks**, with the complete repository validation delegated to GitHub-hosted CI. Source-acquisition and evidence workflows may have additional authorization and provenance requirements; do not run them casually from a development checkout.
 
-```bash
-python tools/train_model.py
-```
+## Project status
 
-### Run the Desktop Interface
+ATHENA is an active research project, not a finished commercial betting product.
 
-The easiest way to generate accumulators and interact with the engine is via the new Desktop UI:
+The current engineering direction is focused on:
 
-```bash
-python run_desktop.py
-```
+1. hardening the end-to-end all-market Shadow path;
+2. proving deterministic current-source, pricing, routing, and portfolio behaviour with real preserved evidence;
+3. expanding hosted chronological backtesting and champion/challenger evaluation;
+4. improving tactical, availability, lineup, regime, and uncertainty features where historical evidence supports them;
+5. validating model and routing changes on frozen holdouts and prospective Shadow observations before any increase in authority.
 
-Desktop notes:
-- Fixture and league responses are cached server-side for faster repeated navigation.
-- Athenizer now supports **Optimize**, **Split**, and **Merge** booking-code workflows.
-- Navigation keyboard shortcuts are available with `Alt+1..5`.
+The project deliberately does **not** treat a green test suite, a high historical hit rate, or a successful field trial as sufficient evidence for production deployment.
 
-### Generate Accumulators via CLI
+## License and intellectual property
 
-You can also run the engine entirely from the terminal:
+ATHENA is **proprietary software**. Public visibility of this repository does **not** make it open source and does not grant permission to copy, redistribute, modify, sublicense, reverse engineer, create derivative works from, or commercially use the project.
 
-```bash
-# Just today's matches, 20 folds
-python build_acca.py --days 1 --folds 20 --no-strict
+The repository's [LICENSE](LICENSE) applies to the source code, documentation, algorithms, trained models, database schemas, analytical methodologies, proprietary datasets, and generated analytical outputs. Separate written permission or a commercial license is required where specified by that license.
 
-# Target a specific league, 5 folds
-python build_acca.py --days 2 --folds 5 --league "Premier League"
-```
+Third-party datasets, APIs, services, trademarks, and source material remain subject to their respective owners' licenses, terms, and rights. ATHENA's proprietary license does not supersede those third-party terms.
 
----
+Copyright © 2025–2026 ATHENA Project. All Rights Reserved.
 
-## 🔬 How It Works
+## Disclaimer
 
-### 1. Data Collection
-ATHENA scrapes live fixture data from **FotMob** using `curl_cffi` with browser impersonation to bypass anti-bot protections, and seeds historical data from **OpenFootball's** open datasets.
-
-### 2. Feature Engineering
-For each upcoming match, ATHENA computes:
-- **ELO Differential** — the rating gap between teams based on 10,000+ chronologically-ordered results
-- **Rolling 5-Match xG** — each team's expected goals average over their last 5 games
-- **Possession Trends** — ball dominance patterns
-- **Form Score** — recent W/D/L weighted by opponent strength
-- **Fatigue Index** — days since last match, fixture congestion
-- **Motivation Signal** — title race, relegation battle, dead rubber detection
-- **Weather Impact** — temperature and conditions affecting play style
-- **Referee Profile** — card/penalty tendencies of the assigned official
-
-### 3. Prediction Engine
-Two models run in parallel and their outputs are blended:
-
-| Engine | Method | Strength |
-|--------|--------|----------|
-| **Poisson Model** | Mathematical distribution | Excellent at baseline goal probabilities |
-| **Random Forest** | ML trained on 4,600+ matches | Captures non-linear xG/ELO/fatigue interactions |
-
-The final probability for each market (1X2, Over/Under, BTTS, etc.) is a **50/50 blend** of both engines.
-
-### 4. Accumulator Construction
-The `AccumulatorBuilder` selects bets with:
-- Minimum **edge differential** (predicted probability vs. implied odds probability)
-- **Correlation filtering** to avoid same-league stacking
-- **Risk scoring** with upset alerts for volatile fixtures
-- **Market diversity** to spread across 1X2, Over 1.5, BTTS, etc.
-
----
-
-## 📊 Model Performance
-
-| Metric | Value |
-|--------|-------|
-| Training Samples | 4,632 matches |
-| Outcome Accuracy (1X2) | 48.3% |
-| Home Win Recall | 80% |
-| Total Goals MSE | 2.64 |
-| Leagues Covered | 25+ |
-| Historical Matches | 10,644 |
-
-> **Note:** 48% raw 1X2 accuracy is strong — the random baseline is 33%. Combined with edge filtering and accumulator construction, this translates to consistent positive expected value.
-
----
-
-## 🤖 Automation
-
-ATHENA runs daily via **GitHub Actions**:
-
-- **Schedule:** 7:00 AM UTC every day
-- **Output:** Generates acca slip → sends styled HTML email
-- **Manual Trigger:** Available via `workflow_dispatch`
-
-Configure secrets in your GitHub repo:
-- `GMAIL_ADDRESS`
-- `GMAIL_APP_PASSWORD`
-- `RECIPIENT_EMAIL`
-
----
-
-## 🔒 Security & Intellectual Property
-
-This project is protected under a **proprietary license**. See [LICENSE](LICENSE).
-
-- All source code, algorithms, and trained models are © the original author
-- Git commit history serves as timestamped proof of authorship
-- Unauthorized reproduction or distribution will be prosecuted
-
----
-
-## 🛣️ Roadmap
-
-- [x] Phase 1: Core Architecture & Database
-- [x] Phase 2: Multi-Engine Intelligence Pipeline
-- [x] Phase 3: Poisson Probability Engine
-- [x] Phase 4: FotMob Live Data Integration
-- [x] Phase 5: ELO System & Backtesting Framework
-- [x] Phase 6: Machine Learning (Random Forest) & xG Integration
-- [x] Phase 7: Live Dashboard (Desktop Web UI)
-- [x] Phase 8: NLP Live Context Engine (Google Search Sentiment)
-- [x] Phase 9: Reasoning-Based Selection & Shin (1993) De-vigging (`fixture_reasoner.py`)
-- [x] Phase 10: Dual Prediction Engine & Logit Contextual Overlay (`prediction_engine.py`)
-- [x] Phase 11: Multi-Lingual Gender & Women's Match Safety Filter (`gender_filter.py`)
-- [x] Phase 12: Selenium E2E Automation & Desktop UI Audit Traces
-- [ ] Phase 13: Automated Betting API Integration
-- [ ] Phase 14: Telegram/Discord Bot for Alerts
+ATHENA is a research and decision-support system for probabilistic football analysis. Football outcomes remain uncertain. The project does not guarantee profit, does not claim certainty, and is intentionally designed to refuse unsupported decisions. The software is provided subject to the warranty and liability terms in the repository's proprietary license.
 
 ---
 
 <p align="center">
-  <b>Built with precision. Powered by data. Protected by law.</b>
+  <strong>ATHENA — evidence in, uncertainty preserved, decisions earned.</strong>
 </p>
