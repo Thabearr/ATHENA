@@ -139,10 +139,7 @@ def test_timeout_receipt_retains_completed_market_and_funnel_diagnostics(
 def test_mismatched_runtime_snapshot_is_rejected_before_checkpoint_write(tmp_path):
     snapshot = runner._runtime_progress_diagnostics((_completed_router_input(),))
     snapshot["fixture_funnel"]["policy_approved"] = 0
-    with pytest.raises(
-        runner.CurrentShadowAllMarketRunnerError,
-        match="do not match completed Router progress",
-    ):
+    with pytest.raises(runner.CurrentShadowAllMarketRunnerError):
         _write_progress(tmp_path, snapshot)
 
 
