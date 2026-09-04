@@ -39,8 +39,8 @@ import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror
 
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
-POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
-SCHEDULE_RECOVERY_BLOB_SHA = "1752fd5b96823f8b52e99a2dbbf84250676809d8"
+POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "ee928ba29c7108c203402ff8efabf3d6fc3e4e00"
+SCHEDULE_RECOVERY_BLOB_SHA = "7fe531dfb6bba96c7e6505016b89761f0d25428f"
 SCHEDULE_RECOVERY_PATH = (
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
 )
@@ -272,6 +272,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
+    projected_schedule_duplicates: dict[int, Mapping[str, Any]] = {}
     projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
     projected_legacy_queued: dict[int, Mapping[str, Any]] = {}
@@ -360,6 +361,13 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
 
         artifacts = cached_artifacts(run_id)
         if run.get("conclusion") == "success":
+            if recovery._prove_schedule_duplicate_no_acquisition_success(
+                run,
+                artifacts,
+                cached_jobs,
+            ):
+                projected_schedule_duplicates[run_id] = run
+                return False
             if recovery._prove_ambiguous_no_acquisition_success(
                 run,
                 artifacts,
@@ -426,6 +434,17 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     result["projected_ambiguous_no_acquisition_runs"] = [
         _projected_noop_record(run) for run in ordered_noops
     ]
+    ordered_schedule_duplicates = sorted(
+        projected_schedule_duplicates.values(),
+        key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
+    )
+    if ordered_schedule_duplicates:
+        result["verified_schedule_duplicate_no_acquisition_count"] = len(
+            ordered_schedule_duplicates
+        )
+        result["projected_schedule_duplicate_no_acquisition_runs"] = [
+            _projected_noop_record(run) for run in ordered_schedule_duplicates
+        ]
     ordered_continuity_noops = sorted(
         projected_continuity_noops.values(),
         key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),

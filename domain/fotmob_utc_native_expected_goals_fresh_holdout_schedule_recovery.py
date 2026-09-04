@@ -29,10 +29,16 @@ AMBIGUOUS_NO_ACQUISITION_DISPOSITION = "AMBIGUOUS_NO_ACQUISITION"
 CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION = (
     "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION"
 )
+SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION = (
+    "SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION"
+)
 RESOLVED_DISPOSITION = "RESOLVED"
 _AMBIGUOUS_MARKER_STEP = "Acknowledge ambiguous schedule without acquisition"
 _CONTINUITY_MARKER_STEP = (
     "Acknowledge continuity slot already attempted without acquisition"
+)
+_SCHEDULE_DUPLICATE_MARKER_STEP = (
+    "Acknowledge schedule slot already attempted without acquisition"
 )
 _NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
     "Restore newest durable lineage and resolve schedule slot": "success",
@@ -49,6 +55,18 @@ _CONTINUITY_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
     "Restore newest durable lineage and resolve schedule slot": "success",
     _AMBIGUOUS_MARKER_STEP: "skipped",
     _CONTINUITY_MARKER_STEP: "success",
+    "Restore or materialize PR119 bootstrap projection": "skipped",
+    "Execute reviewed fresh-holdout collection tick": "skipped",
+    "Reconcile any staged capture lineage": "skipped",
+    "Package durable state archive": "skipped",
+    "Upload authoritative 90-day Actions artifact": "skipped",
+    "Publish and verify long-lived evidence release asset": "skipped",
+}
+_SCHEDULE_DUPLICATE_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES = {
+    "Restore newest durable lineage and resolve schedule slot": "success",
+    _AMBIGUOUS_MARKER_STEP: "skipped",
+    _CONTINUITY_MARKER_STEP: "skipped",
+    _SCHEDULE_DUPLICATE_MARKER_STEP: "success",
     "Restore or materialize PR119 bootstrap projection": "skipped",
     "Execute reviewed fresh-holdout collection tick": "skipped",
     "Reconcile any staged capture lineage": "skipped",
@@ -191,6 +209,21 @@ def _prove_continuity_duplicate_no_acquisition_success(
         get_run_jobs,
         expected_event="workflow_dispatch",
         required_step_outcomes=_CONTINUITY_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES,
+    )
+
+
+def _prove_schedule_duplicate_no_acquisition_success(
+    run: Mapping[str, Any],
+    artifact_data: Mapping[str, Any],
+    get_run_jobs: Callable[[int], Mapping[str, Any]],
+) -> bool:
+    """Prove a delayed natural schedule run stopped before acquisition."""
+    return _prove_green_zero_artifact_path(
+        run,
+        artifact_data,
+        get_run_jobs,
+        expected_event="schedule",
+        required_step_outcomes=_SCHEDULE_DUPLICATE_NO_ACQUISITION_REQUIRED_STEP_OUTCOMES,
     )
 
 
@@ -428,6 +461,7 @@ FreshHoldoutFailureLineageError = lineage.FreshHoldoutFailureLineageError
 __all__ = [
     "AMBIGUOUS_NO_ACQUISITION_DISPOSITION",
     "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION",
+    "SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION",
     "RESOLVED_DISPOSITION",
     "FreshHoldoutFailureLineageError",
     "RestoredFailureLineage",
