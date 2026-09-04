@@ -116,6 +116,7 @@ _PROGRESS_COUNT_FIELDS = (
     "router_selected_count",
     "router_no_bet_count",
 )
+_PROGRESS_DIAGNOSTICS_KEY = "runtime_progress_diagnostics"
 
 
 class CurrentShadowAllMarketRunnerError(ValueError):
@@ -1127,4 +1128,3 @@ __all__ = [
     "STATUS_SOURCE_INCOMPLETE",
     "execute_current_shadow_all_market",
 ]
-_PROGRESS_DIAGNOSTICS_KEY = "runtime_progress_diagnostics"
