@@ -47,7 +47,7 @@ SOURCE_SCOPE = (
 
 RAW_AUDIT_BLOB_SHA = "e3cdb18845403d92f94933f68c2bd06e55660de0"
 PR175_PROJECTION_BLOB_SHA = "522b99260137fbeea1914495b3aaa368961ba455"
-SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "6d643f446db1b0737f10e48b29ace0d55b28a5a4"
+SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "714fd234a32d3fc781493edfcd216aedcec825bd"
 
 # This is not a general relaxation of PR174's cumulative-journal semantics.
 # It is the one observed current-only redundant declaration: two real execution

@@ -9,7 +9,9 @@ contain a provider observation:
 * exact zero-artifact pre-acquisition failures admitted by the current reviewed
   producer-side proof; and
 * one exact historical queued workflow_dispatch that never acquired a job or
-  artifact and predates the reviewed prospective-continuity run-name boundary.
+  artifact and predates the reviewed prospective-continuity run-name boundary;
+* one exact, fully replayed historical continuity/natural double-acquisition
+  retained as one canonical slot plus one current-only auxiliary execution.
 
 The current producer also contains the separately source-authenticated prospective
 continuity transport. This projection admits a continuity collection only after
@@ -24,16 +26,30 @@ The pre-acquisition allowance matches the post-PR207 producer boundary. A proven
 pre-acquisition failure may be transparent even after canonical campaign evidence
 exists, but projecting it out never reopens Genesis: the unchanged audit engine
 still derives campaign-origin state from the remaining chronological evidence.
+
+The historical double-acquisition allowance is identity-bound as well. It first
+prefetches the complete paginated run universe, proves both exact executions and
+their durable archive prefix, then hides only the later execution from the frozen
+nominal-slot map while retaining its provider-acquiring evidence in current-only
+metadata. It is not a general multiple-runs-per-slot relaxation.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+import dataclasses
+import datetime as dt
+import hashlib
+import copy
+import re
+import tempfile
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
+import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as activation
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as recovery
 import domain.fotmob_fresh_holdout_continuity as continuity
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
+import scripts.mirror_fotmob_fresh_holdout_release_receipt as durable_mirror
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_pr175_projection as pr175
 import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror
 
@@ -53,6 +69,7 @@ LEGACY_QUEUED_NO_EXECUTION_TITLE = "FotMob UTC-Native xG Fresh-Holdout Collectio
 
 _ORIGINAL_AUDIT_ACTIONS_LINEAGE = audit.audit_actions_lineage
 _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE = audit._run_is_collection_candidate
+_ORIGINAL_VALIDATE_CONTROL_LINEAGE = audit.validate_control_lineage
 
 
 def _fixed_get_run_by_id(
@@ -156,28 +173,816 @@ def _projected_legacy_queued_no_execution_record(
 _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID = 33820556400
 _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID = 33823663641
 _HISTORICAL_SAME_SLOT_UTC = "2026-09-04T00:07:00.000000Z"
+_HISTORICAL_SAME_SLOT_SECONDS = "2026-09-04T00:07:00Z"
+_HISTORICAL_SAME_SLOT_COMPACT = "20260904T000700Z"
+_HISTORICAL_SAME_SLOT_HEAD_SHA = "92da60c93e03c0c958a6d3143b43bb43fa8a2f42"
+_HISTORICAL_SAME_SLOT_WORKFLOW_ID = continuity.PRIMARY_WORKFLOW_ID
+_HISTORICAL_SAME_SLOT_WORKFLOW_PATH = continuity.PRIMARY_WORKFLOW_PATH
+_HISTORICAL_SAME_SLOT_CONTINUITY_CREATED_AT = "2026-09-04T00:08:32Z"
+_HISTORICAL_SAME_SLOT_NATURAL_CREATED_AT = "2026-09-04T00:54:24Z"
+_HISTORICAL_SAME_SLOT_WATCHDOG_CREATED_AT = "2026-09-03T23:57:11Z"
+_HISTORICAL_SAME_SLOT_CONTINUITY_NAME = (
+    "ATHENA fresh-holdout workflow_dispatch source=33819767003 "
+    "target=2026-09-04T00:07:00Z cron=7 * * * * "
+    "confirm=PROSPECTIVE_ONLY_NO_BACKFILL_V1"
+)
+_HISTORICAL_SAME_SLOT_NATURAL_NAME = (
+    "ATHENA fresh-holdout schedule source= target= cron= confirm="
+)
+_HISTORICAL_SAME_SLOT_WATCHDOG_RUN_ID = 33819767003
+_HISTORICAL_CONTINUITY_ARTIFACT_ID = 9918215386
+_HISTORICAL_CONTINUITY_ARTIFACT = (
+    "failure-20260904T000700Z-run-33820556400.tar.gz"
+)
+_HISTORICAL_CONTINUITY_ZIP_DIGEST = (
+    "sha256:e22fd0c351eb90bb8d7d577f24a94b5f71f8ea0dbd0ef7c648ca03bd7da930df"
+)
+_HISTORICAL_CONTINUITY_ARCHIVE_SHA256 = (
+    "38a51e7acbb0221b223f0523e3484f4159f17ae609b01c0f9813f517e930e112"
+)
+_HISTORICAL_CONTINUITY_ARCHIVE_SIZE = 1811473
+_HISTORICAL_NATURAL_ARTIFACT_ID = 9919255715
 _HISTORICAL_NATURAL_ARTIFACT = "failure-20260904T000700Z-run-33823663641.tar.gz"
-_HISTORICAL_NATURAL_ZIP_DIGEST = "sha256:792ddba3b8f4b38bc494f8d0a660a80dceb5c8c9f2a9bcdaf88cbba43ac5f43a"
+_HISTORICAL_NATURAL_ZIP_DIGEST = (
+    "sha256:792ddba3b8f4b38bc494f8d0a660a80dceb5c8c9f2a9bcdaf88cbba43ac5f43a"
+)
+_HISTORICAL_NATURAL_ARCHIVE_SHA256 = (
+    "32d8c5dfb450238c328af24f1b4a0705b9066cd9a1b02412937c10555aedf864"
+)
+_HISTORICAL_NATURAL_ARCHIVE_SIZE = 1873913
+_HISTORICAL_PROVIDER_REQUEST_DATES = ("20260903", "20260904", "20260905")
+_HISTORICAL_RELEASE_TAG = "athena-fresh-holdout-evidence-2026-W36"
+_HISTORICAL_FAILURE_DISPOSITION = "TICK_NOT_COMMITTED_REVIEW_FAILURE_EVIDENCE"
+_HISTORICAL_DETAIL = "FreshHoldoutActivationError: reviewed fresh capture qualification failed"
+_HISTORICAL_PROOF_TOKEN = object()
+_RUN_UNIVERSE_TOKEN = object()
+_LOWER_SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
+
+
+def _is_lower_sha256(value: Any) -> bool:
+    return type(value) is str and _LOWER_SHA256_RE.fullmatch(value) is not None
+
+
+@dataclasses.dataclass(frozen=True)
+class HistoricalSameSlotProviderDuplicateProof:
+    """Complete, current-only proof for the one observed double acquisition.
+
+    This object is deliberately not a generic duplicate policy.  Construction is
+    private-by-convention: callers receive it only after the paginated run
+    universe, exact run metadata, continuity provenance, Actions transports,
+    receipt fields, durable archive bytes, and cumulative journal proof all pass.
+    """
+
+    canonical_run_id: int
+    auxiliary_run_id: int
+    nominal_slot_utc: str
+    canonical_archive_name: str
+    canonical_archive_sha256: str
+    canonical_archive_size_bytes: int
+    auxiliary_archive_name: str
+    auxiliary_archive_sha256: str
+    auxiliary_archive_size_bytes: int
+    canonical_actions_artifact_id: int
+    canonical_actions_digest: str
+    auxiliary_actions_artifact_id: int
+    auxiliary_actions_digest: str
+    provider_acquisition_count_canonical: int
+    provider_acquisition_count_auxiliary: int
+    _token: object = dataclasses.field(repr=False, compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self._token is not _HISTORICAL_PROOF_TOKEN:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical proof must be issued by the complete evidence preflight"
+            )
+        if self.canonical_run_id != _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical proof canonical run identity changed"
+            )
+        if self.auxiliary_run_id != _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical proof auxiliary run identity changed"
+            )
+        if self.nominal_slot_utc != _HISTORICAL_SAME_SLOT_UTC:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical proof nominal slot changed"
+            )
+        if self.canonical_archive_name != _HISTORICAL_CONTINUITY_ARTIFACT:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical proof canonical archive identity changed"
+            )
+        if self.auxiliary_archive_name != _HISTORICAL_NATURAL_ARTIFACT:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical proof auxiliary archive identity changed"
+            )
+        exact_identity = (
+            (self.canonical_archive_sha256, _HISTORICAL_CONTINUITY_ARCHIVE_SHA256),
+            (self.canonical_archive_size_bytes, _HISTORICAL_CONTINUITY_ARCHIVE_SIZE),
+            (self.auxiliary_archive_sha256, _HISTORICAL_NATURAL_ARCHIVE_SHA256),
+            (self.auxiliary_archive_size_bytes, _HISTORICAL_NATURAL_ARCHIVE_SIZE),
+            (self.canonical_actions_artifact_id, _HISTORICAL_CONTINUITY_ARTIFACT_ID),
+            (self.canonical_actions_digest, _HISTORICAL_CONTINUITY_ZIP_DIGEST),
+            (self.auxiliary_actions_artifact_id, _HISTORICAL_NATURAL_ARTIFACT_ID),
+            (self.auxiliary_actions_digest, _HISTORICAL_NATURAL_ZIP_DIGEST),
+            (self.provider_acquisition_count_canonical, 3),
+            (self.provider_acquisition_count_auxiliary, 3),
+        )
+        for actual, expected in exact_identity:
+            if actual != expected:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "historical proof evidence identity changed"
+                )
+        for value, label in (
+            (self.canonical_archive_sha256, "canonical archive SHA-256"),
+            (self.auxiliary_archive_sha256, "auxiliary archive SHA-256"),
+        ):
+            if not _is_lower_sha256(value):
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"{label} is not exact lowercase SHA-256"
+                )
+        for value, label in (
+            (self.canonical_archive_size_bytes, "canonical archive size"),
+            (self.auxiliary_archive_size_bytes, "auxiliary archive size"),
+            (self.canonical_actions_artifact_id, "canonical Actions artifact id"),
+            (self.auxiliary_actions_artifact_id, "auxiliary Actions artifact id"),
+            (self.provider_acquisition_count_canonical, "canonical acquisition count"),
+            (self.provider_acquisition_count_auxiliary, "auxiliary acquisition count"),
+        ):
+            if type(value) is not int or value < 1:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"{label} is invalid"
+                )
+        for value, label in (
+            (self.canonical_actions_digest, "canonical Actions digest"),
+            (self.auxiliary_actions_digest, "auxiliary Actions digest"),
+        ):
+            if (
+                type(value) is not str
+                or not value.startswith("sha256:")
+                or len(value) != 71
+                or not _is_lower_sha256(value[7:])
+            ):
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"{label} is invalid"
+                )
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            field.name: getattr(self, field.name)
+            for field in dataclasses.fields(self)
+            if field.name != "_token"
+        }
+
+
+@dataclasses.dataclass(frozen=True)
+class _CachedWorkflowRunUniverse:
+    pages: tuple[Mapping[str, Any], ...]
+    runs: tuple[Mapping[str, Any], ...]
+    _token: object = dataclasses.field(repr=False, compare=False, default=None)
+
+    def __post_init__(self) -> None:
+        if self._token is not _RUN_UNIVERSE_TOKEN:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "workflow run universe must come from the exact page preflight"
+            )
+        if type(self.pages) is not tuple or type(self.runs) is not tuple:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "workflow run universe snapshots must be immutable tuples"
+            )
+
+    def reader(self, page: int, per_page: int) -> Mapping[str, Any]:
+        if type(page) is not int or page < 1 or page > len(self.pages):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "cached workflow run page escaped prefetched universe"
+            )
+        if per_page != 100:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "cached workflow run reader changed reviewed page size"
+            )
+        # Hand a detached snapshot to each consumer.  A validator or test may
+        # inspect/mutate its return value, but that must never mutate the exact
+        # cached evidence subsequently replayed by another consumer.
+        return copy.deepcopy(self.pages[page - 1])
+
+
+def _prefetch_workflow_run_universe(
+    get_runs_page: Callable[[int, int], Mapping[str, Any]],
+) -> _CachedWorkflowRunUniverse:
+    """Capture the exact bounded run pages before the raw audit sees any run."""
+    if not callable(get_runs_page):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "workflow run page reader must be callable"
+        )
+    pages: list[Mapping[str, Any]] = []
+    runs: list[Mapping[str, Any]] = []
+    seen_ids: set[int] = set()
+    campaign_start = audit._parse_utc(audit.CAMPAIGN_START_UTC, "campaign start")
+    for page in range(1, 101):
+        payload = get_runs_page(page, 100)
+        if not isinstance(payload, Mapping):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "workflow run page payload is malformed"
+            )
+        values = payload.get("workflow_runs")
+        if type(values) is not list:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "workflow run page workflow_runs is malformed"
+            )
+        # Retain a detached exact mapping and ordering.  The cached reader is
+        # the sole page source subsequently supplied to the frozen audit; a
+        # caller cannot mutate the live response after this evidence boundary.
+        try:
+            snapshot = copy.deepcopy(payload)
+        except Exception as exc:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "workflow run page could not be detached for caching"
+            ) from exc
+        pages.append(snapshot)
+        values = snapshot.get("workflow_runs")
+        for value in values:
+            if type(value) is not dict:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "workflow run page contains a non-object run"
+                )
+            run_id = value.get("id")
+            if type(run_id) is not int or run_id < 1:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "workflow run page contains an invalid run id"
+                )
+            if run_id in seen_ids:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "workflow run appears more than once in paginated universe"
+                )
+            seen_ids.add(run_id)
+            # Keep the flattened universe detached from the page snapshots as
+            # well.  The proof must consume one immutable evidence snapshot,
+            # not a dict that a later page-reader consumer could mutate.
+            runs.append(copy.deepcopy(value))
+        if not values:
+            break
+        oldest: dt.datetime | None = None
+        for value in values:
+            created_at = value.get("created_at")
+            if type(created_at) is not str:
+                continue
+            try:
+                parsed = audit._parse_utc(created_at, "run created_at")
+            except audit.FreshHoldoutActionsLineageAuditError:
+                continue
+            oldest = parsed if oldest is None or parsed < oldest else oldest
+        if len(values) < 100 or (oldest is not None and oldest < campaign_start):
+            break
+    else:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "workflow run pagination exceeded reviewed bound"
+        )
+    return _CachedWorkflowRunUniverse(
+        tuple(pages), tuple(runs), _token=_RUN_UNIVERSE_TOKEN
+    )
 
 
 def _prove_exact_historical_same_slot_provider_duplicate(
-    run: Mapping[str, Any], *, continuity_plan: continuity.ContinuityPlan | None,
-    artifacts: Mapping[str, Any],
-) -> bool:
-    """Admit only the independently reviewed delayed 2026-09-04 acquisition."""
-    if continuity_plan is None or run.get("id") != _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID:
-        return False
-    if continuity_plan.target_slot_text != _HISTORICAL_SAME_SLOT_UTC:
-        return False
-    if run.get("event") != "schedule" or run.get("conclusion") != "failure":
-        return False
-    if run.get("head_branch") != "main" or run.get("head_sha") != "92da60c93e03c0c958a6d3143b43bb43fa8a2f42":
-        return False
-    values = artifacts.get("artifacts")
-    if type(values) is not list or len(values) != 1 or type(values[0]) is not dict:
-        return False
-    artifact = values[0]
-    return artifact.get("name") == _HISTORICAL_NATURAL_ARTIFACT and artifact.get("digest") == _HISTORICAL_NATURAL_ZIP_DIGEST
+    *,
+    run_universe: _CachedWorkflowRunUniverse,
+    get_run_by_id: Callable[[int], Mapping[str, Any]],
+    get_run_artifacts: Callable[[int], Mapping[str, Any]],
+    download_artifact_zip: Callable[[int], bytes],
+    get_run_jobs: Callable[[int], Mapping[str, Any]],
+) -> HistoricalSameSlotProviderDuplicateProof | None:
+    """Prove the one reviewed historical double-acquisition before raw audit.
+
+    The proof intentionally performs no candidate-predicate work.  It consumes
+    the complete cached paginated run universe, cross-checks both exact runs,
+    replays the existing continuity authentication, verifies both Actions ZIPs
+    and their receipts, and compares the durable state archives byte-for-byte.
+    Only a fully proven pair yields a proof object; all mutations raise and the
+    caller must leave the frozen audit's generic duplicate rule in place.
+    """
+    if not isinstance(run_universe, _CachedWorkflowRunUniverse):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair proof requires the exact prefetched run universe"
+        )
+    values = [value for value in run_universe.runs if type(value) is dict]
+    if len(values) != len(run_universe.runs):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair universe contains a non-object run"
+        )
+    # Reconstruct the flattened page identity from the cached pages.  This
+    # prevents a caller from presenting an independently fabricated ``runs``
+    # tuple while omitting or changing a page in the evidence snapshot.
+    flattened_page_runs: list[Mapping[str, Any]] = []
+    for page in run_universe.pages:
+        if type(page) is not dict or type(page.get("workflow_runs")) is not list:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical pair cached page shape changed"
+            )
+        if any(type(value) is not dict for value in page["workflow_runs"]):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical pair cached page contains a non-object run"
+            )
+        flattened_page_runs.extend(page["workflow_runs"])
+    if [value.get("id") for value in flattened_page_runs] != [
+        value.get("id") for value in values
+    ]:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair flattened pages disagree with cached run universe"
+        )
+    if flattened_page_runs != values:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair cached run fields disagree with exact page evidence"
+        )
+    by_id: dict[int, Mapping[str, Any]] = {}
+    for value in values:
+        run_id = value.get("id")
+        if type(run_id) is not int or run_id < 1:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical pair universe contains an invalid run id"
+            )
+        if run_id in by_id:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical pair universe contains a duplicate run id"
+            )
+        by_id[run_id] = value
+
+    continuity_run = by_id.get(_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID)
+    natural_run = by_id.get(_HISTORICAL_SAME_SLOT_NATURAL_RUN_ID)
+    if continuity_run is None or natural_run is None:
+        # The exact historical pair is not in this snapshot.  This is a normal
+        # path for synthetic/current universes and must not authorize a pair.
+        return None
+
+    direct_cache: dict[int, Mapping[str, Any]] = {}
+
+    def _exact_run(run_id: int) -> Mapping[str, Any]:
+        if run_id not in direct_cache:
+            direct = get_run_by_id(run_id)
+            if type(direct) is not dict:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "historical pair direct run metadata is malformed"
+                )
+            direct_cache[run_id] = direct
+        return direct_cache[run_id]
+
+    def _expected_metadata(run_id: int) -> dict[str, Any]:
+        if run_id == _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID:
+            return {
+                "id": _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
+                "event": "workflow_dispatch",
+                "workflow_id": _HISTORICAL_SAME_SLOT_WORKFLOW_ID,
+                "path": _HISTORICAL_SAME_SLOT_WORKFLOW_PATH,
+                "head_branch": "main",
+                "head_sha": _HISTORICAL_SAME_SLOT_HEAD_SHA,
+                "created_at": _HISTORICAL_SAME_SLOT_CONTINUITY_CREATED_AT,
+                "conclusion": "failure",
+                "status": "completed",
+                "name": _HISTORICAL_SAME_SLOT_CONTINUITY_NAME,
+                "display_title": _HISTORICAL_SAME_SLOT_CONTINUITY_NAME,
+            }
+        return {
+            "id": _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID,
+            "event": "schedule",
+            "workflow_id": _HISTORICAL_SAME_SLOT_WORKFLOW_ID,
+            "path": _HISTORICAL_SAME_SLOT_WORKFLOW_PATH,
+            "head_branch": "main",
+            "head_sha": _HISTORICAL_SAME_SLOT_HEAD_SHA,
+            "created_at": _HISTORICAL_SAME_SLOT_NATURAL_CREATED_AT,
+            "conclusion": "failure",
+            "status": "completed",
+            "name": _HISTORICAL_SAME_SLOT_NATURAL_NAME,
+            "display_title": _HISTORICAL_SAME_SLOT_NATURAL_NAME,
+        }
+
+    def _cross_check_run(run_id: int, paginated: Mapping[str, Any]) -> Mapping[str, Any]:
+        expected = _expected_metadata(run_id)
+        direct = _exact_run(run_id)
+        for key, expected_value in expected.items():
+            if paginated.get(key) != expected_value or direct.get(key) != expected_value:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"historical pair run {run_id} metadata drifted: {key}"
+                )
+            if paginated.get(key) != direct.get(key):
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"historical pair run {run_id} paginated/direct metadata disagrees: {key}"
+                )
+        return direct
+
+    continuity_run = _cross_check_run(
+        _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID, continuity_run
+    )
+    natural_run = _cross_check_run(_HISTORICAL_SAME_SLOT_NATURAL_RUN_ID, natural_run)
+    if continuity_run["created_at"] >= natural_run["created_at"]:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical continuity attempt does not precede natural attempt"
+        )
+
+    watchdog = _exact_run(_HISTORICAL_SAME_SLOT_WATCHDOG_RUN_ID)
+    expected_watchdog = {
+        "id": _HISTORICAL_SAME_SLOT_WATCHDOG_RUN_ID,
+        "name": continuity.WATCHDOG_WORKFLOW_NAME,
+        "path": continuity.WATCHDOG_WORKFLOW_PATH,
+        "event": "schedule",
+        "head_branch": "main",
+        "head_sha": _HISTORICAL_SAME_SLOT_HEAD_SHA,
+        "created_at": _HISTORICAL_SAME_SLOT_WATCHDOG_CREATED_AT,
+        "status": "completed",
+        "conclusion": "success",
+    }
+    if not isinstance(watchdog, Mapping) or any(
+        watchdog.get(key) != value for key, value in expected_watchdog.items()
+    ):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical continuity watchdog metadata drifted"
+        )
+
+    # The existing reviewed watchdog/continuity validator is the only accepted
+    # authentication scheme for the dispatch execution.
+    plan = _prove_continuity_candidate(
+        continuity_run,
+        get_run_by_id=_exact_run,
+        get_run_jobs=get_run_jobs,
+    )
+    if plan.target_slot != audit._parse_utc(
+        _HISTORICAL_SAME_SLOT_UTC, "historical continuity target"
+    ):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical continuity target differs from reviewed slot"
+        )
+
+    def _artifact_for(
+        run_id: int,
+        *,
+        expected_id: int,
+        expected_name: str,
+        expected_digest: str,
+    ) -> tuple[Mapping[str, Any], dict[str, Any]]:
+        payload = get_run_artifacts(run_id)
+        if not isinstance(payload, Mapping):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} artifact payload is malformed"
+            )
+        artifacts = payload.get("artifacts")
+        if (
+            type(artifacts) is not list
+            or len(artifacts) != 1
+            or ("total_count" in payload and payload.get("total_count") != 1)
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} must expose exactly one artifact"
+            )
+        artifact = artifacts[0]
+        if (
+            type(artifact) is not dict
+            or artifact.get("id") != expected_id
+            or artifact.get("name") != expected_name
+            or artifact.get("digest") != expected_digest
+            or artifact.get("expired") is not False
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} artifact identity drifted"
+            )
+        zip_bytes = download_artifact_zip(expected_id)
+        try:
+            zip_digest = durable_mirror.verify_actions_artifact_zip_digest(
+                zip_bytes, expected_digest
+            )
+            verified = durable_mirror.verify_actions_artifact_bundle(
+                run_id=run_id,
+                artifact_name=expected_name,
+                zip_bytes=zip_bytes,
+            )
+        except Exception as exc:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} Actions artifact proof failed"
+            ) from exc
+        if f"sha256:{zip_digest}" != expected_digest:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} Actions digest changed"
+            )
+        verified["actions_artifact_zip_sha256"] = zip_digest
+        return artifact, verified
+
+    def _read_attempt(
+        *,
+        run_id: int,
+        artifact_id: int,
+        artifact_name: str,
+        artifact_digest: str,
+        archive_sha256: str,
+        archive_size: int,
+    ) -> tuple[Mapping[str, Any], dict[str, bytes], tuple[dict[str, Any], ...], tuple[dict[str, Any], ...]]:
+        artifact, verified = _artifact_for(
+            run_id,
+            expected_id=artifact_id,
+            expected_name=artifact_name,
+            expected_digest=artifact_digest,
+        )
+        receipt = durable_mirror._parse_canonical_json(
+            verified["receipt_bytes"],
+            f"historical run {run_id} tick receipt",
+        )
+        exact_receipt = {
+            "schema_version": 1,
+            "workflow_run_id": run_id,
+            "nominal_scheduled_for_utc": _HISTORICAL_SAME_SLOT_UTC,
+            "scheduled_for_utc": "2026-09-04T00:07:00Z",
+            "disposition": _HISTORICAL_FAILURE_DISPOSITION,
+            "tick_committed": False,
+            "backfill_or_retrofill_authorized": False,
+            "network_replay_authorized": False,
+            "durable_asset_name": artifact_name,
+            "durable_asset_sha256": archive_sha256,
+            "durable_asset_size_bytes": archive_size,
+            "durable_release_tag": _HISTORICAL_RELEASE_TAG,
+            "runner_id": activation.RUNNER_ID,
+            "workflow_event_schedule": "7 * * * *",
+            "failure_lineage_reconcile_outcome": "success",
+            "tick_exit_code": 1,
+        }
+        for key, expected in exact_receipt.items():
+            if receipt.get(key) != expected:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"historical run {run_id} receipt drifted: {key}"
+                )
+        safety = receipt.get("safety")
+        if (
+            type(safety) is not dict
+            or set(safety) != set(activation.SAFETY_KEYS)
+            or any(value is not False for value in safety.values())
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} receipt safety authority changed"
+            )
+        archive_bytes = verified["archive_bytes"]
+        if (
+            hashlib.sha256(archive_bytes).hexdigest() != archive_sha256
+            or len(archive_bytes) != archive_size
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical run {run_id} inner archive digest or size changed"
+            )
+        with tempfile.TemporaryDirectory(prefix="athena-historical-pair-") as temporary:
+            root = Path(temporary)
+            archive_path = root / "durable-state.tar.gz"
+            archive_path.write_bytes(archive_bytes)
+            try:
+                activation.verify_and_extract_durable_state_archive(
+                    archive_path,
+                    repository_root=root,
+                    expected_sha256=archive_sha256,
+                )
+            except Exception as exc:
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"historical run {run_id} durable archive proof failed"
+                ) from exc
+            state_root = root / activation.control.CONTROL_ROOT_RELATIVE
+            names = {
+                "capture": activation.control.CAPTURE_INDEX_FILENAME,
+                "control": activation.control.CONTROL_JOURNAL_FILENAME,
+                "prediction": activation.control.PREDICTION_JOURNAL_FILENAME,
+                "identity": activation.control.POST_SEAL_IDENTITY_JOURNAL_FILENAME,
+                "settlement": activation.control.SETTLEMENT_JOURNAL_FILENAME,
+                "checkpoint": activation.control.CHECKPOINT_FILENAME,
+            }
+            state: dict[str, bytes] = {}
+            for key, name in names.items():
+                path = state_root / name
+                if not path.is_file() or path.is_symlink():
+                    raise audit.FreshHoldoutActionsLineageAuditError(
+                        f"historical run {run_id} durable archive is missing {name}"
+                    )
+                state[key] = path.read_bytes()
+        capture_rows = audit._canonical_rows(
+            state["capture"], f"historical run {run_id} capture index"
+        )
+        control_rows = audit._canonical_rows(
+            state["control"], f"historical run {run_id} control journal"
+        )
+        return artifact, state, capture_rows, control_rows
+
+    canonical_artifact, canonical_state, canonical_capture, canonical_control = _read_attempt(
+        run_id=_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
+        artifact_id=_HISTORICAL_CONTINUITY_ARTIFACT_ID,
+        artifact_name=_HISTORICAL_CONTINUITY_ARTIFACT,
+        artifact_digest=_HISTORICAL_CONTINUITY_ZIP_DIGEST,
+        archive_sha256=_HISTORICAL_CONTINUITY_ARCHIVE_SHA256,
+        archive_size=_HISTORICAL_CONTINUITY_ARCHIVE_SIZE,
+    )
+    auxiliary_artifact, auxiliary_state, auxiliary_capture, auxiliary_control = _read_attempt(
+        run_id=_HISTORICAL_SAME_SLOT_NATURAL_RUN_ID,
+        artifact_id=_HISTORICAL_NATURAL_ARTIFACT_ID,
+        artifact_name=_HISTORICAL_NATURAL_ARTIFACT,
+        artifact_digest=_HISTORICAL_NATURAL_ZIP_DIGEST,
+        archive_sha256=_HISTORICAL_NATURAL_ARCHIVE_SHA256,
+        archive_size=_HISTORICAL_NATURAL_ARCHIVE_SIZE,
+    )
+
+    # Validate both canonical state shapes before comparing them.  This uses
+    # the frozen validator captured at import time, never the current
+    # compatibility validator installed by current-history construction.
+    if len(canonical_capture) != 663 or len(auxiliary_capture) != 666:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair capture row counts changed"
+        )
+    if len(canonical_control) != 715 or len(auxiliary_control) != 719:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair control row counts changed"
+        )
+    if auxiliary_state["capture"][: len(canonical_state["capture"])] != canonical_state["capture"]:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical natural capture index is not an exact canonical prefix"
+        )
+    if auxiliary_state["control"][: len(canonical_state["control"])] != canonical_state["control"]:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical natural control journal is not an exact canonical prefix"
+        )
+    for key, expected_rows in (
+        ("prediction", 3136),
+        ("identity", 6071),
+        ("settlement", 166),
+    ):
+        canonical_lines = canonical_state[key].splitlines(keepends=True)
+        auxiliary_lines = auxiliary_state[key].splitlines(keepends=True)
+        if len(canonical_lines) != expected_rows or len(auxiliary_lines) != expected_rows:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical pair {key} row count changed"
+            )
+        if canonical_state[key] != auxiliary_state[key]:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical pair {key} journal is not byte-identical"
+            )
+    if canonical_state["checkpoint"] != auxiliary_state["checkpoint"]:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair checkpoint is not byte-identical"
+        )
+
+    def _provider_rows(
+        rows: Sequence[Mapping[str, Any]],
+        archive_name: str,
+    ) -> tuple[Mapping[str, Any], ...]:
+        selected = tuple(
+            row for row in rows if row.get("durable_asset_name") == archive_name
+        )
+        if len(selected) != 3:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical archive {archive_name} does not contain exactly three provider captures"
+            )
+        if tuple(row.get("request_date") for row in selected) != _HISTORICAL_PROVIDER_REQUEST_DATES:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"historical archive {archive_name} request-date sequence changed"
+            )
+        for row in selected:
+            if (
+                row.get("network_acquisition_performed") is not True
+                or row.get("preserved_from_uncommitted_tick") is not True
+                or not _is_lower_sha256(row.get("raw_sha256"))
+                or not _is_lower_sha256(row.get("manifest_sha256"))
+            ):
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    f"historical archive {archive_name} provider acquisition evidence changed"
+                )
+        return selected
+
+    canonical_provider_rows = _provider_rows(
+        canonical_capture, _HISTORICAL_CONTINUITY_ARTIFACT
+    )
+    natural_capture_append = auxiliary_capture[len(canonical_capture) :]
+    if len(natural_capture_append) != 3:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical natural capture append length changed"
+        )
+    auxiliary_provider_rows = _provider_rows(
+        natural_capture_append, _HISTORICAL_NATURAL_ARTIFACT
+    )
+    if tuple(natural_capture_append) != auxiliary_provider_rows:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical natural capture append contains unexpected rows"
+        )
+
+    appended_control = auxiliary_control[len(canonical_control) :]
+    if len(appended_control) != 4 or appended_control[0] != {
+        "schema_version": 1,
+        "event": "SCHEDULER_GAP_RANGE",
+        "detected_at_scheduled_for_utc": "2026-09-04T00:07:00.000000Z",
+        "previous_committed_tick_utc": "2026-09-03T22:07:00.000000Z",
+        "first_missing_tick_utc": "2026-09-03T22:37:00.000000Z",
+        "last_missing_tick_utc": "2026-09-03T23:37:00.000000Z",
+        "missing_tick_count": 3,
+        "backfill_authorized": False,
+    }:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical natural control append gap changed"
+        )
+    for control_row, capture_row in zip(appended_control[1:], auxiliary_provider_rows):
+        if (
+            set(control_row)
+            != {
+                "schema_version",
+                "event",
+                "observed_at",
+                "detail",
+                "capture_raw_sha256",
+                "capture_manifest_sha256",
+                "tick_committed",
+                "backfill_authorized",
+            }
+            or control_row.get("event") != "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED"
+            or control_row.get("schema_version") != 1
+            or control_row.get("observed_at") != capture_row.get("observed_at")
+            or control_row.get("detail") != _HISTORICAL_DETAIL
+            or control_row.get("capture_raw_sha256") != capture_row.get("raw_sha256")
+            or control_row.get("capture_manifest_sha256") != capture_row.get("manifest_sha256")
+            or control_row.get("tick_committed") is not False
+            or control_row.get("backfill_authorized") is not False
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical natural control qualification append changed"
+            )
+
+    _ORIGINAL_VALIDATE_CONTROL_LINEAGE(canonical_control)
+
+    # A third provider-attempting execution for this slot is not admissible.
+    # Prove absence from the same cached universe and exact artifact metadata,
+    # rather than relying on encounter order in the frozen audit.
+    for candidate in values:
+        candidate_id = candidate.get("id")
+        if candidate_id in {
+            _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
+            _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID,
+        }:
+            continue
+        target_texts = {
+            candidate.get("nominal_slot_utc"),
+            candidate.get("nominal_scheduled_for_utc"),
+            candidate.get("target_slot"),
+            candidate.get("scheduled_for_utc"),
+        }
+        title_text = " ".join(
+            text
+            for text in (candidate.get("name"), candidate.get("display_title"))
+            if type(text) is str
+        )
+        if (
+            _HISTORICAL_SAME_SLOT_UTC in target_texts
+            or _HISTORICAL_SAME_SLOT_SECONDS in target_texts
+            or (
+                "target=2026-09-04T00:07:00Z" in title_text
+            )
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "third execution claims the historical nominal slot"
+            )
+        if (
+            candidate.get("workflow_id") == _HISTORICAL_SAME_SLOT_WORKFLOW_ID
+            and candidate.get("path") in {
+                _HISTORICAL_SAME_SLOT_WORKFLOW_PATH,
+                f"{_HISTORICAL_SAME_SLOT_WORKFLOW_PATH}@{candidate.get('head_sha', '')}",
+            }
+            and candidate.get("event") in {"schedule", "workflow_dispatch"}
+            and candidate.get("head_branch") == "main"
+        ):
+            payload = get_run_artifacts(candidate_id)
+            if (
+                type(payload) is not dict
+                or type(payload.get("artifacts")) is not list
+                or (
+                    "total_count" in payload
+                    and payload.get("total_count") != len(payload["artifacts"])
+                )
+            ):
+                raise audit.FreshHoldoutActionsLineageAuditError(
+                    "could not prove absence of a third historical artifact"
+                )
+            for item in payload["artifacts"]:
+                if type(item) is not dict or type(item.get("name")) is not str:
+                    raise audit.FreshHoldoutActionsLineageAuditError(
+                        "third historical artifact metadata is malformed"
+                    )
+                name = item["name"]
+                if name.startswith(f"failure-{_HISTORICAL_SAME_SLOT_COMPACT}-") or name.startswith(
+                    f"success-{_HISTORICAL_SAME_SLOT_COMPACT}-"
+                ):
+                    raise audit.FreshHoldoutActionsLineageAuditError(
+                        "third execution exposes an artifact for the historical slot"
+                    )
+
+    return HistoricalSameSlotProviderDuplicateProof(
+        canonical_run_id=_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
+        auxiliary_run_id=_HISTORICAL_SAME_SLOT_NATURAL_RUN_ID,
+        nominal_slot_utc=_HISTORICAL_SAME_SLOT_UTC,
+        canonical_archive_name=_HISTORICAL_CONTINUITY_ARTIFACT,
+        canonical_archive_sha256=_HISTORICAL_CONTINUITY_ARCHIVE_SHA256,
+        canonical_archive_size_bytes=_HISTORICAL_CONTINUITY_ARCHIVE_SIZE,
+        auxiliary_archive_name=_HISTORICAL_NATURAL_ARTIFACT,
+        auxiliary_archive_sha256=_HISTORICAL_NATURAL_ARCHIVE_SHA256,
+        auxiliary_archive_size_bytes=_HISTORICAL_NATURAL_ARCHIVE_SIZE,
+        canonical_actions_artifact_id=_HISTORICAL_CONTINUITY_ARTIFACT_ID,
+        canonical_actions_digest=_HISTORICAL_CONTINUITY_ZIP_DIGEST,
+        auxiliary_actions_artifact_id=_HISTORICAL_NATURAL_ARTIFACT_ID,
+        auxiliary_actions_digest=_HISTORICAL_NATURAL_ZIP_DIGEST,
+        provider_acquisition_count_canonical=len(canonical_provider_rows),
+        provider_acquisition_count_auxiliary=len(auxiliary_provider_rows),
+        _token=_HISTORICAL_PROOF_TOKEN,
+    )
 
 
 def _prove_exact_legacy_queued_no_execution_dispatch(
@@ -275,7 +1080,7 @@ def _prove_continuity_candidate(
 
 
 def _audit_actions_lineage_compatible(*args, **kwargs):
-    """Run the unchanged engine while projecting exact zero-observation runs."""
+    """Run the unchanged engine across reviewed current-only projections."""
     if args:
         raise audit.FreshHoldoutActionsLineageAuditError(
             "schedule-recovery projection requires keyword audit arguments"
@@ -288,6 +1093,20 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     get_run_jobs = kwargs.get("get_run_jobs")
     if not callable(get_run_artifacts) or not callable(get_run_jobs):
         return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
+    original_get_runs_page = kwargs.get("get_runs_page")
+    # The production/current audit path always supplies the reviewed paginated
+    # run reader.  A few legacy projection-only callers exercise the historical
+    # queued/no-execution compatibility with a stub audit and intentionally do
+    # not provide that reader (or an Actions ZIP transport).  Such a caller
+    # cannot possibly authorize the historical pair, so preserve the old
+    # projection API but leave the pair proof absent.  Whenever the reviewed
+    # page path is present, the ZIP transport is mandatory and the complete
+    # preflight below runs before the frozen audit.
+    download_artifact_zip = kwargs.get("download_artifact_zip")
+    if callable(original_get_runs_page) and not callable(download_artifact_zip):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "historical pair artifact ZIP reader must be callable"
+        )
     if get_run_by_id is None:
         repository = kwargs.get("repository")
         get_run_by_id = lambda run_id: _fixed_get_run_by_id(repository, run_id)
@@ -298,13 +1117,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
 
     artifact_cache: dict[int, Mapping[str, Any]] = {}
     jobs_cache: dict[int, Mapping[str, Any]] = {}
-    projected_noops: dict[int, Mapping[str, Any]] = {}
-    projected_schedule_duplicates: dict[int, Mapping[str, Any]] = {}
-    projected_historical_provider_duplicates: dict[int, Mapping[str, Any]] = {}
-    projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
-    projected_preacquisition: dict[int, Mapping[str, Any]] = {}
-    projected_legacy_queued: dict[int, Mapping[str, Any]] = {}
-    projected_continuities: dict[int, continuity.ContinuityPlan] = {}
+    zip_cache: dict[int, bytes] = {}
 
     def cached_artifacts(run_id: int) -> Mapping[str, Any]:
         if run_id not in artifact_cache:
@@ -316,7 +1129,62 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             jobs_cache[run_id] = get_run_jobs(run_id)
         return jobs_cache[run_id]
 
+    def cached_zip(artifact_id: int) -> bytes:
+        if artifact_id not in zip_cache:
+            zip_cache[artifact_id] = download_artifact_zip(artifact_id)
+        return zip_cache[artifact_id]
+
+    # Prefetch the exact bounded pagination universe before installing the
+    # candidate predicate.  The frozen audit evaluates that predicate before
+    # sorting; proving the one historical pair here makes its projection
+    # independent of GitHub page/run encounter order.
+    cached_universe: _CachedWorkflowRunUniverse | None = None
+    historical_pair_proof: HistoricalSameSlotProviderDuplicateProof | None = None
+    if callable(original_get_runs_page):
+        cached_universe = _prefetch_workflow_run_universe(original_get_runs_page)
+    # No page universe means no historical pair can be admitted.  The frozen
+    # delegate remains responsible for its own page-reader contract when this
+    # compatibility helper is used outside the normal production path.
+    historical_ids = {
+        value.get("id") for value in cached_universe.runs if type(value) is dict
+    } if cached_universe is not None else set()
+    if {
+        _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
+        _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID,
+    }.issubset(historical_ids):
+        historical_pair_proof = _prove_exact_historical_same_slot_provider_duplicate(
+            run_universe=cached_universe,
+            get_run_by_id=get_run_by_id,
+            get_run_artifacts=cached_artifacts,
+            download_artifact_zip=cached_zip,
+            get_run_jobs=cached_jobs,
+        )
+        if historical_pair_proof is None:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                "historical same-slot pair was present but could not be proven"
+            )
+
+    projected_noops: dict[int, Mapping[str, Any]] = {}
+    projected_schedule_duplicates: dict[int, Mapping[str, Any]] = {}
+    projected_historical_provider_duplicates: dict[
+        int, HistoricalSameSlotProviderDuplicateProof
+    ] = {}
+    projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
+    projected_preacquisition: dict[int, Mapping[str, Any]] = {}
+    projected_legacy_queued: dict[int, Mapping[str, Any]] = {}
+    projected_continuities: dict[int, continuity.ContinuityPlan] = {}
+
     def projected_candidate(run: Mapping[str, Any]) -> bool:
+        # This decision is based solely on the complete preflight proof, never
+        # on whether the continuity run happened to be encountered first.
+        if (
+            historical_pair_proof is not None
+            and run.get("id") == historical_pair_proof.auxiliary_run_id
+        ):
+            projected_historical_provider_duplicates[run["id"]] = (
+                historical_pair_proof
+            )
+            return False
         if not _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE(run):
             if run.get("event") != "workflow_dispatch":
                 return False
@@ -388,13 +1256,6 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             return True
 
         artifacts = cached_artifacts(run_id)
-        if _prove_exact_historical_same_slot_provider_duplicate(
-            run,
-            continuity_plan=projected_continuities.get(_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID),
-            artifacts=artifacts,
-        ):
-            projected_historical_provider_duplicates[run_id] = run
-            return False
         if run.get("conclusion") == "success":
             if recovery._prove_schedule_duplicate_no_acquisition_success(
                 run,
@@ -432,7 +1293,11 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     previous_candidate = audit._run_is_collection_candidate
     audit._run_is_collection_candidate = projected_candidate
     projected_kwargs = dict(kwargs)
+    if cached_universe is not None:
+        projected_kwargs["get_runs_page"] = cached_universe.reader
     projected_kwargs["get_run_artifacts"] = cached_artifacts
+    if callable(download_artifact_zip):
+        projected_kwargs["download_artifact_zip"] = cached_zip
     projected_kwargs["get_run_jobs"] = cached_jobs
     try:
         result = _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**projected_kwargs)
@@ -440,6 +1305,13 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         audit._run_is_collection_candidate = previous_candidate
 
     result = dict(result)
+    if historical_pair_proof is not None:
+        # Retain the auxiliary execution even when the raw candidate predicate
+        # happens not to visit it (for example an older GitHub response omits
+        # the workflow-name field used by the frozen schedule predicate).
+        projected_historical_provider_duplicates[
+            historical_pair_proof.auxiliary_run_id
+        ] = historical_pair_proof
     for record in result.get("runs", []):
         if type(record) is not dict:
             continue
@@ -484,14 +1356,24 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         result["verified_same_slot_provider_duplicate_count"] = len(projected_historical_provider_duplicates)
         result["projected_same_slot_provider_duplicate_runs"] = [
             {
-                "run_id": run["id"], "canonical_run_id": _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
-                "nominal_slot_utc": _HISTORICAL_SAME_SLOT_UTC,
+                "run_id": proof.auxiliary_run_id,
+                "canonical_run_id": proof.canonical_run_id,
+                "nominal_slot_utc": proof.nominal_slot_utc,
                 "evidence_state": "VERIFIED_DUPLICATE_SAME_SLOT_PROVIDER_ATTEMPT",
                 "execution_provenance": "DELAYED_NATURAL_DUPLICATE_PROVIDER_ATTEMPT",
-                "provider_acquisition_performed": True, "tick_committed": False,
-                "archive_name": _HISTORICAL_NATURAL_ARTIFACT,
+                "provider_acquisition_performed": True,
+                "provider_acquisition_count": proof.provider_acquisition_count_auxiliary,
+                "tick_committed": False,
+                "archive_name": proof.auxiliary_archive_name,
+                "archive_sha256": proof.auxiliary_archive_sha256,
+                "archive_size_bytes": proof.auxiliary_archive_size_bytes,
+                "actions_artifact_id": proof.auxiliary_actions_artifact_id,
+                "actions_artifact_digest": proof.auxiliary_actions_digest,
             }
-            for run in projected_historical_provider_duplicates.values()
+            for proof in sorted(
+                projected_historical_provider_duplicates.values(),
+                key=lambda value: value.auxiliary_run_id,
+            )
         ]
     ordered_continuity_noops = sorted(
         projected_continuity_noops.values(),
