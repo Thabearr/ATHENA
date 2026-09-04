@@ -13,12 +13,20 @@ matches the requested date. Such rows are structurally revalidated in a separate
 previous-date projection and excluded from fresh candidate qualification. No
 provider bucket, timezone, kickoff, or football semantics are inferred.
 
+A second bounded structural compatibility covers the exact 20260905 provider
+shape preserved by fresh-holdout run 33823663641: wrapper id/primaryId 10369 is
+repeated exactly twice for opaque groups ``A`` and ``B``. Each wrapper is
+validated independently through the frozen structural/candidate chain so the
+reviewed group labels are never merged or reinterpreted. Provider-native fixture
+identity is still extracted from the exact original raw capture.
+
 Returned qualified fixture identity remains extracted from the exact original
 network capture and bound to the original manifest. Compatibility projections
 are validation-only and are never promoted to source evidence.
 """
 from __future__ import annotations
 
+from collections import Counter
 import copy
 import dataclasses
 import datetime as dt
@@ -37,7 +45,7 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
 
 SCHEMA_VERSION = 1
-ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V1"
+ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V2"
 ADAPTER_STATE = "REVIEWED_STRUCTURAL_COMPATIBILITY_ONLY_NO_FOOTBALL_SEMANTIC_PROMOTION"
 
 FRESH_HOLDOUT_CORE_BLOB_SHA = "5dabab12d5205d384fd3904cda0e68661ef90791"
@@ -54,6 +62,10 @@ EXTRA_HALFS_RULE = (
 REQUEST_BUCKET_SPILLOVER_RULE = (
     "EXCLUDE_ONLY_IMMEDIATELY_PREVIOUS_UTC_DATE_FIXTURES_WITH_EXACT_TIMETS_"
     "AND_REQUEST_DATE_DISPLAY_TEXT_NO_PROVIDER_BUCKET_OR_TIMEZONE_SEMANTICS"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_RULE = (
+    "EXACT_20260905_WRAPPER_10369_GROUP_A_B_SEPARATE_VALIDATION_ONLY_"
+    "NO_GROUP_SEMANTICS_NO_MERGE_NO_FUZZY"
 )
 
 SOURCE_WORKFLOW_RUN_ID = 32583079461
@@ -91,6 +103,28 @@ SPILLOVER_SOURCE_RAW_SHA256 = (
     "445bc09a013fabf3bd953e2980ee54bee6e1fb8ab50f4686ab2de67bea02c023"
 )
 SPILLOVER_SOURCE_FIXTURE_IDS = (1000008693, 1000014538)
+
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_WORKFLOW_RUN_ID = 33823663641
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ACTIONS_ARTIFACT_ID = 9919255715
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ACTIONS_ARTIFACT_SHA256 = (
+    "792ddba3b8f4b38bc494f8d0a660a80dceb5c8c9f2a9bcdaf88cbba43ac5f43a"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_CAPTURE_ID = "797133444d500f22a60b03d4"
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_OBSERVED_AT = "2026-09-04T00:59:19.213485Z"
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_MANIFEST_SHA256 = (
+    "e34365e25fce42c7106e9c54b0fc1df77a97311cb499a5895c6322c8d7bb8781"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_RAW_SHA256 = (
+    "a19c50ca3c3e7c9c57d83f2b83a43d1cc3d75c92b9a788f25d74473de3ed0b19"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE = "20260905"
+REVIEWED_DUPLICATE_GROUP_WRAPPER_ID = 10369
+REVIEWED_DUPLICATE_GROUP_PRIMARY_ID = 10369
+REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS = (
+    ("A", "Women's World Cup U20 Grp. A"),
+    ("B", "Women's World Cup U20 Grp. B"),
+)
+REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME = "FIFA U-20 World Cup"
 
 _DISPLAY_TIME_RE = re.compile(
     r"^[0-9]{2}\.[0-9]{2}\.[0-9]{4} [0-9]{2}:[0-9]{2}$",
@@ -289,6 +323,138 @@ def _epoch_milliseconds(value: dt.datetime) -> int:
     )
 
 
+def _wrapper_id(league: Any) -> int:
+    if type(league) is not dict:
+        raise _error("reviewed duplicate group wrapper league shape changed")
+    value = league.get("id")
+    if type(value) is not int or value < 1:
+        raise _error("reviewed duplicate group wrapper league.id must be exact positive integer")
+    return value
+
+
+def _reviewed_duplicate_group_wrapper_present(
+    payload: dict[str, Any],
+    *,
+    request_date: str,
+) -> bool:
+    leagues = payload.get("leagues")
+    if type(leagues) is not list:
+        raise _error("reviewed duplicate group wrapper requires leagues list")
+    wrapper_ids = [_wrapper_id(league) for league in leagues]
+    duplicated = {
+        wrapper_id
+        for wrapper_id, count in Counter(wrapper_ids).items()
+        if count > 1
+    }
+    if not duplicated:
+        return False
+    if duplicated != {REVIEWED_DUPLICATE_GROUP_WRAPPER_ID}:
+        raise _error("unreviewed duplicate competition wrapper id in fresh holdout capture")
+    if request_date != REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE:
+        raise _error("reviewed duplicate group wrapper escaped exact request date")
+    if payload.get("date") != request_date:
+        raise _error("reviewed duplicate group wrapper top-level date changed")
+
+    wrappers = [
+        league
+        for league in leagues
+        if _wrapper_id(league) == REVIEWED_DUPLICATE_GROUP_WRAPPER_ID
+    ]
+    if len(wrappers) != 2:
+        raise _error("reviewed duplicate group wrapper occurrence count changed")
+
+    metadata: list[dict[str, Any]] = []
+    label_pairs: list[tuple[str, str]] = []
+    for league in wrappers:
+        if type(league.get("matches")) is not list:
+            raise _error("reviewed duplicate group wrapper matches shape changed")
+        if league.get("primaryId") != REVIEWED_DUPLICATE_GROUP_PRIMARY_ID:
+            raise _error("reviewed duplicate group wrapper primaryId changed")
+        if league.get("isGroup") is not True:
+            raise _error("reviewed duplicate group wrapper lost exact isGroup=true")
+        if league.get("ccode") != "INT":
+            raise _error("reviewed duplicate group wrapper ccode changed")
+        if league.get("parentLeagueName") != REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME:
+            raise _error("reviewed duplicate group wrapper parentLeagueName changed")
+        if league.get("internalRank") != 0 or league.get("simpleLeague") is not False:
+            raise _error("reviewed duplicate group wrapper opaque metadata changed")
+        group_name = league.get("groupName")
+        league_name = league.get("name")
+        if type(group_name) is not str or type(league_name) is not str:
+            raise _error("reviewed duplicate group wrapper labels changed type")
+        label_pairs.append((group_name, league_name))
+        metadata.append(
+            {
+                key: value
+                for key, value in league.items()
+                if key not in {"groupName", "name", "matches"}
+            }
+        )
+
+    if tuple(sorted(label_pairs)) != REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS:
+        raise _error("reviewed duplicate group wrapper label pairing changed")
+    if metadata[0] != metadata[1]:
+        raise _error("reviewed duplicate group wrappers differ outside opaque group labels")
+    return True
+
+
+def _reviewed_duplicate_group_fixture_ids(payload: dict[str, Any]) -> set[int]:
+    result: set[int] = set()
+    for league in payload["leagues"]:
+        if _wrapper_id(league) != REVIEWED_DUPLICATE_GROUP_WRAPPER_ID:
+            continue
+        for match in league["matches"]:
+            if type(match) is not dict:
+                raise _error("reviewed duplicate group wrapper match shape changed")
+            fixture_id = match.get("id")
+            if type(fixture_id) is not int or fixture_id < 1:
+                raise _error("reviewed duplicate group wrapper fixture id changed")
+            if fixture_id in result:
+                raise _error("fixture id duplicated in reviewed duplicate group wrappers")
+            result.add(fixture_id)
+    return result
+
+
+def _partition_reviewed_duplicate_group_structural_payloads(
+    payload: dict[str, Any],
+    *,
+    request_date: str,
+) -> tuple[tuple[dict[str, Any], str], ...]:
+    if not _reviewed_duplicate_group_wrapper_present(
+        payload,
+        request_date=request_date,
+    ):
+        return ((copy.deepcopy(payload), "requested-date candidate population"),)
+
+    ordinary = []
+    groups = []
+    for league in payload["leagues"]:
+        if _wrapper_id(league) == REVIEWED_DUPLICATE_GROUP_WRAPPER_ID:
+            groups.append(copy.deepcopy(league))
+        else:
+            ordinary.append(copy.deepcopy(league))
+
+    partitions: list[tuple[dict[str, Any], str]] = []
+    if ordinary:
+        projected = copy.deepcopy(payload)
+        projected["leagues"] = ordinary
+        partitions.append(
+            (projected, "requested-date non-duplicated wrapper population")
+        )
+    for league in sorted(groups, key=lambda item: item["groupName"]):
+        projected = copy.deepcopy(payload)
+        projected["leagues"] = [league]
+        partitions.append(
+            (
+                projected,
+                f"requested-date reviewed duplicate group {league['groupName']} population",
+            )
+        )
+    if not partitions:
+        raise _error("reviewed duplicate group structural partition is empty")
+    return tuple(partitions)
+
+
 def _validate_previous_utc_day_spillover(
     match: dict[str, Any],
     *,
@@ -461,6 +627,117 @@ def _project_to_pr39(payload: dict[str, Any]) -> dict[str, Any]:
     return projected
 
 
+def _build_reviewed_candidate_population(
+    primary_payload: dict[str, Any],
+    manifest: capture_contract.FotMobDataMatchesCaptureManifest,
+) -> tuple[dict[int, Any], dict[int, tuple[str, str]], int]:
+    candidates: dict[int, Any] = {}
+    lineage: dict[int, tuple[str, str]] = {}
+    candidate_count = 0
+    for structural_payload, label in _partition_reviewed_duplicate_group_structural_payloads(
+        primary_payload,
+        request_date=manifest.request_date,
+    ):
+        pr89_payload, _pr89_manifest = _assess_reviewed_structural_payload(
+            structural_payload,
+            manifest,
+            label=label,
+        )
+        candidate_payload = _project_to_pr39(pr89_payload)
+        candidate_raw = _canonical(candidate_payload)
+        candidate_manifest = _projected_manifest(manifest, candidate_raw)
+        try:
+            bundle = fixture_candidates.build_fotmob_fixture_candidate_bundle(
+                ((candidate_raw, candidate_manifest),)
+            )
+        except Exception as exc:
+            raise _error(f"reviewed PR39 fixture-candidate projection failed for {label}") from exc
+        projected_manifest_sha = capture_contract.sha256_data_matches_capture_manifest(
+            candidate_manifest
+        )
+        candidate_count += len(bundle.candidates)
+        for candidate in bundle.candidates:
+            fixture_id = candidate.source_match_id
+            if fixture_id in candidates:
+                raise _error("fixture id duplicated across reviewed structural partitions")
+            candidates[fixture_id] = candidate
+            lineage[fixture_id] = (
+                candidate_manifest.raw_sha256,
+                projected_manifest_sha,
+            )
+    return candidates, lineage, candidate_count
+
+
+def _qualify_original_provider_identity(
+    raw_json: bytes,
+    *,
+    payload: dict[str, Any],
+    capture_observed_at: Any,
+    capture_manifest_sha256: str,
+    capture_raw_sha256: str,
+    request_date: str,
+) -> tuple[fresh.QualifiedCaptureFixture, ...]:
+    if not _reviewed_duplicate_group_wrapper_present(
+        payload,
+        request_date=request_date,
+    ):
+        return fresh._qualify_provider_identity_payload(
+            raw_json,
+            capture_observed_at=capture_observed_at,
+            capture_manifest_sha256=capture_manifest_sha256,
+            capture_raw_sha256=capture_raw_sha256,
+        )
+
+    if hashlib.sha256(raw_json).hexdigest() != capture_raw_sha256:
+        raise _error("reviewed duplicate group raw capture SHA-256 lineage changed")
+    observed = fresh._utc(capture_observed_at, "capture_observed_at")
+    manifest_sha = fresh._sha256(capture_manifest_sha256, "capture_manifest_sha256")
+    raw_sha = fresh._sha256(capture_raw_sha256, "capture_raw_sha256")
+
+    result: list[fresh.QualifiedCaptureFixture] = []
+    seen_fixtures: set[int] = set()
+    for league in payload["leagues"]:
+        if type(league) is not dict or type(league.get("matches")) is not list:
+            raise _error("league wrapper shape changed during duplicate group replay")
+        primary_id = fresh._positive_int(league.get("primaryId"), "league.primaryId")
+        wrapper_id = fresh._positive_int(league.get("id"), "league.id")
+        for match in league["matches"]:
+            if type(match) is not dict:
+                raise _error("match shape changed during duplicate group replay")
+            fixture_id = fresh._positive_int(match.get("id"), "match.id")
+            if fixture_id in seen_fixtures:
+                raise _error("fixture id duplicated in one capture")
+            seen_fixtures.add(fixture_id)
+            match_league_id = fresh._positive_int(match.get("leagueId"), "match.leagueId")
+            if match_league_id != wrapper_id:
+                raise _error("match.leagueId does not equal containing league.id")
+            home = match.get("home")
+            away = match.get("away")
+            status = match.get("status")
+            if type(home) is not dict or type(away) is not dict or type(status) is not dict:
+                raise _error("match home/away/status shape changed")
+            home_id = fresh._positive_int(home.get("id"), "match.home.id")
+            away_id = fresh._positive_int(away.get("id"), "match.away.id")
+            if home_id == away_id:
+                raise _error("match cannot use one team twice")
+            kickoff = fresh._parse_utc(status.get("utcTime"), "status.utcTime")
+            result.append(
+                fresh.QualifiedCaptureFixture(
+                    fixture_id=fixture_id,
+                    provider_primary_id=primary_id,
+                    wrapper_id=wrapper_id,
+                    home_team_id=home_id,
+                    away_team_id=away_id,
+                    kickoff_utc=kickoff,
+                    capture_observed_at=observed,
+                    capture_manifest_sha256=manifest_sha,
+                    capture_raw_sha256=raw_sha,
+                )
+            )
+    result.sort(key=lambda item: (item.kickoff_utc, item.fixture_id))
+    return tuple(result)
+
+
 def qualify_capture_fixtures(
     raw_json: bytes,
     manifest: capture_contract.FotMobDataMatchesCaptureManifest,
@@ -479,14 +756,26 @@ def qualify_capture_fixtures(
         raise _error("raw capture SHA-256 does not match original manifest")
 
     payload = _strict_json(raw_json)
+    duplicate_group_present = _reviewed_duplicate_group_wrapper_present(
+        payload,
+        request_date=manifest.request_date,
+    )
+    duplicate_group_fixture_ids = (
+        _reviewed_duplicate_group_fixture_ids(payload)
+        if duplicate_group_present
+        else set()
+    )
     primary_payload, spillover_payload, spillover_ids = (
         partition_reviewed_request_bucket_spillover(payload, manifest.request_date)
     )
+    if duplicate_group_fixture_ids & set(spillover_ids):
+        raise _error(
+            "reviewed duplicate group wrapper cannot combine with previous-day spillover"
+        )
 
-    primary_pr89_payload, _primary_pr89_manifest = _assess_reviewed_structural_payload(
+    candidates, candidate_lineage, candidate_count = _build_reviewed_candidate_population(
         primary_payload,
         manifest,
-        label="requested-date candidate population",
     )
     if spillover_payload is not None:
         previous_date = (_request_date(manifest.request_date) - dt.timedelta(days=1)).strftime(
@@ -499,32 +788,23 @@ def qualify_capture_fixtures(
             label="reviewed previous-UTC-day spillover population",
         )
 
-    candidate_payload = _project_to_pr39(primary_pr89_payload)
-    candidate_raw = _canonical(candidate_payload)
-    candidate_manifest = _projected_manifest(manifest, candidate_raw)
-    try:
-        bundle = fixture_candidates.build_fotmob_fixture_candidate_bundle(
-            ((candidate_raw, candidate_manifest),)
-        )
-    except Exception as exc:
-        raise _error("reviewed PR39 fixture-candidate projection failed") from exc
-
     original_manifest_sha = capture_contract.sha256_data_matches_capture_manifest(
         manifest
     )
-    original_qualified = fresh._qualify_provider_identity_payload(
+    original_qualified = _qualify_original_provider_identity(
         raw_json,
+        payload=payload,
         capture_observed_at=manifest.observed_at,
         capture_manifest_sha256=original_manifest_sha,
         capture_raw_sha256=manifest.raw_sha256,
+        request_date=manifest.request_date,
     )
 
-    candidates = {item.source_match_id: item for item in bundle.candidates}
     candidate_ids = set(candidates)
     spillover_id_set = set(spillover_ids)
     original_ids = {item.fixture_id for item in original_qualified}
     if (
-        len(candidates) != len(bundle.candidates)
+        len(candidates) != candidate_count
         or candidate_ids & spillover_id_set
         or original_ids != candidate_ids | spillover_id_set
         or len(original_ids) != len(original_qualified)
@@ -534,16 +814,13 @@ def qualify_capture_fixtures(
     qualified = tuple(
         item for item in original_qualified if item.fixture_id in candidate_ids
     )
-    if len(qualified) != len(bundle.candidates):
+    if len(qualified) != candidate_count:
         raise _error("reviewed candidate and retained identity populations disagree")
     previous_date = _request_date(manifest.request_date) - dt.timedelta(days=1)
     for item in original_qualified:
         if item.fixture_id in spillover_id_set and item.kickoff_utc.date() != previous_date:
             raise _error("excluded spillover fixture escaped reviewed previous UTC date")
 
-    projected_manifest_sha = capture_contract.sha256_data_matches_capture_manifest(
-        candidate_manifest
-    )
     for item in qualified:
         candidate = candidates.get(item.fixture_id)
         if candidate is None:
@@ -568,9 +845,10 @@ def qualify_capture_fixtures(
             raise _error(
                 "exact provider identity disagrees with reviewed candidate projection"
             )
+        projected_raw_sha, projected_manifest_sha = candidate_lineage[item.fixture_id]
         if (
             candidate.source_request_date != manifest.request_date
-            or candidate.source_raw_sha256 != candidate_manifest.raw_sha256
+            or candidate.source_raw_sha256 != projected_raw_sha
             or candidate.source_capture_manifest_sha256 != projected_manifest_sha
         ):
             raise _error("candidate projection lineage is internally inconsistent")
@@ -591,6 +869,7 @@ def adapter_receipt() -> dict[str, Any]:
         "reviewed_extra_halfs_keys": list(EXTRA_HALFS_KEYS),
         "reviewed_extra_halfs_rule": EXTRA_HALFS_RULE,
         "reviewed_request_bucket_spillover_rule": REQUEST_BUCKET_SPILLOVER_RULE,
+        "reviewed_duplicate_group_wrapper_rule": REVIEWED_DUPLICATE_GROUP_WRAPPER_RULE,
         "source_workflow_run_id": SOURCE_WORKFLOW_RUN_ID,
         "source_actions_artifact_id": SOURCE_ACTIONS_ARTIFACT_ID,
         "source_actions_artifact_name": SOURCE_ACTIONS_ARTIFACT_NAME,
@@ -605,6 +884,28 @@ def adapter_receipt() -> dict[str, Any]:
         "spillover_source_manifest_sha256": SPILLOVER_SOURCE_MANIFEST_SHA256,
         "spillover_source_raw_sha256": SPILLOVER_SOURCE_RAW_SHA256,
         "spillover_source_fixture_ids": list(SPILLOVER_SOURCE_FIXTURE_IDS),
+        "duplicate_group_source_workflow_run_id": (
+            REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_WORKFLOW_RUN_ID
+        ),
+        "duplicate_group_source_actions_artifact_id": (
+            REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ACTIONS_ARTIFACT_ID
+        ),
+        "duplicate_group_source_actions_artifact_sha256": (
+            REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ACTIONS_ARTIFACT_SHA256
+        ),
+        "duplicate_group_source_capture_id": REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_CAPTURE_ID,
+        "duplicate_group_source_observed_at": REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_OBSERVED_AT,
+        "duplicate_group_source_manifest_sha256": (
+            REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_MANIFEST_SHA256
+        ),
+        "duplicate_group_source_raw_sha256": REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_RAW_SHA256,
+        "duplicate_group_request_date": REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE,
+        "duplicate_group_wrapper_id": REVIEWED_DUPLICATE_GROUP_WRAPPER_ID,
+        "duplicate_group_primary_id": REVIEWED_DUPLICATE_GROUP_PRIMARY_ID,
+        "duplicate_group_label_pairs": [list(item) for item in REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS],
+        "duplicate_group_parent_league_name": REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME,
+        "duplicate_group_wrappers_structurally_revalidated_separately": True,
+        "duplicate_group_labels_not_merged_or_semantically_interpreted": True,
         "spillover_rows_excluded_from_fresh_candidate_population": True,
         "spillover_rows_structurally_revalidated_separately": True,
         "original_network_capture_lineage_preserved_in_returned_fixtures": True,
@@ -621,6 +922,19 @@ __all__ = [
     "EXTRA_HALFS_RULE",
     "FreshHoldoutCaptureQualificationAdapterError",
     "REQUEST_BUCKET_SPILLOVER_RULE",
+    "REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS",
+    "REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME",
+    "REVIEWED_DUPLICATE_GROUP_PRIMARY_ID",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_ID",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_RULE",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ACTIONS_ARTIFACT_ID",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ACTIONS_ARTIFACT_SHA256",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_CAPTURE_ID",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_MANIFEST_SHA256",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_OBSERVED_AT",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_RAW_SHA256",
+    "REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_WORKFLOW_RUN_ID",
     "SOURCE_ACTIONS_ARTIFACT_ID",
     "SOURCE_ACTIONS_ARTIFACT_NAME",
     "SOURCE_CAPTURE_LINEAGES",
