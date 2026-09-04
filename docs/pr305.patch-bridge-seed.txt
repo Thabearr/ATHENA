@@ -1,0 +1,1 @@
+Temporary Patch Bridge seed for the evidence-bound Current Shadow SportyBet team-label fix. This file is removed by the reviewed patch before PR readiness.
