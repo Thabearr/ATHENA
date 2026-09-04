@@ -10,6 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 
+import scripts.current_shadow_history_github_prefetch as history_github_prefetch
 from domain import _all_market_shadow_current_binding as current_binding
 from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
@@ -517,6 +518,7 @@ def _install_price_stage_diagnostics(output_dir: Path):
 
 
 def _execute_once(args: argparse.Namespace) -> int:
+    history_prefetch_hooks = history_github_prefetch.install(runner.latest_history)
     (
         original_history_replay,
         original_success_materials,
@@ -553,6 +555,7 @@ def _execute_once(args: argparse.Namespace) -> int:
         runner.latest_history._replay_audit_from_evidence = original_history_replay
         runner.latest_history._success_materials = original_success_materials
         runner.latest_history.prefix._derive = original_prefix_derive
+        history_github_prefetch.restore(runner.latest_history, history_prefetch_hooks)
     print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
     return 0
 
