@@ -265,7 +265,13 @@ jobs:
                   raise SystemExit(f"FATAL: schedule slot resolution failed: {exc}")
               success_asset = f"{success_prefix}{current_run_id}.tar.gz"
               failure_asset = f"{failure_prefix}{current_run_id}.tar.gz"
-              disposition = "RESOLVED"
+              if continuity.lineage_already_attempted_target(
+                  last_attempted_utc=restored.last_attempted_utc,
+                  target_slot=nominal,
+              ):
+                  disposition = "SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION"
+              else:
+                  disposition = "RESOLVED"
               source_watchdog_run_id = ""
           else:
               try:
@@ -353,6 +359,13 @@ jobs:
         run: |
           echo "Durable lineage proves this exact prospective continuity slot was already attempted."
           echo "No provider request will be repeated and no historical slot will be reconstructed."
+
+      - name: Acknowledge schedule slot already attempted without acquisition
+        if: steps.state.outputs.schedule_disposition == 'SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION'
+        shell: bash
+        run: |
+          echo "Durable lineage proves this exact natural schedule slot was already attempted."
+          echo "No provider request, capture persistence, or backfill will be performed."
 
       - name: Restore or materialize PR119 bootstrap projection
         id: bootstrap

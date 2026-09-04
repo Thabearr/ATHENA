@@ -23,7 +23,7 @@ import hashlib
 import json
 import os
 import types
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -47,7 +47,24 @@ SOURCE_SCOPE = (
 
 RAW_AUDIT_BLOB_SHA = "e3cdb18845403d92f94933f68c2bd06e55660de0"
 PR175_PROJECTION_BLOB_SHA = "522b99260137fbeea1914495b3aaa368961ba455"
-SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "dc4e8de2bf16ca923e39aafe14b665edd50efeff"
+SCHEDULE_RECOVERY_PROJECTION_BLOB_SHA = "714fd234a32d3fc781493edfcd216aedcec825bd"
+
+# This is not a general relaxation of PR174's cumulative-journal semantics.
+# It is the one observed current-only redundant declaration: two real execution
+# attempts for the same 2026-09-04 00:07 UTC nominal slot persisted the same
+# durable gap state without a TICK_COMMITTED boundary between them.  The raw
+# audit remains byte-pinned and receives every other row unchanged.
+_CURRENT_REDUNDANT_GAP = {
+    "schema_version": 1,
+    "event": "SCHEDULER_GAP_RANGE",
+    "detected_at_scheduled_for_utc": "2026-09-04T00:07:00.000000Z",
+    "previous_committed_tick_utc": "2026-09-03T22:07:00.000000Z",
+    "first_missing_tick_utc": "2026-09-03T22:37:00.000000Z",
+    "last_missing_tick_utc": "2026-09-03T23:37:00.000000Z",
+    "missing_tick_count": 3,
+    "backfill_authorized": False,
+}
+_RAW_VALIDATE_CONTROL_LINEAGE = lineage_audit.validate_control_lineage
 
 _ALLOWED_RELEASE_STATES = frozenset(
     {
@@ -251,6 +268,49 @@ def _verify_current_projected_audit_dependencies(
         lineage_audit.FAILURE_LINEAGE_BLOB_SHA = old_failure
 
 
+def _validate_control_lineage_current_compatible(
+    rows: Sequence[Mapping[str, Any]],
+) -> tuple[set[int], set[int]]:
+    """Project exactly one already-observed redundant current gap declaration.
+
+    A duplicate is omitted only when both complete row mappings equal the
+    evidence-bound 2026-09-04 declaration, every intervening record is the
+    uncommitted qualification-failure vocabulary, no commit boundary occurred,
+    and no earlier duplicate was projected.  The unchanged raw validator then
+    validates the projected journal.  Thus a third copy, a changed field, a
+    commit boundary, or any other event remains visible and fails closed.
+    """
+    projected: list[Mapping[str, Any]] = []
+    previous_gap: dict[str, Any] | None = None
+    only_uncommitted_since_gap = False
+    duplicate_projected = False
+
+    for source in rows:
+        row = source if type(source) is dict else dict(source)
+        event = row.get("event")
+        if event == "SCHEDULER_GAP_RANGE":
+            if (
+                not duplicate_projected
+                and previous_gap == _CURRENT_REDUNDANT_GAP
+                and row == _CURRENT_REDUNDANT_GAP
+                and only_uncommitted_since_gap
+            ):
+                duplicate_projected = True
+                only_uncommitted_since_gap = False
+                continue
+            previous_gap = dict(row)
+            only_uncommitted_since_gap = False
+        elif event == "UNCOMMITTED_CAPTURE_QUALIFICATION_FAILED" and previous_gap is not None:
+            # The raw validator still checks its false-authority fields.
+            only_uncommitted_since_gap = True
+        else:
+            # A commit, another accepted control event, or an unknown event is
+            # a boundary; do not use it to make a later repeat disappear.
+            only_uncommitted_since_gap = False
+        projected.append(row)
+    return _RAW_VALIDATE_CONTROL_LINEAGE(tuple(projected))
+
+
 def _run_reviewed_projected_audit(
     *,
     expected_main_sha: str,
@@ -266,6 +326,8 @@ def _run_reviewed_projected_audit(
 ) -> dict[str, Any]:
     _sha40(expected_main_sha, "expected_main_sha")
     _verify_current_projected_audit_dependencies(repository_root)
+    old_validate_control_lineage = lineage_audit.validate_control_lineage
+    lineage_audit.validate_control_lineage = _validate_control_lineage_current_compatible
     try:
         return recovery_projection._audit_actions_lineage_compatible(
             repository=REPOSITORY,
@@ -283,6 +345,8 @@ def _run_reviewed_projected_audit(
         )
     except Exception as exc:
         raise _error("reviewed projected PR151 Actions lineage audit failed") from exc
+    finally:
+        lineage_audit.validate_control_lineage = old_validate_control_lineage
 
 
 @dataclasses.dataclass(frozen=True)

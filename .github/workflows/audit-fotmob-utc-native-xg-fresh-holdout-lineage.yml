@@ -123,15 +123,15 @@ jobs:
           test "$(git rev-parse HEAD)" = "${{ steps.guard.outputs.main_sha }}"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_activation_runner.py)" = "901ab137d6601a3485eac30da7e6bad7eeefa397"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_failure_lineage.py)" = "692e3fe778e43ae4157e10882158f5dae08cb096"
-          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "1752fd5b96823f8b52e99a2dbbf84250676809d8"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "7fe531dfb6bba96c7e6505016b89761f0d25428f"
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           # Pre-PR175 collection workflow blob retained as provenance: 2310d2253b00b8ddd995d7a28e0d67e6ea9381dd
           # PR175/pre-ambiguity-recovery workflow blob retained as provenance: d48b1ff823277445e3b496876caca6b01480ece9
           # Pre-continuity current producer blob retained as provenance: eb6cfd3966d7040f630fc3a51c6cad41b171bcfb
-          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "ee928ba29c7108c203402ff8efabf3d6fc3e4e00"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py)" = "e3cdb18845403d92f94933f68c2bd06e55660de0"
           test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_pr175_projection.py)" = "522b99260137fbeea1914495b3aaa368961ba455"
-          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "dc4e8de2bf16ca923e39aafe14b665edd50efeff"
+          test "$(git rev-parse HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection.py)" = "714fd234a32d3fc781493edfcd216aedcec825bd"
 
       - name: Execute read-only GitHub lineage audit
         id: lineage_audit
