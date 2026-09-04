@@ -102,6 +102,25 @@ def test_reviewed_shadow_projection_admits_exact_observed_away_label():
     assert event.away_team_name == "Comunicaciones FC"
 
 
+def test_reviewed_shadow_projection_admits_exact_run33_home_label_and_retains_raw_sha():
+    raw_sha = "aaffe08813262c4356a53acec4f697d05dcc155862cb3854385965bd779a5597"
+    event = fanout.legacy.reviewed._event_from_mapping(
+        _provider_event(
+            event_id="sr:match:73805972",
+            home="SC Kiyovu ",
+            away="Gorilla FC",
+            kickoff_ms=1788627600000,
+        ),
+        inherited_competition=None,
+        page_num=1,
+        raw_sha256=raw_sha,
+        observed_at=datetime(2026, 9, 4, 18, 50, 34, tzinfo=UTC),
+    )
+    assert event.home_team_name == "SC Kiyovu"
+    assert event.away_team_name == "Gorilla FC"
+    assert event.source_raw_sha256 == raw_sha
+
+
 def test_fanout_parser_uses_exact_reviewed_projection_and_preserves_response_ancestry():
     observed = datetime(2026, 9, 3, 10, 20, tzinfo=UTC)
     nonce = int(observed.timestamp() * 1000) - 1000
@@ -133,6 +152,37 @@ def test_fanout_parser_uses_exact_reviewed_projection_and_preserves_response_anc
     assert observation.event_ids == ("sr:match:73831434",)
 
 
+def test_fanout_parser_admits_exact_run33_projection_and_preserves_response_ancestry():
+    observed = datetime(2026, 9, 4, 18, 50, 34, tzinfo=UTC)
+    nonce = int(observed.timestamp() * 1000) - 1000
+    raw = json.dumps(
+        {
+            "bizCode": 10000,
+            "data": [
+                _provider_event(
+                    event_id="sr:match:73805972",
+                    home="SC Kiyovu ",
+                    away="Gorilla FC",
+                    kickoff_ms=1788627600000,
+                )
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    observation, events = fanout._parse_tournament_response(
+        raw,
+        category_id="sr:category:951",
+        tournament_id="sr:tournament:20162",
+        request_nonce_ms=nonce,
+        observed_at=observed,
+    )
+    assert len(events) == 1
+    assert events[0].home_team_name == "SC Kiyovu"
+    assert events[0].source_raw_sha256 == observation.raw_sha256
+    assert observation.event_ids == ("sr:match:73805972",)
+
+
 def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
     observed = datetime(2026, 9, 3, 10, 20, tzinfo=UTC)
     for value in (
@@ -154,6 +204,12 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
             away="KVC Westerlo",
             kickoff_ms=1788546600000,
         ),
+        _provider_event(
+            event_id="sr:match:73805972",
+            home="SC Kiyovu  ",
+            away="Gorilla FC",
+            kickoff_ms=1788627600000,
+        ),
     ):
         with pytest.raises(
             fanout.reviewed.SportyBetCurrentEventDiscoveryError,
@@ -169,31 +225,70 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
 
 
 def test_frozen_non_shadow_parser_still_rejects_the_observed_trailing_space():
-    with pytest.raises(
-        fanout.reviewed.SportyBetCurrentEventDiscoveryError,
-        match="home_team_name must be an exact non-empty trimmed string",
+    for value in (
+        _provider_event(
+            event_id="sr:match:73831434",
+            home="Jeugd Royal Francs Borains ",
+            away="KVC Westerlo",
+            kickoff_ms=1788546600000,
+        ),
+        _provider_event(
+            event_id="sr:match:73805972",
+            home="SC Kiyovu ",
+            away="Gorilla FC",
+            kickoff_ms=1788627600000,
+        ),
     ):
-        fanout.reviewed._event_from_mapping(
-            _provider_event(
-                event_id="sr:match:73831434",
-                home="Jeugd Royal Francs Borains ",
-                away="KVC Westerlo",
-                kickoff_ms=1788546600000,
-            ),
-            inherited_competition=None,
-            page_num=1,
-            raw_sha256="a" * 64,
-            observed_at=datetime(2026, 9, 3, 10, 20, tzinfo=UTC),
-        )
+        with pytest.raises(
+            fanout.reviewed.SportyBetCurrentEventDiscoveryError,
+            match="home_team_name must be an exact non-empty trimmed string",
+        ):
+            fanout.reviewed._event_from_mapping(
+                value,
+                inherited_competition=None,
+                page_num=1,
+                raw_sha256="a" * 64,
+                observed_at=datetime(2026, 9, 4, 18, 50, 34, tzinfo=UTC),
+            )
 
 
 def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     identity = label_compat.validate_policy()
+    assert label_compat.SCHEMA_VERSION == 2
+    assert label_compat.POLICY_ID == (
+        "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V2"
+    )
     assert label_compat.EVIDENCE_WORKFLOW_RUN_ID == 33743684967
     assert label_compat.EVIDENCE_ARTIFACT_ID == 9888817924
     assert label_compat.EVIDENCE_ARTIFACT_SHA256 == (
         "d67c65d8b77ce61fc76a129aaf588b1b6cdf2983f728c803eaef79288f37aaef"
     )
+    assert label_compat.LATEST_EVIDENCE_WORKFLOW_RUN_ID == 33907719257
+    assert label_compat.LATEST_EVIDENCE_ARTIFACT_ID == 9950240221
+    assert label_compat.LATEST_EVIDENCE_ARTIFACT_SHA256 == (
+        "87b379f9b8163717869d3fd3d8834fc0434d548c4f2a2522120c28c0508aa609"
+    )
+    assert label_compat.EXPECTED_POLICY_SHA256 == (
+        "ce2f87e6f5d9ad3993de5a3d679e25da9d52d9dbaff33fbb622514f67d707f0b"
+    )
     assert label_compat.policy_sha256() == label_compat.EXPECTED_POLICY_SHA256
     assert identity["policy_sha256"] == label_compat.EXPECTED_POLICY_SHA256
-    assert len(label_compat.REVIEWED_PROJECTIONS) == 2
+    assert identity["latest_evidence_artifact_sha256"] == (
+        label_compat.LATEST_EVIDENCE_ARTIFACT_SHA256
+    )
+    assert len(label_compat.REVIEWED_PROJECTIONS) == 3
+    run33 = next(
+        row for row in label_compat.REVIEWED_PROJECTIONS
+        if row.event_id == "sr:match:73805972"
+    )
+    assert run33.field == "homeTeamName"
+    assert run33.raw_source_label == "SC Kiyovu "
+    assert run33.projected_label == "SC Kiyovu"
+    assert run33.category_id == "sr:category:951"
+    assert run33.tournament_id == "sr:tournament:20162"
+    assert run33.source_raw_sha256 == (
+        "aaffe08813262c4356a53acec4f697d05dcc155862cb3854385965bd779a5597"
+    )
+    assert run33.evidence_workflow_run_id == 33907719257
+    assert run33.evidence_artifact_id == 9950240221
+    assert run33.evidence_artifact_sha256 == label_compat.LATEST_EVIDENCE_ARTIFACT_SHA256
