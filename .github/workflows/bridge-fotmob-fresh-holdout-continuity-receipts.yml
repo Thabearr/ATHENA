@@ -128,9 +128,9 @@ jobs:
           set -euo pipefail
           current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
           test "$(git rev-parse HEAD)" = "${current_main}"
-          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8"
+          test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "ee928ba29c7108c203402ff8efabf3d6fc3e4e00"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "6d768a506d579ef88f1d321102cb9c53d846c72a"
-          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "1752fd5b96823f8b52e99a2dbbf84250676809d8"
+          test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "7fe531dfb6bba96c7e6505016b89761f0d25428f"
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           test "$(git rev-parse HEAD:scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)" = "9e09e13d145f9ad2419b11073d4219aec14e54a8"
 
