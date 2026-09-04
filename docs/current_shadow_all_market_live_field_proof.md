@@ -172,3 +172,40 @@ That run still had zero exact FotMob↔SportyBet reconciliations, which is the l
 evidence that drove the bounded multi-date fixture-universe correction above.
 
 `wager_placed=false` is invariant.
+
+## Current runtime recovery (post-PR #305)
+
+Run `33912357847` on current main `e88d13952868156fab9cfe80307948807f373400`
+reached `CURRENT_DURABLE_FRESH_HISTORY` and exhausted the reviewed 3300-second
+supervisor budget there. Its durable receipt correctly remained
+`RESEARCH_NO_CODE_SOURCE_INCOMPLETE`, but it previously wrote zero source-funnel
+counts because the worker had not yet constructed its final source bundle. The
+preserved artifact nevertheless contained real current FotMob and SportyBet
+evidence, including the catalog-fanout observations. A timeout must not erase
+already completed source facts, nor may it invent later Price-all, Router,
+Portfolio, or share-code results.
+
+The Current runner therefore writes an atomic, commit- and target-bound progress
+checkpoint only after a source/reconciliation, history, or per-fixture
+Price-all/Router operation has actually completed. A timeout or source-chain
+failure may reuse that canonical checkpoint only when its executed commit and
+requested target match exactly. It reports the known counts and stage, retains
+zero counts for operations that had not completed, and still exposes no selected
+legs, code, pricing authority, selection authority, execution authority, or
+wager authority.
+
+The reviewed PR151 lineage audit remains the authority for durable history. The
+runtime layer persistently caches only immutable GitHub Actions artifact ZIP and
+Release-asset transport bytes beneath the existing evidence recorder. Every
+normal build still records and replays the same GitHub evidence and verifies
+Actions/Release/archive identities. Mutable GitHub JSON is never cached. A
+corrupt, missing, or unrecognised cache entry causes a normal live read, and a
+cache entry cannot authorize football evidence, probabilities, pricing,
+selection, provider execution, or BET. This changes repeated transport from a
+growing prefix-plus-tail download to verified cache hits plus immutable tail
+misses; it does not replace the frozen audit with a caller-trusted checkpoint.
+
+The run-125 timeout does not establish any later-stage failure. Specifically,
+it did not reach a current model context, Price-all, Router, Portfolio, fresh
+reprice, anonymous create/reload, or email-success proof. Those remain subject
+to a later owner-authorized live run and durable-artifact inspection.

@@ -385,6 +385,10 @@ def restore_latest_lineage_state(
                 candidate,
                 artifact_data,
                 jobs_reader,
+            ) or _prove_schedule_duplicate_no_acquisition_success(
+                candidate,
+                artifact_data,
+                jobs_reader,
             )
             if proven_noop:
                 eligible_noop_ids.add(run_id)
@@ -446,11 +450,43 @@ def resolve_nominal_schedule_slot_from_lineage(
     created_at,
     restored: lineage.RestoredFailureLineage,
 ):
-    return lineage.resolve_nominal_schedule_slot_from_lineage(
-        schedule_expr,
-        created_at,
-        restored,
-    )
+    """Resolve a natural slot, preserving the one reviewed duplicate no-op.
+
+    The frozen resolver correctly rejects a candidate at or before the durable
+    anchor.  A delayed natural delivery can nevertheless resolve to the *exact*
+    durable slot which has already been committed and attempted.  That is not a
+    new collection opportunity: the workflow must route it to the independently
+    proven ``SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION`` lane before any provider
+    work begins.  This compatibility is deliberately narrower than changing the
+    raw resolver's ``>`` comparison: it admits only an exact equality where the
+    committed and attempted anchors agree and no prior zero-artifact projection
+    has changed the ordinary lineage resolution policy.
+    """
+    try:
+        return lineage.resolve_nominal_schedule_slot_from_lineage(
+            schedule_expr,
+            created_at,
+            restored,
+        )
+    except runner.FreshHoldoutActivationError:
+        if restored.skipped_preacquisition_failure_run_ids:
+            raise
+        committed = restored.last_committed_utc
+        attempted = restored.last_attempted_utc
+        if committed is None or attempted is None or committed != attempted:
+            raise
+
+        # Reconstruct the trigger's nominal slot without an anchor solely to
+        # distinguish exact equality from an old/stale occurrence.  The raw
+        # resolver still validates the reviewed cron grammar and trigger time.
+        candidate = runner.resolve_nominal_schedule_slot(
+            schedule_expr,
+            created_at,
+            last_committed_utc=None,
+        )
+        if candidate[0] != committed:
+            raise
+        return candidate
 
 
 reconcile_staged_capture_lineage = lineage.reconcile_staged_capture_lineage

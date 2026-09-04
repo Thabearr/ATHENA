@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 from scripts import current_shadow_history_github_persistent_cache as cache
@@ -93,3 +94,62 @@ def test_cache_never_claims_non_binary_or_cross_repo_endpoints(tmp_path, monkeyp
     ):
         cache._persist(root, endpoint, b"value")
         assert cache._load(root, endpoint) is None
+
+
+def test_persisted_prefix_never_redownloads_when_only_one_immutable_tail_appears(tmp_path, monkeypatch) -> None:
+    """Transport cost becomes O(new immutable binaries), never O(prefix + tail)."""
+    monkeypatch.setenv(cache.CACHE_ENV, str(tmp_path / "history-cache"))
+    prefix = [
+        f"/repos/Thabearr/ATHENA/actions/artifacts/{number}/zip"
+        for number in range(1000, 1100)
+    ]
+    tail = "/repos/Thabearr/ATHENA/actions/artifacts/1100/zip"
+    first_calls: list[str] = []
+
+    def first_live(endpoint: str) -> bytes:
+        first_calls.append(endpoint)
+        return endpoint.encode("ascii")
+
+    first = _latest(first_live)
+    hooks = cache.install(first)
+    try:
+        for endpoint in prefix:
+            assert first.pr175_projection._gh_download_compatible(endpoint) == endpoint.encode("ascii")
+    finally:
+        cache.restore(first, hooks)
+    assert first_calls == prefix
+
+    second_calls: list[str] = []
+
+    def second_live(endpoint: str) -> bytes:
+        second_calls.append(endpoint)
+        return endpoint.encode("ascii")
+
+    second = _latest(second_live)
+    hooks = cache.install(second)
+    try:
+        for endpoint in prefix:
+            assert second.pr175_projection._gh_download_compatible(endpoint) == endpoint.encode("ascii")
+        assert second.pr175_projection._gh_download_compatible(tail) == tail.encode("ascii")
+        assert hooks.stats.to_dict() == {
+            "cache_hits": len(prefix),
+            "cache_misses": 1,
+            "cache_hit_bytes": sum(len(endpoint) for endpoint in prefix),
+            "cache_miss_bytes": len(tail),
+        }
+    finally:
+        cache.restore(second, hooks)
+    assert second_calls == [tail]
+
+
+def test_current_shadow_and_prime_workflows_restore_and_save_only_transport_cache() -> None:
+    for workflow_name in (
+        ".github/workflows/current-shadow-all-market.yml",
+        ".github/workflows/current-shadow-history-cache-prime.yml",
+    ):
+        workflow = Path(workflow_name).read_text(encoding="utf-8")
+        assert "actions/cache/restore@v4" in workflow
+        assert "actions/cache/save@v4" in workflow
+        assert cache.DEFAULT_CACHE_DIR.as_posix() in workflow
+        assert "athena-current-shadow-history-binary-v1-" in workflow
+        assert "wager" not in workflow.lower()

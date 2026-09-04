@@ -155,6 +155,153 @@ def test_timeout_receipt_is_durable_fail_closed_and_identifies_stage(monkeypatch
     assert payload["stake_submitted"] is False
 
 
+def _write_timeout_progress(*, tmp_path, stage, status, counts):
+    runner._write_progress_checkpoint(
+        output_dir=tmp_path,
+        stage=stage,
+        progress_status=status,
+        exact_commit_sha=SHA,
+        target_size=20,
+        counts=counts,
+        source_summary={
+            "known_source_stage": stage,
+            "exact_source_count": counts["reviewed_fixture_count"],
+            "wager_placed": False,
+        },
+    )
+
+
+def test_timeout_after_reconciliation_retains_only_exact_completed_source_counts(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    counts = runner._progress_counts(
+        reviewed_fixture_count=8,
+        reconciled_fixture_count=5,
+        provider_event_count=37,
+        priced_fixture_count=0,
+        router_selected_count=0,
+        router_no_bet_count=0,
+    )
+    _write_timeout_progress(
+        tmp_path=tmp_path,
+        stage=runner.STAGE_SPORTYBET_DISCOVERY_RECONCILIATION,
+        status="COMPLETED",
+        counts=counts,
+    )
+    result = runner.write_current_shadow_timeout_receipt(target_size=20, output_dir=tmp_path)
+    assert result.reviewed_fixture_count == 8
+    assert result.reconciled_fixture_count == 5
+    assert result.provider_event_count == 37
+    assert result.priced_fixture_count == 0
+    assert result.source_summary["timeout_stage"] == runner.STAGE_SPORTYBET_DISCOVERY_RECONCILIATION
+    assert result.source_summary["timeout_progress_status"] == "COMPLETED"
+    assert result.source_summary["known_source_stage"] == runner.STAGE_SPORTYBET_DISCOVERY_RECONCILIATION
+
+
+def test_timeout_during_history_does_not_fabricate_price_or_router_progress(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    counts = runner._progress_counts(
+        reviewed_fixture_count=12,
+        reconciled_fixture_count=7,
+        provider_event_count=45,
+        priced_fixture_count=0,
+        router_selected_count=0,
+        router_no_bet_count=0,
+    )
+    _write_timeout_progress(
+        tmp_path=tmp_path,
+        stage=runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY,
+        status="STARTED",
+        counts=counts,
+    )
+    result = runner.write_current_shadow_timeout_receipt(target_size=20, output_dir=tmp_path)
+    assert result.reviewed_fixture_count == 12
+    assert result.provider_event_count == 45
+    assert result.priced_fixture_count == 0
+    assert result.router_selected_count == 0
+    assert result.router_no_bet_count == 0
+    assert result.source_summary["timeout_stage"] == runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY
+
+
+def test_timeout_during_price_retains_only_completed_fixture_pricing_progress(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    counts = runner._progress_counts(
+        reviewed_fixture_count=12,
+        reconciled_fixture_count=7,
+        provider_event_count=45,
+        priced_fixture_count=3,
+        router_selected_count=1,
+        router_no_bet_count=2,
+    )
+    _write_timeout_progress(
+        tmp_path=tmp_path,
+        stage=runner.STAGE_PRICE_ALL_ROUTER,
+        status="IN_PROGRESS",
+        counts=counts,
+    )
+    result = runner.write_current_shadow_timeout_receipt(target_size=20, output_dir=tmp_path)
+    assert result.priced_fixture_count == 3
+    assert result.router_selected_count == 1
+    assert result.router_no_bet_count == 2
+    assert result.selected_leg_count == 0
+    assert result.share_code is None
+    assert result.to_dict()["authority"]["bet"] is False
+
+
+def test_timeout_rejects_malformed_or_other_head_progress(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+    _write_timeout_progress(
+        tmp_path=tmp_path,
+        stage=runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY,
+        status="STARTED",
+        counts=runner._progress_counts(
+            reviewed_fixture_count=9,
+            reconciled_fixture_count=5,
+            provider_event_count=19,
+            priced_fixture_count=0,
+            router_selected_count=0,
+            router_no_bet_count=0,
+        ),
+    )
+    path = tmp_path / runner.RUN_PROGRESS_FILENAME
+    payload = _receipt_payload(path)
+    payload["exact_commit_sha"] = "c" * 40
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    result = runner.write_current_shadow_timeout_receipt(target_size=20, output_dir=tmp_path)
+    assert result.reviewed_fixture_count == 0
+    assert result.provider_event_count == 0
+    assert result.source_summary["timeout_stage"] == "UNKNOWN"
+
+
+def test_source_chain_failure_after_reconciliation_retains_only_proven_progress(monkeypatch, tmp_path):
+    _install_common(monkeypatch)
+
+    def acquire(**kwargs):
+        kwargs["progress_callback"](
+            runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY,
+            "STARTED",
+            runner._progress_counts(
+                reviewed_fixture_count=11,
+                reconciled_fixture_count=6,
+                provider_event_count=41,
+                priced_fixture_count=0,
+                router_selected_count=0,
+                router_no_bet_count=0,
+            ),
+            {"known_source_stage": "RECONCILED", "wager_placed": False},
+        )
+        raise runner.CurrentShadowAllMarketRunnerError("reviewed history unavailable")
+
+    monkeypatch.setattr(runner, "_acquire_router_inputs", acquire)
+    result = runner.execute_current_shadow_all_market(target_size=20, output_dir=tmp_path)
+    assert result.status == runner.STATUS_SOURCE_INCOMPLETE
+    assert result.reviewed_fixture_count == 11
+    assert result.reconciled_fixture_count == 6
+    assert result.provider_event_count == 41
+    assert result.priced_fixture_count == 0
+    assert result.source_summary["source_failure_progress_stage"] == runner.STAGE_CURRENT_DURABLE_FRESH_HISTORY
+    assert result.share_code is None
+
+
 def test_cli_supervisor_times_out_worker_and_emits_durable_receipt(monkeypatch, tmp_path, capsys):
     monkeypatch.delenv(cli.WORKER_ENV, raising=False)
     captured = {}

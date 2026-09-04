@@ -41,6 +41,37 @@ class PersistentHistoryGitHubCacheHooks:
     original_gh_download: Any
     cached_disk_download: Any
     prefetch_hooks: prefetch.HistoryGitHubPrefetchHooks
+    stats: "PersistentHistoryGitHubCacheStats"
+
+
+@dataclasses.dataclass
+class PersistentHistoryGitHubCacheStats:
+    """Transport-only counters; they are never lineage or model evidence."""
+
+    cache_hits: int = 0
+    cache_misses: int = 0
+    cache_hit_bytes: int = 0
+    cache_miss_bytes: int = 0
+    _lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
+
+    def hit(self, payload: bytes) -> None:
+        with self._lock:
+            self.cache_hits += 1
+            self.cache_hit_bytes += len(payload)
+
+    def miss(self, payload: bytes) -> None:
+        with self._lock:
+            self.cache_misses += 1
+            self.cache_miss_bytes += len(payload)
+
+    def to_dict(self) -> dict[str, int]:
+        with self._lock:
+            return {
+                "cache_hits": self.cache_hits,
+                "cache_misses": self.cache_misses,
+                "cache_hit_bytes": self.cache_hit_bytes,
+                "cache_miss_bytes": self.cache_miss_bytes,
+            }
 
 
 def _canonical(value: Any) -> bytes:
@@ -148,13 +179,17 @@ def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
     """Install persistent immutable-binary caching below the existing prefetch."""
     root = _cache_root()
     original_gh_download = latest_history.pr175_projection._gh_download_compatible
+    stats = PersistentHistoryGitHubCacheStats()
 
     def cached_disk_download(endpoint: str) -> bytes:
         cached = _load(root, endpoint)
         if cached is not None:
+            stats.hit(cached)
             return cached
         payload = original_gh_download(endpoint)
         if type(payload) is bytes and payload:
+            if _IMMUTABLE_BINARY_ENDPOINT.fullmatch(endpoint) is not None:
+                stats.miss(payload)
             _persist(root, endpoint, payload)
         return payload
 
@@ -168,6 +203,7 @@ def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
         original_gh_download=original_gh_download,
         cached_disk_download=cached_disk_download,
         prefetch_hooks=prefetch_hooks,
+        stats=stats,
     )
 
 
@@ -188,6 +224,7 @@ __all__ = [
     "CACHE_SCHEMA_VERSION",
     "DEFAULT_CACHE_DIR",
     "PersistentHistoryGitHubCacheHooks",
+    "PersistentHistoryGitHubCacheStats",
     "install",
     "restore",
 ]

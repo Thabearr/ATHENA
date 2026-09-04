@@ -36,6 +36,15 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
+      - name: Restore immutable durable-history transport cache
+        id: current-shadow-history-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/athena-research/current-shadow-history-github-binary-cache-v1
+          key: athena-current-shadow-history-binary-v1-${{ runner.os }}-${{ github.run_id }}
+          restore-keys: |
+            athena-current-shadow-history-binary-v1-${{ runner.os }}-
+
       - name: Prime immutable durable-history GitHub transport cache
         env:
           GH_TOKEN: ${{ github.token }}
@@ -52,3 +61,10 @@ jobs:
           path: artifacts/current-shadow-history-cache-prime
           if-no-files-found: error
           retention-days: 30
+
+      - name: Save immutable durable-history transport cache
+        if: always() && steps.current-shadow-history-cache.outputs.cache-hit != 'true' && hashFiles('.cache/athena-research/current-shadow-history-github-binary-cache-v1/*.payload') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/athena-research/current-shadow-history-github-binary-cache-v1
+          key: athena-current-shadow-history-binary-v1-${{ runner.os }}-${{ github.run_id }}

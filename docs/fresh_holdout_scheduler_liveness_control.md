@@ -9,3 +9,18 @@ The reviewed collection lattice remains exactly `:07` and `:37` UTC. The livenes
 The watchdog pins the reviewed primary collection workflow blob before any mutation. If that workflow changes, if GitHub metadata drifts, or if a collection run is already active, the control fails closed or performs no mutation.
 
 Any control-plane repair is recorded on issue #172 with explicit `false` authority/backfill/acquisition markers. Resumption is left to future natural `:07`/`:37` schedule events and the existing fail-closed schedule-recovery logic. Missed slots remain missing; they are never replayed.
+
+## Exact delayed natural duplicate
+
+If a delayed natural schedule run resolves to the **same** nominal slot as both
+the restored committed and attempted durable anchors, it is not a new collection
+opportunity. The collection workflow routes only that exact equality to
+`SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION`. It makes no provider request,
+persists no capture, produces no durable state archive or Release asset, and is
+accepted by later recovery only when its complete GitHub job shape proves those
+steps were skipped.
+
+Older slots, a changed attempted/committed anchor, an ambiguous trigger, and a
+newer normal slot do not use this compatibility. They retain their existing
+fail-closed or normal-collection behavior. The raw schedule-slot resolver is not
+relaxed from `>` to `>=`, and this no-op never authorizes backfill or retrofill.

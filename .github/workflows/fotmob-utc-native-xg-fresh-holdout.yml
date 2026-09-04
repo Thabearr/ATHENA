@@ -217,12 +217,23 @@ jobs:
                   ],
               )
 
+          def get_run_jobs(run_id: int):
+              out = subprocess.check_output(
+                  [
+                      "gh", "api",
+                      f"/repos/{repo}/actions/runs/{run_id}/jobs?filter=latest&per_page=100",
+                  ],
+                  text=True,
+              )
+              return json.loads(out)
+
           try:
               restored = lineage.restore_latest_lineage_state(
                   prior_runs=prior_runs,
                   current_run_id=current_run_id,
                   get_run_artifacts=get_run_artifacts,
                   download_artifact_zip=download_artifact_zip,
+                  get_run_jobs=get_run_jobs,
                   repository_root=Path("."),
               )
           except Exception as exc:

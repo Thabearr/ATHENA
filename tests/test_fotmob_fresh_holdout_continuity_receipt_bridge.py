@@ -35,17 +35,25 @@ def test_bridge_has_exact_owner_only_manual_durability_recovery_surface() -> Non
 def test_bridge_pins_existing_reviewed_evidence_and_mirror_implementations() -> None:
     workflow = _workflow_text()
     for digest in (
-        "ee928ba29c7108c203402ff8efabf3d6fc3e4e00",
+        "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2",
         "6d768a506d579ef88f1d321102cb9c53d846c72a",
-        "7fe531dfb6bba96c7e6505016b89761f0d25428f",
+        "14d6dd1000e934e21c12e64f41f67b78f2484278",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
-        "9e09e13d145f9ad2419b11073d4219aec14e54a8",
+        "f0b836304b1d46877e0396ea7a532c24b46a3d16",
     ):
         assert digest in workflow
     assert (
         "python -m scripts.run_fotmob_fresh_holdout_release_receipt_mirror"
         in workflow
     )
+
+
+def test_release_mirror_retains_the_exact_schedule_duplicate_zero_artifact_lane() -> None:
+    mirror = Path("scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py").read_text(
+        encoding="utf-8"
+    )
+    assert "_prove_schedule_duplicate_no_acquisition_success" in mirror
+    assert "VERIFIED_SCHEDULE_ALREADY_ATTEMPTED_NO_MIRROR_REQUIRED" in mirror
 
 
 def test_bridge_is_durability_only_and_cannot_execute_collection_or_betting() -> None:
