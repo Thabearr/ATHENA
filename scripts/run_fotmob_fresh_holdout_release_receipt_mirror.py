@@ -286,6 +286,13 @@ def _reviewed_mirror_run(*, repository: str, run_id: int) -> dict:
                 get_run_jobs,
             )
             disposition = "VERIFIED_AMBIGUOUS_NO_ACQUISITION_NO_MIRROR_REQUIRED"
+            if not proven:
+                proven = schedule_recovery._prove_schedule_duplicate_no_acquisition_success(
+                    run,
+                    artifacts,
+                    get_run_jobs,
+                )
+                disposition = "VERIFIED_SCHEDULE_ALREADY_ATTEMPTED_NO_MIRROR_REQUIRED"
     except schedule_recovery.FreshHoldoutFailureLineageError as exc:
         raise mirror.FreshHoldoutReleaseReceiptMirrorError(
             "could not prove reviewed zero-artifact no-acquisition source run"

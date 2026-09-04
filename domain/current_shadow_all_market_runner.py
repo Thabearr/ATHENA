@@ -54,6 +54,7 @@ CURRENT_FIXTURE_SEARCH_DAY_COUNT = 3
 CURRENT_SHADOW_RUN_TIMEOUT_SECONDS = 25 * 60
 RUN_RECEIPT_FILENAME = "current-shadow-all-market-run-receipt.json"
 RUN_STAGE_FILENAME = "current-shadow-all-market-stage.json"
+RUN_PROGRESS_FILENAME = "current-shadow-all-market-progress.json"
 
 STAGE_STARTED = "STARTED"
 STAGE_CURRENT_FOTMOB_SOURCE = "CURRENT_FOTMOB_SOURCE"
@@ -105,6 +106,27 @@ _ALLOWED_STATUSES = frozenset({
     STATUS_PROVIDER_CHANGED,
     STATUS_SOURCE_INCOMPLETE,
 })
+
+_PROGRESS_STATUSES = frozenset({"STARTED", "IN_PROGRESS", "COMPLETED"})
+_PROGRESS_COUNT_FIELDS = (
+    "reviewed_fixture_count",
+    "reconciled_fixture_count",
+    "provider_event_count",
+    "priced_fixture_count",
+    "router_selected_count",
+    "router_no_bet_count",
+)
+_PROGRESS_DIAGNOSTICS_KEY = "runtime_progress_diagnostics"
+_PROGRESS_DIAGNOSTIC_FIELDS = (
+    "market_diagnostics",
+    "market_family_diagnostics",
+    "fixture_funnel",
+    "opportunity_funnel",
+)
+_FUNNEL_COUNT_FIELDS = (
+    "policy_approved", "provider_present", "identity_reconciled", "model_ready",
+    "priced", "prediction_qualified", "odds_qualified", "portfolio_selected",
+)
 
 
 class CurrentShadowAllMarketRunnerError(ValueError):
@@ -202,6 +224,250 @@ def _read_checkpoint_stage(output_dir: Path) -> str:
     return stage if stage in STAGE_SEQUENCE else "UNKNOWN"
 
 
+def _progress_counts(
+    *,
+    reviewed_fixture_count: int,
+    reconciled_fixture_count: int,
+    provider_event_count: int,
+    priced_fixture_count: int,
+    router_selected_count: int,
+    router_no_bet_count: int,
+) -> dict[str, int]:
+    values = {
+        "reviewed_fixture_count": reviewed_fixture_count,
+        "reconciled_fixture_count": reconciled_fixture_count,
+        "provider_event_count": provider_event_count,
+        "priced_fixture_count": priced_fixture_count,
+        "router_selected_count": router_selected_count,
+        "router_no_bet_count": router_no_bet_count,
+    }
+    if any(type(value) is not int or value < 0 for value in values.values()):
+        raise CurrentShadowAllMarketRunnerError("Current Shadow progress counts are invalid")
+    if values["router_selected_count"] + values["router_no_bet_count"] > values["priced_fixture_count"]:
+        raise CurrentShadowAllMarketRunnerError("Current Shadow Router progress exceeds priced fixtures")
+    return values
+
+
+def _runtime_progress_diagnostics(
+    router_inputs: tuple[portfolio_module.ShadowPortfolioRouterInput, ...] | list[
+        portfolio_module.ShadowPortfolioRouterInput
+    ],
+) -> dict[str, Any]:
+    """Describe only fully completed Price-all/Router inputs, never Portfolio state."""
+
+    markets, families, fixture_funnel, opportunity_funnel = (
+        portfolio_module._diagnostics(tuple(router_inputs), (), ())
+    )
+    return {
+        "market_diagnostics": [dict(item) for item in markets],
+        "market_family_diagnostics": [dict(item) for item in families],
+        "fixture_funnel": dict(fixture_funnel),
+        "opportunity_funnel": dict(opportunity_funnel),
+    }
+
+
+def _validated_runtime_progress_diagnostics(
+    value: Any,
+    *,
+    counts: Mapping[str, int],
+) -> dict[str, Any]:
+    """Validate one local, non-authoritative in-flight Router diagnostic snapshot."""
+
+    if type(value) is not dict or set(value) != set(_PROGRESS_DIAGNOSTIC_FIELDS):
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime progress diagnostic fields drifted"
+        )
+    checked_counts = _progress_counts(**dict(counts))
+    plain = json.loads(_canonical(value))
+    if type(plain) is not dict:
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime progress diagnostics are not an object"
+        )
+
+    empty_markets, empty_families, _empty_fixture, _empty_opportunity = (
+        portfolio_module._diagnostics((), (), ())
+    )
+    market_rows = plain["market_diagnostics"]
+    family_rows = plain["market_family_diagnostics"]
+    if type(market_rows) is not list or [
+        row.get("market_id") if type(row) is dict else None for row in market_rows
+    ] != [row["market_id"] for row in empty_markets]:
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime market diagnostics drifted"
+        )
+    if type(family_rows) is not list or [
+        row.get("market_family") if type(row) is dict else None for row in family_rows
+    ] != [row["market_family"] for row in empty_families]:
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime market-family diagnostics drifted"
+        )
+    for row in market_rows:
+        if (
+            type(row) is not dict
+            or row.get("portfolio_selected_count") != 0
+            or type(row.get("opportunities")) is not list
+            or any(
+                type(item) is not dict
+                or item.get("portfolio_state") == "PORTFOLIO_SELECTED"
+                for item in row["opportunities"]
+            )
+        ):
+            raise CurrentShadowAllMarketRunnerError(
+                "Current Shadow runtime market diagnostics fabricated Portfolio state"
+            )
+    if any(
+        type(row) is not dict or row.get("portfolio_selected_count") != 0
+        for row in family_rows
+    ):
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime market-family diagnostics fabricated Portfolio state"
+        )
+
+    def checked_funnel(raw: Any, unit: str) -> dict[str, Any]:
+        if (
+            type(raw) is not dict
+            or set(raw) != ({"unit"} | set(_FUNNEL_COUNT_FIELDS))
+            or raw.get("unit") != unit
+        ):
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel drifted"
+            )
+        funnel_counts = [raw[key] for key in _FUNNEL_COUNT_FIELDS]
+        if any(type(item) is not int or item < 0 for item in funnel_counts):
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel counts are invalid"
+            )
+        if any(right > left for left, right in zip(funnel_counts, funnel_counts[1:])):
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel is not monotone"
+            )
+        if raw["portfolio_selected"] != 0:
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel fabricated Portfolio selection"
+            )
+        return raw
+
+    fixture_funnel = checked_funnel(plain["fixture_funnel"], "fixture")
+    checked_funnel(plain["opportunity_funnel"], "opportunity")
+    if (
+        checked_counts["router_selected_count"] + checked_counts["router_no_bet_count"]
+        != checked_counts["priced_fixture_count"]
+        or fixture_funnel["policy_approved"] != checked_counts["priced_fixture_count"]
+    ):
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime diagnostics do not match completed Router progress"
+        )
+    return plain
+
+
+def _write_progress_checkpoint(
+    *,
+    output_dir: Path,
+    stage: str,
+    progress_status: str,
+    exact_commit_sha: str,
+    target_size: int,
+    counts: Mapping[str, int],
+    source_summary: Mapping[str, Any],
+) -> None:
+    """Persist only already-completed, bounded Current Shadow diagnostics.
+
+    The outer supervisor can terminate the worker at any point.  This checkpoint
+    is therefore written only after a concrete source/history/price operation has
+    completed, and is deliberately not a partial result or an authority grant.
+    A timeout receipt may reuse it only after its exact executed-commit and target
+    binding has been replayed locally.
+    """
+    if stage not in STAGE_SEQUENCE or progress_status not in _PROGRESS_STATUSES:
+        raise CurrentShadowAllMarketRunnerError("Current Shadow progress vocabulary drifted")
+    if set(counts) != set(_PROGRESS_COUNT_FIELDS):
+        raise CurrentShadowAllMarketRunnerError("Current Shadow progress count fields drifted")
+    checked_counts = _progress_counts(**dict(counts))
+    if not isinstance(source_summary, Mapping) or source_summary.get("wager_placed") is not False:
+        raise CurrentShadowAllMarketRunnerError("Current Shadow progress source summary is unsafe")
+    if "authority" in source_summary:
+        raise CurrentShadowAllMarketRunnerError("Current Shadow progress cannot carry authority")
+    checked_summary = dict(source_summary)
+    if _PROGRESS_DIAGNOSTICS_KEY in checked_summary:
+        checked_summary[_PROGRESS_DIAGNOSTICS_KEY] = (
+            _validated_runtime_progress_diagnostics(
+                checked_summary[_PROGRESS_DIAGNOSTICS_KEY],
+                counts=checked_counts,
+            )
+        )
+    _write(output_dir / RUN_PROGRESS_FILENAME, {
+        "schema_version": SCHEMA_VERSION,
+        "dataset_name": DATASET_NAME,
+        "stage": stage,
+        "stage_index": STAGE_SEQUENCE.index(stage),
+        "progress_status": progress_status,
+        "observed_at": _now().isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        "exact_commit_sha": exact_commit_sha,
+        "requested_target_size": target_size,
+        "counts": checked_counts,
+        "source_summary": checked_summary,
+        "wager_placed": False,
+    })
+
+
+def _read_progress_checkpoint(
+    *, output_dir: Path, exact_commit_sha: str, target_size: int,
+) -> Mapping[str, Any] | None:
+    """Return one exact, local worker progress checkpoint or no diagnostics."""
+    path = output_dir / RUN_PROGRESS_FILENAME
+    try:
+        if path.is_symlink() or not path.is_file():
+            return None
+        raw = path.read_bytes()
+        value = json.loads(raw)
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    if type(value) is not dict or _canonical(value) != raw:
+        return None
+    required = {
+        "schema_version", "dataset_name", "stage", "stage_index", "progress_status",
+        "observed_at", "exact_commit_sha", "requested_target_size", "counts",
+        "source_summary", "wager_placed",
+    }
+    if set(value) != required:
+        return None
+    if (
+        value.get("schema_version") != SCHEMA_VERSION
+        or value.get("dataset_name") != DATASET_NAME
+        or value.get("stage") not in STAGE_SEQUENCE
+        or value.get("stage_index") != STAGE_SEQUENCE.index(value["stage"])
+        or value.get("progress_status") not in _PROGRESS_STATUSES
+        or value.get("exact_commit_sha") != exact_commit_sha
+        or value.get("requested_target_size") != target_size
+        or value.get("wager_placed") is not False
+        or type(value.get("counts")) is not dict
+        or type(value.get("source_summary")) is not dict
+        or value["source_summary"].get("wager_placed") is not False
+        or "authority" in value["source_summary"]
+    ):
+        return None
+    try:
+        if set(value["counts"]) != set(_PROGRESS_COUNT_FIELDS):
+            return None
+        checked_counts = _progress_counts(**value["counts"])
+        checked_summary = dict(value["source_summary"])
+        if _PROGRESS_DIAGNOSTICS_KEY in checked_summary:
+            checked_summary[_PROGRESS_DIAGNOSTICS_KEY] = (
+                _validated_runtime_progress_diagnostics(
+                    checked_summary[_PROGRESS_DIAGNOSTICS_KEY],
+                    counts=checked_counts,
+                )
+            )
+    except (CurrentShadowAllMarketRunnerError, TypeError):
+        return None
+    return MappingProxyType({
+        "stage": value["stage"],
+        "progress_status": value["progress_status"],
+        "counts": checked_counts,
+        "source_summary": MappingProxyType(checked_summary),
+    })
+
+
 def _failure_chain(exc: BaseException) -> str:
     """Preserve bounded fail-closed cause identity without traceback or secrets."""
 
@@ -256,6 +522,14 @@ class CurrentShadowAllMarketRunReceipt:
             raise CurrentShadowAllMarketRunnerError("runner status escaped reviewed vocabulary")
         if type(self.requested_target_size) is not int or not 1 <= self.requested_target_size <= 50:
             raise CurrentShadowAllMarketRunnerError("requested_target_size is invalid")
+        _progress_counts(
+            reviewed_fixture_count=self.reviewed_fixture_count,
+            reconciled_fixture_count=self.reconciled_fixture_count,
+            provider_event_count=self.provider_event_count,
+            priced_fixture_count=self.priced_fixture_count,
+            router_selected_count=self.router_selected_count,
+            router_no_bet_count=self.router_no_bet_count,
+        )
         if type(self.reasons) is not tuple or tuple(sorted(set(self.reasons))) != self.reasons:
             raise CurrentShadowAllMarketRunnerError("reasons must be sorted unique tuple")
         verified = self.status in {STATUS_CODE_VERIFIED, STATUS_CODE_VERIFIED_WITH_SHORTFALL}
@@ -269,7 +543,24 @@ class CurrentShadowAllMarketRunReceipt:
     def to_dict(self) -> dict[str, Any]:
         portfolio_value = None if self.portfolio is None else dict(self.portfolio)
         share_value = None if self.share_code_receipt is None else dict(self.share_code_receipt)
-        if portfolio_value is None:
+        progress_diagnostics = self.source_summary.get(_PROGRESS_DIAGNOSTICS_KEY)
+        if portfolio_value is None and progress_diagnostics is not None:
+            checked = _validated_runtime_progress_diagnostics(
+                progress_diagnostics,
+                counts=_progress_counts(
+                    reviewed_fixture_count=self.reviewed_fixture_count,
+                    reconciled_fixture_count=self.reconciled_fixture_count,
+                    provider_event_count=self.provider_event_count,
+                    priced_fixture_count=self.priced_fixture_count,
+                    router_selected_count=self.router_selected_count,
+                    router_no_bet_count=self.router_no_bet_count,
+                ),
+            )
+            market_diagnostics = checked["market_diagnostics"]
+            family_diagnostics = checked["market_family_diagnostics"]
+            opportunity_funnel = checked["opportunity_funnel"]
+            portfolio_fixture_funnel = checked["fixture_funnel"]
+        elif portfolio_value is None:
             empty_markets, empty_families, _empty_fixtures, empty_opportunities = (
                 portfolio_module._diagnostics((), (), ())
             )
@@ -404,8 +695,19 @@ def _acquire_router_inputs(
     repository_root: Path,
     lineage_main_sha: str,
     stage_callback: Callable[[str], None] | None = None,
+    progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
 ) -> CurrentShadowRunnerSourceBundle:
     emit = (lambda _stage: None) if stage_callback is None else stage_callback
+    if progress_callback is None:
+        def progress(
+            _stage: str,
+            _status: str,
+            _counts: Mapping[str, int],
+            _summary: Mapping[str, Any],
+        ) -> None:
+            return None
+    else:
+        progress = progress_callback
     emit(STAGE_CURRENT_FOTMOB_SOURCE)
     fixture_sources, searched_dates = _issue_current_fixture_sources(
         repository_root=repository_root
@@ -462,6 +764,66 @@ def _acquire_router_inputs(
             matched_provider_dates[row.event_id] = request_date
             matched_fixture_dates[fixture_id] = request_date
 
+    reviewed_fixture_count = sum(
+        len(execution.bootstrap.fixtures)
+        for _request_date, execution, _raw, _manifest, _events in source_rows
+    )
+    reconciled_fixture_count = sum(
+        len(current_events.matched_rows)
+        for _request_date, _execution, _raw, _manifest, current_events in source_rows
+    )
+    known_counts = _progress_counts(
+        reviewed_fixture_count=reviewed_fixture_count,
+        reconciled_fixture_count=reconciled_fixture_count,
+        provider_event_count=len(provider_event_ids),
+        priced_fixture_count=0,
+        router_selected_count=0,
+        router_no_bet_count=0,
+    )
+    first_matched = next((item for item in source_rows if item[4].matched_rows), None)
+    primary = first_matched or source_rows[0]
+    primary_date, primary_execution, _primary_raw, _primary_manifest, primary_events = primary
+    reconciliation_by_date = {
+        request_date: {
+            "current_reconciliation_sha256": current_events.canonical_sha256,
+            "current_reconciliation_contract_sha256": current_events.contract_sha256,
+            "provider_event_count": len(current_events.rows),
+            "reconciled_fixture_count": len(current_events.matched_rows),
+            "provider_catalog_fanout_snapshot_sha256": current_events.fanout_snapshot_sha256,
+            "disposition_counts": _disposition_counts(current_events),
+        }
+        for request_date, _execution, _raw, _manifest, current_events in source_rows
+    }
+    source_progress_summary: dict[str, Any] = {
+        "selected_fixture_request_date": primary_date,
+        "fixture_search_day_count": CURRENT_FIXTURE_SEARCH_DAY_COUNT,
+        "searched_fixture_request_dates": list(searched_dates),
+        "policy_approved_fixture_request_dates": [
+            request_date for request_date, _execution, _raw, _manifest, _events in source_rows
+        ],
+        "lineage_expected_main_sha": lineage_main_sha,
+        "current_fotmob": primary_execution.summary(),
+        "current_fotmob_sources": {
+            request_date: execution.summary()
+            for request_date, execution, _raw, _manifest, _events in source_rows
+        },
+        "current_reconciliation_sha256": primary_events.canonical_sha256,
+        "current_reconciliation_contract_sha256": primary_events.contract_sha256,
+        "current_reconciliation_by_request_date": reconciliation_by_date,
+        "matched_provider_event_ids": sorted(matched_provider_dates),
+        "provider_catalog_fanout_snapshot_sha256": fanout_snapshot.canonical_sha256,
+        "provider_catalog_active_tournament_count": len(fanout_snapshot.tournaments),
+        "provider_catalog_tournament_observation_count": len(fanout_snapshot.observations),
+        "provider_discovery_observation_count": 1 + len(fanout_snapshot.observations),
+        "wager_placed": False,
+    }
+    progress(
+        STAGE_SPORTYBET_DISCOVERY_RECONCILIATION,
+        "COMPLETED",
+        known_counts,
+        source_progress_summary,
+    )
+
     legacy_bootstrap: bytes | None = None
     histories: dict[str, Any] = {}
     matched_source_rows = [
@@ -469,6 +831,12 @@ def _acquire_router_inputs(
     ]
     if matched_source_rows:
         emit(STAGE_CURRENT_DURABLE_FRESH_HISTORY)
+        progress(
+            STAGE_CURRENT_DURABLE_FRESH_HISTORY,
+            "STARTED",
+            known_counts,
+            source_progress_summary,
+        )
         legacy_bootstrap = _legacy_bootstrap_bytes()
         for request_date, execution, raw, manifest, _current_events in matched_source_rows:
             histories[request_date] = (
@@ -482,12 +850,43 @@ def _acquire_router_inputs(
                 )
             )
 
+    history_sha_by_date = {
+        request_date: latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(history)
+        for request_date, history in sorted(histories.items())
+    }
+    primary_history = histories.get(primary_date)
+    history_progress_summary = dict(source_progress_summary)
+    history_progress_summary.update({
+        "complete_current_history_sha256": (
+            None
+            if primary_history is None
+            else latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(
+                primary_history
+            )
+        ),
+        "complete_current_history_sha256_by_request_date": history_sha_by_date,
+    })
+    if matched_source_rows:
+        progress(
+            STAGE_CURRENT_DURABLE_FRESH_HISTORY,
+            "COMPLETED",
+            known_counts,
+            history_progress_summary,
+        )
+
     inputs: list[portfolio_module.ShadowPortfolioRouterInput] = []
     selected = 0
     no_bet = 0
     priced = 0
+    price_progress_summary: Mapping[str, Any] = history_progress_summary
     if matched_source_rows:
         emit(STAGE_PRICE_ALL_ROUTER)
+        progress(
+            STAGE_PRICE_ALL_ROUTER,
+            "STARTED",
+            known_counts,
+            history_progress_summary,
+        )
     for request_date, _execution, _raw, _manifest, current_events in matched_source_rows:
         history = histories[request_date]
         for row in current_events.matched_rows:
@@ -511,67 +910,37 @@ def _acquire_router_inputs(
                 price_all_bundle=priced_bundle,
                 router_decision=decision,
             ))
-
-    first_matched = next((item for item in source_rows if item[4].matched_rows), None)
-    primary = first_matched or source_rows[0]
-    primary_date, primary_execution, _primary_raw, _primary_manifest, primary_events = primary
-    primary_history = histories.get(primary_date)
-    history_sha_by_date = {
-        request_date: latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(history)
-        for request_date, history in sorted(histories.items())
-    }
-    reconciliation_by_date = {
-        request_date: {
-            "current_reconciliation_sha256": current_events.canonical_sha256,
-            "current_reconciliation_contract_sha256": current_events.contract_sha256,
-            "provider_event_count": len(current_events.rows),
-            "reconciled_fixture_count": len(current_events.matched_rows),
-            "provider_catalog_fanout_snapshot_sha256": current_events.fanout_snapshot_sha256,
-            "disposition_counts": _disposition_counts(current_events),
-        }
-        for request_date, _execution, _raw, _manifest, current_events in source_rows
-    }
-    summary = MappingProxyType({
-        "selected_fixture_request_date": primary_date,
-        "fixture_search_day_count": CURRENT_FIXTURE_SEARCH_DAY_COUNT,
-        "searched_fixture_request_dates": list(searched_dates),
-        "policy_approved_fixture_request_dates": [
-            request_date for request_date, _execution, _raw, _manifest, _events in source_rows
-        ],
-        "lineage_expected_main_sha": lineage_main_sha,
-        "current_fotmob": primary_execution.summary(),
-        "current_fotmob_sources": {
-            request_date: execution.summary()
-            for request_date, execution, _raw, _manifest, _events in source_rows
-        },
-        "complete_current_history_sha256": (
-            None
-            if primary_history is None
-            else latest_history.sha256_current_fotmob_latest_durable_fresh_history_handoff(
-                primary_history
+            known_counts = _progress_counts(
+                reviewed_fixture_count=reviewed_fixture_count,
+                reconciled_fixture_count=reconciled_fixture_count,
+                provider_event_count=len(provider_event_ids),
+                priced_fixture_count=priced,
+                router_selected_count=selected,
+                router_no_bet_count=no_bet,
             )
-        ),
-        "complete_current_history_sha256_by_request_date": history_sha_by_date,
-        "current_reconciliation_sha256": primary_events.canonical_sha256,
-        "current_reconciliation_contract_sha256": primary_events.contract_sha256,
-        "current_reconciliation_by_request_date": reconciliation_by_date,
-        "matched_provider_event_ids": sorted(matched_provider_dates),
-        "provider_catalog_fanout_snapshot_sha256": fanout_snapshot.canonical_sha256,
-        "provider_catalog_active_tournament_count": len(fanout_snapshot.tournaments),
-        "provider_catalog_tournament_observation_count": len(fanout_snapshot.observations),
-        "provider_discovery_observation_count": 1 + len(fanout_snapshot.observations),
-        "wager_placed": False,
-    })
+            price_progress_summary = dict(history_progress_summary)
+            price_progress_summary[_PROGRESS_DIAGNOSTICS_KEY] = (
+                _runtime_progress_diagnostics(inputs)
+            )
+            progress(
+                STAGE_PRICE_ALL_ROUTER,
+                "IN_PROGRESS",
+                known_counts,
+                price_progress_summary,
+            )
+
+    if matched_source_rows:
+        progress(
+            STAGE_PRICE_ALL_ROUTER,
+            "COMPLETED",
+            known_counts,
+            price_progress_summary,
+        )
+    summary = MappingProxyType(dict(price_progress_summary))
     return CurrentShadowRunnerSourceBundle(
         router_inputs=tuple(inputs),
-        reviewed_fixture_count=sum(
-            len(execution.bootstrap.fixtures)
-            for _request_date, execution, _raw, _manifest, _events in source_rows
-        ),
-        reconciled_fixture_count=sum(
-            len(current_events.matched_rows)
-            for _request_date, _execution, _raw, _manifest, current_events in source_rows
-        ),
+        reviewed_fixture_count=reviewed_fixture_count,
+        reconciled_fixture_count=reconciled_fixture_count,
         provider_event_count=len(provider_event_ids),
         priced_fixture_count=priced,
         router_selected_count=selected,
@@ -590,18 +959,42 @@ def _receipt(
     share_receipt: share_module.ShadowAllMarketShareCodeReceipt | None,
     reasons: tuple[str, ...],
     source_summary: Mapping[str, Any] | None = None,
+    partial_counts: Mapping[str, int] | None = None,
 ) -> CurrentShadowAllMarketRunReceipt:
+    if sources is None:
+        if partial_counts is None:
+            counts = _progress_counts(
+                reviewed_fixture_count=0,
+                reconciled_fixture_count=0,
+                provider_event_count=0,
+                priced_fixture_count=0,
+                router_selected_count=0,
+                router_no_bet_count=0,
+            )
+        else:
+            if set(partial_counts) != set(_PROGRESS_COUNT_FIELDS):
+                raise CurrentShadowAllMarketRunnerError("partial receipt count fields drifted")
+            counts = _progress_counts(**dict(partial_counts))
+    else:
+        counts = _progress_counts(
+            reviewed_fixture_count=sources.reviewed_fixture_count,
+            reconciled_fixture_count=sources.reconciled_fixture_count,
+            provider_event_count=sources.provider_event_count,
+            priced_fixture_count=sources.priced_fixture_count,
+            router_selected_count=sources.router_selected_count,
+            router_no_bet_count=sources.router_no_bet_count,
+        )
     return CurrentShadowAllMarketRunReceipt(
         status=status,
         observed_at=_now(),
         exact_commit_sha=exact_commit_sha,
         requested_target_size=target_size,
-        reviewed_fixture_count=0 if sources is None else sources.reviewed_fixture_count,
-        reconciled_fixture_count=0 if sources is None else sources.reconciled_fixture_count,
-        provider_event_count=0 if sources is None else sources.provider_event_count,
-        priced_fixture_count=0 if sources is None else sources.priced_fixture_count,
-        router_selected_count=0 if sources is None else sources.router_selected_count,
-        router_no_bet_count=0 if sources is None else sources.router_no_bet_count,
+        reviewed_fixture_count=counts["reviewed_fixture_count"],
+        reconciled_fixture_count=counts["reconciled_fixture_count"],
+        provider_event_count=counts["provider_event_count"],
+        priced_fixture_count=counts["priced_fixture_count"],
+        router_selected_count=counts["router_selected_count"],
+        router_no_bet_count=counts["router_no_bet_count"],
         source_summary=(
             MappingProxyType({}) if source_summary is None else source_summary
         ) if sources is None else sources.source_summary,
@@ -634,7 +1027,27 @@ def write_current_shadow_timeout_receipt(
     repository_root = Path(__file__).resolve().parents[1]
     exact_commit_sha = _git_head(repository_root)
     output_dir.mkdir(parents=True, exist_ok=True)
-    stage = _read_checkpoint_stage(output_dir)
+    progress = _read_progress_checkpoint(
+        output_dir=output_dir,
+        exact_commit_sha=exact_commit_sha,
+        target_size=target_size,
+    )
+    stage = _read_checkpoint_stage(output_dir) if progress is None else progress["stage"]
+    source_summary: dict[str, Any] = {
+        "timeout_stage": stage,
+        "run_budget_seconds": CURRENT_SHADOW_RUN_TIMEOUT_SECONDS,
+        "wager_placed": False,
+    }
+    partial_counts = None
+    if progress is not None:
+        source_summary.update(dict(progress["source_summary"]))
+        source_summary.update({
+            "timeout_stage": stage,
+            "timeout_progress_status": progress["progress_status"],
+            "run_budget_seconds": CURRENT_SHADOW_RUN_TIMEOUT_SECONDS,
+            "wager_placed": False,
+        })
+        partial_counts = progress["counts"]
     result = _receipt(
         status=STATUS_SOURCE_INCOMPLETE,
         exact_commit_sha=exact_commit_sha,
@@ -645,11 +1058,8 @@ def write_current_shadow_timeout_receipt(
         reasons=(
             f"RUN_BUDGET_EXCEEDED:{CURRENT_SHADOW_RUN_TIMEOUT_SECONDS}:STAGE:{stage}",
         ),
-        source_summary=MappingProxyType({
-            "timeout_stage": stage,
-            "run_budget_seconds": CURRENT_SHADOW_RUN_TIMEOUT_SECONDS,
-            "wager_placed": False,
-        }),
+        source_summary=MappingProxyType(source_summary),
+        partial_counts=partial_counts,
     )
     _write(output_dir / RUN_RECEIPT_FILENAME, result.to_dict())
     return result
@@ -687,12 +1097,29 @@ def execute_current_shadow_all_market(
             exact_commit_sha=exact_commit_sha, target_size=target_size,
         )
 
+    def progress(
+        stage: str,
+        progress_status: str,
+        counts: Mapping[str, int],
+        source_summary: Mapping[str, Any],
+    ) -> None:
+        _write_progress_checkpoint(
+            output_dir=output_dir,
+            stage=stage,
+            progress_status=progress_status,
+            exact_commit_sha=exact_commit_sha,
+            target_size=target_size,
+            counts=counts,
+            source_summary=source_summary,
+        )
+
     checkpoint(STAGE_STARTED)
     try:
         sources = _acquire_router_inputs(
             repository_root=repository_root,
             lineage_main_sha=lineage_main_sha,
             stage_callback=checkpoint,
+            progress_callback=progress,
         )
         if sources.reconciled_fixture_count == 0:
             result = _receipt(
@@ -706,6 +1133,19 @@ def execute_current_shadow_all_market(
             )
         elif sources.router_inputs and sources.router_selected_count == 0:
             checkpoint(STAGE_PORTFOLIO)
+            progress(
+                STAGE_PORTFOLIO,
+                "STARTED",
+                _progress_counts(
+                    reviewed_fixture_count=sources.reviewed_fixture_count,
+                    reconciled_fixture_count=sources.reconciled_fixture_count,
+                    provider_event_count=sources.provider_event_count,
+                    priced_fixture_count=sources.priced_fixture_count,
+                    router_selected_count=sources.router_selected_count,
+                    router_no_bet_count=sources.router_no_bet_count,
+                ),
+                sources.source_summary,
+            )
             portfolio = portfolio_module.optimize_shadow_portfolio(
                 sources.router_inputs,
                 target_size=target_size,
@@ -722,6 +1162,19 @@ def execute_current_shadow_all_market(
             )
         else:
             checkpoint(STAGE_PORTFOLIO)
+            progress(
+                STAGE_PORTFOLIO,
+                "STARTED",
+                _progress_counts(
+                    reviewed_fixture_count=sources.reviewed_fixture_count,
+                    reconciled_fixture_count=sources.reconciled_fixture_count,
+                    provider_event_count=sources.provider_event_count,
+                    priced_fixture_count=sources.priced_fixture_count,
+                    router_selected_count=sources.router_selected_count,
+                    router_no_bet_count=sources.router_no_bet_count,
+                ),
+                sources.source_summary,
+            )
             portfolio = portfolio_module.optimize_shadow_portfolio(
                 sources.router_inputs,
                 target_size=target_size,
@@ -745,6 +1198,19 @@ def execute_current_shadow_all_market(
                 )
             else:
                 checkpoint(STAGE_SHARE_CODE_CREATE_RELOAD)
+                progress(
+                    STAGE_SHARE_CODE_CREATE_RELOAD,
+                    "STARTED",
+                    _progress_counts(
+                        reviewed_fixture_count=sources.reviewed_fixture_count,
+                        reconciled_fixture_count=sources.reconciled_fixture_count,
+                        provider_event_count=sources.provider_event_count,
+                        priced_fixture_count=sources.priced_fixture_count,
+                        router_selected_count=sources.router_selected_count,
+                        router_no_bet_count=sources.router_no_bet_count,
+                    ),
+                    sources.source_summary,
+                )
                 share_receipt = share_module.create_verified_shadow_all_market_share_code(
                     portfolio=portfolio,
                     output_dir=output_dir / "provider-verification",
@@ -773,6 +1239,22 @@ def execute_current_shadow_all_market(
         share_module.CurrentShadowAllMarketShareCodeError,
         ShadowPriceError,
     ) as exc:
+        partial_counts = None
+        partial_summary = None
+        if sources is None:
+            progress_snapshot = _read_progress_checkpoint(
+                output_dir=output_dir,
+                exact_commit_sha=exact_commit_sha,
+                target_size=target_size,
+            )
+            if progress_snapshot is not None:
+                partial_counts = progress_snapshot["counts"]
+                partial_summary = dict(progress_snapshot["source_summary"])
+                partial_summary.update({
+                    "source_failure_progress_stage": progress_snapshot["stage"],
+                    "source_failure_progress_status": progress_snapshot["progress_status"],
+                    "wager_placed": False,
+                })
         result = _receipt(
             status=STATUS_SOURCE_INCOMPLETE,
             exact_commit_sha=exact_commit_sha,
@@ -781,6 +1263,8 @@ def execute_current_shadow_all_market(
             portfolio=portfolio,
             share_receipt=share_receipt,
             reasons=(f"SOURCE_CHAIN_FAILED:{_failure_chain(exc)}",),
+            source_summary=partial_summary,
+            partial_counts=partial_counts,
         )
     if result.status != STATUS_SOURCE_INCOMPLETE:
         checkpoint(STAGE_COMPLETE)

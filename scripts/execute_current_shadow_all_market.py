@@ -10,7 +10,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-import scripts.current_shadow_history_github_prefetch as history_github_prefetch
+import scripts.current_shadow_history_github_persistent_cache as history_github_cache
 from domain import _all_market_shadow_current_binding as current_binding
 from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
@@ -21,6 +21,7 @@ from domain import sportybet_current_event_discovery_reconciliation as pr251_rec
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
 HOSTED_SUPERVISOR_TIMEOUT_SECONDS = 50 * 60
 PRICE_DIAGNOSTIC_FILENAME = "current-shadow-price-stage-diagnostic.json"
+HISTORY_TRANSPORT_DIAGNOSTIC_FILENAME = "current-shadow-history-transport-diagnostic.json"
 PRICE_DIAGNOSTIC_STAGES = frozenset({
     "CONTEXT_BUILD_STARTED",
     "CONTEXT_BUILD_COMPLETED",
@@ -518,7 +519,7 @@ def _install_price_stage_diagnostics(output_dir: Path):
 
 
 def _execute_once(args: argparse.Namespace) -> int:
-    history_prefetch_hooks = history_github_prefetch.install(runner.latest_history)
+    history_cache_hooks = history_github_cache.install(runner.latest_history)
     (
         original_history_replay,
         original_success_materials,
@@ -555,7 +556,25 @@ def _execute_once(args: argparse.Namespace) -> int:
         runner.latest_history._replay_audit_from_evidence = original_history_replay
         runner.latest_history._success_materials = original_success_materials
         runner.latest_history.prefix._derive = original_prefix_derive
-        history_github_prefetch.restore(runner.latest_history, history_prefetch_hooks)
+        try:
+            runner._write(
+                args.output_dir / HISTORY_TRANSPORT_DIAGNOSTIC_FILENAME,
+                {
+                    "schema_version": 1,
+                    "dataset_name": "athena-current-shadow-history-transport-diagnostic-v1",
+                    "cache_schema_version": history_github_cache.CACHE_SCHEMA_VERSION,
+                    "transport": history_cache_hooks.stats.to_dict(),
+                    "evidence_authority": False,
+                    "model_authority": False,
+                    "pricing_authority": False,
+                    "selection_authority": False,
+                    "execution_authority": False,
+                    "bet_authority": False,
+                    "wager_placed": False,
+                },
+            )
+        finally:
+            history_github_cache.restore(runner.latest_history, history_cache_hooks)
     print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
     return 0
 
