@@ -35,9 +35,9 @@ def test_bridge_has_exact_owner_only_manual_durability_recovery_surface() -> Non
 def test_bridge_pins_existing_reviewed_evidence_and_mirror_implementations() -> None:
     workflow = _workflow_text()
     for digest in (
-        "f6d3e9e5e4c7306c13b2b618788811da4d2d41f8",
+        "ee928ba29c7108c203402ff8efabf3d6fc3e4e00",
         "6d768a506d579ef88f1d321102cb9c53d846c72a",
-        "1752fd5b96823f8b52e99a2dbbf84250676809d8",
+        "7fe531dfb6bba96c7e6505016b89761f0d25428f",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "9e09e13d145f9ad2419b11073d4219aec14e54a8",
     ):
