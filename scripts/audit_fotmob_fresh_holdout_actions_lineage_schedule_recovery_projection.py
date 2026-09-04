@@ -153,6 +153,33 @@ def _projected_legacy_queued_no_execution_record(
     }
 
 
+_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID = 33820556400
+_HISTORICAL_SAME_SLOT_NATURAL_RUN_ID = 33823663641
+_HISTORICAL_SAME_SLOT_UTC = "2026-09-04T00:07:00.000000Z"
+_HISTORICAL_NATURAL_ARTIFACT = "failure-20260904T000700Z-run-33823663641.tar.gz"
+_HISTORICAL_NATURAL_ZIP_DIGEST = "sha256:792ddba3b8f4b38bc494f8d0a660a80dceb5c8c9f2a9bcdaf88cbba43ac5f43a"
+
+
+def _prove_exact_historical_same_slot_provider_duplicate(
+    run: Mapping[str, Any], *, continuity_plan: continuity.ContinuityPlan | None,
+    artifacts: Mapping[str, Any],
+) -> bool:
+    """Admit only the independently reviewed delayed 2026-09-04 acquisition."""
+    if continuity_plan is None or run.get("id") != _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID:
+        return False
+    if continuity_plan.target_slot_text != _HISTORICAL_SAME_SLOT_UTC:
+        return False
+    if run.get("event") != "schedule" or run.get("conclusion") != "failure":
+        return False
+    if run.get("head_branch") != "main" or run.get("head_sha") != "92da60c93e03c0c958a6d3143b43bb43fa8a2f42":
+        return False
+    values = artifacts.get("artifacts")
+    if type(values) is not list or len(values) != 1 or type(values[0]) is not dict:
+        return False
+    artifact = values[0]
+    return artifact.get("name") == _HISTORICAL_NATURAL_ARTIFACT and artifact.get("digest") == _HISTORICAL_NATURAL_ZIP_DIGEST
+
+
 def _prove_exact_legacy_queued_no_execution_dispatch(
     run: Mapping[str, Any],
     *,
@@ -273,6 +300,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     jobs_cache: dict[int, Mapping[str, Any]] = {}
     projected_noops: dict[int, Mapping[str, Any]] = {}
     projected_schedule_duplicates: dict[int, Mapping[str, Any]] = {}
+    projected_historical_provider_duplicates: dict[int, Mapping[str, Any]] = {}
     projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
     projected_legacy_queued: dict[int, Mapping[str, Any]] = {}
@@ -360,6 +388,13 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             return True
 
         artifacts = cached_artifacts(run_id)
+        if _prove_exact_historical_same_slot_provider_duplicate(
+            run,
+            continuity_plan=projected_continuities.get(_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID),
+            artifacts=artifacts,
+        ):
+            projected_historical_provider_duplicates[run_id] = run
+            return False
         if run.get("conclusion") == "success":
             if recovery._prove_schedule_duplicate_no_acquisition_success(
                 run,
@@ -444,6 +479,19 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         )
         result["projected_schedule_duplicate_no_acquisition_runs"] = [
             _projected_noop_record(run) for run in ordered_schedule_duplicates
+        ]
+    if projected_historical_provider_duplicates:
+        result["verified_same_slot_provider_duplicate_count"] = len(projected_historical_provider_duplicates)
+        result["projected_same_slot_provider_duplicate_runs"] = [
+            {
+                "run_id": run["id"], "canonical_run_id": _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID,
+                "nominal_slot_utc": _HISTORICAL_SAME_SLOT_UTC,
+                "evidence_state": "VERIFIED_DUPLICATE_SAME_SLOT_PROVIDER_ATTEMPT",
+                "execution_provenance": "DELAYED_NATURAL_DUPLICATE_PROVIDER_ATTEMPT",
+                "provider_acquisition_performed": True, "tick_committed": False,
+                "archive_name": _HISTORICAL_NATURAL_ARTIFACT,
+            }
+            for run in projected_historical_provider_duplicates.values()
         ]
     ordered_continuity_noops = sorted(
         projected_continuity_noops.values(),
