@@ -309,6 +309,28 @@ legacy.validate_contract = validate_contract
 
 
 _legacy_bundle_to_dict = CurrentShadowSportyBetCatalogFanoutReconciliationBundle.to_dict
+_replay_identity_state_sha256: str | None = None
+
+
+def _serialized_identity_state_sha256(self: Any) -> str:
+    explicit = getattr(self, "_fixture_stable_identity_state_sha256", None)
+    if explicit is not None:
+        return explicit
+    if _replay_identity_state_sha256 is not None:
+        return _replay_identity_state_sha256
+    return fixture_identity_v2.state_sha256()
+
+
+@contextmanager
+def _retained_identity_serialization_scope(state_sha256: str) -> Iterator[None]:
+    """Serialize rebuilt replay bundles with their retained identity-state ancestry."""
+    global _replay_identity_state_sha256
+    previous = _replay_identity_state_sha256
+    _replay_identity_state_sha256 = state_sha256
+    try:
+        yield
+    finally:
+        _replay_identity_state_sha256 = previous
 
 
 def _bundle_to_dict_with_stable_identity(self: Any) -> dict[str, Any]:
@@ -320,11 +342,7 @@ def _bundle_to_dict_with_stable_identity(self: Any) -> dict[str, Any]:
     payload["fixture_stable_identity_registry_sha256"] = FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256
     payload["team_label_compatibility_policy_id"] = TEAM_LABEL_COMPATIBILITY_POLICY_ID
     payload["team_label_compatibility_policy_sha256"] = TEAM_LABEL_COMPATIBILITY_POLICY_SHA256
-    payload["fixture_stable_identity_state_sha256"] = getattr(
-        self,
-        "_fixture_stable_identity_state_sha256",
-        fixture_identity_v2.state_sha256(),
-    )
+    payload["fixture_stable_identity_state_sha256"] = _serialized_identity_state_sha256(self)
     return payload
 
 
@@ -378,6 +396,16 @@ def _identity_state_sha256(payload: Mapping[str, Any]) -> str:
         separators=(",", ":"),
     ).encode("utf-8")
     return hashlib.sha256(raw).hexdigest()
+
+
+def _copy_identity_state(payload: Mapping[str, Any]) -> dict[str, Any]:
+    return json.loads(json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ))
 
 
 def _verify_identity_state_append_only_extension(
@@ -460,6 +488,21 @@ def _bind_identity_state(bundle: Any) -> Any:
     return bundle
 
 
+def _bind_retained_identity_state(
+    bundle: Any,
+    *,
+    state_sha256: str,
+    snapshot: Mapping[str, Any],
+) -> Any:
+    object.__setattr__(bundle, "_fixture_stable_identity_state_sha256", state_sha256)
+    object.__setattr__(
+        bundle,
+        "_fixture_stable_identity_state_snapshot",
+        _copy_identity_state(snapshot),
+    )
+    return bundle
+
+
 def _sync_wrapper_hooks() -> None:
     legacy._network_get = _identity_observing_network_get
     legacy.time = time
@@ -539,6 +582,7 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
         _begin_identity_scope(captures, fanout_directory)
     _sync_wrapper_hooks()
     expected_state = getattr(value, "_fixture_stable_identity_state_sha256", None)
+    retained_state = None
     if expected_state is not None:
         retained_state = getattr(value, "_fixture_stable_identity_state_snapshot", None)
         if type(retained_state) is not dict:
@@ -552,7 +596,15 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
         current_state = _identity_state_snapshot()
         _verify_identity_state_append_only_extension(retained_state, current_state)
     with _shadow_parser_scope():
-        return legacy.verify_current_event_discovery_reconciliation_bundle(value)
+        if expected_state is None:
+            return legacy.verify_current_event_discovery_reconciliation_bundle(value)
+        with _retained_identity_serialization_scope(expected_state):
+            rebuilt = legacy.verify_current_event_discovery_reconciliation_bundle(value)
+    return _bind_retained_identity_state(
+        rebuilt,
+        state_sha256=expected_state,
+        snapshot=retained_state,
+    )
 
 
 __all__ = [
