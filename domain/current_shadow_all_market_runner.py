@@ -1127,3 +1127,4 @@ __all__ = [
     "STATUS_SOURCE_INCOMPLETE",
     "execute_current_shadow_all_market",
 ]
+_PROGRESS_DIAGNOSTICS_KEY = "runtime_progress_diagnostics"
