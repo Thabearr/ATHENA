@@ -42,7 +42,7 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
 
 REVIEWED_DUPLICATE_GROUP_WRAPPER_COMPATIBILITY_ID = (
-    "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_V1"
+    "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_20260906_V2"
 )
 REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_RUN_ID = 33787560018
 REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ARTIFACT_ID = 9907200985
@@ -64,6 +64,28 @@ REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS = (
     ("A", "Women's World Cup U20 Grp. A"),
     ("B", "Women's World Cup U20 Grp. B"),
 )
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_SOURCE_RUN_ID = 33829675089
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_SOURCE_ARTIFACT_ID = 9921930551
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_SOURCE_ARTIFACT_SHA256 = (
+    "30fa2862fad09f4063837334a04cc5a1f5d30dc4fe6d7a793e91e125159b57b6"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_SOURCE_MANIFEST_SHA256 = (
+    "697727d33603b09d7bd53597bce49998383ad1ffcbf33414b427b6f86981ba3e"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_SOURCE_RAW_SHA256 = (
+    "bd40655d09aa1933eb706674fd684146f2b658829945a1d906a6edeb48c27485"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_REQUEST_DATE = "20260906"
+REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS_20260906 = (
+    ("C", "Women's World Cup U20 Grp. C"),
+    ("D", "Women's World Cup U20 Grp. D"),
+)
+_REVIEWED_DUPLICATE_GROUP_REQUEST_DATE_BY_LABEL_PAIRS = {
+    REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS: REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE,
+    REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS_20260906: (
+        REVIEWED_DUPLICATE_GROUP_WRAPPER_20260906_REQUEST_DATE
+    ),
+}
 REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME = "FIFA U-20 World Cup"
 
 
@@ -100,8 +122,6 @@ def _reviewed_duplicate_group_wrapper_present(
         return False
     if duplicated != {REVIEWED_DUPLICATE_GROUP_WRAPPER_ID}:
         raise _error("unreviewed duplicate competition wrapper id in current capture")
-    if request_date != REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE:
-        raise _error("reviewed duplicate group wrapper escaped exact request date")
 
     wrappers = [
         league
@@ -139,8 +159,14 @@ def _reviewed_duplicate_group_wrapper_present(
             }
         )
 
-    if tuple(sorted(label_pairs)) != REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS:
+    reviewed_label_pairs = tuple(sorted(label_pairs))
+    reviewed_request_date = _REVIEWED_DUPLICATE_GROUP_REQUEST_DATE_BY_LABEL_PAIRS.get(
+        reviewed_label_pairs
+    )
+    if reviewed_request_date is None:
         raise _error("reviewed duplicate group wrapper label pairing changed")
+    if request_date != reviewed_request_date:
+        raise _error("reviewed duplicate group wrapper escaped exact request date")
     if metadata[0] != metadata[1]:
         raise _error("reviewed duplicate group wrappers differ outside opaque group labels")
     return True
