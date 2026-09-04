@@ -117,6 +117,16 @@ _PROGRESS_COUNT_FIELDS = (
     "router_no_bet_count",
 )
 _PROGRESS_DIAGNOSTICS_KEY = "runtime_progress_diagnostics"
+_PROGRESS_DIAGNOSTIC_FIELDS = (
+    "market_diagnostics",
+    "market_family_diagnostics",
+    "fixture_funnel",
+    "opportunity_funnel",
+)
+_FUNNEL_COUNT_FIELDS = (
+    "policy_approved", "provider_present", "identity_reconciled", "model_ready",
+    "priced", "prediction_qualified", "odds_qualified", "portfolio_selected",
+)
 
 
 class CurrentShadowAllMarketRunnerError(ValueError):
@@ -238,6 +248,118 @@ def _progress_counts(
     return values
 
 
+def _runtime_progress_diagnostics(
+    router_inputs: tuple[portfolio_module.ShadowPortfolioRouterInput, ...] | list[
+        portfolio_module.ShadowPortfolioRouterInput
+    ],
+) -> dict[str, Any]:
+    """Describe only fully completed Price-all/Router inputs, never Portfolio state."""
+
+    markets, families, fixture_funnel, opportunity_funnel = (
+        portfolio_module._diagnostics(tuple(router_inputs), (), ())
+    )
+    return {
+        "market_diagnostics": [dict(item) for item in markets],
+        "market_family_diagnostics": [dict(item) for item in families],
+        "fixture_funnel": dict(fixture_funnel),
+        "opportunity_funnel": dict(opportunity_funnel),
+    }
+
+
+def _validated_runtime_progress_diagnostics(
+    value: Any,
+    *,
+    counts: Mapping[str, int],
+) -> dict[str, Any]:
+    """Validate one local, non-authoritative in-flight Router diagnostic snapshot."""
+
+    if type(value) is not dict or set(value) != set(_PROGRESS_DIAGNOSTIC_FIELDS):
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime progress diagnostic fields drifted"
+        )
+    checked_counts = _progress_counts(**dict(counts))
+    plain = json.loads(_canonical(value))
+    if type(plain) is not dict:
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime progress diagnostics are not an object"
+        )
+
+    empty_markets, empty_families, _empty_fixture, _empty_opportunity = (
+        portfolio_module._diagnostics((), (), ())
+    )
+    market_rows = plain["market_diagnostics"]
+    family_rows = plain["market_family_diagnostics"]
+    if type(market_rows) is not list or [
+        row.get("market_id") if type(row) is dict else None for row in market_rows
+    ] != [row["market_id"] for row in empty_markets]:
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime market diagnostics drifted"
+        )
+    if type(family_rows) is not list or [
+        row.get("market_family") if type(row) is dict else None for row in family_rows
+    ] != [row["market_family"] for row in empty_families]:
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime market-family diagnostics drifted"
+        )
+    for row in market_rows:
+        if (
+            type(row) is not dict
+            or row.get("portfolio_selected_count") != 0
+            or type(row.get("opportunities")) is not list
+            or any(
+                type(item) is not dict
+                or item.get("portfolio_state") == "PORTFOLIO_SELECTED"
+                for item in row["opportunities"]
+            )
+        ):
+            raise CurrentShadowAllMarketRunnerError(
+                "Current Shadow runtime market diagnostics fabricated Portfolio state"
+            )
+    if any(
+        type(row) is not dict or row.get("portfolio_selected_count") != 0
+        for row in family_rows
+    ):
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime market-family diagnostics fabricated Portfolio state"
+        )
+
+    def checked_funnel(raw: Any, unit: str) -> dict[str, Any]:
+        if (
+            type(raw) is not dict
+            or set(raw) != ({"unit"} | set(_FUNNEL_COUNT_FIELDS))
+            or raw.get("unit") != unit
+        ):
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel drifted"
+            )
+        funnel_counts = [raw[key] for key in _FUNNEL_COUNT_FIELDS]
+        if any(type(item) is not int or item < 0 for item in funnel_counts):
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel counts are invalid"
+            )
+        if any(right > left for left, right in zip(funnel_counts, funnel_counts[1:])):
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel is not monotone"
+            )
+        if raw["portfolio_selected"] != 0:
+            raise CurrentShadowAllMarketRunnerError(
+                f"Current Shadow runtime {unit} funnel fabricated Portfolio selection"
+            )
+        return raw
+
+    fixture_funnel = checked_funnel(plain["fixture_funnel"], "fixture")
+    checked_funnel(plain["opportunity_funnel"], "opportunity")
+    if (
+        checked_counts["router_selected_count"] + checked_counts["router_no_bet_count"]
+        != checked_counts["priced_fixture_count"]
+        or fixture_funnel["policy_approved"] != checked_counts["priced_fixture_count"]
+    ):
+        raise CurrentShadowAllMarketRunnerError(
+            "Current Shadow runtime diagnostics do not match completed Router progress"
+        )
+    return plain
+
+
 def _write_progress_checkpoint(
     *,
     output_dir: Path,
@@ -265,6 +387,14 @@ def _write_progress_checkpoint(
         raise CurrentShadowAllMarketRunnerError("Current Shadow progress source summary is unsafe")
     if "authority" in source_summary:
         raise CurrentShadowAllMarketRunnerError("Current Shadow progress cannot carry authority")
+    checked_summary = dict(source_summary)
+    if _PROGRESS_DIAGNOSTICS_KEY in checked_summary:
+        checked_summary[_PROGRESS_DIAGNOSTICS_KEY] = (
+            _validated_runtime_progress_diagnostics(
+                checked_summary[_PROGRESS_DIAGNOSTICS_KEY],
+                counts=checked_counts,
+            )
+        )
     _write(output_dir / RUN_PROGRESS_FILENAME, {
         "schema_version": SCHEMA_VERSION,
         "dataset_name": DATASET_NAME,
@@ -275,7 +405,7 @@ def _write_progress_checkpoint(
         "exact_commit_sha": exact_commit_sha,
         "requested_target_size": target_size,
         "counts": checked_counts,
-        "source_summary": dict(source_summary),
+        "source_summary": checked_summary,
         "wager_placed": False,
     })
 
@@ -320,13 +450,21 @@ def _read_progress_checkpoint(
         if set(value["counts"]) != set(_PROGRESS_COUNT_FIELDS):
             return None
         checked_counts = _progress_counts(**value["counts"])
+        checked_summary = dict(value["source_summary"])
+        if _PROGRESS_DIAGNOSTICS_KEY in checked_summary:
+            checked_summary[_PROGRESS_DIAGNOSTICS_KEY] = (
+                _validated_runtime_progress_diagnostics(
+                    checked_summary[_PROGRESS_DIAGNOSTICS_KEY],
+                    counts=checked_counts,
+                )
+            )
     except (CurrentShadowAllMarketRunnerError, TypeError):
         return None
     return MappingProxyType({
         "stage": value["stage"],
         "progress_status": value["progress_status"],
         "counts": checked_counts,
-        "source_summary": MappingProxyType(dict(value["source_summary"])),
+        "source_summary": MappingProxyType(checked_summary),
     })
 
 
@@ -405,7 +543,24 @@ class CurrentShadowAllMarketRunReceipt:
     def to_dict(self) -> dict[str, Any]:
         portfolio_value = None if self.portfolio is None else dict(self.portfolio)
         share_value = None if self.share_code_receipt is None else dict(self.share_code_receipt)
-        if portfolio_value is None:
+        progress_diagnostics = self.source_summary.get(_PROGRESS_DIAGNOSTICS_KEY)
+        if portfolio_value is None and progress_diagnostics is not None:
+            checked = _validated_runtime_progress_diagnostics(
+                progress_diagnostics,
+                counts=_progress_counts(
+                    reviewed_fixture_count=self.reviewed_fixture_count,
+                    reconciled_fixture_count=self.reconciled_fixture_count,
+                    provider_event_count=self.provider_event_count,
+                    priced_fixture_count=self.priced_fixture_count,
+                    router_selected_count=self.router_selected_count,
+                    router_no_bet_count=self.router_no_bet_count,
+                ),
+            )
+            market_diagnostics = checked["market_diagnostics"]
+            family_diagnostics = checked["market_family_diagnostics"]
+            opportunity_funnel = checked["opportunity_funnel"]
+            portfolio_fixture_funnel = checked["fixture_funnel"]
+        elif portfolio_value is None:
             empty_markets, empty_families, _empty_fixtures, empty_opportunities = (
                 portfolio_module._diagnostics((), (), ())
             )
@@ -723,6 +878,7 @@ def _acquire_router_inputs(
     selected = 0
     no_bet = 0
     priced = 0
+    price_progress_summary: Mapping[str, Any] = history_progress_summary
     if matched_source_rows:
         emit(STAGE_PRICE_ALL_ROUTER)
         progress(
@@ -762,11 +918,15 @@ def _acquire_router_inputs(
                 router_selected_count=selected,
                 router_no_bet_count=no_bet,
             )
+            price_progress_summary = dict(history_progress_summary)
+            price_progress_summary[_PROGRESS_DIAGNOSTICS_KEY] = (
+                _runtime_progress_diagnostics(inputs)
+            )
             progress(
                 STAGE_PRICE_ALL_ROUTER,
                 "IN_PROGRESS",
                 known_counts,
-                history_progress_summary,
+                price_progress_summary,
             )
 
     if matched_source_rows:
@@ -774,9 +934,9 @@ def _acquire_router_inputs(
             STAGE_PRICE_ALL_ROUTER,
             "COMPLETED",
             known_counts,
-            history_progress_summary,
+            price_progress_summary,
         )
-    summary = MappingProxyType(history_progress_summary)
+    summary = MappingProxyType(dict(price_progress_summary))
     return CurrentShadowRunnerSourceBundle(
         router_inputs=tuple(inputs),
         reviewed_fixture_count=reviewed_fixture_count,
