@@ -1,0 +1,54 @@
+name: ATHENA Current Shadow history transport cache prime
+
+on:
+  workflow_dispatch:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: current-shadow-history-cache-prime
+  cancel-in-progress: false
+
+jobs:
+  prime:
+    if: github.event_name == 'workflow_dispatch' || (github.event.issue.number == 276 && github.event.comment.user.login == github.repository_owner && github.event.comment.body == '/athena-shadow-history-cache-prime')
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - name: Checkout exact requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Prime immutable durable-history GitHub transport cache
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR: .cache/athena-research/current-shadow-history-github-binary-cache-v1
+        run: |
+          python -m scripts.prime_current_shadow_history_github_cache \
+            --output-dir artifacts/current-shadow-history-cache-prime
+
+      - name: Upload transport-only cache
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: current-shadow-history-cache-prime
+          path: artifacts/current-shadow-history-cache-prime
+          if-no-files-found: error
+          retention-days: 30
