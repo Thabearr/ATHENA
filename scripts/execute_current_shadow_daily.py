@@ -132,13 +132,17 @@ def _execute_worker(args: argparse.Namespace) -> int:
             print(json.dumps(result.to_dict(), ensure_ascii=False, sort_keys=True))
             return 0
     finally:
-        if verification_hooks is not None:
-            verification_reuse.restore(runner.latest_history, verification_hooks)
-        runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
-        if prior_all_market_worker is None:
-            os.environ.pop(all_market_cli.WORKER_ENV, None)
-        else:
-            os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
+        try:
+            if verification_hooks is not None:
+                verification_reuse.restore(runner.latest_history, verification_hooks)
+        finally:
+            # Restoration of the request-scope and exact worker marker must not
+            # depend on diagnostic I/O or verifier cleanup succeeding.
+            runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
+            if prior_all_market_worker is None:
+                os.environ.pop(all_market_cli.WORKER_ENV, None)
+            else:
+                os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
 
 
 def main(argv: list[str] | None = None) -> int:
