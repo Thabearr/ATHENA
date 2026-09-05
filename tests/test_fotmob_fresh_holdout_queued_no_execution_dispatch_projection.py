@@ -5,6 +5,8 @@ import pytest
 import scripts.audit_fotmob_fresh_holdout_actions_lineage as audit
 import scripts.audit_fotmob_fresh_holdout_actions_lineage_schedule_recovery_projection as projection
 
+# This regression contract must execute; skipping it would mask the continuity blocker.
+
 
 def _bot() -> dict[str, object]:
     return {"login": "github-actions[bot]", "id": 41898282, "type": "Bot"}
