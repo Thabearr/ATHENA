@@ -170,6 +170,27 @@ def _projected_legacy_queued_no_execution_record(
     }
 
 
+def _projected_queued_no_execution_dispatch_record(
+    run: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "run_id": run.get("id"),
+        "created_at": run.get("created_at"),
+        "head_sha": run.get("head_sha"),
+        "conclusion": None,
+        "evidence_state": "VERIFIED_QUEUED_NO_EXECUTION_TRANSPORT",
+        "execution_provenance": (
+            "PROSPECTIVE_CONTINUITY_DISPATCH_PENDING_NO_EXECUTION"
+        ),
+        "nominal_slot_utc": None,
+        "tick_committed": False,
+        "archive_name": None,
+        "archive_sha256": None,
+        "release_state": "NOT_APPLICABLE_NO_ACQUISITION",
+        "verification_error": None,
+    }
+
+
 _HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID = 33820556400
 _HISTORICAL_SAME_SLOT_NATURAL_RUN_ID = 33823663641
 _HISTORICAL_SAME_SLOT_UTC = "2026-09-04T00:07:00.000000Z"
@@ -227,7 +248,7 @@ def _is_lower_sha256(value: Any) -> bool:
 class HistoricalSameSlotProviderDuplicateProof:
     """Complete, current-only proof for the one observed double acquisition.
 
-    This object is deliberately not a generic duplicate policy.  Construction is
+    This object is deliberately not a generic duplicate policy. Construction is
     private-by-convention: callers receive it only after the paginated run
     universe, exact run metadata, continuity provenance, Actions transports,
     receipt fields, durable archive bytes, and cumulative journal proof all pass.
@@ -359,9 +380,6 @@ class _CachedWorkflowRunUniverse:
             raise audit.FreshHoldoutActionsLineageAuditError(
                 "cached workflow run reader changed reviewed page size"
             )
-        # Hand a detached snapshot to each consumer.  A validator or test may
-        # inspect/mutate its return value, but that must never mutate the exact
-        # cached evidence subsequently replayed by another consumer.
         return copy.deepcopy(self.pages[page - 1])
 
 
@@ -388,9 +406,6 @@ def _prefetch_workflow_run_universe(
             raise audit.FreshHoldoutActionsLineageAuditError(
                 "workflow run page workflow_runs is malformed"
             )
-        # Retain a detached exact mapping and ordering.  The cached reader is
-        # the sole page source subsequently supplied to the frozen audit; a
-        # caller cannot mutate the live response after this evidence boundary.
         try:
             snapshot = copy.deepcopy(payload)
         except Exception as exc:
@@ -414,9 +429,6 @@ def _prefetch_workflow_run_universe(
                     "workflow run appears more than once in paginated universe"
                 )
             seen_ids.add(run_id)
-            # Keep the flattened universe detached from the page snapshots as
-            # well.  The proof must consume one immutable evidence snapshot,
-            # not a dict that a later page-reader consumer could mutate.
             runs.append(copy.deepcopy(value))
         if not values:
             break
@@ -451,7 +463,7 @@ def _prove_exact_historical_same_slot_provider_duplicate(
 ) -> HistoricalSameSlotProviderDuplicateProof | None:
     """Prove the one reviewed historical double-acquisition before raw audit.
 
-    The proof intentionally performs no candidate-predicate work.  It consumes
+    The proof intentionally performs no candidate-predicate work. It consumes
     the complete cached paginated run universe, cross-checks both exact runs,
     replays the existing continuity authentication, verifies both Actions ZIPs
     and their receipts, and compares the durable state archives byte-for-byte.
@@ -467,9 +479,6 @@ def _prove_exact_historical_same_slot_provider_duplicate(
         raise audit.FreshHoldoutActionsLineageAuditError(
             "historical pair universe contains a non-object run"
         )
-    # Reconstruct the flattened page identity from the cached pages.  This
-    # prevents a caller from presenting an independently fabricated ``runs``
-    # tuple while omitting or changing a page in the evidence snapshot.
     flattened_page_runs: list[Mapping[str, Any]] = []
     for page in run_universe.pages:
         if type(page) is not dict or type(page.get("workflow_runs")) is not list:
@@ -507,8 +516,6 @@ def _prove_exact_historical_same_slot_provider_duplicate(
     continuity_run = by_id.get(_HISTORICAL_SAME_SLOT_CONTINUITY_RUN_ID)
     natural_run = by_id.get(_HISTORICAL_SAME_SLOT_NATURAL_RUN_ID)
     if continuity_run is None or natural_run is None:
-        # The exact historical pair is not in this snapshot.  This is a normal
-        # path for synthetic/current universes and must not authorize a pair.
         return None
 
     direct_cache: dict[int, Mapping[str, Any]] = {}
@@ -594,8 +601,6 @@ def _prove_exact_historical_same_slot_provider_duplicate(
             "historical continuity watchdog metadata drifted"
         )
 
-    # The existing reviewed watchdog/continuity validator is the only accepted
-    # authentication scheme for the dispatch execution.
     plan = _prove_continuity_candidate(
         continuity_run,
         get_run_by_id=_exact_run,
@@ -776,9 +781,6 @@ def _prove_exact_historical_same_slot_provider_duplicate(
         archive_size=_HISTORICAL_NATURAL_ARCHIVE_SIZE,
     )
 
-    # Validate both canonical state shapes before comparing them.  This uses
-    # the frozen validator captured at import time, never the current
-    # compatibility validator installed by current-history construction.
     if len(canonical_capture) != 663 or len(auxiliary_capture) != 666:
         raise audit.FreshHoldoutActionsLineageAuditError(
             "historical pair capture row counts changed"
@@ -900,9 +902,6 @@ def _prove_exact_historical_same_slot_provider_duplicate(
 
     _ORIGINAL_VALIDATE_CONTROL_LINEAGE(canonical_control)
 
-    # A third provider-attempting execution for this slot is not admissible.
-    # Prove absence from the same cached universe and exact artifact metadata,
-    # rather than relying on encounter order in the frozen audit.
     for candidate in values:
         candidate_id = candidate.get("id")
         if candidate_id in {
@@ -924,9 +923,7 @@ def _prove_exact_historical_same_slot_provider_duplicate(
         if (
             _HISTORICAL_SAME_SLOT_UTC in target_texts
             or _HISTORICAL_SAME_SLOT_SECONDS in target_texts
-            or (
-                "target=2026-09-04T00:07:00Z" in title_text
-            )
+            or "target=2026-09-04T00:07:00Z" in title_text
         ):
             raise audit.FreshHoldoutActionsLineageAuditError(
                 "third execution claims the historical nominal slot"
@@ -1037,6 +1034,77 @@ def _prove_exact_legacy_queued_no_execution_dispatch(
     return True
 
 
+def _prove_queued_no_execution_dispatch(
+    run: Mapping[str, Any],
+    *,
+    get_run_artifacts,
+    get_run_jobs,
+) -> bool:
+    """Prove a generic-title primary dispatch is still a zero-execution transport."""
+    generic_title = continuity.PRIMARY_WORKFLOW_NAME
+    if run.get("name") != generic_title or run.get("display_title") != generic_title:
+        return False
+
+    run_id = run.get("id")
+    head_sha = run.get("head_sha")
+    expected = {
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "path": continuity.PRIMARY_WORKFLOW_PATH,
+        "event": "workflow_dispatch",
+        "head_branch": "main",
+        "status": "queued",
+        "conclusion": None,
+        "run_attempt": 1,
+    }
+    for key, value in expected.items():
+        if run.get(key) != value:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"queued no-execution dispatch metadata drifted: {key}"
+            )
+    if type(run_id) is not int or run_id <= 0:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "queued no-execution dispatch run id is invalid"
+        )
+    if (
+        type(head_sha) is not str
+        or len(head_sha) != 40
+        or any(ch not in "0123456789abcdef" for ch in head_sha)
+    ):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "queued no-execution dispatch head SHA is invalid"
+        )
+    for key in ("actor", "triggering_actor"):
+        actor = run.get(key)
+        if (
+            not isinstance(actor, Mapping)
+            or actor.get("login") != "github-actions[bot]"
+            or actor.get("type") != "Bot"
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"queued no-execution dispatch {key} drifted"
+            )
+
+    artifacts = get_run_artifacts(run_id)
+    if (
+        not isinstance(artifacts, Mapping)
+        or artifacts.get("total_count") != 0
+        or artifacts.get("artifacts") != []
+    ):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "queued no-execution dispatch unexpectedly acquired artifact evidence"
+        )
+    jobs = get_run_jobs(run_id)
+    if (
+        not isinstance(jobs, Mapping)
+        or jobs.get("total_count") != 0
+        or jobs.get("jobs") != []
+    ):
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "queued no-execution dispatch unexpectedly acquired execution jobs"
+        )
+    return True
+
+
 def _prove_continuity_candidate(
     run: Mapping[str, Any],
     *,
@@ -1057,8 +1125,6 @@ def _prove_continuity_candidate(
     source_run_id = int(match.group(1))
     dispatch_sha = run.get("head_sha")
     try:
-        # A continuity observation remains historical evidence after main moves.
-        # Its exact execution SHA, not audit-time main, binds both executions.
         continuity.validate_watchdog_source_jobs(
             get_run_jobs(source_run_id),
             expected_run_id=source_run_id,
@@ -1086,22 +1152,12 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             "schedule-recovery projection requires keyword audit arguments"
         )
 
-    # get_run_by_id belongs to this compatibility projection only. Consume it
-    # before any delegation so the frozen raw audit signature stays untouched.
     get_run_by_id = kwargs.pop("get_run_by_id", None)
     get_run_artifacts = kwargs.get("get_run_artifacts")
     get_run_jobs = kwargs.get("get_run_jobs")
     if not callable(get_run_artifacts) or not callable(get_run_jobs):
         return _ORIGINAL_AUDIT_ACTIONS_LINEAGE(**kwargs)
     original_get_runs_page = kwargs.get("get_runs_page")
-    # The production/current audit path always supplies the reviewed paginated
-    # run reader.  A few legacy projection-only callers exercise the historical
-    # queued/no-execution compatibility with a stub audit and intentionally do
-    # not provide that reader (or an Actions ZIP transport).  Such a caller
-    # cannot possibly authorize the historical pair, so preserve the old
-    # projection API but leave the pair proof absent.  Whenever the reviewed
-    # page path is present, the ZIP transport is mandatory and the complete
-    # preflight below runs before the frozen audit.
     download_artifact_zip = kwargs.get("download_artifact_zip")
     if callable(original_get_runs_page) and not callable(download_artifact_zip):
         raise audit.FreshHoldoutActionsLineageAuditError(
@@ -1134,17 +1190,10 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             zip_cache[artifact_id] = download_artifact_zip(artifact_id)
         return zip_cache[artifact_id]
 
-    # Prefetch the exact bounded pagination universe before installing the
-    # candidate predicate.  The frozen audit evaluates that predicate before
-    # sorting; proving the one historical pair here makes its projection
-    # independent of GitHub page/run encounter order.
     cached_universe: _CachedWorkflowRunUniverse | None = None
     historical_pair_proof: HistoricalSameSlotProviderDuplicateProof | None = None
     if callable(original_get_runs_page):
         cached_universe = _prefetch_workflow_run_universe(original_get_runs_page)
-    # No page universe means no historical pair can be admitted.  The frozen
-    # delegate remains responsible for its own page-reader contract when this
-    # compatibility helper is used outside the normal production path.
     historical_ids = {
         value.get("id") for value in cached_universe.runs if type(value) is dict
     } if cached_universe is not None else set()
@@ -1172,11 +1221,10 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
     projected_legacy_queued: dict[int, Mapping[str, Any]] = {}
+    projected_queued_no_execution: dict[int, Mapping[str, Any]] = {}
     projected_continuities: dict[int, continuity.ContinuityPlan] = {}
 
     def projected_candidate(run: Mapping[str, Any]) -> bool:
-        # This decision is based solely on the complete preflight proof, never
-        # on whether the continuity run happened to be encountered first.
         if (
             historical_pair_proof is not None
             and run.get("id") == historical_pair_proof.auxiliary_run_id
@@ -1208,6 +1256,13 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
                 get_run_jobs=cached_jobs,
             ):
                 projected_legacy_queued[run_id] = run
+                return False
+            if _prove_queued_no_execution_dispatch(
+                run,
+                get_run_artifacts=cached_artifacts,
+                get_run_jobs=cached_jobs,
+            ):
+                projected_queued_no_execution[run_id] = run
                 return False
             projected_continuities[run_id] = _prove_continuity_candidate(
                 run,
@@ -1306,9 +1361,6 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
 
     result = dict(result)
     if historical_pair_proof is not None:
-        # Retain the auxiliary execution even when the raw candidate predicate
-        # happens not to visit it (for example an older GitHub response omits
-        # the workflow-name field used by the frozen schedule predicate).
         projected_historical_provider_duplicates[
             historical_pair_proof.auxiliary_run_id
         ] = historical_pair_proof
@@ -1399,6 +1451,18 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
             _projected_legacy_queued_no_execution_record(run)
             for run in ordered_legacy_queued
         ]
+    ordered_queued_no_execution = sorted(
+        projected_queued_no_execution.values(),
+        key=lambda run: (str(run.get("created_at")), int(run.get("id", 0))),
+    )
+    if ordered_queued_no_execution:
+        result["verified_queued_no_execution_dispatch_count"] = len(
+            ordered_queued_no_execution
+        )
+        result["projected_queued_no_execution_dispatch_runs"] = [
+            _projected_queued_no_execution_dispatch_record(run)
+            for run in ordered_queued_no_execution
+        ]
 
     existing_preacquisition = result.get(
         "verified_preacquisition_control_failure_count", 0
@@ -1417,9 +1481,6 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         ordered_preacquisition
         and result.get("audit_state") == "NO_COMPLETED_CAMPAIGN_EVIDENCE"
     ):
-        # Preserve the base engine's historical semantics: a proven failed control
-        # attempt before Genesis is verified metadata, but there is still no nominal
-        # source observation to promote into completed campaign evidence.
         result["audit_state"] = "PARTIAL_UNVERIFIED_GITHUB_LINEAGE"
     return result
 
