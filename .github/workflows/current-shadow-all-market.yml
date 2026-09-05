@@ -52,7 +52,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Restore latest verified durable-history prime artifact
+      - name: Restore latest trusted-main durable-history prime artifact
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -61,9 +61,13 @@ jobs:
           mapfile -t prime_runs < <(
             gh api \
               "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-history-cache-prime.yml/runs?status=success&per_page=10" \
-              --jq '.workflow_runs[].id'
+              --jq '.workflow_runs[] | select(.head_branch == "main") | [.id, .head_sha] | @tsv'
           )
-          for run_id in "${prime_runs[@]}"; do
+          for run_row in "${prime_runs[@]}"; do
+            IFS=$'\t' read -r run_id run_sha <<< "${run_row}"
+            if ! [[ "${run_id}" =~ ^[0-9]+$ ]] || ! [[ "${run_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              continue
+            fi
             rm -rf /tmp/athena-current-shadow-history-prime
             mkdir -p /tmp/athena-current-shadow-history-prime
             if gh run download "${run_id}" \
@@ -73,16 +77,17 @@ jobs:
             then
               if python -m scripts.restore_current_shadow_history_prime_artifact \
                 --artifact-dir /tmp/athena-current-shadow-history-prime \
-                --cache-dir "${cache_dir}"
+                --cache-dir "${cache_dir}" \
+                --expected-prime-commit-sha "${run_sha}"
               then
-                echo "Restored verified durable-history prime artifact from run ${run_id}."
+                echo "Restored verified durable-history prime artifact from trusted main run ${run_id} at ${run_sha}."
                 restored=true
                 break
               fi
             fi
           done
           if [ "${restored}" != true ]; then
-            echo "No valid durable-history prime artifact was restorable; using verified live transport fallback."
+            echo "No valid trusted-main durable-history prime artifact was restorable; using verified live transport fallback."
           fi
 
       - name: Resolve daily/on-demand request
