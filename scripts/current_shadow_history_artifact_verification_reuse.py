@@ -253,16 +253,21 @@ def install(
 def restore(latest_history: Any, hooks: ArtifactVerificationReuseHooks) -> None:
     if type(hooks) is not ArtifactVerificationReuseHooks:
         raise TypeError("hooks must be ArtifactVerificationReuseHooks")
-    _write_diagnostic(
-        hooks.diagnostic_path,
-        stats=hooks.stats,
-        last_operation="RESTORED",
-        force=True,
-    )
-    latest_history.mirror.verify_actions_artifact_zip_digest = (
-        hooks.original_digest_verifier
-    )
-    latest_history.mirror.verify_actions_artifact_bundle = hooks.original_bundle_verifier
+    try:
+        _write_diagnostic(
+            hooks.diagnostic_path,
+            stats=hooks.stats,
+            last_operation="RESTORED",
+            force=True,
+        )
+    finally:
+        # Diagnostic I/O can never be allowed to strand verifier monkeypatches.
+        latest_history.mirror.verify_actions_artifact_zip_digest = (
+            hooks.original_digest_verifier
+        )
+        latest_history.mirror.verify_actions_artifact_bundle = (
+            hooks.original_bundle_verifier
+        )
 
 
 __all__ = [
