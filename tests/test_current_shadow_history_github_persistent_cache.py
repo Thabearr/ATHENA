@@ -152,4 +152,6 @@ def test_current_shadow_and_prime_workflows_restore_and_save_only_transport_cach
         assert "actions/cache/save@v4" in workflow
         assert cache.DEFAULT_CACHE_DIR.as_posix() in workflow
         assert "athena-current-shadow-history-binary-v1-" in workflow
+        assert "permissions:\n  contents: read\n  actions: write\n" in workflow
+        assert "github.event.comment.user.login == github.repository_owner" in workflow
         assert "wager" not in workflow.lower()
