@@ -1,8 +1,10 @@
 """Restore a verified Current Shadow history transport cache from a prime artifact.
 
-The prime artifact is transport-only.  Restoring it never grants evidence, model,
-pricing, selection, execution, or wager authority.  Every cached entry is checked
-against its canonical endpoint metadata and SHA-256 before it is admitted.
+The prime artifact is transport-only. Restoring it never grants evidence, model,
+pricing, selection, execution, or wager authority. Every cached entry is checked
+against its canonical endpoint metadata and SHA-256 before it is admitted. The
+receipt must also bind to the exact trusted-main workflow run that supplied the
+artifact; internal self-consistency alone is never sufficient trust.
 """
 from __future__ import annotations
 
@@ -69,7 +71,15 @@ def _hex(value: Any, length: int) -> bool:
     )
 
 
-def _read_receipt(artifact_dir: Path) -> dict[str, Any]:
+def _read_receipt(
+    artifact_dir: Path,
+    *,
+    expected_prime_commit_sha: str,
+) -> dict[str, Any]:
+    if not _hex(expected_prime_commit_sha, 40):
+        raise CurrentShadowPrimeArtifactRestoreError(
+            "expected prime workflow commit SHA is invalid"
+        )
     path = artifact_dir / PRIME_RECEIPT_FILENAME
     try:
         if path.is_symlink() or not path.is_file():
@@ -86,6 +96,10 @@ def _read_receipt(artifact_dir: Path) -> dict[str, Any]:
         raise CurrentShadowPrimeArtifactRestoreError("prime receipt identity drifted")
     if not _hex(value["exact_commit_sha"], 40):
         raise CurrentShadowPrimeArtifactRestoreError("prime receipt commit SHA is invalid")
+    if value["exact_commit_sha"] != expected_prime_commit_sha:
+        raise CurrentShadowPrimeArtifactRestoreError(
+            "prime receipt commit SHA differs from trusted workflow run"
+        )
     for field in ("captured_run_universe_count", "cached_immutable_binary_entry_count"):
         if type(value[field]) is not int or value[field] <= 0:
             raise CurrentShadowPrimeArtifactRestoreError(f"prime receipt {field} is invalid")
@@ -170,11 +184,19 @@ def _validate_cache_tree(source: Path, receipt: Mapping[str, Any]) -> None:
         raise CurrentShadowPrimeArtifactRestoreError("prime cache inventory differs from receipt")
 
 
-def restore(*, artifact_dir: Path, cache_dir: Path) -> dict[str, Any]:
+def restore(
+    *,
+    artifact_dir: Path,
+    cache_dir: Path,
+    expected_prime_commit_sha: str,
+) -> dict[str, Any]:
     artifact_dir = artifact_dir.resolve()
     cache_dir = cache_dir.resolve()
     source = artifact_dir / "history-cache"
-    receipt = _read_receipt(artifact_dir)
+    receipt = _read_receipt(
+        artifact_dir,
+        expected_prime_commit_sha=expected_prime_commit_sha,
+    )
     _validate_cache_tree(source, receipt)
 
     cache_dir.parent.mkdir(parents=True, exist_ok=True)
@@ -215,12 +237,17 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--artifact-dir", required=True, type=Path)
     parser.add_argument("--cache-dir", required=True, type=Path)
+    parser.add_argument("--expected-prime-commit-sha", required=True)
     return parser.parse_args()
 
 
 def main() -> int:
     args = _parse_args()
-    result = restore(artifact_dir=args.artifact_dir, cache_dir=args.cache_dir)
+    result = restore(
+        artifact_dir=args.artifact_dir,
+        cache_dir=args.cache_dir,
+        expected_prime_commit_sha=args.expected_prime_commit_sha,
+    )
     print(json.dumps(result, sort_keys=True))
     return 0
 
