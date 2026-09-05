@@ -2,6 +2,7 @@
 """PR-F hosted wrapper for exact builder-issued history summary SHA reuse."""
 from __future__ import annotations
 
+import datetime as dt
 import hashlib
 import json
 import os
@@ -56,20 +57,33 @@ def _install_captured_history_lineage_reuse():
 
         source_manifest = kwargs["source_manifest"]
         observed_at = getattr(source_manifest, "observed_at", None)
+        if (
+            type(observed_at) is not dt.datetime
+            or observed_at.tzinfo is None
+            or observed_at.utcoffset() is None
+        ):
+            raise latest.CurrentLatestDurableFreshHistoryError(
+                "current source manifest lost observed_at authority"
+            )
         chosen, _artifact, zip_bytes, metadata_digest = latest._select_latest_material(
             evidence=evidence,
             source_observed_at=observed_at,
         )
-        selected_prefix = latest.prefix.build_current_fotmob_durable_fresh_history_prefix_handoff(
-            current_bootstrap=kwargs["current_bootstrap"],
-            source_raw_json=kwargs["source_raw_json"],
-            source_manifest=source_manifest,
-            legacy_bootstrap_projection_raw=kwargs["legacy_bootstrap_projection_raw"],
-            workflow_run_id=chosen.run_id,
-            artifact_name=chosen.artifact_name,
-            artifact_zip_bytes=zip_bytes,
-            artifact_zip_metadata_digest=metadata_digest,
-        )
+        try:
+            selected_prefix = latest.prefix.build_current_fotmob_durable_fresh_history_prefix_handoff(
+                current_bootstrap=kwargs["current_bootstrap"],
+                source_raw_json=kwargs["source_raw_json"],
+                source_manifest=source_manifest,
+                legacy_bootstrap_projection_raw=kwargs["legacy_bootstrap_projection_raw"],
+                workflow_run_id=chosen.run_id,
+                artifact_name=chosen.artifact_name,
+                artifact_zip_bytes=zip_bytes,
+                artifact_zip_metadata_digest=metadata_digest,
+            )
+        except Exception as exc:
+            raise latest.CurrentLatestDurableFreshHistoryError(
+                "latest applicable success failed exact cumulative prefix replay"
+            ) from exc
         source = latest.CurrentLatestDurableFreshHistorySourceBundle(
             github_evidence=evidence,
             selected_prefix=selected_prefix,
