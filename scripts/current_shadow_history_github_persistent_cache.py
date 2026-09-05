@@ -14,6 +14,8 @@ authority.
 """
 from __future__ import annotations
 
+import copy
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import dataclasses
 import hashlib
 import json
@@ -31,9 +33,17 @@ CACHE_ENV = "ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR"
 DEFAULT_CACHE_DIR = Path(
     ".cache/athena-research/current-shadow-history-github-binary-cache-v1"
 )
+CURRENT_SHADOW_WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
+CONTROL_ROW_PREFETCH_WORKERS = 8
 _IMMUTABLE_BINARY_ENDPOINT = re.compile(
     r"^/repos/Thabearr/ATHENA/(?:actions/artifacts/[1-9][0-9]*/zip|releases/assets/[1-9][0-9]*)$"
 )
+
+
+@dataclasses.dataclass(frozen=True)
+class _ControlRowReuseHooks:
+    original_extract_control_rows: Any
+    original_prefetch_universe: Any
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,6 +52,7 @@ class PersistentHistoryGitHubCacheHooks:
     cached_disk_download: Any
     prefetch_hooks: prefetch.HistoryGitHubPrefetchHooks
     stats: "PersistentHistoryGitHubCacheStats"
+    control_row_reuse_hooks: _ControlRowReuseHooks | None = None
 
 
 @dataclasses.dataclass
@@ -175,6 +186,162 @@ def _persist(root: Path, endpoint: str, payload: bytes) -> None:
         metadata_tmp.unlink(missing_ok=True)
 
 
+def _install_control_row_reuse(latest_history: Any) -> _ControlRowReuseHooks:
+    """Parallelize exact cumulative control-row extraction inside one worker.
+
+    The reviewed PR151 audit still performs every authoritative GitHub read,
+    artifact/release verification, control-lineage validation and append-only
+    comparison.  This layer only pre-executes the audit engine's exact durable
+    archive extraction for immutable archive SHA-256 identities after the
+    existing transport prefetch has captured the workflow-run universe.  The
+    later authoritative audit may reuse a result only for the same archive
+    digest and the same ``require_control`` policy.  A speculative failure,
+    malformed run or conflicting cache identity is discarded and therefore
+    falls back to the untouched extraction path.
+    """
+
+    lineage = latest_history.lineage_audit
+    projection = latest_history.recovery_projection
+    downloads = latest_history.pr175_projection
+    mirror = latest_history.mirror
+    original_extract = lineage._extract_control_rows
+    original_prefetch_universe = projection._prefetch_workflow_run_universe
+    rows_by_identity: dict[tuple[str, bool], tuple[dict[str, Any], ...]] = {}
+    poisoned: set[tuple[str, bool]] = set()
+    lock = threading.Lock()
+
+    def prewarm_one(run: Any):
+        if not prefetch._exact_primary_run(run, projection=projection):
+            return None
+        run_id = run.get("id")
+        if type(run_id) is not int or run_id < 1:
+            return None
+        repository = latest_history.REPOSITORY
+        artifacts = lineage._gh_json(
+            f"/repos/{repository}/actions/runs/{run_id}/artifacts"
+        )
+        if not isinstance(artifacts, dict):
+            return None
+        if lineage._is_exact_zero_artifact_payload(artifacts):
+            return None
+        artifact = lineage._candidate_artifact(artifacts, run_id)
+        artifact_id = artifact.get("id")
+        if type(artifact_id) is not int or artifact_id < 1:
+            return None
+        zip_bytes = downloads._gh_download_compatible(
+            f"/repos/{repository}/actions/artifacts/{artifact_id}/zip"
+        )
+        mirror.verify_actions_artifact_zip_digest(
+            zip_bytes,
+            artifact.get("digest"),
+        )
+        verified = mirror.verify_actions_artifact_bundle(
+            run_id=run_id,
+            artifact_name=artifact["name"],
+            zip_bytes=zip_bytes,
+        )
+        match = lineage.ARTIFACT_RE.fullmatch(artifact["name"])
+        if match is None:
+            return None
+        require_control = match.group(1) == "success"
+        archive_sha = verified.get("archive_sha256")
+        if type(archive_sha) is not str or len(archive_sha) != 64:
+            return None
+        rows = original_extract(
+            verified["archive_bytes"],
+            archive_sha,
+            require_control=require_control,
+        )
+        return (archive_sha, require_control), rows
+
+    def prefetch_with_control_rows(get_runs_page):
+        universe = original_prefetch_universe(get_runs_page)
+        runs = getattr(universe, "runs", ())
+        if type(runs) is not tuple:
+            return universe
+        candidates = [
+            run
+            for run in runs
+            if prefetch._exact_primary_run(run, projection=projection)
+        ]
+        with ThreadPoolExecutor(
+            max_workers=CONTROL_ROW_PREFETCH_WORKERS,
+            thread_name_prefix="athena-history-control",
+        ) as executor:
+            futures = [executor.submit(prewarm_one, run) for run in candidates]
+            for future in as_completed(futures):
+                try:
+                    result = future.result()
+                except Exception:
+                    # Speculative work is never evidence and may not convert a
+                    # real audit failure into success.  The authoritative call
+                    # below will execute the original path for this identity.
+                    continue
+                if result is None:
+                    continue
+                identity, rows = result
+                with lock:
+                    if identity in poisoned:
+                        continue
+                    existing = rows_by_identity.get(identity)
+                    if existing is None:
+                        rows_by_identity[identity] = rows
+                    elif existing != rows:
+                        rows_by_identity.pop(identity, None)
+                        poisoned.add(identity)
+        print(
+            "Current Shadow durable-history prewarmed "
+            f"{len(rows_by_identity)} exact control archives.",
+            flush=True,
+        )
+        return universe
+
+    def cached_extract_control_rows(
+        archive_bytes: bytes,
+        expected_sha256: str,
+        *,
+        require_control: bool,
+    ) -> tuple[dict[str, Any], ...]:
+        if (
+            type(archive_bytes) is bytes
+            and type(expected_sha256) is str
+            and type(require_control) is bool
+            and hashlib.sha256(archive_bytes).hexdigest() == expected_sha256
+        ):
+            identity = (expected_sha256, require_control)
+            with lock:
+                cached = rows_by_identity.get(identity)
+                is_poisoned = identity in poisoned
+            if cached is not None and not is_poisoned:
+                return copy.deepcopy(cached)
+        return original_extract(
+            archive_bytes,
+            expected_sha256,
+            require_control=require_control,
+        )
+
+    lineage._extract_control_rows = cached_extract_control_rows
+    projection._prefetch_workflow_run_universe = prefetch_with_control_rows
+    return _ControlRowReuseHooks(
+        original_extract_control_rows=original_extract,
+        original_prefetch_universe=original_prefetch_universe,
+    )
+
+
+def _restore_control_row_reuse(
+    latest_history: Any,
+    hooks: _ControlRowReuseHooks,
+) -> None:
+    if type(hooks) is not _ControlRowReuseHooks:
+        raise TypeError("hooks must be _ControlRowReuseHooks")
+    latest_history.lineage_audit._extract_control_rows = (
+        hooks.original_extract_control_rows
+    )
+    latest_history.recovery_projection._prefetch_workflow_run_universe = (
+        hooks.original_prefetch_universe
+    )
+
+
 def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
     """Install persistent immutable-binary caching below the existing prefetch."""
     root = _cache_root()
@@ -199,19 +366,35 @@ def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
     except Exception:
         latest_history.pr175_projection._gh_download_compatible = original_gh_download
         raise
+
+    control_row_reuse_hooks = None
+    if os.environ.get(CURRENT_SHADOW_WORKER_ENV) == "1":
+        try:
+            control_row_reuse_hooks = _install_control_row_reuse(latest_history)
+        except Exception:
+            prefetch.restore(latest_history, prefetch_hooks)
+            latest_history.pr175_projection._gh_download_compatible = original_gh_download
+            raise
+
     return PersistentHistoryGitHubCacheHooks(
         original_gh_download=original_gh_download,
         cached_disk_download=cached_disk_download,
         prefetch_hooks=prefetch_hooks,
         stats=stats,
+        control_row_reuse_hooks=control_row_reuse_hooks,
     )
 
 
 def restore(latest_history: Any, hooks: PersistentHistoryGitHubCacheHooks) -> None:
-    """Restore both cache layers without changing any authoritative evidence."""
+    """Restore all cache layers without changing any authoritative evidence."""
     if type(hooks) is not PersistentHistoryGitHubCacheHooks:
         raise TypeError("hooks must be PersistentHistoryGitHubCacheHooks")
     try:
+        if hooks.control_row_reuse_hooks is not None:
+            _restore_control_row_reuse(
+                latest_history,
+                hooks.control_row_reuse_hooks,
+            )
         prefetch.restore(latest_history, hooks.prefetch_hooks)
     finally:
         latest_history.pr175_projection._gh_download_compatible = (
