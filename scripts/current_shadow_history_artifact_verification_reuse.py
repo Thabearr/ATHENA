@@ -1,14 +1,14 @@
 """Worker-local exact verification reuse for immutable PR151 artifact bytes.
 
 The current-history audit deliberately replays the same captured Actions evidence
-several times while proving one source-bound Shadow request.  Each replay must
+several times while proving one source-bound Shadow request. Each replay must
 still consume and validate the exact recorded bytes, but repeatedly expanding and
 hashing the same immutable Actions artifact ZIP is computation rather than new
-evidence.  This module caches only successful exact verifier outputs inside one
+evidence. This module caches only successful exact verifier outputs inside one
 worker process.
 
-No GitHub read is skipped.  No failure is cached.  Any change to run id, artifact
-name, metadata digest, or ZIP bytes forces the original verifier.  The cache never
+No GitHub read is skipped. No failure is cached. Any change to run id, artifact
+name, metadata digest, or ZIP bytes forces the original verifier. The cache never
 grants evidence, model, pricing, selection, execution, or BET authority.
 """
 from __future__ import annotations
@@ -24,6 +24,7 @@ from typing import Any
 
 DIAGNOSTIC_SCHEMA_VERSION = 1
 DIAGNOSTIC_DATASET_NAME = "athena-current-shadow-history-artifact-verification-reuse-v1"
+_DIAGNOSTIC_LOCK = threading.Lock()
 
 
 @dataclasses.dataclass
@@ -34,7 +35,7 @@ class ArtifactVerificationReuseStats:
     bundle_reused: int = 0
     _lock: threading.Lock = dataclasses.field(default_factory=threading.Lock, repr=False)
 
-    def increment(self, field: str) -> dict[str, int]:
+    def increment(self, field: str) -> None:
         if field not in {
             "digest_verified",
             "digest_reused",
@@ -44,7 +45,6 @@ class ArtifactVerificationReuseStats:
             raise ValueError("unknown artifact-verification reuse counter")
         with self._lock:
             setattr(self, field, getattr(self, field) + 1)
-            return self._snapshot_unlocked()
 
     def _snapshot_unlocked(self) -> dict[str, int]:
         return {
@@ -93,9 +93,7 @@ def _cacheable_bundle(
         return False
     if type(archive_sha) is not str or hashlib.sha256(archive).hexdigest() != archive_sha:
         return False
-    if len(zip_sha256) != 64:
-        return False
-    return True
+    return len(zip_sha256) == 64
 
 
 def _write_diagnostic(
@@ -103,6 +101,7 @@ def _write_diagnostic(
     *,
     stats: ArtifactVerificationReuseStats,
     last_operation: str,
+    force: bool = False,
 ) -> None:
     if path is None:
         return
@@ -111,7 +110,7 @@ def _write_diagnostic(
     # cost, but ensure a long-running replay leaves durable progress before an
     # outer supervisor can terminate the worker.
     total = sum(snapshot.values())
-    if total not in {1, 2} and total % 25 != 0:
+    if not force and total not in {1, 2} and total % 25 != 0:
         return
     payload = {
         "schema_version": DIAGNOSTIC_SCHEMA_VERSION,
@@ -136,10 +135,11 @@ def _write_diagnostic(
         )
         + "\n"
     ).encode("utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_bytes(raw)
-    temporary.replace(path)
+    with _DIAGNOSTIC_LOCK:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(path.name + ".tmp")
+        temporary.write_bytes(raw)
+        temporary.replace(path)
 
 
 def install(
@@ -175,7 +175,7 @@ def install(
 
         value = original_digest(zip_bytes, metadata_digest)
         # Cache only the exact successful identity proved by the reviewed
-        # verifier.  A strange/mutated verifier result remains uncached.
+        # verifier. A strange/mutated verifier result remains uncached.
         if value == zip_sha and metadata_digest == f"sha256:{zip_sha}":
             with lock:
                 digest_by_identity[identity] = value
@@ -257,6 +257,7 @@ def restore(latest_history: Any, hooks: ArtifactVerificationReuseHooks) -> None:
         hooks.diagnostic_path,
         stats=hooks.stats,
         last_operation="RESTORED",
+        force=True,
     )
     latest_history.mirror.verify_actions_artifact_zip_digest = (
         hooks.original_digest_verifier
