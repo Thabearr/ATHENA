@@ -108,3 +108,11 @@ def test_watchdog_dispatch_requires_full_reviewed_jobs_provenance() -> None:
     assert 'record.get("conclusion") != "success"' in workflow
     assert "watchdog dispatch-record step escaped success/skipped boundary" in workflow
     assert 'fh.write("bridge_required=true\\n")' in workflow
+
+
+def test_bridge_wait_covers_observed_long_running_continuity_success() -> None:
+    workflow = _workflow_text()
+    assert "timeout-minutes: 35" in workflow
+    assert "for _attempt in range(751):" in workflow
+    assert "for _attempt in range(301):" not in workflow
+    assert "continuity collection run did not complete within reviewed wait" in workflow

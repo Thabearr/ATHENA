@@ -36,7 +36,7 @@ jobs:
         startsWith(github.event.comment.body, '/athena-mirror-fresh-holdout-continuity-receipt')
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
 
     steps:
       - name: Validate exact trigger and resolve source identity
@@ -291,7 +291,7 @@ jobs:
               raise SystemExit(f"unknown receipt bridge mode: {mode!r}")
 
           source = None
-          for _attempt in range(301):
+          for _attempt in range(751):
               source = gh_json(f"/repos/{repo}/actions/runs/{source_run_id}")
               if source.get("status") == "completed":
                   break
