@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -41,12 +42,14 @@ def test_today_scope_sets_one_day_only_and_restores_runner(monkeypatch):
     assert runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT == original
 
 
-def test_three_day_scope_preserves_existing_prf_horizon(monkeypatch):
+def test_three_day_scope_preserves_existing_prf_horizon_and_activates_all_market_worker(monkeypatch):
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     seen = {}
+    monkeypatch.delenv(daily.all_market_cli.WORKER_ENV, raising=False)
 
     def fake_worker(_args):
         seen["day_count"] = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
+        seen["all_market_worker"] = os.environ.get(daily.all_market_cli.WORKER_ENV)
         return 0
 
     monkeypatch.setattr(bound, "_execute_worker", fake_worker)
@@ -56,14 +59,18 @@ def test_three_day_scope_preserves_existing_prf_horizon(monkeypatch):
 
     assert daily._execute_worker(args) == 0
     assert seen["day_count"] == 3
+    assert seen["all_market_worker"] == "1"
     assert runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT == original
+    assert daily.all_market_cli.WORKER_ENV not in os.environ
 
 
-def test_scope_restores_runner_after_worker_failure(monkeypatch):
+def test_scope_and_all_market_worker_marker_restore_after_worker_failure(monkeypatch):
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
+    monkeypatch.setenv(daily.all_market_cli.WORKER_ENV, "preexisting")
 
     def boom(_args):
         assert runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT == 1
+        assert os.environ[daily.all_market_cli.WORKER_ENV] == "1"
         raise RuntimeError("failed")
 
     monkeypatch.setattr(bound, "_execute_worker", boom)
@@ -72,6 +79,7 @@ def test_scope_restores_runner_after_worker_failure(monkeypatch):
     with pytest.raises(RuntimeError, match="failed"):
         daily._execute_worker(args)
     assert runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT == original
+    assert os.environ[daily.all_market_cli.WORKER_ENV] == "preexisting"
 
 
 def test_source_adapter_failure_finalizes_durable_source_incomplete(monkeypatch, tmp_path):
