@@ -47,12 +47,18 @@ class _ControlRowReuseHooks:
 
 
 @dataclasses.dataclass(frozen=True)
+class _DurablePrefixReuseHooks:
+    original_derive: Any
+
+
+@dataclasses.dataclass(frozen=True)
 class PersistentHistoryGitHubCacheHooks:
     original_gh_download: Any
     cached_disk_download: Any
     prefetch_hooks: prefetch.HistoryGitHubPrefetchHooks
     stats: "PersistentHistoryGitHubCacheStats"
     control_row_reuse_hooks: _ControlRowReuseHooks | None = None
+    durable_prefix_reuse_hooks: _DurablePrefixReuseHooks | None = None
 
 
 @dataclasses.dataclass
@@ -186,6 +192,15 @@ def _persist(root: Path, endpoint: str, payload: bytes) -> None:
         metadata_tmp.unlink(missing_ok=True)
 
 
+def _run_fingerprint(run: Any) -> str | None:
+    if type(run) is not dict:
+        return None
+    try:
+        return hashlib.sha256(_canonical(run)).hexdigest()
+    except (TypeError, ValueError, OverflowError):
+        return None
+
+
 def _install_control_row_reuse(latest_history: Any) -> _ControlRowReuseHooks:
     """Parallelize exact cumulative control-row extraction inside one worker.
 
@@ -198,6 +213,13 @@ def _install_control_row_reuse(latest_history: Any) -> _ControlRowReuseHooks:
     digest and the same ``require_control`` policy.  A speculative failure,
     malformed run or conflicting cache identity is discarded and therefore
     falls back to the untouched extraction path.
+
+    A successfully prewarmed completed-run snapshot is also remembered by the
+    SHA-256 of its exact canonical GitHub run object.  Re-entering the same
+    reviewed lineage snapshot in this worker therefore does not resubmit all
+    already-proven archives merely because a later current-date prefix replays
+    the same immutable PR151 evidence.  Any run-metadata drift gets a different
+    fingerprint and is re-evaluated normally.
     """
 
     lineage = latest_history.lineage_audit
@@ -208,9 +230,10 @@ def _install_control_row_reuse(latest_history: Any) -> _ControlRowReuseHooks:
     original_prefetch_universe = projection._prefetch_workflow_run_universe
     rows_by_identity: dict[tuple[str, bool], tuple[dict[str, Any], ...]] = {}
     poisoned: set[tuple[str, bool]] = set()
+    successfully_prewarmed_runs: set[str] = set()
     lock = threading.Lock()
 
-    def prewarm_one(run: Any):
+    def prewarm_one(run: Any, fingerprint: str | None):
         if not prefetch._exact_primary_run(run, projection=projection):
             return None
         run_id = run.get("id")
@@ -252,46 +275,67 @@ def _install_control_row_reuse(latest_history: Any) -> _ControlRowReuseHooks:
             archive_sha,
             require_control=require_control,
         )
-        return (archive_sha, require_control), rows
+        return fingerprint, (archive_sha, require_control), rows
 
     def prefetch_with_control_rows(get_runs_page):
         universe = original_prefetch_universe(get_runs_page)
         runs = getattr(universe, "runs", ())
         if type(runs) is not tuple:
             return universe
-        candidates = [
-            run
-            for run in runs
-            if prefetch._exact_primary_run(run, projection=projection)
-        ]
-        with ThreadPoolExecutor(
-            max_workers=CONTROL_ROW_PREFETCH_WORKERS,
-            thread_name_prefix="athena-history-control",
-        ) as executor:
-            futures = [executor.submit(prewarm_one, run) for run in candidates]
-            for future in as_completed(futures):
-                try:
-                    result = future.result()
-                except Exception:
-                    # Speculative work is never evidence and may not convert a
-                    # real audit failure into success.  The authoritative call
-                    # below will execute the original path for this identity.
-                    continue
-                if result is None:
-                    continue
-                identity, rows = result
+
+        pending: list[tuple[Any, str | None]] = []
+        reused_run_count = 0
+        for run in runs:
+            if not prefetch._exact_primary_run(run, projection=projection):
+                continue
+            fingerprint = _run_fingerprint(run)
+            if fingerprint is not None:
                 with lock:
-                    if identity in poisoned:
+                    already = fingerprint in successfully_prewarmed_runs
+                if already:
+                    reused_run_count += 1
+                    continue
+            pending.append((run, fingerprint))
+
+        newly_cached = 0
+        if pending:
+            with ThreadPoolExecutor(
+                max_workers=CONTROL_ROW_PREFETCH_WORKERS,
+                thread_name_prefix="athena-history-control",
+            ) as executor:
+                futures = [
+                    executor.submit(prewarm_one, run, fingerprint)
+                    for run, fingerprint in pending
+                ]
+                for future in as_completed(futures):
+                    try:
+                        result = future.result()
+                    except Exception:
+                        # Speculative work is never evidence and may not convert a
+                        # real audit failure into success.  The authoritative call
+                        # below will execute the original path for this identity.
                         continue
-                    existing = rows_by_identity.get(identity)
-                    if existing is None:
-                        rows_by_identity[identity] = rows
-                    elif existing != rows:
-                        rows_by_identity.pop(identity, None)
-                        poisoned.add(identity)
+                    if result is None:
+                        continue
+                    fingerprint, identity, rows = result
+                    with lock:
+                        if identity in poisoned:
+                            continue
+                        existing = rows_by_identity.get(identity)
+                        if existing is None:
+                            rows_by_identity[identity] = rows
+                            newly_cached += 1
+                        elif existing != rows:
+                            rows_by_identity.pop(identity, None)
+                            poisoned.add(identity)
+                            continue
+                        if fingerprint is not None:
+                            successfully_prewarmed_runs.add(fingerprint)
         print(
             "Current Shadow durable-history prewarmed "
-            f"{len(rows_by_identity)} exact control archives.",
+            f"{newly_cached} new exact control archives; "
+            f"cached {len(rows_by_identity)}; "
+            f"reused {reused_run_count} exact completed-run identities.",
             flush=True,
         )
         return universe
@@ -342,6 +386,135 @@ def _restore_control_row_reuse(
     )
 
 
+def _install_durable_prefix_reuse(latest_history: Any) -> _DurablePrefixReuseHooks:
+    """Reuse only the invariant replay of one exact durable archive inside a worker.
+
+    A three-date Current Shadow request may bind each current FotMob capture to the
+    same latest-applicable PR151 success artifact.  The public prefix verifier
+    intentionally re-extracts and replays that cumulative archive for every
+    independent caller.  Inside this worker we keep that first successful exact
+    replay as a transport/computation cache only.
+
+    Reuse requires the same workflow-run id, artifact name, metadata digest and
+    exact artifact ZIP SHA-256.  Every later current source still passes the
+    reviewed source-bundle ancestry checks, the Actions ZIP digest and bundle
+    commitment are reverified, the receipt is rechecked against that source's
+    own observed_at, and PR244 rebuilds the current-source shadow handoff with
+    the cached reviewed settlement tuple.  Any mismatch or reuse-path exception
+    falls back to the untouched full derivation; the cache can never turn a
+    failing authoritative replay into success.
+    """
+
+    prefix = latest_history.prefix
+    original_derive = prefix._derive
+    invariant_by_artifact: dict[tuple[Any, ...], Any] = {}
+    lock = threading.Lock()
+
+    def artifact_identity(source: Any) -> tuple[Any, ...] | None:
+        if type(source) is not prefix.CurrentDurableFreshHistoryPrefixSourceBundle:
+            return None
+        payload = source.artifact_zip_bytes
+        if type(payload) is not bytes or not payload:
+            return None
+        return (
+            source.workflow_run_id,
+            source.artifact_name,
+            source.artifact_zip_metadata_digest,
+            hashlib.sha256(payload).hexdigest(),
+        )
+
+    def cache_success(identity: tuple[Any, ...], value: Any) -> None:
+        if type(value) is not prefix._DerivedPrefix:
+            return
+        with lock:
+            existing = invariant_by_artifact.get(identity)
+            if existing is None:
+                invariant_by_artifact[identity] = value
+            elif (
+                existing.artifact_zip_sha256 != value.artifact_zip_sha256
+                or existing.archive_sha256 != value.archive_sha256
+                or existing.receipt_sha256 != value.receipt_sha256
+                or existing.checkpoint_sha256 != value.checkpoint_sha256
+                or existing.settlement_journal_sha256 != value.settlement_journal_sha256
+                or existing.reviewed_fresh_settlements != value.reviewed_fresh_settlements
+            ):
+                invariant_by_artifact.pop(identity, None)
+
+    def derive(source: Any):
+        identity = artifact_identity(source)
+        if identity is None:
+            return original_derive(source)
+        with lock:
+            cached = invariant_by_artifact.get(identity)
+        if cached is None:
+            value = original_derive(source)
+            cache_success(identity, value)
+            return value
+
+        try:
+            zip_sha = prefix.mirror.verify_actions_artifact_zip_digest(
+                source.artifact_zip_bytes,
+                source.artifact_zip_metadata_digest,
+            )
+            verified = prefix.mirror.verify_actions_artifact_bundle(
+                run_id=source.workflow_run_id,
+                artifact_name=source.artifact_name,
+                zip_bytes=source.artifact_zip_bytes,
+            )
+            receipt, nominal, committed_at = prefix._exact_receipt(
+                verified["receipt_bytes"],
+                run_id=source.workflow_run_id,
+                artifact_name=source.artifact_name,
+                source_observed_at=source.source_observed_at,
+            )
+            if (
+                zip_sha != cached.artifact_zip_sha256
+                or verified.get("archive_sha256") != cached.archive_sha256
+                or verified.get("archive_size_bytes") != cached.archive_size_bytes
+                or prefix._sha(verified["receipt_bytes"]) != cached.receipt_sha256
+                or nominal != cached.nominal_scheduled_for_utc
+                or committed_at != cached.committed_at_utc
+                or receipt.get("workflow_run_id") != source.workflow_run_id
+                or receipt.get("durable_asset_name") != source.artifact_name
+            ):
+                return original_derive(source)
+            replay = prefix.shadow.build_current_fotmob_utc_native_shadow_prediction_handoff(
+                current_bootstrap=source.current_bootstrap,
+                source_raw_json=source.source_raw_json,
+                source_manifest=source.source_manifest,
+                legacy_bootstrap_projection_raw=source.legacy_bootstrap_projection_raw,
+                reviewed_fresh_settlements=cached.reviewed_fresh_settlements,
+            )
+            return prefix._DerivedPrefix(
+                artifact_zip_sha256=cached.artifact_zip_sha256,
+                archive_sha256=cached.archive_sha256,
+                archive_size_bytes=cached.archive_size_bytes,
+                receipt_sha256=cached.receipt_sha256,
+                nominal_scheduled_for_utc=cached.nominal_scheduled_for_utc,
+                committed_at_utc=cached.committed_at_utc,
+                checkpoint_sha256=cached.checkpoint_sha256,
+                settlement_journal_sha256=cached.settlement_journal_sha256,
+                settlement_journal_row_count=cached.settlement_journal_row_count,
+                reviewed_fresh_settlements=cached.reviewed_fresh_settlements,
+                reviewed_legacy_update_count=cached.reviewed_legacy_update_count,
+                shadow_handoff=replay,
+            )
+        except Exception:
+            return original_derive(source)
+
+    prefix._derive = derive
+    return _DurablePrefixReuseHooks(original_derive=original_derive)
+
+
+def _restore_durable_prefix_reuse(
+    latest_history: Any,
+    hooks: _DurablePrefixReuseHooks,
+) -> None:
+    if type(hooks) is not _DurablePrefixReuseHooks:
+        raise TypeError("hooks must be _DurablePrefixReuseHooks")
+    latest_history.prefix._derive = hooks.original_derive
+
+
 def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
     """Install persistent immutable-binary caching below the existing prefetch."""
     root = _cache_root()
@@ -368,10 +541,16 @@ def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
         raise
 
     control_row_reuse_hooks = None
+    durable_prefix_reuse_hooks = None
     if os.environ.get(CURRENT_SHADOW_WORKER_ENV) == "1":
         try:
             control_row_reuse_hooks = _install_control_row_reuse(latest_history)
+            durable_prefix_reuse_hooks = _install_durable_prefix_reuse(latest_history)
         except Exception:
+            if durable_prefix_reuse_hooks is not None:
+                _restore_durable_prefix_reuse(latest_history, durable_prefix_reuse_hooks)
+            if control_row_reuse_hooks is not None:
+                _restore_control_row_reuse(latest_history, control_row_reuse_hooks)
             prefetch.restore(latest_history, prefetch_hooks)
             latest_history.pr175_projection._gh_download_compatible = original_gh_download
             raise
@@ -382,6 +561,7 @@ def install(latest_history: Any) -> PersistentHistoryGitHubCacheHooks:
         prefetch_hooks=prefetch_hooks,
         stats=stats,
         control_row_reuse_hooks=control_row_reuse_hooks,
+        durable_prefix_reuse_hooks=durable_prefix_reuse_hooks,
     )
 
 
@@ -390,6 +570,11 @@ def restore(latest_history: Any, hooks: PersistentHistoryGitHubCacheHooks) -> No
     if type(hooks) is not PersistentHistoryGitHubCacheHooks:
         raise TypeError("hooks must be PersistentHistoryGitHubCacheHooks")
     try:
+        if hooks.durable_prefix_reuse_hooks is not None:
+            _restore_durable_prefix_reuse(
+                latest_history,
+                hooks.durable_prefix_reuse_hooks,
+            )
         if hooks.control_row_reuse_hooks is not None:
             _restore_control_row_reuse(
                 latest_history,
