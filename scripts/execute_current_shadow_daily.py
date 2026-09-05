@@ -25,6 +25,7 @@ from domain import current_shadow_all_market_runner as runner
 from domain.current_fotmob_fixture_candidate_adapter import (
     CurrentFotMobFixtureCandidateAdapterError,
 )
+from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
 
@@ -98,7 +99,14 @@ def _finalize_source_adapter_failure(
 def _execute_worker(args: argparse.Namespace) -> int:
     day_count = SCOPE_DAY_COUNT[args.fixture_scope]
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
+    prior_all_market_worker = os.environ.get(all_market_cli.WORKER_ENV)
     runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = day_count
+    # The daily wrapper calls the nested PR-F worker stack in-process rather than
+    # entering execute_current_shadow_all_market.main().  Carry forward the exact
+    # all-market worker marker that main() would have set so worker-only durable-
+    # history acceleration (including exact control-row replay reuse) is actually
+    # installed on the hosted daily/on-demand path.
+    os.environ[all_market_cli.WORKER_ENV] = "1"
     try:
         try:
             return bound._execute_worker(args)
@@ -108,6 +116,10 @@ def _execute_worker(args: argparse.Namespace) -> int:
             return 0
     finally:
         runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
+        if prior_all_market_worker is None:
+            os.environ.pop(all_market_cli.WORKER_ENV, None)
+        else:
+            os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
 
 
 def main(argv: list[str] | None = None) -> int:
