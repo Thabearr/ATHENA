@@ -142,16 +142,23 @@ def test_persisted_prefix_never_redownloads_when_only_one_immutable_tail_appears
     assert second_calls == [tail]
 
 
-def test_current_shadow_and_prime_workflows_restore_and_save_only_transport_cache() -> None:
+def test_current_shadow_and_prime_workflows_use_verified_prime_artifacts_only() -> None:
     for workflow_name in (
         ".github/workflows/current-shadow-all-market.yml",
         ".github/workflows/current-shadow-history-cache-prime.yml",
     ):
         workflow = Path(workflow_name).read_text(encoding="utf-8")
-        assert "actions/cache/restore@v4" in workflow
-        assert "actions/cache/save@v4" in workflow
+        assert "actions/cache/restore@v4" not in workflow
+        assert "actions/cache/save@v4" not in workflow
+        assert "actions: read" in workflow
+        assert "actions: write" not in workflow
         assert cache.DEFAULT_CACHE_DIR.as_posix() in workflow
-        assert "athena-current-shadow-history-binary-v1-" in workflow
-        assert "permissions:\n  contents: read\n  actions: write\n" in workflow
+        assert "current-shadow-history-cache-prime.yml/runs?status=success" in workflow
+        assert 'select(.head_branch == "main")' in workflow
+        assert "[.id, .head_sha] | @tsv" in workflow
+        assert "gh run download" in workflow
+        assert "--name current-shadow-history-cache-prime" in workflow
+        assert "scripts.restore_current_shadow_history_prime_artifact" in workflow
+        assert "--expected-prime-commit-sha" in workflow
         assert "github.event.comment.user.login == github.repository_owner" in workflow
         assert "wager" not in workflow.lower()
