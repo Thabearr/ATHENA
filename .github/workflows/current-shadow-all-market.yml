@@ -23,7 +23,7 @@ on:
 
 permissions:
   contents: read
-  actions: write
+  actions: read
 
 concurrency:
   group: current-shadow-all-market
@@ -52,14 +52,38 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Restore immutable durable-history transport cache
-        id: current-shadow-history-cache
-        uses: actions/cache/restore@v4
-        with:
-          path: .cache/athena-research/current-shadow-history-github-binary-cache-v1
-          key: athena-current-shadow-history-binary-v1-${{ runner.os }}-${{ github.run_id }}
-          restore-keys: |
-            athena-current-shadow-history-binary-v1-${{ runner.os }}-
+      - name: Restore latest verified durable-history prime artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cache_dir='.cache/athena-research/current-shadow-history-github-binary-cache-v1'
+          restored=false
+          mapfile -t prime_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-history-cache-prime.yml/runs?status=success&per_page=10" \
+              --jq '.workflow_runs[].id'
+          )
+          for run_id in "${prime_runs[@]}"; do
+            rm -rf /tmp/athena-current-shadow-history-prime
+            mkdir -p /tmp/athena-current-shadow-history-prime
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-history-cache-prime \
+              --dir /tmp/athena-current-shadow-history-prime >/dev/null 2>&1
+            then
+              if python -m scripts.restore_current_shadow_history_prime_artifact \
+                --artifact-dir /tmp/athena-current-shadow-history-prime \
+                --cache-dir "${cache_dir}"
+              then
+                echo "Restored verified durable-history prime artifact from run ${run_id}."
+                restored=true
+                break
+              fi
+            fi
+          done
+          if [ "${restored}" != true ]; then
+            echo "No valid durable-history prime artifact was restorable; using verified live transport fallback."
+          fi
 
       - name: Resolve daily/on-demand request
         env:
@@ -213,13 +237,6 @@ jobs:
             mkdir -p "${identity_root}"
             cp "${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH}" "${identity_root}/"
           fi
-
-      - name: Save immutable durable-history transport cache
-        if: always() && steps.current-shadow-history-cache.outputs.cache-hit != 'true' && hashFiles('.cache/athena-research/current-shadow-history-github-binary-cache-v1/*.payload') != ''
-        uses: actions/cache/save@v4
-        with:
-          path: .cache/athena-research/current-shadow-history-github-binary-cache-v1
-          key: athena-current-shadow-history-binary-v1-${{ runner.os }}-${{ github.run_id }}
 
       - name: Email durable Shadow result when configured
         if: always()
