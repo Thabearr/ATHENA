@@ -6,7 +6,10 @@ import hashlib
 import re
 from types import SimpleNamespace
 
+import pytest
+
 from scripts import current_shadow_history_github_persistent_cache as cache
+from scripts import execute_current_shadow_all_market_summary_reuse as summary_cli
 
 
 RUN_ID = 99
@@ -188,7 +191,7 @@ class _PrefixSource:
         return dt.datetime(2026, 9, 5, 18, 0, tzinfo=dt.timezone.utc)
 
 
-def _fake_prefix_latest(*, fail_receipt_for: set[str] | None = None):
+def _fake_prefix_latest():
     full_calls: list[str] = []
     shadow_calls: list[str] = []
     verify_bundle_calls = 0
@@ -196,7 +199,6 @@ def _fake_prefix_latest(*, fail_receipt_for: set[str] | None = None):
     committed = dt.datetime(2026, 9, 5, 17, 8, tzinfo=dt.timezone.utc)
     receipt_bytes = b"receipt"
     archive_sha = hashlib.sha256(ARCHIVE_BYTES).hexdigest()
-    fail_receipt_for = fail_receipt_for or set()
 
     def original_derive(source):
         full_calls.append(source.marker)
@@ -226,9 +228,6 @@ def _fake_prefix_latest(*, fail_receipt_for: set[str] | None = None):
         }
 
     def exact_receipt(_raw, *, run_id, artifact_name, source_observed_at):
-        marker = getattr(source_observed_at, "marker", None)
-        if marker in fail_receipt_for:
-            raise ValueError("receipt/source observation mismatch")
         return (
             {"workflow_run_id": run_id, "durable_asset_name": artifact_name},
             nominal,
@@ -296,3 +295,141 @@ def test_changed_artifact_bytes_never_share_durable_prefix_replay() -> None:
     assert changed.shadow_handoff == "full-shadow:day-2"
     assert full_calls == ["day-1", "day-2"]
     assert shadow_calls == []
+
+
+def test_later_current_date_uses_first_exact_captured_lineage_without_full_reaudit(
+    monkeypatch,
+) -> None:
+    first_observed = dt.datetime(2026, 9, 5, 17, 30, tzinfo=dt.timezone.utc)
+    second_observed = dt.datetime(2026, 9, 6, 17, 30, tzinfo=dt.timezone.utc)
+    evidence = SimpleNamespace(expected_main_sha=HEAD_SHA)
+    first_history = SimpleNamespace(
+        source_bundle=SimpleNamespace(github_evidence=evidence)
+    )
+    live_calls = []
+    selection_calls = []
+    prefix_calls = []
+    chosen = SimpleNamespace(run_id=RUN_ID, artifact_name=ARTIFACT_NAME)
+    selected_prefix = object()
+
+    def live_builder(**kwargs):
+        live_calls.append(kwargs)
+        return first_history
+
+    def select_latest_material(*, evidence: object, source_observed_at: dt.datetime):
+        selection_calls.append((evidence, source_observed_at))
+        return chosen, {"name": ARTIFACT_NAME}, ZIP_BYTES, "sha256:" + hashlib.sha256(
+            ZIP_BYTES
+        ).hexdigest()
+
+    def build_prefix(**kwargs):
+        prefix_calls.append(kwargs)
+        return selected_prefix
+
+    class SourceBundle:
+        def __init__(self, *, github_evidence, selected_prefix):
+            self.github_evidence = github_evidence
+            self.selected_prefix = selected_prefix
+
+    class Handoff:
+        def __init__(self, **kwargs):
+            self.values = kwargs
+
+    fake_latest = SimpleNamespace(
+        build_current_fotmob_latest_durable_fresh_history_handoff=live_builder,
+        _select_latest_material=select_latest_material,
+        prefix=SimpleNamespace(
+            build_current_fotmob_durable_fresh_history_prefix_handoff=build_prefix
+        ),
+        CurrentLatestDurableFreshHistorySourceBundle=SourceBundle,
+        CurrentLatestDurableFreshHistoryHandoff=Handoff,
+        SCHEMA_VERSION=1,
+        DATASET_NAME="dataset",
+        STATUS="status",
+        NEXT_REQUIRED_BOUNDARY="next",
+        _evidence=lambda: {"exact": True},
+        _authority=lambda: {"bet": False},
+    )
+    monkeypatch.setattr(summary_cli.runner, "latest_history", fake_latest)
+
+    original = summary_cli._install_captured_history_lineage_reuse()
+    common = {
+        "current_bootstrap": object(),
+        "source_raw_json": b"raw",
+        "legacy_bootstrap_projection_raw": b"legacy",
+        "expected_main_sha": HEAD_SHA,
+        "repository_root": None,
+    }
+    try:
+        first = fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff(
+            **common,
+            source_manifest=SimpleNamespace(observed_at=first_observed),
+        )
+        second = fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff(
+            **common,
+            source_manifest=SimpleNamespace(observed_at=second_observed),
+        )
+    finally:
+        fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff = original
+
+    assert first is first_history
+    assert isinstance(second, Handoff)
+    assert len(live_calls) == 1
+    assert selection_calls == [(evidence, second_observed)]
+    assert len(prefix_calls) == 1
+    assert prefix_calls[0]["workflow_run_id"] == RUN_ID
+    assert prefix_calls[0]["artifact_name"] == ARTIFACT_NAME
+    assert prefix_calls[0]["artifact_zip_bytes"] == ZIP_BYTES
+    assert second.values["source_bundle"].github_evidence is evidence
+    assert second.values["source_bundle"].selected_prefix is selected_prefix
+    # The fake latest-history surface intentionally has no _build_with_readers;
+    # this proves the later current date did not start a second full audit.
+    assert not hasattr(fake_latest, "_build_with_readers")
+
+
+def test_captured_lineage_reuse_never_crosses_expected_main_identity(monkeypatch) -> None:
+    live_calls = []
+
+    def live_builder(**kwargs):
+        live_calls.append(kwargs["expected_main_sha"])
+        evidence = SimpleNamespace(expected_main_sha=kwargs["expected_main_sha"])
+        return SimpleNamespace(source_bundle=SimpleNamespace(github_evidence=evidence))
+
+    fake_latest = SimpleNamespace(
+        build_current_fotmob_latest_durable_fresh_history_handoff=live_builder,
+    )
+    monkeypatch.setattr(summary_cli.runner, "latest_history", fake_latest)
+    original = summary_cli._install_captured_history_lineage_reuse()
+    try:
+        fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff(
+            expected_main_sha="a" * 40
+        )
+        fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff(
+            expected_main_sha="b" * 40
+        )
+    finally:
+        fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff = original
+
+    assert live_calls == ["a" * 40, "b" * 40]
+
+
+def test_captured_lineage_main_identity_drift_fails_closed(monkeypatch) -> None:
+    def live_builder(**_kwargs):
+        evidence = SimpleNamespace(expected_main_sha="b" * 40)
+        return SimpleNamespace(source_bundle=SimpleNamespace(github_evidence=evidence))
+
+    fake_latest = SimpleNamespace(
+        build_current_fotmob_latest_durable_fresh_history_handoff=live_builder,
+    )
+    monkeypatch.setattr(summary_cli.runner, "latest_history", fake_latest)
+    original = summary_cli._install_captured_history_lineage_reuse()
+    try:
+        with pytest.raises(
+            summary_cli.runner.CurrentShadowAllMarketRunnerError,
+            match="captured PR151 lineage evidence main identity drifted",
+        ):
+            fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff(
+                expected_main_sha="a" * 40
+            )
+    finally:
+        fake_latest.build_current_fotmob_latest_durable_fresh_history_handoff = original
