@@ -10,6 +10,7 @@ contain a provider observation:
   producer-side proof; and
 * one exact historical queued workflow_dispatch that never acquired a job or
   artifact and predates the reviewed prospective-continuity run-name boundary;
+* generic-title bot dispatches only while queued with zero jobs and artifacts;
 * one exact, fully replayed historical continuity/natural double-acquisition
   retained as one canonical slot plus one current-only auxiliary execution.
 
@@ -985,6 +986,90 @@ def _prove_exact_historical_same_slot_provider_duplicate(
     )
 
 
+def _projected_queued_no_execution_dispatch_record(
+    run: Mapping[str, Any],
+) -> dict[str, Any]:
+    return {
+        "run_id": run.get("id"),
+        "created_at": run.get("created_at"),
+        "head_sha": run.get("head_sha"),
+        "conclusion": None,
+        "evidence_state": "VERIFIED_QUEUED_NO_EXECUTION_TRANSPORT",
+        "execution_provenance": "PROSPECTIVE_CONTINUITY_DISPATCH_PENDING_NO_EXECUTION",
+        "nominal_slot_utc": None,
+        "tick_committed": False,
+        "archive_name": None,
+        "archive_sha256": None,
+        "release_state": "NOT_APPLICABLE_NO_ACQUISITION",
+        "verification_error": None,
+    }
+
+
+def _prove_queued_no_execution_dispatch(
+    run: Mapping[str, Any],
+    *,
+    get_run_artifacts,
+    get_run_jobs,
+) -> bool:
+    """Prove a current transport state, never a permanent run-id exception."""
+    if (
+        run.get("name") != continuity.PRIMARY_WORKFLOW_NAME
+        or run.get("display_title") != continuity.PRIMARY_WORKFLOW_NAME
+    ):
+        return False
+    expected = {
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "path": continuity.PRIMARY_WORKFLOW_PATH,
+        "event": "workflow_dispatch",
+        "head_branch": "main",
+        "status": "queued",
+        "conclusion": None,
+        "run_attempt": 1,
+    }
+    for key, value in expected.items():
+        if key not in run or type(run[key]) is not type(value) or run[key] != value:
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"queued no-execution dispatch metadata drifted: {key}"
+            )
+    run_id = run.get("id")
+    head_sha = run.get("head_sha")
+    if type(run_id) is not int or run_id <= 0:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "queued no-execution dispatch run id is invalid"
+        )
+    if type(head_sha) is not str or re.fullmatch(r"[0-9a-f]{40}", head_sha) is None:
+        raise audit.FreshHoldoutActionsLineageAuditError(
+            "queued no-execution dispatch head SHA is invalid"
+        )
+    for key in ("actor", "triggering_actor"):
+        actor = run.get(key)
+        if (
+            not isinstance(actor, Mapping)
+            or actor.get("login") != "github-actions[bot]"
+            or actor.get("type") != "Bot"
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"queued no-execution dispatch actor drifted: {key}"
+            )
+    jobs = get_run_jobs(run_id)
+    artifacts = get_run_artifacts(run_id)
+    for payload, field, label in (
+        (jobs, "jobs", "execution jobs"),
+        (artifacts, "artifacts", "artifact evidence"),
+    ):
+        if (
+            not isinstance(payload, Mapping)
+            or type(payload.get("total_count")) is not int
+            or payload["total_count"] != 0
+            or type(payload.get(field)) is not list
+            or payload[field] != []
+        ):
+            raise audit.FreshHoldoutActionsLineageAuditError(
+                f"queued no-execution dispatch unexpectedly acquired {label}"
+            )
+    return True
+
+
 def _prove_exact_legacy_queued_no_execution_dispatch(
     run: Mapping[str, Any],
     *,
@@ -1172,6 +1257,7 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
     projected_continuity_noops: dict[int, Mapping[str, Any]] = {}
     projected_preacquisition: dict[int, Mapping[str, Any]] = {}
     projected_legacy_queued: dict[int, Mapping[str, Any]] = {}
+    projected_queued_no_execution: dict[int, Mapping[str, Any]] = {}
     projected_continuities: dict[int, continuity.ContinuityPlan] = {}
 
     def projected_candidate(run: Mapping[str, Any]) -> bool:
@@ -1188,6 +1274,17 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         if not _ORIGINAL_RUN_IS_COLLECTION_CANDIDATE(run):
             if run.get("event") != "workflow_dispatch":
                 return False
+            # Keep the frozen historical exception on its exact existing path.
+            # Prove generic transports before the routing filters or name parser.
+            # Read execution metadata afresh on every predicate evaluation.
+            if run.get("id") != LEGACY_QUEUED_NO_EXECUTION_RUN_ID:
+                if _prove_queued_no_execution_dispatch(
+                    run,
+                    get_run_artifacts=get_run_artifacts,
+                    get_run_jobs=get_run_jobs,
+                ):
+                    projected_queued_no_execution[run["id"]] = dict(run)
+                    return False
             if (
                 run.get("workflow_id") != continuity.PRIMARY_WORKFLOW_ID
                 or run.get("path") not in {
@@ -1386,6 +1483,18 @@ def _audit_actions_lineage_compatible(*args, **kwargs):
         result["projected_continuity_duplicate_no_acquisition_runs"] = [
             _projected_continuity_noop_record(run)
             for run in ordered_continuity_noops
+        ]
+    ordered_queued_no_execution = sorted(
+        projected_queued_no_execution.values(),
+        key=lambda run: (str(run.get("created_at")), run["id"]),
+    )
+    if ordered_queued_no_execution:
+        result["verified_queued_no_execution_dispatch_count"] = len(
+            ordered_queued_no_execution
+        )
+        result["projected_queued_no_execution_dispatch_runs"] = [
+            _projected_queued_no_execution_dispatch_record(run)
+            for run in ordered_queued_no_execution
         ]
     ordered_legacy_queued = sorted(
         projected_legacy_queued.values(),
