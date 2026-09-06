@@ -3,6 +3,8 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+import pytest
+
 from domain import current_shadow_all_market_share_code as share
 from domain._current_shadow_price_core import ShadowOpportunityEligibility, ShadowPriceDisposition
 from domain.markets import MarketId, OutcomeId
