@@ -27,6 +27,7 @@ from domain.current_fotmob_fixture_candidate_adapter import (
 )
 from scripts import current_shadow_history_artifact_verification_reuse as verification_reuse
 from scripts import current_shadow_history_builder_audit_reuse as builder_audit_reuse
+from scripts import current_shadow_history_semantic_replay_reuse as semantic_replay_reuse
 from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
@@ -44,6 +45,9 @@ HISTORY_VERIFICATION_DIAGNOSTIC_FILENAME = (
 )
 HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME = (
     "current-shadow-history-builder-audit-reuse-diagnostic.json"
+)
+HISTORY_SEMANTIC_REPLAY_DIAGNOSTIC_FILENAME = (
+    "current-shadow-history-semantic-replay-reuse-diagnostic.json"
 )
 
 
@@ -110,6 +114,7 @@ def _execute_worker(args: argparse.Namespace) -> int:
     prior_all_market_worker = os.environ.get(all_market_cli.WORKER_ENV)
     verification_hooks = None
     builder_audit_hooks = None
+    semantic_replay_hooks = None
     runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = day_count
     # The daily wrapper calls the nested PR-F worker stack in-process rather than
     # entering execute_current_shadow_all_market.main(). Carry forward the exact
@@ -144,6 +149,23 @@ def _execute_worker(args: argparse.Namespace) -> int:
                 args.output_dir / HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME
             ),
         )
+        # Run #189 proved that the artifact/digest verification and builder audit
+        # layers had both finished roughly four minutes into the 55-minute worker,
+        # while CURRENT_DURABLE_FRESH_HISTORY then consumed the rest of the budget.
+        # The remaining hot path is PR245/PR244 semantic reconstruction: immutable
+        # dataclass copies/canonical hashes repeatedly invoke the same expensive
+        # frozen history ledger and current-shadow derivation. Preserve the first
+        # reviewed execution for every exact semantic input, then reuse only that
+        # successful frozen result for equivalent same-worker copies. The helper
+        # also shares the date-invariant exact PR119+settlement ledger across the
+        # three current source dates. Arbitrary/changed inputs still execute the
+        # untouched reviewed implementation and failures are never cached.
+        semantic_replay_hooks = semantic_replay_reuse.install(
+            runner.latest_history.prefix.shadow,
+            diagnostic_path=(
+                args.output_dir / HISTORY_SEMANTIC_REPLAY_DIAGNOSTIC_FILENAME
+            ),
+        )
         try:
             return bound._execute_worker(args)
         except CurrentFotMobFixtureCandidateAdapterError as exc:
@@ -152,20 +174,27 @@ def _execute_worker(args: argparse.Namespace) -> int:
             return 0
     finally:
         try:
-            if builder_audit_hooks is not None:
-                builder_audit_reuse.restore(runner.latest_history, builder_audit_hooks)
+            if semantic_replay_hooks is not None:
+                semantic_replay_reuse.restore(
+                    runner.latest_history.prefix.shadow,
+                    semantic_replay_hooks,
+                )
         finally:
             try:
-                if verification_hooks is not None:
-                    verification_reuse.restore(runner.latest_history, verification_hooks)
+                if builder_audit_hooks is not None:
+                    builder_audit_reuse.restore(runner.latest_history, builder_audit_hooks)
             finally:
-                # Restoration of the request-scope and exact worker marker must
-                # not depend on diagnostic I/O or either reuse-layer cleanup.
-                runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
-                if prior_all_market_worker is None:
-                    os.environ.pop(all_market_cli.WORKER_ENV, None)
-                else:
-                    os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
+                try:
+                    if verification_hooks is not None:
+                        verification_reuse.restore(runner.latest_history, verification_hooks)
+                finally:
+                    # Restoration of the request-scope and exact worker marker must
+                    # not depend on diagnostic I/O or any reuse-layer cleanup.
+                    runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
+                    if prior_all_market_worker is None:
+                        os.environ.pop(all_market_cli.WORKER_ENV, None)
+                    else:
+                        os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
 
 
 def main(argv: list[str] | None = None) -> int:

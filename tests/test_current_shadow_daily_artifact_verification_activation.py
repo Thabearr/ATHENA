@@ -41,22 +41,26 @@ def test_daily_worker_real_reuse_layer_is_visible_inside_nested_worker(
             "archive_bytes": archive_bytes,
         }
 
+    semantic_shadow = SimpleNamespace()
     fake_latest = SimpleNamespace(
         mirror=SimpleNamespace(
             verify_actions_artifact_zip_digest=digest,
             verify_actions_artifact_bundle=bundle,
-        )
+        ),
+        prefix=SimpleNamespace(shadow=semantic_shadow),
     )
     monkeypatch.setattr(daily.runner, "latest_history", fake_latest)
     monkeypatch.delenv(daily.all_market_cli.WORKER_ENV, raising=False)
 
     # This regression is intentionally scoped to PR #316's artifact-verifier
-    # activation. PR #318 adds a separate builder-audit reuse layer whose real
-    # surface requires the complete latest-history module. Keep that orthogonal
-    # layer inert here; its own daily-worker activation/restoration test exercises
-    # the real install order and fail-closed builder surfaces independently.
+    # activation. PR #318 and PR #320 add independent worker-local reuse layers
+    # whose real surfaces require the complete latest-history stack. Keep those
+    # orthogonal layers inert here; their focused tests exercise their own exact
+    # activation, restoration, semantic identity, and fail-closed behavior.
     builder_hooks = object()
     builder_calls = []
+    semantic_hooks = object()
+    semantic_calls = []
 
     def builder_install(_latest, *, diagnostic_path):
         builder_calls.append(("install", diagnostic_path))
@@ -66,8 +70,20 @@ def test_daily_worker_real_reuse_layer_is_visible_inside_nested_worker(
         assert hooks is builder_hooks
         builder_calls.append(("restore", None))
 
+    def semantic_install(shadow_module, *, diagnostic_path):
+        assert shadow_module is semantic_shadow
+        semantic_calls.append(("install", diagnostic_path))
+        return semantic_hooks
+
+    def semantic_restore(shadow_module, hooks):
+        assert shadow_module is semantic_shadow
+        assert hooks is semantic_hooks
+        semantic_calls.append(("restore", None))
+
     monkeypatch.setattr(daily.builder_audit_reuse, "install", builder_install)
     monkeypatch.setattr(daily.builder_audit_reuse, "restore", builder_restore)
+    monkeypatch.setattr(daily.semantic_replay_reuse, "install", semantic_install)
+    monkeypatch.setattr(daily.semantic_replay_reuse, "restore", semantic_restore)
 
     def nested(_args):
         mirror = daily.runner.latest_history.mirror
@@ -101,6 +117,13 @@ def test_daily_worker_real_reuse_layer_is_visible_inside_nested_worker(
         (
             "install",
             tmp_path / daily.HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME,
+        ),
+        ("restore", None),
+    ]
+    assert semantic_calls == [
+        (
+            "install",
+            tmp_path / daily.HISTORY_SEMANTIC_REPLAY_DIAGNOSTIC_FILENAME,
         ),
         ("restore", None),
     ]
