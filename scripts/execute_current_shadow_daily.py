@@ -26,6 +26,7 @@ from domain.current_fotmob_fixture_candidate_adapter import (
     CurrentFotMobFixtureCandidateAdapterError,
 )
 from scripts import current_shadow_history_artifact_verification_reuse as verification_reuse
+from scripts import current_shadow_history_builder_audit_reuse as builder_audit_reuse
 from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
@@ -40,6 +41,9 @@ SCOPE_DAY_COUNT = {
 }
 HISTORY_VERIFICATION_DIAGNOSTIC_FILENAME = (
     "current-shadow-history-artifact-verification-diagnostic.json"
+)
+HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME = (
+    "current-shadow-history-builder-audit-reuse-diagnostic.json"
 )
 
 
@@ -105,6 +109,7 @@ def _execute_worker(args: argparse.Namespace) -> int:
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     prior_all_market_worker = os.environ.get(all_market_cli.WORKER_ENV)
     verification_hooks = None
+    builder_audit_hooks = None
     runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = day_count
     # The daily wrapper calls the nested PR-F worker stack in-process rather than
     # entering execute_current_shadow_all_market.main(). Carry forward the exact
@@ -125,6 +130,20 @@ def _execute_worker(args: argparse.Namespace) -> int:
                 args.output_dir / HISTORY_VERIFICATION_DIAGNOSTIC_FILENAME
             ),
         )
+        # The reviewed builder also performs the complete projected PR151 audit
+        # once live and immediately replays that same just-recorded snapshot in
+        # GitHubActionsLineageEvidenceBundle.__post_init__. Run #188 proved the
+        # second projected audit remained inside CURRENT_DURABLE_FRESH_HISTORY
+        # after exact artifact-verification reuse had already activated. Reuse
+        # only the successful audit paired with the exact same-process immutable
+        # payload objects issued by this builder; arbitrary evidence continues
+        # through the untouched public replay.
+        builder_audit_hooks = builder_audit_reuse.install(
+            runner.latest_history,
+            diagnostic_path=(
+                args.output_dir / HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME
+            ),
+        )
         try:
             return bound._execute_worker(args)
         except CurrentFotMobFixtureCandidateAdapterError as exc:
@@ -133,16 +152,20 @@ def _execute_worker(args: argparse.Namespace) -> int:
             return 0
     finally:
         try:
-            if verification_hooks is not None:
-                verification_reuse.restore(runner.latest_history, verification_hooks)
+            if builder_audit_hooks is not None:
+                builder_audit_reuse.restore(runner.latest_history, builder_audit_hooks)
         finally:
-            # Restoration of the request-scope and exact worker marker must not
-            # depend on diagnostic I/O or verifier cleanup succeeding.
-            runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
-            if prior_all_market_worker is None:
-                os.environ.pop(all_market_cli.WORKER_ENV, None)
-            else:
-                os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
+            try:
+                if verification_hooks is not None:
+                    verification_reuse.restore(runner.latest_history, verification_hooks)
+            finally:
+                # Restoration of the request-scope and exact worker marker must
+                # not depend on diagnostic I/O or either reuse-layer cleanup.
+                runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
+                if prior_all_market_worker is None:
+                    os.environ.pop(all_market_cli.WORKER_ENV, None)
+                else:
+                    os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
 
 
 def main(argv: list[str] | None = None) -> int:
