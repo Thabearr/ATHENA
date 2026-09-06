@@ -2,7 +2,7 @@
 
 GitHub can expose a newly-created ``workflow_dispatch`` run in the ``queued``
 state under the workflow's generic name before the reviewed ``run-name`` is
-materialized.  The durability bridge must still be able to bind that exact run,
+materialized. The durability bridge must still be able to bind that exact run,
 but it must not turn generic queued workflow metadata into a fuzzy identity.
 
 The generic-name fallback therefore requires all of the following:
@@ -52,15 +52,15 @@ def _utc(value: Any, *, field: str) -> dt.datetime:
     return parsed.astimezone(dt.timezone.utc)
 
 
-def _dispatch_window(record_step: Mapping[str, Any]) -> tuple[dt.datetime, dt.datetime]:
-    if record_step.get("name") != "Record prospective continuity dispatch request":
-        raise ContinuityDispatchBindingError("watchdog dispatch-record step name drifted")
-    if record_step.get("status") != "completed" or record_step.get("conclusion") != "success":
-        raise ContinuityDispatchBindingError("watchdog dispatch-record step is not successful")
-    started = _utc(record_step.get("started_at"), field="watchdog dispatch-record started_at")
-    completed = _utc(record_step.get("completed_at"), field="watchdog dispatch-record completed_at")
+def _dispatch_window(dispatch_step: Mapping[str, Any]) -> tuple[dt.datetime, dt.datetime]:
+    if dispatch_step.get("name") != DISPATCH_STEP_NAME:
+        raise ContinuityDispatchBindingError("watchdog dispatch step name drifted")
+    if dispatch_step.get("status") != "completed" or dispatch_step.get("conclusion") != "success":
+        raise ContinuityDispatchBindingError("watchdog dispatch step is not successful")
+    started = _utc(dispatch_step.get("started_at"), field="watchdog dispatch started_at")
+    completed = _utc(dispatch_step.get("completed_at"), field="watchdog dispatch completed_at")
     if completed < started:
-        raise ContinuityDispatchBindingError("watchdog dispatch-record time window is inverted")
+        raise ContinuityDispatchBindingError("watchdog dispatch time window is inverted")
     slop = dt.timedelta(seconds=WINDOW_SLOP_SECONDS)
     return started - slop, completed + slop
 
@@ -85,7 +85,7 @@ def select_dispatch_candidate(
     *,
     expected_name: str,
     watchdog_head_sha: str,
-    record_step: Mapping[str, Any],
+    dispatch_step: Mapping[str, Any],
 ) -> BoundDispatchCandidate | None:
     """Select the exact reviewed run or the exact proven generic queued fallback."""
 
@@ -112,7 +112,7 @@ def select_dispatch_candidate(
             raise ContinuityDispatchBindingError("exact continuity dispatch run id is invalid")
         return BoundDispatchCandidate(run_id=run_id, generic_queued_fallback=False)
 
-    window_start, window_end = _dispatch_window(record_step)
+    window_start, window_end = _dispatch_window(dispatch_step)
     generic: list[Mapping[str, Any]] = []
     for value in runs:
         if type(value) is not dict:
