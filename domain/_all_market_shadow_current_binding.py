@@ -6,9 +6,9 @@ Two layers are intentionally separated:
   It accepts already-reviewed research xG rates and never claims that those inputs
   are the complete current source state.
 * ``scan_current_fixture_all_markets`` is the current source-bound entrypoint.  It
-  revalidates the exact complete PR151 durable-history handoff, derives xG only
-  from one sealed current shadow row, revalidates the typed PR-B SportyBet
-  semantic registry, and derives exact current line families from its observations.
+  revalidates the exact complete PR151 durable-history handoff, derives xG from
+  the exact current source state, revalidates the typed PR-B SportyBet semantic
+  registry, and derives exact current line families from its observations.
 
 Both layers remain research/shadow only.  Production, pricing, selection, staking,
 SportyBet execution, and BET authority remain false.
@@ -22,6 +22,7 @@ from types import MappingProxyType
 from typing import Mapping, Optional, Sequence
 
 from domain import current_fotmob_latest_durable_fresh_history as latest_history
+from domain import current_fotmob_utc_native_current_asof_xg as current_asof_xg
 from domain import current_fotmob_utc_native_shadow_prediction as current_shadow
 from domain import fotmob_utc_native_expected_goals_fresh_holdout as fresh_xg
 from domain.current_sportybet_semantic_registry import (
@@ -304,11 +305,14 @@ def _research_xg_from_validated_current_history(
     tuple[str, ...],
     str,
 ]:
-    """Extract one exact sealed xG pair from an already validated PR151 handoff.
+    """Extract exact current xG from reviewed history and current source state.
 
-    This helper is private so public current-source callers cannot bypass the
-    reviewed replay boundary. PR-F may reuse it only for an exact history object
-    issued by the reviewed history builder in the same worker process.
+    The frozen fresh-holdout seal remains authoritative when the current capture
+    falls inside its reviewed 24h-to-60m window.  A Current Shadow fixture that
+    was reviewed earlier than that window no longer becomes unusable merely
+    because the holdout seal intentionally refuses to mint a prospective seal;
+    the same reviewed history, feature constructor and frozen xG rate math are
+    replayed through the explicit current-as-of research boundary instead.
     """
 
     if type(history) is not latest_history.CurrentLatestDurableFreshHistoryHandoff:
@@ -353,7 +357,47 @@ def _research_xg_from_validated_current_history(
             kickoff,
         )
     if row.disposition == current_shadow.OUTSIDE_REVIEWED_SEAL_WINDOW:
-        return None, ShadowDisposition.OUTSIDE_REVIEWED_XG_WINDOW, (), kickoff
+        try:
+            ledger, _update_count = current_shadow._history_ledger(
+                history.shadow_handoff.source_bundle
+            )
+            assessment = current_asof_xg.build_current_asof_xg_assessment(
+                history_ledger=ledger,
+                selected_capture=row.fixture,
+                fixture_review_policy_id=history.shadow_handoff.fixture_review_policy_id,
+            )
+        except Exception as exc:
+            raise AllMarketShadowError(
+                "current-as-of xG failed exact reviewed source replay"
+            ) from exc
+        if (
+            assessment.disposition
+            is current_asof_xg.CurrentAsOfXGDisposition.MISSING_REVIEWED_FEATURES
+        ):
+            return (
+                None,
+                ShadowDisposition.MISSING_REQUIRED_INPUT,
+                tuple(assessment.missing_feature_ids),
+                kickoff,
+            )
+        if assessment.disposition is not current_asof_xg.CurrentAsOfXGDisposition.COMPLETE:
+            raise AllMarketShadowError("current-as-of xG disposition escaped reviewed vocabulary")
+        rates = dict(assessment.rates)
+        if set(rates) != _RATE_KEYS:
+            raise AllMarketShadowError("current-as-of xG rate vocabulary drifted")
+        return (
+            ResearchXGRates(
+                calibrated_home=float(rates["calibrated_home"]),
+                calibrated_away=float(rates["calibrated_away"]),
+                feature_projection_identity=assessment.feature_projection_sha256,
+                history_prefix_identity=assessment.history_prefix_sha256,
+                source_fixture_identity=fixture_identity,
+                completeness_status=current_asof_xg.COMPLETE,
+            ),
+            None,
+            (),
+            kickoff,
+        )
     if (
         row.disposition != current_shadow.SEALED_COMPLETE_CASE
         or row.sealed_prediction is None
@@ -405,7 +449,7 @@ def _research_xg_from_complete_current_history(
     tuple[str, ...],
     str,
 ]:
-    """Replay complete current history and extract one exact current sealed xG pair."""
+    """Replay complete current history and extract one exact current xG pair."""
 
     if type(complete_current_history) is not latest_history.CurrentLatestDurableFreshHistoryHandoff:
         raise AllMarketShadowError(
