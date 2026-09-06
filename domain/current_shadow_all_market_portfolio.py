@@ -1,9 +1,9 @@
-"""Research-only all-market Shadow Prediction-first Portfolio V2.
+"""Research-only all-market Shadow source-aligned Portfolio V3.
 
 Consumes only source-replay-verifiable PR-D Price-all + Router outputs from the
-current reconciliation lane.  Router V2 prediction confidence remains the
-selection authority; price/value/fragility fields are retained as diagnostics
-only.  The optimizer never pads a target or invents a dependence model.
+current reconciliation lane.  Router V3 settlement-aware value remains the
+selection authority after the common confidence/odds quality gates; confidence
+is a tie-breaker.  The optimizer never pads a target or invents a dependence model.
 """
 from __future__ import annotations
 
@@ -61,12 +61,12 @@ from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
 
 SCHEMA_VERSION = 2
 DATASET_NAME = "athena-current-shadow-all-market-portfolio-v2"
-STATUS = "RESEARCH_ONLY_CURRENT_SHADOW_PREDICTION_FIRST_PORTFOLIO_V2"
-PORTFOLIO_POLICY_ID = "SHADOW_PREDICTION_FIRST_PORTFOLIO_V2"
+STATUS = "RESEARCH_ONLY_CURRENT_SHADOW_SOURCE_ALIGNED_PORTFOLIO_V3"
+PORTFOLIO_POLICY_ID = "SHADOW_SOURCE_ALIGNED_SETTLEMENT_AWARE_PORTFOLIO_V3"
 ROUTER_REPLAY_POLICY_ID = "REBUILD_EXACT_PRD_ROUTER_FROM_SOURCE_REPLAYED_PRICE_ALL_V1"
 FIXTURE_EXPOSURE_POLICY_ID = "PRD_RETAINED_PR251_CURRENT_RECONCILIATION_EXPOSURE_IDENTITY_V1"
 PORTFOLIO_FRESHNESS_POLICY_ID = "RECHECK_PRD_QUOTE_AGE_AND_KICKOFF_LEAD_AT_PORTFOLIO_TIME_V1"
-JOINT_SELECTION_POLICY_ID = "PREDICTION_CONFIDENCE_THEN_CANONICAL_IDENTITY_WITH_HARD_CAPS_V2"
+JOINT_SELECTION_POLICY_ID = "SETTLEMENT_AWARE_EV_THEN_CONFIDENCE_THEN_CANONICAL_IDENTITY_WITH_HARD_CAPS_V3"
 CORRELATION_POLICY_ID = "EXPOSURE_FLAGS_AND_CAPS_NO_FABRICATED_STATISTICAL_RHO_V1"
 SURVIVAL_POLICY_ID = "WORST_MODEL_NON_NEGATIVE_SETTLEMENT_FLOOR_INDEPENDENCE_BASELINE_V1"
 RESERVE_POLICY_ID = "PRESERVE_ROUTER_QUALIFIED_UNSELECTED_LEGS_WITH_REASONS_V1"
@@ -583,7 +583,7 @@ def _build_leg(value: ShadowPortfolioRouterInput, *, now: datetime) -> ShadowPor
         or opportunity.prediction_confidence_method is None
         or opportunity.prediction_first_rank is None
     ):
-        raise CurrentShadowPortfolioError("selected Router opportunity lacks Prediction-first authority")
+        raise CurrentShadowPortfolioError("selected Router opportunity lacks source-aligned Router authority")
     canonical_parts = router._prediction_canonical_key(result)
     canonical_prediction_identity = "|".join(canonical_parts)
     router_age = (value.price_all_bundle.evaluation_time - quote.observed_at).total_seconds()
@@ -637,7 +637,7 @@ def _build_leg(value: ShadowPortfolioRouterInput, *, now: datetime) -> ShadowPor
         canonical_prediction_identity=canonical_prediction_identity,
         router_policy_id=value.router_decision.router_policy_id,
         portfolio_policy_id=PORTFOLIO_POLICY_ID,
-        selection_reason="PREDICTION_FIRST_AUTHORITY",
+        selection_reason="SOURCE_ALIGNED_SETTLEMENT_AWARE_AUTHORITY",
         robust_net_expected_value=float(robust_ev),
         robust_edge=opportunity.robust_edge,
         event_probability_floor=opportunity.event_probability_floor,
@@ -691,8 +691,13 @@ def _constraint_reasons(candidate: ShadowPortfolioLeg, selected: Sequence[Shadow
 
 
 def _prediction_selection_key(candidate: ShadowPortfolioLeg) -> tuple[Any, ...]:
-    """Quote/value-independent Prediction-first Portfolio ordering."""
+    """Source-aligned Portfolio ordering matching Router V3 authority."""
+    if not math.isfinite(candidate.robust_net_expected_value):
+        raise CurrentShadowPortfolioError("Portfolio candidate lacks finite settlement-aware EV")
+    if not math.isfinite(candidate.prediction_confidence):
+        raise CurrentShadowPortfolioError("Portfolio candidate lacks finite prediction confidence")
     return (
+        -candidate.robust_net_expected_value,
         -candidate.prediction_confidence,
         candidate.fixture_identity,
         candidate.canonical_prediction_identity,
@@ -767,7 +772,7 @@ def _diagnostics(
                 reasons = reserve_reasons[opportunity.opportunity_id]
             elif opportunity.eligibility is ShadowOpportunityEligibility.ELIGIBLE:
                 state = "ROUTER_RESERVE"
-                reasons = ("NOT_ROUTER_TOP_PREDICTION",)
+                reasons = ("NOT_ROUTER_TOP_SOURCE_ALIGNED",)
             else:
                 state = "ROUTER_REJECTED"
                 reasons = opportunity.rejection_reasons
@@ -961,7 +966,7 @@ def optimize_shadow_portfolio(
         if len(selected) >= target_size:
             reasons.append("TARGET_ALREADY_FILLED")
         if not reasons:
-            reasons.append("LOWER_PREDICTION_FIRST_PRIORITY")
+            reasons.append("LOWER_SOURCE_ALIGNED_PRIORITY")
         reserves.append(ShadowPortfolioReserveLeg(leg, tuple(sorted(set(reasons)))))
     reserves.sort(key=lambda item: (_reserve_key(item.leg), item.reserve_reasons))
     market_diagnostics, family_diagnostics, fixture_funnel, opportunity_funnel = _diagnostics(

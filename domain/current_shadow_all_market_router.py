@@ -1,8 +1,12 @@
-"""Research-only all-market Shadow Router with Prediction-first V2 semantics.
+"""Research-only all-market Shadow Router with source-aligned V3 semantics.
 
 The Router consumes only an exact source-replayable ``ShadowPriceAllBundle``.
-Price-all therefore completes before either the Prediction-first authority or
-the retained value-first counterfactual is calculated.
+Price-all completes first. Comparable model confidence remains a mandatory
+quality gate, but raw probability is not final selection authority: eligible
+markets must also survive the reviewed settlement-aware value gate and are then
+ranked by settlement-aware expected value, confidence, and canonical prediction
+identity. Provider-only Total Goals Over 0.5 remains visible in Price-all audit
+but cannot become a recommendation under the ATHENA source contract.
 """
 from __future__ import annotations
 
@@ -22,6 +26,7 @@ from domain._current_shadow_price_core import (
     MINIMUM_PREDICTION_CONFIDENCE,
     MINIMUM_ROBUST_EDGE,
     MINIMUM_ROBUST_NET_EXPECTED_VALUE,
+    MINIMUM_SELECTABLE_OVER_TOTAL_GOALS_LINE,
     ORDINARY_PARTITIONS,
     OVERLAPPING_MARKETS,
     PUSH_SPLIT_MARKETS,
@@ -81,7 +86,7 @@ def _robust_edge(result: ShadowPriceResult, event_floor: Optional[float]) -> Opt
 def _value_first_eligibility(
     result: ShadowPriceResult,
 ) -> tuple[ShadowOpportunityEligibility, tuple[str, ...]]:
-    """Reproduce the former value-first Router decision for diagnostics only."""
+    """Reproduce the former conservative value gate for audit and V3 safety."""
 
     reasons: list[str] = []
     if result.disposition is not ShadowPriceDisposition.PRICED:
@@ -246,6 +251,8 @@ def _prediction_first_eligibility(
     confidence: Optional[float],
     confidence_reasons: tuple[str, ...],
 ) -> tuple[ShadowOpportunityEligibility, tuple[str, ...]]:
+    """Compatibility name for the V2 confidence/odds gate retained inside V3."""
+
     reasons = list(confidence_reasons)
     if result.disposition is not ShadowPriceDisposition.PRICED and not reasons:
         reasons.append("Price-all result is not exactly PRICED")
@@ -272,6 +279,53 @@ def _prediction_first_eligibility(
     return ShadowOpportunityEligibility.ELIGIBLE, ()
 
 
+def _source_market_policy_reasons(result: ShadowPriceResult) -> tuple[str, ...]:
+    """Apply project-source recommendation scope without hiding provider audit rows."""
+
+    if (
+        result.market_id is MarketId.TOTAL_GOALS
+        and result.outcome_id is OutcomeId.OVER
+        and result.line is not None
+        and result.line < MINIMUM_SELECTABLE_OVER_TOTAL_GOALS_LINE
+    ):
+        return (
+            "ATHENA source contract starts selectable Over totals at "
+            f"{MINIMUM_SELECTABLE_OVER_TOTAL_GOALS_LINE}; provider-only lower Over line is audit-only",
+        )
+    return ()
+
+
+def _selection_eligibility(
+    result: ShadowPriceResult,
+    confidence: Optional[float],
+    confidence_reasons: tuple[str, ...],
+) -> tuple[
+    ShadowOpportunityEligibility,
+    tuple[str, ...],
+    ShadowOpportunityEligibility,
+    tuple[str, ...],
+]:
+    confidence_eligibility, confidence_gate_reasons = _prediction_first_eligibility(
+        result,
+        confidence,
+        confidence_reasons,
+    )
+    value_eligibility, value_reasons = _value_first_eligibility(result)
+    source_reasons = _source_market_policy_reasons(result)
+    reasons: list[str] = list(confidence_gate_reasons)
+    if value_eligibility is ShadowOpportunityEligibility.REJECTED:
+        reasons.extend(f"settlement-aware value gate: {reason}" for reason in value_reasons)
+    reasons.extend(source_reasons)
+    if confidence_eligibility is ShadowOpportunityEligibility.REJECTED or reasons:
+        return (
+            ShadowOpportunityEligibility.REJECTED,
+            tuple(dict.fromkeys(reasons)),
+            value_eligibility,
+            value_reasons,
+        )
+    return ShadowOpportunityEligibility.ELIGIBLE, (), value_eligibility, value_reasons
+
+
 def _value_first_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, float, float, str]:
     if item.value_first_eligibility is not ShadowOpportunityEligibility.ELIGIBLE:
         raise ShadowPriceError("value-first rank key used for rejected opportunity")
@@ -282,14 +336,24 @@ def _value_first_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, float, 
     return (-item.robust_net_expected_value, -edge, -floor, item.opportunity_id)
 
 
-def _prediction_first_rank_key(
+def _selection_rank_key(
     item: ShadowRoutedOpportunity,
-) -> tuple[float, tuple[str, str, str]]:
+) -> tuple[float, float, tuple[str, str, str]]:
     if item.eligibility is not ShadowOpportunityEligibility.ELIGIBLE:
-        raise ShadowPriceError("prediction-first rank key used for rejected opportunity")
+        raise ShadowPriceError("source-aligned rank key used for rejected opportunity")
     if item.prediction_confidence is None:
-        raise ShadowPriceError("prediction-first eligible opportunity lacks confidence")
-    return (-item.prediction_confidence, _prediction_canonical_key(item.price_result))
+        raise ShadowPriceError("source-aligned eligible opportunity lacks confidence")
+    if item.robust_net_expected_value is None or not math.isfinite(item.robust_net_expected_value):
+        raise ShadowPriceError("source-aligned eligible opportunity lacks finite settlement-aware EV")
+    return (
+        -item.robust_net_expected_value,
+        -item.prediction_confidence,
+        _prediction_canonical_key(item.price_result),
+    )
+
+
+# Compatibility alias retained for callers/tests that imported the V2 private name.
+_prediction_first_rank_key = _selection_rank_key
 
 
 def _rejected_rank_key(item: ShadowRoutedOpportunity) -> tuple[float, str]:
@@ -305,18 +369,18 @@ def _apply_ranks(
     list[ShadowRoutedOpportunity],
     list[ShadowRoutedOpportunity],
 ]:
-    prediction_eligible = [
+    selection_eligible = [
         item for item in opportunities if item.eligibility is ShadowOpportunityEligibility.ELIGIBLE
     ]
     canonical_keys: dict[tuple[str, str, str], str] = {}
-    for item in prediction_eligible:
+    for item in selection_eligible:
         key = _prediction_canonical_key(item.price_result)
         if key in canonical_keys:
             raise ShadowPriceError(
-                "ambiguous canonical prediction identity for Prediction-first ranking"
+                "ambiguous canonical prediction identity for source-aligned ranking"
             )
         canonical_keys[key] = item.opportunity_id
-    prediction_eligible.sort(key=_prediction_first_rank_key)
+    selection_eligible.sort(key=_selection_rank_key)
     value_eligible = sorted(
         (
             item
@@ -325,9 +389,9 @@ def _apply_ranks(
         ),
         key=_value_first_rank_key,
     )
-    prediction_ranks = {
+    selection_ranks = {
         item.opportunity_id: rank
-        for rank, item in enumerate(prediction_eligible, start=1)
+        for rank, item in enumerate(selection_eligible, start=1)
     }
     value_ranks = {
         item.opportunity_id: rank
@@ -336,7 +400,9 @@ def _apply_ranks(
     ranked = tuple(
         dataclasses.replace(
             item,
-            prediction_first_rank=prediction_ranks.get(item.opportunity_id),
+            # Field name retained for schema compatibility; under Router V3 this is
+            # the source-aligned settlement-aware rank.
+            prediction_first_rank=selection_ranks.get(item.opportunity_id),
             value_first_rank=value_ranks.get(item.opportunity_id),
         )
         for item in opportunities
@@ -349,33 +415,33 @@ def _apply_ranks(
         ),
         key=_rejected_rank_key,
     )
-    return ranked, prediction_eligible, value_eligible, value_rejected
+    return ranked, selection_eligible, value_eligible, value_rejected
 
 
 def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketRouterDecision:
-    """Select the strongest comparable prediction after complete Price-all."""
+    """Choose one source-aligned settlement-aware market after complete Price-all."""
 
     verified = verify_shadow_price_all_bundle(price_all)
     opportunities: list[ShadowRoutedOpportunity] = []
     for result in verified.results:
         confidence, confidence_method, confidence_reasons = _prediction_confidence(result)
-        prediction_eligibility, prediction_reasons = _prediction_first_eligibility(
-            result,
-            confidence,
-            confidence_reasons,
-        )
-        value_eligibility, value_reasons = _value_first_eligibility(result)
+        (
+            selection_eligibility,
+            selection_reasons,
+            value_eligibility,
+            value_reasons,
+        ) = _selection_eligibility(result, confidence, confidence_reasons)
         event_floor = _event_floor(result)
         opportunities.append(
             ShadowRoutedOpportunity(
                 opportunity_id=result.opportunity_id,
                 price_result=result,
-                eligibility=prediction_eligibility,
+                eligibility=selection_eligibility,
                 robust_net_expected_value=result.net_expected_value,
                 robust_edge=_robust_edge(result, event_floor),
                 event_probability_floor=event_floor,
                 model_agreement=ShadowModelAgreementStatus.SINGLE_MODEL_NO_DISAGREEMENT_EVIDENCE,
-                rejection_reasons=prediction_reasons,
+                rejection_reasons=selection_reasons,
                 prediction_confidence=confidence,
                 prediction_confidence_method=confidence_method,
                 value_first_eligibility=value_eligibility,
@@ -383,10 +449,10 @@ def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketR
             )
         )
 
-    ranked, prediction_eligible, value_eligible, value_rejected = _apply_ranks(
+    ranked, selection_eligible, value_eligible, value_rejected = _apply_ranks(
         tuple(opportunities)
     )
-    prediction_rejected = sorted(
+    selection_rejected = sorted(
         (
             item
             for item in ranked
@@ -405,16 +471,16 @@ def route_shadow_price_results(price_all: ShadowPriceAllBundle) -> ShadowMarketR
         else value_rejected[0].opportunity_id if value_rejected else None
     )
 
-    if prediction_eligible:
+    if selection_eligible:
         status = ShadowRouterDecisionStatus.SELECTED
-        selected = prediction_eligible[0].opportunity_id
-        runner_up = prediction_eligible[1].opportunity_id if len(prediction_eligible) > 1 else None
+        selected = selection_eligible[0].opportunity_id
+        runner_up = selection_eligible[1].opportunity_id if len(selection_eligible) > 1 else None
     else:
         status = ShadowRouterDecisionStatus.NO_BET
         selected = None
         runner_up = None
 
-    strongest_rejected = prediction_rejected[0].opportunity_id if prediction_rejected else None
+    strongest_rejected = selection_rejected[0].opportunity_id if selection_rejected else None
     return _issue_shadow_router_decision(
         fixture_identity=verified.fixture_identity,
         status=status,
