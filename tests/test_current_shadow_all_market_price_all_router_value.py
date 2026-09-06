@@ -307,7 +307,7 @@ def test_source_aligned_rank_uses_ev_then_canonical_identity(monkeypatch):
     second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c", confidence=0.70, odds=1.20, ev=0.10)
     _bundle, first_decision = _route_custom(monkeypatch, first, second)
     changed_first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b", confidence=0.70, odds=1.20, ev=0.90)
-    changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c", confidence=0.70, odds=1.20, ev=0.90)
+    changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c", confidence=0.70, odds=1.20, ev=0.10)
     _bundle, second_decision = _route_custom(monkeypatch, changed_first, changed_second)
     expected = min(
         router._prediction_canonical_key(first),
