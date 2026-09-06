@@ -11,13 +11,18 @@ on:
         default: "20"
         type: string
       fixture_scope:
-        description: Today only, or the existing three-day research horizon
+        description: Legacy today-only or three-day research horizon
         required: true
         default: today
         type: choice
         options:
           - today
           - three-day
+      fixture_dates:
+        description: Optional comma-separated UTC YYYYMMDD dates, 1..7 inside today..today+6
+        required: false
+        default: ""
+        type: string
   issue_comment:
     types: [created]
 
@@ -95,16 +100,19 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           INPUT_TARGET_SIZE: ${{ inputs.target_size }}
           INPUT_FIXTURE_SCOPE: ${{ inputs.fixture_scope }}
+          INPUT_FIXTURE_DATES: ${{ inputs.fixture_dates }}
           COMMENT_BODY: ${{ github.event.comment.body }}
         run: |
           case "${EVENT_NAME}" in
             schedule)
               target_size="20"
               fixture_scope="today"
+              fixture_dates=""
               ;;
             workflow_dispatch)
               target_size="${INPUT_TARGET_SIZE}"
               fixture_scope="${INPUT_FIXTURE_SCOPE}"
+              fixture_dates="${INPUT_FIXTURE_DATES}"
               ;;
             issue_comment)
               parsed="$(python - <<'PY'
@@ -112,14 +120,24 @@ jobs:
           import re
 
           body = os.environ.get("COMMENT_BODY", "")
-          match = re.fullmatch(
+          legacy = re.fullmatch(
               r"/athena-shadow target=([0-9]+) scope=(today|three-day)",
               body,
           )
-          if match is None:
+          explicit = re.fullmatch(
+              r"/athena-shadow target=([0-9]+) dates=([0-9]{8}(?:,[0-9]{8}){0,6})",
+              body,
+          )
+          if legacy is not None:
+              print(legacy.group(1))
+              print(legacy.group(2))
+              print("")
+          elif explicit is not None:
+              print(explicit.group(1))
+              print("today")
+              print(explicit.group(2))
+          else:
               raise SystemExit(2)
-          print(match.group(1))
-          print(match.group(2))
           PY
               )" || {
                 echo "ATHENA request comment does not match the reviewed command grammar" >&2
@@ -127,6 +145,7 @@ jobs:
               }
               target_size="$(printf '%s\n' "${parsed}" | sed -n '1p')"
               fixture_scope="$(printf '%s\n' "${parsed}" | sed -n '2p')"
+              fixture_dates="$(printf '%s\n' "${parsed}" | sed -n '3p')"
               ;;
             *)
               echo "unsupported ATHENA trigger: ${EVENT_NAME}" >&2
@@ -146,9 +165,22 @@ jobs:
               ;;
           esac
 
+          if [ -n "${fixture_dates}" ]; then
+            ATHENA_REQUESTED_DATES="${fixture_dates}" python - <<'PY'
+          import datetime as dt
+          import os
+          from domain import current_shadow_fixture_date_request as request
+
+          values = request.parse_fixture_dates_text(os.environ["ATHENA_REQUESTED_DATES"])
+          request.validate_fixture_dates(values, current_utc=dt.datetime.now(dt.timezone.utc))
+          PY
+          fi
+
           printf 'ATHENA_TARGET_SIZE=%s\n' "${target_size}" >> "${GITHUB_ENV}"
           printf 'ATHENA_FIXTURE_SCOPE=%s\n' "${fixture_scope}" >> "${GITHUB_ENV}"
-          printf 'Resolved ATHENA request: target=%s scope=%s\n' "${target_size}" "${fixture_scope}"
+          printf 'ATHENA_FIXTURE_DATES=%s\n' "${fixture_dates}" >> "${GITHUB_ENV}"
+          printf 'Resolved ATHENA request: target=%s scope=%s dates=%s\n' \
+            "${target_size}" "${fixture_scope}" "${fixture_dates:-legacy-scope}"
 
       - name: Restore fixed PR119 materialized bootstrap
         env:
@@ -164,6 +196,25 @@ jobs:
             'e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2' \
             '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
             | sha256sum --check --strict
+
+      - name: Restore exact preserved broad FotMob history campaign
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          history_dir='.cache/athena-research/current-shadow-paired-history'
+          artifact_path="${history_dir}/fotmob-source-history-campaign.zip"
+          mkdir -p "${history_dir}"
+          gh api \
+            -H 'Accept: application/vnd.github+json' \
+            "repos/${GITHUB_REPOSITORY}/actions/artifacts/9249856559/zip" \
+            > "${artifact_path}"
+          printf '%s  %s\n' \
+            '7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f' \
+            "${artifact_path}" \
+            | sha256sum --check --strict
+          test "$(stat -c %s "${artifact_path}")" -eq 61886753
+          printf 'ATHENA_CURRENT_SHADOW_PAIRED_HISTORY_ARTIFACT=%s\n' \
+            "${artifact_path}" >> "${GITHUB_ENV}"
 
       - name: Restore prior persistent Shadow identity state
         env:
@@ -214,10 +265,15 @@ jobs:
           ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
           ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR: .cache/athena-research/current-shadow-history-github-binary-cache-v1
         run: |
-          python -m scripts.execute_current_shadow_daily \
-            --target-size "${ATHENA_TARGET_SIZE}" \
-            --fixture-scope "${ATHENA_FIXTURE_SCOPE}" \
+          args=(
+            --target-size "${ATHENA_TARGET_SIZE}"
+            --fixture-scope "${ATHENA_FIXTURE_SCOPE}"
             --output-dir artifacts/current-shadow-all-market
+          )
+          if [ -n "${ATHENA_FIXTURE_DATES}" ]; then
+            args+=(--fixture-dates "${ATHENA_FIXTURE_DATES}")
+          fi
+          python -m scripts.execute_current_shadow_request "${args[@]}"
 
       - name: Preserve exact current source evidence
         if: always()
