@@ -66,9 +66,9 @@ def _leg(
         prediction_confidence_method="SCALAR_MODEL_PROBABILITY_V1",
         prediction_first_rank=1,
         canonical_prediction_identity=f"{market_id.value}|{MARKET_REGISTRY[market_id].supported_outcomes[0].value}|NONE",
-        router_policy_id="SHADOW_PREDICTION_FIRST_ROUTER_V2",
+        router_policy_id="SHADOW_SOURCE_ALIGNED_SETTLEMENT_AWARE_ROUTER_V3",
         portfolio_policy_id=portfolio.PORTFOLIO_POLICY_ID,
-        selection_reason="PREDICTION_FIRST_AUTHORITY",
+        selection_reason="SOURCE_ALIGNED_SETTLEMENT_AWARE_AUTHORITY",
         robust_net_expected_value=ev,
         robust_edge=0.02,
         event_probability_floor=survival,
@@ -114,7 +114,7 @@ def test_naked_router_or_price_all_objects_cannot_enter_trust_builder():
         )
 
 
-def test_prediction_first_caps_exclude_legacy_fragility_authority():
+def test_source_aligned_caps_exclude_legacy_fragility_authority():
     assert portfolio._caps(1) == {"team": 1, "competition": 1, "market_family": 1}
     assert portfolio._caps(20) == {"team": 1, "competition": 8, "market_family": 10}
     assert portfolio._caps(50) == {"team": 1, "competition": 20, "market_family": 25}
@@ -179,16 +179,16 @@ def test_team_competition_and_family_caps_are_explicit_but_fragility_is_diagnost
     assert "FRAGILITY_CAP" not in reasons
 
 
-def test_prediction_confidence_outranks_ev_survival_and_odds():
-    high = _leg("a", confidence=0.80, ev=-0.20, survival=0.55, odds=1.09)
-    low = _leg("b", confidence=0.70, ev=0.50, survival=0.95, odds=8.0)
-    assert portfolio._prediction_selection_key(high) < portfolio._prediction_selection_key(low)
+def test_settlement_aware_ev_outranks_confidence_survival_and_odds():
+    high_confidence = _leg("a", confidence=0.80, ev=0.03, survival=0.95, odds=8.0)
+    higher_value = _leg("b", confidence=0.70, ev=0.50, survival=0.55, odds=1.09)
+    assert portfolio._prediction_selection_key(higher_value) < portfolio._prediction_selection_key(high_confidence)
 
 
-def test_ev_and_eligible_odds_changes_cannot_change_prediction_order():
-    first = _leg("a", confidence=0.75, ev=-0.50, odds=1.09)
-    changed = _leg("a", confidence=0.75, ev=9.0, odds=20.0)
-    other = _leg("b", confidence=0.70, ev=100.0, odds=50.0)
+def test_odds_are_not_direct_tie_break_authority():
+    first = _leg("a", confidence=0.75, ev=0.05, odds=1.09)
+    changed = _leg("a", confidence=0.75, ev=0.05, odds=20.0)
+    other = _leg("b", confidence=0.70, ev=0.05, odds=50.0)
     assert portfolio._prediction_selection_key(first) == portfolio._prediction_selection_key(changed)
     assert portfolio._prediction_selection_key(first) < portfolio._prediction_selection_key(other)
 
