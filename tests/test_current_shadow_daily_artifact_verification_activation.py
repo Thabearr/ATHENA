@@ -50,6 +50,25 @@ def test_daily_worker_real_reuse_layer_is_visible_inside_nested_worker(
     monkeypatch.setattr(daily.runner, "latest_history", fake_latest)
     monkeypatch.delenv(daily.all_market_cli.WORKER_ENV, raising=False)
 
+    # This regression is intentionally scoped to PR #316's artifact-verifier
+    # activation. PR #318 adds a separate builder-audit reuse layer whose real
+    # surface requires the complete latest-history module. Keep that orthogonal
+    # layer inert here; its own daily-worker activation/restoration test exercises
+    # the real install order and fail-closed builder surfaces independently.
+    builder_hooks = object()
+    builder_calls = []
+
+    def builder_install(_latest, *, diagnostic_path):
+        builder_calls.append(("install", diagnostic_path))
+        return builder_hooks
+
+    def builder_restore(_latest, hooks):
+        assert hooks is builder_hooks
+        builder_calls.append(("restore", None))
+
+    monkeypatch.setattr(daily.builder_audit_reuse, "install", builder_install)
+    monkeypatch.setattr(daily.builder_audit_reuse, "restore", builder_restore)
+
     def nested(_args):
         mirror = daily.runner.latest_history.mirror
         assert mirror.verify_actions_artifact_zip_digest(zip_bytes, metadata_digest) == metadata_digest[7:]
@@ -78,6 +97,13 @@ def test_daily_worker_real_reuse_layer_is_visible_inside_nested_worker(
     assert calls == {"digest": 1, "bundle": 1}
     assert fake_latest.mirror.verify_actions_artifact_zip_digest is digest
     assert fake_latest.mirror.verify_actions_artifact_bundle is bundle
+    assert builder_calls == [
+        (
+            "install",
+            tmp_path / daily.HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME,
+        ),
+        ("restore", None),
+    ]
 
     diagnostic = json.loads(
         (tmp_path / daily.HISTORY_VERIFICATION_DIAGNOSTIC_FILENAME).read_text(
