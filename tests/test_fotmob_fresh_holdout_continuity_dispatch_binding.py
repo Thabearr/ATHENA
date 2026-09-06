@@ -113,6 +113,14 @@ def test_generic_fallback_fails_closed_on_duplicate_same_window_candidates() -> 
         _select([first, second])
 
 
+def test_exact_and_generic_candidate_coexistence_fails_closed() -> None:
+    with pytest.raises(
+        binding.ContinuityDispatchBindingError,
+        match="exact and generic queued continuity dispatch candidates coexist",
+    ):
+        _select([_run(generic=False), _run(generic=True)])
+
+
 def test_generic_fallback_requires_valid_successful_dispatch_step_window() -> None:
     dispatch = _dispatch_step()
     dispatch["conclusion"] = "skipped"
@@ -172,6 +180,28 @@ def test_generic_queued_no_execution_requires_zero_jobs_and_zero_artifacts() -> 
             run=run,
             jobs_payload={"total_count": 0, "jobs": []},
             artifacts_payload={"total_count": 1, "artifacts": [{"id": 1}]},
+        )
+
+
+@pytest.mark.parametrize(
+    ("jobs_payload", "artifacts_payload", "message"),
+    [
+        ({"jobs": []}, {"total_count": 0, "artifacts": []}, "execution jobs"),
+        ({"total_count": 0, "jobs": []}, {"artifacts": []}, "artifacts"),
+    ],
+)
+def test_generic_queued_no_execution_rejects_missing_zero_counts(
+    jobs_payload,
+    artifacts_payload,
+    message,
+) -> None:
+    run = _run()
+    with pytest.raises(binding.ContinuityDispatchBindingError, match=message):
+        binding.prove_generic_queued_no_execution(
+            run_id=run["id"],
+            run=run,
+            jobs_payload=jobs_payload,
+            artifacts_payload=artifacts_payload,
         )
 
 
