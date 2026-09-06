@@ -85,6 +85,7 @@ jobs:
                   fh.write("mode=watchdog\n")
                   fh.write(f"watchdog_run_id={run_id}\n")
                   fh.write(f"watchdog_head_sha={head_sha}\n")
+                  fh.write(f"checkout_ref={head_sha}\n")
               raise SystemExit(0)
 
           if event == "issue_comment":
@@ -102,15 +103,16 @@ jobs:
               with open(output, "a", encoding="utf-8") as fh:
                   fh.write("mode=manual\n")
                   fh.write(f"source_run_id={int(match.group(1))}\n")
+                  fh.write("checkout_ref=main\n")
               raise SystemExit(0)
 
           raise SystemExit(f"forbidden trigger event: {event!r}")
           PY
 
-      - name: Check out exact current main
+      - name: Check out exact reviewed durability commit
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
         with:
-          ref: main
+          ref: ${{ steps.trigger.outputs.checkout_ref }}
           fetch-depth: 1
           persist-credentials: false
 
@@ -119,15 +121,25 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Verify exact main and reviewed durability dependencies
+      - name: Verify exact checkout and reviewed durability dependencies
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          MODE: ${{ steps.trigger.outputs.mode }}
+          WATCHDOG_HEAD_SHA: ${{ steps.trigger.outputs.watchdog_head_sha }}
         run: |
           set -euo pipefail
-          current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
-          test "$(git rev-parse HEAD)" = "${current_main}"
+          checkout_head="$(git rev-parse HEAD)"
+          if [ "${MODE}" = "watchdog" ]; then
+            test "${checkout_head}" = "${WATCHDOG_HEAD_SHA}"
+          elif [ "${MODE}" = "manual" ]; then
+            current_main="$(gh api "/repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+            test "${checkout_head}" = "${current_main}"
+          else
+            echo "unknown receipt bridge mode during checkout verification: ${MODE}" >&2
+            exit 1
+          fi
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "6d768a506d579ef88f1d321102cb9c53d846c72a"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "14d6dd1000e934e21c12e64f41f67b78f2484278"
