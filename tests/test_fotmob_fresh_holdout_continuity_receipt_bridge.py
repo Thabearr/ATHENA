@@ -116,6 +116,20 @@ def test_watchdog_dispatch_requires_full_reviewed_jobs_provenance() -> None:
     assert 'fh.write("bridge_required=true\\n")' in workflow
 
 
+def test_watchdog_checkout_is_bound_to_trigger_head_not_moving_main() -> None:
+    workflow = _workflow_text()
+    assert 'fh.write(f"checkout_ref={head_sha}\\n")' in workflow
+    assert 'fh.write("checkout_ref=main\\n")' in workflow
+    assert "ref: ${{ steps.trigger.outputs.checkout_ref }}" in workflow
+    assert "          ref: main\n" not in workflow
+    assert "Verify exact checkout and reviewed durability dependencies" in workflow
+    assert 'if [ "${MODE}" = "watchdog" ]; then' in workflow
+    assert 'test "${checkout_head}" = "${WATCHDOG_HEAD_SHA}"' in workflow
+    assert 'elif [ "${MODE}" = "manual" ]; then' in workflow
+    assert 'test "${checkout_head}" = "${current_main}"' in workflow
+    assert 'test "$(git rev-parse HEAD)" = "${current_main}"' not in workflow
+
+
 def test_bridge_wait_covers_observed_long_queue_plus_primary_execution_budget() -> None:
     workflow = _workflow_text()
     assert "timeout-minutes: 130" in workflow
