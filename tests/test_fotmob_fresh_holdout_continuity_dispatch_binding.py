@@ -15,12 +15,12 @@ EXPECTED = (
 )
 
 
-def _record() -> dict:
+def _dispatch_step() -> dict:
     return {
-        "name": "Record prospective continuity dispatch request",
+        "name": binding.DISPATCH_STEP_NAME,
         "status": "completed",
         "conclusion": "success",
-        "started_at": "2026-09-06T04:38:32Z",
+        "started_at": "2026-09-06T04:38:30Z",
         "completed_at": "2026-09-06T04:38:33Z",
     }
 
@@ -51,7 +51,7 @@ def _select(runs):
         runs,
         expected_name=EXPECTED,
         watchdog_head_sha=HEAD,
-        record_step=_record(),
+        dispatch_step=_dispatch_step(),
     )
 
 
@@ -63,7 +63,7 @@ def test_exact_reviewed_run_name_remains_primary_binding_authority() -> None:
     )
 
 
-def test_observed_generic_queued_bot_dispatch_binds_only_inside_record_window() -> None:
+def test_observed_generic_queued_bot_dispatch_binds_only_inside_dispatch_window() -> None:
     result = _select([_run()])
     assert result == binding.BoundDispatchCandidate(
         run_id=34012011312,
@@ -113,19 +113,34 @@ def test_generic_fallback_fails_closed_on_duplicate_same_window_candidates() -> 
         _select([first, second])
 
 
-def test_generic_fallback_requires_valid_successful_record_step_window() -> None:
-    record = _record()
-    record["conclusion"] = "skipped"
+def test_generic_fallback_requires_valid_successful_dispatch_step_window() -> None:
+    dispatch = _dispatch_step()
+    dispatch["conclusion"] = "skipped"
     with pytest.raises(
         binding.ContinuityDispatchBindingError,
-        match="dispatch-record step is not successful",
+        match="dispatch step is not successful",
     ):
         binding.select_dispatch_candidate(
             [_run()],
             expected_name=EXPECTED,
             watchdog_head_sha=HEAD,
-            record_step=record,
+            dispatch_step=dispatch,
         )
+
+
+def test_exact_named_candidate_does_not_need_generic_fallback_window() -> None:
+    dispatch = _dispatch_step()
+    dispatch["started_at"] = None
+    result = binding.select_dispatch_candidate(
+        [_run(generic=False)],
+        expected_name=EXPECTED,
+        watchdog_head_sha=HEAD,
+        dispatch_step=dispatch,
+    )
+    assert result == binding.BoundDispatchCandidate(
+        run_id=34012011312,
+        generic_queued_fallback=False,
+    )
 
 
 def test_generic_queued_no_execution_requires_zero_jobs_and_zero_artifacts() -> None:
