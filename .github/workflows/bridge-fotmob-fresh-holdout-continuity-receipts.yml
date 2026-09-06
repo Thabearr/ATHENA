@@ -133,7 +133,7 @@ jobs:
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "14d6dd1000e934e21c12e64f41f67b78f2484278"
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           test "$(git rev-parse HEAD:scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)" = "f0b836304b1d46877e0396ea7a532c24b46a3d16"
-          test "$(git rev-parse HEAD:scripts/bind_fotmob_fresh_holdout_continuity_dispatch.py)" = "0c99f01d38afaaad5f9deae67da441723ac0476e"
+          test "$(git rev-parse HEAD:scripts/bind_fotmob_fresh_holdout_continuity_dispatch.py)" = "4c05e20ded1f2b7129ec38a16d45c65cedb341ed"
 
       - name: Bind exact reviewed continuity collection run
         id: source
