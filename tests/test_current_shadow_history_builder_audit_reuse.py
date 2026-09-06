@@ -83,14 +83,20 @@ def _fake_latest(*, payload: bytes, fail_live: bool = False):
         )
 
     def build_with_readers(*, expected_main_sha, **_kwargs):
-        audit = fake._run_reviewed_projected_audit(
-            expected_main_sha=expected_main_sha
-        )
         recorder = fake._ReadRecorder(
             (
                 _Snapshot("artifact_zip:7", payload),
                 _Snapshot("main_ref", b'{"sha":"main"}\n', payload_kind="json"),
             )
+        )
+
+        def get_main_ref():
+            # The real _build_with_readers lambda closes over this exact recorder.
+            return recorder
+
+        audit = fake._run_reviewed_projected_audit(
+            expected_main_sha=expected_main_sha,
+            get_main_ref=get_main_ref,
         )
         reads = recorder.freeze()
         # GitHubActionsLineageEvidenceBundle.__post_init__ clones each snapshot
@@ -134,7 +140,7 @@ def test_builder_issued_reads_reuse_live_audit_without_second_projected_replay(t
         "builder_replays_reused": 1,
         "fallback_replays_executed": 0,
     }
-    assert all(item.payload is payload for item in cloned[:1])
+    assert cloned[0].payload is payload
     recorded = json.loads(diagnostic.read_text(encoding="utf-8"))
     assert recorded["last_operation"] == "BUILDER_REPLAY_REUSED"
     assert recorded["stats"] == hooks.stats.to_dict()
