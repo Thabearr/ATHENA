@@ -32,7 +32,7 @@ def test_bridge_has_exact_owner_only_manual_durability_recovery_surface() -> Non
     assert "durability bridge only accepts prospective continuity dispatch runs" in workflow
 
 
-def test_bridge_pins_existing_reviewed_evidence_and_mirror_implementations() -> None:
+def test_bridge_pins_existing_reviewed_evidence_and_binding_implementations() -> None:
     workflow = _workflow_text()
     for digest in (
         "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2",
@@ -40,6 +40,7 @@ def test_bridge_pins_existing_reviewed_evidence_and_mirror_implementations() -> 
         "14d6dd1000e934e21c12e64f41f67b78f2484278",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "f0b836304b1d46877e0396ea7a532c24b46a3d16",
+        "4c05e20ded1f2b7129ec38a16d45c65cedb341ed",
     ):
         assert digest in workflow
     assert (
@@ -69,15 +70,20 @@ def test_bridge_is_durability_only_and_cannot_execute_collection_or_betting() ->
     assert "Model/pricing/selection/BET authority change: false" in workflow
 
 
-def test_bridge_exactly_binds_bot_dispatched_continuity_identity() -> None:
+def test_bridge_uses_fail_closed_exact_or_generic_queued_binding() -> None:
     workflow = _workflow_text()
-    assert 'run.get("event") == "workflow_dispatch"' in workflow
-    assert 'run.get("head_branch") == "main"' in workflow
-    assert 'run.get("head_sha") == watchdog_head_sha' in workflow
-    assert 'run.get("name") == expected_name' in workflow
-    assert 'run.get("display_title") == expected_name' in workflow
-    assert 'run.get("path") == continuity.PRIMARY_WORKFLOW_PATH' in workflow
-    assert "duplicate exact continuity dispatch runs detected" in workflow
+    assert (
+        "import scripts.bind_fotmob_fresh_holdout_continuity_dispatch as dispatch_binding"
+        in workflow
+    )
+    assert 'step.get("name") == dispatch_binding.DISPATCH_STEP_NAME' in workflow
+    assert "dispatch_binding.select_dispatch_candidate(" in workflow
+    assert "candidate.generic_queued_fallback" in workflow
+    assert "dispatch_binding.prove_generic_queued_no_execution(" in workflow
+    assert "/jobs?per_page=100" in workflow
+    assert "/artifacts?per_page=100" in workflow
+    assert "zero jobs and zero artifacts" in workflow
+    assert "continuity dispatch binding failed closed" in workflow
     assert "transport._continuity_plan_from_run" in workflow
 
 
@@ -110,9 +116,10 @@ def test_watchdog_dispatch_requires_full_reviewed_jobs_provenance() -> None:
     assert 'fh.write("bridge_required=true\\n")' in workflow
 
 
-def test_bridge_wait_covers_observed_long_running_continuity_success() -> None:
+def test_bridge_wait_covers_observed_long_queue_plus_primary_execution_budget() -> None:
     workflow = _workflow_text()
-    assert "timeout-minutes: 35" in workflow
-    assert "for _attempt in range(751):" in workflow
+    assert "timeout-minutes: 130" in workflow
+    assert "for _attempt in range(3601):" in workflow
+    assert "for _attempt in range(751):" not in workflow
     assert "for _attempt in range(301):" not in workflow
     assert "continuity collection run did not complete within reviewed wait" in workflow
