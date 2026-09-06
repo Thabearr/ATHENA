@@ -693,9 +693,67 @@ def _verify_roundtrip(
         }
         if any(row[key] != value for key, value in expected.items()):
             reasons.append(f"{leg['fixture_identity']}:DIRECT_PROVIDER_SEMANTICS_CHANGED")
-        if row["odds"] != _decimal(leg["decimal_odds"], "fresh priced"):
-            reasons.append(f"{leg['fixture_identity']}:DIRECT_PROVIDER_ODDS_CHANGED")
+        if row["odds"] < Decimal(str(MINIMUM_DECIMAL_ODDS)):
+            reasons.append(f"{leg['fixture_identity']}:DIRECT_PROVIDER_ODDS_BELOW_1_09")
     return tuple(sorted(set(reasons)))
+
+
+def _bind_roundtrip_fresh_legs(
+    portfolio: portfolio_module.ShadowPortfolioOptimization,
+    fresh_selected_legs: Sequence[Mapping[str, Any]],
+    receipt: Mapping[str, Any],
+) -> tuple[Mapping[str, Any], ...]:
+    """Bind final research diagnostics to the exact stable create/reload odds."""
+
+    load = receipt.get("load_accepted_outcomes")
+    if type(load) is not list or len(load) != len(fresh_selected_legs):
+        raise CurrentShadowAllMarketShareCodeError(
+            "verified direct transport lost exact accepted rows before final binding"
+        )
+    load_rows = {
+        row["eventId"]: row for row in (_accepted_row(item, "load") for item in load)
+    }
+    if len(load_rows) != len(fresh_selected_legs):
+        raise CurrentShadowAllMarketShareCodeError(
+            "verified direct transport contains duplicate accepted event identities"
+        )
+    source_by_fixture = {item.fixture_identity: item for item in portfolio._router_inputs}
+    rebound: list[Mapping[str, Any]] = []
+    for leg in fresh_selected_legs:
+        row = load_rows.get(leg["provider_event_id"])
+        if row is None:
+            raise CurrentShadowAllMarketShareCodeError(
+                "verified direct transport lost selected event during final binding"
+            )
+        direct_odds = row["odds"]
+        semantic_odds = _decimal(leg["decimal_odds"], "fresh semantic priced")
+        if direct_odds < Decimal(str(MINIMUM_DECIMAL_ODDS)):
+            raise CurrentShadowAllMarketShareCodeError(
+                "direct transport odds escaped reviewed eligibility floor after verification"
+            )
+        source = source_by_fixture.get(leg["fixture_identity"])
+        if source is None:
+            raise CurrentShadowAllMarketShareCodeError(
+                "selected fixture lost Router evidence during final odds binding"
+            )
+        opportunities = [
+            opportunity for opportunity in source.router_decision.opportunities
+            if opportunity.opportunity_id == leg["selected_opportunity_id"]
+        ]
+        if len(opportunities) != 1:
+            raise CurrentShadowAllMarketShareCodeError(
+                "selected prediction identity is not unique during final odds binding"
+            )
+        updated = dict(leg)
+        updated["semantic_resolved_decimal_odds"] = str(semantic_odds)
+        updated["direct_roundtrip_decimal_odds"] = str(direct_odds)
+        updated["decimal_odds"] = str(direct_odds)
+        updated["direct_roundtrip_odds_refreshed"] = direct_odds != semantic_odds
+        updated["fresh_net_expected_value_diagnostic"] = _fresh_ev_diagnostic(
+            opportunities[0], direct_odds
+        )
+        rebound.append(MappingProxyType(updated))
+    return tuple(rebound)
 
 
 def create_verified_shadow_all_market_share_code(
@@ -791,7 +849,11 @@ def create_verified_shadow_all_market_share_code(
 
     roundtrip_reasons = _verify_roundtrip(fresh_legs, transport_receipt)
     if roundtrip_reasons:
-        status = STATUS_REPRICE_REQUIRED if all("ODDS_CHANGED" in item for item in roundtrip_reasons) else STATUS_PROVIDER_CHANGED
+        odds_floor_only = all(
+            item.endswith(":DIRECT_PROVIDER_ODDS_BELOW_1_09")
+            for item in roundtrip_reasons
+        )
+        status = STATUS_REPRICE_REQUIRED if odds_floor_only else STATUS_PROVIDER_CHANGED
         result = _terminal(
             portfolio=rebuilt,
             status=status,
@@ -804,6 +866,7 @@ def create_verified_shadow_all_market_share_code(
         _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
         return result
 
+    fresh_legs = _bind_roundtrip_fresh_legs(rebuilt, fresh_legs, transport_receipt)
     share_code = transport_receipt.get("shareCode")
     share_url = transport_receipt.get("shareURL")
     combined_odds = transport_receipt.get("combined_odds")
