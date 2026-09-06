@@ -20,6 +20,7 @@ from domain._current_shadow_price_records import (
     _issue_shadow_price_all_bundle,
     _issue_shadow_price_result,
 )
+from domain._current_shadow_quote_binding import CurrentShadowPriceContext
 from domain.markets import MarketId, OutcomeId
 
 
@@ -32,6 +33,32 @@ C = "c" * 64
 D = "d" * 64
 E = "e" * 64
 F = "f" * 64
+
+
+def _context() -> CurrentShadowPriceContext:
+    context = object.__new__(CurrentShadowPriceContext)
+    for key, value in {
+        "fixture_identity": FIXTURE,
+        "provider_event_id": EVENT,
+        "evaluation_time": NOW,
+        "scan": None,
+        "prc_scan_sha256": C,
+        "provider_registry": None,
+        "provider_registry_sha256": D,
+        "provider_inventory": None,
+        "source_raw_sha256": A,
+        "source_manifest_sha256": B,
+        "source_inventory_sha256": C,
+        "fixture_reconciliation_sha256": D,
+        "current_mapping_rebind_sha256": E,
+        "bridge_bundle_sha256": F,
+        "source_context_policy_id": "SOURCE_ALIGNED_ROUTER_V3_TEST",
+        "_bridge_bundle": None,
+        "_event_evidence": None,
+        "_complete_current_history": None,
+    }.items():
+        object.__setattr__(context, key, value)
+    return context
 
 
 def _result(
@@ -104,7 +131,7 @@ def _route(monkeypatch: pytest.MonkeyPatch, *results):
         quote_count=len(results),
         results=tuple(results),
         authority=AUTHORITY_FLAGS,
-        _context=object(),
+        _context=_context(),
     )
     monkeypatch.setattr(router, "verify_shadow_price_all_bundle", lambda value: value)
     return router.route_shadow_price_results(bundle)
