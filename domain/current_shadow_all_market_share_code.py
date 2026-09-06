@@ -23,7 +23,10 @@ from domain._current_shadow_price_core import (
     MAX_QUOTE_AGE_SECONDS,
     MINIMUM_DECIMAL_ODDS,
     MINIMUM_LEAD_SECONDS,
+    MINIMUM_NET_EXPECTED_VALUE,
     MINIMUM_PREDICTION_CONFIDENCE,
+    MINIMUM_ROBUST_NET_EXPECTED_VALUE,
+    ShadowOpportunityEligibility,
     ShadowPriceDisposition,
 )
 from domain._current_shadow_quote_binding import build_current_shadow_exact_quotes
@@ -389,10 +392,17 @@ def _opportunity_quote(source: portfolio_module.ShadowPortfolioRouterInput, oppo
     return matches[0]
 
 
-def _fresh_candidate_key(opportunity: Any) -> tuple[Any, ...]:
+def _fresh_candidate_key(
+    item: tuple[Any, Any, dict[str, str], dict[str, Any], Decimal, str, float],
+) -> tuple[Any, ...]:
+    opportunity = item[0]
+    fresh_ev = item[6]
     if opportunity.prediction_confidence is None:
         raise CurrentShadowAllMarketShareCodeError("fresh candidate lacks prediction confidence")
+    if not math.isfinite(fresh_ev):
+        raise CurrentShadowAllMarketShareCodeError("fresh candidate lacks finite settlement-aware EV")
     return (
+        -fresh_ev,
         -opportunity.prediction_confidence,
         portfolio_module.router._prediction_canonical_key(opportunity.price_result),
     )
@@ -421,7 +431,7 @@ def _fresh_resolve_portfolio(
     output_dir: Path,
     delay_seconds: float,
 ) -> tuple[tuple[dict[str, str], ...], dict[str, Any], tuple[Mapping[str, Any], ...], tuple[Mapping[str, Any], ...]]:
-    """Resolve each fixture once and apply current Prediction-first fallback."""
+    """Resolve each fixture once and apply current source-aligned fallback."""
 
     output_dir.mkdir(parents=True, exist_ok=True)
     event_dir = output_dir / "events"
@@ -460,19 +470,43 @@ def _fresh_resolve_portfolio(
             "raw_sha256": hashlib.sha256(raw).hexdigest(),
             "raw_size": len(raw),
         })
-        candidates = sorted(
-            (
-                opportunity for opportunity in source.router_decision.opportunities
-                if opportunity.prediction_confidence is not None
-                and opportunity.prediction_confidence >= MINIMUM_PREDICTION_CONFIDENCE
-                and opportunity.prediction_confidence_method is not None
-                and opportunity.price_result.disposition is ShadowPriceDisposition.PRICED
-            ),
-            key=_fresh_candidate_key,
+        candidates = tuple(
+            opportunity for opportunity in source.router_decision.opportunities
+            if opportunity.prediction_confidence is not None
+            and opportunity.prediction_confidence >= MINIMUM_PREDICTION_CONFIDENCE
+            and opportunity.prediction_confidence_method is not None
+            and opportunity.price_result.disposition is ShadowPriceDisposition.PRICED
         )
-        chosen: tuple[Any, Any, dict[str, str], dict[str, Any], Decimal, str] | None = None
+        chosen: tuple[Any, Any, dict[str, str], dict[str, Any], Decimal, str, float] | None = None
+        resolved_candidates: list[
+            tuple[Any, Any, dict[str, str], dict[str, Any], Decimal, str, float]
+        ] = []
         per_fixture: list[dict[str, Any]] = []
-        for opportunity in candidates:
+        for opportunity in sorted(
+            candidates,
+            key=lambda item: portfolio_module.router._prediction_canonical_key(
+                item.price_result
+            ),
+        ):
+            if opportunity.value_first_eligibility is not ShadowOpportunityEligibility.ELIGIBLE:
+                per_fixture.append({
+                    "opportunity_id": opportunity.opportunity_id,
+                    "prediction_confidence": opportunity.prediction_confidence,
+                    "eligible": False,
+                    "reason": "SOURCE_ALIGNED_SETTLEMENT_VALUE_GATE_REJECTED",
+                })
+                continue
+            source_reasons = portfolio_module.router._source_market_policy_reasons(
+                opportunity.price_result
+            )
+            if source_reasons:
+                per_fixture.append({
+                    "opportunity_id": opportunity.opportunity_id,
+                    "prediction_confidence": opportunity.prediction_confidence,
+                    "eligible": False,
+                    "reason": "SOURCE_MARKET_POLICY_REJECTED:" + "|".join(source_reasons),
+                })
+                continue
             quote = _opportunity_quote(source, opportunity)
             if quote is None:
                 continue
@@ -508,26 +542,53 @@ def _fresh_resolve_portfolio(
                     "reason": f"EXACT_PROVIDER_SEMANTICS_UNAVAILABLE:{exc}",
                 })
                 continue
+            fresh_ev = _fresh_ev_diagnostic(opportunity, odds)
+            if fresh_ev is None or not math.isfinite(fresh_ev):
+                per_fixture.append({
+                    "opportunity_id": opportunity.opportunity_id,
+                    "prediction_confidence": opportunity.prediction_confidence,
+                    "market_family": family,
+                    "exact_current_odds": str(odds),
+                    "eligible": False,
+                    "reason": "FRESH_SETTLEMENT_AWARE_EV_UNAVAILABLE",
+                })
+                continue
+            resolved_candidates.append(
+                (opportunity, quote, selection, audit, odds, family, float(fresh_ev))
+            )
+
+        for rank, candidate in enumerate(
+            sorted(resolved_candidates, key=_fresh_candidate_key),
+            start=1,
+        ):
+            opportunity, quote, selection, audit, odds, family, fresh_ev = candidate
             odds_eligible = odds >= Decimal(str(MINIMUM_DECIMAL_ODDS))
+            value_eligible = (
+                fresh_ev > MINIMUM_NET_EXPECTED_VALUE
+                and fresh_ev > MINIMUM_ROBUST_NET_EXPECTED_VALUE
+            )
             family_eligible = family_counts.get(family, 0) < family_cap
             if not odds_eligible:
                 reason = "EXACT_CURRENT_ODDS_BELOW_1_09"
+            elif not value_eligible:
+                reason = "FRESH_SETTLEMENT_AWARE_VALUE_NOT_POSITIVE"
             elif not family_eligible:
                 reason = f"CURRENT_MARKET_FAMILY_CAP:{family}"
             else:
                 reason = None
-            eligible = odds_eligible and family_eligible
+            eligible = odds_eligible and value_eligible and family_eligible
             per_fixture.append({
                 "opportunity_id": opportunity.opportunity_id,
                 "prediction_confidence": opportunity.prediction_confidence,
                 "market_family": family,
+                "source_aligned_fresh_rank": rank,
                 "exact_current_odds": str(odds),
+                "fresh_net_expected_value": fresh_ev,
                 "eligible": eligible,
                 "reason": reason,
             })
-            if eligible:
-                chosen = opportunity, quote, selection, audit, odds, family
-                break
+            if eligible and chosen is None:
+                chosen = candidate
         candidate_audits.append({
             "fixture_identity": leg.fixture_identity,
             "candidates": per_fixture,
@@ -540,7 +601,7 @@ def _fresh_resolve_portfolio(
                 "reason": "NO_CURRENT_PREDICTION_QUALIFIED_FALLBACK",
             }))
             continue
-        opportunity, quote, selection, audit, odds, family = chosen
+        opportunity, quote, selection, audit, odds, family, fresh_ev = chosen
         family_counts[family] = family_counts.get(family, 0) + 1
         prediction_identity = "|".join(
             portfolio_module.router._prediction_canonical_key(opportunity.price_result)
@@ -568,7 +629,7 @@ def _fresh_resolve_portfolio(
             "provider_outcome_name": audit["observed_outcome_name"],
             "decimal_odds": str(odds),
             "stale_portfolio_decimal_odds": leg.decimal_odds,
-            "fresh_net_expected_value_diagnostic": _fresh_ev_diagnostic(opportunity, odds),
+            "fresh_net_expected_value_diagnostic": fresh_ev,
             "fresh_robust_edge_diagnostic": None,
             "fresh_robust_edge_unavailable_reason": "FULL_CURRENT_MARKET_PARTITION_NOT_FETCHED_BY_TRANSPORT_GATE",
             "stale_router_net_expected_value_diagnostic": opportunity.robust_net_expected_value,
@@ -582,14 +643,16 @@ def _fresh_resolve_portfolio(
                 "fixture_identity": leg.fixture_identity,
                 "from_opportunity_id": leg.selected_opportunity_id,
                 "to_opportunity_id": opportunity.opportunity_id,
-                "reason": "PREDICTION_FIRST_FRESH_FALLBACK",
+                "reason": "SOURCE_ALIGNED_FRESH_FALLBACK",
             }))
 
     receipt = {
-        "schema": "athena-sportybet-prediction-first-fresh-resolution-v2",
+        "schema": "athena-sportybet-source-aligned-fresh-resolution-v3",
         "observed_at": semantic_bridge._utc_now(),
         "minimum_prediction_confidence": MINIMUM_PREDICTION_CONFIDENCE,
         "minimum_decimal_odds": MINIMUM_DECIMAL_ODDS,
+        "minimum_net_expected_value": MINIMUM_NET_EXPECTED_VALUE,
+        "minimum_robust_net_expected_value": MINIMUM_ROBUST_NET_EXPECTED_VALUE,
         "market_family_cap": family_cap,
         "fresh_market_family_counts": dict(sorted(family_counts.items())),
         "intent_count": len(portfolio.selected_legs),
@@ -744,16 +807,34 @@ def _bind_roundtrip_fresh_legs(
             raise CurrentShadowAllMarketShareCodeError(
                 "selected prediction identity is not unique during final odds binding"
             )
+        direct_ev = _fresh_ev_diagnostic(opportunities[0], direct_odds)
         updated = dict(leg)
         updated["semantic_resolved_decimal_odds"] = str(semantic_odds)
         updated["direct_roundtrip_decimal_odds"] = str(direct_odds)
         updated["decimal_odds"] = str(direct_odds)
         updated["direct_roundtrip_odds_refreshed"] = direct_odds != semantic_odds
-        updated["fresh_net_expected_value_diagnostic"] = _fresh_ev_diagnostic(
-            opportunities[0], direct_odds
-        )
+        updated["fresh_net_expected_value_diagnostic"] = direct_ev
         rebound.append(MappingProxyType(updated))
     return tuple(rebound)
+
+
+def _direct_value_reasons(
+    fresh_selected_legs: Sequence[Mapping[str, Any]],
+) -> tuple[str, ...]:
+    reasons: list[str] = []
+    for leg in fresh_selected_legs:
+        value = leg.get("fresh_net_expected_value_diagnostic")
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) <= MINIMUM_NET_EXPECTED_VALUE
+            or float(value) <= MINIMUM_ROBUST_NET_EXPECTED_VALUE
+        ):
+            reasons.append(
+                f"{leg['fixture_identity']}:DIRECT_PROVIDER_SETTLEMENT_AWARE_VALUE_NOT_POSITIVE"
+            )
+    return tuple(sorted(set(reasons)))
 
 
 def create_verified_shadow_all_market_share_code(
@@ -867,6 +948,20 @@ def create_verified_shadow_all_market_share_code(
         return result
 
     fresh_legs = _bind_roundtrip_fresh_legs(rebuilt, fresh_legs, transport_receipt)
+    direct_value_reasons = _direct_value_reasons(fresh_legs)
+    if direct_value_reasons:
+        result = _terminal(
+            portfolio=rebuilt,
+            status=STATUS_REPRICE_REQUIRED,
+            reasons=direct_value_reasons,
+            semantic_receipt=semantic_receipt,
+            transport_receipt=transport_receipt,
+            fresh_selected_legs=fresh_legs,
+            fallback_events=fallback_events,
+        )
+        _write(output_dir / "research-shadow-all-market-share-code-receipt.json", result.to_dict())
+        return result
+
     share_code = transport_receipt.get("shareCode")
     share_url = transport_receipt.get("shareURL")
     combined_odds = transport_receipt.get("combined_odds")
