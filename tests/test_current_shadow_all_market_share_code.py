@@ -147,7 +147,7 @@ def test_top_below_floor_reroutes_by_fresh_settlement_value(tmp_path, monkeypatc
     assert len(selections) == 1
     assert legs[0]["selected_opportunity_id"] == lower_confidence_higher_value.opportunity_id
     assert legs[0]["decimal_odds"] == "2.0"
-    assert legs[0]["fresh_net_expected_value_diagnostic"] == 0.2
+    assert legs[0]["fresh_net_expected_value_diagnostic"] == pytest.approx(0.2)
     assert events[0]["reason"] == "SOURCE_ALIGNED_FRESH_FALLBACK"
     top_audit = next(
         item for item in receipt["candidate_audits"][0]["candidates"]
