@@ -42,7 +42,10 @@ def test_complete_partition_devig_and_strongest_router_selection(monkeypatch):
 def test_incomplete_ordinary_partition_remains_audit_but_cannot_route(monkeypatch):
     bundle=_price(monkeypatch,(_mr()[0],)); home=next(r for r in bundle.results if r.market_id is MarketId.MATCH_RESULT and r.outcome_id is OutcomeId.HOME)
     assert home.disposition is ShadowPriceDisposition.PRICED and home.devig_status is ShadowDevigStatus.INCOMPLETE_PARTITION
-    decision=_route(monkeypatch,bundle); opp=next(o for o in decision.opportunities if o.opportunity_id==home.opportunity_id); assert opp.eligibility is ShadowOpportunityEligibility.ELIGIBLE and opp.value_first_eligibility is ShadowOpportunityEligibility.REJECTED
+    decision=_route(monkeypatch,bundle); opp=next(o for o in decision.opportunities if o.opportunity_id==home.opportunity_id)
+    assert opp.eligibility is ShadowOpportunityEligibility.REJECTED
+    assert opp.value_first_eligibility is ShadowOpportunityEligibility.REJECTED
+    assert any("settlement-aware value gate" in reason for reason in opp.rejection_reasons)
 
 def test_overlapping_scalar_market_still_obeys_055_floor(monkeypatch):
     quote=_q(MarketId.DOUBLE_CHANCE,OutcomeId.DRAW_OR_AWAY,20.0,mid="10",oid="11")
@@ -195,7 +198,7 @@ def test_prediction_first_selects_scalar_over_high_ev_low_confidence_ah(monkeypa
     assert decision.value_first_counterfactual_opportunity_id == ah_row.opportunity_id
 
 
-def test_strong_ah_can_rank_first_without_family_penalty(monkeypatch):
+def test_strong_ah_confidence_does_not_override_stronger_settlement_value(monkeypatch):
     ah = _router_result(
         MarketId.ASIAN_HANDICAP,
         OutcomeId.HOME,
@@ -217,7 +220,9 @@ def test_strong_ah_can_rank_first_without_family_penalty(monkeypatch):
     ah_row = next(item for item in decision.opportunities if item.price_result is ah)
     assert ah_row.prediction_confidence == pytest.approx(0.70)
     assert ah_row.eligibility is ShadowOpportunityEligibility.ELIGIBLE
-    assert decision.selected_opportunity_id == ah_row.opportunity_id
+    scalar_row = next(item for item in decision.opportunities if item.price_result is scalar)
+    assert scalar_row.prediction_confidence == pytest.approx(0.65)
+    assert decision.selected_opportunity_id == scalar_row.opportunity_id
 
 
 def test_dnb_confidence_is_win_plus_push(monkeypatch):
@@ -297,11 +302,11 @@ def test_high_confidence_below_odds_floor_falls_through(monkeypatch):
     assert next(item for item in decision.opportunities if item.price_result is blocked).prediction_first_rank is None
 
 
-def test_prediction_rank_is_deterministic_and_invariant_to_ev(monkeypatch):
-    first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b", confidence=0.70, odds=1.20, ev=0.90)
+def test_source_aligned_rank_uses_ev_then_canonical_identity(monkeypatch):
+    first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b", confidence=0.70, odds=1.20, ev=0.10)
     second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c", confidence=0.70, odds=1.20, ev=0.10)
     _bundle, first_decision = _route_custom(monkeypatch, first, second)
-    changed_first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b", confidence=0.70, odds=1.20, ev=0.10)
+    changed_first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b", confidence=0.70, odds=1.20, ev=0.90)
     changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c", confidence=0.70, odds=1.20, ev=0.90)
     _bundle, second_decision = _route_custom(monkeypatch, changed_first, changed_second)
     expected = min(
@@ -311,16 +316,16 @@ def test_prediction_rank_is_deterministic_and_invariant_to_ev(monkeypatch):
     first_selected = next(item for item in first_decision.opportunities if item.opportunity_id == first_decision.selected_opportunity_id)
     second_selected = next(item for item in second_decision.opportunities if item.opportunity_id == second_decision.selected_opportunity_id)
     assert router._prediction_canonical_key(first_selected.price_result) == expected
-    assert router._prediction_canonical_key(second_selected.price_result) == expected
+    assert second_selected.price_result is changed_first
 
 
-def test_prediction_rank_is_invariant_to_odds_and_quote_identity(monkeypatch):
-    first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b1", confidence=0.70, odds=1.20, ev=0.90)
+def test_source_aligned_tie_break_is_invariant_to_quote_identity(monkeypatch):
+    first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b1", confidence=0.70, odds=1.20, ev=0.10)
     second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c1", confidence=0.70, odds=1.50, ev=0.10)
     _bundle, first_decision = _route_custom(monkeypatch, first, second)
 
     changed_first = _router_result(MarketId.BTTS, OutcomeId.YES, token="b2", confidence=0.70, odds=1.50, ev=0.10)
-    changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c2", confidence=0.70, odds=1.20, ev=0.90)
+    changed_second = _router_result(MarketId.BTTS, OutcomeId.NO, token="c2", confidence=0.70, odds=1.20, ev=0.10)
     _bundle, second_decision = _route_custom(monkeypatch, changed_first, changed_second)
 
     assert first.opportunity_id != changed_first.opportunity_id
@@ -329,8 +334,10 @@ def test_prediction_rank_is_invariant_to_odds_and_quote_identity(monkeypatch):
     second_selected = next(item for item in second_decision.opportunities if item.opportunity_id == second_decision.selected_opportunity_id)
     assert router._prediction_canonical_key(first_selected.price_result) == router._prediction_canonical_key(second_selected.price_result)
     assert first_decision.selected_opportunity_id != second_decision.selected_opportunity_id
-    assert first_decision.value_first_selected_opportunity_id == first.opportunity_id
-    assert second_decision.value_first_selected_opportunity_id == changed_second.opportunity_id
+    assert router._prediction_canonical_key(first_selected.price_result) == min(
+        router._prediction_canonical_key(first),
+        router._prediction_canonical_key(second),
+    )
 
 
 def test_prediction_rank_collision_fails_closed(monkeypatch):
