@@ -1,23 +1,23 @@
 """Worker-local exact reuse of the builder-issued PR151 captured-audit replay.
 
 The reviewed latest-history builder first runs the complete projected PR151
-Actions audit while recording every GitHub read.  It then constructs a
+Actions audit while recording every GitHub read. It then constructs a
 ``GitHubActionsLineageEvidenceBundle`` whose public validator deliberately reruns
 that same complete audit from the captured reads to prove that the snapshot
 reproduces the live result.
 
-For arbitrary callers that second replay is essential.  Inside one Current
+For arbitrary callers that second replay is essential. Inside one Current
 Shadow worker, however, the exact read tuple handed to the evidence constructor
 was just issued by the same reviewed builder from the successful live audit.
 This module lets only that exact same-process payload identity reuse the already
-completed audit result.  The evidence dataclass itself still runs unchanged and
+completed audit result. The evidence dataclass itself still runs unchanged and
 still compares the returned canonical audit with ``audit_result_bytes``.
 
-No failed audit is cached.  Different main SHA, read key/kind/status, payload
-object, or payload length falls back to the original replay.  Cached entries hold
-strong references to every immutable payload byte object so Python object-id
-reuse cannot create a false match.  This layer grants no evidence, model,
-pricing, selection, execution, or BET authority.
+No failed audit is cached. Different main SHA, recorder instance, read
+key/kind/status, payload object, or payload length falls back to the original
+replay. Cached entries hold strong references to the recorder and every immutable
+payload byte object so Python object-id reuse cannot create a false match. This
+layer grants no evidence, model, pricing, selection, execution, or BET authority.
 """
 from __future__ import annotations
 
@@ -61,6 +61,7 @@ class BuilderAuditReplayReuseStats:
 
 @dataclasses.dataclass(frozen=True)
 class _IssuedAudit:
+    recorder_ref: Any
     payload_refs: tuple[bytes, ...]
     audit_result_bytes: bytes
     used_keys: frozenset[str]
@@ -82,6 +83,8 @@ def _write_diagnostic(
     stats: BuilderAuditReplayReuseStats,
     last_operation: str,
 ) -> None:
+    """Best-effort non-authoritative progress only; never change execution truth."""
+
     if path is None:
         return
     payload = {
@@ -107,15 +110,22 @@ def _write_diagnostic(
         )
         + "\n"
     ).encode("utf-8")
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(
-        f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
-    )
+    temporary = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = path.with_name(
+            f"{path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
         temporary.write_bytes(raw)
         os.replace(temporary, path)
+    except OSError:
+        return
     finally:
-        temporary.unlink(missing_ok=True)
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _valid_main_sha(value: Any) -> bool:
@@ -162,6 +172,23 @@ def _reads_identity(latest_history: Any, expected_main_sha: Any, reads: Any):
     )
 
 
+def _recorder_from_reader(latest_history: Any, reader: Any):
+    closure = getattr(reader, "__closure__", None)
+    if type(closure) is not tuple:
+        return None
+    matches = []
+    for cell in closure:
+        try:
+            value = cell.cell_contents
+        except ValueError:
+            continue
+        if type(value) is latest_history._ReadRecorder:
+            matches.append(value)
+    if len(matches) != 1:
+        return None
+    return matches[0]
+
+
 def install(
     latest_history: Any,
     *,
@@ -206,14 +233,18 @@ def install(
         value = original_run_audit(*args, **kwargs)
         if in_active_builder() and not getattr(local, "inside_replay", False):
             expected_main_sha = kwargs.get("expected_main_sha")
-            if _valid_main_sha(expected_main_sha):
+            recorder = _recorder_from_reader(
+                latest_history,
+                kwargs.get("get_main_ref"),
+            )
+            if _valid_main_sha(expected_main_sha) and recorder is not None:
                 try:
                     audit_raw = latest_history._canonical(value)
                 except Exception:
                     return value
                 captures = getattr(local, "live_audit_captures", None)
                 if type(captures) is list:
-                    captures.append((expected_main_sha, audit_raw))
+                    captures.append((expected_main_sha, recorder, audit_raw))
         return value
 
     def recorder_freeze(recorder):
@@ -225,12 +256,15 @@ def install(
             if type(captures) is list:
                 captures.clear()
             return reads
-        expected_main_sha, audit_raw = captures.pop()
+        expected_main_sha, captured_recorder, audit_raw = captures.pop()
+        if captured_recorder is not recorder:
+            return reads
         identity_value = _reads_identity(latest_history, expected_main_sha, reads)
         if identity_value is None:
             return reads
         identity, refs, keys = identity_value
         issued = _IssuedAudit(
+            recorder_ref=recorder,
             payload_refs=refs,
             audit_result_bytes=audit_raw,
             used_keys=keys,
@@ -243,7 +277,8 @@ def install(
                     issued_by_identity[identity] = issued
                     cached = True
                 elif (
-                    len(existing.payload_refs) == len(refs)
+                    existing.recorder_ref is recorder
+                    and len(existing.payload_refs) == len(refs)
                     and all(left is right for left, right in zip(existing.payload_refs, refs))
                     and existing.audit_result_bytes == audit_raw
                     and existing.used_keys == keys
@@ -273,19 +308,21 @@ def install(
                     len(issued.payload_refs) == len(refs)
                     and all(left is right for left, right in zip(issued.payload_refs, refs))
                 ):
-                    stats.increment("builder_replays_reused")
-                    _write_diagnostic(
-                        diagnostic_path,
-                        stats=stats,
-                        last_operation="BUILDER_REPLAY_REUSED",
-                    )
-                    return (
-                        latest_history._parse_object(
+                    try:
+                        replayed = latest_history._parse_object(
                             issued.audit_result_bytes,
                             "builder-issued captured Actions lineage audit",
-                        ),
-                        set(issued.used_keys),
-                    )
+                        )
+                    except Exception:
+                        replayed = None
+                    if replayed is not None:
+                        stats.increment("builder_replays_reused")
+                        _write_diagnostic(
+                            diagnostic_path,
+                            stats=stats,
+                            last_operation="BUILDER_REPLAY_REUSED",
+                        )
+                        return replayed, set(issued.used_keys)
 
         prior = getattr(local, "inside_replay", False)
         local.inside_replay = True
