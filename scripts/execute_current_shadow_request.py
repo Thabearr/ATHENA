@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """Execute Current Shadow for legacy scopes or explicit rolling seven-day dates.
 
-The wrapper keeps the reviewed daily supervisor/worker behavior while adding two
+The wrapper keeps the reviewed daily supervisor/worker behavior while adding
 research-only compatibility boundaries proven necessary by run #199:
 
 * exact explicit UTC fixture dates (any 1..7 unique dates in today..today+6);
 * evidence-bound Current Shadow reconciliation recovery for retained run-199
-  team/competition display drift and row-local malformed provider quote rows.
+  team/competition display drift and row-local malformed provider quote rows;
+* a reviewed Elo-only current-as-of xG fallback when the full five-feature model
+  is incomplete because form/fatigue remain correctly missing.
 
-It does not alter the frozen holdout, Router/Portfolio authority, provider prices,
-login/wallet/stake behavior, or the wager invariant.
+It does not alter the frozen holdout, impute missing features, broaden historical
+feature scope, change Router/Portfolio authority or provider prices, or touch
+login/wallet/stake behavior or the wager invariant.
 """
 from __future__ import annotations
 
@@ -27,6 +30,7 @@ from domain import current_shadow_fixture_identity_run199_overlay as run199_iden
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as reconciliation
 from domain import current_shadow_sportybet_tolerant_live_inventory as tolerant_inventory
 from domain import sportybet_current_event_discovery_reconciliation as reviewed
+from scripts import current_shadow_current_asof_elo_only_fallback as xg_fallback
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 from scripts import execute_current_shadow_daily as daily
 
@@ -153,6 +157,7 @@ def _write_request_policy(args: argparse.Namespace) -> None:
             "run199_identity_policy_id": run199_identity.POLICY_ID,
             "run199_identity_policy_sha256": run199_identity.POLICY_SHA256,
             "row_local_quote_policy": tolerant_inventory.policy_summary(),
+            "current_asof_elo_only_policy": xg_fallback.policy_summary(),
             "authority": {
                 "research_shadow_request": True,
                 "production_model": False,
@@ -171,6 +176,7 @@ def _execute_worker(args: argparse.Namespace) -> int:
     original_issuer = runner._issue_current_fixture_sources
     original_scope_count = daily.SCOPE_DAY_COUNT[args.fixture_scope]
     proxy, previous_proxy = _install_reconciliation_compatibility()
+    xg_hooks = xg_fallback.install()
     if args.fixture_dates is not None:
         validated_dates = fixture_dates.validate_fixture_dates(
             args.fixture_dates,
@@ -191,9 +197,12 @@ def _execute_worker(args: argparse.Namespace) -> int:
         )
         return daily._execute_worker(daily_args)
     finally:
-        daily.SCOPE_DAY_COUNT[args.fixture_scope] = original_scope_count
-        runner._issue_current_fixture_sources = original_issuer
-        _restore_reconciliation_compatibility(proxy, previous_proxy)
+        try:
+            xg_fallback.restore(xg_hooks)
+        finally:
+            daily.SCOPE_DAY_COUNT[args.fixture_scope] = original_scope_count
+            runner._issue_current_fixture_sources = original_issuer
+            _restore_reconciliation_compatibility(proxy, previous_proxy)
 
 
 def main(argv: list[str] | None = None) -> int:
