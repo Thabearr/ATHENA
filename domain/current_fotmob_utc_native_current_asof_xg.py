@@ -1,15 +1,15 @@
 """Research-only current-as-of UTC-native xG inference for Current Shadow.
 
 The frozen PR149 fresh-holdout seal remains unchanged: it may only seal captures
-inside its reviewed 24h-to-60m window.  Current Shadow, however, deliberately
-reviews fixtures with a different prospective horizon.  This module reuses the
-same reviewed UTC-native feature constructor and frozen xG rate math without
-minting a ``SealedFreshPrediction`` outside that holdout window.
+inside its reviewed 24h-to-60m window. Current Shadow deliberately reviews
+fixtures with a different prospective horizon. This module reuses the same
+reviewed UTC-native feature constructor and frozen xG rate math without minting
+a ``SealedFreshPrediction`` outside that holdout window.
 
 Inputs are exact reviewed PR149 history-ledger rows plus one exact qualified
-current FotMob capture.  The result is explicitly current-as-of research
-inference only and grants no production, pricing, selection, SportyBet or BET
-authority.
+current FotMob capture. When that narrower history cannot construct form/fatigue,
+Current Shadow may use the separately verified paired-campaign research history.
+Neither path grants production, pricing, selection, SportyBet or BET authority.
 """
 from __future__ import annotations
 
@@ -19,10 +19,12 @@ import enum
 import hashlib
 import json
 import math
+import os
 from types import MappingProxyType
 from typing import Any, Mapping
 
 from domain import current_fotmob_fixture_review_policy as fixture_policy
+from domain import current_shadow_paired_fotmob_history as paired_history
 from domain import fotmob_utc_native_expected_goals_fresh_holdout as fresh
 from domain import fotmob_utc_native_successor_feature_construction_qualification as utc_features
 
@@ -191,6 +193,50 @@ class CurrentAsOfXGAssessment:
         }
 
 
+def _paired_fallback(
+    *,
+    prefix: tuple[fresh.FreshHistoryResult, ...],
+    capture: fresh.QualifiedCaptureFixture,
+    narrow_history_sha256: str,
+) -> CurrentAsOfXGAssessment | None:
+    if not os.environ.get(paired_history.ARTIFACT_ENV, ""):
+        return None
+    try:
+        paired = paired_history.build_current_features_from_paired_history(
+            history_prefix=prefix,
+            selected_capture=capture,
+        )
+    except paired_history.CurrentShadowPairedHistoryError as exc:
+        raise _error("paired current-history research fallback failed") from exc
+    if paired.missing_feature_ids:
+        return None
+    values = dict(paired.features)
+    combined_history_sha = hashlib.sha256(
+        _canonical(
+            {
+                "narrow_history_prefix_sha256": narrow_history_sha256,
+                "paired_history_identity_sha256": paired.history_identity_sha256,
+                "paired_history_policy_id": paired_history.POLICY_ID,
+            }
+        )
+    ).hexdigest()
+    return CurrentAsOfXGAssessment(
+        schema_version=SCHEMA_VERSION,
+        dataset_name=DATASET_NAME,
+        status=STATUS,
+        disposition=CurrentAsOfXGDisposition.COMPLETE,
+        fixture=capture,
+        fixture_review_policy_id=fixture_policy.SHADOW_POLICY_ID,
+        history_prefix_sha256=combined_history_sha,
+        history_prefix_count=paired.history_row_count,
+        feature_projection_sha256=paired.feature_projection_sha256,
+        missing_feature_ids=(),
+        features=values,
+        rates=fresh._rates_from_features(values),
+        authority=_AUTHORITY,
+    )
+
+
 def build_current_asof_xg_assessment(
     *,
     history_ledger: fresh.FreshHistoryLedger,
@@ -299,6 +345,18 @@ def build_current_asof_xg_assessment(
     history_sha = hashlib.sha256(prefix_raw).hexdigest()
     projection_sha = hashlib.sha256(projection_raw).hexdigest()
     if missing:
+        paired = _paired_fallback(
+            prefix=prefix,
+            capture=capture,
+            narrow_history_sha256=history_sha,
+        )
+        if paired is not None:
+            if paired.fixture_review_policy_id != fixture_review_policy_id:
+                paired = dataclasses.replace(
+                    paired,
+                    fixture_review_policy_id=fixture_review_policy_id,
+                )
+            return paired
         return CurrentAsOfXGAssessment(
             schema_version=SCHEMA_VERSION,
             dataset_name=DATASET_NAME,
