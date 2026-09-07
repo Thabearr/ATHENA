@@ -4,10 +4,12 @@ import datetime as dt
 
 import pytest
 
+from domain import fotmob_fresh_holdout_continuity as continuity
 from domain import fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as recovery
 
 
 UTC = dt.timezone.utc
+MAIN_SHA = "a" * 40
 
 
 def _restored(
@@ -107,3 +109,69 @@ def test_only_exact_reviewed_crons_can_use_early_projection() -> None:
             created,
             _restored(committed=prior, attempted=prior),
         )
+
+
+def _watchdog_run() -> dict[str, object]:
+    return {
+        "id": 123,
+        "name": continuity.WATCHDOG_WORKFLOW_NAME,
+        "path": continuity.WATCHDOG_WORKFLOW_PATH,
+        "event": "schedule",
+        "head_branch": "main",
+        "head_sha": MAIN_SHA,
+        "created_at": "2026-09-07T18:38:00Z",
+    }
+
+
+def _dispatch_run(created_at: str) -> dict[str, object]:
+    plan = continuity.plan_from_watchdog_created_at("2026-09-07T18:38:00Z")
+    return {
+        "workflow_id": continuity.PRIMARY_WORKFLOW_ID,
+        "name": (
+            "ATHENA fresh-holdout workflow_dispatch "
+            f"source=123 target={plan.target_slot_text} "
+            f"cron={plan.target_cron} confirm={continuity.CONTINUITY_CONFIRMATION}"
+        ),
+        "path": continuity.PRIMARY_WORKFLOW_PATH,
+        "event": "workflow_dispatch",
+        "head_branch": "main",
+        "head_sha": MAIN_SHA,
+        "created_at": created_at,
+    }
+
+
+def test_watchdog_recognizes_same_bounded_early_window_without_widening_dispatch_authority() -> None:
+    assert continuity.MAXIMUM_NATURAL_PRIMARY_EARLY_SECONDS == 5 * 60
+    assert continuity.MAXIMUM_DISPATCH_EARLY_SECONDS == 5 * 60
+    assert (
+        continuity.MAXIMUM_NATURAL_PRIMARY_EARLY_SECONDS
+        == recovery.MAXIMUM_EARLY_SCHEDULE_LEAD_SECONDS
+    )
+
+    plan = continuity.plan_from_watchdog_created_at("2026-09-07T18:38:00Z")
+    assert plan.target_slot_text == "2026-09-07T19:07:00Z"
+
+    with pytest.raises(
+        continuity.FreshHoldoutContinuityError,
+        match="continuity dispatch was not created at the planned prospective slot",
+    ):
+        continuity.validate_continuity_dispatch(
+            watchdog_run=_watchdog_run(),
+            dispatch_run=_dispatch_run("2026-09-07T19:06:29Z"),
+            source_watchdog_run_id=123,
+            current_main_sha=MAIN_SHA,
+            requested_target_slot=plan.target_slot_text,
+            requested_target_cron=plan.target_cron,
+            confirmation=continuity.CONTINUITY_CONFIRMATION,
+        )
+
+    accepted = continuity.validate_continuity_dispatch(
+        watchdog_run=_watchdog_run(),
+        dispatch_run=_dispatch_run("2026-09-07T19:06:30Z"),
+        source_watchdog_run_id=123,
+        current_main_sha=MAIN_SHA,
+        requested_target_slot=plan.target_slot_text,
+        requested_target_cron=plan.target_cron,
+        confirmation=continuity.CONTINUITY_CONFIRMATION,
+    )
+    assert accepted == plan
