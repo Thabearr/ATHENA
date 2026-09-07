@@ -57,7 +57,7 @@ import scripts.run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror
 
 PRE_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = pr175.POST_PR175_WORKFLOW_BLOB_SHA
 POST_AMBIGUOUS_NOOP_WORKFLOW_BLOB_SHA = "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2"
-SCHEDULE_RECOVERY_BLOB_SHA = "14d6dd1000e934e21c12e64f41f67b78f2484278"
+SCHEDULE_RECOVERY_BLOB_SHA = "0f880bfb161d2dd9547326611505a066019b7f06"
 SCHEDULE_RECOVERY_PATH = (
     "domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py"
 )

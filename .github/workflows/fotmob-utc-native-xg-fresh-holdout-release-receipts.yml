@@ -47,13 +47,13 @@ jobs:
             exit 1
           }
           recovery_actual="$(git hash-object domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)"
-          recovery_expected="14d6dd1000e934e21c12e64f41f67b78f2484278"
+          recovery_expected="0f880bfb161d2dd9547326611505a066019b7f06"
           test "${recovery_actual}" = "${recovery_expected}" || {
             echo "FATAL: reviewed no-acquisition proof implementation blob changed"
             exit 1
           }
           continuity_actual="$(git hash-object domain/fotmob_fresh_holdout_continuity.py)"
-          continuity_expected="6d768a506d579ef88f1d321102cb9c53d846c72a"
+          continuity_expected="ac8ba91b8f3e1086f01d35f3ca6d6aa356417623"
           test "${continuity_actual}" = "${continuity_expected}" || {
             echo "FATAL: reviewed prospective continuity provenance implementation blob changed"
             exit 1
