@@ -52,7 +52,7 @@ def parse_fixture_dates_text(value: str) -> tuple[str, ...]:
         raise CurrentShadowFixtureDateRequestError(
             "fixture dates must be comma-separated YYYYMMDD values"
         )
-    parts = tuple(part.strip() for part in value.split(","))
+    parts = tuple(value.split(","))
     if not 1 <= len(parts) <= MAX_SELECTED_DATES or any(not part for part in parts):
         raise CurrentShadowFixtureDateRequestError("select between one and seven fixture dates")
     if len(set(parts)) != len(parts):
