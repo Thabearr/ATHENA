@@ -197,25 +197,6 @@ jobs:
             '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
             | sha256sum --check --strict
 
-      - name: Restore exact preserved broad FotMob history campaign
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          history_dir='.cache/athena-research/current-shadow-paired-history'
-          artifact_path="${history_dir}/fotmob-source-history-campaign.zip"
-          mkdir -p "${history_dir}"
-          gh api \
-            -H 'Accept: application/vnd.github+json' \
-            "repos/${GITHUB_REPOSITORY}/actions/artifacts/9249856559/zip" \
-            > "${artifact_path}"
-          printf '%s  %s\n' \
-            '7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f' \
-            "${artifact_path}" \
-            | sha256sum --check --strict
-          test "$(stat -c %s "${artifact_path}")" -eq 61886753
-          printf 'ATHENA_CURRENT_SHADOW_PAIRED_HISTORY_ARTIFACT=%s\n' \
-            "${artifact_path}" >> "${GITHUB_ENV}"
-
       - name: Restore prior persistent Shadow identity state
         env:
           GH_TOKEN: ${{ github.token }}
