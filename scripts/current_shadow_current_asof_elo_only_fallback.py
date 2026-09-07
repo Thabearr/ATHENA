@@ -21,6 +21,8 @@ and other fail-closed model-readiness states without changing model behavior.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
+import json
 from types import MappingProxyType
 from typing import Any, Callable
 
@@ -28,12 +30,13 @@ from domain import _all_market_shadow_current_binding as binding
 from domain import current_fotmob_utc_native_current_asof_elo_only as elo_only
 from domain import current_fotmob_utc_native_current_asof_xg as current_asof
 from domain import current_fotmob_utc_native_shadow_prediction as current_shadow
+from domain import current_shadow_nonlegacy_history as nonlegacy
 from domain._all_market_shadow_types import ResearchXGRates, ShadowDisposition
 
 
-POLICY_ID = "ATHENA_CURRENT_SHADOW_CURRENT_AS_OF_ELO_ONLY_FALLBACK_V2"
-DIAGNOSTIC_SCHEMA_VERSION = 2
-DIAGNOSTIC_DATASET_NAME = "athena-current-shadow-current-asof-xg-diagnostic-v2"
+POLICY_ID = "ATHENA_CURRENT_SHADOW_CURRENT_AS_OF_NONLEGACY_THEN_ELO_FALLBACK_V3"
+DIAGNOSTIC_SCHEMA_VERSION = 3
+DIAGNOSTIC_DATASET_NAME = "athena-current-shadow-current-asof-xg-diagnostic-v3"
 _FALLBACK_ROW_DISPOSITIONS = frozenset(
     {
         current_shadow.MISSING_REVIEWED_FEATURES,
@@ -232,6 +235,36 @@ def _with_fallback(
         )
         return result
 
+    # Separate current-research source, never an extension of the frozen ledger.
+    current_receipt = None
+    current_error = None
+    try:
+        current_receipt = nonlegacy.build_current_nonlegacy_features(history, fixture_identity)
+    except Exception as exc:
+        # Invalid new evidence cannot authorize full inference. Preserve the
+        # independently reviewed Elo fallback and expose the failed boundary.
+        current_error = {
+            "failure_type": type(exc).__name__,
+            "coverage_status": getattr(exc, "coverage_status", "IDENTITY_UNPROVEN"),
+        }
+    if current_receipt is not None:
+        current = json.loads(current_receipt)
+        if current["status"] == nonlegacy.COMPLETE:
+            _record(fixture_identity, state="CURRENT_NONLEGACY_MODEL_READY",
+                    history_sha=history_sha, blocker=blocker, missing=missing,
+                    row_disposition=row.disposition, full=full)
+            _DIAGNOSTIC_ROWS[fixture_identity]["current_nonlegacy_history"] = current
+            return (
+                ResearchXGRates(
+                    calibrated_home=current["rates"]["calibrated_home"],
+                    calibrated_away=current["rates"]["calibrated_away"],
+                    feature_projection_identity=hashlib.sha256(current_receipt).hexdigest(),
+                    history_prefix_identity=current["history_sha256"],
+                    source_fixture_identity=fixture_identity,
+                    completeness_status=nonlegacy.COMPLETE,
+                ), None, (), kickoff,
+            )
+
     try:
         reduced = elo_only.build_current_asof_elo_only_xg_assessment(full)
     except elo_only.CurrentAsOfEloOnlyXGError as exc:
@@ -271,6 +304,10 @@ def _with_fallback(
         full=full,
     )
     reduced_rates = dict(reduced.rates)
+    if current_receipt is not None:
+        _DIAGNOSTIC_ROWS[fixture_identity]["current_nonlegacy_history"] = json.loads(current_receipt)
+    if current_error is not None:
+        _DIAGNOSTIC_ROWS[fixture_identity]["current_nonlegacy_history_error"] = current_error
     return (
         ResearchXGRates(
             calibrated_home=float(reduced_rates["elo_only_home"]),
@@ -331,6 +368,8 @@ def policy_summary() -> dict[str, Any]:
     return {
         "policy_id": POLICY_ID,
         "fallback": payload,
+        "current_nonlegacy_history_contract": nonlegacy.CONTRACT,
+        "current_nonlegacy_history_contract_sha256": nonlegacy.CONTRACT_SHA256,
         "base_binding_runs_first": True,
         "fallback_row_dispositions": sorted(_FALLBACK_ROW_DISPOSITIONS),
         "current_asof_assessment_required": True,
