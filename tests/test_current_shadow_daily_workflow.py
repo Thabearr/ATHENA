@@ -27,8 +27,8 @@ def test_current_shadow_workflow_is_single_daily_and_on_demand_surface():
     assert "--fixture-scope \"${ATHENA_FIXTURE_SCOPE}\"" in text
     assert "--fixture-dates \"${ATHENA_FIXTURE_DATES}\"" in text
     assert "current_shadow_fixture_date_request" in text
-    assert "9249856559" in text
-    assert "7c2fa200efed098bd5fca22fc139af816256c74967b98d8cb2c62fe3e793508f" in text
+    assert "ATHENA_CURRENT_SHADOW_PAIRED_HISTORY_ARTIFACT" not in text
+    assert "9249856559" not in text
     assert "cancel-in-progress: false" in text
     assert "build_acca.py generate" not in text
 
