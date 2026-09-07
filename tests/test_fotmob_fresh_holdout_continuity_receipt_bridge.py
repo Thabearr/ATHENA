@@ -36,8 +36,8 @@ def test_bridge_pins_existing_reviewed_evidence_and_binding_implementations() ->
     workflow = _workflow_text()
     for digest in (
         "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2",
-        "6d768a506d579ef88f1d321102cb9c53d846c72a",
-        "14d6dd1000e934e21c12e64f41f67b78f2484278",
+        "ac8ba91b8f3e1086f01d35f3ca6d6aa356417623",
+        "0f880bfb161d2dd9547326611505a066019b7f06",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
         "f0b836304b1d46877e0396ea7a532c24b46a3d16",
         "4c05e20ded1f2b7129ec38a16d45c65cedb341ed",
