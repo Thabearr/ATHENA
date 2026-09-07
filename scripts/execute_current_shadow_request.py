@@ -169,9 +169,19 @@ def _write_request_policy(args: argparse.Namespace) -> None:
 
 def _execute_worker(args: argparse.Namespace) -> int:
     original_issuer = runner._issue_current_fixture_sources
+    original_scope_count = daily.SCOPE_DAY_COUNT[args.fixture_scope]
     proxy, previous_proxy = _install_reconciliation_compatibility()
     if args.fixture_dates is not None:
-        runner._issue_current_fixture_sources = _selected_source_issuer(args.fixture_dates)
+        validated_dates = fixture_dates.validate_fixture_dates(
+            args.fixture_dates,
+            current_utc=runner._now(),
+        )
+        runner._issue_current_fixture_sources = _selected_source_issuer(validated_dates)
+        # The reviewed daily worker copies the scope's day count into the runner
+        # for receipt/progress diagnostics.  Bind that diagnostic count to the
+        # exact explicit request while the custom issuer supplies the actual
+        # non-contiguous dates, then restore the legacy scope unconditionally.
+        daily.SCOPE_DAY_COUNT[args.fixture_scope] = len(validated_dates)
     _write_request_policy(args)
     try:
         daily_args = argparse.Namespace(
@@ -181,6 +191,7 @@ def _execute_worker(args: argparse.Namespace) -> int:
         )
         return daily._execute_worker(daily_args)
     finally:
+        daily.SCOPE_DAY_COUNT[args.fixture_scope] = original_scope_count
         runner._issue_current_fixture_sources = original_issuer
         _restore_reconciliation_compatibility(proxy, previous_proxy)
 
