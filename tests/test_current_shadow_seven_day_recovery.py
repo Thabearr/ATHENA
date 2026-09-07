@@ -1,36 +1,19 @@
 from __future__ import annotations
 
 import datetime as dt
-import os
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
-from domain import current_fotmob_fixture_review_policy as fixture_policy
 from domain import current_fotmob_utc_native_current_asof_xg as current_asof
 from domain import current_shadow_fixture_date_request as date_request
 from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
-from domain import current_shadow_paired_fotmob_history as paired_history
 from domain import current_shadow_sportybet_tolerant_live_inventory as tolerant_inventory
-from domain import fotmob_utc_native_expected_goals_fresh_holdout as fresh
 from scripts import execute_current_shadow_request as request
 
 
 UTC = dt.timezone.utc
-
-
-def _capture() -> fresh.QualifiedCaptureFixture:
-    return fresh.QualifiedCaptureFixture(
-        fixture_id=9_000_001,
-        provider_primary_id=87,
-        wrapper_id=87,
-        home_team_id=101,
-        away_team_id=202,
-        kickoff_utc=dt.datetime(2026, 9, 9, 18, 0, tzinfo=UTC),
-        capture_observed_at=dt.datetime(2026, 9, 6, 20, 0, tzinfo=UTC),
-        capture_manifest_sha256="1" * 64,
-        capture_raw_sha256="2" * 64,
-    )
 
 
 def test_explicit_fixture_dates_support_non_contiguous_days_inside_rolling_week():
@@ -151,56 +134,8 @@ def test_row_local_quote_policy_keeps_all_execution_authority_false():
     assert policy["wager_placed"] is False
 
 
-def test_paired_history_is_pinned_to_exact_preserved_pr117_campaign():
-    assert paired_history.ARTIFACT_ID == paired_history.pr117.ARTIFACT_ID
-    assert paired_history.ARTIFACT_SHA256 == paired_history.pr117.ARTIFACT_SHA256
-    assert paired_history.ARTIFACT_SIZE == paired_history.pr117.ARTIFACT_SIZE
-    assert paired_history.CACHE_SHA256 == paired_history.pr117.CACHE_SHA256
-    assert paired_history.CACHE_SIZE == paired_history.pr117.CACHE_SIZE
-    assert paired_history._AUTHORITY["research_shadow_history_fallback"] is True
-    assert paired_history._AUTHORITY["production_model"] is False
-    assert paired_history._AUTHORITY["pricing"] is False
-    assert paired_history._AUTHORITY["selection"] is False
-    assert paired_history._AUTHORITY["bet"] is False
-    assert paired_history._AUTHORITY["wager_placed"] is False
-
-
-def test_current_asof_paired_fallback_reuses_frozen_rate_math_and_stays_research_only(monkeypatch):
-    features = {
-        "home_elo": 1510.0,
-        "away_elo": 1490.0,
-        "home_form": 0.60,
-        "away_form": 0.40,
-        "fatigue": 0.0,
-    }
-    paired = paired_history.PairedCurrentFeatureResult(
-        features=features,
-        missing_feature_ids=(),
-        history_identity_sha256="3" * 64,
-        history_row_count=1234,
-        feature_projection_sha256="4" * 64,
-        authority=paired_history._AUTHORITY,
-    )
-    monkeypatch.setenv(paired_history.ARTIFACT_ENV, "/exact/preserved/history.zip")
-    monkeypatch.setattr(
-        paired_history,
-        "build_current_features_from_paired_history",
-        lambda **_kwargs: paired,
-    )
-
-    assessment = current_asof._paired_fallback(
-        prefix=(),
-        capture=_capture(),
-        narrow_history_sha256="5" * 64,
-    )
-
-    assert assessment is not None
-    assert assessment.fixture_review_policy_id == fixture_policy.SHADOW_POLICY_ID
-    assert dict(assessment.features) == features
-    assert dict(assessment.rates) == fresh._rates_from_features(features)
-    assert assessment.history_prefix_count == 1234
-    assert assessment.authority["production_model"] is False
-    assert assessment.authority["pricing"] is False
-    assert assessment.authority["selection"] is False
-    assert assessment.authority["bet"] is False
-    assert assessment.authority["wager_placed"] is False
+def test_current_asof_never_expands_frozen_historical_feature_scope():
+    source = Path(current_asof.__file__).read_text(encoding="utf-8")
+    assert "current_shadow_paired_fotmob_history" not in source
+    assert "_paired_fallback" not in source
+    assert "ATHENA_CURRENT_SHADOW_PAIRED_HISTORY_ARTIFACT" not in source
