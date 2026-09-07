@@ -26,7 +26,15 @@ MINIMUM_ARM_LEAD_SECONDS = 90
 PRIMARY_DELIVERY_GRACE_SECONDS = 90
 MAXIMUM_ARM_HORIZON_SECONDS = 40 * 60
 MAXIMUM_DISPATCH_LATE_SECONDS = 5 * 60
-MAXIMUM_DISPATCH_EARLY_SECONDS = 30
+# GitHub scheduled deliveries have now been observed 114 seconds before their
+# nominal cron occurrence.  The watchdog uses this public value only when
+# deciding whether a naturally-created primary run exists for the target slot.
+# Continuity workflow_dispatch provenance remains on its original 30-second
+# early bound below; widening natural-delivery recognition must not widen
+# dispatch authority.
+MAXIMUM_NATURAL_PRIMARY_EARLY_SECONDS = 5 * 60
+MAXIMUM_DISPATCH_EARLY_SECONDS = MAXIMUM_NATURAL_PRIMARY_EARLY_SECONDS
+_CONTINUITY_DISPATCH_EARLY_SECONDS = 30
 CONTINUITY_CONFIRMATION = "PROSPECTIVE_ONLY_NO_BACKFILL_V1"
 WATCHDOG_PROSPECTIVE_DISPATCH_REQUIRED_STEPS = (
     "Validate exact control trigger",
@@ -259,7 +267,9 @@ def validate_continuity_dispatch(
     if _sha(dispatch_run.get("head_sha"), "dispatch head_sha") != current_sha:
         raise _error("continuity dispatch head differs from current main")
     dispatch_created = _utc(dispatch_run.get("created_at"), "dispatch created_at")
-    earliest = plan.target_slot - dt.timedelta(seconds=MAXIMUM_DISPATCH_EARLY_SECONDS)
+    earliest = plan.target_slot - dt.timedelta(
+        seconds=_CONTINUITY_DISPATCH_EARLY_SECONDS
+    )
     latest = plan.target_slot + dt.timedelta(seconds=MAXIMUM_DISPATCH_LATE_SECONDS)
     if not earliest <= dispatch_created <= latest:
         raise _error("continuity dispatch was not created at the planned prospective slot")
@@ -272,7 +282,7 @@ def seconds_until_target(plan: ContinuityPlan, *, now: Any) -> int:
         raise _error("exact ContinuityPlan is required")
     current = _utc(now, "now")
     remaining = (plan.target_slot - current).total_seconds()
-    if remaining < -MAXIMUM_DISPATCH_EARLY_SECONDS:
+    if remaining < -_CONTINUITY_DISPATCH_EARLY_SECONDS:
         raise _error("planned continuity slot is already in the past; no dispatch allowed")
     if remaining <= 0:
         return 0
@@ -334,6 +344,7 @@ __all__ = [
     "MAXIMUM_ARM_HORIZON_SECONDS",
     "MAXIMUM_DISPATCH_EARLY_SECONDS",
     "MAXIMUM_DISPATCH_LATE_SECONDS",
+    "MAXIMUM_NATURAL_PRIMARY_EARLY_SECONDS",
     "MINIMUM_ARM_LEAD_SECONDS",
     "PRIMARY_CRON_BY_MINUTE",
     "PRIMARY_DELIVERY_GRACE_SECONDS",
