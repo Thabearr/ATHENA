@@ -33,5 +33,25 @@ def test_current_shadow_workflow_is_single_daily_and_on_demand_surface():
     assert "build_acca.py generate" not in text
 
 
+def test_current_shadow_email_delivery_failure_is_visible_but_receipt_still_uploads():
+    path = Path(".github/workflows/current-shadow-all-market.yml")
+    text = path.read_text(encoding="utf-8")
+
+    email_step = text.split(
+        "- name: Email durable Shadow result when configured", 1
+    )[1].split("- name: Upload durable research receipt", 1)[0]
+    upload_step = text.split("- name: Upload durable research receipt", 1)[1]
+
+    assert "if: always()" in email_step
+    assert "continue-on-error:" not in email_step
+    assert "GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}" in email_step
+    assert "GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}" in email_step
+    assert "RECIPIENT_EMAIL: ${{ secrets.RECIPIENT_EMAIL }}" in email_step
+    assert "current-shadow-email-delivery-receipt.json" in email_step
+
+    assert "if: always()" in upload_step
+    assert "path: artifacts/current-shadow-all-market" in upload_step
+
+
 def test_legacy_daily_accumulator_workflow_is_retired():
     assert not Path(".github/workflows/daily_acca.yml").exists()
