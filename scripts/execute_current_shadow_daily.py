@@ -181,7 +181,7 @@ def _finalize_source_adapter_failure(
 
 
 def _execute_worker(args: argparse.Namespace) -> int:
-    request_dates = args.fixture_dates
+    request_dates = getattr(args, "fixture_dates", None)
     day_count = (
         len(request_dates)
         if request_dates is not None
@@ -203,63 +203,22 @@ def _execute_worker(args: argparse.Namespace) -> int:
                 request_dates=request_dates,
             )
         )
-    # The daily wrapper calls the nested PR-F worker stack in-process rather than
-    # entering execute_current_shadow_all_market.main(). Carry forward the exact
-    # all-market worker marker that main() would have set so worker-only durable-
-    # history acceleration is actually installed on the hosted daily/on-demand
-    # path.
     os.environ[all_market_cli.WORKER_ENV] = "1"
     try:
-        # Run #199 proved exact same-kickoff provider counterparts were being lost
-        # at the V2 fixture-identity boundary. Install the Current Shadow V3
-        # deterministic compatibility only inside this worker. It keeps full UTC,
-        # home/away and stable provider IDs exact and binds the changed matching
-        # basis into the reconciliation contract identity.
         identity_hooks = identity_recovery.install(runner.reconciliation)
-
-        # One malformed provider market/outcome row must not poison an otherwise
-        # valid direct event. The exact raw response and manifest remain unchanged;
-        # the worker-local replay only omits the unusable row and is restored in
-        # finally. All PR-B replay inside the worker sees the same row-local view.
         quote_hook = quote_replay.install()
-
-        # The PR151 audit intentionally replays its exact captured bytes more than
-        # once. Keep those reads and validations authoritative, but do not unzip
-        # and hash the same immutable Actions artifact from scratch at every
-        # replay boundary. This worker-local layer caches only successful exact
-        # verifier outputs and writes non-authoritative progress diagnostics that
-        # survive the outer supervisor if history still overruns its budget.
         verification_hooks = verification_reuse.install(
             runner.latest_history,
             diagnostic_path=(
                 args.output_dir / HISTORY_VERIFICATION_DIAGNOSTIC_FILENAME
             ),
         )
-        # The reviewed builder also performs the complete projected PR151 audit
-        # once live and immediately replays that same just-recorded snapshot in
-        # GitHubActionsLineageEvidenceBundle.__post_init__. Run #188 proved the
-        # second projected audit remained inside CURRENT_DURABLE_FRESH_HISTORY
-        # after exact artifact-verification reuse had already activated. Reuse
-        # only the successful audit paired with the exact same-process immutable
-        # payload objects issued by this builder; arbitrary evidence continues
-        # through the untouched public replay.
         builder_audit_hooks = builder_audit_reuse.install(
             runner.latest_history,
             diagnostic_path=(
                 args.output_dir / HISTORY_BUILDER_AUDIT_DIAGNOSTIC_FILENAME
             ),
         )
-        # Run #189 proved that the artifact/digest verification and builder audit
-        # layers had both finished roughly four minutes into the 55-minute worker,
-        # while CURRENT_DURABLE_FRESH_HISTORY then consumed the rest of the budget.
-        # The remaining hot path is PR245/PR244 semantic reconstruction: immutable
-        # dataclass copies/canonical hashes repeatedly invoke the same expensive
-        # frozen history ledger and current-shadow derivation. Preserve the first
-        # reviewed execution for every exact semantic input, then reuse only that
-        # successful frozen result for equivalent same-worker copies. The helper
-        # also shares the date-invariant exact PR119+settlement ledger across the
-        # current source dates. Arbitrary/changed inputs still execute the
-        # untouched reviewed implementation and failures are never cached.
         semantic_replay_hooks = semantic_replay_reuse.install(
             runner.latest_history.prefix.shadow,
             diagnostic_path=(
@@ -299,8 +258,6 @@ def _execute_worker(args: argparse.Namespace) -> int:
                                     identity_hooks,
                                 )
                         finally:
-                            # Restoration of request scope, issuer and exact worker
-                            # marker must not depend on diagnostic I/O or cleanup.
                             runner._issue_current_fixture_sources = original_issuer
                             runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
                             if prior_all_market_worker is None:
