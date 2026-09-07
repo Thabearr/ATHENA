@@ -2,11 +2,12 @@
 """Run the reviewed current Shadow chain for a user-facing daily/on-demand request.
 
 This wrapper changes no football, pricing, Router, Portfolio, provider, freshness,
-or authority semantics. It only makes the already-reviewed fixture search horizon
-an explicit user-facing request scope:
+or authority semantics. It only makes the reviewed fixture search horizon an
+explicit user-facing request:
 
 * ``today`` -> current UTC fixture date only;
-* ``three-day`` -> the existing PR-F three-date research horizon.
+* ``three-day`` -> the existing PR-F three-date research horizon;
+* ``--fixture-dates`` -> any 1..7 unique UTC dates inside today..today+6.
 
 Requested accumulator size remains a target and is limited to the frozen 1..50
 Portfolio contract. The wrapper preserves the PR-F 55-minute supervisor and
@@ -15,6 +16,7 @@ Portfolio contract. The wrapper preserves the PR-F 55-minute supervisor and
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 import json
 import os
 from pathlib import Path
@@ -40,6 +42,7 @@ SCOPE_DAY_COUNT = {
     SCOPE_TODAY: 1,
     SCOPE_THREE_DAY: 3,
 }
+MAX_REQUEST_DATE_COUNT = 7
 HISTORY_VERIFICATION_DIAGNOSTIC_FILENAME = (
     "current-shadow-history-artifact-verification-diagnostic.json"
 )
@@ -61,6 +64,39 @@ def _target_size(value: str) -> int:
     return result
 
 
+def _fixture_dates(value: str) -> tuple[str, ...]:
+    if type(value) is not str or not value or value != value.strip():
+        raise argparse.ArgumentTypeError(
+            "fixture dates must be comma-separated YYYYMMDD values"
+        )
+    tokens = value.split(",")
+    if not 1 <= len(tokens) <= MAX_REQUEST_DATE_COUNT:
+        raise argparse.ArgumentTypeError("fixture dates must contain 1 through 7 dates")
+    if len(set(tokens)) != len(tokens):
+        raise argparse.ArgumentTypeError("fixture dates must be unique")
+
+    today = runner._now().date()
+    latest = today + timedelta(days=MAX_REQUEST_DATE_COUNT - 1)
+    parsed: list[tuple[object, str]] = []
+    for token in tokens:
+        if len(token) != 8 or not token.isdigit():
+            raise argparse.ArgumentTypeError(
+                "fixture dates must be comma-separated YYYYMMDD values"
+            )
+        try:
+            requested = datetime.strptime(token, "%Y%m%d").date()
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError("fixture date is not a real UTC date") from exc
+        if requested.strftime("%Y%m%d") != token:
+            raise argparse.ArgumentTypeError("fixture date is not canonical YYYYMMDD")
+        if requested < today or requested > latest:
+            raise argparse.ArgumentTypeError(
+                "fixture dates must be inside the rolling UTC today..today+6 window"
+            )
+        parsed.append((requested, token))
+    return tuple(token for _date, token in sorted(parsed))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target-size", type=_target_size, required=True)
@@ -71,11 +107,45 @@ def build_parser() -> argparse.ArgumentParser:
         help="today = UTC date only; three-day = existing PR-F research horizon",
     )
     parser.add_argument(
+        "--fixture-dates",
+        type=_fixture_dates,
+        default=None,
+        help="1..7 unique comma-separated UTC dates inside today..today+6",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=Path("artifacts/current-shadow-all-market"),
     )
     return parser
+
+
+def _issue_exact_fixture_sources(
+    *, repository_root: Path, request_dates: tuple[str, ...]
+):
+    attempted: list[str] = []
+    sources: list[tuple[object, str]] = []
+    for request_date in request_dates:
+        attempted.append(request_date)
+        try:
+            execution = runner.current_fotmob_source.issue_current_shadow_fotmob_reviewed_source(
+                request_date=request_date,
+                timezone="UTC",
+                ccode3="NGA",
+                execute_live_network=True,
+                repository_root=repository_root,
+            )
+        except runner.current_fotmob_source.CurrentFotMobReviewedSourceError as exc:
+            if str(exc) == runner.current_fotmob_source.STATUS_NO_FIXTURES:
+                continue
+            raise
+        sources.append((execution, request_date))
+    if not sources:
+        raise runner.CurrentShadowAllMarketRunnerError(
+            "NO_POLICY_APPROVED_CURRENT_FOTMOB_FIXTURES_IN_REQUESTED_DATES:"
+            + ",".join(attempted)
+        )
+    return tuple(sources), tuple(attempted)
 
 
 def _finalize_source_adapter_failure(
@@ -109,13 +179,26 @@ def _finalize_source_adapter_failure(
 
 
 def _execute_worker(args: argparse.Namespace) -> int:
-    day_count = SCOPE_DAY_COUNT[args.fixture_scope]
+    request_dates = args.fixture_dates
+    day_count = (
+        len(request_dates)
+        if request_dates is not None
+        else SCOPE_DAY_COUNT[args.fixture_scope]
+    )
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
+    original_issuer = runner._issue_current_fixture_sources
     prior_all_market_worker = os.environ.get(all_market_cli.WORKER_ENV)
     verification_hooks = None
     builder_audit_hooks = None
     semantic_replay_hooks = None
     runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = day_count
+    if request_dates is not None:
+        runner._issue_current_fixture_sources = (
+            lambda *, repository_root: _issue_exact_fixture_sources(
+                repository_root=repository_root,
+                request_dates=request_dates,
+            )
+        )
     # The daily wrapper calls the nested PR-F worker stack in-process rather than
     # entering execute_current_shadow_all_market.main(). Carry forward the exact
     # all-market worker marker that main() would have set so worker-only durable-
@@ -158,7 +241,7 @@ def _execute_worker(args: argparse.Namespace) -> int:
         # reviewed execution for every exact semantic input, then reuse only that
         # successful frozen result for equivalent same-worker copies. The helper
         # also shares the date-invariant exact PR119+settlement ledger across the
-        # three current source dates. Arbitrary/changed inputs still execute the
+        # current source dates. Arbitrary/changed inputs still execute the
         # untouched reviewed implementation and failures are never cached.
         semantic_replay_hooks = semantic_replay_reuse.install(
             runner.latest_history.prefix.shadow,
@@ -188,8 +271,9 @@ def _execute_worker(args: argparse.Namespace) -> int:
                     if verification_hooks is not None:
                         verification_reuse.restore(runner.latest_history, verification_hooks)
                 finally:
-                    # Restoration of the request-scope and exact worker marker must
-                    # not depend on diagnostic I/O or any reuse-layer cleanup.
+                    # Restoration of request scope, issuer and exact worker marker
+                    # must not depend on diagnostic I/O or reuse-layer cleanup.
+                    runner._issue_current_fixture_sources = original_issuer
                     runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
                     if prior_all_market_worker is None:
                         os.environ.pop(all_market_cli.WORKER_ENV, None)
@@ -210,11 +294,12 @@ def main(argv: list[str] | None = None) -> int:
         WORKER_MODULE,
         "--target-size",
         str(args.target_size),
-        "--fixture-scope",
-        args.fixture_scope,
-        "--output-dir",
-        str(args.output_dir),
     ]
+    if args.fixture_dates is None:
+        command.extend(("--fixture-scope", args.fixture_scope))
+    else:
+        command.extend(("--fixture-dates", ",".join(args.fixture_dates)))
+    command.extend(("--output-dir", str(args.output_dir)))
     try:
         completed = subprocess.run(
             command,
