@@ -6,6 +6,11 @@ run. This module lets such a run finish as a proven no-acquisition control no-op
 then permits a later run to step across that no-op only when GitHub job metadata
 proves the reviewed collection path never reached acquisition or persistence.
 
+GitHub can also materialize a scheduled workflow run shortly before its nominal cron
+minute. That case must not be misread as the previous hour's occurrence. A narrowly
+bounded early delivery may wait until its exact upcoming :07/:37 UTC occurrence and
+then resolve normally; wider/older anomalies remain fail-closed.
+
 The same rule applies to the prospective continuity transport: if durable lineage
 already attempted the exact future target, the continuity dispatch must become a
 green zero-artifact no-op and may be stepped across only after exact job metadata
@@ -16,6 +21,8 @@ before provider acquisition or persistence.
 from __future__ import annotations
 
 import dataclasses
+import datetime as dt
+import time
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -33,6 +40,8 @@ SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION = (
     "SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION"
 )
 RESOLVED_DISPOSITION = "RESOLVED"
+MAXIMUM_EARLY_SCHEDULE_LEAD_SECONDS = 5 * 60
+_EXACT_SCHEDULE_MINUTE = {"7 * * * *": 7, "37 * * * *": 37}
 _AMBIGUOUS_MARKER_STEP = "Acknowledge ambiguous schedule without acquisition"
 _CONTINUITY_MARKER_STEP = (
     "Acknowledge continuity slot already attempted without acquisition"
@@ -97,6 +106,54 @@ _CONTINUITY_PREACQUISITION_ALLOWED_STEP_OUTCOMES = (
         "Reconcile any staged capture lineage": "skipped",
     },
 )
+
+
+def _utc_now() -> dt.datetime:
+    return dt.datetime.now(dt.timezone.utc)
+
+
+def _sleep(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def _bounded_early_schedule_target(
+    schedule_expr: str,
+    created_at: Any,
+    restored: lineage.RestoredFailureLineage,
+) -> dt.datetime | None:
+    """Return only a tightly bounded upcoming occurrence for an early delivery.
+
+    The target is derived solely from GitHub's exact reviewed cron identity and the
+    authoritative run ``created_at``.  It is never an historical slot.  A target at
+    or behind durable ``last_attempted`` is deliberately rejected so ordinary
+    duplicate/backward-lineage handling remains authoritative.
+    """
+    expected_minute = _EXACT_SCHEDULE_MINUTE.get(schedule_expr)
+    if expected_minute is None:
+        return None
+    if (
+        type(created_at) is not dt.datetime
+        or created_at.tzinfo is None
+        or created_at.utcoffset() is None
+    ):
+        return None
+    created_utc = created_at.astimezone(dt.timezone.utc)
+    target = created_utc.replace(
+        minute=expected_minute,
+        second=0,
+        microsecond=0,
+    )
+    if target <= created_utc:
+        return None
+    lead_seconds = (target - created_utc).total_seconds()
+    if lead_seconds > MAXIMUM_EARLY_SCHEDULE_LEAD_SECONDS:
+        return None
+    attempted = restored.last_attempted_utc
+    if attempted is not None:
+        attempted_utc = attempted.astimezone(dt.timezone.utc)
+        if target <= attempted_utc:
+            return None
+    return target
 
 
 def is_ambiguous_schedule_occurrence_error(exc: BaseException) -> bool:
@@ -450,18 +507,37 @@ def resolve_nominal_schedule_slot_from_lineage(
     created_at,
     restored: lineage.RestoredFailureLineage,
 ):
-    """Resolve a natural slot, preserving the one reviewed duplicate no-op.
+    """Resolve a natural slot while preserving fail-closed scheduler semantics.
 
-    The frozen resolver correctly rejects a candidate at or before the durable
-    anchor.  A delayed natural delivery can nevertheless resolve to the *exact*
-    durable slot which has already been committed and attempted.  That is not a
-    new collection opportunity: the workflow must route it to the independently
-    proven ``SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION`` lane before any provider
-    work begins.  This compatibility is deliberately narrower than changing the
-    raw resolver's ``>`` comparison: it admits only an exact equality where the
-    committed and attempted anchors agree and no prior zero-artifact projection
-    has changed the ordinary lineage resolution policy.
+    A narrowly bounded run created just before its exact cron minute is allowed to
+    wait until that upcoming occurrence, then it is passed back through the unchanged
+    lineage resolver.  This prevents an early :07 delivery from being misidentified
+    as the prior hour's :07 slot and, crucially, prevents network acquisition before
+    the nominal slot.
+
+    The frozen resolver still rejects a candidate at or before the durable anchor.
+    A delayed natural delivery can nevertheless resolve to the *exact* durable slot
+    which has already been committed and attempted.  That is not a new collection
+    opportunity: the workflow must route it to the independently proven
+    ``SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION`` lane before any provider work
+    begins.  The duplicate compatibility remains narrower than changing the raw
+    resolver's ``>`` comparison.
     """
+    early_target = _bounded_early_schedule_target(
+        schedule_expr,
+        created_at,
+        restored,
+    )
+    if early_target is not None:
+        wait_seconds = (early_target - _utc_now()).total_seconds()
+        if wait_seconds > 0:
+            _sleep(wait_seconds)
+        return lineage.resolve_nominal_schedule_slot_from_lineage(
+            schedule_expr,
+            early_target,
+            restored,
+        )
+
     try:
         return lineage.resolve_nominal_schedule_slot_from_lineage(
             schedule_expr,
@@ -499,6 +575,7 @@ __all__ = [
     "CONTINUITY_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION",
     "SCHEDULE_ALREADY_ATTEMPTED_NO_ACQUISITION_DISPOSITION",
     "RESOLVED_DISPOSITION",
+    "MAXIMUM_EARLY_SCHEDULE_LEAD_SECONDS",
     "FreshHoldoutFailureLineageError",
     "RestoredFailureLineage",
     "is_ambiguous_schedule_occurrence_error",
