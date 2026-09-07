@@ -175,21 +175,24 @@ def _write_request_policy(args: argparse.Namespace) -> None:
 def _execute_worker(args: argparse.Namespace) -> int:
     original_issuer = runner._issue_current_fixture_sources
     original_scope_count = daily.SCOPE_DAY_COUNT[args.fixture_scope]
-    proxy, previous_proxy = _install_reconciliation_compatibility()
-    xg_hooks = xg_fallback.install()
-    if args.fixture_dates is not None:
-        validated_dates = fixture_dates.validate_fixture_dates(
-            args.fixture_dates,
-            current_utc=runner._now(),
-        )
-        runner._issue_current_fixture_sources = _selected_source_issuer(validated_dates)
-        # The reviewed daily worker copies the scope's day count into the runner
-        # for receipt/progress diagnostics.  Bind that diagnostic count to the
-        # exact explicit request while the custom issuer supplies the actual
-        # non-contiguous dates, then restore the legacy scope unconditionally.
-        daily.SCOPE_DAY_COUNT[args.fixture_scope] = len(validated_dates)
-    _write_request_policy(args)
+    proxy = None
+    previous_proxy = None
+    xg_hooks = None
     try:
+        proxy, previous_proxy = _install_reconciliation_compatibility()
+        xg_hooks = xg_fallback.install()
+        if args.fixture_dates is not None:
+            validated_dates = fixture_dates.validate_fixture_dates(
+                args.fixture_dates,
+                current_utc=runner._now(),
+            )
+            runner._issue_current_fixture_sources = _selected_source_issuer(validated_dates)
+            # The reviewed daily worker copies the scope's day count into the runner
+            # for receipt/progress diagnostics.  Bind that diagnostic count to the
+            # exact explicit request while the custom issuer supplies the actual
+            # non-contiguous dates, then restore the legacy scope unconditionally.
+            daily.SCOPE_DAY_COUNT[args.fixture_scope] = len(validated_dates)
+        _write_request_policy(args)
         daily_args = argparse.Namespace(
             target_size=args.target_size,
             fixture_scope=args.fixture_scope,
@@ -198,11 +201,13 @@ def _execute_worker(args: argparse.Namespace) -> int:
         return daily._execute_worker(daily_args)
     finally:
         try:
-            xg_fallback.restore(xg_hooks)
+            if xg_hooks is not None:
+                xg_fallback.restore(xg_hooks)
         finally:
             daily.SCOPE_DAY_COUNT[args.fixture_scope] = original_scope_count
             runner._issue_current_fixture_sources = original_issuer
-            _restore_reconciliation_compatibility(proxy, previous_proxy)
+            if proxy is not None and previous_proxy is not None:
+                _restore_reconciliation_compatibility(proxy, previous_proxy)
 
 
 def main(argv: list[str] | None = None) -> int:
