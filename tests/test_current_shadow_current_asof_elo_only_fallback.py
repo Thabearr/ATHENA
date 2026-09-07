@@ -59,7 +59,7 @@ def test_worker_hook_recovers_only_current_asof_missing_full_model(monkeypatch):
         lambda _source: reduced,
     )
 
-    fallback.install()
+    fallback._DIAGNOSTIC_ROWS.clear()
     result = fallback._with_fallback(
         lambda *_args, **_kwargs: original_result,
         history,
@@ -122,7 +122,7 @@ def test_worker_hook_records_reviewed_elo_unavailable_without_broadening(monkeyp
         raise current_asof.CurrentAsOfXGError("reviewed Elo unexpectedly became missing")
 
     monkeypatch.setattr(current_asof, "build_current_asof_xg_assessment", fail)
-    fallback.install()
+    fallback._DIAGNOSTIC_ROWS.clear()
     result = fallback._with_fallback(
         lambda *_args, **_kwargs: original_result,
         history,
@@ -154,7 +154,7 @@ def test_worker_hook_does_not_override_other_missing_input_dispositions(monkeypa
         ("home_form",),
         "2026-09-08T18:00:00.000000Z",
     )
-    fallback.install()
+    fallback._DIAGNOSTIC_ROWS.clear()
     assert fallback._with_fallback(
         lambda *_args, **_kwargs: original_result,
         history,
