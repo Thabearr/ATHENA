@@ -64,7 +64,12 @@ def test_request_policy_records_non_authoritative_elo_only_fallback(monkeypatch,
     payload = json.loads((tmp_path / request_cli.REQUEST_POLICY_FILENAME).read_text())
     fallback = payload["current_asof_elo_only_policy"]
     assert fallback["base_binding_runs_first"] is True
-    assert fallback["only_outside_seal_window_missing_full_model"] is True
+    assert fallback["fallback_row_dispositions"] == [
+        "MISSING_REVIEWED_FEATURES",
+        "OUTSIDE_REVIEWED_SEAL_WINDOW",
+    ]
+    assert fallback["current_asof_assessment_required"] is True
+    assert fallback["seal_window_is_not_runtime_model_readiness_authority"] is True
     assert fallback["fallback"]["missing_feature_imputation"] is False
     assert fallback["fallback"]["historical_feature_scope_expansion"] is False
     assert fallback["wager_placed"] is False

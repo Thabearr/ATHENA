@@ -1,10 +1,17 @@
 """Worker-local Current Shadow fallback from incomplete full xG to reviewed Elo-only xG.
 
-The base current-source binding remains unchanged.  This hook is installed only by
-the user-facing Current Shadow request wrapper.  It first executes the existing
-binding unchanged; only an OUTSIDE_REVIEWED_SEAL_WINDOW current-as-of fixture
-whose full five-feature assessment is missing reviewed form/fatigue may use the
-separate reviewed Elo-only research boundary.
+The base current-source binding remains unchanged. This hook is installed only by
+the user-facing Current Shadow request wrapper. It first executes the existing
+binding unchanged; when the base binding reports missing required inputs, the
+wrapper may replay the separate current-as-of assessment for exact reviewed
+Current Shadow row dispositions that can legitimately need that replay.
+
+The frozen PR149 seal-window disposition is not runtime model-readiness authority.
+Both OUTSIDE_REVIEWED_SEAL_WINDOW and MISSING_REVIEWED_FEATURES rows must pass the
+same current-as-of assessment. Elo-only recovery is then allowed only when that
+assessment proves the full five-feature model is incomplete solely because the
+reviewed form/fatigue features are missing while both reviewed overall Elo inputs
+remain available.
 
 No missing value is imputed and no historical feature scope is broadened.
 The worker also retains bounded, non-authoritative per-fixture diagnostics so a
@@ -24,9 +31,15 @@ from domain import current_fotmob_utc_native_shadow_prediction as current_shadow
 from domain._all_market_shadow_types import ResearchXGRates, ShadowDisposition
 
 
-POLICY_ID = "ATHENA_CURRENT_SHADOW_CURRENT_AS_OF_ELO_ONLY_FALLBACK_V1"
-DIAGNOSTIC_SCHEMA_VERSION = 1
-DIAGNOSTIC_DATASET_NAME = "athena-current-shadow-current-asof-xg-diagnostic-v1"
+POLICY_ID = "ATHENA_CURRENT_SHADOW_CURRENT_AS_OF_ELO_ONLY_FALLBACK_V2"
+DIAGNOSTIC_SCHEMA_VERSION = 2
+DIAGNOSTIC_DATASET_NAME = "athena-current-shadow-current-asof-xg-diagnostic-v2"
+_FALLBACK_ROW_DISPOSITIONS = frozenset(
+    {
+        current_shadow.MISSING_REVIEWED_FEATURES,
+        current_shadow.OUTSIDE_REVIEWED_SEAL_WINDOW,
+    }
+)
 
 _DIAGNOSTIC_AUTHORITY = MappingProxyType(
     {
@@ -160,10 +173,10 @@ def _with_fallback(
         )
         return result
     row = rows[0]
-    if row.disposition != current_shadow.OUTSIDE_REVIEWED_SEAL_WINDOW:
+    if row.disposition not in _FALLBACK_ROW_DISPOSITIONS:
         _record(
             fixture_identity,
-            state="ROW_NOT_OUTSIDE_REVIEWED_SEAL_WINDOW",
+            state="ROW_DISPOSITION_NOT_FALLBACK_ELIGIBLE",
             history_sha=history_sha,
             blocker=blocker,
             missing=missing,
@@ -319,7 +332,9 @@ def policy_summary() -> dict[str, Any]:
         "policy_id": POLICY_ID,
         "fallback": payload,
         "base_binding_runs_first": True,
-        "only_outside_seal_window_missing_full_model": True,
+        "fallback_row_dispositions": sorted(_FALLBACK_ROW_DISPOSITIONS),
+        "current_asof_assessment_required": True,
+        "seal_window_is_not_runtime_model_readiness_authority": True,
         "diagnostic_dataset_name": DIAGNOSTIC_DATASET_NAME,
         "diagnostic_non_authoritative": True,
         "wager_placed": False,
