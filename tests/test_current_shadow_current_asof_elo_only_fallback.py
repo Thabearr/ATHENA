@@ -12,6 +12,8 @@ from scripts import current_shadow_current_asof_elo_only_fallback as fallback
 def _source_assessment():
     return SimpleNamespace(
         disposition=current_asof.CurrentAsOfXGDisposition.MISSING_REVIEWED_FEATURES,
+        missing_feature_ids=("fatigue", "home_form"),
+        features={"home_elo": 1512.0, "away_elo": 1488.0},
     )
 
 
@@ -57,6 +59,7 @@ def test_worker_hook_recovers_only_current_asof_missing_full_model(monkeypatch):
         lambda _source: reduced,
     )
 
+    fallback._DIAGNOSTIC_ROWS.clear()
     result = fallback._with_fallback(
         lambda *_args, **_kwargs: original_result,
         history,
@@ -74,6 +77,67 @@ def test_worker_hook_recovers_only_current_asof_missing_full_model(monkeypatch):
     assert rates.source_fixture_identity == "FOTMOB:42"
     assert rates.completeness_status == elo_only.COMPLETE
 
+    diagnostic = fallback.diagnostic_summary()
+    assert diagnostic["fixture_count"] == 1
+    assert diagnostic["state_counts"] == {"ELO_ONLY_APPLIED": 1}
+    assert diagnostic["fixtures"][0]["fixture_identity"] == "FOTMOB:42"
+    assert diagnostic["fixtures"][0]["full_missing_feature_ids"] == [
+        "fatigue",
+        "home_form",
+    ]
+    assert diagnostic["fixtures"][0]["full_available_feature_ids"] == [
+        "away_elo",
+        "home_elo",
+    ]
+    assert diagnostic["fixtures"][0]["fallback_applied"] is True
+    assert diagnostic["wager_placed"] is False
+
+
+def test_worker_hook_records_reviewed_elo_unavailable_without_broadening(monkeypatch):
+    row = SimpleNamespace(
+        fixture_identifier="FOTMOB:77",
+        fixture=object(),
+        disposition=current_shadow.OUTSIDE_REVIEWED_SEAL_WINDOW,
+    )
+    history = SimpleNamespace(
+        shadow_handoff=SimpleNamespace(
+            rows=(row,),
+            source_bundle=object(),
+            fixture_review_policy_id="policy",
+        )
+    )
+    original_result = (
+        None,
+        ShadowDisposition.MISSING_REQUIRED_INPUT,
+        ("home_elo",),
+        "2026-09-08T18:00:00.000000Z",
+    )
+    monkeypatch.setattr(
+        current_shadow,
+        "_history_ledger",
+        lambda _source: (object(), 0),
+    )
+
+    def fail(**_kwargs):
+        raise current_asof.CurrentAsOfXGError("reviewed Elo unexpectedly became missing")
+
+    monkeypatch.setattr(current_asof, "build_current_asof_xg_assessment", fail)
+    fallback._DIAGNOSTIC_ROWS.clear()
+    result = fallback._with_fallback(
+        lambda *_args, **_kwargs: original_result,
+        history,
+        "FOTMOB:77",
+        history_sha="6" * 64,
+    )
+    assert result == original_result
+    diagnostic = fallback.diagnostic_summary()
+    assert diagnostic["state_counts"] == {"CURRENT_ASOF_ASSESSMENT_ERROR": 1}
+    row_value = diagnostic["fixtures"][0]
+    assert row_value["error_code"] == "REVIEWED_ELO_UNAVAILABLE"
+    assert row_value["error_type"] == "CurrentAsOfXGError"
+    assert row_value["fallback_applied"] is False
+    assert row_value["base_missing_feature_ids"] == ["home_elo"]
+
 
 def test_worker_hook_does_not_override_other_missing_input_dispositions(monkeypatch):
     row = SimpleNamespace(
@@ -90,25 +154,30 @@ def test_worker_hook_does_not_override_other_missing_input_dispositions(monkeypa
         ("home_form",),
         "2026-09-08T18:00:00.000000Z",
     )
+    fallback._DIAGNOSTIC_ROWS.clear()
     assert fallback._with_fallback(
         lambda *_args, **_kwargs: original_result,
         history,
         "FOTMOB:42",
         history_sha="5" * 64,
     ) == original_result
+    diagnostic = fallback.diagnostic_summary()
+    assert diagnostic["state_counts"] == {"ROW_NOT_OUTSIDE_REVIEWED_SEAL_WINDOW": 1}
 
 
-def test_install_restore_is_worker_local(monkeypatch):
+def test_install_restore_is_worker_local_and_install_resets_diagnostics(monkeypatch):
     sentinel = lambda *_args, **_kwargs: (None, None, (), "kickoff")
     monkeypatch.setattr(
         fallback.binding,
         "_research_xg_from_validated_current_history",
         sentinel,
     )
+    fallback._DIAGNOSTIC_ROWS["FOTMOB:stale"] = {"state": "stale"}
     hooks = fallback.install()
     try:
         assert hooks.original_research_xg is sentinel
         assert fallback.binding._research_xg_from_validated_current_history is not sentinel
+        assert fallback.diagnostic_summary()["fixture_count"] == 0
     finally:
         fallback.restore(hooks)
     assert fallback.binding._research_xg_from_validated_current_history is sentinel

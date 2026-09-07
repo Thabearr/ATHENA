@@ -38,6 +38,7 @@ from scripts import execute_current_shadow_daily as daily
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_REQUEST_WORKER"
 WORKER_MODULE = "scripts.execute_current_shadow_request"
 REQUEST_POLICY_FILENAME = "current-shadow-request-policy.json"
+XG_DIAGNOSTIC_FILENAME = "current-shadow-current-asof-xg-diagnostic.json"
 
 
 def _fixture_dates(value: str) -> tuple[str, ...]:
@@ -172,6 +173,19 @@ def _write_request_policy(args: argparse.Namespace) -> None:
     )
 
 
+def _write_xg_diagnostic(args: argparse.Namespace) -> bool:
+    """Persist bounded model-readiness evidence without making it run authority."""
+
+    try:
+        runner._write(
+            args.output_dir / XG_DIAGNOSTIC_FILENAME,
+            xg_fallback.diagnostic_summary(),
+        )
+    except (OSError, TypeError, ValueError, runner.CurrentShadowAllMarketRunnerError):
+        return False
+    return True
+
+
 def _execute_worker(args: argparse.Namespace) -> int:
     original_issuer = runner._issue_current_fixture_sources
     original_scope_count = daily.SCOPE_DAY_COUNT[args.fixture_scope]
@@ -198,7 +212,10 @@ def _execute_worker(args: argparse.Namespace) -> int:
             fixture_scope=args.fixture_scope,
             output_dir=args.output_dir,
         )
-        return daily._execute_worker(daily_args)
+        try:
+            return daily._execute_worker(daily_args)
+        finally:
+            _write_xg_diagnostic(args)
     finally:
         try:
             if xg_hooks is not None:

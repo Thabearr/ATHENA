@@ -126,6 +126,28 @@ def test_explicit_worker_binds_exact_count_and_restores_all_compatibility(monkey
     assert policy["wager_placed"] is False
     assert policy["authority"]["bet"] is False
 
+    diagnostic = json.loads((tmp_path / request_cli.XG_DIAGNOSTIC_FILENAME).read_text())
+    assert diagnostic["dataset_name"] == request_cli.xg_fallback.DIAGNOSTIC_DATASET_NAME
+    assert diagnostic["fixture_count"] == 0
+    assert diagnostic["state_counts"] == {}
+    assert diagnostic["authority"]["production_model"] is False
+    assert diagnostic["wager_placed"] is False
+
+
+def test_diagnostic_write_failure_is_non_authoritative(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "_now", lambda: NOW)
+    original_write = runner._write
+
+    def write(path, payload):
+        if path.name == request_cli.XG_DIAGNOSTIC_FILENAME:
+            raise OSError("diagnostic disk unavailable")
+        return original_write(path, payload)
+
+    monkeypatch.setattr(runner, "_write", write)
+    monkeypatch.setattr(daily, "_execute_worker", lambda _args: 23)
+    assert request_cli._execute_worker(_args(tmp_path)) == 23
+    assert not (tmp_path / request_cli.XG_DIAGNOSTIC_FILENAME).exists()
+
 
 def test_outer_supervisor_forwards_exact_dates_to_worker(monkeypatch, tmp_path):
     captured = {}
