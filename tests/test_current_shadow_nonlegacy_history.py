@@ -106,11 +106,11 @@ def test_invalid_prefix_fails_closed(change):
 
 @pytest.mark.parametrize("value", [-1, True, 1.5, "2", None])
 def test_malformed_score_rejected(value):
-    with pytest.raises(ValueError): result(home_goals=value)
+    with pytest.raises(lane.fresh.FotMobFreshHoldoutError): result(home_goals=value)
 
 
 def test_missing_observation_rejected():
-    with pytest.raises(ValueError): result(settlement_observed_at=None)
+    with pytest.raises(lane.fresh.FotMobFreshHoldoutError): result(settlement_observed_at=None)
 
 
 @pytest.mark.parametrize("fake", [{}, {"odds": 2.0}, {"history_sha256": "a" * 64}, SimpleNamespace()])
