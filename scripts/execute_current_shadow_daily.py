@@ -27,9 +27,11 @@ from domain import current_shadow_all_market_runner as runner
 from domain.current_fotmob_fixture_candidate_adapter import (
     CurrentFotMobFixtureCandidateAdapterError,
 )
+from scripts import current_shadow_fixture_identity_reconciliation_recovery as identity_recovery
 from scripts import current_shadow_history_artifact_verification_reuse as verification_reuse
 from scripts import current_shadow_history_builder_audit_reuse as builder_audit_reuse
 from scripts import current_shadow_history_semantic_replay_reuse as semantic_replay_reuse
+from scripts import current_shadow_live_quote_row_local_replay as quote_replay
 from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
@@ -188,6 +190,8 @@ def _execute_worker(args: argparse.Namespace) -> int:
     original = runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT
     original_issuer = runner._issue_current_fixture_sources
     prior_all_market_worker = os.environ.get(all_market_cli.WORKER_ENV)
+    identity_hooks = None
+    quote_hook = None
     verification_hooks = None
     builder_audit_hooks = None
     semantic_replay_hooks = None
@@ -206,6 +210,19 @@ def _execute_worker(args: argparse.Namespace) -> int:
     # path.
     os.environ[all_market_cli.WORKER_ENV] = "1"
     try:
+        # Run #199 proved exact same-kickoff provider counterparts were being lost
+        # at the V2 fixture-identity boundary. Install the Current Shadow V3
+        # deterministic compatibility only inside this worker. It keeps full UTC,
+        # home/away and stable provider IDs exact and binds the changed matching
+        # basis into the reconciliation contract identity.
+        identity_hooks = identity_recovery.install(runner.reconciliation)
+
+        # One malformed provider market/outcome row must not poison an otherwise
+        # valid direct event. The exact raw response and manifest remain unchanged;
+        # the worker-local replay only omits the unusable row and is restored in
+        # finally. All PR-B replay inside the worker sees the same row-local view.
+        quote_hook = quote_replay.install()
+
         # The PR151 audit intentionally replays its exact captured bytes more than
         # once. Keep those reads and validations authoritative, but do not unzip
         # and hash the same immutable Actions artifact from scratch at every
@@ -271,14 +288,25 @@ def _execute_worker(args: argparse.Namespace) -> int:
                     if verification_hooks is not None:
                         verification_reuse.restore(runner.latest_history, verification_hooks)
                 finally:
-                    # Restoration of request scope, issuer and exact worker marker
-                    # must not depend on diagnostic I/O or reuse-layer cleanup.
-                    runner._issue_current_fixture_sources = original_issuer
-                    runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
-                    if prior_all_market_worker is None:
-                        os.environ.pop(all_market_cli.WORKER_ENV, None)
-                    else:
-                        os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
+                    try:
+                        if quote_hook is not None:
+                            quote_replay.restore(quote_hook)
+                    finally:
+                        try:
+                            if identity_hooks is not None:
+                                identity_recovery.restore(
+                                    runner.reconciliation,
+                                    identity_hooks,
+                                )
+                        finally:
+                            # Restoration of request scope, issuer and exact worker
+                            # marker must not depend on diagnostic I/O or cleanup.
+                            runner._issue_current_fixture_sources = original_issuer
+                            runner.CURRENT_FIXTURE_SEARCH_DAY_COUNT = original
+                            if prior_all_market_worker is None:
+                                os.environ.pop(all_market_cli.WORKER_ENV, None)
+                            else:
+                                os.environ[all_market_cli.WORKER_ENV] = prior_all_market_worker
 
 
 def main(argv: list[str] | None = None) -> int:
