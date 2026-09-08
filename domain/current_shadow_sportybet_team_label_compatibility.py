@@ -1,10 +1,10 @@
 """Evidence-bound SportyBet team-label compatibility for current Shadow fanout.
 
-The provider evidence captured by workflow runs 33743684967 and 33907719257
-proved exactly three current event labels with one trailing ASCII space. This
-module does not define a generic trimming rule. It admits only the exact reviewed
-(event id, source field, raw label) tuples below and projects them to the exact
-reviewed label used by the existing reconciliation boundary.
+The provider evidence captured by workflow runs 33743684967, 33907719257, and
+34243048761 proved exactly four current event labels with one trailing ASCII
+space. This module does not define a generic trimming rule. It admits only the
+exact reviewed (event id, source field, raw label) tuples below and projects them
+to the exact reviewed label used by the existing reconciliation boundary.
 
 The retained raw provider response and SHA-256 remain the source evidence. This
 policy grants no fixture-reconciliation, model, pricing, selection, transport,
@@ -18,8 +18,8 @@ import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
-SCHEMA_VERSION = 2
-POLICY_ID = "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V2"
+SCHEMA_VERSION = 3
+POLICY_ID = "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V3"
 EVIDENCE_WORKFLOW_RUN_ID = 33743684967
 EVIDENCE_ARTIFACT_ID = 9888817924
 EVIDENCE_ARTIFACT_SHA256 = (
@@ -30,8 +30,13 @@ LATEST_EVIDENCE_ARTIFACT_ID = 9950240221
 LATEST_EVIDENCE_ARTIFACT_SHA256 = (
     "87b379f9b8163717869d3fd3d8834fc0434d548c4f2a2522120c28c0508aa609"
 )
+CURRENT_EVIDENCE_WORKFLOW_RUN_ID = 34243048761
+CURRENT_EVIDENCE_ARTIFACT_ID = 10062892966
+CURRENT_EVIDENCE_ARTIFACT_SHA256 = (
+    "bbc5434425443b38a20d0807cc3e85a269a02a446ff229ea7025d28b4cd0dea4"
+)
 EXPECTED_POLICY_SHA256 = (
-    "ce2f87e6f5d9ad3993de5a3d679e25da9d52d9dbaff33fbb622514f67d707f0b"
+    "77fbe4ffdc031c2e6b15353d99afa25ff31c4537cb45e541f69d6b029a7c4709"
 )
 
 
@@ -98,6 +103,20 @@ REVIEWED_PROJECTIONS = tuple(
                 evidence_artifact_id=LATEST_EVIDENCE_ARTIFACT_ID,
                 evidence_artifact_sha256=LATEST_EVIDENCE_ARTIFACT_SHA256,
             ),
+            ReviewedTeamLabelProjection(
+                event_id="sr:match:74170884",
+                field="homeTeamName",
+                raw_source_label="Comunicaciones FC ",
+                projected_label="Comunicaciones FC",
+                category_id="sr:category:365",
+                tournament_id="sr:tournament:27396",
+                source_raw_sha256=(
+                    "d25423e8dfea8d8d49b15041338bb7d90e546a918471653afe5bfb5449ee0f54"
+                ),
+                evidence_workflow_run_id=CURRENT_EVIDENCE_WORKFLOW_RUN_ID,
+                evidence_artifact_id=CURRENT_EVIDENCE_ARTIFACT_ID,
+                evidence_artifact_sha256=CURRENT_EVIDENCE_ARTIFACT_SHA256,
+            ),
         )
     )
 )
@@ -154,6 +173,11 @@ def policy_payload() -> dict[str, Any]:
                 "artifact_id": LATEST_EVIDENCE_ARTIFACT_ID,
                 "artifact_sha256": LATEST_EVIDENCE_ARTIFACT_SHA256,
             },
+            {
+                "workflow_run_id": CURRENT_EVIDENCE_WORKFLOW_RUN_ID,
+                "artifact_id": CURRENT_EVIDENCE_ARTIFACT_ID,
+                "artifact_sha256": CURRENT_EVIDENCE_ARTIFACT_SHA256,
+            },
         ],
         "projections": [
             {
@@ -203,6 +227,7 @@ def validate_policy() -> Mapping[str, str]:
             "policy_sha256": actual,
             "evidence_artifact_sha256": EVIDENCE_ARTIFACT_SHA256,
             "latest_evidence_artifact_sha256": LATEST_EVIDENCE_ARTIFACT_SHA256,
+            "current_evidence_artifact_sha256": CURRENT_EVIDENCE_ARTIFACT_SHA256,
         }
     )
 
@@ -211,7 +236,7 @@ def project_team_label(*, event_id: Any, field: str, value: Any) -> str:
     """Return exact source text or one exact reviewed evidence-bound projection.
 
     Already-trimmed labels pass through unchanged. Any non-trimmed label must match
-    one of the three exact reviewed tuples above. No dynamic ``strip`` or other
+    one of the four exact reviewed tuples above. No dynamic ``strip`` or other
     normalization is performed.
     """
     if field not in ("homeTeamName", "awayTeamName"):
