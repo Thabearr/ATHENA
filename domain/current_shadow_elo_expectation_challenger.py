@@ -306,4 +306,23 @@ def validate_report(report: Mapping[str, Any]) -> None:
     if identity != hashlib.sha256(canonical_bytes(value)).hexdigest(): raise _error("comparison identity changed")
     if value.get("baseline_id") == value.get("challenger_id"): raise _error("baseline and challenger identities are not separate")
     if value.get("conclusion_state") not in CONCLUSIONS: raise _error("conclusion escaped descriptive vocabulary")
+    aggregate = value.get("aggregate")
+    if type(aggregate) is not dict:
+        raise _error("comparison aggregate is unavailable")
+    row_count = aggregate.get("cohort_fixture_count")
+    if type(row_count) is not int or row_count < 1:
+        raise _error("comparison cohort fixture count is invalid")
+    source_sha = value.get("source_history_sha256")
+    projection_sha = value.get("baseline_projection_sha256")
+    for candidate, label in ((source_sha, "source history"), (projection_sha, "baseline projection")):
+        if (type(candidate) is not str or len(candidate) != 64
+                or any(character not in "0123456789abcdef" for character in candidate)):
+            raise _error(f"{label} identity is invalid")
+    expected_conclusion = _conclusion(
+        row_count=row_count,
+        source_sha256=source_sha,
+        projection_sha256=projection_sha,
+    )
+    if value.get("conclusion_state") != expected_conclusion:
+        raise _error("conclusion is not authorized by the report evidence identities")
     if value.get("authority") != AUTHORITY or value.get("wager_placed") is not False: raise _error("authority changed")
