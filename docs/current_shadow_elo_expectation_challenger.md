@@ -1,0 +1,9 @@
+# Current Shadow Elo expectation challenger
+
+This offline research comparator does not alter Current Shadow, the frozen PR134 constructor, PR148 coefficients, Router, Portfolio, provider semantics, pricing, or execution authority.
+
+The causal path is: PR119 reviewed ordinary-FT materialization plus durable reviewed settlements; exact strictly-prior ledger prefix; `construct_utc_native_feature_projection`; `CurrentAsOfXGAssessment`; and the unchanged two-feature `FOTMOB_NATIVE_ELO_ONLY_NESTED_GLM`. The constructor initializes unseen teams at 1500, orders by UTC kickoff then fixture identity, batches equal kickoffs, encodes W/D/L as 1/0.5/0, uses +50 home advantage, divisor 400, K 32/24/16 at 20/50 prior matches, and truncates updates with `int`. Scope is only the reviewed source history. There is no promoted-team reset; an unseen team starts at 1500.
+
+The baseline independently reproduces the existing non-complementary pair. The challenger holds all other semantics fixed and uses `away_expected = 1 - home_expected`, with absolute tolerance `1e-15`. It requires byte-exact reproduction of the frozen projection and per-fixture agreement on pre-match ratings and match counts before emitting conclusions. Separate source, projection, terminal-state and comparison identities are preserved. All authority flags and `wager_placed` remain false.
+
+Run #218's artifact was downloaded read-only and its ZIP matched SHA-256 `fac0c3c62cbc82154271f17d5df55336f014c8e2155542b3aa545dae015e10d5`. It contains the 33-fixture diagnostic and 20 selected legs, but not the exact PR119 bootstrap or complete durable ledger required to reconstruct corrected historical Elo. Run-218 challenger comparison therefore remains an evidence gate; values must not be synthesized from terminal pre-match Elo. The predeclared later extreme-disagreement threshold is absolute model-versus-implied probability delta at least `0.25`; provider values remain downstream diagnostics only.
