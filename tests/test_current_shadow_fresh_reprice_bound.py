@@ -62,10 +62,14 @@ def test_bound_worker_does_not_replace_frozen_portfolio_freshness_policy():
 
 def test_bound_supervisor_extends_generic_budget_but_preserves_workflow_margin():
     assert cli.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 50 * 60
-    assert bound.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 55 * 60
-    assert bound._supervisor_timeout_seconds() == 55 * 60
+    assert bound.HOSTED_SUPERVISOR_TIMEOUT_SECONDS == 75 * 60
+    assert bound._supervisor_timeout_seconds() == 75 * 60
     assert bound._supervisor_timeout_seconds() < bound.WORKFLOW_JOB_TIMEOUT_SECONDS
-    assert bound.WORKFLOW_JOB_TIMEOUT_SECONDS == 60 * 60
+    assert bound.WORKFLOW_JOB_TIMEOUT_SECONDS == 90 * 60
+    assert (
+        bound.WORKFLOW_JOB_TIMEOUT_SECONDS - bound._supervisor_timeout_seconds()
+        == 15 * 60
+    )
     assert runner.portfolio_module.MAX_QUOTE_AGE_SECONDS == 900
 
 
@@ -92,7 +96,7 @@ def test_bound_main_uses_exact_prf_supervisor_budget(monkeypatch, tmp_path):
     )
 
     assert result == 23
-    assert seen["timeout"] == 55 * 60
+    assert seen["timeout"] == 75 * 60
     assert seen["check"] is False
     assert seen["env"][cli.WORKER_ENV] == "1"
     assert seen["command"][0] == bound.sys.executable
@@ -125,6 +129,6 @@ def test_timeout_receipt_reports_exact_prf_budget_and_restores_generic_budget(
     assert observed == {
         "target_size": 20,
         "output_dir": tmp_path,
-        "budget": 55 * 60,
+        "budget": 75 * 60,
     }
     assert runner.CURRENT_SHADOW_RUN_TIMEOUT_SECONDS == original
