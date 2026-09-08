@@ -6,6 +6,7 @@ import itertools
 import json
 import math
 import statistics
+import datetime as dt
 from typing import Any, Iterable, Mapping
 
 from domain import current_fotmob_utc_native_current_asof_elo_only as elo_xg
@@ -19,6 +20,13 @@ INITIAL_RATING, HOME_ADVANTAGE, LOGISTIC_DIVISOR = 1500, 50, 400.0
 COMPLEMENT_TOLERANCE = 1e-15
 EXTREME_DISAGREEMENT_ABSOLUTE_PROBABILITY_DELTA = 0.25
 FROZEN_CONSTRUCTOR_BLOB_SHA = "9c9e424791b65292f7bbe8849b3214c140834889"
+REVIEWED_PR119_ROW_COUNT = 21_326
+REVIEWED_PR119_SOURCE_HISTORY_SHA256 = "49aa8af171063471705c6089d5f7042727b11a65294b3f26b560487ca1701625"
+REVIEWED_PR119_BASELINE_PROJECTION_SHA256 = "5519ef40db3efc678c9eef73046c0e577e5f33a85f11b3fe043fc22bca2fcfed"
+REVIEWED_PR119_CONCLUSION = "CHALLENGER_SMALL_EFFECT_ELO_STATE_REQUIRES_REVIEW"
+DEFAULT_CONCLUSION = "INSUFFICIENT_EVIDENCE_FOR_CAUSAL_BACKTEST"
+PROBE_FIXTURE_PREFIX = "ATHENA_PR334_TERMINAL_PROOF_FIXTURE_V1"
+PROBE_TEAM_PREFIX = "ATHENA_PR334_TERMINAL_PROOF_OPPONENT_V1"
 CONCLUSIONS = frozenset({
     "CHALLENGER_MATERIAL_IMPROVEMENT_REQUIRES_SEPARATE_VALIDATION",
     "CHALLENGER_SMALL_EFFECT_ELO_STATE_REQUIRES_REVIEW",
@@ -131,6 +139,74 @@ def _rates(home: int, away: int) -> dict[str, float]:
     return elo_xg._elo_only_rates({"home_elo": float(home), "away_elo": float(away)})
 
 
+def _terminal_probe_rows(source: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build one same-kickoff frozen-observer fixture for every historical team."""
+    teams = sorted({row[key] for row in source for key in ("home_team_identifier", "away_team_identifier")})
+    if not teams:
+        raise _error("terminal proof has no historical teams")
+    maximum = max(frozen._parse_utc(row["kickoff_utc"], "kickoff_utc") for row in source)
+    kickoff = frozen._utc_text(maximum + dt.timedelta(seconds=1))
+    probes = []
+    for index, team in enumerate(teams):
+        seed = canonical_bytes({"index": index, "real_team": team, "kickoff_utc": kickoff})
+        suffix = hashlib.sha256(seed).hexdigest()
+        fixture_id = f"{PROBE_FIXTURE_PREFIX}:{index:08d}:{suffix}"
+        opponent = f"{PROBE_TEAM_PREFIX}:{index:08d}:{suffix}"
+        evidence = hashlib.sha256(canonical_bytes({"fixture_identifier": fixture_id, "purpose": "FROZEN_TERMINAL_STATE_OBSERVER_ONLY"})).hexdigest()
+        probes.append({"source_namespace": frozen.SOURCE_NAMESPACE,
+            "fixture_identifier": fixture_id, "kickoff_utc": kickoff,
+            "home_team_identifier": team, "away_team_identifier": opponent,
+            "home_goals": 0, "away_goals": 0, "evidence_sha256": evidence,
+            "evidence_reference": f"athena-pr334-terminal-proof:{suffix}"})
+    return probes
+
+
+def _frozen_terminal_observation(source: list[dict[str, Any]]) -> tuple[dict[str, dict[str, int]], dict[str, Any]]:
+    probes = _terminal_probe_rows(source)
+    try:
+        raw, _ = frozen.construct_utc_native_feature_projection(source + probes)
+    except Exception as exc:
+        raise _error("frozen terminal-state probe failed") from exc
+    projected = _projection(raw)
+    observed = {}
+    for probe in probes:
+        value = projected.get(probe["fixture_identifier"])
+        if value is None or value.get("home_team_identifier") != probe["home_team_identifier"]:
+            raise _error("frozen terminal-state probe identity changed")
+        observed[probe["home_team_identifier"]] = {
+            "rating": value["home_elo"]["value"],
+            "matches": value["home_elo"]["matches_before"],
+        }
+    probe_sha = hashlib.sha256(b"".join(canonical_bytes(row) for row in probes)).hexdigest()
+    observation_sha = hashlib.sha256(canonical_bytes(observed)).hexdigest()
+    proof = {"method": "FROZEN_SAME_KICKOFF_SYNTHETIC_PROBE_BATCH_V1",
+        "terminal_team_count": len(observed), "terminal_mismatch_count": 0,
+        "probe_fixture_count": len(probes), "probe_batch_kickoff_utc": probes[0]["kickoff_utc"],
+        "probe_rows_sha256": probe_sha, "frozen_terminal_observation_sha256": observation_sha,
+        "probes_enter_comparison_cohort": False, "probes_enter_source_history_identity": False,
+        "probes_enter_xg": False, "probes_enter_provider_inputs": False}
+    proof["terminal_proof_sha256"] = hashlib.sha256(canonical_bytes(proof)).hexdigest()
+    return observed, proof
+
+
+def _verify_terminal_baseline(source: list[dict[str, Any]], independent: Mapping[str, Mapping[str, int]]) -> dict[str, Any]:
+    observed, proof = _frozen_terminal_observation(source)
+    normalized = {team: dict(state) for team, state in independent.items()}
+    mismatches = sorted(team for team in set(observed) | set(normalized) if observed.get(team) != normalized.get(team))
+    if mismatches:
+        raise _error(f"BASELINE_REPRODUCTION_FAILED: terminal state differs for {len(mismatches)} team(s)")
+    return proof
+
+
+def _conclusion(*, row_count: int, source_sha256: str, projection_sha256: str) -> str:
+    if (row_count, source_sha256, projection_sha256) == (
+        REVIEWED_PR119_ROW_COUNT, REVIEWED_PR119_SOURCE_HISTORY_SHA256,
+        REVIEWED_PR119_BASELINE_PROJECTION_SHA256,
+    ):
+        return REVIEWED_PR119_CONCLUSION
+    return DEFAULT_CONCLUSION
+
+
 def compare_elo_replays(*, rows: Iterable[dict[str, Any]], expected_baseline_projection_raw: bytes) -> dict[str, Any]:
     values = _rows(rows)
     source = _source_rows(values)
@@ -190,6 +266,7 @@ def compare_elo_replays(*, rows: Iterable[dict[str, Any]], expected_baseline_pro
             cu += [(home, chn, ch["matches"] + 1), (away, can, ca["matches"] + 1)]
         for team, rating, count in bu: baseline[team] = {"rating": rating, "matches": count}
         for team, rating, count in cu: challenger[team] = {"rating": rating, "matches": count}
+    terminal_proof = _verify_terminal_baseline(source, baseline)
     elo_delta = [abs(v) for item in fixtures for v in (item["delta"]["home_elo"], item["delta"]["away_elo"])]
     xg_delta = [abs(v) for item in fixtures for v in (item["delta"]["home_xg_absolute"], item["delta"]["away_xg_absolute"])]
     bgaps = [abs(i["baseline"]["home_elo"] - i["baseline"]["away_elo"]) for i in fixtures]
@@ -205,17 +282,20 @@ def compare_elo_replays(*, rows: Iterable[dict[str, Any]], expected_baseline_pro
             "both": sum(i["baseline"]["home_elo"] == 1500 == i["baseline"]["away_elo"] for i in fixtures)}.items()},
         "baseline_elo_gap": _summary(bgaps), "challenger_elo_gap": _summary(cgaps),
         "large_gap_counts": {str(n): {"baseline": sum(v >= n for v in bgaps), "challenger": sum(v >= n for v in cgaps)} for n in (100, 200, 300)}}
+    source_sha = hashlib.sha256(b"".join(canonical_bytes(r) for r in source)).hexdigest()
+    projection_sha = hashlib.sha256(actual).hexdigest()
     report = {"schema_version": SCHEMA_VERSION, "dataset_name": DATASET_NAME,
         "baseline_id": BASELINE_ID, "challenger_id": CHALLENGER_ID,
         "frozen_constructor_blob_sha": FROZEN_CONSTRUCTOR_BLOB_SHA,
-        "source_history_sha256": hashlib.sha256(b"".join(canonical_bytes(r) for r in source)).hexdigest(),
-        "baseline_projection_sha256": hashlib.sha256(actual).hexdigest(),
+        "source_history_sha256": source_sha,
+        "baseline_projection_sha256": projection_sha,
+        "terminal_baseline_reproduction_proof": terminal_proof,
         "terminal_state_sha256": {"baseline": hashlib.sha256(canonical_bytes(baseline)).hexdigest(),
                                   "challenger": hashlib.sha256(canonical_bytes(challenger)).hexdigest()},
         "complement_tolerance": COMPLEMENT_TOLERANCE,
         "predeclared_extreme_disagreement_absolute_probability_delta": EXTREME_DISAGREEMENT_ABSOLUTE_PROBABILITY_DELTA,
         "fixtures": fixtures, "aggregate": aggregate,
-        "conclusion_state": "CHALLENGER_SMALL_EFFECT_ELO_STATE_REQUIRES_REVIEW",
+        "conclusion_state": _conclusion(row_count=len(fixtures), source_sha256=source_sha, projection_sha256=projection_sha),
         "authority": dict(AUTHORITY), "wager_placed": False}
     report["comparison_sha256"] = hashlib.sha256(canonical_bytes(report)).hexdigest()
     return report
