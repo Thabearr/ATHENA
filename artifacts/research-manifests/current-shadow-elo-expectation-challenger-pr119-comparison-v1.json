@@ -1,0 +1,73 @@
+{
+  "artifact_scope": "EXACT_PR119_REVIEWED_ORDINARY_FT_HISTORY_OFFLINE_RESEARCH_ONLY",
+  "authority": {
+    "bet": false,
+    "pricing": false,
+    "production_model": false,
+    "production_probability": false,
+    "selection": false,
+    "sportybet_execution": false,
+    "wager_placed": false
+  },
+  "baseline_exact_reproduction": true,
+  "baseline_projection_sha256": "5519ef40db3efc678c9eef73046c0e577e5f33a85f11b3fe043fc22bca2fcfed",
+  "challenger_id": "COMPLEMENTARY_HOME_ADVANTAGE_ELO_EXPECTATION_CHALLENGER_V1",
+  "cohort_fixture_count": 21326,
+  "comparison_full_json_sha256": "0a3c02f3a2b09d458efc48a16938e11ca3071622c4cb1d983547c4b929509591",
+  "comparison_identity_sha256": "441a3913b6715c218fee6f9a96e820ef19139ae8d6801d0217af598d05b858f7",
+  "conclusion_state": "CHALLENGER_SMALL_EFFECT_ELO_STATE_REQUIRES_REVIEW",
+  "elo_absolute_delta": {
+    "max": 132,
+    "median": 67.0,
+    "min": 0,
+    "p90": 105.0
+  },
+  "expected_score_mass": {
+    "baseline": {"max": 1.0718318538902045, "median": 1.068346901445863, "min": 1.016434860682837, "p90": 1.071715946381588},
+    "challenger": {"max": 1.0, "median": 1.0, "min": 1.0, "p90": 1.0}
+  },
+  "frozen_constructor_blob_sha": "9c9e424791b65292f7bbe8849b3214c140834889",
+  "exact_1500": {
+    "away": {"count": 201, "percentage": 0.9425114883241115},
+    "both": {"count": 90, "percentage": 0.42202006939885583},
+    "either": {"count": 310, "percentage": 1.453624683484948},
+    "home": {"count": 199, "percentage": 0.9331332645596924}
+  },
+  "large_gap_counts": {
+    "100": {"baseline": 8405, "challenger": 8463},
+    "200": {"baseline": 2867, "challenger": 2970},
+    "300": {"baseline": 587, "challenger": 594}
+  },
+  "pr119_source_asset": {
+    "row_count": 21326,
+    "sha256": "e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2",
+    "size_bytes": 10545099
+  },
+  "run_218": {
+    "artifact_digest_revalidated": true,
+    "artifact_id": 10044665236,
+    "artifact_sha256": "fac0c3c62cbc82154271f17d5df55336f014c8e2155542b3aa545dae015e10d5",
+    "extreme_disagreement_after": null,
+    "extreme_disagreement_before": null,
+    "extreme_disagreement_threshold": 0.25,
+    "model_ready_fixture_count": 33,
+    "model_ready_fixture_count_compared": 0,
+    "reason_not_compared": "ARTIFACT_DOES_NOT_CONTAIN_EXACT_COMPLETE_DURABLE_HISTORY_LEDGER_REQUIRED_FOR_CHALLENGER_RECONSTRUCTION",
+    "reviewed_elo_only_fixture_count": 22,
+    "reviewed_elo_only_fixture_count_compared": 0,
+    "run_id": 34194381190,
+    "selected_leg_count": 20,
+    "selected_leg_count_compared": 0
+  },
+  "terminal_state_sha256": {
+    "baseline": "efc78860c9cfcb621afada3e2a3d9252218117d546360071ff5eb06eb2bffc58",
+    "challenger": "2d2eb28d007d6074913eaa7ab8249d3f45080b847c13968fcbe7f6e77e438b32"
+  },
+  "wager_placed": false,
+  "xg_absolute_delta": {
+    "max": 0.5833331236926425,
+    "median": 0.030880022664830253,
+    "min": 0.0,
+    "p90": 0.09002050218489208
+  }
+}
