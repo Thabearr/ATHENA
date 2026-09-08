@@ -6,13 +6,16 @@ fresh direct-event contexts remain replay-checkable.  ``current_shadow_all_marke
 imports that verifier by value, so its module-local alias must delegate to the
 currently installed quote-binding verifier while the worker runs.
 
-Run #32 then proved that the fresh-reprice path reaches the reviewed
+Run #32 proved that the fresh-reprice path could reach the reviewed
 SHARE_CODE_CREATE_RELOAD boundary only at the end of the generic 50-minute
-hosted supervisor budget.  This PR-F-only wrapper therefore grants five more
-bounded minutes for final research create/reload verification while remaining
-strictly below the workflow's 60-minute job timeout.  It does not alter pricing,
-Router, Portfolio, the 900-second quote-freshness rule, provider semantics,
-transport, staking, or wager authority.
+hosted supervisor budget, so this specialized wrapper was previously extended
+to 55 minutes for smaller runs.  Exact Current Shadow run #230 later reached
+SHARE_CODE_CREATE_RELOAD only at that 55-minute ceiling for a target-25
+three-day request.  This wrapper therefore grants a bounded 75-minute
+supervisor budget while the workflow keeps a separate 90-minute hard ceiling,
+leaving 15 minutes for finalization, preservation, and artifact upload.  It
+does not alter pricing, Router, Portfolio, the 900-second quote-freshness rule,
+provider semantics, transport, staking, or wager authority.
 """
 from __future__ import annotations
 
@@ -28,8 +31,8 @@ from scripts import execute_current_shadow_all_market_fresh_reprice as fresh_cli
 
 
 WORKER_MODULE = "scripts.execute_current_shadow_all_market_fresh_reprice_bound"
-HOSTED_SUPERVISOR_TIMEOUT_SECONDS = 55 * 60
-WORKFLOW_JOB_TIMEOUT_SECONDS = 60 * 60
+HOSTED_SUPERVISOR_TIMEOUT_SECONDS = 75 * 60
+WORKFLOW_JOB_TIMEOUT_SECONDS = 90 * 60
 
 
 def _supervisor_timeout_seconds() -> int:
