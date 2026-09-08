@@ -121,6 +121,25 @@ def test_reviewed_shadow_projection_admits_exact_run33_home_label_and_retains_ra
     assert event.source_raw_sha256 == raw_sha
 
 
+def test_reviewed_shadow_projection_admits_exact_run126_home_label_and_retains_raw_sha():
+    raw_sha = "d25423e8dfea8d8d49b15041338bb7d90e546a918471653afe5bfb5449ee0f54"
+    event = fanout.legacy.reviewed._event_from_mapping(
+        _provider_event(
+            event_id="sr:match:74170884",
+            home="Comunicaciones FC ",
+            away="CD Marquense",
+            kickoff_ms=1788998400000,
+        ),
+        inherited_competition=None,
+        page_num=1,
+        raw_sha256=raw_sha,
+        observed_at=datetime(2026, 9, 8, 15, 12, 27, 450772, tzinfo=UTC),
+    )
+    assert event.home_team_name == "Comunicaciones FC"
+    assert event.away_team_name == "CD Marquense"
+    assert event.source_raw_sha256 == raw_sha
+
+
 def test_fanout_parser_uses_exact_reviewed_projection_and_preserves_response_ancestry():
     observed = datetime(2026, 9, 3, 10, 20, tzinfo=UTC)
     nonce = int(observed.timestamp() * 1000) - 1000
@@ -210,6 +229,12 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
             away="Gorilla FC",
             kickoff_ms=1788627600000,
         ),
+        _provider_event(
+            event_id="sr:match:74170885",
+            home="Comunicaciones FC ",
+            away="CD Marquense",
+            kickoff_ms=1788998400000,
+        ),
     ):
         with pytest.raises(
             fanout.reviewed.SportyBetCurrentEventDiscoveryError,
@@ -238,6 +263,12 @@ def test_frozen_non_shadow_parser_still_rejects_the_observed_trailing_space():
             away="Gorilla FC",
             kickoff_ms=1788627600000,
         ),
+        _provider_event(
+            event_id="sr:match:74170884",
+            home="Comunicaciones FC ",
+            away="CD Marquense",
+            kickoff_ms=1788998400000,
+        ),
     ):
         with pytest.raises(
             fanout.reviewed.SportyBetCurrentEventDiscoveryError,
@@ -248,15 +279,15 @@ def test_frozen_non_shadow_parser_still_rejects_the_observed_trailing_space():
                 inherited_competition=None,
                 page_num=1,
                 raw_sha256="a" * 64,
-                observed_at=datetime(2026, 9, 4, 18, 50, 34, tzinfo=UTC),
+                observed_at=datetime(2026, 9, 8, 15, 12, 27, 450772, tzinfo=UTC),
             )
 
 
 def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     identity = label_compat.validate_policy()
-    assert label_compat.SCHEMA_VERSION == 2
+    assert label_compat.SCHEMA_VERSION == 3
     assert label_compat.POLICY_ID == (
-        "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V2"
+        "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V3"
     )
     assert label_compat.EVIDENCE_WORKFLOW_RUN_ID == 33743684967
     assert label_compat.EVIDENCE_ARTIFACT_ID == 9888817924
@@ -268,15 +299,23 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     assert label_compat.LATEST_EVIDENCE_ARTIFACT_SHA256 == (
         "87b379f9b8163717869d3fd3d8834fc0434d548c4f2a2522120c28c0508aa609"
     )
+    assert label_compat.CURRENT_EVIDENCE_WORKFLOW_RUN_ID == 34243048761
+    assert label_compat.CURRENT_EVIDENCE_ARTIFACT_ID == 10062892966
+    assert label_compat.CURRENT_EVIDENCE_ARTIFACT_SHA256 == (
+        "bbc5434425443b38a20d0807cc3e85a269a02a446ff229ea7025d28b4cd0dea4"
+    )
     assert label_compat.EXPECTED_POLICY_SHA256 == (
-        "ce2f87e6f5d9ad3993de5a3d679e25da9d52d9dbaff33fbb622514f67d707f0b"
+        "77fbe4ffdc031c2e6b15353d99afa25ff31c4537cb45e541f69d6b029a7c4709"
     )
     assert label_compat.policy_sha256() == label_compat.EXPECTED_POLICY_SHA256
     assert identity["policy_sha256"] == label_compat.EXPECTED_POLICY_SHA256
     assert identity["latest_evidence_artifact_sha256"] == (
         label_compat.LATEST_EVIDENCE_ARTIFACT_SHA256
     )
-    assert len(label_compat.REVIEWED_PROJECTIONS) == 3
+    assert identity["current_evidence_artifact_sha256"] == (
+        label_compat.CURRENT_EVIDENCE_ARTIFACT_SHA256
+    )
+    assert len(label_compat.REVIEWED_PROJECTIONS) == 4
     run33 = next(
         row for row in label_compat.REVIEWED_PROJECTIONS
         if row.event_id == "sr:match:73805972"
@@ -292,3 +331,20 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     assert run33.evidence_workflow_run_id == 33907719257
     assert run33.evidence_artifact_id == 9950240221
     assert run33.evidence_artifact_sha256 == label_compat.LATEST_EVIDENCE_ARTIFACT_SHA256
+    run126 = next(
+        row for row in label_compat.REVIEWED_PROJECTIONS
+        if row.event_id == "sr:match:74170884"
+    )
+    assert run126.field == "homeTeamName"
+    assert run126.raw_source_label == "Comunicaciones FC "
+    assert run126.projected_label == "Comunicaciones FC"
+    assert run126.category_id == "sr:category:365"
+    assert run126.tournament_id == "sr:tournament:27396"
+    assert run126.source_raw_sha256 == (
+        "d25423e8dfea8d8d49b15041338bb7d90e546a918471653afe5bfb5449ee0f54"
+    )
+    assert run126.evidence_workflow_run_id == 34243048761
+    assert run126.evidence_artifact_id == 10062892966
+    assert run126.evidence_artifact_sha256 == (
+        label_compat.CURRENT_EVIDENCE_ARTIFACT_SHA256
+    )
