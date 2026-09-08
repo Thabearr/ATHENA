@@ -76,6 +76,38 @@ def test_conclusion_is_bound_only_to_exact_reviewed_pr119_identities(cohort):
     assert subject._conclusion(row_count=subject.REVIEWED_PR119_ROW_COUNT,
         source_sha256=subject.REVIEWED_PR119_SOURCE_HISTORY_SHA256, projection_sha256="0" * 64) == subject.DEFAULT_CONCLUSION
 
+def _rehash(report):
+    value = copy.deepcopy(report)
+    value.pop("comparison_sha256", None)
+    value["comparison_sha256"] = hashlib.sha256(subject.canonical_bytes(value)).hexdigest()
+    return value
+
+def test_validator_rejects_rehashed_identity_incompatible_allowed_conclusions(cohort):
+    toy = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))
+    assert toy["conclusion_state"] == subject.DEFAULT_CONCLUSION
+    subject.validate_report(toy)
+    for incompatible in (
+        subject.REVIEWED_PR119_CONCLUSION,
+        "CHALLENGER_WORSE_OR_INCONCLUSIVE",
+        "CHALLENGER_MATERIAL_IMPROVEMENT_REQUIRES_SEPARATE_VALIDATION",
+    ):
+        tampered = copy.deepcopy(toy)
+        tampered["conclusion_state"] = incompatible
+        tampered = _rehash(tampered)
+        with pytest.raises(subject.EloExpectationChallengerError, match="conclusion is not authorized"):
+            subject.validate_report(tampered)
+
+def test_validator_accepts_exact_reviewed_pr119_identity_tuple(cohort):
+    report = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))
+    report["aggregate"]["cohort_fixture_count"] = subject.REVIEWED_PR119_ROW_COUNT
+    report["source_history_sha256"] = subject.REVIEWED_PR119_SOURCE_HISTORY_SHA256
+    report["baseline_projection_sha256"] = subject.REVIEWED_PR119_BASELINE_PROJECTION_SHA256
+    report["conclusion_state"] = subject.REVIEWED_PR119_CONCLUSION
+    report = _rehash(report)
+    subject.validate_report(report)
+    assert all(value is False for value in report["authority"].values())
+    assert report["wager_placed"] is False
+
 def test_missing_malformed_and_nonreproducing_inputs_fail_closed(cohort):
     with pytest.raises(subject.EloExpectationChallengerError, match="BASELINE_REPRODUCTION_FAILED"):
         subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort) + b" ")
