@@ -13,8 +13,8 @@
   "baseline_projection_sha256": "5519ef40db3efc678c9eef73046c0e577e5f33a85f11b3fe043fc22bca2fcfed",
   "challenger_id": "COMPLEMENTARY_HOME_ADVANTAGE_ELO_EXPECTATION_CHALLENGER_V1",
   "cohort_fixture_count": 21326,
-  "comparison_full_json_sha256": "0a3c02f3a2b09d458efc48a16938e11ca3071622c4cb1d983547c4b929509591",
-  "comparison_identity_sha256": "441a3913b6715c218fee6f9a96e820ef19139ae8d6801d0217af598d05b858f7",
+  "comparison_full_json_sha256": "525ec9b10121360137c71f9642f9163656aba173cfd3f6cb0c763595c50017eb",
+  "comparison_identity_sha256": "3704f34f569b4c0307c500e681b3f57adc198481a8b6830aca63a4503f8696f6",
   "conclusion_state": "CHALLENGER_SMALL_EFFECT_ELO_STATE_REQUIRES_REVIEW",
   "elo_absolute_delta": {
     "max": 132,
@@ -62,6 +62,20 @@
   "terminal_state_sha256": {
     "baseline": "efc78860c9cfcb621afada3e2a3d9252218117d546360071ff5eb06eb2bffc58",
     "challenger": "2d2eb28d007d6074913eaa7ab8249d3f45080b847c13968fcbe7f6e77e438b32"
+  },
+  "terminal_baseline_reproduction_proof": {
+    "frozen_terminal_observation_sha256": "efc78860c9cfcb621afada3e2a3d9252218117d546360071ff5eb06eb2bffc58",
+    "method": "FROZEN_SAME_KICKOFF_SYNTHETIC_PROBE_BATCH_V1",
+    "probe_batch_kickoff_utc": "2026-08-14T19:15:01Z",
+    "probe_fixture_count": 282,
+    "probe_rows_sha256": "1117c610a84379dd428240c892714e55d105b28b6fc7b919540e901b04389888",
+    "probes_enter_comparison_cohort": false,
+    "probes_enter_provider_inputs": false,
+    "probes_enter_source_history_identity": false,
+    "probes_enter_xg": false,
+    "terminal_mismatch_count": 0,
+    "terminal_proof_sha256": "3932aaafbdbdf39aa4ad5eb20bcfe601f61388d194c33eb7a19678f26d73dc41",
+    "terminal_team_count": 282
   },
   "wager_placed": false,
   "xg_absolute_delta": {
