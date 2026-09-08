@@ -24,6 +24,9 @@ def test_exact_reproduction_complements_separation_and_authority(cohort):
     assert all(abs(i["challenger"]["expected_score_mass"] - 1) <= subject.COMPLEMENT_TOLERANCE for i in report["fixtures"])
     assert report["baseline_id"] != report["challenger_id"]
     assert all(v is False for v in report["authority"].values()) and report["wager_placed"] is False
+    proof = report["terminal_baseline_reproduction_proof"]
+    assert proof["terminal_team_count"] == 4
+    assert proof["terminal_mismatch_count"] == 0
 
 def test_only_expected_pair_semantics_changes_initially(cohort):
     first = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))["fixtures"][0]
@@ -39,6 +42,39 @@ def test_identity_changes_and_reordering_canonicalizes(cohort):
     revised = subject.compare_elo_replays(rows=changed, expected_baseline_projection_raw=projection(changed))
     assert original["source_history_sha256"] != revised["source_history_sha256"]
     assert original["terminal_state_sha256"]["challenger"] != revised["terminal_state_sha256"]["challenger"]
+    assert original["terminal_baseline_reproduction_proof"]["terminal_proof_sha256"] == reordered["terminal_baseline_reproduction_proof"]["terminal_proof_sha256"]
+
+def test_terminal_probe_covers_last_update_and_perturbation_fails(cohort):
+    values = subject._rows(cohort); source = subject._source_rows(values)
+    report = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))
+    observed, _ = subject._frozen_terminal_observation(source)
+    # Team 30's last and only update is fixture 4; the probe exposes its post-fixture state.
+    last_update = next(i["baseline"]["home_update"] for i in report["fixtures"] if i["fixture_identifier"] == "4")
+    assert observed["30"]["rating"] == last_update
+    perturbed = copy.deepcopy(observed); perturbed["30"]["rating"] += 1
+    with pytest.raises(subject.EloExpectationChallengerError, match="BASELINE_REPRODUCTION_FAILED: terminal state"):
+        subject._verify_terminal_baseline(source, perturbed)
+
+def test_probes_are_deterministic_and_excluded(cohort):
+    source = subject._source_rows(subject._rows(cohort))
+    probes = subject._terminal_probe_rows(source)
+    assert probes == subject._terminal_probe_rows(list(reversed(source)))
+    report = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))
+    assert report["aggregate"]["cohort_fixture_count"] == len(cohort)
+    assert all(not i["fixture_identifier"].startswith(subject.PROBE_FIXTURE_PREFIX) for i in report["fixtures"])
+    proof = report["terminal_baseline_reproduction_proof"]
+    assert not any((proof["probes_enter_comparison_cohort"], proof["probes_enter_source_history_identity"], proof["probes_enter_xg"], proof["probes_enter_provider_inputs"]))
+
+def test_conclusion_is_bound_only_to_exact_reviewed_pr119_identities(cohort):
+    report = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))
+    assert report["conclusion_state"] == subject.DEFAULT_CONCLUSION
+    assert subject._conclusion(row_count=subject.REVIEWED_PR119_ROW_COUNT,
+        source_sha256=subject.REVIEWED_PR119_SOURCE_HISTORY_SHA256,
+        projection_sha256=subject.REVIEWED_PR119_BASELINE_PROJECTION_SHA256) == subject.REVIEWED_PR119_CONCLUSION
+    assert subject._conclusion(row_count=subject.REVIEWED_PR119_ROW_COUNT,
+        source_sha256="0" * 64, projection_sha256=subject.REVIEWED_PR119_BASELINE_PROJECTION_SHA256) == subject.DEFAULT_CONCLUSION
+    assert subject._conclusion(row_count=subject.REVIEWED_PR119_ROW_COUNT,
+        source_sha256=subject.REVIEWED_PR119_SOURCE_HISTORY_SHA256, projection_sha256="0" * 64) == subject.DEFAULT_CONCLUSION
 
 def test_missing_malformed_and_nonreproducing_inputs_fail_closed(cohort):
     with pytest.raises(subject.EloExpectationChallengerError, match="BASELINE_REPRODUCTION_FAILED"):
