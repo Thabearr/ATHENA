@@ -24,6 +24,7 @@ REVIEWED_PR119_ROW_COUNT = 21_326
 REVIEWED_PR119_SOURCE_HISTORY_SHA256 = "49aa8af171063471705c6089d5f7042727b11a65294b3f26b560487ca1701625"
 REVIEWED_PR119_BASELINE_PROJECTION_SHA256 = "5519ef40db3efc678c9eef73046c0e577e5f33a85f11b3fe043fc22bca2fcfed"
 REVIEWED_PR119_CONCLUSION = "CHALLENGER_SMALL_EFFECT_ELO_STATE_REQUIRES_REVIEW"
+REVIEWED_PR119_COMPARISON_SHA256 = "3704f34f569b4c0307c500e681b3f57adc198481a8b6830aca63a4503f8696f6"
 DEFAULT_CONCLUSION = "INSUFFICIENT_EVIDENCE_FOR_CAUSAL_BACKTEST"
 PROBE_FIXTURE_PREFIX = "ATHENA_PR334_TERMINAL_PROOF_FIXTURE_V1"
 PROBE_TEAM_PREFIX = "ATHENA_PR334_TERMINAL_PROOF_OPPONENT_V1"
@@ -207,6 +208,12 @@ def _conclusion(*, row_count: int, source_sha256: str, projection_sha256: str) -
     return DEFAULT_CONCLUSION
 
 
+def _validate_conclusion_identity(*, expected_conclusion: str, comparison_sha256: Any) -> None:
+    if (expected_conclusion == REVIEWED_PR119_CONCLUSION
+            and comparison_sha256 != REVIEWED_PR119_COMPARISON_SHA256):
+        raise _error("reviewed PR119 conclusion requires the exact reviewed comparison identity")
+
+
 def compare_elo_replays(*, rows: Iterable[dict[str, Any]], expected_baseline_projection_raw: bytes) -> dict[str, Any]:
     values = _rows(rows)
     source = _source_rows(values)
@@ -325,4 +332,8 @@ def validate_report(report: Mapping[str, Any]) -> None:
     )
     if value.get("conclusion_state") != expected_conclusion:
         raise _error("conclusion is not authorized by the report evidence identities")
+    _validate_conclusion_identity(
+        expected_conclusion=expected_conclusion,
+        comparison_sha256=identity,
+    )
     if value.get("authority") != AUTHORITY or value.get("wager_placed") is not False: raise _error("authority changed")
