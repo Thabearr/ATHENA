@@ -97,16 +97,27 @@ def test_validator_rejects_rehashed_identity_incompatible_allowed_conclusions(co
         with pytest.raises(subject.EloExpectationChallengerError, match="conclusion is not authorized"):
             subject.validate_report(tampered)
 
-def test_validator_accepts_exact_reviewed_pr119_identity_tuple(cohort):
+def test_validator_rejects_forged_toy_with_reviewed_pr119_metadata_tuple(cohort):
     report = subject.compare_elo_replays(rows=cohort, expected_baseline_projection_raw=projection(cohort))
     report["aggregate"]["cohort_fixture_count"] = subject.REVIEWED_PR119_ROW_COUNT
     report["source_history_sha256"] = subject.REVIEWED_PR119_SOURCE_HISTORY_SHA256
     report["baseline_projection_sha256"] = subject.REVIEWED_PR119_BASELINE_PROJECTION_SHA256
     report["conclusion_state"] = subject.REVIEWED_PR119_CONCLUSION
     report = _rehash(report)
-    subject.validate_report(report)
-    assert all(value is False for value in report["authority"].values())
-    assert report["wager_placed"] is False
+    assert report["comparison_sha256"] != subject.REVIEWED_PR119_COMPARISON_SHA256
+    with pytest.raises(subject.EloExpectationChallengerError, match="exact reviewed comparison identity"):
+        subject.validate_report(report)
+
+def test_exact_reviewed_pr119_comparison_identity_is_the_only_privileged_identity():
+    subject._validate_conclusion_identity(
+        expected_conclusion=subject.REVIEWED_PR119_CONCLUSION,
+        comparison_sha256=subject.REVIEWED_PR119_COMPARISON_SHA256,
+    )
+    with pytest.raises(subject.EloExpectationChallengerError, match="exact reviewed comparison identity"):
+        subject._validate_conclusion_identity(
+            expected_conclusion=subject.REVIEWED_PR119_CONCLUSION,
+            comparison_sha256="0" * 64,
+        )
 
 def test_missing_malformed_and_nonreproducing_inputs_fail_closed(cohort):
     with pytest.raises(subject.EloExpectationChallengerError, match="BASELINE_REPRODUCTION_FAILED"):
