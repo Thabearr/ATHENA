@@ -85,6 +85,52 @@ def test_private_helpers_are_not_public_parallel_authority(helper: str) -> None:
     assert boundaries._parallel_authority_diagnostics(families, _modules(helper), set()) == []
 
 
+def _adr_text(status: str = "Accepted") -> bytes:
+    headings = "\n".join(f"## {heading}\n" for heading in boundaries.ADR_HEADINGS)
+    return f"## Status\n\n{status}\n\n{headings}".encode("utf-8")
+
+
+def test_exact_accepted_adr_approves_one_new_public_authority() -> None:
+    policy = _policy()
+    module = "domain.market_router_v4"
+    path = "docs/architecture/adrs/ADR-001-router-v4.md"
+    policy["approved_parallel_authority_adrs"] = [{
+        "adr_id": "ADR-001", "adr_path": path, "status": "ACCEPTED",
+        "responsibility_id": "market_router", "approved_module_ids": [module],
+    }]
+    families = boundaries._validate_policy(policy)
+    approved = boundaries._approved_adr_modules(policy, {path}, {path: _adr_text()}, families)
+    assert approved == {module}
+    assert boundaries._parallel_authority_diagnostics(families, _modules(module), approved) == []
+
+
+@pytest.mark.parametrize(("mutate", "tracked", "contents"), [
+    (lambda entry: entry.__setitem__("adr_path", "docs/architecture/adrs/ADR-001-missing.md"), set(), {}),
+    (lambda entry: None, {"docs/architecture/adrs/ADR-001-router-v4.md"}, {"docs/architecture/adrs/ADR-001-router-v4.md": _adr_text("Proposed")}),
+    (lambda entry: entry.__setitem__("approved_module_ids", ["domain.market_router_*"]), {"docs/architecture/adrs/ADR-001-router-v4.md"}, {"docs/architecture/adrs/ADR-001-router-v4.md": _adr_text()}),
+])
+def test_malformed_or_unaccepted_adr_fails_closed(mutate, tracked: set[str], contents: dict[str, bytes]) -> None:
+    policy = _policy()
+    entry = {"adr_id": "ADR-001", "adr_path": "docs/architecture/adrs/ADR-001-router-v4.md", "status": "ACCEPTED", "responsibility_id": "market_router", "approved_module_ids": ["domain.market_router_v4"]}
+    mutate(entry)
+    policy["approved_parallel_authority_adrs"] = [entry]
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, tracked, contents, boundaries._validate_policy(policy))
+
+
+def test_duplicate_adr_approval_fails_closed() -> None:
+    policy = _policy()
+    path = "docs/architecture/adrs/ADR-001-router-v4.md"
+    entry = {"adr_id": "ADR-001", "adr_path": path, "status": "ACCEPTED", "responsibility_id": "market_router", "approved_module_ids": ["domain.market_router_v4"]}
+    second = deepcopy(entry)
+    second["adr_id"] = "ADR-002"
+    second["adr_path"] = "docs/architecture/adrs/ADR-002-router-v4.md"
+    policy["approved_parallel_authority_adrs"] = [entry, second]
+    contents = {path: _adr_text(), second["adr_path"]: _adr_text()}
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, set(contents), contents, boundaries._validate_policy(policy))
+
+
 def test_baseline_family_matches_every_real_base_module() -> None:
     policy = _policy()
     families = boundaries._validate_policy(policy)
