@@ -61,13 +61,20 @@ def _commit(repo: Path, message: str = "test commit") -> str:
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from scripts.audit_repository_architecture import (
+    ALL_AUTHORITY_PROFILES,
+    AUTHORITY_HISTORICAL_EVIDENCE,
+    AUTHORITY_MAIN_ONLY,
+    AUTHORITY_RESEARCH_CHALLENGER,
+    AUTHORITY_SHADOW_ONLY,
+    AUTHORITY_SHARED_CANONICAL,
+    AUTHORITY_UNKNOWN,
     DISPOSITION_UNCLASSIFIED,
     DYNAMIC_NONLITERAL,
     POLICY_ID,
     SCHEMA_VERSION,
+    build_csv,
     build_inventory,
     canonical_json,
-    build_csv,
     detect_authority_families,
     detect_cli_frameworks,
     detect_dynamic_imports,
@@ -76,6 +83,8 @@ from scripts.audit_repository_architecture import (
     is_test_path,
     parse_imports,
     path_to_module,
+    read_file_at_ref,
+    read_files_at_ref,
     resolve_ref,
 )
 
@@ -785,3 +794,287 @@ class TestKnownPaths:
         inv = self._get_inv()
         bad = [m for m in inv["python_modules"] if m["disposition"] != DISPOSITION_UNCLASSIFIED]
         assert not bad, f"Modules with non-UNCLASSIFIED disposition: {[b['path'] for b in bad]}"
+
+    def test_all_modules_have_valid_authority_profile_at_base(self):
+        inv = self._get_inv()
+        for m in inv["python_modules"]:
+            assert m["authority_profile"] in ALL_AUTHORITY_PROFILES
+            assert m["authority_profile"] == AUTHORITY_UNKNOWN
+
+    def test_key_paths_disposition_and_profile_at_base(self):
+        inv = self._get_inv()
+        mods = {m["path"]: m for m in inv["python_modules"]}
+        for kp in self._KNOWN_PATHS:
+            assert kp in mods
+            assert mods[kp]["disposition"] == DISPOSITION_UNCLASSIFIED
+            assert mods[kp]["authority_profile"] == AUTHORITY_UNKNOWN
+
+    def test_fresh_holdout_supported_roots_at_base(self):
+        inv = self._get_inv()
+        supported_mods = {r["root_module"] for r in inv["supported_roots"]}
+        assert "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick" in supported_mods
+        assert "scripts.run_fotmob_fresh_holdout_release_receipt_mirror" in supported_mods
+
+    def test_fresh_holdout_dependencies_reachable_at_base(self):
+        inv = self._get_inv()
+        mods = {m["module"]: m for m in inv["python_modules"] if m["module"]}
+        assert mods["domain.fotmob_utc_native_expected_goals_fresh_holdout"]["reachable_from_supported_static_root"] is True
+        assert mods["domain.fotmob_fresh_holdout_continuity"]["reachable_from_supported_static_root"] is True
+
+
+# ===========================================================================
+# Authority Profile Dimension Tests (Specification v2 Alignment)
+# ===========================================================================
+
+class TestAuthorityProfile:
+    def test_every_module_has_authority_profile(self, tiny_repo):
+        repo, sha = tiny_repo
+        inv = build_inventory(repo, sha)
+        for m in inv["python_modules"]:
+            assert "authority_profile" in m, f"{m['path']} missing authority_profile"
+
+    def test_authority_profile_vocabulary(self, tiny_repo):
+        repo, sha = tiny_repo
+        inv = build_inventory(repo, sha)
+        for m in inv["python_modules"]:
+            assert m["authority_profile"] in ALL_AUTHORITY_PROFILES, (
+                f"{m['path']} has invalid authority_profile {m['authority_profile']!r}"
+            )
+
+    def test_unproven_module_defaults_to_unknown(self, tiny_repo):
+        repo, sha = tiny_repo
+        inv = build_inventory(repo, sha)
+        for m in inv["python_modules"]:
+            assert m["authority_profile"] == AUTHORITY_UNKNOWN
+
+    def test_authority_profile_unknown_does_not_change_disposition(self, tiny_repo):
+        repo, sha = tiny_repo
+        inv = build_inventory(repo, sha)
+        for m in inv["python_modules"]:
+            assert m["authority_profile"] == AUTHORITY_UNKNOWN
+            assert m["disposition"] == DISPOSITION_UNCLASSIFIED
+
+    def test_no_authority_profile_creates_delete_or_keep_authority(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "mod_main.py", "x = 1\n")
+        _add_file(repo, "mod_shadow.py", "y = 2\n")
+        sha = _commit(repo)
+        profiles = {
+            "mod_main": AUTHORITY_MAIN_ONLY,
+            "mod_shadow": AUTHORITY_SHADOW_ONLY,
+        }
+        inv = build_inventory(repo, sha, known_authority_profiles=profiles)
+        for m in inv["python_modules"]:
+            assert m["disposition"] == DISPOSITION_UNCLASSIFIED
+            assert m.get("delete_recommended") is None
+
+    def test_no_automatic_authority_from_filename(self, tmp_path):
+        """Do NOT infer authority profile from filenames like shadow, current, v1, v2, v3, fotmob, sportybet."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "shadow_runner.py", "pass\n")
+        _add_file(repo, "current_provider.py", "pass\n")
+        _add_file(repo, "v1_router.py", "pass\n")
+        _add_file(repo, "v2_price.py", "pass\n")
+        _add_file(repo, "v3_portfolio.py", "pass\n")
+        _add_file(repo, "fotmob_scraper.py", "pass\n")
+        _add_file(repo, "sportybet_service.py", "pass\n")
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        for m in inv["python_modules"]:
+            assert m["authority_profile"] == AUTHORITY_UNKNOWN, (
+                f"{m['path']} should have authority_profile UNKNOWN, got {m['authority_profile']!r}"
+            )
+
+
+# ===========================================================================
+# Fresh-Holdout Protected Research Reachability Tests
+# ===========================================================================
+
+class TestFreshHoldoutProtectedReachability:
+    def test_fresh_holdout_reviewed_workflow_is_supported_root(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "scripts/__init__.py", "")
+        _add_file(repo, "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py", "x = 1\n")
+        _add_file(
+            repo,
+            ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+            textwrap.dedent("""\
+                name: FotMob Fresh Holdout
+                on:
+                  schedule:
+                    - cron: '7 * * * *'
+                jobs:
+                  collect:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py --foo bar
+            """),
+        )
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        supported_mods = [r["root_module"] for r in inv["supported_roots"]]
+        assert "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick" in supported_mods
+
+    def test_fresh_holdout_transitive_dependency_reachable(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "scripts/__init__.py", "")
+        _add_file(
+            repo,
+            "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py",
+            "import domain.fresh_holdout_core\n",
+        )
+        _add_file(repo, "domain/__init__.py", "")
+        _add_file(repo, "domain/fresh_holdout_core.py", "import domain.fresh_submodule\n")
+        _add_file(repo, "domain/fresh_submodule.py", "pass\n")
+        _add_file(
+            repo,
+            ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+            textwrap.dedent("""\
+                name: FotMob Fresh Holdout
+                on:
+                  schedule:
+                    - cron: '7 * * * *'
+                jobs:
+                  collect:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py
+            """),
+        )
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        mods = {m["module"]: m for m in inv["python_modules"]}
+        assert mods["domain.fresh_holdout_core"]["reachable_from_supported_static_root"] is True
+        assert mods["domain.fresh_submodule"]["reachable_from_supported_static_root"] is True
+        assert "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick" in mods["domain.fresh_submodule"]["supported_static_roots"]
+
+    def test_unreviewed_historical_workflow_not_automatically_promoted(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "scripts/__init__.py", "")
+        _add_file(repo, "scripts/historical_pr_proof.py", "pass\n")
+        _add_file(
+            repo,
+            ".github/workflows/historical-pr-proof.yml",
+            textwrap.dedent("""\
+                name: Historical PR Proof
+                on: [pull_request]
+                jobs:
+                  proof:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python -m scripts.historical_pr_proof
+            """),
+        )
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        supported_mods = [r["root_module"] for r in inv["supported_roots"]]
+        assert "scripts.historical_pr_proof" not in supported_mods
+        candidate_mods = [c["candidate_module"] for c in inv["candidate_entrypoints"]]
+        assert "scripts.historical_pr_proof" in candidate_mods
+
+
+# ===========================================================================
+# Fail-Closed Git Read Tests
+# ===========================================================================
+
+class TestFailClosedGitRead:
+    def test_read_files_at_ref_missing_object_raises(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "exists.py", "x = 1\n")
+        sha = _commit(repo)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: missing Git blob"):
+            read_files_at_ref(repo, sha, ["nonexistent.py"])
+
+    def test_read_files_at_ref_malformed_header_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"malformed_header_line_without_blob\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_truncated_blob_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 100\nshortbytes\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: truncated blob body"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_cardinality_mismatch_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        _add_file(repo, "b.py", "y = 2\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 5\nhello\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED"):
+            read_files_at_ref(repo, sha, ["a.py", "b.py"])
+
+    def test_read_files_at_ref_misaligned_shift_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 5\nhelloX",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: missing trailing newline delimiter"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+
+# ===========================================================================
+# CSV Contract Tests
+# ===========================================================================
+
+class TestCSVContract:
+    def test_csv_contains_authority_profile_column(self, tiny_repo):
+        repo, sha = tiny_repo
+        inv = build_inventory(repo, sha)
+        csv_str = build_csv(inv["python_modules"])
+        header_cols = csv_str.splitlines()[0].split(",")
+        assert "authority_profile" in header_cols
+        idx_zero = header_cols.index("zero_static_inbound")
+        idx_auth = header_cols.index("authority_profile")
+        idx_disp = header_cols.index("disposition")
+        assert idx_zero < idx_auth < idx_disp

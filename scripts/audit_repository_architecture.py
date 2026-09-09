@@ -36,6 +36,23 @@ SCHEMA_VERSION: int = 1
 POLICY_ID: str = "ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_V1"
 DISPOSITION_UNCLASSIFIED: str = "UNCLASSIFIED"
 
+# Authority-role vocabulary (Architecture Remediation Specification v2)
+AUTHORITY_SHARED_CANONICAL: str = "SHARED_CANONICAL"
+AUTHORITY_MAIN_ONLY: str = "MAIN_ONLY"
+AUTHORITY_SHADOW_ONLY: str = "SHADOW_ONLY"
+AUTHORITY_RESEARCH_CHALLENGER: str = "RESEARCH_CHALLENGER"
+AUTHORITY_HISTORICAL_EVIDENCE: str = "HISTORICAL_EVIDENCE"
+AUTHORITY_UNKNOWN: str = "UNKNOWN"
+
+ALL_AUTHORITY_PROFILES: tuple[str, ...] = (
+    AUTHORITY_SHARED_CANONICAL,
+    AUTHORITY_MAIN_ONLY,
+    AUTHORITY_SHADOW_ONLY,
+    AUTHORITY_RESEARCH_CHALLENGER,
+    AUTHORITY_HISTORICAL_EVIDENCE,
+    AUTHORITY_UNKNOWN,
+)
+
 # Supported-root evidence basis values
 EVIDENCE_CURRENT_HOSTED_WORKFLOW: str = "CURRENT_HOSTED_WORKFLOW"
 EVIDENCE_PACKAGING_ENTRYPOINT: str = "PACKAGING_ENTRYPOINT"
@@ -110,7 +127,12 @@ def list_tracked_files(repo_root: Path, sha: str) -> list[str]:
 
 
 def read_files_at_ref(repo_root: Path, sha: str, paths: list[str]) -> dict[str, bytes]:
-    """Batch-read multiple files at sha:<path> using git cat-file --batch."""
+    """Batch-read multiple files at sha:<path> using git cat-file --batch.
+
+    Fails closed: every requested path must resolve to a valid blob.
+    Missing objects, malformed headers, truncated bodies, or cardinality
+    mismatches immediately raise a RuntimeError.
+    """
     if not paths:
         return {}
     input_data = b"".join(f"{sha}:{p}\n".encode("utf-8") for p in paths)
@@ -121,38 +143,90 @@ def read_files_at_ref(repo_root: Path, sha: str, paths: list[str]) -> dict[str, 
     )
     if proc.returncode != 0:
         raise RuntimeError(
-            f"git cat-file --batch failed:\n{proc.stderr.decode('utf-8', errors='replace')}"
+            f"git cat-file --batch failed (exit {proc.returncode}):\n"
+            + proc.stderr.decode("utf-8", errors="replace")
         )
 
     out = proc.stdout
     idx = 0
     results: dict[str, bytes] = {}
-    path_idx = 0
     total = len(paths)
 
-    while idx < len(out) and path_idx < total:
+    for path_idx, req_path in enumerate(paths):
+        if idx >= len(out):
+            raise RuntimeError(
+                f"FAIL-CLOSED: git cat-file --batch truncated: reached EOF before reading path {req_path!r} "
+                f"({path_idx + 1}/{total})"
+            )
         nl = out.find(b"\n", idx)
         if nl == -1:
-            break
+            raise RuntimeError(
+                f"FAIL-CLOSED: git cat-file --batch malformed: missing header newline for path {req_path!r} at offset {idx}"
+            )
         header = out[idx:nl].decode("utf-8", errors="replace")
         idx = nl + 1
         parts = header.split()
-        if len(parts) >= 3 and parts[1] == "blob":
+        if len(parts) >= 2 and parts[1] == "missing":
+            raise RuntimeError(
+                f"FAIL-CLOSED: missing Git blob for requested path {req_path!r} at ref {sha}: {header}"
+            )
+        if len(parts) < 3 or parts[1] != "blob":
+            raise RuntimeError(
+                f"FAIL-CLOSED: unexpected git cat-file header for path {req_path!r}: {header!r}"
+            )
+        try:
             size = int(parts[2])
-            results[paths[path_idx]] = out[idx:idx + size]
-            idx = idx + size + 1  # skip newline
-        elif len(parts) >= 2 and parts[1] == "missing":
+            if size < 0:
+                raise ValueError("negative size")
+        except ValueError as exc:
+            raise RuntimeError(
+                f"FAIL-CLOSED: invalid blob size in header for path {req_path!r}: {header!r}"
+            ) from exc
+
+        if idx + size > len(out):
+            raise RuntimeError(
+                f"FAIL-CLOSED: truncated blob body for path {req_path!r}: "
+                f"expected {size} bytes, but only {len(out) - idx} remaining"
+            )
+        blob_data = out[idx:idx + size]
+        idx += size
+        if idx < len(out) and out[idx:idx + 1] == b"\n":
+            idx += 1
+        elif idx == len(out):
             pass
-        path_idx += 1
+        else:
+            raise RuntimeError(
+                f"FAIL-CLOSED: missing trailing newline delimiter after blob {req_path!r}"
+            )
+
+        if req_path in results:
+            raise RuntimeError(
+                f"FAIL-CLOSED: duplicate result for requested path {req_path!r}"
+            )
+        results[req_path] = blob_data
+
+    # Check cardinality and trailing bytes
+    if len(results) != total:
+        raise RuntimeError(
+            f"FAIL-CLOSED: requested {total} paths but parsed {len(results)} results"
+        )
+    if idx < len(out) and out[idx:].strip():
+        raise RuntimeError(
+            f"FAIL-CLOSED: unparsed trailing data in git cat-file output ({len(out) - idx} bytes)"
+        )
+    for p in paths:
+        if p not in results:
+            raise RuntimeError(
+                f"FAIL-CLOSED: requested path {p!r} not present in parsed results"
+            )
+
     return results
 
 
 def read_file_at_ref(repo_root: Path, sha: str, path: str) -> bytes:
     """Read a single file at sha:<path>."""
     res = read_files_at_ref(repo_root, sha, [path])
-    if path in res:
-        return res[path]
-    return _git(repo_root, "show", f"{sha}:{path}")
+    return res[path]
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +702,7 @@ def build_inventory(
     ref: str,
     *,
     known_supported_roots: list[dict] | None = None,
+    known_authority_profiles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build the complete inventory for *ref* in *repo_root*."""
 
@@ -688,7 +763,7 @@ def build_inventory(
         mod = path_to_module_map.get(path)
         is_test = is_test_path(path)
 
-        raw = file_contents.get(path, b"")
+        raw = file_contents[path]
         source = raw.decode("utf-8", errors="replace")
 
         raw_imports, diags = parse_imports(source, path)
@@ -696,6 +771,13 @@ def build_inventory(
         cli_frameworks = detect_cli_frameworks(source, path)
         dynamic_indicators = detect_dynamic_imports(source, path)
         exec_indicators = detect_execution_indicators(source, path)
+
+        profile = AUTHORITY_UNKNOWN
+        if known_authority_profiles and mod in known_authority_profiles:
+            assigned = known_authority_profiles[mod]
+            if assigned not in ALL_AUTHORITY_PROFILES:
+                raise RuntimeError(f"Invalid authority profile {assigned!r} for module {mod!r}")
+            profile = assigned
 
         module_records[path] = {
             "path": path,
@@ -717,6 +799,7 @@ def build_inventory(
             "supported_static_roots": [],
             "reachable_from_supported_static_root": False,
             "zero_static_inbound": True,
+            "authority_profile": profile,
             "disposition": DISPOSITION_UNCLASSIFIED,
         }
 
@@ -782,7 +865,7 @@ def build_inventory(
     workflow_referenced_modules: set[str] = set()
 
     for wf_path in workflow_files:
-        raw = file_contents.get(wf_path, b"")
+        raw = file_contents[wf_path]
         content = raw.decode("utf-8", errors="replace")
         wf_data = analyze_workflow(wf_path, content)
         workflow_inventory.append(wf_data)
@@ -828,18 +911,27 @@ def build_inventory(
         for mod in wf["referenced_python_modules"]:
             wf_invoked[mod].append(wf["path"])
         for f in wf["referenced_python_files"]:
-            wf_invoked[f].append(wf["path"])
+            norm = f.lstrip("./")
+            mod_from_path = path_to_module_map.get(norm)
+            if mod_from_path:
+                wf_invoked[mod_from_path].append(wf["path"])
+            else:
+                wf_invoked[norm].append(wf["path"])
 
-    _CURRENT_HOSTED_WORKFLOWS = {
-        ".github/workflows/current-shadow-all-market.yml",
-        ".github/workflows/tests.yml",
+    _REVIEWED_SUPPORTED_HOSTED_WORKFLOWS = {
+        ".github/workflows/current-shadow-all-market.yml": "Active Current Shadow multi-market evaluation root",
+        ".github/workflows/tests.yml": "Authoritative hosted CI test suite and syntax verification gate",
+        ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml": "Active prospective FotMob fresh-holdout collection experiment root",
+        ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": "Active prospective fresh-holdout continuity durability bridge root",
     }
 
     supported_root_modules: list[str] = []
 
     for mod, wf_paths in sorted(wf_invoked.items()):
-        is_hosted_current = any(wf in _CURRENT_HOSTED_WORKFLOWS for wf in wf_paths)
+        is_hosted_current = any(wf in _REVIEWED_SUPPORTED_HOSTED_WORKFLOWS for wf in wf_paths)
         mod_path = module_to_path_map.get(mod)
+        if mod_path is None and mod in all_tracked:
+            mod_path = mod
         is_packaging = mod in packaging_entrypoints or any(
             mod == pe.split(":")[0] for pe in packaging_entrypoints
         )
@@ -1100,6 +1192,7 @@ def build_csv(modules: list[dict]) -> str:
         "supported_root_count",
         "reachable_from_supported_static_root",
         "zero_static_inbound",
+        "authority_profile",
         "disposition",
     ]
     buf = io.StringIO()
@@ -1122,6 +1215,7 @@ def build_csv(modules: list[dict]) -> str:
             "supported_root_count": len(rec["supported_static_roots"]),
             "reachable_from_supported_static_root": rec["reachable_from_supported_static_root"],
             "zero_static_inbound": rec["zero_static_inbound"],
+            "authority_profile": rec.get("authority_profile", AUTHORITY_UNKNOWN),
             "disposition": rec["disposition"],
         })
     return buf.getvalue()

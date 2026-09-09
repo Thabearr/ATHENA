@@ -92,7 +92,7 @@ production deployment.
 
 ---
 
-## Deterministic `--ref` behaviour
+## Deterministic `--ref` behaviour and fail-closed Git reads
 
 The tool resolves the supplied `--ref` using:
 
@@ -103,14 +103,27 @@ git rev-parse --verify <ref>^{commit}
 This fails closed: any invalid ref, non-existent SHA, or non-commit object
 causes an immediate fatal error.
 
-File bytes are read from:
+Tracked repository files at the resolved commit are enumerated via:
 
 ```
-git show <resolved_sha>:<path>
+git ls-tree -r --name-only <resolved_sha>
 ```
 
-No checkout of the target ref is required. The tool works entirely from the
-Git object store.
+File bytes are read using a high-performance batched reader:
+
+```
+git cat-file --batch
+```
+
+Required semantics:
+- The ref resolves deterministically via `rev-parse`.
+- Tracked paths come from `ls-tree`.
+- Required bytes are obtained through a batched `cat-file --batch` reader.
+- Every requested blob must be returned by Git.
+- A `missing` blob response raises an immediate, fail-closed `RuntimeError`.
+- Malformed headers, negative sizes, or truncated blob bodies fail closed.
+- Output-path/request-path cardinality mismatches or misaligned stream data raise.
+- No checkout of the target ref or working tree modification is performed.
 
 The `source_commit` field in the JSON artifact always contains the 40-character
 resolved SHA, not the human-readable ref string.
@@ -220,6 +233,26 @@ static inbound count + dynamic/workflow/subprocess references + contract review
 
 ---
 
+## Authority profile dimension (Specification v2 Alignment)
+
+Under ATHENA Architecture Specification v2, ATHENA operates with **ONE CANONICAL CORE** serving two parallel authority profiles (**MAIN** and **SHADOW**). Modules in the repository belong to one of six mutually exclusive authority profiles:
+
+1. `SHARED_CANONICAL` — Modules shared by both MAIN and SHADOW runtime profiles as part of the canonical core.
+2. `MAIN_ONLY` — Modules participating exclusively in MAIN execution.
+3. `SHADOW_ONLY` — Modules participating exclusively in SHADOW execution.
+4. `RESEARCH_CHALLENGER` — Active, protected research and experimentation paths (e.g., fresh-holdout ticks, continuity receipts, validation models).
+5. `HISTORICAL_EVIDENCE` — Frozen benchmark runs, historical data packages, and durable audit artifacts preserved for auditability and lineage.
+6. `UNKNOWN` — Modules whose authority profile has not yet been authoritatively determined.
+
+### Invariants for P0.2
+
+- **P0.2 default**: In P0.2, all Python modules have `authority_profile: "UNKNOWN"`. P0.2 does NOT perform heuristic or pattern-based classification of authority profiles; P0.3 establishes authoritative profile assignments.
+- **Absence from Main/Shadow ≠ Obsolescence**: A module not participating in Main or Shadow may be an active research challenger (`RESEARCH_CHALLENGER`) or critical historical audit evidence (`HISTORICAL_EVIDENCE`). Lack of Main/Shadow reachability does not authorize deprecation or deletion.
+- **Protected Fresh-Holdout Reachability**: Active research automation workflows (`fotmob-utc-native-xg-fresh-holdout.yml` and `bridge-fotmob-fresh-holdout-continuity-receipts.yml`) are included in `_REVIEWED_SUPPORTED_HOSTED_WORKFLOWS` as supported roots, ensuring live research paths are recognized as reachable in the static dependency graph.
+- **Immutability of disposition**: All modules retain `disposition: "UNCLASSIFIED"` in P0.2. No module receives `DELETE`, `ARCHIVE`, `MIGRATE_THEN_DELETE`, or `KEEP` in P0.2.
+
+---
+
 ## Signals exposed per module
 
 | Signal | Meaning |
@@ -235,6 +268,7 @@ static inbound count + dynamic/workflow/subprocess references + contract review
 | `execution_refs` | subprocess.run / os.system / Popen calls in this file |
 | `reachable_from_supported_static_root` | True if reachable via BFS from a supported root |
 | `supported_static_roots` | List of supported roots that can reach this module |
+| `authority_profile` | Always `"UNKNOWN"` in P0.2 (authoritative profile assignment in P0.3) |
 | `disposition` | Always `"UNCLASSIFIED"` in P0.2 |
 
 ---
@@ -253,6 +287,19 @@ entrypoint (main guard, CLI framework, workflow reference) but lacks evidence
 of active supported invocation.
 
 If support cannot be proven: module is classified `CANDIDATE`, not `SUPPORTED`.
+
+---
+
+## Reviewed supported hosted workflows
+
+Supported roots are derived from explicit, reviewed hosted GitHub Actions workflows in `_REVIEWED_SUPPORTED_HOSTED_WORKFLOWS`:
+
+1. `.github/workflows/current-shadow-all-market.yml` — The active production Current Shadow automated execution pipeline.
+2. `.github/workflows/tests.yml` — Continuous integration testing workflow validating repository test suites.
+3. `.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml` — Active fresh-holdout research tick workflow protecting live research continuity and out-of-sample data collection.
+4. `.github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml` — Live continuity receipt bridging workflow preserving research audit artifacts.
+
+Workflows outside this reviewed set (such as unmaintained, historical, or deprecated legacy workflows) are not treated as supported roots in P0.2. Their invocations are captured as general workflow references but do not confer supported-root status.
 
 ---
 
