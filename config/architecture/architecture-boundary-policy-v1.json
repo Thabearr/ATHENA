@@ -1,0 +1,106 @@
+{
+  "approved_parallel_authority_adrs": [],
+  "authority_contract_path": "config/architecture/main-shadow-authority-parity-v1.json",
+  "authority_contract_policy_id": "ATHENA_MAIN_SHADOW_AUTHORITY_PARITY_V1",
+  "authority_contract_sha256": "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe",
+  "authority_families": [
+    {
+      "baseline_public_module_ids": [
+        "domain.current_shadow_all_market_router",
+        "domain.market_router",
+        "domain.market_router_v2_direct_provider",
+        "domain.market_router_v3_current_provider"
+      ],
+      "public_prefixes": [
+        "domain.market_router",
+        "domain.current_shadow_all_market_router"
+      ],
+      "responsibility_id": "market_router"
+    },
+    {
+      "baseline_public_module_ids": [
+        "domain.current_shadow_all_market_price_all",
+        "domain.price_all_v2_direct_provider",
+        "domain.price_all_v3_current_provider",
+        "domain.price_all_value"
+      ],
+      "public_prefixes": [
+        "domain.price_all",
+        "domain.current_shadow_all_market_price_all"
+      ],
+      "responsibility_id": "price_all_and_de_vig"
+    },
+    {
+      "baseline_public_module_ids": [
+        "domain.current_shadow_all_market_portfolio",
+        "domain.portfolio_optimizer_v2_direct_provider",
+        "domain.portfolio_optimizer_v3_current_provider"
+      ],
+      "public_prefixes": [
+        "domain.portfolio_optimizer",
+        "domain.current_shadow_all_market_portfolio"
+      ],
+      "responsibility_id": "portfolio_optimizer"
+    }
+  ],
+  "delivery_target_module_ids": [
+    "domain.current_shadow_all_market_share_code",
+    "domain.current_shadow_sportybet_share_code",
+    "domain.current_shadow_sportybet_verified_share_code",
+    "domain.current_sportybet_accumulator_execution",
+    "scripts.sportybet_direct_share_bridge",
+    "scripts.sportybet_semantic_share_bridge"
+  ],
+  "delivery_target_tokens": [
+    "booking",
+    "delivery",
+    "execution",
+    "share",
+    "share_code",
+    "sharecode",
+    "transport"
+  ],
+  "model_probability_parent_namespaces": [
+    "domain",
+    "engine",
+    "intelligence",
+    "models"
+  ],
+  "model_probability_tokens": [
+    "model",
+    "models",
+    "prediction",
+    "predictions",
+    "probability"
+  ],
+  "policy_base_main": "d18976128b15d773b77487a361abe9781bd32cc3",
+  "policy_id": "ATHENA_ARCHITECTURE_BOUNDARY_CI_V1",
+  "pricing_source_prefixes": [
+    "domain.price_all",
+    "domain._price_all",
+    "domain.current_shadow_all_market_price_all",
+    "domain._current_shadow_price_"
+  ],
+  "research_orchestration_selector": {
+    "authority_profile": "SHADOW_ONLY",
+    "canonical_status": "PROFILE_ORCHESTRATION"
+  },
+  "rules": [
+    "MODEL_PROBABILITY_CANNOT_IMPORT_SPORTYBET_DELIVERY",
+    "PRICING_CANNOT_IMPORT_PORTFOLIO_OR_WAGER",
+    "RESEARCH_ORCHESTRATION_CANNOT_IMPORT_WAGER_AUTHORITY"
+  ],
+  "schema_version": 1,
+  "wager_authority_tokens": [
+    "authenticated",
+    "authentication",
+    "bet",
+    "betslip",
+    "login",
+    "stake",
+    "staking",
+    "wager",
+    "wagering",
+    "wallet"
+  ]
+}
