@@ -152,10 +152,10 @@ def _valid_deviation(payload: dict) -> dict:
     }
 
 
-def test_registered_challenger_is_permitted_only_on_challenger_capable_surface(tmp_path: Path) -> None:
+def test_registered_challenger_is_rejected_until_a_later_registry_pr(tmp_path: Path) -> None:
     payload = _payload()
     payload["active_shadow_deviations"] = [_valid_deviation(payload)]
-    assert _validate(payload, tmp_path)["policy_id"] == validator.POLICY_ID
+    _fails(payload, tmp_path)
 
 
 @pytest.mark.parametrize("field,value", [
@@ -213,6 +213,55 @@ def test_request_semantics_are_exact_shared() -> None:
     assert request["date_window_days"] == {"maximum": 7, "minimum": 1}
     assert request["target_legs_distinct_from_target_total_odds"] is True
     assert request["truthful_shortfall_permitted"] is True
+
+
+@pytest.mark.parametrize("responsibility", [
+    "fixture_identity", "provider_market_semantics",
+    "provider_quote_identity_and_freshness", "settlement_semantics",
+    "delivery_share_code_transport",
+])
+def test_exact_shared_responsibilities_cannot_become_challenger_capable(responsibility: str, tmp_path: Path) -> None:
+    payload = _payload()
+    entry = next(item for item in payload["shared_responsibilities"] if item["responsibility_id"] == responsibility)
+    entry["parity_requirement"] = "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED"
+    entry["shadow_deviation_policy"] = "REGISTERED_CHALLENGER_ONLY"
+    _fails(payload, tmp_path)
+
+
+def test_baseline_gap_and_assignment_registries_cannot_be_removed(tmp_path: Path) -> None:
+    payload = _payload()
+    payload["known_parity_gaps"] = []
+    _fails(payload, tmp_path)
+    payload = _payload()
+    payload["reviewed_module_assignments"] = [x for x in payload["reviewed_module_assignments"] if x["component_id"] != "domain.current_shadow_all_market_runner"]
+    _fails(payload, tmp_path)
+
+
+def test_closed_owner_and_safety_schema_cannot_be_faked(tmp_path: Path) -> None:
+    payload = _payload()
+    payload["shared_responsibilities"][0]["current_owner_status"] = "RESOLVED_SHARED_CANONICAL"
+    _fails(payload, tmp_path)
+    payload = _payload()
+    payload["safety_boundary"] = {}
+    _fails(payload, tmp_path)
+    payload = _payload()
+    payload["safety_boundary"]["wager"] = "false"
+    _fails(payload, tmp_path)
+
+
+def test_lifecycle_request_protection_and_top_level_schema_are_frozen(tmp_path: Path) -> None:
+    payload = _payload()
+    payload["promotion_policy"]["lifecycle"].reverse()
+    _fails(payload, tmp_path)
+    payload = _payload()
+    payload["request_semantics"]["concrete_date_resolution_before_orchestration"] = False
+    _fails(payload, tmp_path)
+    payload = _payload()
+    payload["protected_research_infrastructure"][0]["rules"].remove("NO_SYNTHETIC_BACKFILL")
+    _fails(payload, tmp_path)
+    payload = _payload()
+    payload["unknown"] = True
+    _fails(payload, tmp_path)
 
 
 def test_validator_uses_no_network_or_business_runtime(monkeypatch, tmp_path: Path) -> None:

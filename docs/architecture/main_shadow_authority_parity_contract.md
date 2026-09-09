@@ -42,6 +42,11 @@ fixture state, prices, and configuration and no challenger selected, Main and
 Shadow are capable of producing the same canonical intermediate semantics.  It
 does not require challenger results to equal champion results.
 
+The responsibility-to-parity-mode mapping is frozen by the validator.  A
+contract-only edit cannot make an exact-shared surface challenger-capable.
+Current owner status is not a canonical promotion: P0.3 approves zero
+`SHARED_CANONICAL` module owners.
+
 ## Current Main and Shadow architecture state
 
 `build_acca` is recorded only as a supported legacy Main-facing entrypoint.  The
@@ -52,6 +57,11 @@ permanent Shadow deviations.  The v3 current-provider components are unproven
 canonical-promotion candidates, not shared canonical owners.  Legacy
 `engine.market_selector` and `services.prediction_service` remain in a
 reachability-review queue, not a deletion queue.
+
+The v3 Price-All, Router, and Portfolio candidates map respectively to
+`price_all_and_de_vig`, `market_router`, and `portfolio_optimizer`.  Their
+separate unresolved gaps are immutable baseline evidence until a later
+remediation PR proves closure.
 
 ## Fresh-holdout protection
 
@@ -67,6 +77,9 @@ challenger.  It must identify its responsibility, champion baseline, challenger,
 research-only authority, evidence status, review requirement, and future
 promotion-PR requirement.  Deviations are forbidden for exact-shared
 responsibilities.  The baseline contract has no active deviations.
+P0.3 intentionally rejects every non-empty active-deviation registry: future
+activation requires a later reviewed authority-registry PR with a tracked shared
+baseline and registered `RESEARCH_CHALLENGER` component.
 
 ## No automatic promotion and lifecycle
 
@@ -92,6 +105,11 @@ Shadow remains research-only.  Login, cookies, wallet, staking, and wager are
 false.  Anonymous share-code create/reload verification is non-wager delivery
 research and does not grant production pricing, routing, portfolio, or selection
 authority.
+
+Every reviewed P0.3 module assignment has the boolean
+`production_authority_granted_by_this_contract = false`.  Its separately named
+`observed_production_authority_state` remains `UNKNOWN` where evidence is not
+sufficient; no truthy string is used as an authority field.
 
 ## What P0.3 does not do
 

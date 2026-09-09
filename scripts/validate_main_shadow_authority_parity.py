@@ -35,6 +35,34 @@ OWNER_STATUSES = (
     "RESOLVED_SHARED_CANONICAL", "PENDING_CANONICAL_PROMOTION",
     "PENDING_SHARED_CORE_EXTRACTION", "PENDING_LEGACY_MIGRATION",
 )
+EXACT_SHARED_RESPONSIBILITIES = frozenset({
+    "fixture_identity", "source_evidence_and_lineage", "fixture_state_schema",
+    "provider_market_semantics", "provider_quote_identity_and_freshness",
+    "settlement_semantics", "request_date_and_target_semantics",
+    "delivery_share_code_transport", "run_receipt_and_observability",
+})
+CHALLENGER_CAPABLE_RESPONSIBILITIES = frozenset(set(RESPONSIBILITY_IDS) - EXACT_SHARED_RESPONSIBILITIES)
+REQUIRED_ASSIGNMENTS = frozenset({
+    "build_acca", "domain.current_shadow_all_market_runner",
+    "domain.current_shadow_all_market_price_all", "domain.current_shadow_all_market_router",
+    "domain.current_shadow_all_market_portfolio", "domain.current_shadow_all_market_share_code",
+    "domain.price_all_v3_current_provider", "domain.market_router_v3_current_provider",
+    "domain.portfolio_optimizer_v3_current_provider", "engine.market_selector",
+    "services.prediction_service", "scripts.execute_current_shadow_request",
+    "scripts.restore_current_shadow_history_prime_artifact", "scripts.send_current_shadow_email",
+    "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
+    "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
+})
+REQUIRED_GAPS = frozenset({
+    "main_shadow_pipeline_not_yet_one_shared_core", "current_shadow_profile_specific_price_all",
+    "current_shadow_profile_specific_router", "current_shadow_profile_specific_portfolio",
+    "current_shadow_profile_specific_share_code", "v3_current_provider_price_all_candidate_unproven",
+    "v3_current_provider_router_candidate_unproven", "v3_current_provider_portfolio_candidate_unproven",
+})
+SAFETY_KEYS = frozenset({"cookies", "login", "provider_create_reload_verification_is_wager", "shadow_production_portfolio_authority", "shadow_production_pricing_authority", "shadow_production_router_authority", "shadow_production_selection_authority", "share_code_is_wager", "staking", "wager", "wallet"})
+TOP_LEVEL_KEYS = frozenset({"active_shadow_deviations", "authority_profile_vocabulary", "contract_base_main", "execution_profiles", "known_parity_gaps", "p0_inventory_evidence", "policy_id", "promotion_policy", "protected_research_infrastructure", "request_semantics", "reviewed_module_assignments", "safety_boundary", "schema_version", "shadow_deviation_policy", "shared_responsibilities"})
+PROTECTED_RULES = frozenset({"ACTIVE_PROSPECTIVE_RESEARCH", "NO_DELETION_AUTHORITY", "NO_MIGRATION_WITHOUT_EXPERIMENT_REVIEW", "NO_SYNTHETIC_BACKFILL", "NO_AUTOMATIC_PROMOTION"})
+PROMOTION_LIFECYCLE = ("REGISTERED_CHALLENGER", "SHADOW_EVALUATION", "PROSPECTIVE_WALK_FORWARD_EVIDENCE", "REVIEW_REQUIRED", "EXPLICIT_PROMOTION_PR", "MAIN")
 
 
 class ValidationError(ValueError):
@@ -110,9 +138,11 @@ def _validate_responsibilities(responsibilities: Any) -> dict[str, dict[str, Any
         _require(entry.get("canonical_scope") == "SHARED", f"{rid}: canonical_scope must be SHARED")
         _require(entry.get("baseline_required_in_main") is True and entry.get("baseline_required_in_shadow") is True, f"{rid}: shared baseline required in both profiles")
         _require(entry.get("current_owner_status") in OWNER_STATUSES, f"{rid}: invalid owner status")
-        mode = entry.get("parity_requirement")
-        _require(mode in PARITY_MODES, f"{rid}: invalid parity mode")
-        _require(entry.get("shadow_deviation_policy") == ("FORBIDDEN" if mode == "EXACT_SHARED_BASELINE" else "REGISTERED_CHALLENGER_ONLY"), f"{rid}: invalid deviation policy")
+        expected_mode = "EXACT_SHARED_BASELINE" if rid in EXACT_SHARED_RESPONSIBILITIES else "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED"
+        expected_policy = "FORBIDDEN" if rid in EXACT_SHARED_RESPONSIBILITIES else "REGISTERED_CHALLENGER_ONLY"
+        _require(entry.get("parity_requirement") == expected_mode, f"{rid}: immutable parity mode changed")
+        _require(entry.get("shadow_deviation_policy") == expected_policy, f"{rid}: immutable deviation policy changed")
+        _require(entry.get("current_owner_status") != "RESOLVED_SHARED_CANONICAL", f"{rid}: no shared canonical owner is proven in P0.3")
         result[rid] = entry
     return result
 
@@ -121,6 +151,7 @@ def _validate_assignments(assignments: Any, inventory: dict[str, Any]) -> None:
     _require(isinstance(assignments, list), "reviewed_module_assignments must be a list")
     ids = [entry.get("component_id") for entry in assignments if isinstance(entry, dict)]
     _unique(ids, "module assignment")
+    _require(set(ids) == REQUIRED_ASSIGNMENTS, "reviewed P0.3 assignment baseline changed")
     inventory_modules = {entry.get("module"): entry.get("path") for entry in inventory.get("python_modules", []) if isinstance(entry, dict)}
     for entry in assignments:
         _require(isinstance(entry, dict), "invalid module assignment")
@@ -129,13 +160,15 @@ def _validate_assignments(assignments: Any, inventory: dict[str, Any]) -> None:
         role = entry.get("authority_profile")
         _require(role in AUTHORITY_PROFILES, f"unknown authority profile: {component}")
         _require(entry.get("cleanup_disposition") == "UNCLASSIFIED", f"cleanup disposition must remain independent: {component}")
+        _require("production_authority" not in entry, f"mixed production_authority field is forbidden: {component}")
+        _require(entry.get("production_authority_granted_by_this_contract") is False, f"P0.3 grants no production authority: {component}")
+        _require(entry.get("observed_production_authority_state") in {"SEPARATELY_GOVERNED", "PROVEN_FALSE", "UNKNOWN"}, f"invalid observed production authority state: {component}")
         _require(entry.get("canonical_status") != "CANONICAL_SHARED" or role == "SHARED_CANONICAL", f"canonical status/role mismatch: {component}")
-        if role == "SHARED_CANONICAL":
-            _require(entry.get("main_shadow_shared_evidence") is True, f"SHARED_CANONICAL needs Main+Shadow evidence: {component}")
+        _require(role != "SHARED_CANONICAL", f"P0.3 has zero shared canonical assignments: {component}")
         if role == "MAIN_ONLY":
             _require(entry.get("canonical_status") != "CANONICAL_SHARED", f"MAIN_ONLY cannot own shared canonical baseline: {component}")
         if role == "SHADOW_ONLY":
-            _require(entry.get("production_authority") is False, f"SHADOW_ONLY cannot have production authority: {component}")
+            _require(entry.get("observed_production_authority_state") == "PROVEN_FALSE", f"SHADOW_ONLY must have proven-false observed authority: {component}")
         if role == "RESEARCH_CHALLENGER":
             _require(entry.get("main_authority") is False, f"RESEARCH_CHALLENGER cannot have Main authority: {component}")
     supported = inventory.get("supported_roots")
@@ -146,6 +179,8 @@ def _validate_assignments(assignments: Any, inventory: dict[str, Any]) -> None:
     by_id = {entry["component_id"]: entry for entry in assignments}
     _require(by_id["build_acca"]["authority_profile"] == "MAIN_ONLY", "build_acca must be MAIN_ONLY")
     _require(by_id["build_acca"]["canonical_status"] == "SUPPORTED_LEGACY", "build_acca must remain supported legacy")
+    for component in ("engine.market_selector", "services.prediction_service", "domain.price_all_v3_current_provider", "domain.market_router_v3_current_provider", "domain.portfolio_optimizer_v3_current_provider"):
+        _require(by_id[component]["observed_production_authority_state"] == "UNKNOWN", f"{component} must remain production-authority unknown")
     for component in ("scripts.execute_current_shadow_request", "scripts.restore_current_shadow_history_prime_artifact", "scripts.send_current_shadow_email"):
         _require(by_id[component]["authority_profile"] == "SHADOW_ONLY", f"{component} must be SHADOW_ONLY")
     for component in ("scripts.run_fotmob_utc_native_xg_fresh_holdout_tick", "scripts.run_fotmob_fresh_holdout_release_receipt_mirror"):
@@ -162,12 +197,13 @@ def _validate_protected(entries: Any) -> None:
         "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
         "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
     }
-    _require(required <= set(ids), "required fresh-holdout protection missing")
+    _require(set(ids) == required, "required fresh-holdout protection baseline changed")
     for entry in entries:
         _require(entry.get("authority_profile") == "UNKNOWN", "protected infrastructure must not be made a challenger")
         _require(entry.get("cleanup_authority") == "NONE" and entry.get("deletion_allowed") is False, "protected infrastructure cannot gain deletion authority")
         _require(entry.get("protection_class") == "PROTECTED_RESEARCH_INFRASTRUCTURE", "invalid research protection class")
         _require(entry.get("reason") == "ACTIVE_PROSPECTIVE_EVIDENCE_CAMPAIGN", "invalid research protection reason")
+        _require(frozenset(entry.get("rules", [])) == PROTECTED_RULES, "protected research rules changed")
 
 
 def _validate_deviations(deviations: Any, responsibilities: dict[str, dict[str, Any]]) -> None:
@@ -194,6 +230,7 @@ def validate_contract(contract_path: Path, inventory_path: Path) -> dict[str, An
     contract_raw, contract = _read_json(contract_path)
     inventory_raw, inventory = _read_json(inventory_path)
     _require(contract_raw == canonical_json_bytes(contract), "contract JSON is not canonical deterministic bytes")
+    _require(set(contract) == TOP_LEVEL_KEYS, "top-level contract schema changed")
     _require(_inventory_digest(inventory_raw) == EXPECTED_INVENTORY_SHA256, "wrong P0 inventory digest")
     _require(contract.get("schema_version") == SCHEMA_VERSION, "invalid schema version")
     _require(contract.get("policy_id") == POLICY_ID, "invalid policy ID")
@@ -210,18 +247,29 @@ def validate_contract(contract_path: Path, inventory_path: Path) -> dict[str, An
     _require(isinstance(gaps, list), "known_parity_gaps must be a list")
     gap_ids = [entry.get("gap_id") for entry in gaps if isinstance(entry, dict)]
     _unique(gap_ids, "parity-gap ID")
+    _require(set(gap_ids) == REQUIRED_GAPS, "required baseline parity gaps changed")
     for entry in gaps:
-        _require(entry.get("responsibility_id") in responsibilities and entry.get("status") == "UNRESOLVED_PREEXISTING" and entry.get("production_authority_change") is False and entry.get("required_resolution_wave") in {"P1", "P2", "P3"}, "invalid known parity gap")
-    _validate_deviations(contract.get("active_shadow_deviations"), responsibilities)
+        _require(set(entry) == {"gap_id", "affected_responsibility_ids", "current_main_state", "current_shadow_state", "status", "production_authority_change", "resolution_start_wave", "resolution_completion_wave"}, "invalid known parity gap schema")
+        affected = entry.get("affected_responsibility_ids")
+        _require(isinstance(affected, list) and affected and set(affected) <= set(responsibilities), "invalid parity-gap responsibilities")
+        _require(entry.get("status") == "UNRESOLVED_PREEXISTING" and entry.get("production_authority_change") is False, "invalid known parity gap authority")
+        waves = {"P1": 1, "P2": 2, "P3": 3}
+        _require(entry.get("resolution_start_wave") in waves and entry.get("resolution_completion_wave") in waves and waves[entry["resolution_start_wave"]] <= waves[entry["resolution_completion_wave"]], "invalid parity-gap waves")
+    pipeline = next(item for item in gaps if item["gap_id"] == "main_shadow_pipeline_not_yet_one_shared_core")
+    _require(pipeline["resolution_start_wave"] == "P1" and pipeline["resolution_completion_wave"] == "P3", "pipeline gap must span P1 through P3")
+    _require(contract.get("active_shadow_deviations") == [], "P0.3 permits no active Shadow deviations")
+    deviation_policy = contract.get("shadow_deviation_policy")
+    _require(deviation_policy == {"activation_requires_registered_baseline": True, "activation_requires_registered_challenger": True, "activation_requires_research_challenger_role": True, "activation_requires_review": True, "allowed_parity_mode": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED", "automatic_promotion": False, "required_fields": ["deviation_id", "responsibility_id", "baseline_component_id", "challenger_component_id", "challenger_authority_profile", "research_only", "main_authority", "production_selection_authority", "automatic_promotion", "evidence_status", "review_required", "promotion_pr_required"]}, "invalid Shadow deviation policy")
     policy = contract.get("promotion_policy")
-    _require(isinstance(policy, dict), "promotion_policy missing")
+    _require(isinstance(policy, dict) and set(policy) == {"automatic_promotion", "backtest_win_is_sufficient_for_promotion", "explicit_promotion_pr_required", "explicit_review_required", "holdout_pass_is_sufficient_for_promotion", "lifecycle", "shadow_success_is_sufficient_for_promotion", "share_code_success_is_sufficient_for_promotion"}, "promotion_policy schema changed")
     for key in ("automatic_promotion", "backtest_win_is_sufficient_for_promotion", "holdout_pass_is_sufficient_for_promotion", "share_code_success_is_sufficient_for_promotion", "shadow_success_is_sufficient_for_promotion"):
         _require(policy.get(key) is False, f"{key} must be false")
     _require(policy.get("explicit_review_required") is True and policy.get("explicit_promotion_pr_required") is True, "explicit promotion review/PR required")
+    _require(tuple(policy.get("lifecycle", ())) == PROMOTION_LIFECYCLE, "promotion lifecycle changed")
     safety = contract.get("safety_boundary")
-    _require(isinstance(safety, dict) and all(safety.get(key) is False for key in safety), "safety authority must remain false")
+    _require(isinstance(safety, dict) and set(safety) == SAFETY_KEYS and all(value is False for value in safety.values()), "safety authority must remain false")
     request = contract.get("request_semantics")
-    _require(isinstance(request, dict) and request.get("parity_mode") == "EXACT_SHARED_BASELINE" and request.get("target_legs") == {"maximum": 50, "minimum": 1} and request.get("date_window_days") == {"maximum": 7, "minimum": 1} and request.get("target_legs_distinct_from_target_total_odds") is True and request.get("truthful_shortfall_permitted") is True, "invalid request semantics parity")
+    _require(request == {"concrete_date_resolution_before_orchestration": True, "date_window_days": {"maximum": 7, "minimum": 1}, "parity_mode": "EXACT_SHARED_BASELINE", "responsibility_id": "request_date_and_target_semantics", "target_legs": {"maximum": 50, "minimum": 1}, "target_legs_distinct_from_target_total_odds": True, "truthful_shortfall_permitted": True, "weekday_names_resolve_to_concrete_dates": True}, "invalid request semantics parity")
     return {"contract_sha256": hashlib.sha256(contract_raw).hexdigest(), "policy_id": POLICY_ID, "supported_root_count": 6}
 
 

@@ -34,57 +34,103 @@
   },
   "known_parity_gaps": [
     {
+      "affected_responsibility_ids": [
+        "fixture_state_schema",
+        "price_all_and_de_vig",
+        "market_router",
+        "portfolio_optimizer",
+        "delivery_share_code_transport"
+      ],
       "current_main_state": "SUPPORTED_LEGACY_MAIN_ENTRYPOINT_WITHOUT_PROVEN_SHARED_CORE",
       "current_shadow_state": "CURRENT_SHADOW_RESEARCH_PIPELINE_EXISTS_SEPARATELY",
       "gap_id": "main_shadow_pipeline_not_yet_one_shared_core",
       "production_authority_change": false,
-      "required_resolution_wave": "P1",
-      "responsibility_id": "fixture_state_schema",
+      "resolution_completion_wave": "P3",
+      "resolution_start_wave": "P1",
       "status": "UNRESOLVED_PREEXISTING"
     },
     {
+      "affected_responsibility_ids": [
+        "price_all_and_de_vig"
+      ],
       "current_main_state": "NO_PROVEN_SHARED_CANONICAL_PRICE_ALL_OWNER",
       "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
       "gap_id": "current_shadow_profile_specific_price_all",
       "production_authority_change": false,
-      "required_resolution_wave": "P2",
-      "responsibility_id": "price_all_and_de_vig",
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P2",
       "status": "UNRESOLVED_PREEXISTING"
     },
     {
+      "affected_responsibility_ids": [
+        "market_router"
+      ],
       "current_main_state": "NO_PROVEN_SHARED_CANONICAL_ROUTER_OWNER",
       "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
       "gap_id": "current_shadow_profile_specific_router",
       "production_authority_change": false,
-      "required_resolution_wave": "P2",
-      "responsibility_id": "market_router",
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P2",
       "status": "UNRESOLVED_PREEXISTING"
     },
     {
+      "affected_responsibility_ids": [
+        "portfolio_optimizer"
+      ],
       "current_main_state": "NO_PROVEN_SHARED_CANONICAL_PORTFOLIO_OWNER",
       "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
       "gap_id": "current_shadow_profile_specific_portfolio",
       "production_authority_change": false,
-      "required_resolution_wave": "P2",
-      "responsibility_id": "portfolio_optimizer",
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P2",
       "status": "UNRESOLVED_PREEXISTING"
     },
     {
+      "affected_responsibility_ids": [
+        "delivery_share_code_transport"
+      ],
       "current_main_state": "NO_PROVEN_SHARED_CANONICAL_DELIVERY_OWNER",
       "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
       "gap_id": "current_shadow_profile_specific_share_code",
       "production_authority_change": false,
-      "required_resolution_wave": "P2",
-      "responsibility_id": "delivery_share_code_transport",
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P2",
       "status": "UNRESOLVED_PREEXISTING"
     },
     {
+      "affected_responsibility_ids": [
+        "price_all_and_de_vig"
+      ],
       "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
-      "current_shadow_state": "V3_CURRENT_PROVIDER_CANDIDATES_ARE_NOT_SUPPORTED_ROOT_CANONICAL_OWNERS",
-      "gap_id": "v3_current_provider_candidates_unproven",
+      "current_shadow_state": "V3_CURRENT_PROVIDER_PRICE_ALL_CANDIDATE_UNPROVEN",
+      "gap_id": "v3_current_provider_price_all_candidate_unproven",
       "production_authority_change": false,
-      "required_resolution_wave": "P3",
-      "responsibility_id": "market_projection",
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P1",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "affected_responsibility_ids": [
+        "market_router"
+      ],
+      "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
+      "current_shadow_state": "V3_CURRENT_PROVIDER_ROUTER_CANDIDATE_UNPROVEN",
+      "gap_id": "v3_current_provider_router_candidate_unproven",
+      "production_authority_change": false,
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P1",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "affected_responsibility_ids": [
+        "portfolio_optimizer"
+      ],
+      "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
+      "current_shadow_state": "V3_CURRENT_PROVIDER_PORTFOLIO_CANDIDATE_UNPROVEN",
+      "gap_id": "v3_current_provider_portfolio_candidate_unproven",
+      "production_authority_change": false,
+      "resolution_completion_wave": "P2",
+      "resolution_start_wave": "P1",
       "status": "UNRESOLVED_PREEXISTING"
     }
   ],
@@ -196,7 +242,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "build_acca",
       "component_path": "build_acca.py",
-      "production_authority": "SEPARATELY_GOVERNED_NOT_GRANTED_BY_THIS_CONTRACT",
+      "observed_production_authority_state": "SEPARATELY_GOVERNED",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "SUPPORTED_LEGACY_MAIN_ENTRYPOINT"
     },
     {
@@ -205,7 +252,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "domain.current_shadow_all_market_runner",
       "component_path": "domain/current_shadow_all_market_runner.py",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "RESEARCH_SHADOW_ONLY"
     },
     {
@@ -215,7 +263,8 @@
       "component_id": "domain.current_shadow_all_market_price_all",
       "component_path": "domain/current_shadow_all_market_price_all.py",
       "future_shared_responsibility": "price_all_and_de_vig",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "KNOWN_PARITY_GAP"
     },
     {
@@ -225,7 +274,8 @@
       "component_id": "domain.current_shadow_all_market_router",
       "component_path": "domain/current_shadow_all_market_router.py",
       "future_shared_responsibility": "market_router",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "KNOWN_PARITY_GAP"
     },
     {
@@ -235,7 +285,8 @@
       "component_id": "domain.current_shadow_all_market_portfolio",
       "component_path": "domain/current_shadow_all_market_portfolio.py",
       "future_shared_responsibility": "portfolio_optimizer",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "KNOWN_PARITY_GAP"
     },
     {
@@ -245,7 +296,8 @@
       "component_id": "domain.current_shadow_all_market_share_code",
       "component_path": "domain/current_shadow_all_market_share_code.py",
       "future_shared_responsibility": "delivery_share_code_transport",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "KNOWN_PARITY_GAP"
     },
     {
@@ -254,7 +306,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "domain.price_all_v3_current_provider",
       "component_path": "domain/price_all_v3_current_provider.py",
-      "production_authority": false,
+      "observed_production_authority_state": "UNKNOWN",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"
     },
     {
@@ -263,7 +316,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "domain.market_router_v3_current_provider",
       "component_path": "domain/market_router_v3_current_provider.py",
-      "production_authority": false,
+      "observed_production_authority_state": "UNKNOWN",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"
     },
     {
@@ -272,7 +326,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "domain.portfolio_optimizer_v3_current_provider",
       "component_path": "domain/portfolio_optimizer_v3_current_provider.py",
-      "production_authority": false,
+      "observed_production_authority_state": "UNKNOWN",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"
     },
     {
@@ -281,7 +336,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "engine.market_selector",
       "component_path": "engine/market_selector.py",
-      "production_authority": false,
+      "observed_production_authority_state": "UNKNOWN",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "LEGACY_REACHABILITY_REVIEW_REQUIRED"
     },
     {
@@ -290,7 +346,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "services.prediction_service",
       "component_path": "services/prediction_service.py",
-      "production_authority": false,
+      "observed_production_authority_state": "UNKNOWN",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "LEGACY_REACHABILITY_REVIEW_REQUIRED"
     },
     {
@@ -299,7 +356,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "scripts.execute_current_shadow_request",
       "component_path": "scripts/execute_current_shadow_request.py",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "RESEARCH_SHADOW_ONLY"
     },
     {
@@ -308,7 +366,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "scripts.restore_current_shadow_history_prime_artifact",
       "component_path": "scripts/restore_current_shadow_history_prime_artifact.py",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "RESEARCH_SHADOW_ONLY"
     },
     {
@@ -317,7 +376,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "scripts.send_current_shadow_email",
       "component_path": "scripts/send_current_shadow_email.py",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "RESEARCH_SHADOW_ONLY"
     },
     {
@@ -326,7 +386,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
       "component_path": "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "PROTECTED_RESEARCH_INFRASTRUCTURE"
     },
     {
@@ -335,7 +396,8 @@
       "cleanup_disposition": "UNCLASSIFIED",
       "component_id": "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
       "component_path": "scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py",
-      "production_authority": false,
+      "observed_production_authority_state": "PROVEN_FALSE",
+      "production_authority_granted_by_this_contract": false,
       "review_state": "PROTECTED_RESEARCH_INFRASTRUCTURE"
     }
   ],
@@ -354,7 +416,12 @@
   },
   "schema_version": 1,
   "shadow_deviation_policy": {
+    "activation_requires_registered_baseline": true,
+    "activation_requires_registered_challenger": true,
+    "activation_requires_research_challenger_role": true,
+    "activation_requires_review": true,
     "allowed_parity_mode": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+    "automatic_promotion": false,
     "required_fields": [
       "deviation_id",
       "responsibility_id",
@@ -420,7 +487,7 @@
       "baseline_required_in_main": true,
       "baseline_required_in_shadow": true,
       "canonical_scope": "SHARED",
-      "current_owner_status": "PENDING_CANONICAL_PROMOTION",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
       "parity_requirement": "EXACT_SHARED_BASELINE",
       "responsibility_id": "fixture_state_schema",
       "shadow_deviation_policy": "FORBIDDEN"
@@ -438,7 +505,7 @@
       "baseline_required_in_main": true,
       "baseline_required_in_shadow": true,
       "canonical_scope": "SHARED",
-      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "current_owner_status": "PENDING_CANONICAL_PROMOTION",
       "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
       "responsibility_id": "market_router",
       "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
@@ -447,7 +514,7 @@
       "baseline_required_in_main": true,
       "baseline_required_in_shadow": true,
       "canonical_scope": "SHARED",
-      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "current_owner_status": "PENDING_CANONICAL_PROMOTION",
       "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
       "responsibility_id": "portfolio_optimizer",
       "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
