@@ -31,7 +31,9 @@ trigger. An accepted ADR is an architecture exception only, never promotion.
 The document's single `## Status` section itself must contain exactly
 `Accepted`; an unrelated later use of that word cannot approve an ADR. Approved
 module IDs use Python identifier components, so malformed dotted names cannot
-be registered as authority exceptions.
+be registered as authority exceptions. ADR heading parsing ignores both
+backtick- and tilde-fenced code blocks, so Markdown examples cannot satisfy,
+duplicate, or override required ADR sections. An unclosed fence fails closed.
 
 Private helper candidates whose final component begins `_` are not public
 authority merely because their name contains router, Price-All, or portfolio.

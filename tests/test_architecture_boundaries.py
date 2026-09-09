@@ -162,6 +162,44 @@ def test_adr_status_must_be_accepted_in_its_own_section() -> None:
         boundaries._approved_adr_modules(policy, {path}, {path: _adr_text("Proposed", later_accepted=True)}, boundaries._validate_policy(policy))
 
 
+def _approved_router_adr_policy() -> tuple[dict, str]:
+    policy = _policy()
+    path = "docs/architecture/adrs/ADR-001-router-v4.md"
+    policy["approved_parallel_authority_adrs"] = [{
+        "adr_id": "ADR-001", "adr_path": path, "status": "ACCEPTED",
+        "responsibility_id": "market_router", "approved_module_ids": ["domain.market_router_v4"],
+    }]
+    return policy, path
+
+
+def test_fenced_headings_do_not_satisfy_required_adr_sections() -> None:
+    policy, path = _approved_router_adr_policy()
+    text = _adr_text().decode("utf-8").replace("## Context\n\nreviewed", "```markdown\n## Context\n\nreviewed\n```")
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, {path}, {path: text.encode("utf-8")}, boundaries._validate_policy(policy))
+
+
+def test_fenced_duplicate_heading_does_not_invalidate_real_adr_sections() -> None:
+    policy, path = _approved_router_adr_policy()
+    text = _adr_text().decode("utf-8") + "\n```markdown\n## Status\n\nProposed\n## Context\n\nfake\n```\n"
+    approved = boundaries._approved_adr_modules(policy, {path}, {path: text.encode("utf-8")}, boundaries._validate_policy(policy))
+    assert approved == {"domain.market_router_v4"}
+
+
+def test_fenced_accepted_status_cannot_approve_a_proposed_adr() -> None:
+    policy, path = _approved_router_adr_policy()
+    text = _adr_text("Proposed").decode("utf-8") + "\n~~~markdown\n## Status\n\nAccepted\n~~~\n"
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, {path}, {path: text.encode("utf-8")}, boundaries._validate_policy(policy))
+
+
+def test_unclosed_adr_fence_fails_closed() -> None:
+    policy, path = _approved_router_adr_policy()
+    text = _adr_text().decode("utf-8") + "\n```markdown\n## Status\n\nProposed\n"
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, {path}, {path: text.encode("utf-8")}, boundaries._validate_policy(policy))
+
+
 @pytest.mark.parametrize("module", ["domain.market-router_v4", "domain..market_router_v4", "domain.4router", "domain.for"])
 def test_adr_module_ids_require_python_identifier_components(module: str) -> None:
     policy = _policy()

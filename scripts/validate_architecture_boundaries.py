@@ -349,12 +349,39 @@ def _dependency_violations(
 
 
 def _markdown_section(text: str, heading: str) -> str:
-    matches = list(re.finditer(rf"(?m)^## {re.escape(heading)}[ \t]*$", text))
+    visible = _markdown_without_fenced_code(text)
+    matches = list(re.finditer(rf"(?m)^## {re.escape(heading)}[ \t]*$", visible))
     _require(len(matches) == 1, f"ADR document must contain exactly one ## {heading} section")
     start = matches[0].end()
-    next_heading = re.search(r"(?m)^## ", text[start:])
-    end = start + next_heading.start() if next_heading else len(text)
-    return text[start:end].strip()
+    next_heading = re.search(r"(?m)^## ", visible[start:])
+    end = start + next_heading.start() if next_heading else len(visible)
+    return visible[start:end].strip()
+
+
+def _markdown_without_fenced_code(text: str) -> str:
+    """Mask fenced code while preserving lines and offsets for ADR heading parsing."""
+    masked: list[str] = []
+    fence_character: str | None = None
+    fence_length = 0
+    for line in text.splitlines(keepends=True):
+        content = line.rstrip("\r\n")
+        ending = line[len(content):]
+        if fence_character is None:
+            opener = re.match(r"^[ \t]{0,3}(`{3,}|~{3,})[^\r\n]*$", content)
+            if opener:
+                fence_character = opener.group(1)[0]
+                fence_length = len(opener.group(1))
+                masked.append(" " * len(content) + ending)
+                continue
+            masked.append(line)
+            continue
+        masked.append(" " * len(content) + ending)
+        closer = re.match(rf"^[ \t]{{0,3}}{re.escape(fence_character)}{{{fence_length},}}[ \t]*$", content)
+        if closer:
+            fence_character = None
+            fence_length = 0
+    _require(fence_character is None, "ADR document has unclosed fenced code block")
+    return "".join(masked)
 
 
 def _is_python_module_id(module: str) -> bool:
