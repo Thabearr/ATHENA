@@ -71,24 +71,30 @@ Modules can be alive and necessary via:
 **Policy:** `zero_static_inbound = true` is a flag for investigation.
 It never, by itself, authorises deletion.
 
-### Dynamic import limitations
+### Package-relative import resolution (PEP 328)
 
-The tool detects `importlib.import_module(...)` and `__import__(...)` by
-static AST inspection only. If the target is a literal string, it is
-recorded as-is. If it is a variable or expression, it is recorded as
-`DYNAMIC_IMPORT_NON_LITERAL`. The tool **does not execute** the module to
-resolve dynamic targets.
+Relative imports are resolved from the importing module's *package context*:
+- For a normal module (`pkg/sub/module.py`), the package context is `pkg.sub`.
+- For a package initializer (`pkg/sub/__init__.py`), the package context is `pkg.sub`.
+- Relative level 1 remains within the current package context (ascends 0 levels).
+- Relative level 2 ascends 1 package level; level N ascends N - 1 levels.
 
-This means the inventory may undercount reachability through dynamic import.
+Package initializers (e.g. `database/__init__.py` containing `from .database import Database`) resolve imports to their actual submodule (`database.database`) rather than fabricating false self-edges (`database -> database`). Relative imports ascending beyond the package root emit a deterministic `RELATIVE_IMPORT_TOO_DEEP` diagnostic.
 
-### Workflow/subprocess reference handling
+### AST import ownership for execution and dynamic indicators
 
-Workflow YAML files are read as text. The tool extracts literal
-`python script.py` and `python -m package.module` patterns using regex.
-It does **not** execute workflow steps or shell commands.
+Execution indicators (`subprocess.run`, `Popen`, `call`, `check_call`, `check_output`, and `os.system`) and dynamic import indicators (`importlib.import_module`, `__import__`) are strictly AST import-ownership and alias-aware:
+- Supported patterns include direct imports (`import subprocess; subprocess.run(...)`), module aliases (`import subprocess as sp; sp.run(...)`), direct symbol imports (`from subprocess import run; run(...)`), and symbol aliases (`from subprocess import run as sp_run; sp_run(...)`).
+- Similarly for `os.system` (`import os; os.system(...)`, `import os as op; op.system(...)`, `from os import system; system(...)`).
+- Similarly for `importlib.import_module` (`import importlib; importlib.import_module(...)`, `import importlib as il; il.import_module(...)`, `from importlib import import_module; import_module(...)`, `__import__(...)`).
+- Attribute calls without matching AST import ownership (e.g. `app.run()`, `platform.system()`, `custom_loader.import_module(...)`) are rejected as false positives and are not recorded as execution or dynamic import indicators.
+- Non-literal arguments to genuine dynamic import or execution calls are recorded with `DYNAMIC_IMPORT_NON_LITERAL` / `EXECUTION_NON_LITERAL` markers.
 
-References are evidence that a module is invoked by CI, not proof of
-production deployment.
+### Workflow and CLI reference handling
+
+Workflow YAML files are read as text. The tool extracts literal `python script.py` and `python -m package.module` patterns using regex. It does **not** execute workflow steps or shell commands.
+
+References provide concrete evidence of CI invocation without conferring production deployment authority.
 
 ---
 
@@ -282,18 +288,30 @@ Under ATHENA Architecture Specification v2, ATHENA operates with **ONE CANONICAL
 
 ## Supported roots vs. candidate entrypoints
 
-**Supported root** — a module/script with concrete evidence of active use:
-- Directly invoked by a current hosted GitHub Actions workflow, OR
-- Declared as a `console_scripts` entry point in `setup.py`.
+**Supported root** — a repository-local module/script with concrete evidence of active supported use:
+- Directly invoked by a current hosted GitHub Actions workflow (`python -m module` or `python script.py`), OR
+- Declared as an entry point in `setup.py` that resolves to a local repository module.
 
-Evidence basis values: `CURRENT_HOSTED_WORKFLOW`, `PACKAGING_ENTRYPOINT`,
-`USER_FACING_CLI`.
+Every supported root MUST satisfy two fail-closed invariants:
+1. `root_module in known_modules` (must be a repository-local Python module).
+2. `root_path != None` (must map to a tracked repository file).
 
-**Candidate entrypoint** — a module/script that has indicators of being an
-entrypoint (main guard, CLI framework, workflow reference) but lacks evidence
-of active supported invocation.
+**Local-only rule for workflow references:**
+External tools and packages invoked in workflows (such as `python -m pip`, `python -m pytest`, or `python -m compileall` in `tests.yml`) remain visible in the workflow inventory as module references, but MUST NOT become supported roots or candidate entrypoints. They do not confer reachability authority and do not count toward `supported_root_count`.
 
-If support cannot be proven: module is classified `CANDIDATE`, not `SUPPORTED`.
+If a packaging entrypoint references an unresolvable or external module, it emits a deterministic `UNRESOLVABLE_PACKAGING_ENTRYPOINT` diagnostic rather than receiving root authority.
+
+**Candidate entrypoint** — a repository-local module/script that has indicators of being an entrypoint (main guard, CLI framework, or invocation by a non-reviewed/legacy workflow) but lacks reviewed supported status.
+
+If support cannot be proven: module is classified `CANDIDATE`, not `SUPPORTED`. External tools are never candidate entrypoints.
+
+---
+
+## Canonical module name validation
+
+Tracked Python files are mapped to canonical dotted module names using strict Python identifier validation (`part.isidentifier()` for every path component).
+- Valid paths (`foo.py`, `pkg/foo_bar.py`) resolve to canonical module names (`foo`, `pkg.foo_bar`).
+- Non-identifier filenames (such as hyphenated names `foo-bar.py` or leading digits `123foo.py`) return `None` and emit an `UNRESOLVABLE_MODULE_NAME` diagnostic rather than normalizing into invalid or fabricated module names.
 
 ---
 
@@ -301,10 +319,10 @@ If support cannot be proven: module is classified `CANDIDATE`, not `SUPPORTED`.
 
 Supported roots are derived from explicit, reviewed hosted GitHub Actions workflows in `_REVIEWED_SUPPORTED_HOSTED_WORKFLOWS`:
 
-1. `.github/workflows/current-shadow-all-market.yml` — The active Current Shadow research-only multi-market execution pipeline (research authority only; carries no production authority, no automatic promotion into Main, non-wager share-code delivery only, and zero login/cookie/wallet/stake/wager authority).
-2. `.github/workflows/tests.yml` — Continuous integration testing workflow validating repository test suites.
-3. `.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml` — Active fresh-holdout research tick workflow protecting live research continuity and out-of-sample data collection.
-4. `.github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml` — Live continuity receipt bridging workflow preserving research audit artifacts.
+1. `.github/workflows/current-shadow-all-market.yml` — The active Current Shadow research-only multi-market execution pipeline (research authority only; carries no production authority, no automatic promotion into Main, non-wager share-code delivery only, and zero login/cookie/wallet/stake/wager authority). Local roots: `scripts.execute_current_shadow_request`, `scripts.restore_current_shadow_history_prime_artifact`, `scripts.send_current_shadow_email`.
+2. `.github/workflows/tests.yml` — Continuous integration testing workflow validating repository test suites and syntax gates. External tools (`pip`, `pytest`, `compileall`) remain workflow references only.
+3. `.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml` — Active fresh-holdout research tick workflow protecting live research continuity and out-of-sample data collection. Local root: `scripts.run_fotmob_utc_native_xg_fresh_holdout_tick`.
+4. `.github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml` — Live continuity receipt bridging workflow preserving research audit artifacts. Local root: `scripts.run_fotmob_fresh_holdout_release_receipt_mirror`.
 
 Workflows outside this reviewed set (such as unmaintained, historical, or deprecated legacy workflows) are not treated as supported roots in P0.2. Their invocations are captured as general workflow references but do not confer supported-root status.
 

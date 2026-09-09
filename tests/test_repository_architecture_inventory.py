@@ -85,6 +85,7 @@ from scripts.audit_repository_architecture import (
     path_to_module,
     read_file_at_ref,
     read_files_at_ref,
+    resolve_import,
     resolve_ref,
 )
 
@@ -821,6 +822,48 @@ class TestKnownPaths:
         assert mods["domain.fotmob_utc_native_expected_goals_fresh_holdout"]["reachable_from_supported_static_root"] is True
         assert mods["domain.fotmob_fresh_holdout_continuity"]["reachable_from_supported_static_root"] is True
 
+    def test_all_supported_roots_at_base(self):
+        inv = self._get_inv()
+        supported_mods = [r["root_module"] for r in inv["supported_roots"]]
+        assert "pip" not in supported_mods
+        assert "pytest" not in supported_mods
+        assert "compileall" not in supported_mods
+        assert "..." not in supported_mods
+        expected_roots = [
+            "build_acca",
+            "scripts.execute_current_shadow_request",
+            "scripts.restore_current_shadow_history_prime_artifact",
+            "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
+            "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
+            "scripts.send_current_shadow_email",
+        ]
+        assert supported_mods == expected_roots
+        for r in inv["supported_roots"]:
+            assert r["root_path"] is not None
+
+    def test_app_py_no_subprocess_execution_indicator_at_base(self):
+        inv = self._get_inv()
+        mods = {m["path"]: m for m in inv["python_modules"]}
+        assert "app.py" in mods
+        assert len(mods["app.py"]["execution_refs"]) == 0
+
+    def test_export_benchmarks_no_os_system_indicator_at_base(self):
+        inv = self._get_inv()
+        mods = {m["path"]: m for m in inv["python_modules"]}
+        bench_path = "scripts/export_win_either_half_baseline_benchmarks.py"
+        assert bench_path in mods
+        assert len(mods[bench_path]["execution_refs"]) == 0
+
+    def test_database_init_static_edges_at_base(self):
+        inv = self._get_inv()
+        db_edges = [
+            e for e in inv["static_import_edges"]
+            if e["source_path"] == "database/__init__.py"
+        ]
+        target_mods = [e["target_module"] for e in db_edges]
+        assert "database.database" in target_mods
+        assert "database" not in target_mods
+
 
 # ===========================================================================
 # Authority Profile Dimension Tests (Specification v2 Alignment)
@@ -1174,3 +1217,322 @@ class TestCSVContract:
         idx_auth = header_cols.index("authority_profile")
         idx_disp = header_cols.index("disposition")
         assert idx_zero < idx_auth < idx_disp
+
+
+# ===========================================================================
+# Package Relative Import Tests (PEP 328 Package Context Semantics)
+# ===========================================================================
+
+class TestPackageRelativeImports:
+    def test_init_relative_import_resolves_to_submodule_not_self(self):
+        imp = {"kind": "from", "module": "database", "names": ["Database"], "level": 1, "lineno": 1}
+        known = {"database", "database.database"}
+        diags = []
+        targets = resolve_import(imp, "database", known, diags, "database/__init__.py")
+        assert targets == ["database.database"]
+        assert "database" not in targets
+        assert not diags
+
+    def test_init_from_dot_import_submodule(self):
+        imp = {"kind": "from", "module": "", "names": ["database"], "level": 1, "lineno": 1}
+        known = {"database", "database.database"}
+        diags = []
+        targets = resolve_import(imp, "database", known, diags, "database/__init__.py")
+        assert targets == ["database.database"]
+        assert not diags
+
+    def test_nested_init_relative_import_level1(self):
+        imp = {"kind": "from", "module": "foo", "names": ["bar"], "level": 1, "lineno": 1}
+        known = {"pkg", "pkg.sub", "pkg.sub.foo"}
+        diags = []
+        targets = resolve_import(imp, "pkg.sub", known, diags, "pkg/sub/__init__.py")
+        assert targets == ["pkg.sub.foo"]
+        assert not diags
+
+    def test_nested_init_relative_import_level2(self):
+        imp = {"kind": "from", "module": "foo", "names": ["bar"], "level": 2, "lineno": 1}
+        known = {"pkg", "pkg.sub", "pkg.foo"}
+        diags = []
+        targets = resolve_import(imp, "pkg.sub", known, diags, "pkg/sub/__init__.py")
+        assert targets == ["pkg.foo"]
+        assert not diags
+
+    def test_normal_module_relative_import_level1(self):
+        imp = {"kind": "from", "module": "foo", "names": ["bar"], "level": 1, "lineno": 1}
+        known = {"pkg", "pkg.mod", "pkg.foo"}
+        diags = []
+        targets = resolve_import(imp, "pkg.mod", known, diags, "pkg/mod.py")
+        assert targets == ["pkg.foo"]
+        assert not diags
+
+    def test_normal_module_relative_import_level2(self):
+        imp = {"kind": "from", "module": "foo", "names": ["bar"], "level": 2, "lineno": 1}
+        known = {"pkg", "pkg.sub.mod", "pkg.foo"}
+        diags = []
+        targets = resolve_import(imp, "pkg.sub.mod", known, diags, "pkg/sub/mod.py")
+        assert targets == ["pkg.foo"]
+        assert not diags
+
+    def test_relative_import_too_deep_diagnostic(self):
+        imp = {"kind": "from", "module": "foo", "names": ["bar"], "level": 3, "lineno": 5}
+        known = {"pkg", "pkg.mod"}
+        diags = []
+        targets = resolve_import(imp, "pkg.mod", known, diags, "pkg/mod.py")
+        assert targets == []
+        assert len(diags) == 1
+        assert diags[0]["category"] == "RELATIVE_IMPORT_TOO_DEEP"
+        assert diags[0]["line"] == 5
+
+    def test_synthetic_repo_package_init_no_self_edge(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "database/__init__.py", "from .database import Database\n")
+        _add_file(repo, "database/database.py", "class Database:\n    pass\n")
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        edges = inv["static_import_edges"]
+        assert len(edges) == 1
+        edge = edges[0]
+        assert edge["source_module"] == "database"
+        assert edge["target_module"] == "database.database"
+        assert edge["source_path"] == "database/__init__.py"
+        assert edge["target_path"] == "database/database.py"
+        assert edge["source_module"] != edge["target_module"]
+
+
+# ===========================================================================
+# Local-Only Supported Roots Tests
+# ===========================================================================
+
+class TestLocalOnlySupportedRoots:
+    def test_reviewed_workflow_external_tools_not_supported_roots(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "scripts/__init__.py", "")
+        _add_file(repo, "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py", "x = 1\n")
+        _add_file(
+            repo,
+            ".github/workflows/tests.yml",
+            textwrap.dedent("""\
+                name: Tests
+                on: [push]
+                jobs:
+                  test:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python -m pip install -r requirements.txt
+                      - run: python -m pytest tests/
+                      - run: python -m compileall scripts/
+            """),
+        )
+        _add_file(
+            repo,
+            ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+            textwrap.dedent("""\
+                name: Fresh Holdout
+                on: [workflow_dispatch]
+                jobs:
+                  tick:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python -m scripts.run_fotmob_utc_native_xg_fresh_holdout_tick
+            """),
+        )
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        supported_mods = [r["root_module"] for r in inv["supported_roots"]]
+        candidate_mods = [c["candidate_module"] for c in inv["candidate_entrypoints"]]
+
+        # pip, pytest, compileall must NEVER be in supported_roots
+        assert "pip" not in supported_mods
+        assert "pytest" not in supported_mods
+        assert "compileall" not in supported_mods
+
+        # pip, pytest, compileall must NOT be candidate entrypoints
+        assert "pip" not in candidate_mods
+        assert "pytest" not in candidate_mods
+        assert "compileall" not in candidate_mods
+
+        # Local script in reviewed workflow MUST be supported root
+        assert "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick" in supported_mods
+
+        # All supported roots must have valid local tracked paths
+        for root in inv["supported_roots"]:
+            assert root["root_path"] is not None
+            assert Path(repo / root["root_path"]).exists()
+
+        # External tools remain visible in workflow inventory
+        tests_wf = next(w for w in inv["workflow_inventory"] if w["path"] == ".github/workflows/tests.yml")
+        assert "pip" in tests_wf["referenced_python_modules"]
+        assert "pytest" in tests_wf["referenced_python_modules"]
+        assert "compileall" in tests_wf["referenced_python_modules"]
+
+    def test_tracked_python_file_workflow_invocation_is_supported_root(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "scripts/__init__.py", "")
+        _add_file(repo, "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py", "pass\n")
+        _add_file(
+            repo,
+            ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+            textwrap.dedent("""\
+                name: Fresh Holdout
+                on: [workflow_dispatch]
+                jobs:
+                  tick:
+                    runs-on: ubuntu-latest
+                    steps:
+                      - run: python scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py
+            """),
+        )
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        supported_mods = [r["root_module"] for r in inv["supported_roots"]]
+        assert "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick" in supported_mods
+        entry = next(r for r in inv["supported_roots"] if r["root_module"] == "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick")
+        assert entry["root_path"] == "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py"
+
+    def test_unresolvable_packaging_entrypoint_emits_diagnostic(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(
+            repo,
+            "setup.py",
+            textwrap.dedent("""\
+                from setuptools import setup
+                setup(
+                    name="mypkg",
+                    entry_points={
+                        "console_scripts": [
+                            "nonexistent_cli = nonexistent_mod:main",
+                        ]
+                    }
+                )
+            """),
+        )
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        supported_mods = [r["root_module"] for r in inv["supported_roots"]]
+        assert "nonexistent_mod" not in supported_mods
+        assert any(
+            d.get("category") == "UNRESOLVABLE_PACKAGING_ENTRYPOINT"
+            for d in inv["diagnostics"]
+        )
+
+
+# ===========================================================================
+# Execution and Dynamic Import Ownership Tests
+# ===========================================================================
+
+class TestExecutionAndDynamicImportOwnership:
+    def test_subprocess_true_positives(self):
+        cases = [
+            ("import subprocess\nsubprocess.run(['ls'])\n", "subprocess.run"),
+            ("import subprocess as sp\nsp.run(['ls'])\n", "subprocess.run"),
+            ("from subprocess import run\nrun(['ls'])\n", "subprocess.run"),
+            ("from subprocess import run as subprocess_run\nsubprocess_run(['ls'])\n", "subprocess.run"),
+            ("import subprocess\nsubprocess.Popen(['ls'])\n", "subprocess.Popen"),
+            ("import subprocess as sp\nsp.Popen(['ls'])\n", "subprocess.Popen"),
+            ("from subprocess import Popen\nPopen(['ls'])\n", "subprocess.Popen"),
+            ("from subprocess import call\ncall(['ls'])\n", "subprocess.call"),
+            ("from subprocess import check_call\ncheck_call(['ls'])\n", "subprocess.check_call"),
+            ("from subprocess import check_output\ncheck_output(['ls'])\n", "subprocess.check_output"),
+        ]
+        for src, expected_kind in cases:
+            indicators = detect_execution_indicators(src, "test.py")
+            assert len(indicators) == 1, f"Failed for {src!r}"
+            assert indicators[0]["call_kind"] == expected_kind
+
+    def test_subprocess_false_positives(self):
+        cases = [
+            "app.run()\n",
+            "checker.run()\n",
+            "importer.run()\n",
+            "arbitrary.run()\n",
+            "AthenaApplication().run()\n",
+            "foo.Popen()\n",
+            "runner.call()\n",
+        ]
+        for src in cases:
+            indicators = detect_execution_indicators(src, "test.py")
+            assert len(indicators) == 0, f"False positive for {src!r}: {indicators}"
+
+    def test_os_system_true_positives(self):
+        cases = [
+            ("import os\nos.system('echo hi')\n", "os.system"),
+            ("import os as operating_system\noperating_system.system('echo hi')\n", "os.system"),
+            ("from os import system\nsystem('echo hi')\n", "os.system"),
+            ("from os import system as sys_call\nsys_call('echo hi')\n", "os.system"),
+        ]
+        for src, expected_kind in cases:
+            indicators = detect_execution_indicators(src, "test.py")
+            assert len(indicators) == 1, f"Failed for {src!r}"
+            assert indicators[0]["call_kind"] == expected_kind
+
+    def test_os_system_false_positives(self):
+        cases = [
+            "import platform\nplatform.system()\n",
+            "obj.system()\n",
+            "self.system()\n",
+        ]
+        for src in cases:
+            indicators = detect_execution_indicators(src, "test.py")
+            assert len(indicators) == 0, f"False positive for {src!r}: {indicators}"
+
+    def test_importlib_true_positives(self):
+        cases = [
+            ("import importlib\nimportlib.import_module('mod')\n", "importlib.import_module"),
+            ("import importlib as il\nil.import_module('mod')\n", "importlib.import_module"),
+            ("from importlib import import_module\nimport_module('mod')\n", "importlib.import_module"),
+            ("from importlib import import_module as load_module\nload_module('mod')\n", "importlib.import_module"),
+            ("__import__('mod')\n", "__import__"),
+        ]
+        for src, expected_kind in cases:
+            indicators = detect_dynamic_imports(src, "test.py")
+            assert len(indicators) == 1, f"Failed for {src!r}"
+            assert indicators[0]["call_kind"] == expected_kind
+
+    def test_importlib_false_positives(self):
+        cases = [
+            "custom_loader.import_module('mod')\n",
+            "self.import_module('mod')\n",
+            "loader.import_module('mod')\n",
+        ]
+        for src in cases:
+            indicators = detect_dynamic_imports(src, "test.py")
+            assert len(indicators) == 0, f"False positive for {src!r}: {indicators}"
+
+
+# ===========================================================================
+# Canonical Module Name Validation Tests
+# ===========================================================================
+
+class TestPathToModuleValidation:
+    def test_valid_module_identifiers(self):
+        assert path_to_module("foo.py") == "foo"
+        assert path_to_module("foo_bar.py") == "foo_bar"
+        assert path_to_module("pkg/foo.py") == "pkg.foo"
+        assert path_to_module("pkg/sub/foo_123.py") == "pkg.sub.foo_123"
+
+    def test_invalid_module_identifiers_return_none(self):
+        assert path_to_module("foo-bar.py") is None
+        assert path_to_module("123foo.py") is None
+        assert path_to_module("pkg/foo-bar.py") is None
+        assert path_to_module("pkg/123_sub/foo.py") is None
+
+    def test_unresolvable_module_name_emits_diagnostic(self, tmp_path):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "foo-bar.py", "x = 1\n")
+        sha = _commit(repo)
+        inv = build_inventory(repo, sha)
+        diags = inv["diagnostics"]
+        assert any(
+            d.get("category") == "UNRESOLVABLE_MODULE_NAME" and d.get("path") == "foo-bar.py"
+            for d in diags
+        )

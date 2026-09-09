@@ -279,7 +279,7 @@ def path_to_module(repo_relative_path: str) -> str | None:
         return None
     # Validate each part is a valid Python identifier component
     for part in parts:
-        if not part.replace("_", "a").replace("-", "a").isalnum():
+        if not part.isidentifier():
             return None
     return ".".join(parts)
 
@@ -402,30 +402,45 @@ def detect_cli_frameworks(source: str, path: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 def detect_dynamic_imports(source: str, path: str) -> list[dict]:
-    """Detect importlib.import_module and __import__ calls statically."""
+    """Detect importlib.import_module and __import__ calls statically using AST import ownership."""
     indicators: list[dict] = []
     try:
         tree = ast.parse(source, filename=path)
     except SyntaxError:
         return indicators
 
+    importlib_modules: set[str] = set()
+    importlib_direct_names: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "importlib":
+                    importlib_modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "importlib":
+                for alias in node.names:
+                    if alias.name == "import_module":
+                        importlib_direct_names.add(alias.asname or alias.name)
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        # importlib.import_module(...)
-        is_importlib = (
-            isinstance(func, ast.Attribute)
-            and func.attr == "import_module"
-        ) or (
-            isinstance(func, ast.Name)
-            and func.id == "import_module"
-        )
-        # __import__(...)
-        is_dunder = isinstance(func, ast.Name) and func.id == "__import__"
+        call_kind: str | None = None
 
-        if is_importlib or is_dunder:
-            call_kind = "importlib.import_module" if is_importlib else "__import__"
+        # importlib.import_module(...) or aliased_importlib.import_module(...)
+        if isinstance(func, ast.Attribute) and func.attr == "import_module":
+            if isinstance(func.value, ast.Name) and func.value.id in importlib_modules:
+                call_kind = "importlib.import_module"
+        # direct import_module(...) or aliased from importlib import import_module
+        elif isinstance(func, ast.Name):
+            if func.id in importlib_direct_names:
+                call_kind = "importlib.import_module"
+            elif func.id == "__import__":
+                call_kind = "__import__"
+
+        if call_kind:
             # Try to extract literal target
             literal_target: str | None = None
             if node.args:
@@ -451,23 +466,57 @@ _SUBPROCESS_CALLS = {"run", "Popen", "call", "check_call", "check_output"}
 
 
 def detect_execution_indicators(source: str, path: str) -> list[dict]:
-    """Detect subprocess.run/Popen, os.system, python CLI invocations."""
+    """Detect subprocess.run/Popen, os.system, python CLI invocations using AST import ownership."""
     indicators: list[dict] = []
     try:
         tree = ast.parse(source, filename=path)
     except SyntaxError:
         return indicators
 
+    subprocess_modules: set[str] = set()
+    subprocess_direct_names: dict[str, str] = {}  # alias -> method name (e.g. "my_run" -> "run")
+    os_modules: set[str] = set()
+    os_direct_names: dict[str, str] = {}  # alias -> "system"
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "subprocess":
+                    subprocess_modules.add(alias.asname or alias.name)
+                elif alias.name == "os":
+                    os_modules.add(alias.asname or alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module == "subprocess":
+                for alias in node.names:
+                    if alias.name in _SUBPROCESS_CALLS:
+                        subprocess_direct_names[alias.asname or alias.name] = alias.name
+            elif node.module == "os":
+                for alias in node.names:
+                    if alias.name == "system":
+                        os_direct_names[alias.asname or alias.name] = "system"
+
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
         func = node.func
-        # subprocess.run([...]) / subprocess.Popen([...]) etc.
-        is_subprocess = (
-            isinstance(func, ast.Attribute)
-            and func.attr in _SUBPROCESS_CALLS
-        )
-        if is_subprocess:
+        call_kind: str | None = None
+
+        # 1. Attribute call: e.g. subprocess.run(...), sp.Popen(...), os.system(...)
+        if isinstance(func, ast.Attribute):
+            if func.attr in _SUBPROCESS_CALLS and isinstance(func.value, ast.Name):
+                if func.value.id in subprocess_modules:
+                    call_kind = f"subprocess.{func.attr}"
+            elif func.attr == "system" and isinstance(func.value, ast.Name):
+                if func.value.id in os_modules:
+                    call_kind = "os.system"
+        # 2. Name call: e.g. run(...), my_run(...), system(...)
+        elif isinstance(func, ast.Name):
+            if func.id in subprocess_direct_names:
+                call_kind = f"subprocess.{subprocess_direct_names[func.id]}"
+            elif func.id in os_direct_names:
+                call_kind = "os.system"
+
+        if call_kind:
             literal_cmd: str | None = None
             if node.args:
                 first = node.args[0]
@@ -486,26 +535,7 @@ def detect_execution_indicators(source: str, path: str) -> list[dict]:
                     literal_cmd = first.value
             indicators.append({
                 "path": path,
-                "call_kind": f"subprocess.{func.attr}",
-                "literal_cmd": literal_cmd,
-                "is_literal": literal_cmd is not None,
-                "marker": literal_cmd if literal_cmd else EXEC_NONLITERAL,
-                "lineno": node.lineno,
-            })
-        # os.system(...)
-        is_os_system = (
-            isinstance(func, ast.Attribute)
-            and func.attr == "system"
-        )
-        if is_os_system:
-            literal_cmd = None
-            if node.args:
-                first = node.args[0]
-                if isinstance(first, ast.Constant) and isinstance(first.value, str):
-                    literal_cmd = first.value
-            indicators.append({
-                "path": path,
-                "call_kind": "os.system",
+                "call_kind": call_kind,
                 "literal_cmd": literal_cmd,
                 "is_literal": literal_cmd is not None,
                 "marker": literal_cmd if literal_cmd else EXEC_NONLITERAL,
@@ -603,9 +633,21 @@ def resolve_import(
                     if module in known_modules:
                         targets.append(module)
     else:
-        # Relative import
-        source_parts = source_module.split(".")
-        if level > len(source_parts):
+        # Relative import from package context (PEP 328)
+        # Normal module pkg/sub/mod.py has package context "pkg.sub".
+        # Package initializer pkg/sub/__init__.py has package context "pkg.sub".
+        is_init = path.replace("\\", "/").endswith("/__init__.py") or path == "__init__.py"
+        if is_init:
+            package_parts = source_module.split(".") if source_module else []
+        else:
+            source_parts = source_module.split(".") if source_module else []
+            package_parts = source_parts[:-1]
+
+        # Level 1 remains in current package (ascends 0 levels).
+        # Level 2 ascends 1 package level.
+        # Level N ascends N - 1 package levels.
+        # Ascending beyond package root (level > len(package_parts)) is invalid.
+        if level > len(package_parts):
             diagnostics.append({
                 "path": path,
                 "category": "RELATIVE_IMPORT_TOO_DEEP",
@@ -613,7 +655,9 @@ def resolve_import(
                 "line": import_record["lineno"],
             })
             return []
-        base_parts = source_parts[:-level]
+
+        ascend = level - 1
+        base_parts = package_parts[:len(package_parts) - ascend] if ascend > 0 else package_parts
         base = ".".join(base_parts)
 
         if kind == "from":
@@ -928,6 +972,7 @@ def build_inventory(
 
     # ---- 9. Identify supported roots ----
     packaging_entrypoints: list[str] = []
+    packaging_diagnostics: list[dict] = []
     if "setup.py" in file_contents:
         setup_py_src = file_contents["setup.py"].decode("utf-8", errors="replace")
         packaging_entrypoints = extract_packaging_entrypoints(setup_py_src)
@@ -957,10 +1002,16 @@ def build_inventory(
     supported_root_modules: list[str] = []
 
     for mod, wf_paths in sorted(wf_invoked.items()):
-        is_hosted_current = any(wf in _REVIEWED_SUPPORTED_HOSTED_WORKFLOWS for wf in wf_paths)
         mod_path = module_to_path_map.get(mod)
         if mod_path is None and mod in all_tracked:
             mod_path = mod
+
+        # Supported roots and candidate entrypoints must be repository-local modules
+        is_local = (mod in known_modules and mod_path is not None)
+        if not is_local:
+            continue
+
+        is_hosted_current = any(wf in _REVIEWED_SUPPORTED_HOSTED_WORKFLOWS for wf in wf_paths)
         is_packaging = mod in packaging_entrypoints or any(
             mod == pe.split(":")[0] for pe in packaging_entrypoints
         )
@@ -994,17 +1045,27 @@ def build_inventory(
 
     for pe in packaging_entrypoints:
         pe_mod = pe.split(":")[0].strip()
-        if not any(r["root_module"] == pe_mod for r in supported_roots):
-            pe_path = module_to_path_map.get(pe_mod)
-            supported_roots.append({
-                "root_identifier": pe_mod,
-                "root_path": pe_path,
-                "root_module": pe_mod,
-                "root_type": "PACKAGING_ENTRYPOINT",
-                "evidence_basis": [EVIDENCE_PACKAGING_ENTRYPOINT],
-                "invoking_workflows": [],
+        pe_path = module_to_path_map.get(pe_mod)
+        if pe_path is None and pe_mod in all_tracked:
+            pe_path = pe_mod
+        if pe_mod in known_modules and pe_path is not None:
+            if not any(r["root_module"] == pe_mod for r in supported_roots):
+                supported_roots.append({
+                    "root_identifier": pe_mod,
+                    "root_path": pe_path,
+                    "root_module": pe_mod,
+                    "root_type": "PACKAGING_ENTRYPOINT",
+                    "evidence_basis": [EVIDENCE_PACKAGING_ENTRYPOINT],
+                    "invoking_workflows": [],
+                })
+                supported_root_modules.append(pe_mod)
+        else:
+            packaging_diagnostics.append({
+                "path": "setup.py",
+                "category": "UNRESOLVABLE_PACKAGING_ENTRYPOINT",
+                "detail": f"Packaging entrypoint '{pe}' references unresolvable module '{pe_mod}'",
+                "line": None,
             })
-            supported_root_modules.append(pe_mod)
 
     for path, record in sorted(module_records.items()):
         mod = record["module"]
@@ -1031,6 +1092,13 @@ def build_inventory(
             supported_roots_dedup.append(r)
     supported_roots = sorted(supported_roots_dedup, key=lambda r: r["root_module"])
     supported_root_modules = [r["root_module"] for r in supported_roots]
+
+    # Fail-closed validation assertions: every supported root must be local and tracked
+    for r in supported_roots:
+        if r["root_module"] not in known_modules:
+            raise ValueError(f"Supported root '{r['root_module']}' is not in known_modules")
+        if r["root_path"] is None or r["root_path"] not in all_tracked:
+            raise ValueError(f"Supported root '{r['root_module']}' path '{r['root_path']}' is not a tracked file")
 
     seen_cands = set()
     candidate_entrypoints_dedup = []
@@ -1151,7 +1219,7 @@ def build_inventory(
 
     # ---- 15. Diagnostics ----
     all_diagnostics = sorted(
-        module_diagnostics + parse_diagnostics,
+        module_diagnostics + parse_diagnostics + packaging_diagnostics,
         key=lambda d: (d.get("path", ""), d.get("category", ""), d.get("line") or 0),
     )
 
