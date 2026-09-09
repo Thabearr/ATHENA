@@ -1,0 +1,375 @@
+# ATHENA Repository Architecture Inventory (P0.2)
+
+## Purpose
+
+`scripts/audit_repository_architecture.py` produces a deterministic,
+machine-generated, read-only inventory of the ATHENA repository at a
+specific Git ref. It replaces anecdotal architecture claims with
+reproducible, multi-signal evidence.
+
+The inventory answers:
+
+- What Python modules exist at a given commit?
+- Which local modules statically import which other modules?
+- Which modules are imported by tests only?
+- Which modules have zero static inbound edges?
+- Which modules contain dynamic import indicators?
+- Which modules are referenced by GitHub Actions workflows?
+- Which scripts/modules are invoked via subprocess/CLI string literals?
+- Which files appear to be executable entrypoints?
+- Which CLI frameworks are present?
+- Which current workflows invoke which scripts/modules?
+- Which architecture generations/families coexist?
+- Which "supported roots" can statically reach which modules?
+- What exact Git commit was inventoried?
+
+The resulting artifacts are the factual input for subsequent remediation
+waves (P0.3 Main / Shadow Authority and Parity Contract, P0.4 Architecture Boundary CI, P0.5 Runtime Reachability Instrumentation, etc.).
+
+---
+
+## Schema version
+
+**Schema version: 1**  
+**Policy ID: `ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_V1`**
+
+---
+
+## Critical distinctions
+
+### Static imports vs. supported reachability
+
+**Static import edge** — `module A` contains `import B` or `from B import x`.
+This is a structural fact about source code.
+
+**Supported reachability** — there exists a chain of static import edges from
+a *supported root* to a module.
+
+These are not the same thing. A module can have many static inbound edges and
+still be unreachable from any supported root. Conversely, a module referenced
+only by tests has static inbound edges but no supported-root reachability.
+
+### Why zero static inbound ≠ obsolete
+
+A module with `zero_static_inbound = true` has no known static importers at the
+inventoried commit. That is one signal only.
+
+It does **NOT** mean:
+
+- The module is dead.
+- The module is safe to delete.
+- The module is not called at runtime.
+
+Modules can be alive and necessary via:
+- GitHub Actions workflow invocations (`python -m module` / `python script.py`).
+- Dynamic imports (`importlib.import_module(...)`, `__import__(...)`).
+- Subprocess calls from other Python files.
+- Entry points in `setup.py` / `pyproject.toml`.
+- CLI invocation by users or CI scripts not tracked by static analysis.
+- Historical contract preservation (module must remain importable by name).
+
+**Policy:** `zero_static_inbound = true` is a flag for investigation.
+It never, by itself, authorises deletion.
+
+### Package-relative import resolution (PEP 328)
+
+Relative imports are resolved from the importing module's *package context*:
+- For a normal module (`pkg/sub/module.py`), the package context is `pkg.sub`.
+- For a package initializer (`pkg/sub/__init__.py`), the package context is `pkg.sub`.
+- Relative level 1 remains within the current package context (ascends 0 levels).
+- Relative level 2 ascends 1 package level; level N ascends N - 1 levels.
+
+Package initializers (e.g. `database/__init__.py` containing `from .database import Database`) resolve imports to their actual submodule (`database.database`) rather than fabricating false self-edges (`database -> database`). Relative imports ascending beyond the package root emit a deterministic `RELATIVE_IMPORT_TOO_DEEP` diagnostic.
+
+### AST import ownership for execution and dynamic indicators
+
+Execution indicators (`subprocess.run`, `Popen`, `call`, `check_call`, `check_output`, and `os.system`) and dynamic import indicators (`importlib.import_module`, `__import__`) are strictly AST import-ownership and alias-aware:
+- Supported patterns include direct imports (`import subprocess; subprocess.run(...)`), module aliases (`import subprocess as sp; sp.run(...)`), direct symbol imports (`from subprocess import run; run(...)`), and symbol aliases (`from subprocess import run as sp_run; sp_run(...)`).
+- Similarly for `os.system` (`import os; os.system(...)`, `import os as op; op.system(...)`, `from os import system; system(...)`).
+- Similarly for `importlib.import_module` (`import importlib; importlib.import_module(...)`, `import importlib as il; il.import_module(...)`, `from importlib import import_module; import_module(...)`, `__import__(...)`).
+- Attribute calls without matching AST import ownership (e.g. `app.run()`, `platform.system()`, `custom_loader.import_module(...)`) are rejected as false positives and are not recorded as execution or dynamic import indicators.
+- Non-literal arguments to genuine dynamic import or execution calls are recorded with `DYNAMIC_IMPORT_NON_LITERAL` / `EXECUTION_NON_LITERAL` markers.
+
+### Workflow and CLI reference handling
+
+Workflow YAML files are read as text. The tool extracts literal `python script.py` and `python -m package.module` patterns using regex. It does **not** execute workflow steps or shell commands.
+
+References provide concrete evidence of CI invocation without conferring production deployment authority.
+
+---
+
+## Deterministic `--ref` behaviour and fail-closed Git reads
+
+The tool resolves the supplied `--ref` using:
+
+```
+git rev-parse --verify <ref>^{commit}
+```
+
+This fails closed: any invalid ref, non-existent SHA, or non-commit object
+causes an immediate fatal error.
+
+Tracked repository files at the resolved commit are enumerated via:
+
+```
+git ls-tree -r --name-only <resolved_sha>
+```
+
+File bytes are read using a high-performance batched reader:
+
+```
+git cat-file --batch
+```
+
+Required semantics:
+- The ref resolves deterministically via `rev-parse`.
+- Tracked paths come from `ls-tree`.
+- Required bytes are obtained through a batched `cat-file --batch` reader.
+- Every requested blob must be returned by Git.
+- A `missing` blob response raises an immediate, fail-closed `RuntimeError`.
+- Malformed headers, negative sizes, or truncated blob bodies fail closed.
+- Output-path/request-path cardinality mismatches or misaligned stream data raise.
+- No checkout of the target ref or working tree modification is performed.
+
+The `source_commit` field in the JSON artifact always contains the 40-character
+resolved SHA, not the human-readable ref string.
+
+Because:
+- all output is sorted deterministically,
+- no wall-clock time is embedded in canonical output,
+- no machine hostname, path, or UUID is included,
+
+two runs of the tool against the same commit and same policy produce
+byte-identical JSON and CSV.
+
+---
+
+## How to regenerate the baseline artifact
+
+```bash
+git pull --ff-only && \
+PYTHONPATH=. python -m scripts.audit_repository_architecture \
+  --ref e04cbbeaeff999a1e5dd3ff7891857b4813a7fac \
+  --json-output artifacts/architecture/repository-architecture-inventory-v1.json \
+  --csv-output artifacts/architecture/repository-architecture-modules-v1.csv
+```
+
+On Windows (PowerShell):
+
+```powershell
+git pull --ff-only; `
+$env:PYTHONPATH="."; python -m scripts.audit_repository_architecture `
+  --ref e04cbbeaeff999a1e5dd3ff7891857b4813a7fac `
+  --json-output artifacts/architecture/repository-architecture-inventory-v1.json `
+  --csv-output artifacts/architecture/repository-architecture-modules-v1.csv
+```
+
+To verify determinism (run twice, compare SHA-256):
+
+```bash
+PYTHONPATH=. python -m scripts.audit_repository_architecture \
+  --ref e04cbbeaeff999a1e5dd3ff7891857b4813a7fac \
+  --json-output /tmp/inv-a.json \
+  --csv-output /tmp/inv-a.csv
+
+PYTHONPATH=. python -m scripts.audit_repository_architecture \
+  --ref e04cbbeaeff999a1e5dd3ff7891857b4813a7fac \
+  --json-output /tmp/inv-b.json \
+  --csv-output /tmp/inv-b.csv
+
+sha256sum /tmp/inv-a.json /tmp/inv-b.json
+sha256sum /tmp/inv-a.csv /tmp/inv-b.csv
+```
+
+Required: both SHA-256 pairs must be identical.
+
+---
+
+## What P0.2 does NOT authorise
+
+P0.2 generates evidence only. It does not:
+
+- Assign `DELETE`, `ARCHIVE`, `MIGRATE_THEN_DELETE`, or `KEEP` to any module.
+- Promote any architecture generation as canonical.
+- Demote any architecture generation as obsolete.
+- Authorise deletion of any file.
+- Authorise migration of any caller.
+- Authorise removal of any workflow.
+- Modify any runtime behaviour.
+- Create any runtime code path.
+- Trigger any provider acquisition.
+- Execute Current Shadow.
+- Create or reload a SportyBet share code.
+
+All `disposition` values in the P0.2 artifact are `"UNCLASSIFIED"`.
+
+Actual `KEEP` / `MIGRATE_THEN_DELETE` / `ARCHIVE_OR_RETIRE` / `DELETE`
+classification belongs to later reviewed remediation waves, each requiring
+human review and a merged PR.
+
+---
+
+## How later remediation waves use the artifact
+
+| Wave | How this artifact is used |
+|------|--------------------------|
+| P0.2 Machine-generated repository architecture inventory | Baseline inventory of modules, imports, entrypoints, workflows, and indicators (this artifact). |
+| P0.3 Main / Shadow Authority and Parity Contract | Establishes authoritative profile assignments (`SHARED_CANONICAL`, `MAIN_ONLY`, `SHADOW_ONLY`, `RESEARCH_CHALLENGER`, `HISTORICAL_EVIDENCE`), parity invariants, and allowed shadow deviations based on P0.2 evidence. |
+| P0.4 Architecture Boundary CI | Import graph edges become CI rules — if a caller imports a module it should not (e.g. legacy or unpromoted challenger into canonical core), CI fails. Boundaries derived from P0.2 evidence. |
+| P0.5 Runtime Reachability Instrumentation | P0.2 static roots and edges become starting points for runtime coverage and execution path verification. |
+| Checkpoint A — Inventory Complete | P0.2 + P0.4 + P0.5 together constitute the complete inventory. |
+| Checkpoint B0 — Main / Shadow Parity Contract Established | Formally establishes typed MAIN/SHADOW profiles, shared canonical core, and parity gates. |
+| P1 Canonical interfaces / orchestration | P0.2 identifies which callers must be migrated before canonical interface can be locked. |
+| P2 Shared-core / Shadow migration | P0.2 provides the list of static importers that must be updated for shared-core and shadow migration. |
+| P3 Main / legacy migration | P0.2 provides the list of static importers that must be migrated away from legacy paths. |
+| P4 Command + workflow convergence | Consolidates fragmented CLI entrypoints and workflows using P0.2 workflow/entrypoint evidence. |
+| P5 Learning / explicit promotion | Explicit promotion gating for challengers; no automatic promotion. |
+| P6 Evidence-backed retirement | P0.2 evidence (static inbound, workflow refs, dynamic refs, subprocess refs) is a required input for any deletion PR. A deletion PR must show that all signals are zero or migrated. |
+| P7 Deep repository audit / final pruning | Final structural verification and dead code removal across the repository. |
+
+---
+
+## Cleanup classifications (future waves only)
+
+| Classification | Meaning |
+|----------------|---------|
+| `KEEP` | Canonical, actively maintained. |
+| `MIGRATE_THEN_DELETE` | Has canonical replacement; all callers must be migrated first. |
+| `ARCHIVE_OR_RETIRE` | No active callers; safe to archive, requires multi-signal evidence. |
+| `DELETE` | Fully superseded; all callers migrated; evidence reviewed by human. |
+
+**No item receives `DELETE` authority merely because `zero_static_inbound = true`.**
+
+Multi-signal evidence required for any deletion decision:
+static inbound count + dynamic/workflow/subprocess references + contract review
++ historical usage.
+
+---
+
+## Authority profile dimension (Specification v2 Alignment)
+
+Under ATHENA Architecture Specification v2, ATHENA operates with **ONE CANONICAL CORE** serving two parallel authority profiles (**MAIN** and **SHADOW**). Modules in the repository belong to one of six mutually exclusive authority profiles:
+
+1. `SHARED_CANONICAL` — Modules shared by both MAIN and SHADOW runtime profiles as part of the canonical core.
+2. `MAIN_ONLY` — Modules participating exclusively in MAIN execution.
+3. `SHADOW_ONLY` — Modules participating exclusively in SHADOW execution.
+4. `RESEARCH_CHALLENGER` — Active, protected research and experimentation paths (e.g., fresh-holdout ticks, continuity receipts, validation models).
+5. `HISTORICAL_EVIDENCE` — Frozen benchmark runs, historical data packages, and durable audit artifacts preserved for auditability and lineage.
+6. `UNKNOWN` — Modules whose authority profile has not yet been authoritatively determined.
+
+### Invariants for P0.2
+
+- **P0.2 default**: In P0.2, all Python modules have `authority_profile: "UNKNOWN"`. P0.2 does NOT perform heuristic or pattern-based classification of authority profiles; P0.3 establishes authoritative profile assignments.
+- **Absence from Main/Shadow ≠ Obsolescence**: A module not participating in Main or Shadow may be an active research challenger (`RESEARCH_CHALLENGER`) or critical historical audit evidence (`HISTORICAL_EVIDENCE`). Lack of Main/Shadow reachability does not authorize deprecation or deletion.
+- **Protected Fresh-Holdout Reachability**: Active research automation workflows (`fotmob-utc-native-xg-fresh-holdout.yml` and `bridge-fotmob-fresh-holdout-continuity-receipts.yml`) are included in `_REVIEWED_SUPPORTED_HOSTED_WORKFLOWS` as supported roots, ensuring live research paths are recognized as reachable in the static dependency graph.
+- **Immutability of disposition**: All modules retain `disposition: "UNCLASSIFIED"` in P0.2. No module receives `DELETE`, `ARCHIVE`, `MIGRATE_THEN_DELETE`, or `KEEP` in P0.2.
+
+---
+
+## Signals exposed per module
+
+| Signal | Meaning |
+|--------|---------|
+| `static_inbound_count` | Number of local modules that statically import this module |
+| `non_test_static_inbound_count` | Same, excluding test modules |
+| `static_outbound_count` | Number of local modules this module imports |
+| `zero_static_inbound` | True if no local static importers (NOT equivalent to "dead") |
+| `referenced_by_tests` | True if any test module statically imports this module |
+| `test_reference_count` | Count of test modules importing this module |
+| `workflow_refs` | Direct workflow YAML references (python file or -m invocation) |
+| `dynamic_import_indicators` | importlib / __import__ calls detected |
+| `execution_refs` | subprocess.run / os.system / Popen calls in this file |
+| `reachable_from_supported_static_root` | True if reachable via BFS from a supported root |
+| `supported_static_roots` | List of supported roots that can reach this module |
+| `authority_profile` | Always `"UNKNOWN"` in P0.2 (authoritative profile assignment in P0.3) |
+| `disposition` | Always `"UNCLASSIFIED"` in P0.2 |
+
+---
+
+## Supported roots vs. candidate entrypoints
+
+**Supported root** — a repository-local module/script with concrete evidence of active supported use:
+- Directly invoked by a current hosted GitHub Actions workflow (`python -m module` or `python script.py`), OR
+- Declared as an entry point in `setup.py` that resolves to a local repository module.
+
+Every supported root MUST satisfy two fail-closed invariants:
+1. `root_module in known_modules` (must be a repository-local Python module).
+2. `root_path != None` (must map to a tracked repository file).
+
+**Local-only rule for workflow references:**
+External tools and packages invoked in workflows (such as `python -m pip`, `python -m pytest`, or `python -m compileall` in `tests.yml`) remain visible in the workflow inventory as module references, but MUST NOT become supported roots or candidate entrypoints. They do not confer reachability authority and do not count toward `supported_root_count`.
+
+If a packaging entrypoint references an unresolvable or external module, it emits a deterministic `UNRESOLVABLE_PACKAGING_ENTRYPOINT` diagnostic rather than receiving root authority.
+
+**Candidate entrypoint** — a repository-local module/script that has indicators of being an entrypoint (main guard, CLI framework, or invocation by a non-reviewed/legacy workflow) but lacks reviewed supported status.
+
+If support cannot be proven: module is classified `CANDIDATE`, not `SUPPORTED`. External tools are never candidate entrypoints.
+
+---
+
+## Canonical module name validation
+
+Tracked Python files are mapped to canonical dotted module names using strict Python identifier validation (`part.isidentifier()` for every path component).
+- Valid paths (`foo.py`, `pkg/foo_bar.py`) resolve to canonical module names (`foo`, `pkg.foo_bar`).
+- Non-identifier filenames (such as hyphenated names `foo-bar.py` or leading digits `123foo.py`) return `None` and emit an `UNRESOLVABLE_MODULE_NAME` diagnostic rather than normalizing into invalid or fabricated module names.
+
+---
+
+## Reviewed supported hosted workflows
+
+Supported roots are derived from explicit, reviewed hosted GitHub Actions workflows in `_REVIEWED_SUPPORTED_HOSTED_WORKFLOWS`:
+
+1. `.github/workflows/current-shadow-all-market.yml` — The active Current Shadow research-only multi-market execution pipeline (research authority only; carries no production authority, no automatic promotion into Main, non-wager share-code delivery only, and zero login/cookie/wallet/stake/wager authority). Local roots: `scripts.execute_current_shadow_request`, `scripts.restore_current_shadow_history_prime_artifact`, `scripts.send_current_shadow_email`.
+2. `.github/workflows/tests.yml` — Continuous integration testing workflow validating repository test suites and syntax gates. External tools (`pip`, `pytest`, `compileall`) remain workflow references only.
+3. `.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml` — Active fresh-holdout research tick workflow protecting live research continuity and out-of-sample data collection. Local root: `scripts.run_fotmob_utc_native_xg_fresh_holdout_tick`.
+4. `.github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml` — Live continuity receipt bridging workflow preserving research audit artifacts. Local root: `scripts.run_fotmob_fresh_holdout_release_receipt_mirror`.
+
+Workflows outside this reviewed set (such as unmaintained, historical, or deprecated legacy workflows) are not treated as supported roots in P0.2. Their invocations are captured as general workflow references but do not confer supported-root status.
+
+---
+
+## JSON artifact structure
+
+Top-level keys (alphabetically sorted, canonical JSON):
+
+```json
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_V1",
+  "source_commit": "<40-char SHA>",
+  "generator_semantics": { ... },
+  "summary": { ... },
+  "supported_roots": [ ... ],
+  "candidate_entrypoints": [ ... ],
+  "python_modules": [ ... ],
+  "static_import_edges": [ ... ],
+  "workflow_inventory": [ ... ],
+  "workflow_references": [ ... ],
+  "dynamic_import_indicators": [ ... ],
+  "execution_indicators": [ ... ],
+  "authority_families": [ ... ],
+  "diagnostics": [ ... ]
+}
+```
+
+All lists are sorted deterministically. All maps have sorted keys.
+
+---
+
+## Security and side-effect guarantees
+
+The inventory tool is **read-only** with respect to ATHENA runtime state. It:
+
+- Does NOT import repository business modules.
+- Does NOT run provider code.
+- Does NOT make network requests.
+- Does NOT read secrets, cookies, or wallet data.
+- Does NOT create SportyBet codes.
+- Does NOT invoke Current Shadow.
+- Does NOT execute build_acca, PredictionService, or any analysis pipeline.
+- Does NOT write database rows.
+- Does NOT modify `.cache/athena-research`.
+- Does NOT run arbitrary workflow commands.
+
+Analysis is AST/text/Git only. Output is written only to the specified
+`--json-output` and `--csv-output` paths.
