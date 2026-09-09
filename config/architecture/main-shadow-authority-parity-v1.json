@@ -1,0 +1,519 @@
+{
+  "active_shadow_deviations": [],
+  "authority_profile_vocabulary": [
+    "SHARED_CANONICAL",
+    "MAIN_ONLY",
+    "SHADOW_ONLY",
+    "RESEARCH_CHALLENGER",
+    "HISTORICAL_EVIDENCE",
+    "UNKNOWN"
+  ],
+  "contract_base_main": "147c09d058e8609ef11296bd7e0f74e4c6626b63",
+  "execution_profiles": {
+    "MAIN": {
+      "automatic_promotion": false,
+      "may_activate_unpromoted_challenger": false,
+      "production_authority": true,
+      "profile_id": "MAIN",
+      "research_authority": false,
+      "wager_authority_from_this_contract": false
+    },
+    "SHADOW": {
+      "automatic_promotion": false,
+      "challenger_must_be_explicitly_registered": true,
+      "cookies": false,
+      "login": false,
+      "may_activate_unpromoted_challenger": true,
+      "production_authority": false,
+      "profile_id": "SHADOW",
+      "research_authority": true,
+      "staking": false,
+      "wager": false,
+      "wallet": false
+    }
+  },
+  "known_parity_gaps": [
+    {
+      "current_main_state": "SUPPORTED_LEGACY_MAIN_ENTRYPOINT_WITHOUT_PROVEN_SHARED_CORE",
+      "current_shadow_state": "CURRENT_SHADOW_RESEARCH_PIPELINE_EXISTS_SEPARATELY",
+      "gap_id": "main_shadow_pipeline_not_yet_one_shared_core",
+      "production_authority_change": false,
+      "required_resolution_wave": "P1",
+      "responsibility_id": "fixture_state_schema",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "current_main_state": "NO_PROVEN_SHARED_CANONICAL_PRICE_ALL_OWNER",
+      "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "gap_id": "current_shadow_profile_specific_price_all",
+      "production_authority_change": false,
+      "required_resolution_wave": "P2",
+      "responsibility_id": "price_all_and_de_vig",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "current_main_state": "NO_PROVEN_SHARED_CANONICAL_ROUTER_OWNER",
+      "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "gap_id": "current_shadow_profile_specific_router",
+      "production_authority_change": false,
+      "required_resolution_wave": "P2",
+      "responsibility_id": "market_router",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "current_main_state": "NO_PROVEN_SHARED_CANONICAL_PORTFOLIO_OWNER",
+      "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "gap_id": "current_shadow_profile_specific_portfolio",
+      "production_authority_change": false,
+      "required_resolution_wave": "P2",
+      "responsibility_id": "portfolio_optimizer",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "current_main_state": "NO_PROVEN_SHARED_CANONICAL_DELIVERY_OWNER",
+      "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "gap_id": "current_shadow_profile_specific_share_code",
+      "production_authority_change": false,
+      "required_resolution_wave": "P2",
+      "responsibility_id": "delivery_share_code_transport",
+      "status": "UNRESOLVED_PREEXISTING"
+    },
+    {
+      "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
+      "current_shadow_state": "V3_CURRENT_PROVIDER_CANDIDATES_ARE_NOT_SUPPORTED_ROOT_CANONICAL_OWNERS",
+      "gap_id": "v3_current_provider_candidates_unproven",
+      "production_authority_change": false,
+      "required_resolution_wave": "P3",
+      "responsibility_id": "market_projection",
+      "status": "UNRESOLVED_PREEXISTING"
+    }
+  ],
+  "p0_inventory_evidence": {
+    "csv_sha256": "6585ab79b29e9a51751e4cc1060f6a20643457aff5090c436b8eaae451202e51",
+    "json_sha256": "a77617557659c8d8a7a5e6887ba65529a87f5f7c229113a36ca6d2f9f2a26a4a",
+    "source_commit": "e04cbbeaeff999a1e5dd3ff7891857b4813a7fac"
+  },
+  "policy_id": "ATHENA_MAIN_SHADOW_AUTHORITY_PARITY_V1",
+  "promotion_policy": {
+    "automatic_promotion": false,
+    "backtest_win_is_sufficient_for_promotion": false,
+    "explicit_promotion_pr_required": true,
+    "explicit_review_required": true,
+    "holdout_pass_is_sufficient_for_promotion": false,
+    "lifecycle": [
+      "REGISTERED_CHALLENGER",
+      "SHADOW_EVALUATION",
+      "PROSPECTIVE_WALK_FORWARD_EVIDENCE",
+      "REVIEW_REQUIRED",
+      "EXPLICIT_PROMOTION_PR",
+      "MAIN"
+    ],
+    "shadow_success_is_sufficient_for_promotion": false,
+    "share_code_success_is_sufficient_for_promotion": false
+  },
+  "protected_research_infrastructure": [
+    {
+      "authority_profile": "UNKNOWN",
+      "cleanup_authority": "NONE",
+      "component_id": ".github/workflows/fotmob-utc-native-xg-fresh-holdout.yml",
+      "deletion_allowed": false,
+      "protection_class": "PROTECTED_RESEARCH_INFRASTRUCTURE",
+      "reason": "ACTIVE_PROSPECTIVE_EVIDENCE_CAMPAIGN",
+      "rules": [
+        "ACTIVE_PROSPECTIVE_RESEARCH",
+        "NO_DELETION_AUTHORITY",
+        "NO_MIGRATION_WITHOUT_EXPERIMENT_REVIEW",
+        "NO_SYNTHETIC_BACKFILL",
+        "NO_AUTOMATIC_PROMOTION"
+      ]
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "cleanup_authority": "NONE",
+      "component_id": ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml",
+      "deletion_allowed": false,
+      "protection_class": "PROTECTED_RESEARCH_INFRASTRUCTURE",
+      "reason": "ACTIVE_PROSPECTIVE_EVIDENCE_CAMPAIGN",
+      "rules": [
+        "ACTIVE_PROSPECTIVE_RESEARCH",
+        "NO_DELETION_AUTHORITY",
+        "NO_MIGRATION_WITHOUT_EXPERIMENT_REVIEW",
+        "NO_SYNTHETIC_BACKFILL",
+        "NO_AUTOMATIC_PROMOTION"
+      ]
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "cleanup_authority": "NONE",
+      "component_id": "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
+      "deletion_allowed": false,
+      "protection_class": "PROTECTED_RESEARCH_INFRASTRUCTURE",
+      "reason": "ACTIVE_PROSPECTIVE_EVIDENCE_CAMPAIGN",
+      "rules": [
+        "ACTIVE_PROSPECTIVE_RESEARCH",
+        "NO_DELETION_AUTHORITY",
+        "NO_MIGRATION_WITHOUT_EXPERIMENT_REVIEW",
+        "NO_SYNTHETIC_BACKFILL",
+        "NO_AUTOMATIC_PROMOTION"
+      ]
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "cleanup_authority": "NONE",
+      "component_id": "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
+      "deletion_allowed": false,
+      "protection_class": "PROTECTED_RESEARCH_INFRASTRUCTURE",
+      "reason": "ACTIVE_PROSPECTIVE_EVIDENCE_CAMPAIGN",
+      "rules": [
+        "ACTIVE_PROSPECTIVE_RESEARCH",
+        "NO_DELETION_AUTHORITY",
+        "NO_MIGRATION_WITHOUT_EXPERIMENT_REVIEW",
+        "NO_SYNTHETIC_BACKFILL",
+        "NO_AUTOMATIC_PROMOTION"
+      ]
+    }
+  ],
+  "request_semantics": {
+    "concrete_date_resolution_before_orchestration": true,
+    "date_window_days": {
+      "maximum": 7,
+      "minimum": 1
+    },
+    "parity_mode": "EXACT_SHARED_BASELINE",
+    "responsibility_id": "request_date_and_target_semantics",
+    "target_legs": {
+      "maximum": 50,
+      "minimum": 1
+    },
+    "target_legs_distinct_from_target_total_odds": true,
+    "truthful_shortfall_permitted": true,
+    "weekday_names_resolve_to_concrete_dates": true
+  },
+  "reviewed_module_assignments": [
+    {
+      "authority_profile": "MAIN_ONLY",
+      "canonical_status": "SUPPORTED_LEGACY",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "build_acca",
+      "component_path": "build_acca.py",
+      "production_authority": "SEPARATELY_GOVERNED_NOT_GRANTED_BY_THIS_CONTRACT",
+      "review_state": "SUPPORTED_LEGACY_MAIN_ENTRYPOINT"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "PROFILE_ORCHESTRATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.current_shadow_all_market_runner",
+      "component_path": "domain/current_shadow_all_market_runner.py",
+      "production_authority": false,
+      "review_state": "RESEARCH_SHADOW_ONLY"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.current_shadow_all_market_price_all",
+      "component_path": "domain/current_shadow_all_market_price_all.py",
+      "future_shared_responsibility": "price_all_and_de_vig",
+      "production_authority": false,
+      "review_state": "KNOWN_PARITY_GAP"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.current_shadow_all_market_router",
+      "component_path": "domain/current_shadow_all_market_router.py",
+      "future_shared_responsibility": "market_router",
+      "production_authority": false,
+      "review_state": "KNOWN_PARITY_GAP"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.current_shadow_all_market_portfolio",
+      "component_path": "domain/current_shadow_all_market_portfolio.py",
+      "future_shared_responsibility": "portfolio_optimizer",
+      "production_authority": false,
+      "review_state": "KNOWN_PARITY_GAP"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.current_shadow_all_market_share_code",
+      "component_path": "domain/current_shadow_all_market_share_code.py",
+      "future_shared_responsibility": "delivery_share_code_transport",
+      "production_authority": false,
+      "review_state": "KNOWN_PARITY_GAP"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.price_all_v3_current_provider",
+      "component_path": "domain/price_all_v3_current_provider.py",
+      "production_authority": false,
+      "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.market_router_v3_current_provider",
+      "component_path": "domain/market_router_v3_current_provider.py",
+      "production_authority": false,
+      "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "domain.portfolio_optimizer_v3_current_provider",
+      "component_path": "domain/portfolio_optimizer_v3_current_provider.py",
+      "production_authority": false,
+      "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "UNRESOLVED",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "engine.market_selector",
+      "component_path": "engine/market_selector.py",
+      "production_authority": false,
+      "review_state": "LEGACY_REACHABILITY_REVIEW_REQUIRED"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "UNRESOLVED",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "services.prediction_service",
+      "component_path": "services/prediction_service.py",
+      "production_authority": false,
+      "review_state": "LEGACY_REACHABILITY_REVIEW_REQUIRED"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "PROFILE_ORCHESTRATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "scripts.execute_current_shadow_request",
+      "component_path": "scripts/execute_current_shadow_request.py",
+      "production_authority": false,
+      "review_state": "RESEARCH_SHADOW_ONLY"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "PROFILE_ORCHESTRATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "scripts.restore_current_shadow_history_prime_artifact",
+      "component_path": "scripts/restore_current_shadow_history_prime_artifact.py",
+      "production_authority": false,
+      "review_state": "RESEARCH_SHADOW_ONLY"
+    },
+    {
+      "authority_profile": "SHADOW_ONLY",
+      "canonical_status": "PROFILE_ORCHESTRATION",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "scripts.send_current_shadow_email",
+      "component_path": "scripts/send_current_shadow_email.py",
+      "production_authority": false,
+      "review_state": "RESEARCH_SHADOW_ONLY"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "RESEARCH_INFRASTRUCTURE",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
+      "component_path": "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py",
+      "production_authority": false,
+      "review_state": "PROTECTED_RESEARCH_INFRASTRUCTURE"
+    },
+    {
+      "authority_profile": "UNKNOWN",
+      "canonical_status": "RESEARCH_INFRASTRUCTURE",
+      "cleanup_disposition": "UNCLASSIFIED",
+      "component_id": "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
+      "component_path": "scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py",
+      "production_authority": false,
+      "review_state": "PROTECTED_RESEARCH_INFRASTRUCTURE"
+    }
+  ],
+  "safety_boundary": {
+    "cookies": false,
+    "login": false,
+    "provider_create_reload_verification_is_wager": false,
+    "shadow_production_portfolio_authority": false,
+    "shadow_production_pricing_authority": false,
+    "shadow_production_router_authority": false,
+    "shadow_production_selection_authority": false,
+    "share_code_is_wager": false,
+    "staking": false,
+    "wager": false,
+    "wallet": false
+  },
+  "schema_version": 1,
+  "shadow_deviation_policy": {
+    "allowed_parity_mode": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+    "required_fields": [
+      "deviation_id",
+      "responsibility_id",
+      "baseline_component_id",
+      "challenger_component_id",
+      "challenger_authority_profile",
+      "research_only",
+      "main_authority",
+      "production_selection_authority",
+      "automatic_promotion",
+      "evidence_status",
+      "review_required",
+      "promotion_pr_required"
+    ]
+  },
+  "shared_responsibilities": [
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "calibration_interface",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "champion_feature_interface",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "champion_probability_interface",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "delivery_share_code_transport",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "fixture_identity",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_CANONICAL_PROMOTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "fixture_state_schema",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "market_projection",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "market_router",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "portfolio_optimizer",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_CANONICAL_PROMOTION",
+      "parity_requirement": "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED",
+      "responsibility_id": "price_all_and_de_vig",
+      "shadow_deviation_policy": "REGISTERED_CHALLENGER_ONLY"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "provider_market_semantics",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "provider_quote_identity_and_freshness",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_LEGACY_MIGRATION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "request_date_and_target_semantics",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "run_receipt_and_observability",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "settlement_semantics",
+      "shadow_deviation_policy": "FORBIDDEN"
+    },
+    {
+      "baseline_required_in_main": true,
+      "baseline_required_in_shadow": true,
+      "canonical_scope": "SHARED",
+      "current_owner_status": "PENDING_SHARED_CORE_EXTRACTION",
+      "parity_requirement": "EXACT_SHARED_BASELINE",
+      "responsibility_id": "source_evidence_and_lineage",
+      "shadow_deviation_policy": "FORBIDDEN"
+    }
+  ]
+}
