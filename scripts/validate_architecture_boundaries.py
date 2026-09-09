@@ -27,6 +27,9 @@ EXPECTED_BASE_MAIN = "d18976128b15d773b77487a361abe9781bd32cc3"
 AUTHORITY_CONTRACT_POLICY_ID = "ATHENA_MAIN_SHADOW_AUTHORITY_PARITY_V1"
 AUTHORITY_CONTRACT_SHA256 = "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe"
 AUTHORITY_CONTRACT_PATH = "config/architecture/main-shadow-authority-parity-v1.json"
+P0_INVENTORY_PATH = "artifacts/architecture/repository-architecture-inventory-v1.json"
+P0_INVENTORY_SHA256 = "a77617557659c8d8a7a5e6887ba65529a87f5f7c229113a36ca6d2f9f2a26a4a"
+P0_INVENTORY_SOURCE_COMMIT = "e04cbbeaeff999a1e5dd3ff7891857b4813a7fac"
 RULE_IDS = (
     "MODEL_PROBABILITY_CANNOT_IMPORT_SPORTYBET_DELIVERY",
     "PRICING_CANNOT_IMPORT_PORTFOLIO_OR_WAGER",
@@ -142,7 +145,7 @@ def _validate_policy(policy: dict[str, Any]) -> dict[str, dict[str, Any]]:
     return by_responsibility
 
 
-def _validate_authority_contract(raw: bytes) -> list[dict[str, Any]]:
+def _validate_authority_contract(raw: bytes) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     _require(hashlib.sha256(raw).hexdigest() == AUTHORITY_CONTRACT_SHA256, "wrong P0.3 contract bytes")
     try:
         contract = json.loads(raw.decode("utf-8"))
@@ -150,9 +153,65 @@ def _validate_authority_contract(raw: bytes) -> list[dict[str, Any]]:
         raise BoundaryError("invalid P0.3 contract JSON") from exc
     _require(isinstance(contract, dict) and contract.get("policy_id") == AUTHORITY_CONTRACT_POLICY_ID, "wrong P0.3 contract policy ID")
     _require(contract.get("active_shadow_deviations") == [], "P0.3 active Shadow deviations must remain zero")
+    _require(
+        contract.get("p0_inventory_evidence") == {
+            "csv_sha256": "6585ab79b29e9a51751e4cc1060f6a20643457aff5090c436b8eaae451202e51",
+            "json_sha256": P0_INVENTORY_SHA256,
+            "source_commit": P0_INVENTORY_SOURCE_COMMIT,
+        },
+        "P0.3 does not pin the reviewed P0.2 inventory evidence",
+    )
     assignments = contract.get("reviewed_module_assignments")
     _require(isinstance(assignments, list), "P0.3 assignments missing")
-    return assignments
+    return assignments, contract
+
+
+def _p0_inventory_digest(raw: bytes) -> str:
+    """Return P0.2's pinned digest, allowing only its terminal CRLF transport form."""
+    normalized = raw.replace(b"\r\n", b"\n")
+    checkout_terminal = normalized[:-1] + b"\r\n" if normalized.endswith(b"\n") else normalized
+    for candidate in (raw, checkout_terminal):
+        digest = hashlib.sha256(candidate).hexdigest()
+        if digest == P0_INVENTORY_SHA256:
+            return digest
+    return hashlib.sha256(raw).hexdigest()
+
+
+def _p0_inventory_modules(raw: bytes) -> dict[str, str]:
+    _require(_p0_inventory_digest(raw) == P0_INVENTORY_SHA256, "wrong P0.2 inventory bytes")
+    try:
+        inventory = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise BoundaryError("invalid P0.2 inventory JSON") from exc
+    _require(isinstance(inventory, dict), "P0.2 inventory root must be an object")
+    _require(inventory.get("source_commit") == P0_INVENTORY_SOURCE_COMMIT, "wrong P0.2 inventory source commit")
+    records = inventory.get("python_modules")
+    _require(isinstance(records, list), "P0.2 inventory python modules missing")
+    modules: dict[str, str] = {}
+    for record in records:
+        _require(isinstance(record, dict), "invalid P0.2 module record")
+        module, path = record.get("module"), record.get("path")
+        _require(isinstance(module, str) and module and isinstance(path, str) and path, "invalid P0.2 module identity")
+        _require(module not in modules, f"duplicate P0.2 module identity: {module}")
+        modules[module] = path
+    return modules
+
+
+def _baseline_module_index(repo_root: Path, base_ref: str, exact_ref: str, tracked: set[str]) -> dict[str, str]:
+    """Read the exact P0.4 base, or its P0.3-pinned immutable inventory in shallow CI.
+
+    GitHub's Tests checkout can contain only the pull-request commit.  The
+    fallback has authority only because P0.3 pins the P0.2 artifact bytes and
+    source commit; it never consults untracked files or the working tree.
+    """
+    try:
+        base_sha = resolve_ref(repo_root, base_ref)
+    except RuntimeError:
+        _require(P0_INVENTORY_PATH in tracked, "P0.2 inventory is not tracked at exact ref")
+        raw = read_files_at_ref(repo_root, exact_ref, [P0_INVENTORY_PATH])[P0_INVENTORY_PATH]
+        return _p0_inventory_modules(raw)
+    _require(base_sha == EXPECTED_BASE_MAIN, "P0.4 policy base does not resolve exactly")
+    return _module_index(repo_root, base_sha)
 
 
 def _research_sources(assignments: list[dict[str, Any]], selector: dict[str, str]) -> set[str]:
@@ -304,11 +363,9 @@ def validate_architecture_boundaries(repo_root: Path, policy_path: Path, ref: st
     _require(exact_policy == raw_policy, "policy bytes do not match exact ref")
     _require(AUTHORITY_CONTRACT_PATH in tracked, "P0.3 contract is not tracked at exact ref")
     authority_raw = read_files_at_ref(repo_root, sha, [AUTHORITY_CONTRACT_PATH])[AUTHORITY_CONTRACT_PATH]
-    assignments = _validate_authority_contract(authority_raw)
+    assignments, _authority_contract = _validate_authority_contract(authority_raw)
     modules = _module_index(repo_root, sha)
-    base_sha = resolve_ref(repo_root, policy["policy_base_main"])
-    _require(base_sha == EXPECTED_BASE_MAIN, "P0.4 policy base does not resolve exactly")
-    base_modules = _module_index(repo_root, base_sha)
+    base_modules = _baseline_module_index(repo_root, policy["policy_base_main"], sha, tracked)
     for responsibility, family in families.items():
         observed = _family_modules(base_modules, tuple(family["public_prefixes"]))
         _require(observed == family["baseline_public_module_ids"], f"baseline family list does not match P0.4 base: {responsibility}")

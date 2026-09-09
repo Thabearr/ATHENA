@@ -56,6 +56,12 @@ relative imports, malformed policies, missing ADRs, or unknown dynamic targets
 fail closed. Untracked files, caches, and developer-machine state have no
 authority.
 
+When a CI checkout does not retain the exact P0.4 base commit, baseline-family
+verification uses only the immutable P0.2 inventory whose bytes and source
+commit are already pinned by P0.3. This narrow shallow-checkout fallback never
+uses working-tree files or network state; a full-history checkout continues to
+inspect the exact base commit directly.
+
 ## Current baseline and CI integration
 
 At creation, the ADR registry is empty and the exact P0.4 base has zero

@@ -134,9 +134,26 @@ def test_duplicate_adr_approval_fails_closed() -> None:
 def test_baseline_family_matches_every_real_base_module() -> None:
     policy = _policy()
     families = boundaries._validate_policy(policy)
-    base_modules = boundaries._module_index(ROOT, boundaries.EXPECTED_BASE_MAIN)
+    head = boundaries.resolve_ref(ROOT, "HEAD")
+    tracked = set(boundaries.list_tracked_files(ROOT, head))
+    base_modules = boundaries._baseline_module_index(ROOT, boundaries.EXPECTED_BASE_MAIN, head, tracked)
     for responsibility, family in families.items():
         assert boundaries._family_modules(base_modules, tuple(family["public_prefixes"])) == family["baseline_public_module_ids"]
+
+
+def test_shallow_checkout_uses_only_p03_pinned_p02_inventory(monkeypatch: pytest.MonkeyPatch) -> None:
+    head = boundaries.resolve_ref(ROOT, "HEAD")
+    tracked = set(boundaries.list_tracked_files(ROOT, head))
+    original = boundaries.resolve_ref
+
+    def shallow_only(repo_root: Path, ref: str) -> str:
+        if ref == boundaries.EXPECTED_BASE_MAIN:
+            raise RuntimeError("base object unavailable in shallow checkout")
+        return original(repo_root, ref)
+
+    monkeypatch.setattr(boundaries, "resolve_ref", shallow_only)
+    modules = boundaries._baseline_module_index(ROOT, boundaries.EXPECTED_BASE_MAIN, head, tracked)
+    assert modules["domain.market_router"] == "domain/market_router.py"
 
 
 @pytest.mark.parametrize(("source_module", "source"), [
