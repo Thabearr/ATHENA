@@ -63,6 +63,21 @@ SAFETY_KEYS = frozenset({"cookies", "login", "provider_create_reload_verificatio
 TOP_LEVEL_KEYS = frozenset({"active_shadow_deviations", "authority_profile_vocabulary", "contract_base_main", "execution_profiles", "known_parity_gaps", "p0_inventory_evidence", "policy_id", "promotion_policy", "protected_research_infrastructure", "request_semantics", "reviewed_module_assignments", "safety_boundary", "schema_version", "shadow_deviation_policy", "shared_responsibilities"})
 PROTECTED_RULES = frozenset({"ACTIVE_PROSPECTIVE_RESEARCH", "NO_DELETION_AUTHORITY", "NO_MIGRATION_WITHOUT_EXPERIMENT_REVIEW", "NO_SYNTHETIC_BACKFILL", "NO_AUTOMATIC_PROMOTION"})
 PROMOTION_LIFECYCLE = ("REGISTERED_CHALLENGER", "SHADOW_EVALUATION", "PROSPECTIVE_WALK_FORWARD_EVIDENCE", "REVIEW_REQUIRED", "EXPLICIT_PROMOTION_PR", "MAIN")
+EXPECTED_OWNER_STATUS_BY_RESPONSIBILITY = {
+    "calibration_interface": "PENDING_SHARED_CORE_EXTRACTION", "champion_feature_interface": "PENDING_SHARED_CORE_EXTRACTION", "champion_probability_interface": "PENDING_SHARED_CORE_EXTRACTION", "delivery_share_code_transport": "PENDING_SHARED_CORE_EXTRACTION", "fixture_identity": "PENDING_SHARED_CORE_EXTRACTION", "fixture_state_schema": "PENDING_SHARED_CORE_EXTRACTION", "market_projection": "PENDING_SHARED_CORE_EXTRACTION", "market_router": "PENDING_CANONICAL_PROMOTION", "portfolio_optimizer": "PENDING_CANONICAL_PROMOTION", "price_all_and_de_vig": "PENDING_CANONICAL_PROMOTION", "provider_market_semantics": "PENDING_SHARED_CORE_EXTRACTION", "provider_quote_identity_and_freshness": "PENDING_SHARED_CORE_EXTRACTION", "request_date_and_target_semantics": "PENDING_LEGACY_MIGRATION", "run_receipt_and_observability": "PENDING_SHARED_CORE_EXTRACTION", "settlement_semantics": "PENDING_SHARED_CORE_EXTRACTION", "source_evidence_and_lineage": "PENDING_SHARED_CORE_EXTRACTION",
+}
+EXPECTED_GAP_SEMANTICS = {
+    "main_shadow_pipeline_not_yet_one_shared_core": (["fixture_state_schema", "price_all_and_de_vig", "market_router", "portfolio_optimizer", "delivery_share_code_transport"], "P1", "P3"),
+    "current_shadow_profile_specific_price_all": (["price_all_and_de_vig"], "P2", "P2"), "current_shadow_profile_specific_router": (["market_router"], "P2", "P2"), "current_shadow_profile_specific_portfolio": (["portfolio_optimizer"], "P2", "P2"), "current_shadow_profile_specific_share_code": (["delivery_share_code_transport"], "P2", "P2"), "v3_current_provider_price_all_candidate_unproven": (["price_all_and_de_vig"], "P1", "P2"), "v3_current_provider_router_candidate_unproven": (["market_router"], "P1", "P2"), "v3_current_provider_portfolio_candidate_unproven": (["portfolio_optimizer"], "P1", "P2"),
+}
+EXPECTED_ASSIGNMENT_ROLE = {
+    "build_acca": ("MAIN_ONLY", "SUPPORTED_LEGACY", "SUPPORTED_LEGACY_MAIN_ENTRYPOINT", "SEPARATELY_GOVERNED", None),
+    "domain.current_shadow_all_market_runner": ("SHADOW_ONLY", "PROFILE_ORCHESTRATION", "RESEARCH_SHADOW_ONLY", "PROVEN_FALSE", None),
+    "domain.current_shadow_all_market_price_all": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "price_all_and_de_vig"),
+    "domain.current_shadow_all_market_router": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "market_router"),
+    "domain.current_shadow_all_market_portfolio": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "portfolio_optimizer"),
+    "domain.current_shadow_all_market_share_code": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "delivery_share_code_transport"),
+}
 
 
 class ValidationError(ValueError):
@@ -137,7 +152,7 @@ def _validate_responsibilities(responsibilities: Any) -> dict[str, dict[str, Any
         rid = entry["responsibility_id"]
         _require(entry.get("canonical_scope") == "SHARED", f"{rid}: canonical_scope must be SHARED")
         _require(entry.get("baseline_required_in_main") is True and entry.get("baseline_required_in_shadow") is True, f"{rid}: shared baseline required in both profiles")
-        _require(entry.get("current_owner_status") in OWNER_STATUSES, f"{rid}: invalid owner status")
+        _require(entry.get("current_owner_status") == EXPECTED_OWNER_STATUS_BY_RESPONSIBILITY[rid], f"{rid}: reviewed owner status changed")
         expected_mode = "EXACT_SHARED_BASELINE" if rid in EXACT_SHARED_RESPONSIBILITIES else "SHARED_BASELINE_REGISTERED_CHALLENGER_ALLOWED"
         expected_policy = "FORBIDDEN" if rid in EXACT_SHARED_RESPONSIBILITIES else "REGISTERED_CHALLENGER_ONLY"
         _require(entry.get("parity_requirement") == expected_mode, f"{rid}: immutable parity mode changed")
@@ -177,6 +192,10 @@ def _validate_assignments(assignments: Any, inventory: dict[str, Any]) -> None:
     _require(len(roots) == 6, "P0.2 supported-root count changed")
     _require(roots <= set(ids), "every P0.2 supported root needs an explicit P0.3 assignment")
     by_id = {entry["component_id"]: entry for entry in assignments}
+    for component, expected in EXPECTED_ASSIGNMENT_ROLE.items():
+        entry = by_id[component]
+        actual = (entry["authority_profile"], entry["canonical_status"], entry["review_state"], entry["observed_production_authority_state"], entry.get("future_shared_responsibility"))
+        _require(actual == expected, f"reviewed assignment semantics changed: {component}")
     _require(by_id["build_acca"]["authority_profile"] == "MAIN_ONLY", "build_acca must be MAIN_ONLY")
     _require(by_id["build_acca"]["canonical_status"] == "SUPPORTED_LEGACY", "build_acca must remain supported legacy")
     for component in ("engine.market_selector", "services.prediction_service", "domain.price_all_v3_current_provider", "domain.market_router_v3_current_provider", "domain.portfolio_optimizer_v3_current_provider"):
@@ -255,6 +274,8 @@ def validate_contract(contract_path: Path, inventory_path: Path) -> dict[str, An
         _require(entry.get("status") == "UNRESOLVED_PREEXISTING" and entry.get("production_authority_change") is False, "invalid known parity gap authority")
         waves = {"P1": 1, "P2": 2, "P3": 3}
         _require(entry.get("resolution_start_wave") in waves and entry.get("resolution_completion_wave") in waves and waves[entry["resolution_start_wave"]] <= waves[entry["resolution_completion_wave"]], "invalid parity-gap waves")
+        expected_affected, expected_start, expected_completion = EXPECTED_GAP_SEMANTICS[entry["gap_id"]]
+        _require(entry["affected_responsibility_ids"] == expected_affected and entry["resolution_start_wave"] == expected_start and entry["resolution_completion_wave"] == expected_completion, "reviewed parity-gap semantics changed")
     pipeline = next(item for item in gaps if item["gap_id"] == "main_shadow_pipeline_not_yet_one_shared_core")
     _require(pipeline["resolution_start_wave"] == "P1" and pipeline["resolution_completion_wave"] == "P3", "pipeline gap must span P1 through P3")
     _require(contract.get("active_shadow_deviations") == [], "P0.3 permits no active Shadow deviations")
