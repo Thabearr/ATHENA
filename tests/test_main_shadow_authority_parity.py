@@ -5,6 +5,7 @@ import hashlib
 import ast
 import json
 import socket
+import subprocess
 import sys
 from copy import deepcopy
 from pathlib import Path
@@ -16,16 +17,29 @@ from scripts import validate_main_shadow_authority_parity as validator
 ROOT = Path(__file__).resolve().parents[1]
 CONTRACT = ROOT / "config/architecture/main-shadow-authority-parity-v1.json"
 INVENTORY = ROOT / "artifacts/architecture/repository-architecture-inventory-v1.json"
+INVENTORY_RELATIVE_PATH = "artifacts/architecture/repository-architecture-inventory-v1.json"
 
 
 def _payload() -> dict:
     return json.loads(CONTRACT.read_text(encoding="utf-8"))
 
 
+def _committed_inventory_bytes() -> bytes:
+    """Use the immutable tracked P0.2 blob, not a restored test-cache copy."""
+    return subprocess.run(
+        ["git", "show", f"HEAD:{INVENTORY_RELATIVE_PATH}"],
+        check=True,
+        cwd=ROOT,
+        capture_output=True,
+    ).stdout
+
+
 def _validate(payload: dict, tmp_path: Path) -> dict:
     candidate = tmp_path / "contract.json"
     candidate.write_bytes(validator.canonical_json_bytes(payload))
-    return validator.validate_contract(candidate, INVENTORY)
+    inventory = tmp_path / "inventory.json"
+    inventory.write_bytes(_committed_inventory_bytes())
+    return validator.validate_contract(candidate, inventory)
 
 
 def _fails(payload: dict, tmp_path: Path) -> None:
@@ -48,10 +62,10 @@ def test_baseline_contract_is_valid_and_deterministic(tmp_path: Path) -> None:
 
 def test_inventory_digest_rejects_semantic_mutation_but_tolerates_checkout_eol(tmp_path: Path) -> None:
     crlf_inventory = tmp_path / "inventory-crlf.json"
-    crlf_inventory.write_bytes(INVENTORY.read_bytes().replace(b"\n", b"\r\n"))
+    crlf_inventory.write_bytes(_committed_inventory_bytes().replace(b"\n", b"\r\n"))
     assert validator.validate_contract(CONTRACT, crlf_inventory)["supported_root_count"] == 6
     changed_inventory = tmp_path / "inventory-changed.json"
-    changed_inventory.write_bytes(INVENTORY.read_bytes().replace(b"ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_V1", b"ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_X1"))
+    changed_inventory.write_bytes(_committed_inventory_bytes().replace(b"ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_V1", b"ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_X1"))
     with pytest.raises(validator.ValidationError, match="wrong P0 inventory digest"):
         validator.validate_contract(CONTRACT, changed_inventory)
 
@@ -86,7 +100,7 @@ def test_cleanup_is_not_inferred_from_authority(tmp_path: Path) -> None:
 def test_all_supported_roots_are_covered_and_correctly_classified() -> None:
     payload = _payload()
     assignments = {item["component_id"]: item for item in payload["reviewed_module_assignments"]}
-    inventory = json.loads(INVENTORY.read_text(encoding="utf-8"))
+    inventory = json.loads(_committed_inventory_bytes().decode("utf-8"))
     roots = {item["root_identifier"] for item in inventory["supported_roots"]}
     assert roots <= assignments.keys()
     assert assignments["build_acca"]["authority_profile"] == "MAIN_ONLY"

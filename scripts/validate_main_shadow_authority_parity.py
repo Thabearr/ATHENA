@@ -61,11 +61,22 @@ def _read_json(path: Path) -> tuple[bytes, dict[str, Any]]:
 
 
 def _inventory_digest(raw: bytes) -> str:
-    """Hash canonical P0.2 bytes, tolerating only reversible checkout EOLs."""
-    digest = hashlib.sha256(raw).hexdigest()
-    if digest == EXPECTED_INVENTORY_SHA256:
-        return digest
-    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+    """Hash canonical P0.2 bytes, tolerating only transport-only endings.
+
+    P0.2's published digest covers its terminal CRLF.  The tracked Git blob may
+    carry the same terminal delimiter as LF.  These representations have
+    identical JSON semantics; no other byte is repaired.
+    """
+    normalized = raw.replace(b"\r\n", b"\n")
+    checkout_terminal = (
+        normalized[:-1] + b"\r\n" if normalized.endswith(b"\n") else normalized
+    )
+    candidates = (raw, checkout_terminal)
+    for candidate in candidates:
+        digest = hashlib.sha256(candidate).hexdigest()
+        if digest == EXPECTED_INVENTORY_SHA256:
+            return digest
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _unique(values: list[str], label: str) -> None:
