@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import hashlib
-import importlib
+import ast
 import json
 import socket
 import sys
@@ -44,6 +44,16 @@ def test_baseline_contract_is_valid_and_deterministic(tmp_path: Path) -> None:
     assert first == second
     assert first["contract_sha256"] == hashlib.sha256(CONTRACT.read_bytes()).hexdigest()
     assert CONTRACT.read_bytes() == validator.canonical_json_bytes(payload)
+
+
+def test_inventory_digest_rejects_semantic_mutation_but_tolerates_checkout_eol(tmp_path: Path) -> None:
+    crlf_inventory = tmp_path / "inventory-crlf.json"
+    crlf_inventory.write_bytes(INVENTORY.read_bytes().replace(b"\n", b"\r\n"))
+    assert validator.validate_contract(CONTRACT, crlf_inventory)["supported_root_count"] == 6
+    changed_inventory = tmp_path / "inventory-changed.json"
+    changed_inventory.write_bytes(INVENTORY.read_bytes().replace(b"ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_V1", b"ATHENA_REPOSITORY_ARCHITECTURE_INVENTORY_X1"))
+    with pytest.raises(validator.ValidationError, match="wrong P0 inventory digest"):
+        validator.validate_contract(CONTRACT, changed_inventory)
 
 
 @pytest.mark.parametrize(("mutate", "label"), [
@@ -195,5 +205,12 @@ def test_validator_uses_no_network_or_business_runtime(monkeypatch, tmp_path: Pa
     def forbidden(*args, **kwargs):
         raise AssertionError("network access is forbidden")
     monkeypatch.setattr(socket, "create_connection", forbidden)
+    before = set(sys.modules)
     assert _validate(_payload(), tmp_path)["supported_root_count"] == 6
-    assert not any(name.startswith(("domain.", "engine.", "services.")) for name in sys.modules)
+    imported = set(sys.modules) - before
+    assert not any(name.startswith(("domain.", "engine.", "services.")) for name in imported)
+    source = Path(validator.__file__).read_text(encoding="utf-8")
+    assert all(
+        not (isinstance(node, ast.ImportFrom) and node.module and node.module.split(".")[0] in {"domain", "engine", "services"})
+        for node in ast.walk(ast.parse(source))
+    )

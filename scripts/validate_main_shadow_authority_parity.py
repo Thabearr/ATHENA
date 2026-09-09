@@ -60,6 +60,14 @@ def _read_json(path: Path) -> tuple[bytes, dict[str, Any]]:
     return raw, value
 
 
+def _inventory_digest(raw: bytes) -> str:
+    """Hash canonical P0.2 bytes, tolerating only reversible checkout EOLs."""
+    digest = hashlib.sha256(raw).hexdigest()
+    if digest == EXPECTED_INVENTORY_SHA256:
+        return digest
+    return hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+
+
 def _unique(values: list[str], label: str) -> None:
     _require(len(values) == len(set(values)), f"duplicate {label}")
 
@@ -175,7 +183,7 @@ def validate_contract(contract_path: Path, inventory_path: Path) -> dict[str, An
     contract_raw, contract = _read_json(contract_path)
     inventory_raw, inventory = _read_json(inventory_path)
     _require(contract_raw == canonical_json_bytes(contract), "contract JSON is not canonical deterministic bytes")
-    _require(hashlib.sha256(inventory_raw).hexdigest() == EXPECTED_INVENTORY_SHA256, "wrong P0 inventory digest")
+    _require(_inventory_digest(inventory_raw) == EXPECTED_INVENTORY_SHA256, "wrong P0 inventory digest")
     _require(contract.get("schema_version") == SCHEMA_VERSION, "invalid schema version")
     _require(contract.get("policy_id") == POLICY_ID, "invalid policy ID")
     _require(contract.get("contract_base_main") == EXPECTED_BASE_MAIN, "wrong contract base main")
