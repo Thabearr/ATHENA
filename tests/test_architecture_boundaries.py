@@ -185,6 +185,6 @@ def test_diagnostics_are_deterministic() -> None:
 
 def test_exact_head_baseline_has_no_violations_and_contract_is_unchanged() -> None:
     result = boundaries.validate_architecture_boundaries(ROOT, POLICY_PATH, "HEAD")
-    assert result["resolved_ref"] == "d18976128b15d773b77487a361abe9781bd32cc3"
+    assert result["resolved_ref"] == boundaries.resolve_ref(ROOT, "HEAD")
     assert result["forbidden_dependency_violation_count"] == 0
     assert result["baseline_parallel_authority_adr_count"] == 0

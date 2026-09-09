@@ -168,14 +168,18 @@ def _research_sources(assignments: list[dict[str, Any]], selector: dict[str, str
 
 
 def _tokenized(module: str, tokens: list[str]) -> bool:
-    return any(component in set(tokens) for component in module.split("."))
+    expected = set(tokens)
+    return any(
+        component in expected or any(part in expected for part in component.split("_"))
+        for component in module.split(".")
+    )
 
 
 def _is_model_probability(module: str, policy: dict[str, Any]) -> bool:
     parts = module.split(".")
     if not parts or parts[0] not in policy["model_probability_parent_namespaces"]:
         return False
-    return parts[0] == "models" or any(part in set(policy["model_probability_tokens"]) for part in parts)
+    return parts[0] == "models" or _tokenized(module, policy["model_probability_tokens"])
 
 
 def _is_pricing(module: str, policy: dict[str, Any]) -> bool:
