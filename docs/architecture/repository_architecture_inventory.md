@@ -24,7 +24,7 @@ The inventory answers:
 - What exact Git commit was inventoried?
 
 The resulting artifacts are the factual input for subsequent remediation
-waves (P0.3 boundary CI, P0.4 runtime instrumentation, etc.).
+waves (P0.3 Main / Shadow Authority and Parity Contract, P0.4 Architecture Boundary CI, P0.5 Runtime Reachability Instrumentation, etc.).
 
 ---
 
@@ -207,12 +207,19 @@ human review and a merged PR.
 
 | Wave | How this artifact is used |
 |------|--------------------------|
-| P0.3 Architecture boundary CI | Import graph edges become CI rules — if a caller imports a module it should not (e.g. legacy into canonical), CI fails. Boundaries derived from P0.2 evidence. |
-| P0.4 Runtime reachability instrumentation | P0.2 static roots and edges become starting points for runtime coverage annotation. |
-| Checkpoint A | P0.2 + P0.3 + P0.4 together constitute the complete inventory. |
-| P1 Canonical orchestration/interfaces | P0.2 identifies which callers must be migrated before canonical interface can be locked. |
-| P2–P3 Migration waves | P0.2 provides the list of static importers that must be updated for each migration. |
-| P5/P6 Retirement/deletion | P0.2 evidence (static inbound, workflow refs, dynamic refs, subprocess refs) is a required input for any deletion PR. A deletion PR must show that all signals are zero or migrated. |
+| P0.2 Machine-generated repository architecture inventory | Baseline inventory of modules, imports, entrypoints, workflows, and indicators (this artifact). |
+| P0.3 Main / Shadow Authority and Parity Contract | Establishes authoritative profile assignments (`SHARED_CANONICAL`, `MAIN_ONLY`, `SHADOW_ONLY`, `RESEARCH_CHALLENGER`, `HISTORICAL_EVIDENCE`), parity invariants, and allowed shadow deviations based on P0.2 evidence. |
+| P0.4 Architecture Boundary CI | Import graph edges become CI rules — if a caller imports a module it should not (e.g. legacy or unpromoted challenger into canonical core), CI fails. Boundaries derived from P0.2 evidence. |
+| P0.5 Runtime Reachability Instrumentation | P0.2 static roots and edges become starting points for runtime coverage and execution path verification. |
+| Checkpoint A — Inventory Complete | P0.2 + P0.4 + P0.5 together constitute the complete inventory. |
+| Checkpoint B0 — Main / Shadow Parity Contract Established | Formally establishes typed MAIN/SHADOW profiles, shared canonical core, and parity gates. |
+| P1 Canonical interfaces / orchestration | P0.2 identifies which callers must be migrated before canonical interface can be locked. |
+| P2 Shared-core / Shadow migration | P0.2 provides the list of static importers that must be updated for shared-core and shadow migration. |
+| P3 Main / legacy migration | P0.2 provides the list of static importers that must be migrated away from legacy paths. |
+| P4 Command + workflow convergence | Consolidates fragmented CLI entrypoints and workflows using P0.2 workflow/entrypoint evidence. |
+| P5 Learning / explicit promotion | Explicit promotion gating for challengers; no automatic promotion. |
+| P6 Evidence-backed retirement | P0.2 evidence (static inbound, workflow refs, dynamic refs, subprocess refs) is a required input for any deletion PR. A deletion PR must show that all signals are zero or migrated. |
+| P7 Deep repository audit / final pruning | Final structural verification and dead code removal across the repository. |
 
 ---
 
@@ -294,7 +301,7 @@ If support cannot be proven: module is classified `CANDIDATE`, not `SUPPORTED`.
 
 Supported roots are derived from explicit, reviewed hosted GitHub Actions workflows in `_REVIEWED_SUPPORTED_HOSTED_WORKFLOWS`:
 
-1. `.github/workflows/current-shadow-all-market.yml` — The active production Current Shadow automated execution pipeline.
+1. `.github/workflows/current-shadow-all-market.yml` — The active Current Shadow research-only multi-market execution pipeline (research authority only; carries no production authority, no automatic promotion into Main, non-wager share-code delivery only, and zero login/cookie/wallet/stake/wager authority).
 2. `.github/workflows/tests.yml` — Continuous integration testing workflow validating repository test suites.
 3. `.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml` — Active fresh-holdout research tick workflow protecting live research continuity and out-of-sample data collection.
 4. `.github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml` — Live continuity receipt bridging workflow preserving research audit artifacts.

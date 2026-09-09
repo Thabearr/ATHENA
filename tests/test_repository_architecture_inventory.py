@@ -1062,6 +1062,102 @@ class TestFailClosedGitRead:
         with pytest.raises(RuntimeError, match="FAIL-CLOSED: missing trailing newline delimiter"):
             read_files_at_ref(repo, sha, ["a.py"])
 
+    def test_read_files_at_ref_missing_final_blob_delimiter_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 5\nhello",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: missing trailing newline delimiter"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_extra_header_token_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 5 EXTRA\nhello\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: unexpected git cat-file header"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_invalid_non_hex_object_id_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"111111111111111111111111111111111111111z blob 5\nhello\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: invalid object id"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_wrong_length_object_id_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"111111111111111111111111111111111111111 blob 5\nhello\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: invalid object id"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_extra_trailing_whitespace_raises(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 5\nhello\n\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        with pytest.raises(RuntimeError, match="FAIL-CLOSED: unparsed trailing data"):
+            read_files_at_ref(repo, sha, ["a.py"])
+
+    def test_read_files_at_ref_exact_valid_response_succeeds(self, tmp_path, monkeypatch):
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        _init_repo(repo)
+        _add_file(repo, "a.py", "x = 1\n")
+        sha = _commit(repo)
+        fake_proc = subprocess.CompletedProcess(
+            args=["git", "cat-file", "--batch"],
+            returncode=0,
+            stdout=b"1111111111111111111111111111111111111111 blob 5\nhello\n",
+            stderr=b"",
+        )
+        monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: fake_proc)
+        result = read_files_at_ref(repo, sha, ["a.py"])
+        assert result == {"a.py": b"hello"}
+
 
 # ===========================================================================
 # CSV Contract Tests

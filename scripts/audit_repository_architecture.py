@@ -163,25 +163,52 @@ def read_files_at_ref(repo_root: Path, sha: str, paths: list[str]) -> dict[str, 
             raise RuntimeError(
                 f"FAIL-CLOSED: git cat-file --batch malformed: missing header newline for path {req_path!r} at offset {idx}"
             )
-        header = out[idx:nl].decode("utf-8", errors="replace")
+        header_bytes = out[idx:nl]
         idx = nl + 1
-        parts = header.split()
-        if len(parts) >= 2 and parts[1] == "missing":
+        try:
+            header = header_bytes.decode("ascii")
+        except UnicodeDecodeError as exc:
+            raise RuntimeError(
+                f"FAIL-CLOSED: non-ASCII characters in git cat-file header for path {req_path!r}: {header_bytes!r}"
+            ) from exc
+
+        # Check for missing object response: "<object-name> missing"
+        if header.endswith(" missing"):
             raise RuntimeError(
                 f"FAIL-CLOSED: missing Git blob for requested path {req_path!r} at ref {sha}: {header}"
             )
-        if len(parts) < 3 or parts[1] != "blob":
+
+        # Header must contain exactly 3 space-separated tokens:
+        # <40-char lowercase hex object id> blob <decimal size>
+        parts = header.split(" ")
+        if len(parts) != 3:
             raise RuntimeError(
-                f"FAIL-CLOSED: unexpected git cat-file header for path {req_path!r}: {header!r}"
+                f"FAIL-CLOSED: unexpected git cat-file header for path {req_path!r} "
+                f"(expected exactly 3 space-separated tokens '<oid> blob <size>'): {header!r}"
             )
-        try:
-            size = int(parts[2])
-            if size < 0:
-                raise ValueError("negative size")
-        except ValueError as exc:
+        obj_id, obj_type, size_str = parts
+
+        # Object ID must be exactly 40 lowercase hexadecimal characters
+        if len(obj_id) != 40 or not all(c in "0123456789abcdef" for c in obj_id):
             raise RuntimeError(
-                f"FAIL-CLOSED: invalid blob size in header for path {req_path!r}: {header!r}"
-            ) from exc
+                f"FAIL-CLOSED: invalid object id in git cat-file header for path {req_path!r} "
+                f"(expected 40 lowercase hex chars): {obj_id!r}"
+            )
+
+        # Object type must be exactly "blob"
+        if obj_type != "blob":
+            raise RuntimeError(
+                f"FAIL-CLOSED: unexpected object type in git cat-file header for path {req_path!r} "
+                f"(expected 'blob'): {obj_type!r}"
+            )
+
+        # Size must parse as a non-negative decimal integer
+        if not size_str.isdigit():
+            raise RuntimeError(
+                f"FAIL-CLOSED: invalid blob size in header for path {req_path!r} "
+                f"(expected non-negative decimal integer): {size_str!r}"
+            )
+        size = int(size_str)
 
         if idx + size > len(out):
             raise RuntimeError(
@@ -190,14 +217,14 @@ def read_files_at_ref(repo_root: Path, sha: str, paths: list[str]) -> dict[str, 
             )
         blob_data = out[idx:idx + size]
         idx += size
-        if idx < len(out) and out[idx:idx + 1] == b"\n":
-            idx += 1
-        elif idx == len(out):
-            pass
-        else:
+
+        # The next byte MUST exist and MUST be b"\n"
+        if idx >= len(out) or out[idx:idx + 1] != b"\n":
             raise RuntimeError(
                 f"FAIL-CLOSED: missing trailing newline delimiter after blob {req_path!r}"
             )
+        # Consume exactly that one protocol delimiter
+        idx += 1
 
         if req_path in results:
             raise RuntimeError(
@@ -210,15 +237,18 @@ def read_files_at_ref(repo_root: Path, sha: str, paths: list[str]) -> dict[str, 
         raise RuntimeError(
             f"FAIL-CLOSED: requested {total} paths but parsed {len(results)} results"
         )
-    if idx < len(out) and out[idx:].strip():
-        raise RuntimeError(
-            f"FAIL-CLOSED: unparsed trailing data in git cat-file output ({len(out) - idx} bytes)"
-        )
     for p in paths:
         if p not in results:
             raise RuntimeError(
                 f"FAIL-CLOSED: requested path {p!r} not present in parsed results"
             )
+
+    # After all requested objects are parsed: idx MUST equal len(out)
+    # ANY additional byte, including whitespace/newline, must fail closed
+    if idx != len(out):
+        raise RuntimeError(
+            f"FAIL-CLOSED: unparsed trailing data in git cat-file output ({len(out) - idx} bytes): {out[idx:idx + 64]!r}"
+        )
 
     return results
 
@@ -701,7 +731,6 @@ def build_inventory(
     repo_root: Path,
     ref: str,
     *,
-    known_supported_roots: list[dict] | None = None,
     known_authority_profiles: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Build the complete inventory for *ref* in *repo_root*."""
