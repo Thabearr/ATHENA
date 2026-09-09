@@ -51,6 +51,10 @@ def _assignment(payload: dict, component_id: str) -> dict:
     return next(item for item in payload["reviewed_module_assignments"] if item["component_id"] == component_id)
 
 
+def _gap(payload: dict, gap_id: str) -> dict:
+    return next(item for item in payload["known_parity_gaps"] if item["gap_id"] == gap_id)
+
+
 def test_baseline_contract_is_valid_and_deterministic(tmp_path: Path) -> None:
     payload = _payload()
     first = _validate(payload, tmp_path)
@@ -190,7 +194,7 @@ def test_duplicate_gap_and_assignment_and_unknown_responsibility_rejected(tmp_pa
     payload["reviewed_module_assignments"].append(deepcopy(payload["reviewed_module_assignments"][0]))
     _fails(payload, tmp_path)
     payload = _payload()
-    payload["known_parity_gaps"][0]["responsibility_id"] = "unknown"
+    payload["known_parity_gaps"][0]["affected_responsibility_ids"] = ["unknown"]
     _fails(payload, tmp_path)
 
 
@@ -261,6 +265,83 @@ def test_lifecycle_request_protection_and_top_level_schema_are_frozen(tmp_path: 
     _fails(payload, tmp_path)
     payload = _payload()
     payload["unknown"] = True
+    _fails(payload, tmp_path)
+
+
+@pytest.mark.parametrize(("responsibility_id", "replacement"), [
+    ("request_date_and_target_semantics", "PENDING_SHARED_CORE_EXTRACTION"),
+    ("fixture_state_schema", "PENDING_CANONICAL_PROMOTION"),
+    ("market_router", "PENDING_SHARED_CORE_EXTRACTION"),
+    ("portfolio_optimizer", "PENDING_SHARED_CORE_EXTRACTION"),
+    ("price_all_and_de_vig", "PENDING_SHARED_CORE_EXTRACTION"),
+])
+def test_reviewed_owner_status_mapping_is_immutable(responsibility_id: str, replacement: str, tmp_path: Path) -> None:
+    payload = _payload()
+    entry = next(item for item in payload["shared_responsibilities"] if item["responsibility_id"] == responsibility_id)
+    entry["current_owner_status"] = replacement
+    _fails(payload, tmp_path)
+
+
+@pytest.mark.parametrize(("gap_id", "field", "replacement"), [
+    ("v3_current_provider_price_all_candidate_unproven", "affected_responsibility_ids", ["market_router"]),
+    ("v3_current_provider_router_candidate_unproven", "affected_responsibility_ids", ["portfolio_optimizer"]),
+    ("v3_current_provider_portfolio_candidate_unproven", "affected_responsibility_ids", ["market_projection"]),
+    ("main_shadow_pipeline_not_yet_one_shared_core", "affected_responsibility_ids", ["price_all_and_de_vig", "market_router", "portfolio_optimizer", "delivery_share_code_transport"]),
+    ("main_shadow_pipeline_not_yet_one_shared_core", "affected_responsibility_ids", ["fixture_state_schema", "price_all_and_de_vig", "market_router", "portfolio_optimizer", "delivery_share_code_transport", "fixture_identity"]),
+    ("current_shadow_profile_specific_price_all", "resolution_start_wave", "P1"),
+    ("v3_current_provider_price_all_candidate_unproven", "resolution_completion_wave", "P3"),
+    ("current_shadow_profile_specific_router", "current_main_state", "REWRITTEN"),
+    ("current_shadow_profile_specific_router", "current_shadow_state", "REWRITTEN"),
+])
+def test_reviewed_parity_gap_semantics_are_immutable(gap_id: str, field: str, replacement, tmp_path: Path) -> None:
+    payload = _payload()
+    _gap(payload, gap_id)[field] = replacement
+    _fails(payload, tmp_path)
+
+
+@pytest.mark.parametrize(("component_id", "field", "replacement"), [
+    ("domain.current_shadow_all_market_runner", "authority_profile", "UNKNOWN"),
+    ("domain.current_shadow_all_market_price_all", "authority_profile", "UNKNOWN"),
+    ("domain.current_shadow_all_market_router", "canonical_status", "UNRESOLVED"),
+    ("domain.current_shadow_all_market_portfolio", "review_state", "RESEARCH_SHADOW_ONLY"),
+    ("domain.current_shadow_all_market_share_code", "future_shared_responsibility", "market_router"),
+    ("build_acca", "authority_profile", "SHARED_CANONICAL"),
+    ("build_acca", "observed_production_authority_state", "PROVEN_FALSE"),
+    ("domain.price_all_v3_current_provider", "authority_profile", "MAIN_ONLY"),
+    ("domain.market_router_v3_current_provider", "authority_profile", "SHARED_CANONICAL"),
+    ("domain.portfolio_optimizer_v3_current_provider", "review_state", "LEGACY_REACHABILITY_REVIEW_REQUIRED"),
+    ("engine.market_selector", "authority_profile", "MAIN_ONLY"),
+    ("services.prediction_service", "authority_profile", "MAIN_ONLY"),
+    ("scripts.execute_current_shadow_request", "authority_profile", "UNKNOWN"),
+    ("scripts.restore_current_shadow_history_prime_artifact", "canonical_status", "UNRESOLVED"),
+    ("scripts.send_current_shadow_email", "observed_production_authority_state", "UNKNOWN"),
+    ("scripts.run_fotmob_utc_native_xg_fresh_holdout_tick", "authority_profile", "RESEARCH_CHALLENGER"),
+    ("scripts.run_fotmob_fresh_holdout_release_receipt_mirror", "canonical_status", "UNRESOLVED"),
+])
+def test_all_reviewed_assignment_semantics_are_immutable(component_id: str, field: str, replacement, tmp_path: Path) -> None:
+    payload = _payload()
+    _assignment(payload, component_id)[field] = replacement
+    _fails(payload, tmp_path)
+
+
+def test_reviewed_assignment_nested_schemas_are_exact(tmp_path: Path) -> None:
+    payload = _payload()
+    _assignment(payload, "build_acca")["future_shared_responsibility"] = "market_router"
+    _fails(payload, tmp_path)
+    payload = _payload()
+    _assignment(payload, "engine.market_selector")["unexpected"] = True
+    _fails(payload, tmp_path)
+    for component_id, field in [
+        ("build_acca", "review_state"),
+        ("build_acca", "observed_production_authority_state"),
+        ("build_acca", "production_authority_granted_by_this_contract"),
+        ("domain.current_shadow_all_market_price_all", "future_shared_responsibility"),
+    ]:
+        payload = _payload()
+        del _assignment(payload, component_id)[field]
+        _fails(payload, tmp_path)
+    payload = _payload()
+    _assignment(payload, "domain.current_shadow_all_market_price_all")["future_shared_responsibility"] = "market_router"
     _fails(payload, tmp_path)
 
 

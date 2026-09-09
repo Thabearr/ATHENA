@@ -67,16 +67,80 @@ EXPECTED_OWNER_STATUS_BY_RESPONSIBILITY = {
     "calibration_interface": "PENDING_SHARED_CORE_EXTRACTION", "champion_feature_interface": "PENDING_SHARED_CORE_EXTRACTION", "champion_probability_interface": "PENDING_SHARED_CORE_EXTRACTION", "delivery_share_code_transport": "PENDING_SHARED_CORE_EXTRACTION", "fixture_identity": "PENDING_SHARED_CORE_EXTRACTION", "fixture_state_schema": "PENDING_SHARED_CORE_EXTRACTION", "market_projection": "PENDING_SHARED_CORE_EXTRACTION", "market_router": "PENDING_CANONICAL_PROMOTION", "portfolio_optimizer": "PENDING_CANONICAL_PROMOTION", "price_all_and_de_vig": "PENDING_CANONICAL_PROMOTION", "provider_market_semantics": "PENDING_SHARED_CORE_EXTRACTION", "provider_quote_identity_and_freshness": "PENDING_SHARED_CORE_EXTRACTION", "request_date_and_target_semantics": "PENDING_LEGACY_MIGRATION", "run_receipt_and_observability": "PENDING_SHARED_CORE_EXTRACTION", "settlement_semantics": "PENDING_SHARED_CORE_EXTRACTION", "source_evidence_and_lineage": "PENDING_SHARED_CORE_EXTRACTION",
 }
 EXPECTED_GAP_SEMANTICS = {
-    "main_shadow_pipeline_not_yet_one_shared_core": (["fixture_state_schema", "price_all_and_de_vig", "market_router", "portfolio_optimizer", "delivery_share_code_transport"], "P1", "P3"),
-    "current_shadow_profile_specific_price_all": (["price_all_and_de_vig"], "P2", "P2"), "current_shadow_profile_specific_router": (["market_router"], "P2", "P2"), "current_shadow_profile_specific_portfolio": (["portfolio_optimizer"], "P2", "P2"), "current_shadow_profile_specific_share_code": (["delivery_share_code_transport"], "P2", "P2"), "v3_current_provider_price_all_candidate_unproven": (["price_all_and_de_vig"], "P1", "P2"), "v3_current_provider_router_candidate_unproven": (["market_router"], "P1", "P2"), "v3_current_provider_portfolio_candidate_unproven": (["portfolio_optimizer"], "P1", "P2"),
+    "main_shadow_pipeline_not_yet_one_shared_core": {
+        "affected_responsibility_ids": ["fixture_state_schema", "price_all_and_de_vig", "market_router", "portfolio_optimizer", "delivery_share_code_transport"],
+        "current_main_state": "SUPPORTED_LEGACY_MAIN_ENTRYPOINT_WITHOUT_PROVEN_SHARED_CORE",
+        "current_shadow_state": "CURRENT_SHADOW_RESEARCH_PIPELINE_EXISTS_SEPARATELY",
+        "production_authority_change": False, "resolution_completion_wave": "P3",
+        "resolution_start_wave": "P1", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "current_shadow_profile_specific_price_all": {
+        "affected_responsibility_ids": ["price_all_and_de_vig"],
+        "current_main_state": "NO_PROVEN_SHARED_CANONICAL_PRICE_ALL_OWNER",
+        "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P2", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "current_shadow_profile_specific_router": {
+        "affected_responsibility_ids": ["market_router"],
+        "current_main_state": "NO_PROVEN_SHARED_CANONICAL_ROUTER_OWNER",
+        "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P2", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "current_shadow_profile_specific_portfolio": {
+        "affected_responsibility_ids": ["portfolio_optimizer"],
+        "current_main_state": "NO_PROVEN_SHARED_CANONICAL_PORTFOLIO_OWNER",
+        "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P2", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "current_shadow_profile_specific_share_code": {
+        "affected_responsibility_ids": ["delivery_share_code_transport"],
+        "current_main_state": "NO_PROVEN_SHARED_CANONICAL_DELIVERY_OWNER",
+        "current_shadow_state": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P2", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "v3_current_provider_price_all_candidate_unproven": {
+        "affected_responsibility_ids": ["price_all_and_de_vig"],
+        "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
+        "current_shadow_state": "V3_CURRENT_PROVIDER_PRICE_ALL_CANDIDATE_UNPROVEN",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P1", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "v3_current_provider_router_candidate_unproven": {
+        "affected_responsibility_ids": ["market_router"],
+        "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
+        "current_shadow_state": "V3_CURRENT_PROVIDER_ROUTER_CANDIDATE_UNPROVEN",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P1", "status": "UNRESOLVED_PREEXISTING",
+    },
+    "v3_current_provider_portfolio_candidate_unproven": {
+        "affected_responsibility_ids": ["portfolio_optimizer"],
+        "current_main_state": "LEGACY_MAIN_OWNER_REQUIRES_REACHABILITY_REVIEW",
+        "current_shadow_state": "V3_CURRENT_PROVIDER_PORTFOLIO_CANDIDATE_UNPROVEN",
+        "production_authority_change": False, "resolution_completion_wave": "P2",
+        "resolution_start_wave": "P1", "status": "UNRESOLVED_PREEXISTING",
+    },
 }
-EXPECTED_ASSIGNMENT_ROLE = {
-    "build_acca": ("MAIN_ONLY", "SUPPORTED_LEGACY", "SUPPORTED_LEGACY_MAIN_ENTRYPOINT", "SEPARATELY_GOVERNED", None),
-    "domain.current_shadow_all_market_runner": ("SHADOW_ONLY", "PROFILE_ORCHESTRATION", "RESEARCH_SHADOW_ONLY", "PROVEN_FALSE", None),
-    "domain.current_shadow_all_market_price_all": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "price_all_and_de_vig"),
-    "domain.current_shadow_all_market_router": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "market_router"),
-    "domain.current_shadow_all_market_portfolio": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "portfolio_optimizer"),
-    "domain.current_shadow_all_market_share_code": ("SHADOW_ONLY", "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "KNOWN_PARITY_GAP", "PROVEN_FALSE", "delivery_share_code_transport"),
+EXPECTED_ASSIGNMENT_POLICY = {
+    "build_acca": {"authority_profile": "MAIN_ONLY", "canonical_status": "SUPPORTED_LEGACY", "cleanup_disposition": "UNCLASSIFIED", "component_id": "build_acca", "component_path": "build_acca.py", "observed_production_authority_state": "SEPARATELY_GOVERNED", "production_authority_granted_by_this_contract": False, "review_state": "SUPPORTED_LEGACY_MAIN_ENTRYPOINT"},
+    "domain.current_shadow_all_market_runner": {"authority_profile": "SHADOW_ONLY", "canonical_status": "PROFILE_ORCHESTRATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.current_shadow_all_market_runner", "component_path": "domain/current_shadow_all_market_runner.py", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "RESEARCH_SHADOW_ONLY"},
+    "domain.current_shadow_all_market_price_all": {"authority_profile": "SHADOW_ONLY", "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.current_shadow_all_market_price_all", "component_path": "domain/current_shadow_all_market_price_all.py", "future_shared_responsibility": "price_all_and_de_vig", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "KNOWN_PARITY_GAP"},
+    "domain.current_shadow_all_market_router": {"authority_profile": "SHADOW_ONLY", "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.current_shadow_all_market_router", "component_path": "domain/current_shadow_all_market_router.py", "future_shared_responsibility": "market_router", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "KNOWN_PARITY_GAP"},
+    "domain.current_shadow_all_market_portfolio": {"authority_profile": "SHADOW_ONLY", "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.current_shadow_all_market_portfolio", "component_path": "domain/current_shadow_all_market_portfolio.py", "future_shared_responsibility": "portfolio_optimizer", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "KNOWN_PARITY_GAP"},
+    "domain.current_shadow_all_market_share_code": {"authority_profile": "SHADOW_ONLY", "canonical_status": "TRANSITIONAL_PROFILE_SPECIFIC_IMPLEMENTATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.current_shadow_all_market_share_code", "component_path": "domain/current_shadow_all_market_share_code.py", "future_shared_responsibility": "delivery_share_code_transport", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "KNOWN_PARITY_GAP"},
+    "domain.price_all_v3_current_provider": {"authority_profile": "UNKNOWN", "canonical_status": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.price_all_v3_current_provider", "component_path": "domain/price_all_v3_current_provider.py", "observed_production_authority_state": "UNKNOWN", "production_authority_granted_by_this_contract": False, "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"},
+    "domain.market_router_v3_current_provider": {"authority_profile": "UNKNOWN", "canonical_status": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.market_router_v3_current_provider", "component_path": "domain/market_router_v3_current_provider.py", "observed_production_authority_state": "UNKNOWN", "production_authority_granted_by_this_contract": False, "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"},
+    "domain.portfolio_optimizer_v3_current_provider": {"authority_profile": "UNKNOWN", "canonical_status": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN", "cleanup_disposition": "UNCLASSIFIED", "component_id": "domain.portfolio_optimizer_v3_current_provider", "component_path": "domain/portfolio_optimizer_v3_current_provider.py", "observed_production_authority_state": "UNKNOWN", "production_authority_granted_by_this_contract": False, "review_state": "CANONICAL_PROMOTION_CANDIDATE_UNPROVEN"},
+    "engine.market_selector": {"authority_profile": "UNKNOWN", "canonical_status": "UNRESOLVED", "cleanup_disposition": "UNCLASSIFIED", "component_id": "engine.market_selector", "component_path": "engine/market_selector.py", "observed_production_authority_state": "UNKNOWN", "production_authority_granted_by_this_contract": False, "review_state": "LEGACY_REACHABILITY_REVIEW_REQUIRED"},
+    "services.prediction_service": {"authority_profile": "UNKNOWN", "canonical_status": "UNRESOLVED", "cleanup_disposition": "UNCLASSIFIED", "component_id": "services.prediction_service", "component_path": "services/prediction_service.py", "observed_production_authority_state": "UNKNOWN", "production_authority_granted_by_this_contract": False, "review_state": "LEGACY_REACHABILITY_REVIEW_REQUIRED"},
+    "scripts.execute_current_shadow_request": {"authority_profile": "SHADOW_ONLY", "canonical_status": "PROFILE_ORCHESTRATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "scripts.execute_current_shadow_request", "component_path": "scripts/execute_current_shadow_request.py", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "RESEARCH_SHADOW_ONLY"},
+    "scripts.restore_current_shadow_history_prime_artifact": {"authority_profile": "SHADOW_ONLY", "canonical_status": "PROFILE_ORCHESTRATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "scripts.restore_current_shadow_history_prime_artifact", "component_path": "scripts/restore_current_shadow_history_prime_artifact.py", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "RESEARCH_SHADOW_ONLY"},
+    "scripts.send_current_shadow_email": {"authority_profile": "SHADOW_ONLY", "canonical_status": "PROFILE_ORCHESTRATION", "cleanup_disposition": "UNCLASSIFIED", "component_id": "scripts.send_current_shadow_email", "component_path": "scripts/send_current_shadow_email.py", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "RESEARCH_SHADOW_ONLY"},
+    "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick": {"authority_profile": "UNKNOWN", "canonical_status": "RESEARCH_INFRASTRUCTURE", "cleanup_disposition": "UNCLASSIFIED", "component_id": "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick", "component_path": "scripts/run_fotmob_utc_native_xg_fresh_holdout_tick.py", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "PROTECTED_RESEARCH_INFRASTRUCTURE"},
+    "scripts.run_fotmob_fresh_holdout_release_receipt_mirror": {"authority_profile": "UNKNOWN", "canonical_status": "RESEARCH_INFRASTRUCTURE", "cleanup_disposition": "UNCLASSIFIED", "component_id": "scripts.run_fotmob_fresh_holdout_release_receipt_mirror", "component_path": "scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py", "observed_production_authority_state": "PROVEN_FALSE", "production_authority_granted_by_this_contract": False, "review_state": "PROTECTED_RESEARCH_INFRASTRUCTURE"},
 }
 
 
@@ -171,6 +235,10 @@ def _validate_assignments(assignments: Any, inventory: dict[str, Any]) -> None:
     for entry in assignments:
         _require(isinstance(entry, dict), "invalid module assignment")
         component = entry.get("component_id")
+        expected = EXPECTED_ASSIGNMENT_POLICY.get(component)
+        _require(expected is not None, f"unreviewed P0.3 assignment: {component}")
+        _require(set(entry) == set(expected), f"invalid reviewed assignment schema: {component}")
+        _require(entry == expected, f"reviewed assignment semantics changed: {component}")
         _require(component in inventory_modules and inventory_modules[component] == entry.get("component_path"), f"assignment does not reference a P0.2 tracked module: {component}")
         role = entry.get("authority_profile")
         _require(role in AUTHORITY_PROFILES, f"unknown authority profile: {component}")
@@ -191,19 +259,6 @@ def _validate_assignments(assignments: Any, inventory: dict[str, Any]) -> None:
     roots = {entry.get("root_identifier") for entry in supported if isinstance(entry, dict)}
     _require(len(roots) == 6, "P0.2 supported-root count changed")
     _require(roots <= set(ids), "every P0.2 supported root needs an explicit P0.3 assignment")
-    by_id = {entry["component_id"]: entry for entry in assignments}
-    for component, expected in EXPECTED_ASSIGNMENT_ROLE.items():
-        entry = by_id[component]
-        actual = (entry["authority_profile"], entry["canonical_status"], entry["review_state"], entry["observed_production_authority_state"], entry.get("future_shared_responsibility"))
-        _require(actual == expected, f"reviewed assignment semantics changed: {component}")
-    _require(by_id["build_acca"]["authority_profile"] == "MAIN_ONLY", "build_acca must be MAIN_ONLY")
-    _require(by_id["build_acca"]["canonical_status"] == "SUPPORTED_LEGACY", "build_acca must remain supported legacy")
-    for component in ("engine.market_selector", "services.prediction_service", "domain.price_all_v3_current_provider", "domain.market_router_v3_current_provider", "domain.portfolio_optimizer_v3_current_provider"):
-        _require(by_id[component]["observed_production_authority_state"] == "UNKNOWN", f"{component} must remain production-authority unknown")
-    for component in ("scripts.execute_current_shadow_request", "scripts.restore_current_shadow_history_prime_artifact", "scripts.send_current_shadow_email"):
-        _require(by_id[component]["authority_profile"] == "SHADOW_ONLY", f"{component} must be SHADOW_ONLY")
-    for component in ("scripts.run_fotmob_utc_native_xg_fresh_holdout_tick", "scripts.run_fotmob_fresh_holdout_release_receipt_mirror"):
-        _require(by_id[component]["authority_profile"] == "UNKNOWN", f"{component} must remain UNKNOWN")
 
 
 def _validate_protected(entries: Any) -> None:
@@ -274,8 +329,8 @@ def validate_contract(contract_path: Path, inventory_path: Path) -> dict[str, An
         _require(entry.get("status") == "UNRESOLVED_PREEXISTING" and entry.get("production_authority_change") is False, "invalid known parity gap authority")
         waves = {"P1": 1, "P2": 2, "P3": 3}
         _require(entry.get("resolution_start_wave") in waves and entry.get("resolution_completion_wave") in waves and waves[entry["resolution_start_wave"]] <= waves[entry["resolution_completion_wave"]], "invalid parity-gap waves")
-        expected_affected, expected_start, expected_completion = EXPECTED_GAP_SEMANTICS[entry["gap_id"]]
-        _require(entry["affected_responsibility_ids"] == expected_affected and entry["resolution_start_wave"] == expected_start and entry["resolution_completion_wave"] == expected_completion, "reviewed parity-gap semantics changed")
+        expected = {"gap_id": entry["gap_id"], **EXPECTED_GAP_SEMANTICS[entry["gap_id"]]}
+        _require(entry == expected, "reviewed parity-gap semantics changed")
     pipeline = next(item for item in gaps if item["gap_id"] == "main_shadow_pipeline_not_yet_one_shared_core")
     _require(pipeline["resolution_start_wave"] == "P1" and pipeline["resolution_completion_wave"] == "P3", "pipeline gap must span P1 through P3")
     _require(contract.get("active_shadow_deviations") == [], "P0.3 permits no active Shadow deviations")

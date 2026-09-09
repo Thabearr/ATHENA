@@ -47,6 +47,11 @@ contract-only edit cannot make an exact-shared surface challenger-capable.
 Current owner status is not a canonical promotion: P0.3 approves zero
 `SHARED_CANONICAL` module owners.
 
+Policy v1 also freezes the exact owner-status mapping for all sixteen shared
+responsibilities.  The eight known parity gaps are reviewed baseline evidence:
+their affected responsibilities, waves, and current Main/Shadow state text are
+all fail-closed rather than editable descriptions.
+
 ## Current Main and Shadow architecture state
 
 `build_acca` is recorded only as a supported legacy Main-facing entrypoint.  The
@@ -62,6 +67,12 @@ The v3 Price-All, Router, and Portfolio candidates map respectively to
 `price_all_and_de_vig`, `market_router`, and `portfolio_optimizer`.  Their
 separate unresolved gaps are immutable baseline evidence until a later
 remediation PR proves closure.
+
+All sixteen reviewed assignment semantics are validator-frozen.  Each assignment
+uses an exact nested schema; only the four transitional Shadow components carry
+the reviewed `future_shared_responsibility` field.  A later remediation PR must
+deliberately update both the contract and validator before changing any frozen
+assignment or closing a parity gap.
 
 ## Fresh-holdout protection
 
