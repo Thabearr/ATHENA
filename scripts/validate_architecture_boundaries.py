@@ -8,6 +8,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import keyword
+import re
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +55,27 @@ ADR_HEADINGS = (
     "Status", "Context", "Evidence", "Decision", "Alternatives considered",
     "Consequences", "Migration plan", "Rollback / revisit trigger",
 )
+EXPECTED_SELECTOR_REGISTRIES = {
+    "delivery_target_module_ids": (
+        "domain.current_shadow_all_market_share_code",
+        "domain.current_shadow_sportybet_share_code",
+        "domain.current_shadow_sportybet_verified_share_code",
+        "domain.current_sportybet_accumulator_execution",
+        "scripts.sportybet_direct_share_bridge",
+        "scripts.sportybet_semantic_share_bridge",
+    ),
+    "delivery_target_tokens": (
+        "booking", "delivery", "execution", "share", "share_code", "sharecode", "transport",
+    ),
+    "model_probability_parent_namespaces": ("domain", "engine", "intelligence", "models"),
+    "model_probability_tokens": ("model", "models", "prediction", "predictions", "probability"),
+    "pricing_source_prefixes": (
+        "domain.price_all", "domain._price_all", "domain.current_shadow_all_market_price_all", "domain._current_shadow_price_",
+    ),
+    "wager_authority_tokens": (
+        "authenticated", "authentication", "bet", "betslip", "login", "stake", "staking", "wager", "wagering", "wallet",
+    ),
+}
 
 
 class BoundaryError(ValueError):
@@ -123,9 +146,10 @@ def _validate_policy(policy: dict[str, Any]) -> dict[str, dict[str, Any]]:
     _require(policy.get("authority_contract_policy_id") == AUTHORITY_CONTRACT_POLICY_ID, "wrong P0.3 policy ID")
     _require(policy.get("authority_contract_sha256") == AUTHORITY_CONTRACT_SHA256, "wrong P0.3 contract hash")
     _require(tuple(policy.get("rules", ())) == RULE_IDS, "unknown or reordered rule ID")
-    for field in ("delivery_target_module_ids", "delivery_target_tokens", "model_probability_parent_namespaces", "model_probability_tokens", "pricing_source_prefixes", "wager_authority_tokens"):
+    for field, expected in EXPECTED_SELECTOR_REGISTRIES.items():
         values = policy.get(field)
         _require(isinstance(values, list) and values and len(values) == len(set(values)) and all(isinstance(value, str) and value for value in values), f"invalid {field}")
+        _require(tuple(values) == expected, f"immutable selector registry changed: {field}")
     selector = policy.get("research_orchestration_selector")
     _require(selector == {"authority_profile": "SHADOW_ONLY", "canonical_status": "PROFILE_ORCHESTRATION"}, "invalid research orchestration selector")
     families = policy.get("authority_families")
@@ -234,6 +258,10 @@ def _tokenized(module: str, tokens: list[str]) -> bool:
     )
 
 
+def _module_tokens(module: str) -> set[str]:
+    return {part for component in module.split(".") for part in component.split("_") if part}
+
+
 def _is_model_probability(module: str, policy: dict[str, Any]) -> bool:
     parts = module.split(".")
     if not parts or parts[0] not in policy["model_probability_parent_namespaces"]:
@@ -249,11 +277,45 @@ def _is_pricing(module: str, policy: dict[str, Any]) -> bool:
 
 
 def _is_delivery(module: str, policy: dict[str, Any]) -> bool:
-    return module in set(policy["delivery_target_module_ids"]) or _tokenized(module, policy["delivery_target_tokens"])
+    if module in set(policy["delivery_target_module_ids"]):
+        return True
+    tokens = _module_tokens(module)
+    return "sportybet" in tokens and bool(tokens & set(policy["delivery_target_tokens"]))
 
 
 def _is_portfolio(module: str) -> bool:
-    return _is_boundary(module, "domain.portfolio_optimizer") or _is_boundary(module, "domain._portfolio_optimizer") or _is_boundary(module, "domain.current_shadow_all_market_portfolio")
+    if _is_boundary(module, "domain.portfolio_optimizer") or _is_boundary(module, "domain._portfolio_optimizer") or _is_boundary(module, "domain.current_shadow_all_market_portfolio"):
+        return True
+    tokens = _module_tokens(module)
+    return {"portfolio", "optimizer"} <= tokens
+
+
+def _static_import_targets(record: dict[str, Any], source_module: str, known_modules: set[str], source_path: str) -> list[str]:
+    """Return local targets plus exact external import identities for boundary checks."""
+    relative_diagnostics: list[dict[str, Any]] = []
+    targets = set(resolve_import(record, source_module, known_modules, relative_diagnostics, source_path))
+    if relative_diagnostics:
+        raise BoundaryError(f"BOUNDARY_RELATIVE_IMPORT_TARGET_UNPROVEN: {source_path}:{record['lineno']}")
+    if record["level"] == 0:
+        module = record["module"]
+        if module:
+            targets.add(module)
+        if record["kind"] == "from":
+            targets.update(f"{module}.{name}" if module else name for name in record["names"])
+    return sorted(targets)
+
+
+def _boundary_rule(policy: dict[str, Any], source_module: str, target: str, research_sources: set[str], *, dynamic: bool) -> tuple[str, str] | None:
+    suffix = "dynamically " if dynamic else ""
+    if _is_model_probability(source_module, policy) and _is_delivery(target, policy):
+        return RULE_IDS[0], f"model/probability {suffix}imports SportyBet delivery"
+    if _is_pricing(source_module, policy) and _is_portfolio(target):
+        return RULE_IDS[1], f"pricing {suffix}imports portfolio authority"
+    if _is_pricing(source_module, policy) and _tokenized(target, policy["wager_authority_tokens"]):
+        return RULE_IDS[1], f"pricing {suffix}imports wager authority"
+    if source_module in research_sources and _tokenized(target, policy["wager_authority_tokens"]):
+        return RULE_IDS[2], f"research orchestration {suffix}imports authenticated or wager authority"
+    return None
 
 
 def _dependency_violations(
@@ -269,43 +331,35 @@ def _dependency_violations(
         if import_diagnostics:
             raise BoundaryError(f"unable to parse boundary-controlled source: {source_path}")
         for record in imports:
-            relative_diagnostics: list[dict[str, Any]] = []
-            targets = resolve_import(record, source_module, known_modules, relative_diagnostics, source_path)
-            if relative_diagnostics:
-                raise BoundaryError(f"BOUNDARY_RELATIVE_IMPORT_TARGET_UNPROVEN: {source_path}:{record['lineno']}")
-            for target in targets:
-                rule_id = ""
-                reason = ""
-                if _is_model_probability(source_module, policy) and _is_delivery(target, policy):
-                    rule_id, reason = RULE_IDS[0], "model/probability imports SportyBet delivery"
-                elif _is_pricing(source_module, policy) and _is_portfolio(target):
-                    rule_id, reason = RULE_IDS[1], "pricing imports portfolio authority"
-                elif _is_pricing(source_module, policy) and _tokenized(target, policy["wager_authority_tokens"]):
-                    rule_id, reason = RULE_IDS[1], "pricing imports wager authority"
-                elif source_module in research_sources and _tokenized(target, policy["wager_authority_tokens"]):
-                    rule_id, reason = RULE_IDS[2], "research orchestration imports authenticated or wager authority"
-                if rule_id:
+            for target in _static_import_targets(record, source_module, known_modules, source_path):
+                rule = _boundary_rule(policy, source_module, target, research_sources, dynamic=False)
+                if rule:
+                    rule_id, reason = rule
                     diagnostics.append({"rule_id": rule_id, "source_module": source_module, "source_path": source_path, "target_module": target, "line_number": record["lineno"], "reason": reason})
         for dynamic in detect_dynamic_imports(source, source_path):
             if not dynamic["is_literal"]:
                 diagnostics.append({"rule_id": "BOUNDARY_DYNAMIC_IMPORT_TARGET_UNPROVEN", "source_module": source_module, "source_path": source_path, "target_module": "<UNPROVEN>", "line_number": dynamic["lineno"], "reason": "boundary-controlled source uses non-literal dynamic import"})
                 continue
             target = dynamic["literal_target"]
-            if target not in known_modules:
-                continue
-            rule_id = ""
-            reason = ""
-            if _is_model_probability(source_module, policy) and _is_delivery(target, policy):
-                rule_id, reason = RULE_IDS[0], "model/probability dynamically imports SportyBet delivery"
-            elif _is_pricing(source_module, policy) and _is_portfolio(target):
-                rule_id, reason = RULE_IDS[1], "pricing dynamically imports portfolio authority"
-            elif _is_pricing(source_module, policy) and _tokenized(target, policy["wager_authority_tokens"]):
-                rule_id, reason = RULE_IDS[1], "pricing dynamically imports wager authority"
-            elif source_module in research_sources and _tokenized(target, policy["wager_authority_tokens"]):
-                rule_id, reason = RULE_IDS[2], "research orchestration dynamically imports authenticated or wager authority"
-            if rule_id:
+            rule = _boundary_rule(policy, source_module, target, research_sources, dynamic=True)
+            if rule:
+                rule_id, reason = rule
                 diagnostics.append({"rule_id": rule_id, "source_module": source_module, "source_path": source_path, "target_module": target, "line_number": dynamic["lineno"], "reason": reason})
     return diagnostics
+
+
+def _markdown_section(text: str, heading: str) -> str:
+    matches = list(re.finditer(rf"(?m)^## {re.escape(heading)}[ \t]*$", text))
+    _require(len(matches) == 1, f"ADR document must contain exactly one ## {heading} section")
+    start = matches[0].end()
+    next_heading = re.search(r"(?m)^## ", text[start:])
+    end = start + next_heading.start() if next_heading else len(text)
+    return text[start:end].strip()
+
+
+def _is_python_module_id(module: str) -> bool:
+    parts = module.split(".")
+    return bool(parts) and all(part.isidentifier() and not keyword.iskeyword(part) for part in parts)
 
 
 def _approved_adr_modules(policy: dict[str, Any], tracked: set[str], contents: dict[str, bytes], families: dict[str, dict[str, Any]]) -> set[str]:
@@ -321,14 +375,14 @@ def _approved_adr_modules(policy: dict[str, Any], tracked: set[str], contents: d
         _require(isinstance(adr_path, str) and adr_path.startswith("docs/architecture/adrs/") and adr_path.split("/")[-1].startswith(adr_id), "ADR path is outside approved directory")
         _require(adr_path in tracked and adr_path in contents, "ADR is not tracked at exact ref")
         text = contents[adr_path].decode("utf-8", errors="strict")
-        _require("## Status" in text and "Accepted" in text, "ADR document status is not Accepted")
-        _require(all(f"## {heading}" in text for heading in ADR_HEADINGS), "ADR document lacks required v2 sections")
+        _require(_markdown_section(text, "Status") == "Accepted", "ADR document status is not Accepted")
+        _require(all(_markdown_section(text, heading) for heading in ADR_HEADINGS), "ADR document lacks required v2 sections")
         responsibility = entry.get("responsibility_id")
         _require(responsibility in families, "ADR has unknown responsibility")
         module_ids = entry.get("approved_module_ids")
         _require(isinstance(module_ids, list) and module_ids and module_ids == sorted(set(module_ids)), "invalid ADR approved module IDs")
         for module in module_ids:
-            _require(isinstance(module, str) and module and "*" not in module and not any(char in module for char in "[](){}?+|\\"), "wildcard or malformed ADR module ID")
+            _require(isinstance(module, str) and _is_python_module_id(module), "wildcard or malformed ADR module ID")
             _require(any(_is_boundary(module, prefix) for prefix in families[responsibility]["public_prefixes"]), "ADR approves module outside its responsibility family")
             _require(module not in approved, "new authority module approved by multiple ADRs")
             approved.add(module)
@@ -365,6 +419,10 @@ def validate_architecture_boundaries(repo_root: Path, policy_path: Path, ref: st
     authority_raw = read_files_at_ref(repo_root, sha, [AUTHORITY_CONTRACT_PATH])[AUTHORITY_CONTRACT_PATH]
     assignments, _authority_contract = _validate_authority_contract(authority_raw)
     modules = _module_index(repo_root, sha)
+    _require(
+        set(policy["delivery_target_module_ids"]) <= set(modules),
+        "reviewed SportyBet delivery target absent at exact ref",
+    )
     base_modules = _baseline_module_index(repo_root, policy["policy_base_main"], sha, tracked)
     for responsibility, family in families.items():
         observed = _family_modules(base_modules, tuple(family["public_prefixes"]))

@@ -46,13 +46,19 @@
   "delivery_target_module_ids": [
     "domain.current_shadow_all_market_share_code",
     "domain.current_shadow_sportybet_share_code",
-    "domain.current_shadow_sportybet_verified_share_code"
+    "domain.current_shadow_sportybet_verified_share_code",
+    "domain.current_sportybet_accumulator_execution",
+    "scripts.sportybet_direct_share_bridge",
+    "scripts.sportybet_semantic_share_bridge"
   ],
   "delivery_target_tokens": [
     "booking",
     "delivery",
+    "execution",
+    "share",
     "share_code",
-    "sharecode"
+    "sharecode",
+    "transport"
   ],
   "model_probability_parent_namespaces": [
     "domain",
@@ -88,6 +94,7 @@
   "wager_authority_tokens": [
     "authenticated",
     "authentication",
+    "bet",
     "betslip",
     "login",
     "stake",

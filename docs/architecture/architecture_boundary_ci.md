@@ -28,6 +28,10 @@ A new public family member requires one exact accepted ADR under
 exact modules, and must contain Status, Context, Evidence, Decision,
 Alternatives considered, Consequences, Migration plan, and Rollback / revisit
 trigger. An accepted ADR is an architecture exception only, never promotion.
+The document's single `## Status` section itself must contain exactly
+`Accepted`; an unrelated later use of that word cannot approve an ADR. Approved
+module IDs use Python identifier components, so malformed dotted names cannot
+be registered as authority exceptions.
 
 Private helper candidates whose final component begins `_` are not public
 authority merely because their name contains router, Price-All, or portfolio.
@@ -35,8 +39,11 @@ Comments, docstrings, and string constants are not imports or authority names.
 
 ## Dependency boundaries
 
-- Model/probability sources cannot import SportyBet delivery/share-code targets.
-  Ordinary SportyBet provider/pricing evidence remains distinct and permitted.
+- Model/probability sources cannot import exact reviewed SportyBet execution or
+  share/transport targets. Future delivery detection requires both the exact
+  `sportybet` module token and a delivery token (`booking`, `delivery`,
+  `execution`, `share`, `share_code`, `sharecode`, or `transport`). Ordinary
+  SportyBet provider/pricing evidence remains distinct and permitted.
 - Price-All and private pricing cores cannot import portfolio, staking, wager,
   or betslip authority.
 - P0.3-derived Shadow profile orchestration cannot import login,
@@ -47,6 +54,10 @@ Static imports, aliases, relative imports, literal `importlib.import_module`,
 and literal `__import__` are resolved through AST analysis. A non-literal
 dynamic import in a boundary-controlled source fails closed. Custom loaders are
 not mistaken for `importlib` merely because they use a similarly named method.
+Boundary classification also evaluates exact external import identities: an
+untracked package cannot bypass a delivery, portfolio, login, wallet, stake,
+or wager rule. The wager token `bet` is exact; `sportybet` is not a `bet`
+token and remains distinct from wager authority.
 
 ## Determinism and failure handling
 
@@ -55,6 +66,11 @@ uses canonical JSON bytes, and emits sorted actionable diagnostics. Ambiguous
 relative imports, malformed policies, missing ADRs, or unknown dynamic targets
 fail closed. Untracked files, caches, and developer-machine state have no
 authority.
+
+All authority-critical selector registries are frozen to their reviewed v1
+baseline: delivery target module IDs and tokens, model/probability namespaces
+and tokens, pricing prefixes, and wager/authentication tokens. A policy-only
+edit cannot broaden, narrow, or rename these selectors while validation passes.
 
 When a CI checkout does not retain the exact P0.4 base commit, baseline-family
 verification uses only the immutable P0.2 inventory whose bytes and source

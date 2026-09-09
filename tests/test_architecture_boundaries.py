@@ -39,6 +39,23 @@ def test_real_policy_is_canonical_and_pinned() -> None:
     assert hashlib.sha256(raw).hexdigest()
     assert boundaries._validate_policy(policy)
     assert policy["approved_parallel_authority_adrs"] == []
+    for field, expected in boundaries.EXPECTED_SELECTOR_REGISTRIES.items():
+        assert tuple(policy[field]) == expected
+
+
+@pytest.mark.parametrize(("field", "value"), [
+    ("delivery_target_module_ids", ["domain.current_shadow_all_market_share_code"]),
+    ("delivery_target_tokens", ["delivery"]),
+    ("model_probability_parent_namespaces", ["models"]),
+    ("model_probability_tokens", ["model"]),
+    ("pricing_source_prefixes", ["domain.price_all"]),
+    ("wager_authority_tokens", ["wager"]),
+])
+def test_authority_critical_selector_registries_are_immutable(field: str, value: list[str]) -> None:
+    policy = _policy()
+    policy[field] = value
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._validate_policy(policy)
 
 
 @pytest.mark.parametrize(("field", "value"), [
@@ -85,9 +102,12 @@ def test_private_helpers_are_not_public_parallel_authority(helper: str) -> None:
     assert boundaries._parallel_authority_diagnostics(families, _modules(helper), set()) == []
 
 
-def _adr_text(status: str = "Accepted") -> bytes:
-    headings = "\n".join(f"## {heading}\n" for heading in boundaries.ADR_HEADINGS)
-    return f"## Status\n\n{status}\n\n{headings}".encode("utf-8")
+def _adr_text(status: str = "Accepted", *, later_accepted: bool = False) -> bytes:
+    sections = []
+    for heading in boundaries.ADR_HEADINGS:
+        value = status if heading == "Status" else ("Accepted" if later_accepted and heading == "Evidence" else "reviewed")
+        sections.append(f"## {heading}\n\n{value}")
+    return ("\n\n".join(sections) + "\n").encode("utf-8")
 
 
 def test_exact_accepted_adr_approves_one_new_public_authority() -> None:
@@ -129,6 +149,29 @@ def test_duplicate_adr_approval_fails_closed() -> None:
     contents = {path: _adr_text(), second["adr_path"]: _adr_text()}
     with pytest.raises(boundaries.BoundaryError):
         boundaries._approved_adr_modules(policy, set(contents), contents, boundaries._validate_policy(policy))
+
+
+def test_adr_status_must_be_accepted_in_its_own_section() -> None:
+    policy = _policy()
+    path = "docs/architecture/adrs/ADR-001-router-v4.md"
+    policy["approved_parallel_authority_adrs"] = [{
+        "adr_id": "ADR-001", "adr_path": path, "status": "ACCEPTED",
+        "responsibility_id": "market_router", "approved_module_ids": ["domain.market_router_v4"],
+    }]
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, {path}, {path: _adr_text("Proposed", later_accepted=True)}, boundaries._validate_policy(policy))
+
+
+@pytest.mark.parametrize("module", ["domain.market-router_v4", "domain..market_router_v4", "domain.4router", "domain.for"])
+def test_adr_module_ids_require_python_identifier_components(module: str) -> None:
+    policy = _policy()
+    path = "docs/architecture/adrs/ADR-001-router-v4.md"
+    policy["approved_parallel_authority_adrs"] = [{
+        "adr_id": "ADR-001", "adr_path": path, "status": "ACCEPTED",
+        "responsibility_id": "market_router", "approved_module_ids": [module],
+    }]
+    with pytest.raises(boundaries.BoundaryError):
+        boundaries._approved_adr_modules(policy, {path}, {path: _adr_text()}, boundaries._validate_policy(policy))
 
 
 def test_baseline_family_matches_every_real_base_module() -> None:
@@ -175,6 +218,30 @@ def test_model_provider_semantics_and_mentions_are_allowed() -> None:
     assert _dependency(policy, modules, "models.fixture_model", '"share_code SportyBet delivery"\nvalue = "share_code"') == []
 
 
+@pytest.mark.parametrize(("target", "source"), [
+    ("external.sportybet_delivery", "import external.sportybet_delivery"),
+    ("external.sportybet_delivery", "from external import sportybet_delivery"),
+    ("external.sportybet_transport", 'import importlib\nimportlib.import_module("external.sportybet_transport")'),
+    ("domain.current_sportybet_accumulator_execution", "from domain import current_sportybet_accumulator_execution"),
+    ("scripts.sportybet_direct_share_bridge", "from scripts import sportybet_direct_share_bridge"),
+    ("scripts.sportybet_semantic_share_bridge", "from scripts import sportybet_semantic_share_bridge"),
+])
+def test_model_delivery_boundary_covers_external_and_exact_transport_targets(target: str, source: str) -> None:
+    policy = _policy()
+    modules = _modules("models.fixture_model", *( [target] if target.startswith(("domain.", "scripts.")) else [] ))
+    diagnostics = _dependency(policy, modules, "models.fixture_model", source)
+    assert diagnostics and diagnostics[0]["rule_id"] == "MODEL_PROBABILITY_CANNOT_IMPORT_SPORTYBET_DELIVERY"
+
+
+def test_future_delivery_requires_both_sportybet_and_delivery_tokens() -> None:
+    policy = _policy()
+    source = "models.fixture_model"
+    assert _dependency(policy, _modules(source), source, "import external.delivery") == []
+    assert _dependency(policy, _modules(source), source, "import external.sportybet_quote") == []
+    diagnostics = _dependency(policy, _modules(source), source, "import external.sportybet_execution")
+    assert diagnostics and diagnostics[0]["rule_id"] == "MODEL_PROBABILITY_CANNOT_IMPORT_SPORTYBET_DELIVERY"
+
+
 @pytest.mark.parametrize(("source_module", "source", "target"), [
     ("domain.price_all_v4", "from domain import portfolio_optimizer_v2_direct_provider", "domain.portfolio_optimizer_v2_direct_provider"),
     ("domain._price_all_fixture_core", "from domain import portfolio_optimizer_v2_direct_provider", "domain.portfolio_optimizer_v2_direct_provider"),
@@ -194,6 +261,18 @@ def test_pricing_can_import_provider_price_evidence() -> None:
     assert _dependency(policy, modules, "domain.price_all_v4", "from domain import sportybet_price_all_direct_provider_quote_adapter") == []
 
 
+@pytest.mark.parametrize("source", [
+    "import external.bet",
+    "from external import portfolio_optimizer",
+    'import importlib\nimportlib.import_module("external.wager")',
+    'import importlib\nimportlib.import_module("external.portfolio_optimizer")',
+])
+def test_external_wager_or_portfolio_imports_cannot_bypass_pricing_boundary(source: str) -> None:
+    policy = _policy()
+    diagnostics = _dependency(policy, _modules("domain.price_all_v4"), "domain.price_all_v4", source)
+    assert diagnostics and diagnostics[0]["rule_id"] == "PRICING_CANNOT_IMPORT_PORTFOLIO_OR_WAGER"
+
+
 @pytest.mark.parametrize("target", ["domain.wallet", "domain.staking", "domain.wager", "domain.bookmaker.login"])
 def test_research_orchestration_cannot_import_auth_or_wager(target: str) -> None:
     policy = _policy()
@@ -210,6 +289,15 @@ def test_research_orchestration_allows_anonymous_share_code_and_sportybet_token(
     target = "domain.current_shadow_all_market_share_code"
     modules = _modules(source, target)
     assert _dependency(policy, modules, source, f"from domain import current_shadow_all_market_share_code", {source}) == []
+    assert not boundaries._tokenized("external.sportybet_transport", policy["wager_authority_tokens"])
+
+
+@pytest.mark.parametrize("source", ["import external.wallet", "from external import wallet", 'import importlib\nimportlib.import_module("external.bet")'])
+def test_external_imports_cannot_bypass_research_boundary(source: str) -> None:
+    policy = _policy()
+    controlled = "domain.current_shadow_all_market_runner"
+    diagnostics = _dependency(policy, _modules(controlled), controlled, source, {controlled})
+    assert diagnostics and diagnostics[0]["rule_id"] == "RESEARCH_ORCHESTRATION_CANNOT_IMPORT_WAGER_AUTHORITY"
 
 
 @pytest.mark.parametrize("source", [
