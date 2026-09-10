@@ -158,6 +158,13 @@ def test_run_request_strict_parser_rejects_extra_duplicate_nonfinite_and_noncano
         contracts.RunRequest.from_json_bytes(pretty)
 
 
+def test_run_request_parser_rejects_boolean_schema_version():
+    payload = _request().to_dict()
+    payload["schema_version"] = True
+    with pytest.raises(contracts.RunContractError, match="schema"):
+        contracts.RunRequest.from_dict(payload)
+
+
 def test_run_request_from_dict_rejects_noncanonical_date_order_and_decimal_text():
     payload = _request().to_dict()
     payload["dates"] = list(reversed(payload["dates"]))
@@ -170,16 +177,17 @@ def test_run_request_from_dict_rejects_noncanonical_date_order_and_decimal_text(
         contracts.RunRequest.from_dict(payload)
 
 
-def test_authority_manifest_is_immutable_and_shadow_denies_sensitive_capabilities():
+def test_authority_manifest_is_immutable_and_all_profiles_deny_sensitive_capabilities_in_p1_1():
     source = {"production_selection": False}
     manifest = _manifest(additional_capabilities=source)
     source["production_selection"] = True
     assert manifest.additional_capabilities["production_selection"] is False
     with pytest.raises(TypeError):
         manifest.additional_capabilities["x"] = True
-    for field in ("login", "cookies", "wallet", "staking", "wager"):
-        with pytest.raises(contracts.RunContractError):
-            _manifest(**{field: True})
+    for profile in ("SHADOW", "MAIN"):
+        for field in ("login", "cookies", "wallet", "staking", "wager"):
+            with pytest.raises(contracts.RunContractError):
+                _manifest(authority_profile=profile, **{field: True})
 
 
 def test_run_stage_normalizes_utc_and_freezes_nested_evidence():
@@ -197,6 +205,15 @@ def test_run_stage_normalizes_utc_and_freezes_nested_evidence():
         stage.evidence["x"] = 1
 
 
+def test_run_stage_and_receipt_require_mapping_evidence_surfaces():
+    with pytest.raises(contracts.RunContractError, match="mapping"):
+        contracts.RunStage(stage="PORTFOLIO", status="COMPLETED", evidence=[])
+    with pytest.raises(contracts.RunContractError, match="share_code_result"):
+        _receipt(share_code_result="ABC123")
+    with pytest.raises(contracts.RunContractError, match="receipt evidence"):
+        _receipt(evidence=[])
+
+
 def test_run_receipt_round_trip_carries_stage_counts_legs_shortfall_delivery_and_authority():
     receipt = _receipt()
     raw = contracts.canonical_json_bytes(receipt)
@@ -207,6 +224,13 @@ def test_run_receipt_round_trip_carries_stage_counts_legs_shortfall_delivery_and
     assert rebuilt.share_code_result["verified"] is True
     assert rebuilt.authority_manifest.authority_profile == "SHADOW"
     assert rebuilt.wager_placed is False
+
+
+def test_run_receipt_parser_rejects_boolean_schema_version():
+    payload = _receipt().to_dict()
+    payload["schema_version"] = True
+    with pytest.raises(contracts.RunContractError, match="schema"):
+        contracts.RunReceipt.from_dict(payload)
 
 
 def test_run_receipt_deep_freezes_selected_legs_share_result_and_evidence():
