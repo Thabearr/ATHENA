@@ -30,7 +30,7 @@ A request serializes canonically with sorted object keys, compact JSON, UTF-8, a
 - staking;
 - wager.
 
-P1.1 grants no wager authority. `SHADOW` additionally cannot grant login, cookies, wallet, staking, or wager capability. Compatibility-only boolean capabilities can be preserved in `additional_capabilities` without turning them into canonical production authority.
+P1.1 grants no login, cookies, wallet, staking, or wager authority in either execution profile. Compatibility-only boolean capabilities can be preserved in `additional_capabilities` without turning them into canonical production authority.
 
 ## RunReceipt
 
