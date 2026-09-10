@@ -37,6 +37,7 @@ _REQUIRED_AUTHORITY_CAPABILITIES = (
     "staking",
     "wager",
 )
+_SENSITIVE_CAPABILITIES = ("login", "cookies", "wallet", "staking", "wager")
 
 
 class RunContractError(ValueError):
@@ -53,6 +54,11 @@ def _exact_bool(value: Any, label: str) -> bool:
     if type(value) is not bool:
         raise RunContractError(f"{label} must be exact bool")
     return value
+
+
+def _exact_schema(value: Any, label: str) -> None:
+    if type(value) is not int or value != SCHEMA_VERSION:
+        raise RunContractError(f"{label} schema version drifted")
 
 
 def _sha40(value: Any, label: str) -> str:
@@ -138,6 +144,15 @@ def _freeze_json(value: Any, label: str = "value") -> Any:
     raise RunContractError(f"{label} contains unsupported JSON value {type(value).__name__}")
 
 
+def _freeze_mapping(value: Any, label: str) -> Mapping[str, Any]:
+    if not isinstance(value, Mapping):
+        raise RunContractError(f"{label} must be mapping")
+    frozen = _freeze_json(value, label)
+    if not isinstance(frozen, Mapping):
+        raise RunContractError(f"{label} did not freeze as mapping")
+    return frozen
+
+
 def _thaw_json(value: Any) -> Any:
     if isinstance(value, Mapping):
         return {key: _thaw_json(item) for key, item in value.items()}
@@ -203,8 +218,9 @@ def _load_canonical_json(raw: bytes) -> Any:
 class AuthorityManifest:
     """Per-run side-effect permission manifest.
 
-    The capability vocabulary comes from the architecture specification.  Wager
-    authority remains forbidden throughout the remediation programme.
+    The capability vocabulary comes from the architecture specification. P1.1
+    can describe reviewed acquisition/share-code research, but cannot grant
+    credential, wallet, staking, or wager authority in either execution profile.
     """
 
     authority_profile: str
@@ -224,13 +240,10 @@ class AuthorityManifest:
         _exact_text(self.mode, "mode")
         for key in _REQUIRED_AUTHORITY_CAPABILITIES:
             _exact_bool(getattr(self, key), key)
-        if self.wager is not False:
-            raise RunContractError("P1.1 cannot grant wager authority")
-        if self.authority_profile == "SHADOW" and any(
-            getattr(self, key) is not False
-            for key in ("login", "cookies", "wallet", "staking", "wager")
-        ):
-            raise RunContractError("SHADOW authority cannot grant credential/wallet/stake/wager capability")
+        if any(getattr(self, key) is not False for key in _SENSITIVE_CAPABILITIES):
+            raise RunContractError(
+                "P1.1 cannot grant login/cookies/wallet/staking/wager authority"
+            )
         if not isinstance(self.additional_capabilities, Mapping):
             raise RunContractError("additional_capabilities must be mapping")
         checked: dict[str, bool] = {}
@@ -287,7 +300,10 @@ class RunRequest:
     place_wager: bool = False
 
     def __post_init__(self) -> None:
-        items = tuple(self.dates)
+        try:
+            items = tuple(self.dates)
+        except TypeError as exc:
+            raise RunContractError("RunRequest dates must be iterable concrete dates") from exc
         if not MIN_SELECTED_DATES <= len(items) <= MAX_SELECTED_DATES:
             raise RunContractError("RunRequest must contain one through seven concrete dates")
         if any(type(item) is not date for item in items):
@@ -337,11 +353,8 @@ class RunRequest:
         }
         if type(value) is not dict or set(value) != required:
             raise RunContractError("RunRequest fields drifted")
-        if (
-            value["schema_version"] != SCHEMA_VERSION
-            or value["policy_id"] != POLICY_ID
-            or value["contract"] != REQUEST_CONTRACT
-        ):
+        _exact_schema(value["schema_version"], "RunRequest")
+        if value["policy_id"] != POLICY_ID or value["contract"] != REQUEST_CONTRACT:
             raise RunContractError("RunRequest contract identity drifted")
         raw_dates = value["dates"]
         if type(raw_dates) is not list:
@@ -404,7 +417,7 @@ class RunStage:
                 raise RunContractError(f"stage count {key} must be non-negative exact int")
             counts[key] = value
         object.__setattr__(self, "counts", MappingProxyType(dict(sorted(counts.items()))))
-        object.__setattr__(self, "evidence", _freeze_json(self.evidence, "stage evidence"))
+        object.__setattr__(self, "evidence", _freeze_mapping(self.evidence, "stage evidence"))
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -454,7 +467,10 @@ class RunReceipt:
         object.__setattr__(self, "exact_commit_sha", _sha40(self.exact_commit_sha, "exact_commit_sha"))
         if type(self.request) is not RunRequest:
             raise RunContractError("request must be exact RunRequest")
-        stages = tuple(self.stages)
+        try:
+            stages = tuple(self.stages)
+        except TypeError as exc:
+            raise RunContractError("stages must be iterable RunStage values") from exc
         if any(type(stage) is not RunStage for stage in stages):
             raise RunContractError("stages must contain exact RunStage values")
         object.__setattr__(self, "stages", stages)
@@ -469,15 +485,13 @@ class RunReceipt:
         if "selected_leg_count" not in counts:
             raise RunContractError("receipt counts must include selected_leg_count")
         object.__setattr__(self, "counts", MappingProxyType(dict(sorted(counts.items()))))
-        legs = tuple(self.selected_legs)
+        try:
+            legs = tuple(self.selected_legs)
+        except TypeError as exc:
+            raise RunContractError("selected_legs must be iterable mappings") from exc
         frozen_legs: list[Mapping[str, Any]] = []
         for index, leg in enumerate(legs):
-            if not isinstance(leg, Mapping):
-                raise RunContractError("selected legs must be mappings")
-            frozen = _freeze_json(leg, f"selected_legs[{index}]")
-            if not isinstance(frozen, Mapping):
-                raise RunContractError("selected leg did not freeze as mapping")
-            frozen_legs.append(frozen)
+            frozen_legs.append(_freeze_mapping(leg, f"selected_legs[{index}]"))
         object.__setattr__(self, "selected_legs", tuple(frozen_legs))
         if counts["selected_leg_count"] != len(frozen_legs):
             raise RunContractError("selected_leg_count differs from selected_legs")
@@ -490,7 +504,7 @@ class RunReceipt:
             object.__setattr__(
                 self,
                 "share_code_result",
-                _freeze_json(self.share_code_result, "share_code_result"),
+                _freeze_mapping(self.share_code_result, "share_code_result"),
             )
         if type(self.authority_manifest) is not AuthorityManifest:
             raise RunContractError("authority_manifest must be exact AuthorityManifest")
@@ -499,7 +513,7 @@ class RunReceipt:
             or self.authority_manifest.mode != self.request.mode
         ):
             raise RunContractError("authority manifest does not match RunRequest profile/mode")
-        object.__setattr__(self, "evidence", _freeze_json(self.evidence, "receipt evidence"))
+        object.__setattr__(self, "evidence", _freeze_mapping(self.evidence, "receipt evidence"))
         _exact_bool(self.wager_placed, "wager_placed")
         if self.wager_placed is not False or self.authority_manifest.wager is not False:
             raise RunContractError("P1.1 RunReceipt cannot carry wager authority or wager result")
@@ -537,11 +551,8 @@ class RunReceipt:
         }
         if type(value) is not dict or set(value) != required:
             raise RunContractError("RunReceipt fields drifted")
-        if (
-            value["schema_version"] != SCHEMA_VERSION
-            or value["policy_id"] != POLICY_ID
-            or value["contract"] != RECEIPT_CONTRACT
-        ):
+        _exact_schema(value["schema_version"], "RunReceipt")
+        if value["policy_id"] != POLICY_ID or value["contract"] != RECEIPT_CONTRACT:
             raise RunContractError("RunReceipt contract identity drifted")
         if type(value["stages"]) is not list or type(value["selected_legs"]) is not list:
             raise RunContractError("RunReceipt stages/selected_legs must serialize as lists")
