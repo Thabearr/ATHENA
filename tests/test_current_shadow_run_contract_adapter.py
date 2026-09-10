@@ -221,6 +221,19 @@ def test_adapter_never_lets_resolved_dates_contradict_explicit_legacy_dates():
         )
 
 
+def test_request_adapter_rejects_boolean_schema_and_risky_legacy_authority():
+    policy = _request_policy(fixture_dates=["20260910"])
+    policy["schema_version"] = True
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="schema"):
+        adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
+
+    for key in ("production_model", "pricing", "selection", "sportybet_execution", "bet"):
+        policy = _request_policy(fixture_dates=["20260910"])
+        policy["authority"][key] = True
+        with pytest.raises(adapter.CurrentShadowRunContractAdapterError):
+            adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
+
+
 def test_current_shadow_terminal_receipt_maps_without_losing_legacy_evidence():
     policy = _request_policy(fixture_dates=["20260910"])
     legacy = _receipt(target=2, selected=1)
@@ -331,7 +344,7 @@ def test_only_actual_latest_stage_and_progress_checkpoints_are_adapted():
     assert evidence["legacy_stage_history_complete"] is False
 
 
-def test_adapter_rejects_target_shortfall_and_checkpoint_binding_drift():
+def test_adapter_rejects_target_shortfall_router_partition_and_checkpoint_binding_drift():
     policy = _request_policy(fixture_dates=["20260910"])
     request = adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
 
@@ -346,6 +359,15 @@ def test_adapter_rejects_target_shortfall_and_checkpoint_binding_drift():
     legacy = _receipt(target=2, selected=1)
     legacy["shortfall"] = 0
     with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="shortfall"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+    legacy = _receipt(target=2, selected=1)
+    legacy["router_no_bet_count"] = 1
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="partition"):
         adapter.adapt_current_shadow_receipt(
             request=request,
             receipt_payload=legacy,
@@ -389,12 +411,49 @@ def test_adapter_rejects_any_legacy_wager_or_sensitive_authority_claim():
             )
 
 
+def test_receipt_and_checkpoint_boolean_schema_versions_fail_closed():
+    policy = _request_policy(fixture_dates=["20260910"])
+    request = adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
+    legacy = _receipt(target=2, selected=1)
+    legacy["schema_version"] = True
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="schema"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+    legacy = _receipt(target=2, selected=1)
+    stage = _stage()
+    stage["schema_version"] = True
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="schema"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+            stage_payload=stage,
+        )
+
+
 def test_legacy_share_code_without_verification_receipt_is_never_promoted():
     policy = _request_policy(fixture_dates=["20260910"])
     legacy = _receipt(target=2, selected=1)
     legacy["share_code_receipt"] = None
     request = adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
     with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="verification receipt"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+
+def test_share_code_cannot_be_marked_verified_under_unverified_terminal_status():
+    policy = _request_policy(fixture_dates=["20260910"])
+    legacy = _receipt(target=2, selected=1)
+    legacy["status"] = "RESEARCH_NO_CODE_REPRICE_REQUIRED"
+    request = adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="unverified terminal"):
         adapter.adapt_current_shadow_receipt(
             request=request,
             receipt_payload=legacy,
