@@ -12,6 +12,14 @@ from scripts import validate_architecture_boundaries as boundaries
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "config/architecture/architecture-boundary-policy-v1.json"
+REAL_ADR_PATH = ROOT / "docs/architecture/adrs/ADR-001-canonical-price-all-promotion.md"
+REAL_ADR_ENTRY = {
+    "adr_id": "ADR-001",
+    "adr_path": "docs/architecture/adrs/ADR-001-canonical-price-all-promotion.md",
+    "approved_module_ids": ["domain.price_all"],
+    "responsibility_id": "price_all_and_de_vig",
+    "status": "ACCEPTED",
+}
 
 
 def _policy() -> dict:
@@ -38,9 +46,36 @@ def test_real_policy_is_canonical_and_pinned() -> None:
     assert raw == boundaries.canonical_json_bytes(policy)
     assert hashlib.sha256(raw).hexdigest()
     assert boundaries._validate_policy(policy)
-    assert policy["approved_parallel_authority_adrs"] == []
+    assert policy["approved_parallel_authority_adrs"] == [REAL_ADR_ENTRY]
     for field, expected in boundaries.EXPECTED_SELECTOR_REGISTRIES.items():
         assert tuple(policy[field]) == expected
+
+
+def test_real_canonical_price_all_adr_is_exactly_scoped() -> None:
+    policy = _policy()
+    families = boundaries._validate_policy(policy)
+    relative = REAL_ADR_PATH.relative_to(ROOT).as_posix()
+    contents = {relative: REAL_ADR_PATH.read_bytes()}
+    approved = boundaries._approved_adr_modules(
+        policy,
+        {relative},
+        contents,
+        families,
+    )
+    assert approved == {"domain.price_all"}
+    modules = _modules("domain.price_all", "domain.price_all_v4")
+    diagnostics = boundaries._parallel_authority_diagnostics(families, modules, approved)
+    assert diagnostics == [
+        {
+            "rule_id": "PARALLEL_AUTHORITY_REQUIRES_ACCEPTED_ADR",
+            "responsibility_id": "price_all_and_de_vig",
+            "candidate_module": "domain.price_all_v4",
+            "candidate_path": "domain/price_all_v4.py",
+            "line_number": 0,
+            "required_adr_status": "ACCEPTED",
+            "reason": "new public authority family member lacks an accepted exact ADR",
+        }
+    ]
 
 
 @pytest.mark.parametrize(("field", "value"), [
@@ -266,7 +301,7 @@ def test_model_provider_semantics_and_mentions_are_allowed() -> None:
 ])
 def test_model_delivery_boundary_covers_external_and_exact_transport_targets(target: str, source: str) -> None:
     policy = _policy()
-    modules = _modules("models.fixture_model", *( [target] if target.startswith(("domain.", "scripts.")) else [] ))
+    modules = _modules("models.fixture_model", *([target] if target.startswith(("domain.", "scripts.")) else []))
     diagnostics = _dependency(policy, modules, "models.fixture_model", source)
     assert diagnostics and diagnostics[0]["rule_id"] == "MODEL_PROBABILITY_CANNOT_IMPORT_SPORTYBET_DELIVERY"
 
@@ -376,4 +411,4 @@ def test_exact_head_baseline_has_no_violations_and_contract_is_unchanged() -> No
     result = boundaries.validate_architecture_boundaries(ROOT, POLICY_PATH, "HEAD")
     assert result["resolved_ref"] == boundaries.resolve_ref(ROOT, "HEAD")
     assert result["forbidden_dependency_violation_count"] == 0
-    assert result["baseline_parallel_authority_adr_count"] == 0
+    assert result["baseline_parallel_authority_adr_count"] == 1
