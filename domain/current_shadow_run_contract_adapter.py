@@ -24,6 +24,10 @@ CURRENT_RECEIPT_SCHEMA_VERSION = 1
 CURRENT_RECEIPT_DATASET = "athena-current-shadow-all-market-runner-v1"
 CURRENT_SHARE_CODE_SCHEMA_VERSION = 2
 CURRENT_SHARE_CODE_DATASET = "athena-current-shadow-all-market-share-code-v2"
+CURRENT_SCOPE_DAY_COUNT = {
+    "today": 1,
+    "three-day": 3,
+}
 CURRENT_STAGE_SEQUENCE = (
     "STARTED",
     "CURRENT_FOTMOB_SOURCE",
@@ -195,6 +199,36 @@ def _validated_resolved_dates(values: Sequence[date] | None) -> tuple[date, ...]
     return tuple(sorted(items))
 
 
+def _bind_resolved_dates_to_legacy_scope(
+    policy: Mapping[str, Any], supplied: tuple[date, ...]
+) -> tuple[date, ...]:
+    """Validate caller-resolved dates against retained legacy scope semantics.
+
+    This intentionally does not resolve ``today`` against a clock. It only
+    rejects concrete dates whose cardinality/shape contradicts the reviewed
+    legacy scope that produced them.
+    """
+
+    scope = policy.get("fixture_scope")
+    expected_count = CURRENT_SCOPE_DAY_COUNT.get(scope)
+    if expected_count is None:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow fixture_scope escaped reviewed today/three-day vocabulary"
+        )
+    if len(supplied) != expected_count:
+        raise CurrentShadowRunContractAdapterError(
+            "resolved_dates contradict Current Shadow fixture_scope cardinality"
+        )
+    if expected_count > 1 and any(
+        (current - previous).days != 1
+        for previous, current in zip(supplied, supplied[1:])
+    ):
+        raise CurrentShadowRunContractAdapterError(
+            "resolved_dates contradict Current Shadow fixture_scope continuity"
+        )
+    return supplied
+
+
 def adapt_current_shadow_request(
     *,
     target_size: int,
@@ -211,7 +245,7 @@ def adapt_current_shadow_request(
             raise CurrentShadowRunContractAdapterError(
                 "legacy fixture_scope is not a concrete date; resolved_dates are required"
             )
-        concrete = supplied
+        concrete = _bind_resolved_dates_to_legacy_scope(policy, supplied)
     else:
         if type(legacy_dates) is not list or not legacy_dates:
             raise CurrentShadowRunContractAdapterError(
@@ -662,6 +696,7 @@ def adapt_current_shadow_run(
 __all__ = [
     "CURRENT_RECEIPT_DATASET",
     "CURRENT_REQUEST_DATASET",
+    "CURRENT_SCOPE_DAY_COUNT",
     "CURRENT_SHARE_CODE_DATASET",
     "CURRENT_STAGE_SEQUENCE",
     "CurrentShadowRunContractAdapterError",
