@@ -18,6 +18,8 @@ This PR implements the P1.1 contract only. It does **not** introduce `AthenaRunS
 
 A request serializes canonically with sorted object keys, compact JSON, UTF-8, and one trailing LF. Duplicate object keys, NaN/infinity, extra/missing contract fields, noncanonical dates, and ambiguous or unsupported values fail closed.
 
+The canonical data object deliberately does not call `date.today()` or otherwise make historical deserialization depend on wall-clock time. The source requirement that requested dates be non-past and within the supported horizon is enforced at the later execution/parser boundary using an explicit execution clock. P1.1 requires that relative input has already become concrete dates; it does not guess or silently re-resolve old receipts.
+
 ## AuthorityManifest
 
 `AuthorityManifest` makes the run's side-effect boundary explicit. The canonical capability vocabulary includes:
@@ -30,7 +32,7 @@ A request serializes canonically with sorted object keys, compact JSON, UTF-8, a
 - staking;
 - wager.
 
-P1.1 grants no login, cookies, wallet, staking, or wager authority in either execution profile. Compatibility-only boolean capabilities can be preserved in `additional_capabilities` without turning them into canonical production authority.
+P1.1 grants no login, cookies, wallet, staking, or wager authority in either execution profile. Compatibility-only boolean capabilities can be preserved in `additional_capabilities`, but they cannot contradict a canonical capability and cannot smuggle a true production, credential, staking, betting, wallet, or wager authority claim. Safe research-only legacy capabilities remain preservable as evidence.
 
 ## RunReceipt
 
@@ -39,6 +41,7 @@ P1.1 grants no login, cookies, wallet, staking, or wager authority in either exe
 - status and exact executed commit SHA;
 - canonical resolved request;
 - zero or more proven `RunStage` checkpoints;
+- a canonical SHA-256 digest for every included stage checkpoint;
 - non-negative funnel/count fields, including `selected_leg_count`;
 - the concrete selected-leg records;
 - truthful `shortfall`;
@@ -56,7 +59,9 @@ selected_leg_count = number of concrete selected-leg records
 
 ATHENA therefore cannot satisfy a requested target by inventing filler legs. If `target_legs=25` and only fourteen concrete legs survive, the canonical receipt contains fourteen selected legs and `shortfall=11`.
 
-Canonical receipts use the same deterministic JSON rules as requests and support byte-exact round-trip validation.
+A share-code result may appear only when the resolved request asked for share-code delivery and the authority manifest grants share-code generation. A delivery result cannot be attached to a request/authority pair that denied that side effect.
+
+Canonical receipts use the same deterministic JSON rules as requests and support byte-exact round-trip validation. Serialized `stage_digests` are derived from the canonical `RunStage` values and are verified on deserialization, so checkpoint evidence cannot be changed without invalidating its receipt-level digest binding.
 
 ## Current Shadow compatibility
 
@@ -87,6 +92,8 @@ If a legacy receipt reports positive `selected_leg_count` but contains no concre
 P1.1 changes interface ownership only. It does not change football probabilities, provider odds, de-vig/settlement mathematics, Router selection, Portfolio constraints, Current Shadow source acquisition, share-code transport, or legacy Main behavior. It gives no `KEEP`, `MIGRATE_THEN_DELETE`, `ARCHIVE_OR_RETIRE`, or `DELETE` authority to any existing implementation.
 
 The P0.3 parity contract continues to describe request/date semantics and run-receipt/observability as exact shared responsibilities whose runtime migration is still pending. P1.1 establishes the stable interface those later migrations can target; it does not claim the callers have already migrated.
+
+The broader parity specification also requires native canonical receipts to expose exact champion/challenger and policy identities. P1.1 does not invent those identities for legacy Current Shadow evidence that never recorded them. The typed component-authority registry that supplies those identities is the separately sequenced P1.7 mission. Until then, compatibility evidence is preserved exactly rather than guessed, and P1.1 does not claim the full parity-observability checkpoint is complete.
 
 ## Verification
 
