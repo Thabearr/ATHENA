@@ -17,6 +17,15 @@
       ],
       "responsibility_id": "market_router",
       "status": "ACCEPTED"
+    },
+    {
+      "adr_id": "ADR-003",
+      "adr_path": "docs/architecture/adrs/ADR-003-canonical-portfolio-promotion.md",
+      "approved_module_ids": [
+        "domain.portfolio_optimizer"
+      ],
+      "responsibility_id": "portfolio_optimizer",
+      "status": "ACCEPTED"
     }
   ],
   "authority_contract_path": "config/architecture/main-shadow-authority-parity-v1.json",
