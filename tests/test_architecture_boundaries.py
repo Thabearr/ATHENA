@@ -12,14 +12,23 @@ from scripts import validate_architecture_boundaries as boundaries
 
 ROOT = Path(__file__).resolve().parents[1]
 POLICY_PATH = ROOT / "config/architecture/architecture-boundary-policy-v1.json"
-REAL_ADR_PATH = ROOT / "docs/architecture/adrs/ADR-001-canonical-price-all-promotion.md"
-REAL_ADR_ENTRY = {
+REAL_PRICE_ALL_ADR_PATH = ROOT / "docs/architecture/adrs/ADR-001-canonical-price-all-promotion.md"
+REAL_ROUTER_ADR_PATH = ROOT / "docs/architecture/adrs/ADR-002-canonical-market-router-promotion.md"
+REAL_PRICE_ALL_ADR_ENTRY = {
     "adr_id": "ADR-001",
     "adr_path": "docs/architecture/adrs/ADR-001-canonical-price-all-promotion.md",
     "approved_module_ids": ["domain.price_all"],
     "responsibility_id": "price_all_and_de_vig",
     "status": "ACCEPTED",
 }
+REAL_ROUTER_ADR_ENTRY = {
+    "adr_id": "ADR-002",
+    "adr_path": "docs/architecture/adrs/ADR-002-canonical-market-router-promotion.md",
+    "approved_module_ids": ["domain.market_router_canonical_adapter"],
+    "responsibility_id": "market_router",
+    "status": "ACCEPTED",
+}
+REAL_ADR_ENTRIES = [REAL_PRICE_ALL_ADR_ENTRY, REAL_ROUTER_ADR_ENTRY]
 
 
 def _policy() -> dict:
@@ -46,22 +55,18 @@ def test_real_policy_is_canonical_and_pinned() -> None:
     assert raw == boundaries.canonical_json_bytes(policy)
     assert hashlib.sha256(raw).hexdigest()
     assert boundaries._validate_policy(policy)
-    assert policy["approved_parallel_authority_adrs"] == [REAL_ADR_ENTRY]
+    assert policy["approved_parallel_authority_adrs"] == REAL_ADR_ENTRIES
     for field, expected in boundaries.EXPECTED_SELECTOR_REGISTRIES.items():
         assert tuple(policy[field]) == expected
 
 
 def test_real_canonical_price_all_adr_is_exactly_scoped() -> None:
     policy = _policy()
+    policy["approved_parallel_authority_adrs"] = [REAL_PRICE_ALL_ADR_ENTRY]
     families = boundaries._validate_policy(policy)
-    relative = REAL_ADR_PATH.relative_to(ROOT).as_posix()
-    contents = {relative: REAL_ADR_PATH.read_bytes()}
-    approved = boundaries._approved_adr_modules(
-        policy,
-        {relative},
-        contents,
-        families,
-    )
+    relative = REAL_PRICE_ALL_ADR_PATH.relative_to(ROOT).as_posix()
+    contents = {relative: REAL_PRICE_ALL_ADR_PATH.read_bytes()}
+    approved = boundaries._approved_adr_modules(policy, {relative}, contents, families)
     assert approved == {"domain.price_all"}
     modules = _modules("domain.price_all", "domain.price_all_v4")
     diagnostics = boundaries._parallel_authority_diagnostics(families, modules, approved)
@@ -71,6 +76,29 @@ def test_real_canonical_price_all_adr_is_exactly_scoped() -> None:
             "responsibility_id": "price_all_and_de_vig",
             "candidate_module": "domain.price_all_v4",
             "candidate_path": "domain/price_all_v4.py",
+            "line_number": 0,
+            "required_adr_status": "ACCEPTED",
+            "reason": "new public authority family member lacks an accepted exact ADR",
+        }
+    ]
+
+
+def test_real_canonical_router_adr_is_exactly_scoped() -> None:
+    policy = _policy()
+    policy["approved_parallel_authority_adrs"] = [REAL_ROUTER_ADR_ENTRY]
+    families = boundaries._validate_policy(policy)
+    relative = REAL_ROUTER_ADR_PATH.relative_to(ROOT).as_posix()
+    contents = {relative: REAL_ROUTER_ADR_PATH.read_bytes()}
+    approved = boundaries._approved_adr_modules(policy, {relative}, contents, families)
+    assert approved == {"domain.market_router_canonical_adapter"}
+    modules = _modules("domain.market_router_canonical_adapter", "domain.market_router_v4")
+    diagnostics = boundaries._parallel_authority_diagnostics(families, modules, approved)
+    assert diagnostics == [
+        {
+            "rule_id": "PARALLEL_AUTHORITY_REQUIRES_ACCEPTED_ADR",
+            "responsibility_id": "market_router",
+            "candidate_module": "domain.market_router_v4",
+            "candidate_path": "domain/market_router_v4.py",
             "line_number": 0,
             "required_adr_status": "ACCEPTED",
             "reason": "new public authority family member lacks an accepted exact ADR",
@@ -411,4 +439,4 @@ def test_exact_head_baseline_has_no_violations_and_contract_is_unchanged() -> No
     result = boundaries.validate_architecture_boundaries(ROOT, POLICY_PATH, "HEAD")
     assert result["resolved_ref"] == boundaries.resolve_ref(ROOT, "HEAD")
     assert result["forbidden_dependency_violation_count"] == 0
-    assert result["baseline_parallel_authority_adr_count"] == 1
+    assert result["baseline_parallel_authority_adr_count"] == 2

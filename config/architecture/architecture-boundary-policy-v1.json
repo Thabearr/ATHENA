@@ -8,6 +8,15 @@
       ],
       "responsibility_id": "price_all_and_de_vig",
       "status": "ACCEPTED"
+    },
+    {
+      "adr_id": "ADR-002",
+      "adr_path": "docs/architecture/adrs/ADR-002-canonical-market-router-promotion.md",
+      "approved_module_ids": [
+        "domain.market_router_canonical_adapter"
+      ],
+      "responsibility_id": "market_router",
+      "status": "ACCEPTED"
     }
   ],
   "authority_contract_path": "config/architecture/main-shadow-authority-parity-v1.json",
