@@ -208,8 +208,12 @@ def test_comparable_confidence_semantics_are_model_derived() -> None:
         -0.25,
         (0.42, 0.12, 0.08, 0.10, 0.28),
     )
-    assert canonical._candidate_confidence(scalar) == pytest.approx((0.61, canonical.SCALAR_PREDICTION_CONFIDENCE_METHOD))
-    assert canonical._candidate_confidence(dnb) == pytest.approx((0.62, canonical.DNB_PREDICTION_CONFIDENCE_METHOD))
+    scalar_confidence, scalar_method = canonical._candidate_confidence(scalar)
+    assert scalar_confidence == pytest.approx(0.61)
+    assert scalar_method == canonical.SCALAR_PREDICTION_CONFIDENCE_METHOD
+    dnb_confidence, dnb_method = canonical._candidate_confidence(dnb)
+    assert dnb_confidence == pytest.approx(0.62)
+    assert dnb_method == canonical.DNB_PREDICTION_CONFIDENCE_METHOD
     confidence, method = canonical._candidate_confidence(ah)
     assert confidence == pytest.approx(0.62)
     assert method == canonical.AH_PREDICTION_CONFIDENCE_METHOD
@@ -269,7 +273,6 @@ def test_odds_floor_is_eligibility_only_not_rank_authority() -> None:
     assert canonical._selection_rank_key(good) == canonical._selection_rank_key(
         dataclasses.replace(good, decimal_odds=10.0, quote_sha256="f" * 64)
     )
-    # The floor itself is enforced during projection; it never appears in the rank key.
     assert low.decimal_odds < canonical.MINIMUM_DECIMAL_ODDS
 
 
