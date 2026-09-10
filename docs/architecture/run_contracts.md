@@ -81,7 +81,7 @@ The canonical module never imports Current Shadow.
 
 The adapter maps `requested_target_size` to canonical `target_legs`, explicit legacy `YYYYMMDD` fixture dates to concrete dates, the current receipt funnel/counts to canonical counts, concrete legacy selected-leg records to canonical selected legs, and the current research-only authority map to `AuthorityManifest`.
 
-A legacy `fixture_scope` such as `today` or `three-day` is **not** a concrete date. If an older request policy has `fixture_dates=null`, the adapter requires the caller to provide the already-resolved concrete dates. It never guesses dates from a scope string.
+A legacy `fixture_scope` such as `today` or `three-day` is **not** a concrete date. If an older request policy has `fixture_dates=null`, the adapter requires the caller to provide the already-resolved concrete dates. It never guesses dates from a scope string. For these scope-only legacy artifacts, the supplied dates must also preserve the reviewed scope shape: `today` means exactly one resolved date, while `three-day` means exactly three consecutive resolved dates. This check detects contradictions without deciding from wall-clock time which concrete date counts as today. Explicit `fixture_dates` remain authoritative when present, including the reviewed non-contiguous 1..7-date override semantics.
 
 The current runner stores a latest stage checkpoint and a latest progress checkpoint, not a complete historical stage list. The adapter therefore converts only checkpoints actually supplied to it and records `legacy_stage_history_complete=false`. It does not reconstruct missing stages. The full legacy request policy, terminal receipt, and optional latest stage/progress payloads are preserved under `evidence.legacy_current_shadow` so compatibility does not discard existing evidence.
 
@@ -100,7 +100,7 @@ The broader parity specification also requires native canonical receipts to expo
 Focused offline validation requires no provider access:
 
 ```bash
-git pull --ff-only && PYTHONPATH=. python -m pytest tests/test_run_contracts.py tests/test_current_shadow_run_contract_adapter.py -q
+git pull --ff-only && PYTHONPATH=. python -m pytest tests/test_run_contracts.py tests/test_current_shadow_run_contract_adapter.py tests/test_current_shadow_run_contract_scope_binding.py -q
 ```
 
 The existing Current Shadow backward-compatibility tests remain part of the hosted full suite. No live Current Shadow workflow or provider acquisition is required for P1.1 acceptance.
