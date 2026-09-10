@@ -53,3 +53,19 @@ Adding Kelly staking, a target-total-odds objective, minimum compounded-odds fil
 P1.5 creates one stable `domain.portfolio_optimizer` interface and `SelectedPortfolio` output for later delivery migration while retaining exact reconstruction back to reviewed source evidence. Existing Portfolio v2, Portfolio v3 and Current Shadow Portfolio modules remain present; this ADR grants no deletion or retirement authority.
 
 Architecture Boundary CI continues to reject any additional public Portfolio authority lacking its own accepted exact ADR. P1.5 does not promote Current Shadow to MAIN, grant production authority, trigger provider acquisition, create a SportyBet share code, authenticate, access cookies or wallet state, calculate a stake, or place a wager.
+
+## Migration plan
+
+1. Establish `domain.portfolio_optimizer` and `SelectedPortfolio` with exact P1.4 Router consumption and replay coverage against Portfolio v3.
+2. Keep existing v2, v3 and Current Shadow Portfolio callers unchanged during this ownership PR.
+3. Migrate supported callers to the canonical interface in separately bounded, replay-tested PRs.
+4. Re-run architecture reachability/runtime evidence after caller migration.
+5. Consider retirement of superseded Portfolio generations only when live evidence proves they no longer own supported runtime responsibility; retirement requires its own reviewed mission.
+
+P1.5 itself stops after the canonical interface is review-ready. It does not perform bulk caller migration or deletion.
+
+## Rollback / revisit trigger
+
+Revisit or roll back this ADR if canonical replay changes selected-leg identity or shortfall relative to the reviewed Portfolio-v3 policy for equivalent Router decisions; if P1.4 Router ancestry cannot be reconstructed exactly; if any exposure, freshness, reserve or fragility rule is weakened; if `target_legs` is treated as a quota; if odds/Kelly becomes selection authority; or if the canonical module gains delivery, staking or wager authority.
+
+A later architectural redesign of Portfolio selection, dependence modeling, target-total-odds objectives or Kelly sizing requires separate evidence and change control. It must not be smuggled into this ADR's migration allowance.
