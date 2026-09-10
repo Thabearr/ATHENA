@@ -64,6 +64,27 @@ def _authority():
     }
 
 
+def _share_authority():
+    return {
+        "research_shadow_portfolio_consumption": True,
+        "research_fresh_semantic_resolution": True,
+        "research_exact_odds_equality_verification": True,
+        "research_anonymous_share_code_generation": True,
+        "provider_create_reload_verification": True,
+        "production_model": False,
+        "production_probability": False,
+        "phase6": False,
+        "production_selection": False,
+        "production_sportybet_execution": False,
+        "login": False,
+        "cookies": False,
+        "wallet": False,
+        "staking": False,
+        "bet": False,
+        "wager_placed": False,
+    }
+
+
 def _leg(leg_id="LEG-1"):
     return {
         "leg_id": leg_id,
@@ -79,7 +100,9 @@ def _leg(leg_id="LEG-1"):
 def _receipt(*, target=2, selected=1, include_final=True, include_portfolio=True, verified=True):
     legs = [_leg(f"LEG-{index + 1}") for index in range(selected)]
     portfolio = None
+    portfolio_sha256 = None
     if include_portfolio:
+        portfolio_sha256 = "e" * 64
         portfolio = {
             "dataset_name": "athena-current-shadow-all-market-portfolio-v2",
             "requested_target_size": target,
@@ -95,11 +118,35 @@ def _receipt(*, target=2, selected=1, include_final=True, include_portfolio=True
     if verified:
         share_code = "ABC123"
         share_url = "https://example.test/ABC123"
+        share_status = (
+            "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL"
+            if selected < target
+            else "RESEARCH_SHADOW_CODE_VERIFIED"
+        )
         share_receipt = {
-            "status": "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL" if selected < target else "RESEARCH_SHADOW_CODE_VERIFIED",
-            "fresh_selected_legs": legs,
+            "schema_version": 2,
+            "dataset_name": adapter.CURRENT_SHARE_CODE_DATASET,
+            "status": share_status,
+            "observed_at": OBSERVED,
+            "portfolio_sha256": portfolio_sha256,
+            "requested_target_size": target,
+            "portfolio_shortfall": target - selected,
+            "selected_leg_count": selected,
+            "reasons": [],
+            "semantic_resolution_receipt_sha256": "f" * 64,
+            "transport_receipt_sha256": "1" * 64,
             "shareCode": share_code,
             "shareURL": share_url,
+            "combined_odds": "3.50",
+            "fresh_selected_legs": legs,
+            "fallback_events": [],
+            "exact_create_reload_equality": True,
+            "code_verified": True,
+            "authority": _share_authority(),
+            "sportybet_login_used": False,
+            "sportybet_cookie_used": False,
+            "sportybet_wallet_used": False,
+            "stake_submitted": False,
             "wager_placed": False,
         }
     return {
@@ -123,7 +170,7 @@ def _receipt(*, target=2, selected=1, include_final=True, include_portfolio=True
         "router_no_bet_count": 2,
         "source_summary": {"source_raw_sha256": "d" * 64, "wager_placed": False},
         "portfolio": portfolio,
-        "portfolio_sha256": None if portfolio is None else "e" * 64,
+        "portfolio_sha256": portfolio_sha256,
         "selected_leg_count": selected,
         "reserve_leg_count": 0,
         "shortfall": target - selected,
@@ -250,6 +297,7 @@ def test_current_shadow_terminal_receipt_maps_without_losing_legacy_evidence():
     assert payload["shortfall"] == 1
     assert payload["share_code_result"]["verified"] is True
     assert payload["share_code_result"]["share_code"] == "ABC123"
+    assert payload["share_code_result"]["legacy_receipt"] == legacy["share_code_receipt"]
     assert payload["authority_manifest"]["authority_profile"] == "SHADOW"
     assert payload["authority_manifest"]["capabilities"]["provider_acquisition"] is True
     assert payload["authority_manifest"]["capabilities"]["share_code_generation"] is True
@@ -338,7 +386,9 @@ def test_only_actual_latest_stage_and_progress_checkpoints_are_adapted():
         ("PORTFOLIO", "CHECKPOINTED"),
         ("PRICE_ALL_ROUTER", "COMPLETED"),
     ]
-    evidence = receipt.to_dict()["evidence"]["legacy_current_shadow"]
+    payload = receipt.to_dict()
+    assert payload["stage_digests"] == [item.canonical_sha256 for item in receipt.stages]
+    evidence = payload["evidence"]["legacy_current_shadow"]
     assert evidence["latest_stage_checkpoint"] == stage
     assert evidence["latest_progress_checkpoint"] == progress
     assert evidence["legacy_stage_history_complete"] is False
@@ -368,6 +418,16 @@ def test_adapter_rejects_target_shortfall_router_partition_and_checkpoint_bindin
     legacy = _receipt(target=2, selected=1)
     legacy["router_no_bet_count"] = 1
     with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="partition"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+    legacy = _receipt(target=2, selected=1)
+    legacy["provider_event_count"] = 5
+    legacy["reconciled_fixture_count"] = 6
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="provider events"):
         adapter.adapt_current_shadow_receipt(
             request=request,
             receipt_payload=legacy,
@@ -459,6 +519,58 @@ def test_share_code_cannot_be_marked_verified_under_unverified_terminal_status()
             receipt_payload=legacy,
             request_policy=policy,
         )
+
+
+def test_verified_share_code_requires_exact_create_reload_and_hash_bound_proof():
+    policy = _request_policy(fixture_dates=["20260910"])
+    request = adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
+
+    legacy = _receipt(target=2, selected=1)
+    legacy["share_code_receipt"]["exact_create_reload_equality"] = False
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="create/reload equality"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+    legacy = _receipt(target=2, selected=1)
+    legacy["share_code_receipt"]["transport_receipt_sha256"] = None
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="SHA-256"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+    legacy = _receipt(target=2, selected=1)
+    legacy["share_code_receipt"]["shareCode"] = "DIFFERENT"
+    with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match="metadata differs"):
+        adapter.adapt_current_shadow_receipt(
+            request=request,
+            receipt_payload=legacy,
+            request_policy=policy,
+        )
+
+
+def test_verified_share_code_requires_exact_target_shortfall_leg_and_portfolio_bindings():
+    policy = _request_policy(fixture_dates=["20260910"])
+    request = adapter.adapt_current_shadow_request(target_size=2, request_policy=policy)
+
+    for key, value, message in (
+        ("requested_target_size", 3, "target binding"),
+        ("portfolio_shortfall", 0, "shortfall binding"),
+        ("selected_leg_count", 2, "selected-leg binding"),
+        ("portfolio_sha256", "9" * 64, "portfolio binding"),
+    ):
+        legacy = _receipt(target=2, selected=1)
+        legacy["share_code_receipt"][key] = value
+        with pytest.raises(adapter.CurrentShadowRunContractAdapterError, match=message):
+            adapter.adapt_current_shadow_receipt(
+                request=request,
+                receipt_payload=legacy,
+                request_policy=policy,
+            )
 
 
 def test_composed_adapter_produces_canonical_round_trippable_receipt():
