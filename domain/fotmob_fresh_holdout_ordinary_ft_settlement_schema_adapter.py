@@ -33,13 +33,17 @@ SCHEMA_VERSION = 1
 ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_ORDINARY_FT_SETTLEMENT_SCHEMA_ADAPTER_V1"
 ADAPTER_STATE = "REVIEWED_STRUCTURAL_COMPATIBILITY_ONLY_FROZEN_SCORE_SEMANTICS_UNCHANGED"
 
-LIVE_CAPTURE_ADAPTER_BLOB_SHA = "6fb36b3ced7f9879984128033473fee7721428f6"
+LIVE_CAPTURE_ADAPTER_BLOB_SHA = "6bd66f52a318da6400828c70d957850a96be9c37"
 ORDINARY_FT_ADAPTER_BLOB_SHA = "868563206e09010fce74b4ba7954028930baad54"
 PR89_IMPLEMENTATION_BLOB_SHA = "f33dd31aedcd92b5691a3503914ed184d601b493"
 CAPTURE_CONTRACT_BLOB_SHA = "ca2149395de868104666620173b55a880b10c729"
 
 EXTRA_HALFS_KEYS = ("firstExtraHalfStarted", "secondExtraHalfStarted")
 EXTRA_HALFS_RULE = "OPTIONAL_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_NO_EXTRA_TIME_SEMANTICS"
+TEAM_SHORTNAME_RULE = (
+    "OPTIONAL_MATCH_TEAM_SHORTNAME_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_"
+    "VALIDATION_PROJECTION_ONLY"
+)
 
 SOURCE_WORKFLOW_RUN_ID = 32592483626
 SOURCE_ACTIONS_ARTIFACT_ID = 9480687035
@@ -109,6 +113,8 @@ def verify_reviewed_dependencies() -> None:
         raise _error("reviewed extra-halfs key set changed")
     if live_capture_adapter.EXTRA_HALFS_RULE != EXTRA_HALFS_RULE:
         raise _error("reviewed extra-halfs rule changed")
+    if live_capture_adapter.TEAM_SHORTNAME_RULE != TEAM_SHORTNAME_RULE:
+        raise _error("reviewed team shortName rule changed")
     if not isinstance(live_capture_adapter.REQUEST_BUCKET_SPILLOVER_RULE, str):
         raise _error("reviewed request-bucket spillover rule changed")
 
@@ -240,7 +246,11 @@ def assess_eliminated_team_id_value_domain_for_settlement(
         )
     except Exception as exc:
         raise _error("reviewed request-bucket settlement partition failed") from exc
-    projected_payload = _remove_reviewed_extra_halfs(requested_payload)
+    try:
+        projected_payload = live_capture_adapter._remove_reviewed_team_short_names(requested_payload)
+    except Exception as exc:
+        raise _error("reviewed team shortName settlement projection failed") from exc
+    projected_payload = _remove_reviewed_extra_halfs(projected_payload)
     projected_raw = _canonical(projected_payload)
     projected_manifest = _projected_manifest(manifest, projected_raw)
     try:
@@ -289,6 +299,7 @@ def adapter_receipt() -> dict[str, Any]:
         "adapter_state": ADAPTER_STATE,
         "reviewed_extra_halfs_keys": list(EXTRA_HALFS_KEYS),
         "reviewed_extra_halfs_rule": EXTRA_HALFS_RULE,
+        "reviewed_team_shortname_rule": TEAM_SHORTNAME_RULE,
         "reviewed_request_bucket_spillover_rule": live_capture_adapter.REQUEST_BUCKET_SPILLOVER_RULE,
         "source_workflow_run_id": SOURCE_WORKFLOW_RUN_ID,
         "source_actions_artifact_id": SOURCE_ACTIONS_ARTIFACT_ID,
@@ -309,6 +320,7 @@ __all__ = [
     "ADAPTER_STATE",
     "EXTRA_HALFS_KEYS",
     "EXTRA_HALFS_RULE",
+    "TEAM_SHORTNAME_RULE",
     "FreshHoldoutOrdinaryFtSettlementSchemaAdapterError",
     "ReviewedPr89SettlementCompatibilityProxy",
     "adapter_receipt",
