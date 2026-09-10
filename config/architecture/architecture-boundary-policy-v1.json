@@ -1,5 +1,15 @@
 {
-  "approved_parallel_authority_adrs": [],
+  "approved_parallel_authority_adrs": [
+    {
+      "adr_id": "ADR-001",
+      "adr_path": "docs/architecture/adrs/ADR-001-canonical-price-all-promotion.md",
+      "approved_module_ids": [
+        "domain.price_all"
+      ],
+      "responsibility_id": "price_all_and_de_vig",
+      "status": "ACCEPTED"
+    }
+  ],
   "authority_contract_path": "config/architecture/main-shadow-authority-parity-v1.json",
   "authority_contract_policy_id": "ATHENA_MAIN_SHADOW_AUTHORITY_PARITY_V1",
   "authority_contract_sha256": "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe",
