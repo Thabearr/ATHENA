@@ -7,7 +7,6 @@ It performs no provider acquisition and invokes no Current Shadow runner.
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from decimal import Decimal
 from typing import Any, Mapping, Sequence
 
 from domain.run_contracts import (
@@ -32,6 +31,20 @@ CURRENT_STAGE_SEQUENCE = (
     "PORTFOLIO",
     "SHARE_CODE_CREATE_RELOAD",
     "COMPLETE",
+)
+_VERIFIED_RECEIPT_STATUSES = frozenset(
+    {
+        "RESEARCH_SHADOW_CODE_VERIFIED",
+        "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL",
+    }
+)
+_RISKY_REQUEST_AUTHORITY_KEYS = (
+    "production_model",
+    "pricing",
+    "selection",
+    "sportybet_execution",
+    "bet",
+    "wager_placed",
 )
 _RISKY_LEGACY_AUTHORITY_KEYS = (
     "production_model",
@@ -83,6 +96,11 @@ def _exact_false(value: Any, label: str) -> None:
         raise CurrentShadowRunContractAdapterError(f"{label} must be exact false")
 
 
+def _exact_schema(value: Any, expected: int, label: str) -> None:
+    if type(value) is not int or value != expected:
+        raise CurrentShadowRunContractAdapterError(f"{label} schema version drifted")
+
+
 def _parse_legacy_date(value: Any) -> date:
     if type(value) is not str or len(value) != 8 or not value.isascii() or not value.isdigit():
         raise CurrentShadowRunContractAdapterError(
@@ -110,29 +128,45 @@ def _parse_utc(value: Any, label: str) -> datetime:
         raise CurrentShadowRunContractAdapterError(f"{label} is invalid ISO-8601 UTC") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise CurrentShadowRunContractAdapterError(f"{label} must be timezone-aware")
-    return parsed.astimezone(timezone.utc)
+    checked = parsed.astimezone(timezone.utc)
+    canonical = checked.isoformat(timespec="microseconds").replace("+00:00", "Z")
+    if canonical != value:
+        raise CurrentShadowRunContractAdapterError(f"{label} is not canonical microsecond UTC")
+    return checked
 
 
 def _validate_request_policy(value: Any) -> Mapping[str, Any]:
     policy = _mapping(value, "Current Shadow request policy")
-    if (
-        policy.get("schema_version") != CURRENT_REQUEST_SCHEMA_VERSION
-        or policy.get("dataset_name") != CURRENT_REQUEST_DATASET
-    ):
+    _exact_schema(
+        policy.get("schema_version"),
+        CURRENT_REQUEST_SCHEMA_VERSION,
+        "Current Shadow request-policy",
+    )
+    if policy.get("dataset_name") != CURRENT_REQUEST_DATASET:
         raise CurrentShadowRunContractAdapterError("Current Shadow request-policy identity drifted")
     if "fixture_dates" not in policy or "fixture_scope" not in policy:
         raise CurrentShadowRunContractAdapterError("Current Shadow request policy lacks date fields")
     _exact_false(policy.get("wager_placed"), "Current Shadow request-policy wager_placed")
     authority = _mapping(policy.get("authority"), "Current Shadow request-policy authority")
-    _exact_false(authority.get("bet"), "Current Shadow request-policy bet authority")
-    _exact_false(authority.get("wager_placed"), "Current Shadow request-policy wager result")
+    for key in _RISKY_REQUEST_AUTHORITY_KEYS:
+        _exact_false(authority.get(key), f"Current Shadow request-policy {key} authority")
+    for key, item in authority.items():
+        if type(key) is not str or not key or type(item) is not bool:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow request-policy authority must contain string->bool entries"
+            )
     return policy
 
 
 def _validated_resolved_dates(values: Sequence[date] | None) -> tuple[date, ...] | None:
     if values is None:
         return None
-    items = tuple(values)
+    try:
+        items = tuple(values)
+    except TypeError as exc:
+        raise CurrentShadowRunContractAdapterError(
+            "resolved_dates must be concrete date sequence"
+        ) from exc
     if any(type(item) is not date for item in items):
         raise CurrentShadowRunContractAdapterError("resolved_dates must contain exact date values")
     if len(set(items)) != len(items):
@@ -206,9 +240,17 @@ def _legacy_counts(receipt: Mapping[str, Any]) -> dict[str, int]:
         if type(value) is not int or value < 0:
             raise CurrentShadowRunContractAdapterError(f"Current Shadow {key} is invalid")
         counts[key] = value
-    if counts["router_selected_count"] + counts["router_no_bet_count"] > counts["priced_fixture_count"]:
+    if counts["reconciled_fixture_count"] > counts["reviewed_fixture_count"]:
         raise CurrentShadowRunContractAdapterError(
-            "Current Shadow router counts exceed priced fixtures"
+            "Current Shadow reconciled fixtures exceed reviewed fixtures"
+        )
+    if counts["priced_fixture_count"] > counts["reconciled_fixture_count"]:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow priced fixtures exceed reconciled fixtures"
+        )
+    if counts["router_selected_count"] + counts["router_no_bet_count"] != counts["priced_fixture_count"]:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow router counts do not partition priced fixtures"
         )
     return counts
 
@@ -252,13 +294,19 @@ def _share_code_result(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
     legacy = receipt.get("share_code_receipt")
     code = receipt.get("shareCode")
     url = receipt.get("shareURL")
+    terminal_status = receipt.get("status")
     if legacy is None and code is None and url is None:
+        if terminal_status in _VERIFIED_RECEIPT_STATUSES:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow verified terminal status lacks share-code evidence"
+            )
         return None
     if legacy is None:
         raise CurrentShadowRunContractAdapterError(
             "Current Shadow share-code exposure lacks verification receipt"
         )
     legacy = _mapping(legacy, "Current Shadow share-code receipt")
+    _exact_false(legacy.get("wager_placed"), "Current Shadow share-code receipt wager_placed")
     if (code is None) != (url is None):
         raise CurrentShadowRunContractAdapterError(
             "Current Shadow share code and URL must be exposed together"
@@ -267,8 +315,22 @@ def _share_code_result(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
         raise CurrentShadowRunContractAdapterError("Current Shadow share code is invalid")
     if url is not None and (type(url) is not str or not url):
         raise CurrentShadowRunContractAdapterError("Current Shadow share URL is invalid")
+    verified = code is not None and url is not None
+    if verified:
+        if terminal_status not in _VERIFIED_RECEIPT_STATUSES:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow unverified terminal status cannot expose verified share code"
+            )
+        if legacy.get("status") not in _VERIFIED_RECEIPT_STATUSES:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow share-code receipt status does not prove verification"
+            )
+    elif terminal_status in _VERIFIED_RECEIPT_STATUSES:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow verified terminal status lacks verified code and URL"
+        )
     return {
-        "verified": code is not None and url is not None,
+        "verified": verified,
         "share_code": code,
         "share_url": url,
         "legacy_receipt": dict(legacy),
@@ -283,7 +345,8 @@ def _checkpoint_stage(
     source: str,
 ) -> RunStage:
     value = _mapping(payload, f"Current Shadow {source} checkpoint")
-    if value.get("dataset_name") != CURRENT_RECEIPT_DATASET or value.get("schema_version") != 1:
+    _exact_schema(value.get("schema_version"), 1, f"Current Shadow {source} checkpoint")
+    if value.get("dataset_name") != CURRENT_RECEIPT_DATASET:
         raise CurrentShadowRunContractAdapterError(
             f"Current Shadow {source} checkpoint identity drifted"
         )
@@ -292,7 +355,7 @@ def _checkpoint_stage(
         raise CurrentShadowRunContractAdapterError(
             f"Current Shadow {source} checkpoint stage drifted"
         )
-    if value.get("stage_index") != CURRENT_STAGE_SEQUENCE.index(stage):
+    if type(value.get("stage_index")) is not int or value.get("stage_index") != CURRENT_STAGE_SEQUENCE.index(stage):
         raise CurrentShadowRunContractAdapterError(
             f"Current Shadow {source} checkpoint stage index drifted"
         )
@@ -300,7 +363,7 @@ def _checkpoint_stage(
         raise CurrentShadowRunContractAdapterError(
             f"Current Shadow {source} checkpoint commit does not match receipt"
         )
-    if value.get("requested_target_size") != request.target_legs:
+    if type(value.get("requested_target_size")) is not int or value.get("requested_target_size") != request.target_legs:
         raise CurrentShadowRunContractAdapterError(
             f"Current Shadow {source} checkpoint target does not match request"
         )
@@ -315,11 +378,18 @@ def _checkpoint_stage(
         raw_counts = _mapping(value.get("counts"), "Current Shadow progress counts")
         stage_counts: dict[str, int] = {}
         for key, item in raw_counts.items():
-            if type(key) is not str or type(item) is not int or item < 0:
+            if type(key) is not str or not key or type(item) is not int or item < 0:
                 raise CurrentShadowRunContractAdapterError(
                     "Current Shadow progress counts are invalid"
                 )
             stage_counts[key] = item
+        progress_source = _mapping(
+            value.get("source_summary"), "Current Shadow progress source_summary"
+        )
+        _exact_false(
+            progress_source.get("wager_placed"),
+            "Current Shadow progress source_summary wager_placed",
+        )
         status = progress_status
     else:
         stage_counts = {}
@@ -351,12 +421,14 @@ def adapt_current_shadow_receipt(
         )
     policy = _validate_request_policy(request_policy)
     receipt = _mapping(receipt_payload, "Current Shadow receipt")
-    if (
-        receipt.get("schema_version") != CURRENT_RECEIPT_SCHEMA_VERSION
-        or receipt.get("dataset_name") != CURRENT_RECEIPT_DATASET
-    ):
+    _exact_schema(
+        receipt.get("schema_version"),
+        CURRENT_RECEIPT_SCHEMA_VERSION,
+        "Current Shadow receipt",
+    )
+    if receipt.get("dataset_name") != CURRENT_RECEIPT_DATASET:
         raise CurrentShadowRunContractAdapterError("Current Shadow receipt identity drifted")
-    if receipt.get("requested_target_size") != request.target_legs:
+    if type(receipt.get("requested_target_size")) is not int or receipt.get("requested_target_size") != request.target_legs:
         raise CurrentShadowRunContractAdapterError(
             "Current Shadow receipt target differs from canonical RunRequest"
         )
