@@ -5,11 +5,19 @@ That context source-replays PR-C current history, an exact current
 FotMob<->SportyBet fixture reconciliation, and PR-B provider evidence. Callers
 cannot provide raw xG, a mathematical PR-C scan, provider status strings, or a
 prefiltered quote list.
+
+P1.2 keeps those provider/evidence bindings intact while making the canonical
+``MarketProbabilityBundle`` the source of football probabilities consumed by
+Price-all. Provider odds and quote semantics remain outside that bundle.
 """
 from __future__ import annotations
 
 from typing import Any
 
+from domain.current_shadow_market_probability_adapter import (
+    current_shadow_assessment_with_canonical_probability,
+    market_probability_bundle_from_current_shadow_fixture_scan,
+)
 from domain.markets import MARKET_REGISTRY, MarketId
 from domain._all_market_shadow_types import ShadowDisposition
 from domain._current_shadow_price_core import AUTHORITY_FLAGS, ShadowPriceDisposition, ShadowPriceError, _canonical_bytes
@@ -30,10 +38,21 @@ from domain._current_shadow_quote_binding import (
 
 def _price_context(context: CurrentShadowPriceContext) -> ShadowPriceAllBundle:
     quotes = build_current_shadow_exact_quotes(context)
+    probability_bundle = market_probability_bundle_from_current_shadow_fixture_scan(
+        context.scan
+    )
+    if probability_bundle.fixture_identity != context.fixture_identity:
+        raise ShadowPriceError("canonical probability bundle fixture identity drifted")
+
     results: list[ShadowPriceResult] = []
     seen_markets: set[MarketId] = set()
 
-    for assessment in context.scan.market_assessments:
+    for source_assessment in context.scan.market_assessments:
+        distribution = probability_bundle.market(source_assessment.market_id)
+        assessment = current_shadow_assessment_with_canonical_probability(
+            source_assessment,
+            distribution,
+        )
         seen_markets.add(assessment.market_id)
         if assessment.disposition not in {
             ShadowDisposition.ANALYTICAL_READY,
