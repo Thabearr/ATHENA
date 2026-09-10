@@ -168,6 +168,11 @@ def test_pricing_or_selection_evidence_cannot_be_smuggled_into_bundle() -> None:
     with pytest.raises(MarketProbabilityError, match="boundary"):
         MarketProbabilityBundle.from_dict(payload)
 
+    payload = _bundle().to_dict()
+    payload["model_evidence"]["recommended_market"] = "MATCH_RESULT"
+    with pytest.raises(MarketProbabilityError, match="boundary"):
+        MarketProbabilityBundle.from_dict(payload)
+
 
 def test_extra_or_ambiguous_contract_fields_fail_closed() -> None:
     payload = _bundle().to_dict()
@@ -181,6 +186,21 @@ def test_extra_or_ambiguous_contract_fields_fail_closed() -> None:
         MarketProbabilityBundle.from_canonical_bytes(noncanonical)
 
 
+def test_duplicate_json_keys_and_nonfinite_constants_fail_closed() -> None:
+    raw = canonical_json_bytes(_bundle())
+    duplicated = raw.replace(
+        b'"schema_version":1',
+        b'"schema_version":1,"schema_version":1',
+        1,
+    )
+    with pytest.raises(MarketProbabilityError, match="duplicate JSON key"):
+        MarketProbabilityBundle.from_canonical_bytes(duplicated)
+
+    nonfinite = raw.replace(b'"calibrated_home":1.72', b'"calibrated_home":NaN', 1)
+    with pytest.raises(MarketProbabilityError, match="non-finite JSON constant"):
+        MarketProbabilityBundle.from_canonical_bytes(nonfinite)
+
+
 def test_specialist_score_grid_evidence_is_bound_to_bundle_identity() -> None:
     payload = deepcopy(_bundle().to_dict())
     early = next(
@@ -191,3 +211,41 @@ def test_specialist_score_grid_evidence_is_bound_to_bundle_identity() -> None:
     early["evidence"]["score_matrix_sha256"] = "f" * 64
     with pytest.raises(MarketProbabilityError, match="score-grid identity"):
         MarketProbabilityBundle.from_dict(payload)
+
+
+def test_available_specialist_market_requires_explicit_specialist_output() -> None:
+    payload = _bundle().to_dict()
+    payload["specialist_outputs"] = [
+        item
+        for item in payload["specialist_outputs"]
+        if item["market_id"] != "MATCH_RESULT_1UP"
+    ]
+    with pytest.raises(MarketProbabilityError, match="requires explicit specialist output"):
+        MarketProbabilityBundle.from_dict(payload)
+
+
+def test_available_score_grid_market_requires_exact_score_grid_identity() -> None:
+    payload = _bundle().to_dict()
+    payload["score_grid"] = None
+    with pytest.raises(MarketProbabilityError, match="requires score-grid identity"):
+        MarketProbabilityBundle.from_dict(payload)
+
+
+def test_no_reviewed_xg_produces_truthful_blocked_bundle_without_score_grid() -> None:
+    scan = prc.scan_fixture_all_markets(
+        fixture_identity=FIXTURE,
+        research_xg=None,
+        kickoff_utc_iso="2026-09-12T15:00:00Z",
+        total_goals_lines=(1.5, 2.5),
+        asian_handicap_home_lines=(-0.5, 0.0, 0.5),
+        provider_semantic_by_market=None,
+    )
+    bundle = market_probability_bundle_from_current_shadow_fixture_scan(scan)
+    assert bundle.score_grid is None
+    assert bundle.specialist_outputs == ()
+    assert all(
+        row.availability is ProbabilityAvailability.BLOCKED
+        for row in bundle.markets
+    )
+    assert all(not row.event_probabilities for row in bundle.markets)
+    assert all(not row.settlement_distributions for row in bundle.markets)
