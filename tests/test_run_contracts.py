@@ -190,6 +190,44 @@ def test_authority_manifest_is_immutable_and_all_profiles_deny_sensitive_capabil
                 _manifest(authority_profile=profile, **{field: True})
 
 
+def test_authority_manifest_preserves_safe_research_capabilities_but_rejects_smuggled_authority():
+    manifest = _manifest(
+        additional_capabilities={
+            "research_shadow_price_all": True,
+            "provider_create_reload_verification": True,
+            "production_selection": False,
+            "bet": False,
+        }
+    )
+    assert manifest.additional_capabilities["research_shadow_price_all"] is True
+    assert manifest.additional_capabilities["provider_create_reload_verification"] is True
+
+    for capability in (
+        "production_selection",
+        "phase6",
+        "bet",
+        "place_wager",
+        "stake_submitted",
+        "wallet_read",
+        "login_session",
+    ):
+        with pytest.raises(contracts.RunContractError, match="production/sensitive"):
+            _manifest(additional_capabilities={capability: True})
+
+
+def test_authority_manifest_rejects_conflicting_duplicate_canonical_capability():
+    with pytest.raises(contracts.RunContractError, match="contradicts canonical"):
+        _manifest(
+            share_code_generation=True,
+            additional_capabilities={"share_code_generation": False},
+        )
+    manifest = _manifest(
+        share_code_generation=True,
+        additional_capabilities={"share_code_generation": True},
+    )
+    assert manifest.additional_capabilities["share_code_generation"] is True
+
+
 def test_run_stage_normalizes_utc_and_freezes_nested_evidence():
     source = {"nested": {"items": [1, 2]}}
     stage = contracts.RunStage(
@@ -201,6 +239,7 @@ def test_run_stage_normalizes_utc_and_freezes_nested_evidence():
     )
     source["nested"]["items"].append(3)
     assert stage.to_dict()["evidence"] == {"nested": {"items": [1, 2]}}
+    assert len(stage.canonical_sha256) == 64
     with pytest.raises(TypeError):
         stage.evidence["x"] = 1
 
@@ -223,7 +262,15 @@ def test_run_receipt_round_trip_carries_stage_counts_legs_shortfall_delivery_and
     assert rebuilt.shortfall == 1
     assert rebuilt.share_code_result["verified"] is True
     assert rebuilt.authority_manifest.authority_profile == "SHADOW"
+    assert rebuilt.to_dict()["stage_digests"] == [receipt.stages[0].canonical_sha256]
     assert rebuilt.wager_placed is False
+
+
+def test_run_receipt_rejects_tampered_stage_digest():
+    payload = _receipt().to_dict()
+    payload["stage_digests"][0] = "0" * 64
+    with pytest.raises(contracts.RunContractError, match="stage digests"):
+        contracts.RunReceipt.from_dict(payload)
 
 
 def test_run_receipt_parser_rejects_boolean_schema_version():
@@ -259,6 +306,15 @@ def test_run_receipt_rejects_profile_mode_mismatch_and_wager_result():
         _receipt(authority_manifest=_manifest(mode="backtest"))
     with pytest.raises(contracts.RunContractError, match="wager"):
         _receipt(wager_placed=True)
+
+
+def test_run_receipt_share_code_result_requires_request_intent_and_manifest_authority():
+    disabled_request = _request(target_legs=2, create_share_code=False)
+    with pytest.raises(contracts.RunContractError, match="disabled request delivery flag"):
+        _receipt(request=disabled_request)
+
+    with pytest.raises(contracts.RunContractError, match="share-code generation authority"):
+        _receipt(authority_manifest=_manifest(share_code_generation=False))
 
 
 def test_canonical_contract_module_has_no_legacy_or_current_shadow_import_dependency():
