@@ -20,7 +20,7 @@ import json
 import types
 from typing import Any
 
-from domain import price_all_v3_current_provider as _v3
+import domain.price_all_v3_current_provider as _v3
 from domain._price_all_contracts import CalibratedValueCandidate
 from domain.current_direct_provider_live_quote_mapping_consumption import (
     CurrentDirectProviderMappedQuoteBundle,
