@@ -345,6 +345,7 @@ def test_canonical_adapter_is_one_router_boundary_not_a_fourth_formula_stack() -
             imports.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom) and node.module:
             imports.add(node.module)
+            imports.update(f"{node.module}.{alias.name}" for alias in node.names)
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             definitions.add(node.name)
     assert "domain.price_all" in imports
