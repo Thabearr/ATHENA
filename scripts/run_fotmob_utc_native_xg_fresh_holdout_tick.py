@@ -15,8 +15,8 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_activation_runner as runner
 
 
-LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "6fb36b3ced7f9879984128033473fee7721428f6"
-SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "e5bc1f1581913fcebfb989eb6aeb3ab6485282ed"
+LIVE_CAPTURE_IDENTITY_ADAPTER_BLOB_SHA = "6bd66f52a318da6400828c70d957850a96be9c37"
+SETTLEMENT_SCHEMA_ADAPTER_BLOB_SHA = "f8511954de7738a91f474d78b18b5968d8479e39"
 ACTIVATION_RUNNER_BLOB_SHA = "901ab137d6601a3485eac30da7e6bad7eeefa397"
 
 

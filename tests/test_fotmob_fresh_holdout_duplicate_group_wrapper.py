@@ -281,7 +281,7 @@ def test_reviewed_duplicate_wrapper_cannot_mix_with_spillover_policy():
 
 def test_duplicate_group_receipt_binds_exact_failure_evidence_and_no_authority():
     receipt = adapter.adapter_receipt()
-    assert receipt["adapter_id"] == "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V2"
+    assert receipt["adapter_id"] == "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V3"
     assert receipt["duplicate_group_source_workflow_run_id"] == 33823663641
     assert receipt["duplicate_group_source_actions_artifact_id"] == 9919255715
     assert receipt["duplicate_group_source_actions_artifact_sha256"] == (

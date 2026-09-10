@@ -45,7 +45,7 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
 
 SCHEMA_VERSION = 1
-ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V2"
+ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V3"
 ADAPTER_STATE = "REVIEWED_STRUCTURAL_COMPATIBILITY_ONLY_NO_FOOTBALL_SEMANTIC_PROMOTION"
 
 FRESH_HOLDOUT_CORE_BLOB_SHA = "5dabab12d5205d384fd3904cda0e68661ef90791"
@@ -58,6 +58,39 @@ CAPTURE_CONTRACT_BLOB_SHA = "ca2149395de868104666620173b55a880b10c729"
 EXTRA_HALFS_KEYS = ("firstExtraHalfStarted", "secondExtraHalfStarted")
 EXTRA_HALFS_RULE = (
     "OPTIONAL_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_NO_EXTRA_TIME_SEMANTICS"
+)
+TEAM_SHORTNAME_KEY = "shortName"
+TEAM_SHORTNAME_RULE = (
+    "OPTIONAL_MATCH_TEAM_SHORTNAME_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_"
+    "VALIDATION_PROJECTION_ONLY"
+)
+TEAM_SHORTNAME_SOURCE_WORKFLOW_RUN_ID = 34426288968
+TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_ID = 10132954816
+TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_NAME = (
+    "failure-20260910T013700Z-run-34426288968.tar.gz"
+)
+TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_SHA256 = (
+    "ad44afa394d5fc9be03132af069acf018566cc8eebcee932d518f9fb15b4ab7e"
+)
+TEAM_SHORTNAME_SOURCE_CAPTURE_LINEAGES = (
+    {
+        "request_date": "20260909",
+        "observed_at": "2026-09-10T01:46:14.724321Z",
+        "manifest_sha256": "308898f47d5a6f8e292d247ff661c4b3e71ebb4b0349b13435a59b6ac91c6cf4",
+        "raw_sha256": "6884f67152db749c9f69dc74119d6bed475971d3cb9d27ceb65d1e4ee5d69ccb",
+    },
+    {
+        "request_date": "20260910",
+        "observed_at": "2026-09-10T01:46:15.042980Z",
+        "manifest_sha256": "0aa3be5dc0f8fe3c8922d40d3a2a277ce3df377bc4fc6fdd1c1b34c2f2af710a",
+        "raw_sha256": "3492eab523b2a9e330f7fadb61b25ad21595242f86d6b1173fa2a3547fe2ca1f",
+    },
+    {
+        "request_date": "20260911",
+        "observed_at": "2026-09-10T01:46:15.396251Z",
+        "manifest_sha256": "82149cd522c5146d9158382caa8edb03b8dac3a966d3df799cae3833292a0cf4",
+        "raw_sha256": "1e2029c8e6878e6ec40b414d046ef3e817c69e4f64659363ce5b8de8e6d9a51a",
+    },
 )
 REQUEST_BUCKET_SPILLOVER_RULE = (
     "EXCLUDE_ONLY_IMMEDIATELY_PREVIOUS_UTC_DATE_FIXTURES_WITH_EXACT_TIMETS_"
@@ -135,6 +168,7 @@ SAFETY_KEYS = (
     "football_semantics_promoted",
     "final_result_semantics_promoted",
     "extra_time_semantics_promoted",
+    "team_shortname_semantics_promoted",
     "request_bucket_semantics_promoted",
     "timezone_semantics_promoted",
     "source_capability_changed",
@@ -253,6 +287,34 @@ def _projected_manifest(
         )
     except Exception as exc:
         raise _error("compatibility projection manifest failed validation") from exc
+
+
+def _remove_reviewed_team_short_names(payload: dict[str, Any]) -> dict[str, Any]:
+    """Remove reviewed opaque team shortName only from a validation copy."""
+    projected = copy.deepcopy(payload)
+    leagues = projected.get("leagues")
+    if type(leagues) is not list:
+        return projected
+    for league_index, league in enumerate(leagues):
+        if type(league) is not dict:
+            continue
+        matches = league.get("matches")
+        if type(matches) is not list:
+            continue
+        for match_index, match in enumerate(matches):
+            if type(match) is not dict:
+                continue
+            for side in ("home", "away"):
+                team = match.get(side)
+                if type(team) is not dict or TEAM_SHORTNAME_KEY not in team:
+                    continue
+                if type(team[TEAM_SHORTNAME_KEY]) is not str:
+                    raise _error(
+                        f"leagues[{league_index}].matches[{match_index}]."
+                        f"{side}.{TEAM_SHORTNAME_KEY} must be an exact string"
+                    )
+                del team[TEAM_SHORTNAME_KEY]
+    return projected
 
 
 def _remove_reviewed_extra_halfs(payload: dict[str, Any]) -> dict[str, Any]:
@@ -565,7 +627,8 @@ def _assess_reviewed_structural_payload(
     request_date: str | None = None,
     label: str,
 ) -> tuple[dict[str, Any], capture_contract.FotMobDataMatchesCaptureManifest]:
-    pr89_payload = _remove_reviewed_extra_halfs(payload)
+    pr89_payload = _remove_reviewed_team_short_names(payload)
+    pr89_payload = _remove_reviewed_extra_halfs(pr89_payload)
     pr89_raw = _canonical(pr89_payload)
     pr89_manifest = _projected_manifest(
         manifest,
@@ -868,6 +931,13 @@ def adapter_receipt() -> dict[str, Any]:
         "adapter_state": ADAPTER_STATE,
         "reviewed_extra_halfs_keys": list(EXTRA_HALFS_KEYS),
         "reviewed_extra_halfs_rule": EXTRA_HALFS_RULE,
+        "reviewed_team_shortname_key": TEAM_SHORTNAME_KEY,
+        "reviewed_team_shortname_rule": TEAM_SHORTNAME_RULE,
+        "team_shortname_source_workflow_run_id": TEAM_SHORTNAME_SOURCE_WORKFLOW_RUN_ID,
+        "team_shortname_source_actions_artifact_id": TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_ID,
+        "team_shortname_source_actions_artifact_name": TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_NAME,
+        "team_shortname_source_actions_artifact_sha256": TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_SHA256,
+        "team_shortname_source_capture_lineages": [dict(item) for item in TEAM_SHORTNAME_SOURCE_CAPTURE_LINEAGES],
         "reviewed_request_bucket_spillover_rule": REQUEST_BUCKET_SPILLOVER_RULE,
         "reviewed_duplicate_group_wrapper_rule": REVIEWED_DUPLICATE_GROUP_WRAPPER_RULE,
         "source_workflow_run_id": SOURCE_WORKFLOW_RUN_ID,
@@ -910,6 +980,8 @@ def adapter_receipt() -> dict[str, Any]:
         "spillover_rows_structurally_revalidated_separately": True,
         "original_network_capture_lineage_preserved_in_returned_fixtures": True,
         "compatibility_projection_is_not_source_evidence": True,
+        "team_shortname_projection_is_validation_only": True,
+        "team_shortname_has_no_identity_or_football_semantics": True,
         "network_acquisition_performed": False,
         "safety": {key: False for key in SAFETY_KEYS},
     }
@@ -920,6 +992,13 @@ __all__ = [
     "ADAPTER_STATE",
     "EXTRA_HALFS_KEYS",
     "EXTRA_HALFS_RULE",
+    "TEAM_SHORTNAME_KEY",
+    "TEAM_SHORTNAME_RULE",
+    "TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_ID",
+    "TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_NAME",
+    "TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_SHA256",
+    "TEAM_SHORTNAME_SOURCE_CAPTURE_LINEAGES",
+    "TEAM_SHORTNAME_SOURCE_WORKFLOW_RUN_ID",
     "FreshHoldoutCaptureQualificationAdapterError",
     "REQUEST_BUCKET_SPILLOVER_RULE",
     "REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS",
