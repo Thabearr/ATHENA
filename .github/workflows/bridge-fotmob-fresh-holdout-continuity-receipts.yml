@@ -143,6 +143,7 @@ jobs:
           test "$(git rev-parse HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml)" = "1efe1e34d4459b2aeea17d5da8ba77bd4e2442f2"
           test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_continuity.py)" = "ac8ba91b8f3e1086f01d35f3ca6d6aa356417623"
           test "$(git rev-parse HEAD:domain/fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery.py)" = "0f880bfb161d2dd9547326611505a066019b7f06"
+          test "$(git rev-parse HEAD:domain/fotmob_fresh_holdout_bridge_noop.py)" = "88f97ecb4ae626be9d10e3561f1e52eaebe89242"
           test "$(git rev-parse HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py)" = "ddabb6ae83cbe6c81c9264119a121a54715df960"
           test "$(git rev-parse HEAD:scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)" = "f0b836304b1d46877e0396ea7a532c24b46a3d16"
           test "$(git rev-parse HEAD:scripts/bind_fotmob_fresh_holdout_continuity_dispatch.py)" = "4c05e20ded1f2b7129ec38a16d45c65cedb341ed"
@@ -166,6 +167,7 @@ jobs:
           import subprocess
           import time
 
+          import domain.fotmob_fresh_holdout_bridge_noop as bridge_noop
           import domain.fotmob_fresh_holdout_continuity as continuity
           import scripts.bind_fotmob_fresh_holdout_continuity_dispatch as dispatch_binding
           import scripts.mirror_fotmob_fresh_holdout_release_receipt as mirror
@@ -250,6 +252,7 @@ jobs:
               ):
                   with open(output, "a", encoding="utf-8") as fh:
                       fh.write("bridge_required=false\n")
+                      fh.write("bridge_disposition=NO_WATCHDOG_DISPATCH\n")
                   print(
                       "watchdog completed without requesting a prospective continuity dispatch; "
                       "receipt bridge is a verified no-op"
@@ -365,10 +368,44 @@ jobs:
               time.sleep(2)
           if source is None or source.get("status") != "completed":
               raise SystemExit("continuity collection run did not complete within reviewed wait")
-          if source.get("conclusion") != "success":
-              raise SystemExit("continuity collection run did not complete successfully")
           if source.get("event") != "workflow_dispatch":
               raise SystemExit("durability bridge only accepts prospective continuity dispatch runs")
+
+          if source.get("conclusion") != "success":
+              if mode == "watchdog" and source.get("conclusion") == "failure":
+                  current_main_ref = gh_json(f"/repos/{repo}/git/ref/heads/main")
+                  current_object = current_main_ref.get("object")
+                  current_main_sha = (
+                      current_object.get("sha")
+                      if type(current_object) is dict
+                      else None
+                  )
+                  source_artifacts = gh_json(
+                      f"/repos/{repo}/actions/runs/{source_run_id}/artifacts?per_page=100"
+                  )
+                  source_jobs = gh_json(
+                      f"/repos/{repo}/actions/runs/{source_run_id}/jobs?filter=latest&per_page=100"
+                  )
+                  if bridge_noop.prove_superseded_preacquisition_no_mirror(
+                      source,
+                      source_artifacts,
+                      source_jobs,
+                      expected_source_head_sha=watchdog_head_sha,
+                      current_main_sha=current_main_sha,
+                  ):
+                      with open(output, "a", encoding="utf-8") as fh:
+                          fh.write("bridge_required=false\n")
+                          fh.write(
+                              "bridge_disposition="
+                              "SUPERSEDED_HEAD_PREACQUISITION_NO_MIRROR\n"
+                          )
+                      print(
+                          "prospective continuity source was superseded by newer main and "
+                          "failed before acquisition/persistence; receipt bridge is a "
+                          "verified no-op"
+                      )
+                      raise SystemExit(0)
+              raise SystemExit("continuity collection run did not complete successfully")
 
           try:
               transport._validate_reviewed_collection_run(source, run_id=source_run_id)
@@ -380,6 +417,7 @@ jobs:
 
           with open(output, "a", encoding="utf-8") as fh:
               fh.write("bridge_required=true\n")
+              fh.write("bridge_disposition=MIRROR_VERIFIED_RECEIPT\n")
               fh.write(f"source_run_id={source_run_id}\n")
           print(
               "bound exact completed continuity collection run "
@@ -387,12 +425,14 @@ jobs:
           )
           PY
 
-      - name: Acknowledge watchdog completion without continuity dispatch
+      - name: Acknowledge verified receipt bridge no-op
         if: steps.source.outputs.bridge_required == 'false'
+        env:
+          BRIDGE_DISPOSITION: ${{ steps.source.outputs.bridge_disposition }}
         shell: bash
         run: |
-          echo "No prospective continuity dispatch was requested by this watchdog."
-          echo "Receipt bridge no-op: no evidence mutation and no provider acquisition."
+          echo "Receipt bridge verified no-op: ${BRIDGE_DISPOSITION}."
+          echo "No evidence mutation, provider acquisition, backfill, pricing, selection, or wager authority."
 
       - name: Mirror exact canonical receipt into existing long-lived release
         if: steps.source.outputs.bridge_required == 'true'
