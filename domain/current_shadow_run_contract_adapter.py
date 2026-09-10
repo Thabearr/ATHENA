@@ -22,6 +22,8 @@ CURRENT_REQUEST_SCHEMA_VERSION = 1
 CURRENT_REQUEST_DATASET = "athena-current-shadow-request-policy-v1"
 CURRENT_RECEIPT_SCHEMA_VERSION = 1
 CURRENT_RECEIPT_DATASET = "athena-current-shadow-all-market-runner-v1"
+CURRENT_SHARE_CODE_SCHEMA_VERSION = 2
+CURRENT_SHARE_CODE_DATASET = "athena-current-shadow-all-market-share-code-v2"
 CURRENT_STAGE_SEQUENCE = (
     "STARTED",
     "CURRENT_FOTMOB_SOURCE",
@@ -53,6 +55,19 @@ _RISKY_LEGACY_AUTHORITY_KEYS = (
     "production_price_all",
     "production_market_router",
     "production_portfolio",
+    "production_selection",
+    "production_sportybet_execution",
+    "login",
+    "cookies",
+    "wallet",
+    "staking",
+    "bet",
+    "wager_placed",
+)
+_RISKY_SHARE_CODE_AUTHORITY_KEYS = (
+    "production_model",
+    "production_probability",
+    "phase6",
     "production_selection",
     "production_sportybet_execution",
     "login",
@@ -99,6 +114,12 @@ def _exact_false(value: Any, label: str) -> None:
 def _exact_schema(value: Any, expected: int, label: str) -> None:
     if type(value) is not int or value != expected:
         raise CurrentShadowRunContractAdapterError(f"{label} schema version drifted")
+
+
+def _sha256_text(value: Any, label: str) -> str:
+    if type(value) is not str or len(value) != 64 or any(ch not in "0123456789abcdef" for ch in value):
+        raise CurrentShadowRunContractAdapterError(f"{label} must be exact lowercase SHA-256")
+    return value
 
 
 def _parse_legacy_date(value: Any) -> date:
@@ -244,6 +265,10 @@ def _legacy_counts(receipt: Mapping[str, Any]) -> dict[str, int]:
         raise CurrentShadowRunContractAdapterError(
             "Current Shadow reconciled fixtures exceed reviewed fixtures"
         )
+    if counts["reconciled_fixture_count"] > counts["provider_event_count"]:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow reconciled fixtures exceed provider events"
+        )
     if counts["priced_fixture_count"] > counts["reconciled_fixture_count"]:
         raise CurrentShadowRunContractAdapterError(
             "Current Shadow priced fixtures exceed reconciled fixtures"
@@ -290,7 +315,13 @@ def _selected_legs(receipt: Mapping[str, Any], expected_count: int) -> tuple[Map
     return tuple(chosen)
 
 
-def _share_code_result(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
+def _share_code_result(
+    receipt: Mapping[str, Any],
+    *,
+    counts: Mapping[str, int],
+    selected_legs: tuple[Mapping[str, Any], ...],
+    shortfall: int,
+) -> Mapping[str, Any] | None:
     legacy = receipt.get("share_code_receipt")
     code = receipt.get("shareCode")
     url = receipt.get("shareURL")
@@ -306,7 +337,28 @@ def _share_code_result(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
             "Current Shadow share-code exposure lacks verification receipt"
         )
     legacy = _mapping(legacy, "Current Shadow share-code receipt")
-    _exact_false(legacy.get("wager_placed"), "Current Shadow share-code receipt wager_placed")
+    _exact_schema(
+        legacy.get("schema_version"),
+        CURRENT_SHARE_CODE_SCHEMA_VERSION,
+        "Current Shadow share-code receipt",
+    )
+    if legacy.get("dataset_name") != CURRENT_SHARE_CODE_DATASET:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow share-code receipt identity drifted"
+        )
+    for key in _TOP_LEVEL_SAFETY_KEYS:
+        _exact_false(legacy.get(key), f"Current Shadow share-code receipt {key}")
+    share_authority = _mapping(
+        legacy.get("authority"), "Current Shadow share-code receipt authority"
+    )
+    for key in _RISKY_SHARE_CODE_AUTHORITY_KEYS:
+        _exact_false(share_authority.get(key), f"Current Shadow share-code authority {key}")
+    for key, value in share_authority.items():
+        if type(key) is not str or not key or type(value) is not bool:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow share-code authority must contain string->bool entries"
+            )
+
     if (code is None) != (url is None):
         raise CurrentShadowRunContractAdapterError(
             "Current Shadow share code and URL must be exposed together"
@@ -315,6 +367,30 @@ def _share_code_result(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
         raise CurrentShadowRunContractAdapterError("Current Shadow share code is invalid")
     if url is not None and (type(url) is not str or not url):
         raise CurrentShadowRunContractAdapterError("Current Shadow share URL is invalid")
+    if legacy.get("shareCode") != code or legacy.get("shareURL") != url:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow top-level share-code metadata differs from verification receipt"
+        )
+    if type(legacy.get("requested_target_size")) is not int or legacy.get("requested_target_size") != receipt.get("requested_target_size"):
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow share-code receipt target binding drifted"
+        )
+    if type(legacy.get("selected_leg_count")) is not int or legacy.get("selected_leg_count") != counts["selected_leg_count"]:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow share-code receipt selected-leg binding drifted"
+        )
+    if type(legacy.get("portfolio_shortfall")) is not int or legacy.get("portfolio_shortfall") != shortfall:
+        raise CurrentShadowRunContractAdapterError(
+            "Current Shadow share-code receipt shortfall binding drifted"
+        )
+    top_portfolio_sha = receipt.get("portfolio_sha256")
+    if top_portfolio_sha is not None:
+        _sha256_text(top_portfolio_sha, "Current Shadow portfolio_sha256")
+        if legacy.get("portfolio_sha256") != top_portfolio_sha:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow share-code receipt portfolio binding drifted"
+            )
+
     verified = code is not None and url is not None
     if verified:
         if terminal_status not in _VERIFIED_RECEIPT_STATUSES:
@@ -325,10 +401,51 @@ def _share_code_result(receipt: Mapping[str, Any]) -> Mapping[str, Any] | None:
             raise CurrentShadowRunContractAdapterError(
                 "Current Shadow share-code receipt status does not prove verification"
             )
-    elif terminal_status in _VERIFIED_RECEIPT_STATUSES:
-        raise CurrentShadowRunContractAdapterError(
-            "Current Shadow verified terminal status lacks verified code and URL"
+        if legacy.get("code_verified") is not True:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow share-code receipt code_verified is not true"
+            )
+        if legacy.get("exact_create_reload_equality") is not True:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow share-code receipt lacks exact create/reload equality"
+            )
+        _sha256_text(
+            legacy.get("semantic_resolution_receipt_sha256"),
+            "Current Shadow semantic-resolution receipt SHA-256",
         )
+        _sha256_text(
+            legacy.get("transport_receipt_sha256"),
+            "Current Shadow transport receipt SHA-256",
+        )
+        if type(legacy.get("combined_odds")) is not str or not legacy.get("combined_odds"):
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow verified share-code receipt lacks combined odds"
+            )
+        fresh_legs = legacy.get("fresh_selected_legs")
+        if type(fresh_legs) is not list or fresh_legs != list(selected_legs):
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow verified share-code selected legs differ from canonical delivery legs"
+            )
+    else:
+        if terminal_status in _VERIFIED_RECEIPT_STATUSES:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow verified terminal status lacks verified code and URL"
+            )
+        if legacy.get("status") in _VERIFIED_RECEIPT_STATUSES or legacy.get("code_verified") is not False:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow non-verified delivery evidence contradicts verification state"
+            )
+        if legacy.get("exact_create_reload_equality") is not False:
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow non-verified receipt cannot claim create/reload equality"
+            )
+        if any(
+            legacy.get(key) is not None
+            for key in ("shareCode", "shareURL", "combined_odds")
+        ):
+            raise CurrentShadowRunContractAdapterError(
+                "Current Shadow non-verified receipt exposes provider code metadata"
+            )
     return {
         "verified": verified,
         "share_code": code,
@@ -481,7 +598,12 @@ def adapt_current_shadow_receipt(
         wager=False,
         additional_capabilities=legacy_authority,
     )
-    share_result = _share_code_result(receipt)
+    share_result = _share_code_result(
+        receipt,
+        counts=counts,
+        selected_legs=legs,
+        shortfall=shortfall,
+    )
     evidence = {
         "legacy_current_shadow": {
             "adapter_policy": "ONE_WAY_NO_INFERENCE_V1",
@@ -540,6 +662,7 @@ def adapt_current_shadow_run(
 __all__ = [
     "CURRENT_RECEIPT_DATASET",
     "CURRENT_REQUEST_DATASET",
+    "CURRENT_SHARE_CODE_DATASET",
     "CURRENT_STAGE_SEQUENCE",
     "CurrentShadowRunContractAdapterError",
     "adapt_current_shadow_receipt",
