@@ -38,6 +38,18 @@ _REQUIRED_AUTHORITY_CAPABILITIES = (
     "wager",
 )
 _SENSITIVE_CAPABILITIES = ("login", "cookies", "wallet", "staking", "wager")
+_ADDITIONAL_DENIED_TRUE_NAMES = frozenset(
+    {
+        "phase6",
+        "place_wager",
+        "sportybet_execution",
+        "stake_submitted",
+        "wager_placed",
+    }
+)
+_ADDITIONAL_DENIED_TRUE_TOKENS = frozenset(
+    {"bet", "cookie", "cookies", "login", "stake", "staking", "wager", "wallet"}
+)
 
 
 class RunContractError(ValueError):
@@ -249,7 +261,23 @@ class AuthorityManifest:
         checked: dict[str, bool] = {}
         for key, value in self.additional_capabilities.items():
             _exact_text(key, "additional capability name")
-            checked[key] = _exact_bool(value, f"additional capability {key}")
+            checked_value = _exact_bool(value, f"additional capability {key}")
+            if key in _REQUIRED_AUTHORITY_CAPABILITIES:
+                if checked_value is not getattr(self, key):
+                    raise RunContractError(
+                        f"additional capability {key} contradicts canonical capability"
+                    )
+            elif checked_value is True:
+                tokens = frozenset(key.split("_"))
+                if (
+                    key.startswith("production_")
+                    or key in _ADDITIONAL_DENIED_TRUE_NAMES
+                    or bool(tokens & _ADDITIONAL_DENIED_TRUE_TOKENS)
+                ):
+                    raise RunContractError(
+                        f"additional capability {key} cannot grant production/sensitive authority"
+                    )
+            checked[key] = checked_value
         object.__setattr__(
             self,
             "additional_capabilities",
@@ -428,6 +456,10 @@ class RunStage:
             "evidence": _thaw_json(self.evidence),
         }
 
+    @property
+    def canonical_sha256(self) -> str:
+        return canonical_sha256(self)
+
     @classmethod
     def from_dict(cls, value: Any) -> "RunStage":
         if type(value) is not dict or set(value) != {
@@ -501,6 +533,8 @@ class RunReceipt:
         if self.shortfall != expected_shortfall:
             raise RunContractError("shortfall must equal target_legs minus selected_leg_count")
         if self.share_code_result is not None:
+            if self.request.create_share_code is not True:
+                raise RunContractError("share_code_result contradicts disabled request delivery flag")
             object.__setattr__(
                 self,
                 "share_code_result",
@@ -513,6 +547,8 @@ class RunReceipt:
             or self.authority_manifest.mode != self.request.mode
         ):
             raise RunContractError("authority manifest does not match RunRequest profile/mode")
+        if self.share_code_result is not None and self.authority_manifest.share_code_generation is not True:
+            raise RunContractError("share_code_result lacks share-code generation authority")
         object.__setattr__(self, "evidence", _freeze_mapping(self.evidence, "receipt evidence"))
         _exact_bool(self.wager_placed, "wager_placed")
         if self.wager_placed is not False or self.authority_manifest.wager is not False:
@@ -528,6 +564,7 @@ class RunReceipt:
             "exact_commit_sha": self.exact_commit_sha,
             "request": self.request.to_dict(),
             "stages": [stage.to_dict() for stage in self.stages],
+            "stage_digests": [stage.canonical_sha256 for stage in self.stages],
             "counts": dict(self.counts),
             "selected_legs": [_thaw_json(leg) for leg in self.selected_legs],
             "shortfall": self.shortfall,
@@ -545,7 +582,7 @@ class RunReceipt:
     def from_dict(cls, value: Any) -> "RunReceipt":
         required = {
             "schema_version", "policy_id", "contract", "status", "observed_at",
-            "exact_commit_sha", "request", "stages", "counts", "selected_legs",
+            "exact_commit_sha", "request", "stages", "stage_digests", "counts", "selected_legs",
             "shortfall", "share_code_result", "authority_manifest", "evidence",
             "wager_placed",
         }
@@ -554,14 +591,22 @@ class RunReceipt:
         _exact_schema(value["schema_version"], "RunReceipt")
         if value["policy_id"] != POLICY_ID or value["contract"] != RECEIPT_CONTRACT:
             raise RunContractError("RunReceipt contract identity drifted")
-        if type(value["stages"]) is not list or type(value["selected_legs"]) is not list:
-            raise RunContractError("RunReceipt stages/selected_legs must serialize as lists")
+        if (
+            type(value["stages"]) is not list
+            or type(value["stage_digests"]) is not list
+            or type(value["selected_legs"]) is not list
+        ):
+            raise RunContractError("RunReceipt stages/stage_digests/selected_legs must serialize as lists")
+        stages = tuple(RunStage.from_dict(item) for item in value["stages"])
+        expected_stage_digests = [stage.canonical_sha256 for stage in stages]
+        if value["stage_digests"] != expected_stage_digests:
+            raise RunContractError("RunReceipt stage digests do not match canonical stages")
         receipt = cls(
             status=value["status"],
             observed_at=_parse_iso(value["observed_at"], "receipt observed_at"),
             exact_commit_sha=value["exact_commit_sha"],
             request=RunRequest.from_dict(value["request"]),
-            stages=tuple(RunStage.from_dict(item) for item in value["stages"]),
+            stages=stages,
             counts=value["counts"],
             selected_legs=tuple(value["selected_legs"]),
             shortfall=value["shortfall"],
