@@ -1,0 +1,130 @@
+{
+  "cases": [
+    {
+      "case_id": "LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION",
+      "prediction": {
+        "fixture_id": 5001,
+        "league": "Synthetic League",
+        "home_team": "Alpha",
+        "away_team": "Beta",
+        "home_win_probability": 60.0,
+        "draw_probability": 20.0,
+        "away_win_probability": 20.0,
+        "home_xg": 1.5,
+        "away_xg": 0.9,
+        "expected_goals": 2.4
+      },
+      "extra_attributes": {},
+      "expected_current_recommended_market": "Both Teams To Score",
+      "expected_current_market_confidence": 84.0,
+      "observed_problem": "The legacy selector can issue a recommendation without any bookmaker quote, de-vig result, or provider availability evidence.",
+      "future_required_property": "A selectable market decision must cross the reviewed provider/pricing eligibility boundary before recommendation authority exists.",
+      "evidence_classification": "REPRODUCIBLE_LEGACY_DECISION_SEMANTICS"
+    },
+    {
+      "case_id": "LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT",
+      "prediction": {
+        "fixture_id": 5002,
+        "league": "Synthetic League",
+        "home_team": "Gamma",
+        "away_team": "Delta",
+        "home_win_probability": 60.0,
+        "draw_probability": 20.0,
+        "away_win_probability": 20.0,
+        "home_xg": 1.5,
+        "away_xg": 0.9,
+        "expected_goals": 2.4
+      },
+      "extra_attributes": {
+        "bookmaker_quote": {
+          "market": "Away Win",
+          "decimal_odds": 9.99,
+          "observed_at": "2099-01-01T00:00:00Z"
+        },
+        "provider_market_availability": [
+          "Away Win"
+        ]
+      },
+      "expected_current_recommended_market": "Both Teams To Score",
+      "expected_current_market_confidence": 84.0,
+      "observed_problem": "Changing quote-like/provider-like attributes on the Prediction object does not participate in MarketSelector.select; current output is driven only by legacy prediction fields.",
+      "future_required_property": "Provider pricing evidence must be consumed by a separate reviewed pricing/routing boundary and legacy heuristic output must not masquerade as provider-value authority.",
+      "evidence_classification": "REPRODUCIBLE_LEGACY_DECISION_SEMANTICS"
+    },
+    {
+      "case_id": "LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION",
+      "prediction": {
+        "fixture_id": 5003,
+        "league": "Synthetic League",
+        "home_team": "Epsilon",
+        "away_team": "Zeta",
+        "home_win_probability": 45.0,
+        "draw_probability": 30.0,
+        "away_win_probability": 25.0,
+        "home_xg": 1.0,
+        "away_xg": 0.8,
+        "expected_goals": 1.8
+      },
+      "extra_attributes": {},
+      "expected_current_recommended_market": "Under 2.5",
+      "expected_current_market_confidence": 77.0,
+      "observed_problem": "The legacy selector has no provider-unavailable/unpriced disposition and still recommends Under 2.5 from heuristic fields alone.",
+      "future_required_property": "Absence of exact provider price/availability must remain an explicit non-selectable disposition rather than an actionable recommendation.",
+      "evidence_classification": "REPRODUCIBLE_LEGACY_DECISION_SEMANTICS"
+    },
+    {
+      "case_id": "LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO",
+      "prediction": {
+        "fixture_id": 5004,
+        "league": "Synthetic League",
+        "home_team": "Eta",
+        "away_team": "Theta",
+        "home_win_probability": 70.0,
+        "draw_probability": 15.0,
+        "away_win_probability": 15.0,
+        "home_xg": 1.5,
+        "away_xg": 0.7,
+        "expected_goals": 2.2
+      },
+      "extra_attributes": {},
+      "expected_current_recommended_market": "Home or Over 1.5",
+      "expected_current_market_confidence": 88.0,
+      "observed_problem": "The legacy selector can rank the ad-hoc Home or Over 1.5 label, which is not one of the reviewed current canonical MarketId identities.",
+      "future_required_property": "Decision authority must use exact registered canonical market/outcome identity rather than ad-hoc display labels.",
+      "evidence_classification": "REPRODUCIBLE_LEGACY_DECISION_SEMANTICS"
+    },
+    {
+      "case_id": "LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE",
+      "prediction": {
+        "fixture_id": 5005,
+        "league": "Synthetic League",
+        "home_team": "Iota",
+        "away_team": "Kappa",
+        "home_win_probability": 60.0,
+        "draw_probability": 20.0,
+        "away_win_probability": 20.0,
+        "home_xg": 1.2,
+        "away_xg": 0.8,
+        "expected_goals": 2.0
+      },
+      "extra_attributes": {},
+      "expected_current_recommended_market": "Home or Draw",
+      "expected_current_market_confidence": 80.0,
+      "expected_current_tied_prefix": [
+        [
+          "Home or Draw",
+          80.0
+        ],
+        [
+          "Home or Away",
+          80.0
+        ]
+      ],
+      "observed_problem": "Equal-score markets retain legacy candidate construction order because the selector sorts only by score.",
+      "future_required_property": "Any future canonical router tie must be resolved by an explicit reviewed canonical ranking identity, not incidental candidate append order.",
+      "evidence_classification": "REPRODUCIBLE_LEGACY_DECISION_SEMANTICS"
+    }
+  ],
+  "dataset_name": "athena-p0.5-legacy-market-selection-cases-v1",
+  "schema_version": 1
+}
