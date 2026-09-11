@@ -10,13 +10,17 @@ The core consumes an existing `AuthorityManifest`, source-controlled component r
 
 ## Provider semantics promotion
 
-`domain.provider_market_semantics` is the unversioned façade for the reviewed `domain.current_sportybet_semantic_registry`. It delegates exact native IDs, labels, specifiers, settlement classes, evidence freshness, and retained-source validation. It contains no second mapping table, no fuzzy matching, no pricing, routing, portfolio, delivery, or provider acquisition authority.
+`domain.provider_market_semantics` is the unversioned façade for the reviewed `domain.current_sportybet_semantic_registry`. It delegates exact native IDs, labels, specifiers, settlement classes, evidence freshness, and retained-source validation. Its contract also pins the delegated implementation's Git filtered-blob identity, so a semantic-code edit cannot be accepted merely because its high-level vocabulary constants still match. It contains no second mapping table, no fuzzy matching, no pricing, routing, portfolio, delivery, or provider acquisition authority.
 
 ## Authority resolution
 
-`resolve_canonical_core()` accepts the existing `domain.run_contracts.AuthorityManifest`, a regime, schema version, and a `ComponentAuthorityRegistry`. It resolves exact champions rather than inferring authority from filenames or version suffixes. Each record is checked against the live component contract and source Git blob before bindings are returned.
+`resolve_canonical_core()` accepts the existing `domain.run_contracts.AuthorityManifest`, a regime, and schema version. Its public authority path always reloads the reviewed source-controlled registry; it accepts no caller-provided in-memory registry. Private test-only helpers may exercise malformed registry fixtures, but cannot become a public authority path. Each resolved record is checked against the live component contract and source Git blob before bindings are returned.
 
 The current `CURRENT_SPORTYBET_PROVIDER` records are `SHADOW`-eligible only and `main_authority=false`. A `MAIN` resolution therefore fails closed. SHADOW eligibility is not production promotion and does not create an automatic promotion path.
+
+## Reviewed P2.0 identities
+
+The P2.0 provider-semantics contract is `737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830`. It pins delegated implementation blob `646bf93549d0d859f00e1d42ba72aaa17a84a6e7` and façade artifact blob `46eaf64b6704e1b7b47123a9a182346e0403cbe6`. The shared-core contract is `af4a73f8852893e7391ae85bac092105d305fa5b9e77af273809fcdcb3dc4c4a`; the corresponding five-record registry canonical SHA-256 is `7569dea91ba4c690a1121ea252e51566a7e3cacd80e1120774bd706d2b4eab03`.
 
 ## Stage separation
 

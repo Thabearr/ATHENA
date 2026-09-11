@@ -57,8 +57,8 @@
       "responsibility_id": "provider_market_semantics",
       "regime_id": "CURRENT_SPORTYBET_PROVIDER",
       "component_id": "domain.provider_market_semantics",
-      "contract_sha256": "c011db05fedae07a4f42306981f8639ef742f4682b309cfc4ef157333a0b3e66",
-      "artifact_git_blob_sha": "0b2dec3216fe040b7f463c1eb5aa3224e1189d7b",
+      "contract_sha256": "737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830",
+      "artifact_git_blob_sha": "46eaf64b6704e1b7b47123a9a182346e0403cbe6",
       "role": "CHAMPION",
       "allowed_profiles": [
         "SHADOW"

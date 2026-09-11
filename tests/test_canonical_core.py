@@ -73,7 +73,9 @@ def test_each_missing_champion_fails_closed(responsibility_id: str) -> None:
         records=tuple(item for item in loaded.records if item.responsibility_id != responsibility_id)
     )
     with pytest.raises(core.CanonicalCoreError, match="resolution failed closed"):
-        core.resolve_canonical_core(_manifest(), regime_id=REGIME, registry=reduced)
+        core._resolve_canonical_core_with_registry_for_test(
+            _manifest(), regime_id=REGIME, registry=reduced
+        )
 
 
 def test_registry_contract_and_artifact_tamper_fail_closed() -> None:
@@ -84,25 +86,53 @@ def test_registry_contract_and_artifact_tamper_fail_closed() -> None:
         records=tuple(altered if item is original else item for item in loaded.records)
     )
     with pytest.raises(core.CanonicalCoreError, match="contract identity drifted"):
-        core.resolve_canonical_core(_manifest(), regime_id=REGIME, registry=bad)
+        core._resolve_canonical_core_with_registry_for_test(
+            _manifest(), regime_id=REGIME, registry=bad
+        )
 
     altered_blob = dataclasses.replace(original, artifact_git_blob_sha="0" * 40)
     bad_blob = registry_module.ComponentAuthorityRegistry(
         records=tuple(altered_blob if item is original else item for item in loaded.records)
     )
     with pytest.raises(core.CanonicalCoreError, match="source artifact identity drifted"):
-        core.resolve_canonical_core(_manifest(), regime_id=REGIME, registry=bad_blob)
+        core._resolve_canonical_core_with_registry_for_test(
+            _manifest(), regime_id=REGIME, registry=bad_blob
+        )
 
 
 def test_resolution_is_deterministic_and_registry_order_is_not_authority() -> None:
     loaded = registry_module.load_default_registry()
     reordered = registry_module.ComponentAuthorityRegistry(records=tuple(reversed(loaded.records)))
-    first = core.resolve_canonical_core(_manifest(), regime_id=REGIME, registry=loaded)
-    second = core.resolve_canonical_core(_manifest(), regime_id=REGIME, registry=reordered)
+    first = core._resolve_canonical_core_with_registry_for_test(
+        _manifest(), regime_id=REGIME, registry=loaded
+    )
+    second = core._resolve_canonical_core_with_registry_for_test(
+        _manifest(), regime_id=REGIME, registry=reordered
+    )
     assert first.to_dict() == second.to_dict()
     assert first.canonical_sha256 == second.canonical_sha256
     with pytest.raises(core.CanonicalCoreError, match="builder-only"):
         core.CanonicalCoreBindings()
+
+
+def test_public_resolution_rejects_forged_main_promoted_registry() -> None:
+    loaded = registry_module.load_default_registry()
+    forged = registry_module.ComponentAuthorityRegistry(
+        records=tuple(
+            dataclasses.replace(
+                item,
+                allowed_profiles=("MAIN", "SHADOW"),
+                promotion_state=registry_module.APPROVED_FOR_MAIN,
+                main_authority=True,
+            )
+            for item in loaded.records
+        )
+    )
+    assert forged.canonical_sha256 != loaded.canonical_sha256
+    with pytest.raises(TypeError, match="unexpected keyword argument 'registry'"):
+        core.resolve_canonical_core(
+            _manifest(profile="MAIN"), regime_id=REGIME, registry=forged
+        )
 
 
 def test_replay_stage_adapters_match_direct_canonical_interfaces(monkeypatch: pytest.MonkeyPatch) -> None:

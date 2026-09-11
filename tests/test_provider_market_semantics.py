@@ -22,6 +22,7 @@ def test_canonical_facade_contract_pins_exact_delegated_semantics() -> None:
         == canonical.EXPECTED_CONTRACT_SHA256
     )
     assert identities["implementation_id"] == "domain.current_sportybet_semantic_registry"
+    assert identities["implementation_git_blob_sha"] == canonical.IMPLEMENTATION_GIT_BLOB_SHA
     assert identities["implementation_policy_id"] == delegated.POLICY_ID
     assert dict(identities["source_contract_identities"]) == dict(
         delegated.SOURCE_CONTRACT_IDENTITIES
@@ -89,6 +90,29 @@ def test_facade_contract_fails_closed_on_delegated_contract_drift(monkeypatch: p
         EvidenceFreshnessState = delegated.EvidenceFreshnessState
         _AUTHORITY = delegated._AUTHORITY
 
+    DriftedDelegate.__file__ = delegated.__file__
     monkeypatch.setattr(canonical, "_implementation", lambda: DriftedDelegate)
     with pytest.raises(canonical.ProviderMarketSemanticsError, match="source contracts drifted"):
+        canonical.validate_provider_market_semantics_contract()
+
+
+def test_facade_contract_fails_closed_on_delegated_artifact_drift(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The high-level pinned facts can all remain intact while a changed delegate
+    # implementation alters exact native semantic behavior.  Artifact pinning
+    # must reject that case before the facade is trusted.
+    assert delegated.POLICY_ID == canonical.IMPLEMENTATION_POLICY_ID
+    assert delegated.SCHEMA_VERSION == canonical.IMPLEMENTATION_SCHEMA_VERSION
+    assert delegated.DATASET_NAME == canonical.IMPLEMENTATION_DATASET_NAME
+    assert delegated.CONTRACT_VERSION == canonical.IMPLEMENTATION_CONTRACT_VERSION
+    assert dict(delegated.SOURCE_CONTRACT_IDENTITIES) == dict(
+        canonical.DELEGATED_SOURCE_CONTRACT_IDENTITIES
+    )
+    monkeypatch.setattr(
+        canonical,
+        "_implementation_git_blob_sha",
+        lambda _delegate: "0" * 40,
+    )
+    with pytest.raises(canonical.ProviderMarketSemanticsError, match="source artifact drifted"):
         canonical.validate_provider_market_semantics_contract()

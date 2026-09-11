@@ -64,6 +64,7 @@ def _contract_payload() -> dict[str, Any]:
         "model_inference": False,
         "orchestration": False,
         "runtime_registry_mutation": False,
+        "public_registry_source": "component_authority_registry.load_default_registry",
         "main_promotion": False,
     }
 
@@ -72,7 +73,7 @@ def calculate_canonical_core_contract_sha256() -> str:
     return canonical_sha256(_contract_payload())
 
 
-EXPECTED_CONTRACT_SHA256 = "75b41029d1bd6003f44885aceb9b7a98bd173f692be690d301e6af0826382014"
+EXPECTED_CONTRACT_SHA256 = "af4a73f8852893e7391ae85bac092105d305fa5b9e77af273809fcdcb3dc4c4a"
 
 
 def validate_canonical_core_contract() -> Mapping[str, str]:
@@ -295,14 +296,18 @@ def _validate_record(
         raise CanonicalCoreError("registry component source artifact identity drifted")
 
 
-def resolve_canonical_core(
+def _resolve_canonical_core_with_registry_for_test(
     authority_manifest: _run_contracts.AuthorityManifest,
     *,
     regime_id: str = CURRENT_SPORTYBET_PROVIDER,
     required_schema_version: int = SCHEMA_VERSION,
-    registry: _authority.ComponentAuthorityRegistry | None = None,
+    registry: _authority.ComponentAuthorityRegistry,
 ) -> CanonicalCoreBindings:
-    """Resolve five exact registered champions; no filename discovery or promotion."""
+    """Test-only structural resolver for deliberately synthetic registry states.
+
+    This private helper is not an authority entrypoint.  The public resolver
+    below always reloads the reviewed, source-controlled registry.
+    """
     validate_canonical_core_contract()
     if type(authority_manifest) is not _run_contracts.AuthorityManifest:
         raise CanonicalCoreError("exact AuthorityManifest is required")
@@ -312,15 +317,14 @@ def resolve_canonical_core(
         raise CanonicalCoreError("regime_id must be exact non-empty text")
     if type(required_schema_version) is not int or required_schema_version <= 0:
         raise CanonicalCoreError("required_schema_version must be positive exact int")
-    active_registry = _authority.load_default_registry() if registry is None else registry
-    if type(active_registry) is not _authority.ComponentAuthorityRegistry:
+    if type(registry) is not _authority.ComponentAuthorityRegistry:
         raise CanonicalCoreError("exact ComponentAuthorityRegistry is required")
-    if active_registry.runtime_mutation_allowed is not False:
+    if registry.runtime_mutation_allowed is not False:
         raise CanonicalCoreError("runtime registry mutation is forbidden")
     records = []
     try:
         for responsibility_id in CANONICAL_RESPONSIBILITIES:
-            record = active_registry.resolve_champion(
+            record = registry.resolve_champion(
                 responsibility_id, regime_id,
                 profile=authority_manifest.authority_profile,
                 required_schema_version=required_schema_version,
@@ -334,8 +338,28 @@ def resolve_canonical_core(
         authority_profile=authority_manifest.authority_profile,
         share_code_generation=authority_manifest.share_code_generation,
         authority_manifest_sha256=_run_contracts.canonical_sha256(authority_manifest),
-        registry_canonical_sha256=active_registry.canonical_sha256,
+        registry_canonical_sha256=registry.canonical_sha256,
         records=records,
+    )
+
+
+def resolve_canonical_core(
+    authority_manifest: _run_contracts.AuthorityManifest,
+    *,
+    regime_id: str = CURRENT_SPORTYBET_PROVIDER,
+    required_schema_version: int = SCHEMA_VERSION,
+) -> CanonicalCoreBindings:
+    """Resolve only the reviewed source-controlled canonical champions.
+
+    A caller cannot supply an in-memory registry to this public authority
+    boundary.  Promotion therefore requires a reviewed source change to the
+    default registry rather than a runtime object injection.
+    """
+    return _resolve_canonical_core_with_registry_for_test(
+        authority_manifest,
+        regime_id=regime_id,
+        required_schema_version=required_schema_version,
+        registry=_authority.load_default_registry(),
     )
 
 

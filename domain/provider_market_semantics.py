@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+from pathlib import Path
+import subprocess
 from types import MappingProxyType
 from typing import Any, Mapping, Sequence
 
@@ -20,6 +22,7 @@ IMPLEMENTATION_POLICY_ID = "PRB_EXACT_CURRENT_SPORTYBET_SEMANTIC_POLICIES_V1"
 IMPLEMENTATION_SCHEMA_VERSION = 1
 IMPLEMENTATION_DATASET_NAME = "athena-current-sportybet-semantic-readiness-registry-v1"
 IMPLEMENTATION_CONTRACT_VERSION = 1
+IMPLEMENTATION_GIT_BLOB_SHA = "646bf93549d0d859f00e1d42ba72aaa17a84a6e7"
 DELEGATED_SOURCE_CONTRACT_IDENTITIES = MappingProxyType(
     {
         "event_detail": "b888cebab6447cd4072d823dab67b56f1f75f72eb72d67b692d47a4378b27555",
@@ -94,6 +97,7 @@ def _contract_payload() -> dict[str, Any]:
         "implementation_schema_version": IMPLEMENTATION_SCHEMA_VERSION,
         "implementation_dataset_name": IMPLEMENTATION_DATASET_NAME,
         "implementation_contract_version": IMPLEMENTATION_CONTRACT_VERSION,
+        "implementation_git_blob_sha": IMPLEMENTATION_GIT_BLOB_SHA,
         "source_contract_identities": dict(DELEGATED_SOURCE_CONTRACT_IDENTITIES),
         "canonical_market_ids": list(CANONICAL_MARKET_IDS),
         "provider_semantic_status_vocabulary": list(PROVIDER_SEMANTIC_STATUS_VOCABULARY),
@@ -120,7 +124,7 @@ def calculate_provider_market_semantics_contract_sha256() -> str:
 
 # Filled from the deterministic payload above.  It intentionally changes only
 # when reviewed delegated semantic facts change.
-EXPECTED_CONTRACT_SHA256 = "c011db05fedae07a4f42306981f8639ef742f4682b309cfc4ef157333a0b3e66"
+EXPECTED_CONTRACT_SHA256 = "737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830"
 
 
 def _implementation() -> Any:
@@ -140,12 +144,52 @@ def _implementation() -> Any:
     return delegate
 
 
+def _implementation_git_blob_sha(delegate: Any) -> str:
+    """Return the delegated source identity using Git's filtered blob rules."""
+    path = getattr(delegate, "__file__", None)
+    if type(path) is not str or not path.endswith(".py"):
+        raise ProviderMarketSemanticsError("delegated provider semantics has no source artifact")
+    source_path = Path(path).resolve()
+    repository_root = Path(__file__).resolve().parents[1]
+    try:
+        relative_path = source_path.relative_to(repository_root).as_posix()
+    except ValueError as exc:
+        raise ProviderMarketSemanticsError(
+            "delegated provider semantics source is outside repository"
+        ) from exc
+    try:
+        completed = subprocess.run(
+            [
+                "git", "-C", str(repository_root), "hash-object", "--path",
+                relative_path, "--filters", str(source_path),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ProviderMarketSemanticsError(
+            "delegated provider semantics Git blob verification failed"
+        ) from exc
+    digest = completed.stdout.strip()
+    if completed.returncode != 0 or len(digest) != 40 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        raise ProviderMarketSemanticsError(
+            "delegated provider semantics Git blob verification failed"
+        )
+    return digest
+
+
 def validate_provider_market_semantics_contract() -> Mapping[str, Any]:
     """Fail closed if the reviewed implementation or its semantic facts drift."""
     actual = calculate_provider_market_semantics_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise ProviderMarketSemanticsError("canonical provider semantics contract drifted")
     delegate = _implementation()
+    if _implementation_git_blob_sha(delegate) != IMPLEMENTATION_GIT_BLOB_SHA:
+        raise ProviderMarketSemanticsError("delegated provider semantics source artifact drifted")
     if delegate.POLICY_ID != IMPLEMENTATION_POLICY_ID:
         raise ProviderMarketSemanticsError("delegated provider semantics policy drifted")
     if delegate.SCHEMA_VERSION != IMPLEMENTATION_SCHEMA_VERSION:
@@ -172,6 +216,7 @@ def validate_provider_market_semantics_contract() -> Mapping[str, Any]:
             "implementation_id": IMPLEMENTATION_ID,
             "implementation_policy_id": IMPLEMENTATION_POLICY_ID,
             "implementation_schema_version": IMPLEMENTATION_SCHEMA_VERSION,
+            "implementation_git_blob_sha": IMPLEMENTATION_GIT_BLOB_SHA,
             "source_contract_identities": MappingProxyType(
                 dict(DELEGATED_SOURCE_CONTRACT_IDENTITIES)
             ),
@@ -234,6 +279,7 @@ __all__ = [
     "EvidenceFreshnessState",
     "EXPECTED_CONTRACT_SHA256",
     "IMPLEMENTATION_ID",
+    "IMPLEMENTATION_GIT_BLOB_SHA",
     "IMPLEMENTATION_POLICY_ID",
     "IMPLEMENTATION_SCHEMA_VERSION",
     "DELEGATED_SOURCE_CONTRACT_IDENTITIES",
