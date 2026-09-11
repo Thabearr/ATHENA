@@ -2,9 +2,10 @@
 
 Public callers provide only a target size and output directory.  The runner
 acquires reviewed current FotMob evidence, replays complete PR151 history,
-discovers/reconciles current SportyBet events, runs PR-C -> PR-D Price-all ->
-PR-D Router -> PR-E Portfolio, and finally performs anonymous fresh semantic
-create/reload verification when at least one legal leg survives.
+discovers/reconciles current SportyBet events, resolves the source-controlled
+SHADOW canonical core, runs the compatibility-bound Price-all -> Router ->
+Portfolio stages, and finally performs anonymous fresh semantic create/reload
+verification when at least one legal leg survives.
 
 This is research/shadow only.  It does not weaken the production Phase-6 gate,
 accept provider-native IDs or odds from callers, log in, touch a wallet, submit
@@ -25,9 +26,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from domain import current_fotmob_latest_durable_fresh_history as latest_history
-from domain import current_shadow_all_market_portfolio as portfolio_module
-from domain import current_shadow_all_market_price_all as price_module
-from domain import current_shadow_all_market_router as router_module
+from domain import current_shadow_canonical_core_adapter as shadow_core_adapter
 from domain import sportybet_share_code as share_module
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as reconciliation
 from domain._current_shadow_price_core import ShadowPriceError
@@ -36,6 +35,12 @@ from domain.fotmob_data_matches_capture import (
     verify_data_matches_capture_directory,
 )
 from scripts import issue_current_fotmob_reviewed_source as current_fotmob_source
+
+# Keep the established module-shaped seams used by bounded reprice/timeout
+# workers while making their owner the single P2.1 canonical-core adapter.
+price_module = shadow_core_adapter
+router_module = shadow_core_adapter
+portfolio_module = shadow_core_adapter
 
 SCHEMA_VERSION = 1
 DATASET_NAME = "athena-current-shadow-all-market-runner-v1"
@@ -1115,6 +1120,10 @@ def execute_current_shadow_all_market(
 
     checkpoint(STAGE_STARTED)
     try:
+        # Resolve the exact source-controlled five-component SHADOW champion set
+        # before any live provider acquisition.  A registry/artifact/authority
+        # drift therefore fails closed without spending provider side effects.
+        shadow_core_adapter.resolve_shadow_canonical_core()
         sources = _acquire_router_inputs(
             repository_root=repository_root,
             lineage_main_sha=lineage_main_sha,
@@ -1235,6 +1244,7 @@ def execute_current_shadow_all_market(
         current_fotmob_source.CurrentFotMobReviewedSourceError,
         latest_history.CurrentLatestDurableFreshHistoryError,
         reconciliation.SportyBetCurrentEventDiscoveryError,
+        shadow_core_adapter.CurrentShadowCanonicalCoreAdapterError,
         portfolio_module.CurrentShadowPortfolioError,
         share_module.CurrentShadowAllMarketShareCodeError,
         ShadowPriceError,
