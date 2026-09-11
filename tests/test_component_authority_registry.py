@@ -293,6 +293,45 @@ def test_registry_objects_are_immutable_and_module_has_no_runtime_write_path() -
     assert "urllib" not in source
 
 
+def test_json_object_key_order_is_not_authority_but_field_sets_remain_exact() -> None:
+    loaded = registry.load_default_registry()
+    payload = loaded.to_dict()
+
+    reordered_records = [
+        dict(reversed(list(item.items()))) for item in payload["records"]
+    ]
+    reordered_top = dict(reversed(list(payload.items())))
+    reordered_top["records"] = reordered_records
+
+    rebuilt = registry.ComponentAuthorityRegistry.from_dict(reordered_top)
+    assert rebuilt.to_dict() == loaded.to_dict()
+
+    raw = json.dumps(reordered_top, separators=(",", ":")).encode("utf-8")
+    rebuilt_from_json = registry.ComponentAuthorityRegistry.from_json_bytes(raw)
+    assert rebuilt_from_json.to_dict() == loaded.to_dict()
+
+    alias = registry.ComponentAuthorityAlias.from_dict(
+        {
+            "target_component_id": "domain.synthetic_component",
+            "alias_id": "domain.synthetic_alias",
+        }
+    )
+    assert alias.to_dict() == {
+        "alias_id": "domain.synthetic_alias",
+        "target_component_id": "domain.synthetic_component",
+    }
+
+    bad_record = dict(reordered_records[0])
+    bad_record["unexpected"] = True
+    with pytest.raises(registry.ComponentAuthorityRegistryError, match="record fields drifted"):
+        registry.ComponentAuthorityRecord.from_dict(bad_record)
+
+    missing_top = dict(reordered_top)
+    missing_top.pop("aliases")
+    with pytest.raises(registry.ComponentAuthorityRegistryError, match="registry fields drifted"):
+        registry.ComponentAuthorityRegistry.from_dict(missing_top)
+
+
 def test_duplicate_json_keys_and_contract_identity_drift_are_rejected() -> None:
     raw = registry.DEFAULT_REGISTRY_PATH.read_bytes()
     loaded = registry.ComponentAuthorityRegistry.from_json_bytes(raw)
