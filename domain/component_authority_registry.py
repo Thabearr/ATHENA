@@ -322,7 +322,7 @@ class ComponentAuthorityRecord:
 
     @classmethod
     def from_dict(cls, value: Any) -> "ComponentAuthorityRecord":
-        if type(value) is not dict or tuple(value.keys()) != _RECORD_FIELDS:
+        if type(value) is not dict or set(value) != set(_RECORD_FIELDS):
             raise ComponentAuthorityRegistryError("component authority record fields drifted")
         return cls(
             responsibility_id=value["responsibility_id"],
@@ -373,7 +373,7 @@ class ComponentAuthorityAlias:
 
     @classmethod
     def from_dict(cls, value: Any) -> "ComponentAuthorityAlias":
-        if type(value) is not dict or tuple(value.keys()) != _ALIAS_FIELDS:
+        if type(value) is not dict or set(value) != set(_ALIAS_FIELDS):
             raise ComponentAuthorityRegistryError("component alias fields drifted")
         return cls(
             alias_id=value["alias_id"],
@@ -462,7 +462,7 @@ class ComponentAuthorityRegistry:
 
     @classmethod
     def from_dict(cls, value: Any) -> "ComponentAuthorityRegistry":
-        if type(value) is not dict or tuple(value.keys()) != _TOP_LEVEL_FIELDS:
+        if type(value) is not dict or set(value) != set(_TOP_LEVEL_FIELDS):
             raise ComponentAuthorityRegistryError("component authority registry fields drifted")
         if type(value["schema_version"]) is not int or value["schema_version"] != SCHEMA_VERSION:
             raise ComponentAuthorityRegistryError("component authority registry schema drifted")
