@@ -102,7 +102,10 @@ def test_registry_contract_and_artifact_tamper_fail_closed() -> None:
 
 def test_resolution_is_deterministic_and_registry_order_is_not_authority() -> None:
     loaded = registry_module.load_default_registry()
-    reordered = registry_module.ComponentAuthorityRegistry(records=tuple(reversed(loaded.records)))
+    reordered = registry_module.ComponentAuthorityRegistry(
+        records=tuple(reversed(loaded.records)),
+        aliases=tuple(reversed(loaded.aliases)),
+    )
     first = core._resolve_canonical_core_with_registry_for_test(
         _manifest(), regime_id=REGIME, registry=loaded
     )
