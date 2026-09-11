@@ -205,16 +205,34 @@ def verify_current_shadow_price_context(value: Any) -> Any:
     return _legacy_price.verify_current_shadow_price_context(value)
 
 
+def _with_price_context_verifier(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:
+    """Honor the worker's exact price-context verification reuse seam.
+
+    Before P2.1 the runner exported the legacy Price-all module directly, so a
+    worker monkeypatch of ``runner.price_module.verify_current_shadow_price_context``
+    also changed the verifier used internally by ``price_all_shadow_fixture``.
+    The compatibility adapter preserves that behavior by installing the current
+    adapter-level verifier only for the duration of the delegated call.
+    """
+
+    original = _legacy_price.verify_current_shadow_price_context
+    _legacy_price.verify_current_shadow_price_context = verify_current_shadow_price_context
+    try:
+        return callable_obj(*args, **kwargs)
+    finally:
+        _legacy_price.verify_current_shadow_price_context = original
+
+
 def price_all_shadow_fixture(context: Any) -> Any:
     """Compatibility execution guarded by the canonical Price-all owner."""
 
     _require_price_or_shadow_error()
-    return _legacy_price.price_all_shadow_fixture(context)
+    return _with_price_context_verifier(_legacy_price.price_all_shadow_fixture, context)
 
 
 def verify_shadow_price_all_bundle(value: Any) -> Any:
     _require_price_or_shadow_error()
-    return _legacy_price.verify_shadow_price_all_bundle(value)
+    return _with_price_context_verifier(_legacy_price.verify_shadow_price_all_bundle, value)
 
 
 def route_shadow_price_results(value: Any) -> Any:
