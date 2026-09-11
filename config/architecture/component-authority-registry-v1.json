@@ -86,5 +86,18 @@
       ]
     }
   ],
-  "aliases": []
+  "aliases": [
+    {
+      "alias_id": "domain.current_shadow_all_market_portfolio",
+      "target_component_id": "domain.portfolio_optimizer"
+    },
+    {
+      "alias_id": "domain.current_shadow_all_market_price_all",
+      "target_component_id": "domain.price_all"
+    },
+    {
+      "alias_id": "domain.current_shadow_all_market_router",
+      "target_component_id": "domain.market_router_canonical_adapter"
+    }
+  ]
 }
