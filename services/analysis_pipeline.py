@@ -1,6 +1,8 @@
+import copy
 import logging
 import re
 from datetime import datetime, timedelta
+from typing import Callable, Mapping
 from domain.markets import DecisionStatus
 from database.database import Database
 from intelligence.match_analyst import MatchAnalyst
@@ -189,7 +191,24 @@ class AnalysisPipeline:
 
         return still_upcoming
 
-    def run_pipeline_snapshot(self, execution_limit: int = 150, override_fixtures: list = None) -> list:
+    def run_pipeline_snapshot(
+        self,
+        execution_limit: int = 150,
+        override_fixtures: list = None,
+        *,
+        evidence_observer: Callable[[Mapping, Mapping, Mapping, Mapping], None] | None = None,
+    ) -> list:
+        """Return the legacy snapshot; an explicit observer is diagnostic-only.
+
+        The optional P3.0-E1 seam receives isolated copies of the constructed
+        context, pre-gate legacy analysis, authorized analysis, and exported
+        row only after the legacy result is complete. Its return value is
+        ignored and an observer error is contained, so the supported application
+        cannot acquire a replacement decision or change behavior merely because
+        evidence capture is enabled.
+        """
+        if evidence_observer is not None and not callable(evidence_observer):
+            raise TypeError("evidence_observer must be callable or None")
         if override_fixtures is not None:
             upcoming = override_fixtures
         else:
@@ -247,12 +266,11 @@ class AnalysisPipeline:
                 context_payload["away_pre_elo"] = fix["away_pre_elo"]
 
             try:
-                analysis = apply_runtime_authorization(
-                    self.analyst.compile_master_fixture_prediction(
-                        context_payload
-                    )
+                legacy_analysis_before_runtime_gate = (
+                    self.analyst.compile_master_fixture_prediction(context_payload)
                 )
-                analyzed_batch.append({
+                analysis = apply_runtime_authorization(legacy_analysis_before_runtime_gate)
+                exported_row = {
                     "fixture_id": fix.get("fixture_id", 0),
                     "fixture": f"{home_team} vs {away_team}",
                     "home_team": home_team,
@@ -296,7 +314,25 @@ class AnalysisPipeline:
                     "no_bet_reasons": analysis.get("no_bet_reasons", []),
                     "evidence_report": analysis.get("evidence_report"),
                     "source": fix.get("data_source", "unknown"),
-                })
+                }
+                analyzed_batch.append(exported_row)
+                if evidence_observer is not None:
+                    try:
+                        evidence_observer(
+                            copy.deepcopy(context_payload),
+                            copy.deepcopy(legacy_analysis_before_runtime_gate),
+                            copy.deepcopy(analysis),
+                            copy.deepcopy(exported_row),
+                        )
+                    except Exception as observer_error:
+                        observed_fixture_id = context_payload.get("fixture_id")
+                        logger.error(
+                            "P3.0 comparison evidence observer failed for %s: %s",
+                            observed_fixture_id
+                            if observed_fixture_id is not None
+                            else "unknown fixture",
+                            observer_error,
+                        )
             except Exception as e:
                 logger.error(f"Error compiling prediction for {home_team} vs {away_team}: {e}")
                 continue
