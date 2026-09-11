@@ -1,0 +1,74 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_COMPONENT_AUTHORITY_REGISTRY_V1",
+  "registry_contract_sha256": "c3389e9aca42dccebf965abad06ea44f65c849d8fa3d1b5620d83987fd880e53",
+  "source_controlled_writes_only": true,
+  "runtime_mutation_allowed": false,
+  "records": [
+    {
+      "responsibility_id": "delivery_share_code_transport",
+      "regime_id": "CURRENT_SPORTYBET_PROVIDER",
+      "component_id": "domain.sportybet_share_code",
+      "contract_sha256": "ac73deca0834187480c656482a78f9048381fe2f07abacfe10b84d30c73502cb",
+      "artifact_git_blob_sha": "28c44656915607315e0227f54bcff7cc7af103c7",
+      "role": "CHAMPION",
+      "allowed_profiles": [
+        "SHADOW"
+      ],
+      "promotion_state": "REGISTERED_CHAMPION",
+      "main_authority": false,
+      "compatible_schema_versions": [
+        1
+      ]
+    },
+    {
+      "responsibility_id": "market_router",
+      "regime_id": "CURRENT_SPORTYBET_PROVIDER",
+      "component_id": "domain.market_router_canonical_adapter",
+      "contract_sha256": "85b4b5c712154f7d4708eb53e9cadfcb7c65dc21bdb12cd94cf1b8cd48795e32",
+      "artifact_git_blob_sha": "3011b65fcd62e5ae91fcede967b8cba4f85cdda7",
+      "role": "CHAMPION",
+      "allowed_profiles": [
+        "SHADOW"
+      ],
+      "promotion_state": "REGISTERED_CHAMPION",
+      "main_authority": false,
+      "compatible_schema_versions": [
+        1
+      ]
+    },
+    {
+      "responsibility_id": "portfolio_optimizer",
+      "regime_id": "CURRENT_SPORTYBET_PROVIDER",
+      "component_id": "domain.portfolio_optimizer",
+      "contract_sha256": "916247c4a891e3c0a2b8205b9d33000987471a54107f2b3d508c8e5ab1e9a99c",
+      "artifact_git_blob_sha": "d600d5d88baf5628df23441a9216c2fc68352e45",
+      "role": "CHAMPION",
+      "allowed_profiles": [
+        "SHADOW"
+      ],
+      "promotion_state": "REGISTERED_CHAMPION",
+      "main_authority": false,
+      "compatible_schema_versions": [
+        1
+      ]
+    },
+    {
+      "responsibility_id": "price_all_and_de_vig",
+      "regime_id": "CURRENT_SPORTYBET_PROVIDER",
+      "component_id": "domain.price_all",
+      "contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425",
+      "artifact_git_blob_sha": "cf7214a6103d91a2974e3eb00c705f65c841d458",
+      "role": "CHAMPION",
+      "allowed_profiles": [
+        "SHADOW"
+      ],
+      "promotion_state": "REGISTERED_CHAMPION",
+      "main_authority": false,
+      "compatible_schema_versions": [
+        1
+      ]
+    }
+  ],
+  "aliases": []
+}
