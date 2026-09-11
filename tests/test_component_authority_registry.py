@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import dataclasses
-import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 import pytest
 
@@ -11,6 +11,7 @@ from domain import component_authority_registry as registry
 from domain import market_router_canonical_adapter as router
 from domain import portfolio_optimizer as portfolio
 from domain import price_all
+from domain import provider_market_semantics as provider_semantics
 from domain import sportybet_share_code as share_code
 
 
@@ -19,8 +20,14 @@ REGIME = "CURRENT_SPORTYBET_PROVIDER"
 
 
 def _git_blob_sha(path: Path) -> str:
-    raw = path.read_bytes()
-    return hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+    relative = path.resolve().relative_to(ROOT).as_posix()
+    completed = subprocess.run(
+        ["git", "-C", str(ROOT), "hash-object", "--path", relative, "--filters", str(path)],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout.strip()
 
 
 def _record(
@@ -65,7 +72,7 @@ def test_registry_contract_and_default_source_are_exact() -> None:
     assert registry.ComponentAuthorityRegistry.from_dict(source).to_dict() == loaded.to_dict()
 
 
-def test_default_registry_binds_exact_p1_3_through_p1_6_component_contracts() -> None:
+def test_default_registry_binds_exact_p1_3_through_p2_0_component_contracts() -> None:
     loaded = registry.load_default_registry()
     expected = {
         "delivery_share_code_transport": (
@@ -83,6 +90,11 @@ def test_default_registry_binds_exact_p1_3_through_p1_6_component_contracts() ->
             portfolio.EXPECTED_CONTRACT_SHA256,
             ROOT / "domain/portfolio_optimizer.py",
         ),
+        "provider_market_semantics": (
+            "domain.provider_market_semantics",
+            provider_semantics.EXPECTED_CONTRACT_SHA256,
+            ROOT / "domain/provider_market_semantics.py",
+        ),
         "price_all_and_de_vig": (
             "domain.price_all",
             price_all.IMPLEMENTATION_CONTRACT_SHA256,
@@ -90,7 +102,7 @@ def test_default_registry_binds_exact_p1_3_through_p1_6_component_contracts() ->
         ),
     }
     assert {item.responsibility_id for item in loaded.records} == set(expected)
-    assert len(loaded.records) == len(expected) == 4
+    assert len(loaded.records) == len(expected) == 5
 
     for item in loaded.records:
         component_id, contract_sha256, path = expected[item.responsibility_id]

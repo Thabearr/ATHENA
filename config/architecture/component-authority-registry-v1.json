@@ -54,6 +54,22 @@
       ]
     },
     {
+      "responsibility_id": "provider_market_semantics",
+      "regime_id": "CURRENT_SPORTYBET_PROVIDER",
+      "component_id": "domain.provider_market_semantics",
+      "contract_sha256": "737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830",
+      "artifact_git_blob_sha": "46eaf64b6704e1b7b47123a9a182346e0403cbe6",
+      "role": "CHAMPION",
+      "allowed_profiles": [
+        "SHADOW"
+      ],
+      "promotion_state": "REGISTERED_CHAMPION",
+      "main_authority": false,
+      "compatible_schema_versions": [
+        1
+      ]
+    },
+    {
       "responsibility_id": "price_all_and_de_vig",
       "regime_id": "CURRENT_SPORTYBET_PROVIDER",
       "component_id": "domain.price_all",
