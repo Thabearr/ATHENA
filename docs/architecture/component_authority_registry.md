@@ -41,7 +41,7 @@ A source change that adds, removes, promotes, demotes, or rebinds a component is
 
 ## Seeded P1.7 regime
 
-The first registry population is intentionally narrow. It records only the canonical ownership interfaces already established by P1.3 through P1.6 for the current SportyBet-provider migration regime:
+The registry population remains intentionally narrow. P2.0 adds the promoted provider-semantics façade to the canonical ownership interfaces established by P1.3 through P1.6 for the current SportyBet-provider migration regime:
 
 | Responsibility | Component | Contract identity | P1.7 role/state |
 | --- | --- | --- | --- |
@@ -49,8 +49,9 @@ The first registry population is intentionally narrow. It records only the canon
 | `market_router` | `domain.market_router_canonical_adapter` | canonical P1.4 Router contract | `CHAMPION / REGISTERED_CHAMPION` |
 | `portfolio_optimizer` | `domain.portfolio_optimizer` | canonical P1.5 Portfolio contract | `CHAMPION / REGISTERED_CHAMPION` |
 | `delivery_share_code_transport` | `domain.sportybet_share_code` | canonical P1.6 share-code contract | `CHAMPION / REGISTERED_CHAMPION` |
+| `provider_market_semantics` | `domain.provider_market_semantics` | canonical P2.0 delegated semantic contract | `CHAMPION / REGISTERED_CHAMPION` |
 
-All four records are currently eligible for `SHADOW` only and have `main_authority=false`. This does **not** claim that Current Shadow has already migrated to the canonical Price-All/Router/Portfolio stack; P2.0/P2.1 remain responsible for shared-core extraction and caller migration. Profile eligibility is a registry permission boundary, not proof that a caller already uses the component.
+All five records are currently eligible for `SHADOW` only and have `main_authority=false`. This does **not** claim that Current Shadow has already migrated to the canonical Price-All/Router/Portfolio stack; P2.0 extracts the target and P2.1 alone may migrate the caller. Profile eligibility is a registry permission boundary, not proof that a caller already uses the component.
 
 The P1.3 Price-All wrapper deliberately preserves the reviewed Price-All-v3 payload and contract semantics byte-for-byte, so its registry `contract_sha256` is the delegated reviewed v3 implementation contract identity while `component_id` and Git blob identity bind the unversioned canonical wrapper itself.
 
