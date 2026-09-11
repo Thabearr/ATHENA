@@ -17,6 +17,20 @@ from domain import sportybet_share_code as share_code
 
 ROOT = Path(__file__).resolve().parents[1]
 REGIME = "CURRENT_SPORTYBET_PROVIDER"
+P2_1_COMPATIBILITY_ALIASES = (
+    {
+        "alias_id": "domain.current_shadow_all_market_portfolio",
+        "target_component_id": "domain.portfolio_optimizer",
+    },
+    {
+        "alias_id": "domain.current_shadow_all_market_price_all",
+        "target_component_id": "domain.price_all",
+    },
+    {
+        "alias_id": "domain.current_shadow_all_market_router",
+        "target_component_id": "domain.market_router_canonical_adapter",
+    },
+)
 
 
 def _git_blob_sha(path: Path) -> str:
@@ -62,13 +76,13 @@ def test_registry_contract_and_default_source_are_exact() -> None:
     loaded = registry.load_default_registry()
     assert loaded.source_controlled_writes_only is True
     assert loaded.runtime_mutation_allowed is False
-    assert loaded.aliases == ()
+    assert tuple(item.to_dict() for item in loaded.aliases) == P2_1_COMPATIBILITY_ALIASES
     assert loaded.to_dict()["registry_contract_sha256"] == registry.EXPECTED_REGISTRY_CONTRACT_SHA256
 
     source = json.loads(registry.DEFAULT_REGISTRY_PATH.read_text(encoding="utf-8"))
     assert source["source_controlled_writes_only"] is True
     assert source["runtime_mutation_allowed"] is False
-    assert source["aliases"] == []
+    assert tuple(source["aliases"]) == P2_1_COMPATIBILITY_ALIASES
     assert registry.ComponentAuthorityRegistry.from_dict(source).to_dict() == loaded.to_dict()
 
 
