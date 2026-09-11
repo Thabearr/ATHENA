@@ -159,19 +159,21 @@ def test_core_import_boundary_has_no_shadow_or_acquisition_or_sensitive_authorit
     text = CORE_PATH.read_text(encoding="utf-8")
     tree = ast.parse(text)
     imported = set()
+    domain_members = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             imported.update(item.name for item in node.names)
         if isinstance(node, ast.ImportFrom) and node.module:
             imported.add(node.module)
+            if node.module == "domain":
+                domain_members.update(item.name for item in node.names)
     forbidden = {
         "domain.current_shadow_all_market_price_all", "domain.current_shadow_all_market_router",
         "domain.current_shadow_all_market_portfolio", "domain.current_shadow_all_market_share_code",
         "domain.current_shadow_all_market_runner", "requests", "selenium", "playwright",
     }
     assert not (forbidden & imported)
-    assert "domain.provider_market_semantics" in imported
-    assert "domain.price_all" in imported
-    assert "domain.market_router_canonical_adapter" in imported
-    assert "domain.portfolio_optimizer" in imported
-    assert "domain.sportybet_share_code" in imported
+    assert {
+        "provider_market_semantics", "price_all", "market_router_canonical_adapter",
+        "portfolio_optimizer", "sportybet_share_code",
+    } <= domain_members
