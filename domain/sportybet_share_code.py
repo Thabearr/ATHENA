@@ -14,7 +14,7 @@ this canonical delivery module; profile-core migration remains a later wave.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -42,6 +42,11 @@ SEMANTIC_BRIDGE_SCHEMA = "athena-sportybet-semantic-share-gate-v1"
 DIRECT_BRIDGE_SCHEMA = "athena-sportybet-direct-share-proof-v2"
 MINIMUM_LEAD_SECONDS = _source.MINIMUM_LEAD_SECONDS
 RECEIPT_FILENAME = "sportybet-share-code-receipt.json"
+_LIVE_SEMANTIC_RESOLVER = semantic_bridge.resolve_live_intents
+_LIVE_ROUNDTRIP_TRANSPORT = direct_bridge.create_and_roundtrip
+
+SemanticResolver = Callable[..., tuple[Sequence[Mapping[str, Any]], Mapping[str, Any]]]
+RoundtripTransport = Callable[..., Mapping[str, Any]]
 
 # Compatibility status vocabulary retained for the existing Current Shadow
 # receipt mapper. These strings are not the canonical result contract below.
@@ -144,6 +149,7 @@ def _contract_payload() -> dict[str, Any]:
         "minimum_lead_seconds": MINIMUM_LEAD_SECONDS,
         "shortfall_can_still_verify": True,
         "provider_native_ids_are_verification_not_caller_authority": True,
+        "as_of_replay_requires_explicit_offline_operations": True,
         "authority": dict(AUTHORITY),
     }
 
@@ -152,7 +158,7 @@ def calculate_share_code_contract_sha256() -> str:
     return _sha(_contract_payload())
 
 
-EXPECTED_CONTRACT_SHA256 = "f324076f377340b30c10fcc13a166655f27ac427b162d0a4ee318661bc71f1d9"
+EXPECTED_CONTRACT_SHA256 = "ac73deca0834187480c656482a78f9048381fe2f07abacfe10b84d30c73502cb"
 
 
 def _assert_non_wager_authority() -> None:
@@ -611,6 +617,8 @@ def _execute(
     evaluation_time: datetime,
     require_live_current: bool,
     delay_seconds: float,
+    semantic_resolver: SemanticResolver,
+    roundtrip_transport: RoundtripTransport,
 ) -> VerifiedShareCode | ShareCodeFailure:
     identities = validate_share_code_contract()
     if not isinstance(output_dir, Path):
@@ -631,6 +639,19 @@ def _execute(
         or portfolio._require_live_current is not True
     ):
         raise SportyBetShareCodeError("live share-code delivery requires LIVE_CURRENT SelectedPortfolio")
+    if not callable(semantic_resolver) or not callable(roundtrip_transport):
+        raise SportyBetShareCodeError("share-code operations must be explicit callables")
+    if require_live_current:
+        if (
+            semantic_resolver is not _LIVE_SEMANTIC_RESOLVER
+            or roundtrip_transport is not _LIVE_ROUNDTRIP_TRANSPORT
+        ):
+            raise SportyBetShareCodeError("LIVE_CURRENT delivery requires reviewed live bridge operations")
+    elif (
+        semantic_resolver is _LIVE_SEMANTIC_RESOLVER
+        or roundtrip_transport is _LIVE_ROUNDTRIP_TRANSPORT
+    ):
+        raise SportyBetShareCodeError("as-of replay forbids reviewed live bridge operations")
     bindings = _verify_bindings(portfolio, provider_bindings)
     now = _utc(evaluation_time, "evaluation_time")
     if not bindings:
@@ -665,7 +686,7 @@ def _execute(
     semantic_receipt: Mapping[str, Any] | None = None
     transport_receipt: Mapping[str, Any] | None = None
     try:
-        selections, semantic_receipt = semantic_bridge.resolve_live_intents(
+        selections, semantic_receipt = semantic_resolver(
             intents=bridge_intents,
             output_dir=output_dir / "semantic-resolution",
             minimum_lead_seconds=minimum_lead,
@@ -721,7 +742,7 @@ def _execute(
         return result
 
     try:
-        transport_receipt = direct_bridge.create_and_roundtrip(
+        transport_receipt = roundtrip_transport(
             selections=selections,
             output_dir=output_dir / "transport-roundtrip",
         )
@@ -803,9 +824,11 @@ def create_verified_share_code_as_of(
     *,
     output_dir: Path,
     evaluation_time: datetime,
+    semantic_resolver: SemanticResolver,
+    roundtrip_transport: RoundtripTransport,
     delay_seconds: float = 0.0,
 ) -> VerifiedShareCode | ShareCodeFailure:
-    """Deterministic/synthetic proof lane; provider bridges may be test doubles."""
+    """Deterministic/as-of proof using caller-supplied offline operations only."""
     return _execute(
         selected_portfolio,
         provider_bindings,
@@ -813,6 +836,8 @@ def create_verified_share_code_as_of(
         evaluation_time=evaluation_time,
         require_live_current=False,
         delay_seconds=delay_seconds,
+        semantic_resolver=semantic_resolver,
+        roundtrip_transport=roundtrip_transport,
     )
 
 
@@ -831,6 +856,8 @@ def create_verified_share_code(
         evaluation_time=datetime.now(timezone.utc),
         require_live_current=True,
         delay_seconds=delay_seconds,
+        semantic_resolver=_LIVE_SEMANTIC_RESOLVER,
+        roundtrip_transport=_LIVE_ROUNDTRIP_TRANSPORT,
     )
 
 

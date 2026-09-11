@@ -47,7 +47,7 @@ def _provider_event_row(binding: share.SportyBetProviderBinding) -> dict:
     }
 
 
-def _install_success(monkeypatch, bindings, *, transport_mutator=None):
+def _offline_success(bindings, *, transport_mutator=None):
     bindings = tuple(bindings)
     by_event = {item.event_id: item for item in bindings}
     observed = {"semantic_calls": 0, "transport_calls": 0, "bridge_intents": None}
@@ -111,9 +111,11 @@ def _install_success(monkeypatch, bindings, *, transport_mutator=None):
             transport_mutator(receipt)
         return receipt
 
-    monkeypatch.setattr(share.semantic_bridge, "resolve_live_intents", resolve_live_intents)
-    monkeypatch.setattr(share.direct_bridge, "create_and_roundtrip", create_and_roundtrip)
-    return observed
+    return observed, resolve_live_intents, create_and_roundtrip
+
+
+def _unexpected_live_bridge(*_args, **_kwargs):
+    raise AssertionError("real provider bridge must not run from as-of replay")
 
 
 def test_contract_pins_selected_portfolio_and_non_wager_authority() -> None:
@@ -151,12 +153,14 @@ def test_selected_portfolio_exact_binding_and_create_reload_returns_verified_cod
     assert binding.source_raw_sha256 == leg.source_raw_sha256
     assert binding.current_reconciliation_sha256 == leg.current_reconciliation_sha256
 
-    observed = _install_success(monkeypatch, bindings)
+    observed, semantic_resolver, roundtrip_transport = _offline_success(bindings)
     result = share.create_verified_share_code_as_of(
         portfolio,
         bindings,
         output_dir=tmp_path,
         evaluation_time=EVALUATION + timedelta(seconds=30),
+        semantic_resolver=semantic_resolver,
+        roundtrip_transport=roundtrip_transport,
     )
     assert type(result) is share.VerifiedShareCode
     assert result.verified is True
@@ -170,31 +174,99 @@ def test_selected_portfolio_exact_binding_and_create_reload_returns_verified_cod
     assert (tmp_path / share.RECEIPT_FILENAME).is_file()
 
 
+def test_as_of_replay_uses_only_explicit_offline_operations(monkeypatch, tmp_path) -> None:
+    portfolio = _portfolio(monkeypatch)
+    bindings = share.build_provider_bindings(portfolio)
+    observed, semantic_resolver, roundtrip_transport = _offline_success(bindings)
+    real_bridge_calls = {"semantic": 0, "transport": 0}
+
+    def exploding_semantic(*_args, **_kwargs):
+        real_bridge_calls["semantic"] += 1
+        raise AssertionError("real semantic bridge must not run from as-of replay")
+
+    def exploding_transport(*_args, **_kwargs):
+        real_bridge_calls["transport"] += 1
+        raise AssertionError("real transport bridge must not run from as-of replay")
+
+    monkeypatch.setattr(share.semantic_bridge, "resolve_live_intents", exploding_semantic)
+    monkeypatch.setattr(share.direct_bridge, "create_and_roundtrip", exploding_transport)
+    result = share.create_verified_share_code_as_of(
+        portfolio,
+        bindings,
+        output_dir=tmp_path,
+        evaluation_time=EVALUATION + timedelta(seconds=30),
+        semantic_resolver=semantic_resolver,
+        roundtrip_transport=roundtrip_transport,
+    )
+    assert type(result) is share.VerifiedShareCode
+    assert observed["semantic_calls"] == observed["transport_calls"] == 1
+    assert real_bridge_calls == {"semantic": 0, "transport": 0}
+
+
+def test_as_of_replay_without_offline_operations_cannot_reach_real_bridges(monkeypatch, tmp_path) -> None:
+    portfolio = _portfolio(monkeypatch)
+    bindings = share.build_provider_bindings(portfolio)
+    real_bridge_calls = {"semantic": 0, "transport": 0}
+
+    def exploding_semantic(*_args, **_kwargs):
+        real_bridge_calls["semantic"] += 1
+        raise AssertionError("real semantic bridge must not run from as-of replay")
+
+    def exploding_transport(*_args, **_kwargs):
+        real_bridge_calls["transport"] += 1
+        raise AssertionError("real transport bridge must not run from as-of replay")
+
+    monkeypatch.setattr(share.semantic_bridge, "resolve_live_intents", exploding_semantic)
+    monkeypatch.setattr(share.direct_bridge, "create_and_roundtrip", exploding_transport)
+    with pytest.raises(TypeError, match="semantic_resolver"):
+        share.create_verified_share_code_as_of(
+            portfolio,
+            bindings,
+            output_dir=tmp_path,
+            evaluation_time=EVALUATION + timedelta(seconds=30),
+        )
+    assert real_bridge_calls == {"semantic": 0, "transport": 0}
+
+
+def test_as_of_replay_rejects_reviewed_live_bridge_operations(monkeypatch, tmp_path) -> None:
+    portfolio = _portfolio(monkeypatch)
+    bindings = share.build_provider_bindings(portfolio)
+    with pytest.raises(share.SportyBetShareCodeError, match="forbids reviewed live bridge"):
+        share.create_verified_share_code_as_of(
+            portfolio,
+            bindings,
+            output_dir=tmp_path,
+            evaluation_time=EVALUATION + timedelta(seconds=30),
+            semantic_resolver=share._LIVE_SEMANTIC_RESOLVER,
+            roundtrip_transport=share._LIVE_ROUNDTRIP_TRANSPORT,
+        )
+
+
 def test_tampered_provider_binding_fails_before_any_provider_bridge(monkeypatch, tmp_path) -> None:
     portfolio = _portfolio(monkeypatch)
     binding = share.build_provider_bindings(portfolio)[0]
     tampered = dataclasses.replace(binding, provider_market_id="tampered")
-    monkeypatch.setattr(share.semantic_bridge, "resolve_live_intents", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("provider semantic bridge must not run")))
-    monkeypatch.setattr(share.direct_bridge, "create_and_roundtrip", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("provider transport must not run")))
     with pytest.raises(share.SportyBetShareCodeError, match="provider bindings differ"):
         share.create_verified_share_code_as_of(
             portfolio,
             (tampered,),
             output_dir=tmp_path,
             evaluation_time=EVALUATION + timedelta(seconds=30),
+            semantic_resolver=_unexpected_live_bridge,
+            roundtrip_transport=_unexpected_live_bridge,
         )
 
 
 def test_stale_selected_portfolio_returns_typed_reprice_before_provider_bridge(monkeypatch, tmp_path) -> None:
     portfolio = _portfolio(monkeypatch)
     bindings = share.build_provider_bindings(portfolio)
-    monkeypatch.setattr(share.semantic_bridge, "resolve_live_intents", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("provider semantic bridge must not run")))
-    monkeypatch.setattr(share.direct_bridge, "create_and_roundtrip", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("provider transport must not run")))
     result = share.create_verified_share_code_as_of(
         portfolio,
         bindings,
         output_dir=tmp_path,
         evaluation_time=EVALUATION + timedelta(seconds=1000),
+        semantic_resolver=_unexpected_live_bridge,
+        roundtrip_transport=_unexpected_live_bridge,
     )
     assert type(result) is share.ShareCodeFailure
     assert result.failure_code is share.ShareCodeFailureCode.REPRICE_REQUIRED
@@ -227,13 +299,13 @@ def test_semantic_mismatch_is_typed_provider_changed_and_never_creates_code(monk
             "wager_placed": False,
         }
 
-    monkeypatch.setattr(share.semantic_bridge, "resolve_live_intents", bad_semantics)
-    monkeypatch.setattr(share.direct_bridge, "create_and_roundtrip", lambda **_kwargs: (_ for _ in ()).throw(AssertionError("create must not run after semantic mismatch")))
     result = share.create_verified_share_code_as_of(
         portfolio,
         bindings,
         output_dir=tmp_path,
         evaluation_time=EVALUATION + timedelta(seconds=30),
+        semantic_resolver=bad_semantics,
+        roundtrip_transport=_unexpected_live_bridge,
     )
     assert type(result) is share.ShareCodeFailure
     assert result.failure_code is share.ShareCodeFailureCode.PROVIDER_CHANGED
@@ -248,12 +320,17 @@ def test_create_reload_mismatch_is_typed_failure_with_no_code(monkeypatch, tmp_p
     def mutate(receipt):
         receipt["load_accepted_outcomes"][0]["markets"][0]["outcomes"][0]["id"] = "different"
 
-    _install_success(monkeypatch, bindings, transport_mutator=mutate)
+    _observed, semantic_resolver, roundtrip_transport = _offline_success(
+        bindings,
+        transport_mutator=mutate,
+    )
     result = share.create_verified_share_code_as_of(
         portfolio,
         bindings,
         output_dir=tmp_path,
         evaluation_time=EVALUATION + timedelta(seconds=30),
+        semantic_resolver=semantic_resolver,
+        roundtrip_transport=roundtrip_transport,
     )
     assert type(result) is share.ShareCodeFailure
     assert result.failure_code is share.ShareCodeFailureCode.PROVIDER_CHANGED
@@ -307,12 +384,14 @@ def test_run_231_equivalent_synthetic_14_of_25_verifies_exact_code_with_shortfal
     monkeypatch.setattr(share, "_freshness_reasons", lambda _portfolio, _now: ((), share.MINIMUM_LEAD_SECONDS))
     bindings = share.build_provider_bindings(portfolio)
     assert len(bindings) == 14
-    observed = _install_success(monkeypatch, bindings)
+    observed, semantic_resolver, roundtrip_transport = _offline_success(bindings)
     result = share.create_verified_share_code_as_of(
         portfolio,
         bindings,
         output_dir=tmp_path,
         evaluation_time=EVALUATION + timedelta(seconds=30),
+        semantic_resolver=semantic_resolver,
+        roundtrip_transport=roundtrip_transport,
     )
     assert type(result) is share.VerifiedShareCode
     assert result.status == "VERIFIED_SHARE_CODE_WITH_SHORTFALL"

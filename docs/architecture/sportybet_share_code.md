@@ -34,7 +34,7 @@ Before provider semantic resolution, the service reconstructs the P1.5 portfolio
 
 Provider semantic drift returns `PROVIDER_CHANGED`. A transport-level create/reload error returns `CREATE_RELOAD_FAILED`. A verified transport response that omits a usable share code or URL returns `VERIFIED_RESPONSE_INCOMPLETE`. A portfolio with zero selected legs returns `NO_SELECTED_LEGS`. Structural tampering or unreplayable canonical evidence raises `SportyBetShareCodeError` before provider transport.
 
-`create_verified_share_code_as_of()` exists for deterministic replay and synthetic transport tests. It does not make historical provider state magically replayable; tests must provide synthetic/mock provider bridges. `create_verified_share_code()` is the LIVE_CURRENT anonymous provider-verification lane and is not exercised by the P1.6 remediation test run.
+`create_verified_share_code_as_of()` exists for deterministic replay and synthetic transport tests. It requires explicit injected offline semantic-resolution and round-trip transport callables; it has no default path to the reviewed live bridge modules and rejects those bridge identities when supplied. It does not make historical provider state magically replayable. `create_verified_share_code()` is the only entrypoint that supplies the reviewed anonymous live bridges, requires `LIVE_CURRENT` ancestry, and performs both wall-clock freshness checks. It is not exercised by the P1.6 remediation test run.
 
 ## Current Shadow migration seam
 
