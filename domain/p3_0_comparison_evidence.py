@@ -109,6 +109,21 @@ _SENSITIVE_KEY_FRAGMENTS = (
 )
 
 
+def _contract_payload() -> dict[str, Any]:
+    """Stable schema identity, separate from a particular prospective run."""
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "policy_id": POLICY_ID,
+        "fixture_identity_keys": sorted(FIXTURE_IDENTITY_KEYS),
+        "timing_keys": sorted(TIMING_KEYS),
+        "canonical_authority_keys": sorted(CANONICAL_AUTHORITY_KEYS),
+        "required_canonical_responsibilities": sorted(REQUIRED_CANONICAL_RESPONSIBILITIES),
+        "join_states": sorted(JOIN_STATES),
+        "completeness_states": sorted(COMPLETENESS_STATES),
+        "sensitive_key_fragments": sorted(_SENSITIVE_KEY_FRAGMENTS),
+    }
+
+
 class P30ComparisonEvidenceError(ValueError):
     """Raised when a capture cannot be represented safely and exactly."""
 
@@ -194,6 +209,20 @@ def canonical_json_bytes(value: Any) -> bytes:
 
 def canonical_sha256(value: Any) -> str:
     return hashlib.sha256(canonical_json_bytes(value)).hexdigest()
+
+
+def calculate_contract_sha256() -> str:
+    return canonical_sha256(_contract_payload())
+
+
+EXPECTED_CONTRACT_SHA256 = "33367636297cee01a3386923a7e5a2c1be414272c83af560eb819adf8cf3de7a"
+
+
+def validate_contract() -> str:
+    actual = calculate_contract_sha256()
+    if actual != EXPECTED_CONTRACT_SHA256:
+        raise P30ComparisonEvidenceError("P3.0 comparison evidence contract drifted")
+    return actual
 
 
 def _validate_json_value(value: Any, location: str) -> None:
@@ -385,6 +414,7 @@ def build_fixture_record(
     router_output: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build one neutral evidence row; it cannot classify decision quality."""
+    validate_contract()
     if type(fixture_capture_id) is not str or not fixture_capture_id:
         raise P30ComparisonEvidenceError("fixture_capture_id must be non-empty string")
     normalized_timing = normalize_timing(timing)
@@ -480,6 +510,7 @@ def build_capture_bundle(
     fixture_records: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
     """Build a deterministic run bundle from explicit captured observations."""
+    validate_contract()
     if (
         type(repository_commit_sha) is not str
         or len(repository_commit_sha) != 40
@@ -522,6 +553,7 @@ def build_capture_bundle(
 
 
 def verify_capture_bundle(value: Mapping[str, Any]) -> dict[str, Any]:
+    validate_contract()
     item = _plain_mapping(value, "capture_bundle")
     assert item is not None
     expected = {
@@ -566,6 +598,7 @@ def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Pa
     imports a provider boundary, or serializes objects supplied by application
     code implicitly.
     """
+    validate_contract()
     checked = verify_capture_bundle(bundle)
     destination = Path(output_directory)
     if destination.exists():
@@ -632,6 +665,7 @@ def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Pa
 
 
 def verify_capture_artifact(directory: str | Path) -> dict[str, Any]:
+    validate_contract()
     root = Path(directory)
     manifest = load_json_bytes((root / "manifest.json").read_bytes())
     if type(manifest) is not dict or manifest.get("policy_id") != POLICY_ID:
@@ -654,6 +688,7 @@ def verify_capture_artifact(directory: str | Path) -> dict[str, Any]:
 __all__ = [
     "CANONICAL_AUTHORITY_KEYS",
     "COMPLETENESS_STATES",
+    "EXPECTED_CONTRACT_SHA256",
     "FIXTURE_IDENTITY_KEYS",
     "JOIN_STATES",
     "LegacyEvidenceObserver",
@@ -665,6 +700,7 @@ __all__ = [
     "build_capture_bundle",
     "build_fixture_record",
     "build_join_receipt",
+    "calculate_contract_sha256",
     "canonical_json_bytes",
     "canonical_sha256",
     "load_json_bytes",
@@ -673,5 +709,6 @@ __all__ = [
     "normalize_timing",
     "verify_capture_artifact",
     "verify_capture_bundle",
+    "validate_contract",
     "write_capture_artifact",
 ]

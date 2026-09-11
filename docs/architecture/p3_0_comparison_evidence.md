@@ -56,6 +56,8 @@ capture contract. It must not trigger share-code delivery or email.
 ## Evidence contract
 
 Policy ID: `ATHENA_P3_0_COMPARISON_EVIDENCE_V1`, schema version 1.
+The pinned schema-contract SHA-256 is
+`33367636297cee01a3386923a7e5a2c1be414272c83af560eb819adf8cf3de7a`.
 
 Canonical JSON uses UTF-8, sorted keys, compact separators, one LF, and
 SHA-256. Duplicate keys, NaN, Infinity, unknown identity/timing keys, duplicate

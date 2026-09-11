@@ -113,6 +113,12 @@ def _bundle(records=None):
 
 
 class P30ComparisonEvidenceTests(unittest.TestCase):
+    def test_schema_contract_identity_is_pinned(self):
+        self.assertEqual(
+            evidence.validate_contract(),
+            "33367636297cee01a3386923a7e5a2c1be414272c83af560eb819adf8cf3de7a",
+        )
+
     def test_complete_capture_is_deterministic_and_exactly_joined(self):
         first = _bundle()
         second = _bundle()
