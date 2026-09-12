@@ -223,7 +223,11 @@ def build_fixture_record(
     quote_snapshot: Mapping[str, Any] | None = None, price_all_output: Mapping[str, Any] | None = None,
     router_output: Mapping[str, Any] | None = None,
 ) -> dict[str, Any]:
-    validate_contract()
+    # Contract validation is defined by the final split module. Resolve it lazily
+    # at call time so this implementation slice remains importable without a
+    # forward-name dependency during cumulative module loading.
+    from domain._p3_0_comparison_evidence_part4 import validate_contract as _validate_contract
+    _validate_contract()
     logical_id = _safe_fixture_capture_id(fixture_capture_id)
     normalized_timing = normalize_timing(timing)
     legacy = None if legacy_identity is None else normalize_fixture_identity(legacy_identity)
