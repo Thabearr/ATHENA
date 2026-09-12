@@ -35,6 +35,9 @@ from scripts import execute_current_shadow_daily as shadow_daily
 POLICY_ID = "ATHENA_P3_0_PROSPECTIVE_PAIRED_CAPTURE_V1"
 FIXTURE_IDENTITY_POLICY = "P3_0_EXACT_FOTMOB_RECONCILED_FIXTURE_ID_V1"
 MAX_FIXTURE_CAP = 50
+FAILURE_RECEIPT_SCHEMA_VERSION = 2
+FAILURE_CHAIN_MAX_DEPTH = 8
+FAILURE_MESSAGE_MAX_CHARS = 800
 
 
 class P30PairedCaptureError(ValueError):
@@ -101,11 +104,39 @@ def _hash_if_file(path: Path) -> str | None:
     return digest.hexdigest()
 
 
+def _failure_chain(exc: BaseException) -> tuple[list[dict[str, str]], bool]:
+    """Project a bounded, cause-first exception chain for failure-only receipts."""
+    records: list[dict[str, str]] = []
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    truncated = False
+    while current is not None:
+        if id(current) in seen:
+            truncated = True
+            break
+        if len(records) >= FAILURE_CHAIN_MAX_DEPTH:
+            truncated = True
+            break
+        seen.add(id(current))
+        records.append({
+            "exception_type": type(current).__name__,
+            "message": str(current)[:FAILURE_MESSAGE_MAX_CHARS],
+        })
+        if current.__cause__ is not None:
+            current = current.__cause__
+        elif not current.__suppress_context__:
+            current = current.__context__
+        else:
+            current = None
+    return records, truncated
+
+
 def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id: str,
                   started_at: str, exc: BaseException) -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
+    failure_chain, failure_chain_truncated = _failure_chain(exc)
     value = {
-        "schema_version": 1,
+        "schema_version": FAILURE_RECEIPT_SCHEMA_VERSION,
         "policy_id": POLICY_ID,
         "capture_id": capture_id,
         "status": "CAPTURE_FAILED",
@@ -113,7 +144,9 @@ def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id:
         "failed_at": _iso(_now()),
         "exact_commit_sha": exact_commit_sha,
         "failure_type": type(exc).__name__,
-        "failure_message": str(exc)[:800],
+        "failure_message": str(exc)[:FAILURE_MESSAGE_MAX_CHARS],
+        "failure_chain": failure_chain,
+        "failure_chain_truncated": failure_chain_truncated,
         "share_code_operation": False,
         "login": False,
         "cookies": False,
