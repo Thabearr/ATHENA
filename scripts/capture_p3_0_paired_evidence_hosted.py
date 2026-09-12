@@ -17,6 +17,7 @@ operation is introduced.
 from __future__ import annotations
 
 from contextlib import ExitStack, contextmanager
+import os
 import signal
 from typing import Iterator, Sequence
 
@@ -65,6 +66,29 @@ def _restore_price_verification(originals: tuple[object, object]) -> None:
     quote_binding.verify_current_shadow_price_context = original_quote_verify
 
 
+def _install_history_cache_with_worker_reuse():
+    """Activate only the cache layer's reviewed worker-local computation reuses.
+
+    The persistent-cache installer gates its control-row and durable-prefix
+    computation caches on the Current Shadow worker marker.  The P3.0 hosted
+    wrapper is not a Current Shadow execution worker, so expose that marker only
+    for the duration of installer construction, then restore the environment
+    before any capture code runs.  The installed hooks themselves are the same
+    exact-success/fail-closed hooks used by the reviewed worker.
+    """
+
+    key = history_github_cache.CURRENT_SHADOW_WORKER_ENV
+    prior = os.environ.get(key)
+    os.environ[key] = "1"
+    try:
+        return history_github_cache.install(runner.latest_history)
+    finally:
+        if prior is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = prior
+
+
 @contextmanager
 def _current_shadow_runtime_reuse() -> Iterator[None]:
     """Mirror only reviewed exact-success computation reuse through Router."""
@@ -85,7 +109,7 @@ def _current_shadow_runtime_reuse() -> Iterator[None]:
             semantic_replay_hooks,
         )
 
-        history_cache_hooks = history_github_cache.install(runner.latest_history)
+        history_cache_hooks = _install_history_cache_with_worker_reuse()
         stack.callback(history_github_cache.restore, runner.latest_history, history_cache_hooks)
 
         validation_originals = all_market_cli._install_history_validation_reuse()
