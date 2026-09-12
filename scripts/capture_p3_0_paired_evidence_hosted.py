@@ -11,8 +11,8 @@ an artifact.
 
 Install only the same reviewed exact-success history/verification reuse needed
 through Router, then invoke the unchanged collector.  Every hook is restored in
-LIFO order.  No Portfolio, delivery, authentication, account-state, staking-like,
-or wagering operation is introduced.
+LIFO order.  No Portfolio, delivery, authentication, account-state, or betting
+operation is introduced.
 """
 from __future__ import annotations
 
