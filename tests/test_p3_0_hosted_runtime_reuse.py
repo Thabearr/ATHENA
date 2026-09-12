@@ -21,9 +21,16 @@ def test_hosted_workflow_uses_runtime_wrapper_and_preserves_cleanup_margin():
     assert "actions: read" in text
     assert "contents: write" not in text
     assert "actions: write" not in text
-    assert hosted.HOSTED_CAPTURE_TIMEOUT_SECONDS == 105 * 60
+    assert hosted.PRE_CAPTURE_BUDGET_SECONDS == 15 * 60
+    assert hosted.HOSTED_CAPTURE_TIMEOUT_SECONDS == 90 * 60
+    assert hosted.ARTIFACT_UPLOAD_MARGIN_SECONDS == 15 * 60
     assert hosted.WORKFLOW_JOB_TIMEOUT_SECONDS == 120 * 60
-    assert hosted.CLEANUP_MARGIN_SECONDS == 15 * 60
+    assert (
+        hosted.PRE_CAPTURE_BUDGET_SECONDS
+        + hosted.HOSTED_CAPTURE_TIMEOUT_SECONDS
+        + hosted.ARTIFACT_UPLOAD_MARGIN_SECONDS
+        == hosted.WORKFLOW_JOB_TIMEOUT_SECONDS
+    )
 
 
 def test_hosted_wrapper_is_reuse_only_and_has_no_delivery_or_wager_calls():
