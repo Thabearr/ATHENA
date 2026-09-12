@@ -32,9 +32,10 @@ from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_all_market_summary_reuse as summary_cli
 
 
-HOSTED_CAPTURE_TIMEOUT_SECONDS = 105 * 60
+PRE_CAPTURE_BUDGET_SECONDS = 15 * 60
+HOSTED_CAPTURE_TIMEOUT_SECONDS = 90 * 60
+ARTIFACT_UPLOAD_MARGIN_SECONDS = 15 * 60
 WORKFLOW_JOB_TIMEOUT_SECONDS = 120 * 60
-CLEANUP_MARGIN_SECONDS = WORKFLOW_JOB_TIMEOUT_SECONDS - HOSTED_CAPTURE_TIMEOUT_SECONDS
 
 
 class P30HostedCaptureTimeoutError(RuntimeError):
@@ -142,14 +143,19 @@ def _current_shadow_runtime_reuse() -> Iterator[None]:
 def _hosted_deadline() -> Iterator[None]:
     """Raise inside Python before the Actions hard ceiling so failure evidence survives."""
 
-    if CLEANUP_MARGIN_SECONDS != 15 * 60:
-        raise RuntimeError("P3.0-E1 hosted capture must preserve a 15-minute artifact margin")
+    if (
+        PRE_CAPTURE_BUDGET_SECONDS
+        + HOSTED_CAPTURE_TIMEOUT_SECONDS
+        + ARTIFACT_UPLOAD_MARGIN_SECONDS
+        != WORKFLOW_JOB_TIMEOUT_SECONDS
+    ):
+        raise RuntimeError("P3.0-E1 hosted runtime budget no longer closes exactly")
     if not hasattr(signal, "SIGALRM") or not hasattr(signal, "setitimer"):
         raise RuntimeError("P3.0-E1 hosted deadline requires the reviewed Linux Actions runtime")
 
     def expire(_signum, _frame):
         raise P30HostedCaptureTimeoutError(
-            "hosted P3.0-E1 capture exceeded the 105-minute bounded runtime"
+            "hosted P3.0-E1 capture exceeded the 90-minute bounded runtime"
         )
 
     prior_handler = signal.getsignal(signal.SIGALRM)
