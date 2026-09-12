@@ -1,7 +1,7 @@
 from tests._p3_0_comparison_evidence_support import *  # noqa: F401,F403
 
 def test_contract_is_re_pinned_after_hardening():
-    assert evidence.validate_contract() == "f93922d028c40b8a0d4a246f98c99cb9c208a4e83c7b9e6618fb62cd36788f75"
+    assert evidence.validate_contract() == "464a80970a108efb6d9dcd1f5d1692c521f165d86d7b954b232b90df9fee651b"
 
 
 def test_complete_requires_semantic_evidence_and_explicit_asof_proof():
@@ -97,8 +97,11 @@ def test_possession_is_allowed_but_session_credentials_remain_forbidden():
     with pytest.raises(evidence.P30ComparisonEvidenceError):
         evidence.project_legacy_input({**_legacy_input(), "current_home_form": {"password": False}})
     # Explicit false safety receipts remain representable without opening the
-    # general credential-key exception.
-    evidence.canonical_json_bytes({"wager_placed": False, "staking": False})
+    # general credential-key exception. The canonical probability contract
+    # includes authority.wager=false, so that exact false receipt is admitted.
+    evidence.canonical_json_bytes({"wager": False, "wager_placed": False, "staking": False})
+    with pytest.raises(evidence.P30ComparisonEvidenceError):
+        evidence.canonical_json_bytes({"wager": True})
 
 
 def test_staking_advice_is_quarantined_from_legacy_projection():
