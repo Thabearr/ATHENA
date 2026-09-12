@@ -1,4 +1,76 @@
 from tests._p3_0_comparison_evidence_support import *  # noqa: F401,F403
+from scripts import _p3_0_paired_capture_part1 as capture_part1
+
+
+def _failure_receipt(tmp_path, exc):
+    capture_part1._safe_failure(
+        tmp_path, exact_commit_sha="a" * 40, capture_id="failure-test",
+        started_at="2026-09-12T00:00:00.000000Z", exc=exc,
+    )
+    return json.loads((tmp_path / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+
+
+def test_failure_receipt_preserves_bounded_explicit_cause_chain(tmp_path):
+    try:
+        try:
+            try:
+                raise ValueError("leaf")
+            except ValueError as exc:
+                raise RuntimeError("middle") from exc
+        except RuntimeError as exc:
+            raise LookupError("outer") from exc
+    except LookupError as outer:
+        receipt = _failure_receipt(tmp_path, outer)
+    assert receipt["schema_version"] == 2
+    assert receipt["failure_type"] == "LookupError"
+    assert receipt["failure_message"] == "outer"
+    assert receipt["failure_chain"] == [
+        {"exception_type": "LookupError", "message": "outer"},
+        {"exception_type": "RuntimeError", "message": "middle"},
+        {"exception_type": "ValueError", "message": "leaf"},
+    ]
+    assert receipt["failure_chain_truncated"] is False
+    assert all(set(row) == {"exception_type", "message"} for row in receipt["failure_chain"])
+    assert receipt["share_code_operation"] is False
+    assert receipt["login"] is False and receipt["cookies"] is False
+    assert receipt["wallet"] is False and receipt["stake"] is False and receipt["wager_placed"] is False
+
+
+def test_failure_receipt_bounds_depth_messages_and_suppressed_context(tmp_path):
+    exc = RuntimeError("x" * 900)
+    for index in range(capture_part1.FAILURE_CHAIN_MAX_DEPTH + 2):
+        try:
+            raise exc
+        except RuntimeError as cause:
+            exc = RuntimeError(f"level-{index}")
+            exc.__cause__ = cause
+    receipt = _failure_receipt(tmp_path, exc)
+    assert len(receipt["failure_chain"]) == capture_part1.FAILURE_CHAIN_MAX_DEPTH
+    assert receipt["failure_chain_truncated"] is True
+    assert all(len(row["message"]) <= capture_part1.FAILURE_MESSAGE_MAX_CHARS for row in receipt["failure_chain"])
+    try:
+        try:
+            raise ValueError("hidden")
+        except ValueError:
+            raise RuntimeError("outer") from None
+    except RuntimeError as suppressed:
+        suppressed_receipt = _failure_receipt(tmp_path / "suppressed", suppressed)
+    assert suppressed_receipt["failure_chain"] == [{"exception_type": "RuntimeError", "message": "outer"}]
+    assert not ({"traceback", "stack", "locals", "globals", "environment", "headers"} & set(receipt))
+
+
+def test_failure_receipt_bounds_each_stored_message(tmp_path):
+    message = "x" * (capture_part1.FAILURE_MESSAGE_MAX_CHARS + 100)
+    receipt = _failure_receipt(tmp_path, RuntimeError(message))
+
+    assert receipt["failure_message"] == "x" * capture_part1.FAILURE_MESSAGE_MAX_CHARS
+    assert receipt["failure_chain"] == [{
+        "exception_type": "RuntimeError",
+        "message": "x" * capture_part1.FAILURE_MESSAGE_MAX_CHARS,
+    }]
+    assert receipt["failure_chain_truncated"] is False
+    assert len(receipt["failure_message"]) == 800
+    assert len(receipt["failure_chain"][0]["message"]) == 800
 
 def test_artifact_manifest_rejects_tamper_extra_missing_and_path_escape(tmp_path):
     bundle = _bundle()
