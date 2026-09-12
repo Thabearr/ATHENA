@@ -59,6 +59,29 @@ def test_hosted_wrapper_is_reuse_only_and_has_no_delivery_or_wager_calls():
         assert forbidden not in source
 
 
+def test_history_cache_worker_marker_is_installer_scoped(monkeypatch):
+    key = hosted.history_github_cache.CURRENT_SHADOW_WORKER_ENV
+    seen: list[str | None] = []
+    sentinel = object()
+
+    monkeypatch.setenv(key, "prior-value")
+
+    def install(_latest):
+        seen.append(hosted.os.environ.get(key))
+        return sentinel
+
+    monkeypatch.setattr(hosted.history_github_cache, "install", install)
+    assert hosted._install_history_cache_with_worker_reuse() is sentinel
+    assert seen == ["1"]
+    assert hosted.os.environ.get(key) == "prior-value"
+
+    monkeypatch.delenv(key, raising=False)
+    seen.clear()
+    assert hosted._install_history_cache_with_worker_reuse() is sentinel
+    assert seen == ["1"]
+    assert key not in hosted.os.environ
+
+
 def test_runtime_reuse_restores_direct_monkeypatches(monkeypatch):
     latest = hosted.runner.latest_history
     quote = hosted.quote_binding
