@@ -112,7 +112,7 @@ _ALLOWED_FALSE_SAFETY_KEYS = frozenset({
     "provider_acquisition", "share_code_generation", "share_code_invoked",
     "share_code_operation", "sportybet_cookie_used", "sportybet_login_used",
     "sportybet_wallet_used", "stake", "stake_submitted", "staking", "wallet",
-    "wager_placed",
+    "wager", "wager_placed",
 })
 _HEX40 = re.compile(r"^[0-9a-f]{40}$")
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
@@ -311,7 +311,7 @@ class LegacyEvidenceObserver:
     def __call__(self, fixture_context: Mapping[str, Any], pre_gate: Mapping[str, Any],
                  authorized: Mapping[str, Any], exported: Mapping[str, Any]) -> None:
         now = self._clock()
-        if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
+        if type(now) is not datetime or now.tzinfo is None or now.utcoffsett() is None:
             raise P30ComparisonEvidenceError("legacy observer clock must be timezone-aware")
         self._observations.append({
             "observed_at": now.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
