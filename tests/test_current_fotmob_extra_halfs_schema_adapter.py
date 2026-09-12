@@ -84,8 +84,8 @@ def _identity_rows(bundle):
     )
 
 
-def test_v2_contract_is_bound_to_exact_live_extra_halfs_evidence():
-    assert POLICY_ID == "CURRENT_FOTMOB_PR39_OR_REVIEWED_PR87_PR89_ADDITIVE_SCHEMA_V2"
+def test_v3_contract_preserves_exact_live_extra_halfs_evidence():
+    assert POLICY_ID == "CURRENT_FOTMOB_PR39_OR_REVIEWED_PR87_PR89_ADDITIVE_SCHEMA_V3"
     assert REVIEWED_EXTRA_HALFS_KEYS == (
         "firstExtraHalfStarted",
         "secondExtraHalfStarted",

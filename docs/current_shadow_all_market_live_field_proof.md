@@ -209,3 +209,32 @@ The run-125 timeout does not establish any later-stage failure. Specifically,
 it did not reach a current model context, Price-all, Router, Portfolio, fresh
 reprice, anonymous create/reload, or email-success proof. Those remain subject
 to a later owner-authorized live run and durable-artifact inspection.
+
+## Current FotMob `shortName` structural continuity (post-P3.0-E1)
+
+The one authorized P3.0-E1 prospective paired-capture run `34679280115` on
+main `72526953cc3296c9a2b1107ef292cebba36da03b` failed before corpus creation
+at the current FotMob candidate adapter. Its failure artifact was
+`p3-0-comparison-evidence` (`10293656700`), ZIP SHA-256
+`06ac9315bb7d580966887bc43bfd14e2e77ca78dec50c3c7af366a0e7ffcec12`.
+The failure was an additive PR87/PR89 structural assessment rejection; it did
+not create or reload a share code, and login, cookies, wallet, stake, and wager
+remained false.
+
+The exact preserved source proof is Current Shadow run `34628860651`, artifact
+`current-shadow-all-market-request` (`10275611884`), ZIP SHA-256
+`d16171cb57db943e9d09462b52f33b6c8919a5a8c135d27e7785878b9fa93e04`.
+Its request-date `20260911` capture `36feec8e0ce3dd8970d96cc7` was observed at
+`2026-09-11T17:40:04.585312Z`; its manifest-file SHA-256 is
+`292b8d5e9b8a2f44bc4696f0635f885c121ded3b200c15c62605393c944d3afd` and raw
+response SHA-256 is
+`820d0e6f0e783f8bd9a5f4968bcaba46dad2cc8ef637540e19bd7ce09f398ed1`.
+
+The first rejected match was `5881169` (Union Berlin v Schalke 04). The
+preserved response contains `home.shortName` five times and `away.shortName`
+five times, each as an exact JSON string. The V3 current-only adapter admits
+only that optional exact-string key as an opaque validation projection. It
+removes the key solely from projected validation bytes before replaying the
+frozen PR87/PR89 chain; the original raw and manifest remain source ancestry.
+It gives `shortName` no identity, source-capability, model, pricing, selection,
+or provider-semantic meaning. Any other team key still fails closed.

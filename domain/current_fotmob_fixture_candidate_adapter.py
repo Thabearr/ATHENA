@@ -20,11 +20,12 @@ and manifest ancestry.
 
 Live run 33690015364 also re-observed the two opaque `status.halfs` timestamps
 already reviewed for fresh-holdout capture compatibility:
-`firstExtraHalfStarted` and `secondExtraHalfStarted`.  V2 admits only those exact
-keys when their values are exact strings, removes them from a validation-only
-projection, and then replays the frozen PR87/PR89 structural chain.  The raw
-capture and manifest remain the authoritative candidate ancestry.  No extra-time
-football semantics are inferred from the opaque strings.
+`firstExtraHalfStarted` and `secondExtraHalfStarted`. V3 additionally admits
+only the reviewed opaque match-team `shortName` key when its value is an exact
+string. Each field is removed only from a validation projection after an exact
+PR87 boundary; all other unknown team keys remain fail-closed. The raw capture
+and manifest remain the authoritative candidate ancestry. No football semantics
+are inferred from any compatibility string.
 
 Candidate extraction remains fixture-identity only. No terminal-state semantics
 or model, pricing, selection, production, or betting authority is created here.
@@ -42,11 +43,16 @@ from domain.fotmob_data_matches_capture import FotMobDataMatchesCaptureManifest
 from domain.fotmob_data_matches_schema import FotMobDataMatchesSchemaError
 
 
-POLICY_ID = "CURRENT_FOTMOB_PR39_OR_REVIEWED_PR87_PR89_ADDITIVE_SCHEMA_V2"
+POLICY_ID = "CURRENT_FOTMOB_PR39_OR_REVIEWED_PR87_PR89_ADDITIVE_SCHEMA_V3"
 _REQUEST_DATE_MISMATCH = "kickoff UTC date does not match source request date"
 REVIEWED_EXTRA_HALFS_KEYS = ("firstExtraHalfStarted", "secondExtraHalfStarted")
 REVIEWED_EXTRA_HALFS_RULE = (
     "OPTIONAL_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_NO_EXTRA_TIME_SEMANTICS"
+)
+TEAM_SHORTNAME_KEY = "shortName"
+TEAM_SHORTNAME_RULE = (
+    "OPTIONAL_MATCH_TEAM_SHORTNAME_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_"
+    "VALIDATION_PROJECTION_ONLY"
 )
 SOURCE_WORKFLOW_RUN_ID = 33690015364
 SOURCE_ACTIONS_ARTIFACT_ID = 9869665644
@@ -61,6 +67,22 @@ SOURCE_CAPTURE_EXTRA_HALFS_OCCURRENCES = {
     "firstExtraHalfStarted": 4,
     "secondExtraHalfStarted": 4,
 }
+CURRENT_TEAM_SHORTNAME_SOURCE_WORKFLOW_RUN_ID = 34628860651
+CURRENT_TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_ID = 10275611884
+CURRENT_TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_SHA256 = (
+    "d16171cb57db943e9d09462b52f33b6c8919a5a8c135d27e7785878b9fa93e04"
+)
+CURRENT_TEAM_SHORTNAME_SOURCE_REQUEST_DATE = "20260911"
+CURRENT_TEAM_SHORTNAME_SOURCE_CAPTURE_ID = "36feec8e0ce3dd8970d96cc7"
+CURRENT_TEAM_SHORTNAME_SOURCE_OBSERVED_AT = "2026-09-11T17:40:04.585312Z"
+CURRENT_TEAM_SHORTNAME_SOURCE_MANIFEST_FILE_SHA256 = (
+    "292b8d5e9b8a2f44bc4696f0635f885c121ded3b200c15c62605393c944d3afd"
+)
+CURRENT_TEAM_SHORTNAME_SOURCE_RAW_SHA256 = (
+    "820d0e6f0e783f8bd9a5f4968bcaba46dad2cc8ef637540e19bd7ce09f398ed1"
+)
+CURRENT_TEAM_SHORTNAME_HOME_OCCURRENCES = 5
+CURRENT_TEAM_SHORTNAME_AWAY_OCCURRENCES = 5
 
 
 class CurrentFotMobFixtureCandidateAdapterError(ValueError):
@@ -95,6 +117,35 @@ def _contains_extra_halfs_boundary(error: BaseException) -> bool:
             and current.status is expected_status
             and ".status.halfs has keys outside the PR39 base plus PR86 extension"
             in str(current)
+        ):
+            return True
+        current = current.__cause__
+    return False
+
+
+def _contains_team_shortname_boundary(error: BaseException) -> bool:
+    """Recognize only the reviewed PR87 team-key structural boundary."""
+
+    current: BaseException | None = error
+    seen: set[int] = set()
+    expected_status = (
+        pr89.pr87_implementation.TerminalStateSchemaExtensionStatus.
+        BLOCKED_EXTRA_KEY_OUTSIDE_PRE_REGISTERED_SET
+    )
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if (
+            isinstance(
+                current,
+                pr89.pr87_implementation.FotMobDataMatchesTerminalStateSchemaExtensionError,
+            )
+            and current.status is expected_status
+            and (
+                ".home has keys outside the PR39 base plus PR86 extension"
+                in str(current)
+                or ".away has keys outside the PR39 base plus PR86 extension"
+                in str(current)
+            )
         ):
             return True
         current = current.__cause__
@@ -172,6 +223,80 @@ def _extra_halfs_projection(
     except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as exc:
         raise CurrentFotMobFixtureCandidateAdapterError(
             "extra-halfs compatibility manifest failed reviewed capture validation"
+        ) from exc
+    return projected_raw, projected_manifest, counts
+
+
+def _strip_reviewed_team_shortnames(
+    payload: dict[str, Any],
+) -> tuple[dict[str, Any], dict[str, int]]:
+    """Deep-copy and remove only exact opaque ``shortName`` validation fields."""
+
+    projected = copy.deepcopy(payload)
+    counts = {"home": 0, "away": 0}
+    allowed_team_keys = frozenset(pr89.pr87_implementation.BASE_TEAM_KEYS) | frozenset(
+        pr89.pr87_implementation.EXTENSION_TEAM_OPTIONAL_KEYS
+    )
+    leagues = projected.get("leagues")
+    if type(leagues) is not list:
+        raise CurrentFotMobFixtureCandidateAdapterError(
+            "team shortName compatibility requires a leagues list"
+        )
+    for league_index, league in enumerate(leagues):
+        if type(league) is not dict:
+            raise CurrentFotMobFixtureCandidateAdapterError(
+                f"leagues[{league_index}] must be an object for team shortName compatibility"
+            )
+        matches = league.get("matches")
+        if type(matches) is not list:
+            raise CurrentFotMobFixtureCandidateAdapterError(
+                f"leagues[{league_index}].matches must be a list for team shortName compatibility"
+            )
+        for match_index, match in enumerate(matches):
+            if type(match) is not dict:
+                raise CurrentFotMobFixtureCandidateAdapterError(
+                    f"leagues[{league_index}].matches[{match_index}] must be an object"
+                )
+            for side in ("home", "away"):
+                team = match.get(side)
+                if type(team) is not dict:
+                    raise CurrentFotMobFixtureCandidateAdapterError(
+                        f"leagues[{league_index}].matches[{match_index}].{side} must be an object"
+                    )
+                unknown = set(team) - allowed_team_keys
+                if not unknown:
+                    continue
+                if unknown != {TEAM_SHORTNAME_KEY}:
+                    raise CurrentFotMobFixtureCandidateAdapterError(
+                        f"leagues[{league_index}].matches[{match_index}].{side} has "
+                        "an unreviewed team key beside or instead of shortName"
+                    )
+                if type(team[TEAM_SHORTNAME_KEY]) is not str:
+                    raise CurrentFotMobFixtureCandidateAdapterError(
+                        f"leagues[{league_index}].matches[{match_index}]."
+                        f"{side}.{TEAM_SHORTNAME_KEY} must be an exact string"
+                    )
+                counts[side] += 1
+                del team[TEAM_SHORTNAME_KEY]
+    if sum(counts.values()) <= 0:
+        raise CurrentFotMobFixtureCandidateAdapterError(
+            "team shortName compatibility path entered without the reviewed shortName key"
+        )
+    return projected, counts
+
+
+def _team_shortname_projection(
+    raw: bytes,
+    manifest: FotMobDataMatchesCaptureManifest,
+) -> tuple[bytes, FotMobDataMatchesCaptureManifest, dict[str, int]]:
+    payload = pr39_candidates._strict_json(raw)
+    projected, counts = _strip_reviewed_team_shortnames(payload)
+    projected_raw = _canonical_payload_bytes(projected)
+    try:
+        projected_manifest = pr89._projected_manifest(manifest, projected_raw)
+    except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as exc:
+        raise CurrentFotMobFixtureCandidateAdapterError(
+            "team shortName compatibility manifest failed reviewed capture validation"
         ) from exc
     return projected_raw, projected_manifest, counts
 
@@ -293,88 +418,101 @@ def _extra_halfs_assessment_sha256(
     return hashlib.sha256(_canonical_payload_bytes(descriptor)).hexdigest()
 
 
+def _compatibility_assessment_sha256(
+    *,
+    source_manifest_sha256: str,
+    source_raw_sha256: str,
+    projected_raw: bytes,
+    team_shortname_counts: dict[str, int],
+    extra_halfs_counts: dict[str, int],
+    excluded_count: int,
+    pr89_assessment_sha256: str,
+) -> str:
+    """Bind every finite V3 validation projection without changing source ancestry."""
+
+    descriptor = {
+        "policy_id": POLICY_ID,
+        "source_manifest_sha256": source_manifest_sha256,
+        "source_raw_sha256": source_raw_sha256,
+        "projected_raw_sha256": hashlib.sha256(projected_raw).hexdigest(),
+        "team_shortname_counts": {
+            "home": team_shortname_counts["home"],
+            "away": team_shortname_counts["away"],
+        },
+        "reviewed_extra_halfs_counts": {
+            key: extra_halfs_counts[key] for key in REVIEWED_EXTRA_HALFS_KEYS
+        },
+        "excluded_out_of_request_utc_date_count": excluded_count,
+        "pr89_assessment_sha256": pr89_assessment_sha256,
+    }
+    return hashlib.sha256(_canonical_payload_bytes(descriptor)).hexdigest()
+
+
 def _qualified_extended_payload(
     raw: bytes,
     manifest: FotMobDataMatchesCaptureManifest,
     manifest_sha: str,
 ) -> tuple[dict[str, Any], pr89.FotMobDataMatchesEliminatedTeamIdValueDomainAssessment, str]:
-    try:
-        assessment = pr89.assess_fotmob_data_matches_eliminated_team_id_value_domain(
-            raw, manifest
-        )
-        assessment_sha = pr89.sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(
-            assessment
-        )
-        return pr39_candidates._strict_json(raw), assessment, assessment_sha
-    except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as exc:
-        if _contains_extra_halfs_boundary(exc):
-            projected_raw, projected_manifest, counts = _extra_halfs_projection(
-                raw, manifest
+    # This finite state machine admits each separately reviewed validation
+    # projection once. It never retries an unknown boundary or strips arbitrary
+    # provider keys, and the original raw/manifest remain the candidate ancestry.
+    projected_raw = raw
+    projected_manifest = manifest
+    team_shortname_counts = {"home": 0, "away": 0}
+    extra_halfs_counts = {key: 0 for key in REVIEWED_EXTRA_HALFS_KEYS}
+    excluded_count = 0
+    applied: set[str] = set()
+
+    for _attempt in range(4):
+        try:
+            assessment = pr89.assess_fotmob_data_matches_eliminated_team_id_value_domain(
+                projected_raw, projected_manifest
             )
-            excluded_count = 0
-            try:
-                assessment = pr89.assess_fotmob_data_matches_eliminated_team_id_value_domain(
+        except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as exc:
+            if _contains_team_shortname_boundary(exc) and "team_shortname" not in applied:
+                projected_raw, projected_manifest, team_shortname_counts = (
+                    _team_shortname_projection(projected_raw, projected_manifest)
+                )
+                applied.add("team_shortname")
+                continue
+            if _contains_extra_halfs_boundary(exc) and "extra_halfs" not in applied:
+                projected_raw, projected_manifest, extra_halfs_counts = _extra_halfs_projection(
                     projected_raw, projected_manifest
                 )
-            except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as projected_exc:
-                if not _contains_exact_request_date_mismatch(projected_exc):
-                    raise CurrentFotMobFixtureCandidateAdapterError(
-                        "reviewed extra-halfs projection failed PR87/PR89 assessment"
-                    ) from projected_exc
+                applied.add("extra_halfs")
+                continue
+            if (
+                _contains_exact_request_date_mismatch(exc)
+                and "request_date" not in applied
+            ):
                 projected_raw, projected_manifest, excluded_count = _request_date_projection(
                     projected_raw, projected_manifest
                 )
-                try:
-                    assessment = pr89.assess_fotmob_data_matches_eliminated_team_id_value_domain(
-                        projected_raw, projected_manifest
-                    )
-                except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as final_exc:
-                    raise CurrentFotMobFixtureCandidateAdapterError(
-                        "reviewed extra-halfs plus request-date projection assessment failed"
-                    ) from final_exc
-            pr89_assessment_sha = (
-                pr89.sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(
-                    assessment
-                )
-            )
-            assessment_sha = _extra_halfs_assessment_sha256(
-                source_manifest_sha256=manifest_sha,
-                source_raw_sha256=manifest.raw_sha256,
-                projected_raw=projected_raw,
-                counts=counts,
-                excluded_count=excluded_count,
-                pr89_assessment_sha256=pr89_assessment_sha,
-            )
-            return pr39_candidates._strict_json(projected_raw), assessment, assessment_sha
-        if not _contains_exact_request_date_mismatch(exc):
+                applied.add("request_date")
+                continue
             raise CurrentFotMobFixtureCandidateAdapterError(
                 "reviewed PR87/PR89 additive schema assessment failed"
             ) from exc
 
-    projected_raw, projected_manifest, excluded_count = _request_date_projection(
-        raw, manifest
-    )
-    try:
-        assessment = pr89.assess_fotmob_data_matches_eliminated_team_id_value_domain(
-            projected_raw, projected_manifest
+        pr89_assessment_sha = (
+            pr89.sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(
+                assessment
+            )
         )
-    except pr89.FotMobDataMatchesEliminatedTeamIdValueDomainExtensionError as exc:
-        raise CurrentFotMobFixtureCandidateAdapterError(
-            "reviewed PR87/PR89 request-date projection assessment failed"
-        ) from exc
-    pr89_assessment_sha = (
-        pr89.sha256_fotmob_data_matches_eliminated_team_id_value_domain_assessment(
-            assessment
+        assessment_sha = _compatibility_assessment_sha256(
+            source_manifest_sha256=manifest_sha,
+            source_raw_sha256=manifest.raw_sha256,
+            projected_raw=projected_raw,
+            team_shortname_counts=team_shortname_counts,
+            extra_halfs_counts=extra_halfs_counts,
+            excluded_count=excluded_count,
+            pr89_assessment_sha256=pr89_assessment_sha,
         )
+        return pr39_candidates._strict_json(projected_raw), assessment, assessment_sha
+
+    raise CurrentFotMobFixtureCandidateAdapterError(
+        "reviewed compatibility projection state machine exceeded its finite bound"
     )
-    assessment_sha = _projection_assessment_sha256(
-        source_manifest_sha256=manifest_sha,
-        source_raw_sha256=manifest.raw_sha256,
-        projected_raw=projected_raw,
-        excluded_count=excluded_count,
-        pr89_assessment_sha256=pr89_assessment_sha,
-    )
-    return pr39_candidates._strict_json(projected_raw), assessment, assessment_sha
 
 
 def _extended_candidate_bundle(
@@ -494,6 +632,16 @@ def build_current_fotmob_fixture_candidate_bundle(
 
 
 __all__ = [
+    "CURRENT_TEAM_SHORTNAME_AWAY_OCCURRENCES",
+    "CURRENT_TEAM_SHORTNAME_HOME_OCCURRENCES",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_ID",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_ACTIONS_ARTIFACT_SHA256",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_CAPTURE_ID",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_MANIFEST_FILE_SHA256",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_OBSERVED_AT",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_RAW_SHA256",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_REQUEST_DATE",
+    "CURRENT_TEAM_SHORTNAME_SOURCE_WORKFLOW_RUN_ID",
     "POLICY_ID",
     "REVIEWED_EXTRA_HALFS_KEYS",
     "REVIEWED_EXTRA_HALFS_RULE",
@@ -503,6 +651,8 @@ __all__ = [
     "SOURCE_CAPTURE_RAW_SHA256",
     "SOURCE_CAPTURE_REQUEST_DATE",
     "SOURCE_WORKFLOW_RUN_ID",
+    "TEAM_SHORTNAME_KEY",
+    "TEAM_SHORTNAME_RULE",
     "CurrentFotMobFixtureCandidateAdapterError",
     "build_current_fotmob_fixture_candidate_bundle",
 ]
