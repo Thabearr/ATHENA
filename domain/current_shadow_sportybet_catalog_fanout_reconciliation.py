@@ -72,7 +72,7 @@ TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
     team_label_compatibility.EXPECTED_POLICY_SHA256
 )
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "96b8e9274bfaabdf3d2993774134a600906ad340df666ef2172c8acf47dcd85c"
+EXPECTED_CONTRACT_SHA256 = "e3373cb22d4caacf1d7a69d15011d952e4946689948e19c9a27ceba1d4d070fc"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
