@@ -311,7 +311,7 @@ class LegacyEvidenceObserver:
     def __call__(self, fixture_context: Mapping[str, Any], pre_gate: Mapping[str, Any],
                  authorized: Mapping[str, Any], exported: Mapping[str, Any]) -> None:
         now = self._clock()
-        if type(now) is not datetime or now.tzinfo is None or now.utcoffsett() is None:
+        if type(now) is not datetime or now.tzinfo is None or now.utcoffset() is None:
             raise P30ComparisonEvidenceError("legacy observer clock must be timezone-aware")
         self._observations.append({
             "observed_at": now.astimezone(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z"),
