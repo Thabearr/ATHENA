@@ -24,7 +24,7 @@ concurrency:
 jobs:
   capture:
     runs-on: ubuntu-latest
-    timeout-minutes: 75
+    timeout-minutes: 120
     steps:
       - name: Checkout exact requested commit
         uses: actions/checkout@v4
@@ -129,7 +129,7 @@ jobs:
           ATHENA_P3_FIXTURE_DATES: ${{ inputs.fixture_dates }}
           ATHENA_P3_FIXTURE_CAP: ${{ inputs.fixture_cap }}
         run: |
-          python -m scripts.capture_p3_0_paired_evidence \
+          python -m scripts.capture_p3_0_paired_evidence_hosted \
             --fixture-dates "${ATHENA_P3_FIXTURE_DATES}" \
             --fixture-cap "${ATHENA_P3_FIXTURE_CAP}" \
             --output-dir artifacts/p3-0-comparison-evidence
