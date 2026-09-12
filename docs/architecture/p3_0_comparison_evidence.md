@@ -42,7 +42,7 @@ Schema version: `1`.
 
 Pinned hardened schema-contract SHA-256:
 
-`f93922d028c40b8a0d4a246f98c99cb9c208a4e83c7b9e6618fb62cd36788f75`
+`464a80970a108efb6d9dcd1f5d1692c521f165d86d7b954b232b90df9fee651b`
 
 The public module is a stable facade over a private implementation. Canonical
 JSON is deterministic UTF-8 with sorted keys, compact separators and one final
@@ -126,7 +126,9 @@ The sensitive-key policy is token/exact-key based rather than substring based,
 so legitimate football fields such as `possession` are preserved while
 `session`, `session_id`, authorization, cookies, bearer/token/password/secret,
 wallet/account-balance, stake/wager and share-code material remain forbidden.
-False safety/authority booleans are allowed as receipts.
+Explicit false safety/authority booleans are allowed as receipts, including the
+canonical `MarketProbabilityBundle.authority.wager=false` field; a true wager
+authority value still fails closed.
 
 ## Fixture identity and artifact path safety
 
