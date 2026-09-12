@@ -1,0 +1,143 @@
+name: ATHENA P3.0 prospective comparison evidence capture
+
+on:
+  workflow_dispatch:
+    inputs:
+      fixture_dates:
+        description: Comma-separated UTC YYYYMMDD dates, 1..7 inside today..today+6
+        required: true
+        type: string
+      fixture_cap:
+        description: Maximum reconciled fixtures to preserve, 1..50
+        required: true
+        default: "20"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: p3-0-comparison-evidence-capture
+  cancel-in-progress: false
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - name: Checkout exact requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install project dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Validate bounded capture request
+        env:
+          ATHENA_P3_FIXTURE_DATES: ${{ inputs.fixture_dates }}
+          ATHENA_P3_FIXTURE_CAP: ${{ inputs.fixture_cap }}
+        run: |
+          python - <<'PY'
+          import datetime as dt
+          import os
+          from domain import current_shadow_fixture_date_request as request
+
+          dates = request.parse_fixture_dates_text(os.environ["ATHENA_P3_FIXTURE_DATES"])
+          request.validate_fixture_dates(dates, current_utc=dt.datetime.now(dt.timezone.utc))
+          cap = int(os.environ["ATHENA_P3_FIXTURE_CAP"])
+          if not 1 <= cap <= 50:
+              raise SystemExit("fixture_cap must be from 1 through 50")
+          PY
+
+      - name: Restore latest trusted-main durable-history prime artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cache_dir='.cache/athena-research/current-shadow-history-github-binary-cache-v1'
+          restored=false
+          mapfile -t prime_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-history-cache-prime.yml/runs?status=success&per_page=10" \
+              --jq '.workflow_runs[] | select(.head_branch == "main") | [.id, .head_sha] | @tsv'
+          )
+          for run_row in "${prime_runs[@]}"; do
+            IFS=$'\t' read -r run_id run_sha <<< "${run_row}"
+            if ! [[ "${run_id}" =~ ^[0-9]+$ ]] || ! [[ "${run_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              continue
+            fi
+            rm -rf /tmp/athena-p3-history-prime
+            mkdir -p /tmp/athena-p3-history-prime
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-history-cache-prime \
+              --dir /tmp/athena-p3-history-prime >/dev/null 2>&1
+            then
+              if python -m scripts.restore_current_shadow_history_prime_artifact \
+                --artifact-dir /tmp/athena-p3-history-prime \
+                --cache-dir "${cache_dir}" \
+                --expected-prime-commit-sha "${run_sha}"
+              then
+                echo "Restored verified durable-history prime from trusted main run ${run_id}."
+                restored=true
+                break
+              fi
+            fi
+          done
+          if [ "${restored}" != true ]; then
+            echo "No trusted-main history prime restored; reviewed live fallback remains fail-closed."
+          fi
+
+      - name: Restore fixed PR119 materialized bootstrap
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p .cache/athena-research/pr119-bootstrap
+          gh release download athena-fresh-holdout-bootstrap-v1 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern pr119-materialized.ndjson \
+            --dir .cache/athena-research/pr119-bootstrap \
+            --clobber
+          printf '%s  %s\n' \
+            'e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2' \
+            '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
+            | sha256sum --check --strict
+
+      - name: Resolve exact lineage main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          lineage_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "${#lineage_main_sha}" -eq 40
+          printf 'ATHENA_EXPECTED_LINEAGE_MAIN_SHA=%s\n' "${lineage_main_sha}" >> "${GITHUB_ENV}"
+
+      - name: Capture paired P3.0 evidence through Router only
+        env:
+          ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
+          ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR: .cache/athena-research/current-shadow-history-github-binary-cache-v1
+          ATHENA_P3_FIXTURE_DATES: ${{ inputs.fixture_dates }}
+          ATHENA_P3_FIXTURE_CAP: ${{ inputs.fixture_cap }}
+        run: |
+          python -m scripts.capture_p3_0_paired_evidence \
+            --fixture-dates "${ATHENA_P3_FIXTURE_DATES}" \
+            --fixture-cap "${ATHENA_P3_FIXTURE_CAP}" \
+            --output-dir artifacts/p3-0-comparison-evidence
+
+      - name: Upload P3.0-E1 capture artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p3-0-comparison-evidence
+          path: artifacts/p3-0-comparison-evidence
+          if-no-files-found: error
+          retention-days: 30
