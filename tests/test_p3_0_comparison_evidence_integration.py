@@ -159,6 +159,33 @@ def test_capture_workflow_is_dispatch_only_and_never_calls_delivery():
     assert "upload-artifact@v4" in text
 
 
+def test_capture_workflow_passes_read_only_github_token_to_paired_capture_step():
+    root = Path(__file__).resolve().parents[1]
+    text = (root / ".github" / "workflows" / "p3-0-comparison-evidence-capture.yml").read_text(encoding="utf-8")
+    marker = "      - name: Capture paired P3.0 evidence through Router only\n"
+    start = text.index(marker)
+    end = text.index("      - name: Upload P3.0-E1 capture artifact\n", start)
+    capture_step = text[start:end]
+
+    assert "GH_TOKEN: ${{ github.token }}" in capture_step
+    assert "contents: read" in text
+    assert "actions: read" in text
+    for forbidden in (
+        "secrets.GH_TOKEN",
+        "secrets.GITHUB_TOKEN",
+        "contents: write",
+        "actions: write",
+        "send_current_shadow_email",
+        "execute_current_shadow_request",
+        "share-code",
+        "login",
+        "wallet",
+        "staking",
+        "wager",
+    ):
+        assert forbidden not in text
+
+
 def test_bundle_and_artifact_are_deterministic(tmp_path):
     first = _bundle(); second = _bundle()
     assert first == second

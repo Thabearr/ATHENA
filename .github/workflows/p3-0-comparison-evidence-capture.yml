@@ -123,6 +123,7 @@ jobs:
 
       - name: Capture paired P3.0 evidence through Router only
         env:
+          GH_TOKEN: ${{ github.token }}
           ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
           ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR: .cache/athena-research/current-shadow-history-github-binary-cache-v1
           ATHENA_P3_FIXTURE_DATES: ${{ inputs.fixture_dates }}
