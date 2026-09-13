@@ -31,6 +31,14 @@ is exact structural compatibility only, not general duplicate-wrapper support:
 raw and manifest ancestry remain authoritative, group labels remain opaque, and
 no model, probability, pricing, routing, or selection authority is introduced.
 
+Diagnostic run 34761226581 independently fresh-reacquired a second exact,
+date-bound shape for that same wrapper id on request date 20260917: three
+opaque ``F``/``G``/``H`` wrappers with the same fixed metadata.  Each reviewed
+date has its own exact wrapper count and label-pair set.  This does not create
+generic duplicate-wrapper support, generic competition-group semantics, or any
+model, pricing, routing, or selection authority; raw and manifest ancestry
+remain authoritative.
+
 This is research/replay plumbing only.  It grants no model, probability,
 pricing, selection, SportyBet execution, production, or betting authority.
 """
@@ -50,7 +58,8 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
 
 REVIEWED_DUPLICATE_GROUP_WRAPPER_COMPATIBILITY_ID = (
-    "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_20260906_20260907_20260916_V4"
+    "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_20260906_"
+    "20260907_20260916_20260917_V5"
 )
 REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_RUN_ID = 33787560018
 REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ARTIFACT_ID = 9907200985
@@ -146,6 +155,27 @@ REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_EXACT_KEYS = frozenset(
         "primaryId",
         "simpleLeague",
     }
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_SOURCE_RUN_ID = 34761226581
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_SOURCE_ARTIFACT_ID = 10319156348
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_SOURCE_ARTIFACT_SHA256 = (
+    "690c3e2c2e17fff7589ed7305abbc608dc19f3ede0bb09c82319a9d4476d1c40"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_SOURCE_RAW_SHA256 = (
+    "714b9a570fc47f852de00b52ff6aa1d380723c8ce465a4d934909b49a0bdb0f4"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_SOURCE_MANIFEST_SHA256 = (
+    "d4552fd99683bd078241d6730bbe851cd76902e4e469a250022aa2a58cc46dee"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_SOURCE_OBSERVED_AT = (
+    "2026-09-13T13:56:40.410882Z"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_REQUEST_DATE = "20260917"
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_OCCURRENCE_COUNT = 3
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_LABEL_PAIRS = (
+    ("F", "AFC Champions League Two F"),
+    ("G", "AFC Champions League Two G"),
+    ("H", "AFC Champions League Two H"),
 )
 _REVIEWED_DUPLICATE_GROUP_REQUEST_DATE_BY_LABEL_PAIRS = {
     REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS: REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE,
@@ -254,7 +284,13 @@ def _reviewed_duplicate_group_wrapper_20260916_present(
 ) -> bool:
     """Validate only the reviewed 20260916 AFC Champions League Two shape."""
 
-    if request_date != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_REQUEST_DATE:
+    if request_date == REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_REQUEST_DATE:
+        expected_count = REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_OCCURRENCE_COUNT
+        expected_labels = REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_LABEL_PAIRS
+    elif request_date == REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_REQUEST_DATE:
+        expected_count = REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_OCCURRENCE_COUNT
+        expected_labels = REVIEWED_DUPLICATE_GROUP_WRAPPER_20260917_LABEL_PAIRS
+    else:
         raise _error("reviewed duplicate group wrapper escaped exact request date")
 
     wrappers = [
@@ -262,7 +298,7 @@ def _reviewed_duplicate_group_wrapper_20260916_present(
         for league in leagues
         if _wrapper_id(league) == REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_ID
     ]
-    if len(wrappers) != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_OCCURRENCE_COUNT:
+    if len(wrappers) != expected_count:
         raise _error("reviewed duplicate group wrapper occurrence count changed")
 
     metadata = []
@@ -303,7 +339,7 @@ def _reviewed_duplicate_group_wrapper_20260916_present(
             }
         )
 
-    if tuple(sorted(label_pairs)) != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_LABEL_PAIRS:
+    if tuple(sorted(label_pairs)) != expected_labels:
         raise _error("reviewed duplicate group wrapper label pairing changed")
     if any(item != metadata[0] for item in metadata[1:]):
         raise _error("reviewed duplicate group wrappers differ outside opaque group labels")
