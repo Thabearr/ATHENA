@@ -23,6 +23,14 @@ and manifest ancestry, enforces globally unique fixture ids, and applies the
 same PR149 provider-native fixture checks without inventing group semantics.
 Any other repeated-wrapper shape still fails closed.
 
+A second independently reviewed, equally bounded shape was fresh-reacquired by
+diagnostic run 34726297627 for request date 20260916.  It carries wrapper id
+``1000001775`` four times with primaryId/parentLeagueId ``9469`` and opaque
+``A``/``C``/``D``/``E`` group labels under ``AFC Champions League Two``.  This
+is exact structural compatibility only, not general duplicate-wrapper support:
+raw and manifest ancestry remain authoritative, group labels remain opaque, and
+no model, probability, pricing, routing, or selection authority is introduced.
+
 This is research/replay plumbing only.  It grants no model, probability,
 pricing, selection, SportyBet execution, production, or betting authority.
 """
@@ -42,7 +50,7 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
 
 REVIEWED_DUPLICATE_GROUP_WRAPPER_COMPATIBILITY_ID = (
-    "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_20260906_20260907_V3"
+    "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_20260906_20260907_20260916_V4"
 )
 REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_RUN_ID = 33787560018
 REVIEWED_DUPLICATE_GROUP_WRAPPER_SOURCE_ARTIFACT_ID = 9907200985
@@ -96,6 +104,49 @@ REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS_20260907 = (
     ("E", "Women's World Cup U20 Grp. E"),
     ("F", "Women's World Cup U20 Grp. F"),
 )
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_RUN_ID = 34726297627
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_ARTIFACT_ID = 10307887933
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_ARTIFACT_SHA256 = (
+    "5a3d57265916bd6cdcd9de073516fb9100485548656b93f034098d5ec08ac87c"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_MANIFEST_SHA256 = (
+    "771b64cc425eb83fae82828fa27c37ebb111056864c169288bd708bbc8ea9ba5"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_RAW_SHA256 = (
+    "d1584eaa90e32bb56b4c4ccd8b26fd0e7854df2894c7847f075a17367f228944"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_OBSERVED_AT = (
+    "2026-09-12T23:46:59.868786Z"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_REQUEST_DATE = "20260916"
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_ID = 1000001775
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_PRIMARY_ID = 9469
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_PARENT_LEAGUE_ID = 9469
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_PARENT_LEAGUE_NAME = (
+    "AFC Champions League Two"
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_OCCURRENCE_COUNT = 4
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_LABEL_PAIRS = (
+    ("A", "AFC Champions League Two A"),
+    ("C", "AFC Champions League Two C"),
+    ("D", "AFC Champions League Two D"),
+    ("E", "AFC Champions League Two E"),
+)
+REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_EXACT_KEYS = frozenset(
+    {
+        "ccode",
+        "groupName",
+        "id",
+        "internalRank",
+        "isGroup",
+        "matches",
+        "name",
+        "parentLeagueId",
+        "parentLeagueName",
+        "primaryId",
+        "simpleLeague",
+    }
+)
 _REVIEWED_DUPLICATE_GROUP_REQUEST_DATE_BY_LABEL_PAIRS = {
     REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS: REVIEWED_DUPLICATE_GROUP_WRAPPER_REQUEST_DATE,
     REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS_20260906: (
@@ -139,6 +190,11 @@ def _reviewed_duplicate_group_wrapper_present(
     duplicated = {wrapper_id for wrapper_id, count in counts.items() if count > 1}
     if not duplicated:
         return False
+    if duplicated == {REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_ID}:
+        return _reviewed_duplicate_group_wrapper_20260916_present(
+            leagues,
+            request_date=request_date,
+        )
     if duplicated != {REVIEWED_DUPLICATE_GROUP_WRAPPER_ID}:
         raise _error("unreviewed duplicate competition wrapper id in current capture")
 
@@ -187,6 +243,69 @@ def _reviewed_duplicate_group_wrapper_present(
     if request_date != reviewed_request_date:
         raise _error("reviewed duplicate group wrapper escaped exact request date")
     if metadata[0] != metadata[1]:
+        raise _error("reviewed duplicate group wrappers differ outside opaque group labels")
+    return True
+
+
+def _reviewed_duplicate_group_wrapper_20260916_present(
+    leagues: list[Any],
+    *,
+    request_date: str,
+) -> bool:
+    """Validate only the reviewed 20260916 AFC Champions League Two shape."""
+
+    if request_date != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_REQUEST_DATE:
+        raise _error("reviewed duplicate group wrapper escaped exact request date")
+
+    wrappers = [
+        league
+        for league in leagues
+        if _wrapper_id(league) == REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_ID
+    ]
+    if len(wrappers) != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_OCCURRENCE_COUNT:
+        raise _error("reviewed duplicate group wrapper occurrence count changed")
+
+    metadata = []
+    label_pairs = []
+    for league in wrappers:
+        if set(league) != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_EXACT_KEYS:
+            raise _error("reviewed duplicate group wrapper key set changed")
+        if league["primaryId"] != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_PRIMARY_ID:
+            raise _error("reviewed duplicate group wrapper primaryId changed")
+        if (
+            league["parentLeagueId"]
+            != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_PARENT_LEAGUE_ID
+        ):
+            raise _error("reviewed duplicate group wrapper parentLeagueId changed")
+        if league["isGroup"] is not True:
+            raise _error("reviewed duplicate group wrapper lost exact isGroup=true")
+        if league["ccode"] != "INT":
+            raise _error("reviewed duplicate group wrapper ccode changed")
+        if (
+            league["parentLeagueName"]
+            != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_PARENT_LEAGUE_NAME
+        ):
+            raise _error("reviewed duplicate group wrapper parentLeagueName changed")
+        if league["internalRank"] != 0 or league["simpleLeague"] is not False:
+            raise _error("reviewed duplicate group wrapper opaque metadata changed")
+        if type(league["matches"]) is not list:
+            raise _error("reviewed duplicate group wrapper matches shape changed")
+        group_name = league["groupName"]
+        league_name = league["name"]
+        if type(group_name) is not str or type(league_name) is not str:
+            raise _error("reviewed duplicate group wrapper labels changed type")
+        label_pairs.append((group_name, league_name))
+        metadata.append(
+            {
+                key: value
+                for key, value in league.items()
+                if key not in {"groupName", "name", "matches"}
+            }
+        )
+
+    if tuple(sorted(label_pairs)) != REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_LABEL_PAIRS:
+        raise _error("reviewed duplicate group wrapper label pairing changed")
+    if any(item != metadata[0] for item in metadata[1:]):
         raise _error("reviewed duplicate group wrappers differ outside opaque group labels")
     return True
 
