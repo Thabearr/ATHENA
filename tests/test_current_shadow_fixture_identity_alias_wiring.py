@@ -145,6 +145,30 @@ def test_reviewed_shadow_projection_admits_exact_run33_home_label_and_retains_ra
     assert event.source_raw_sha256 == raw_sha
 
 
+def test_reviewed_shadow_projection_admits_exact_post_pr360_kiyovu_label_and_retains_raw_sha():
+    raw_sha = "652a5fd4a33b95a4b0ed261740d486156c8fe85b8c842c659a5bc0bc39a00ce9"
+    assert label_compat.project_team_label(
+        event_id="sr:match:73806008",
+        field="homeTeamName",
+        value="SC Kiyovu ",
+    ) == "SC Kiyovu"
+    event = fanout.legacy.reviewed._event_from_mapping(
+        _provider_event(
+            event_id="sr:match:73806008",
+            home="SC Kiyovu ",
+            away="Bugesera FC",
+            kickoff_ms=1789477200000,
+        ),
+        inherited_competition=None,
+        page_num=1,
+        raw_sha256=raw_sha,
+        observed_at=datetime(2026, 9, 14, 21, 16, 10, 40050, tzinfo=UTC),
+    )
+    assert event.home_team_name == "SC Kiyovu"
+    assert event.away_team_name == "Bugesera FC"
+    assert event.source_raw_sha256 == raw_sha
+
+
 def test_reviewed_shadow_projection_admits_exact_run126_home_label_and_retains_raw_sha():
     raw_sha = "d25423e8dfea8d8d49b15041338bb7d90e546a918471653afe5bfb5449ee0f54"
     event = fanout.legacy.reviewed._event_from_mapping(
@@ -226,6 +250,39 @@ def test_fanout_parser_admits_exact_run33_projection_and_preserves_response_ance
     assert observation.event_ids == ("sr:match:73805972",)
 
 
+def test_fanout_parser_admits_synthetic_post_pr360_tuple_and_preserves_response_ancestry():
+    """Synthetic regression payload; run 34897587697 is the provider evidence."""
+    observed = datetime(2026, 9, 14, 21, 16, 10, 40050, tzinfo=UTC)
+    nonce = int(observed.timestamp() * 1000) - 1000
+    raw = json.dumps(
+        {
+            "bizCode": 10000,
+            "data": [
+                _provider_event(
+                    event_id="sr:match:73806008",
+                    home="SC Kiyovu ",
+                    away="Bugesera FC",
+                    kickoff_ms=1789477200000,
+                )
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    observation, events = fanout._parse_tournament_response(
+        raw,
+        category_id="sr:category:951",
+        tournament_id="sr:tournament:20162",
+        request_nonce_ms=nonce,
+        observed_at=observed,
+    )
+    assert len(events) == 1
+    assert events[0].event_id == "sr:match:73806008"
+    assert events[0].home_team_name == "SC Kiyovu"
+    assert events[0].away_team_name == "Bugesera FC"
+    assert events[0].source_raw_sha256 == observation.raw_sha256
+
+
 def test_fanout_parser_admits_synthetic_p3_e1_tuple_and_preserves_response_ancestry():
     """Synthetic regression payload; run 34689842174 is the provider evidence."""
     observed = datetime(2026, 9, 12, 11, 1, 42, 950736, tzinfo=UTC)
@@ -286,6 +343,36 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
             kickoff_ms=1788627600000,
         ),
         _provider_event(
+            event_id="sr:match:73806009",
+            home="SC Kiyovu ",
+            away="Bugesera FC",
+            kickoff_ms=1789477200000,
+        ),
+        _provider_event(
+            event_id="sr:match:73806008",
+            home="SC Kiyovu  ",
+            away="Bugesera FC",
+            kickoff_ms=1789477200000,
+        ),
+        _provider_event(
+            event_id="sr:match:73806008",
+            home=" SC Kiyovu",
+            away="Bugesera FC",
+            kickoff_ms=1789477200000,
+        ),
+        _provider_event(
+            event_id="sr:match:73806008",
+            home="SC Kiyovu FC ",
+            away="Bugesera FC",
+            kickoff_ms=1789477200000,
+        ),
+        _provider_event(
+            event_id="sr:match:73806008",
+            home="Bugesera FC",
+            away="SC Kiyovu ",
+            kickoff_ms=1789477200000,
+        ),
+        _provider_event(
             event_id="sr:match:74170885",
             home="Comunicaciones FC ",
             away="CD Marquense",
@@ -304,6 +391,23 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
                 observed_at=observed,
             )
 
+    with pytest.raises(
+        fanout.reviewed.SportyBetCurrentEventDiscoveryError,
+        match="bounded source text",
+    ):
+        fanout.legacy.reviewed._event_from_mapping(
+            _provider_event(
+                event_id="sr:match:73806008",
+                home="SC Kiyovu\t",
+                away="Bugesera FC",
+                kickoff_ms=1789477200000,
+            ),
+            inherited_competition=None,
+            page_num=1,
+            raw_sha256="d" * 64,
+            observed_at=observed,
+        )
+
 
 def test_frozen_non_shadow_parser_still_rejects_the_observed_trailing_space():
     for value in (
@@ -318,6 +422,12 @@ def test_frozen_non_shadow_parser_still_rejects_the_observed_trailing_space():
             home="SC Kiyovu ",
             away="Gorilla FC",
             kickoff_ms=1788627600000,
+        ),
+        _provider_event(
+            event_id="sr:match:73806008",
+            home="SC Kiyovu ",
+            away="Bugesera FC",
+            kickoff_ms=1789477200000,
         ),
         _provider_event(
             event_id="sr:match:74170884",
@@ -360,9 +470,9 @@ def test_frozen_non_shadow_parser_rejects_p3_e1_away_trailing_space():
 
 def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     identity = label_compat.validate_policy()
-    assert label_compat.SCHEMA_VERSION == 4
+    assert label_compat.SCHEMA_VERSION == 5
     assert label_compat.POLICY_ID == (
-        "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V4"
+        "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V5"
     )
     assert label_compat.EVIDENCE_WORKFLOW_RUN_ID == 33743684967
     assert label_compat.EVIDENCE_ARTIFACT_ID == 9888817924
@@ -392,7 +502,7 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     )
     assert label_compat.P3_E1_BLOCKER_EVIDENCE_OBSERVED_AT == "2026-09-12T11:01:42.950736Z"
     assert label_compat.EXPECTED_POLICY_SHA256 == (
-        "c7baf2c7c02498e11674839cf5f064a0ede6420e8d98d14e22c315b71c57b302"
+        "6ec1d805263cddb7d4a4cf8338a611a7b66b22dd12db665db1614b3baa799f14"
     )
     assert label_compat.policy_sha256() == label_compat.EXPECTED_POLICY_SHA256
     assert identity["policy_sha256"] == label_compat.EXPECTED_POLICY_SHA256
@@ -405,7 +515,24 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     assert identity["p3_e1_blocker_evidence_artifact_sha256"] == (
         label_compat.P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
     )
-    assert len(label_compat.REVIEWED_PROJECTIONS) == 5
+    assert identity["post_pr360_p3_e1_blocker_evidence_artifact_sha256"] == (
+        label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
+    )
+    assert label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_WORKFLOW_RUN_ID == 34897587697
+    assert label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_ID == 10369576508
+    assert label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256 == (
+        "d056a7a93adf8c8780355ade436b4c02a772684d3ad08325aecb41f485677f9c"
+    )
+    assert label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_CATALOG_RAW_SHA256 == (
+        "57d15deab140a60aa39c92ce24799e1a56a99cf549c753a7bb0a5a8e53696d1b"
+    )
+    assert label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_TOURNAMENT_RAW_SHA256 == (
+        "652a5fd4a33b95a4b0ed261740d486156c8fe85b8c842c659a5bc0bc39a00ce9"
+    )
+    assert label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_OBSERVED_AT == (
+        "2026-09-14T21:16:10.040050Z"
+    )
+    assert len(label_compat.REVIEWED_PROJECTIONS) == 6
     old_rows = {
         ("sr:match:73831434", "homeTeamName", "Jeugd Royal Francs Borains "): (
             "Jeugd Royal Francs Borains", "sr:category:33", "sr:tournament:1117",
@@ -487,6 +614,23 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     assert blocker.evidence_workflow_run_id == 34689842174
     assert blocker.evidence_artifact_id == 10296832530
     assert blocker.evidence_artifact_sha256 == label_compat.P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
+    post_pr360 = next(
+        row for row in label_compat.REVIEWED_PROJECTIONS
+        if row.event_id == "sr:match:73806008"
+    )
+    assert post_pr360.field == "homeTeamName"
+    assert post_pr360.raw_source_label == "SC Kiyovu "
+    assert post_pr360.projected_label == "SC Kiyovu"
+    assert post_pr360.category_id == "sr:category:951"
+    assert post_pr360.tournament_id == "sr:tournament:20162"
+    assert post_pr360.source_raw_sha256 == (
+        label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_TOURNAMENT_RAW_SHA256
+    )
+    assert post_pr360.evidence_workflow_run_id == 34897587697
+    assert post_pr360.evidence_artifact_id == 10369576508
+    assert post_pr360.evidence_artifact_sha256 == (
+        label_compat.POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
+    )
 
 
 @pytest.mark.parametrize(

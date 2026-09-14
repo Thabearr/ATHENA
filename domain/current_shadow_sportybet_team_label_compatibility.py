@@ -1,8 +1,8 @@
 """Evidence-bound SportyBet team-label compatibility for current Shadow fanout.
 
 The provider evidence captured by workflow runs 33743684967, 33907719257,
-34243048761, and 34689842174 proved exactly five current event labels with one trailing ASCII
-space. This module does not define a generic trimming rule. It admits only the
+34243048761, 34689842174, and 34897587697 proved exactly six current event labels
+with one trailing ASCII space. This module does not define a generic trimming rule. It admits only the
 exact reviewed (event id, source field, raw label) tuples below and projects them
 to the exact reviewed label used by the existing reconciliation boundary.
 
@@ -18,8 +18,8 @@ import json
 from types import MappingProxyType
 from typing import Any, Mapping
 
-SCHEMA_VERSION = 4
-POLICY_ID = "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V4"
+SCHEMA_VERSION = 5
+POLICY_ID = "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V5"
 EVIDENCE_WORKFLOW_RUN_ID = 33743684967
 EVIDENCE_ARTIFACT_ID = 9888817924
 EVIDENCE_ARTIFACT_SHA256 = (
@@ -47,8 +47,20 @@ P3_E1_BLOCKER_EVIDENCE_TOURNAMENT_RAW_SHA256 = (
     "46a549f09d3d4864f8b00185b8634d427d11d219e4e0545a5e3746198ec22b11"
 )
 P3_E1_BLOCKER_EVIDENCE_OBSERVED_AT = "2026-09-12T11:01:42.950736Z"
+POST_PR360_P3_E1_BLOCKER_EVIDENCE_WORKFLOW_RUN_ID = 34897587697
+POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_ID = 10369576508
+POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256 = (
+    "d056a7a93adf8c8780355ade436b4c02a772684d3ad08325aecb41f485677f9c"
+)
+POST_PR360_P3_E1_BLOCKER_EVIDENCE_CATALOG_RAW_SHA256 = (
+    "57d15deab140a60aa39c92ce24799e1a56a99cf549c753a7bb0a5a8e53696d1b"
+)
+POST_PR360_P3_E1_BLOCKER_EVIDENCE_TOURNAMENT_RAW_SHA256 = (
+    "652a5fd4a33b95a4b0ed261740d486156c8fe85b8c842c659a5bc0bc39a00ce9"
+)
+POST_PR360_P3_E1_BLOCKER_EVIDENCE_OBSERVED_AT = "2026-09-14T21:16:10.040050Z"
 EXPECTED_POLICY_SHA256 = (
-    "c7baf2c7c02498e11674839cf5f064a0ede6420e8d98d14e22c315b71c57b302"
+    "6ec1d805263cddb7d4a4cf8338a611a7b66b22dd12db665db1614b3baa799f14"
 )
 
 
@@ -141,6 +153,24 @@ REVIEWED_PROJECTIONS = tuple(
                 evidence_artifact_id=P3_E1_BLOCKER_EVIDENCE_ARTIFACT_ID,
                 evidence_artifact_sha256=P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256,
             ),
+            ReviewedTeamLabelProjection(
+                event_id="sr:match:73806008",
+                field="homeTeamName",
+                raw_source_label="SC Kiyovu ",
+                projected_label="SC Kiyovu",
+                category_id="sr:category:951",
+                tournament_id="sr:tournament:20162",
+                source_raw_sha256=(
+                    POST_PR360_P3_E1_BLOCKER_EVIDENCE_TOURNAMENT_RAW_SHA256
+                ),
+                evidence_workflow_run_id=(
+                    POST_PR360_P3_E1_BLOCKER_EVIDENCE_WORKFLOW_RUN_ID
+                ),
+                evidence_artifact_id=POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_ID,
+                evidence_artifact_sha256=(
+                    POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
+                ),
+            ),
         )
     )
 )
@@ -207,6 +237,13 @@ def policy_payload() -> dict[str, Any]:
                 "artifact_id": P3_E1_BLOCKER_EVIDENCE_ARTIFACT_ID,
                 "artifact_sha256": P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256,
             },
+            {
+                "workflow_run_id": POST_PR360_P3_E1_BLOCKER_EVIDENCE_WORKFLOW_RUN_ID,
+                "artifact_id": POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_ID,
+                "artifact_sha256": (
+                    POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
+                ),
+            },
         ],
         "projections": [
             {
@@ -260,6 +297,9 @@ def validate_policy() -> Mapping[str, str]:
             "p3_e1_blocker_evidence_artifact_sha256": (
                 P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
             ),
+            "post_pr360_p3_e1_blocker_evidence_artifact_sha256": (
+                POST_PR360_P3_E1_BLOCKER_EVIDENCE_ARTIFACT_SHA256
+            ),
         }
     )
 
@@ -268,7 +308,7 @@ def project_team_label(*, event_id: Any, field: str, value: Any) -> str:
     """Return exact source text or one exact reviewed evidence-bound projection.
 
     Already-trimmed labels pass through unchanged. Any non-trimmed label must match
-    one of the five exact reviewed tuples above. No dynamic ``strip`` or other
+    one of the six exact reviewed tuples above. No dynamic ``strip`` or other
     normalization is performed.
     """
     if field not in ("homeTeamName", "awayTeamName"):
