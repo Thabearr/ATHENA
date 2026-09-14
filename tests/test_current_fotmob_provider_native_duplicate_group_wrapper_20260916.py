@@ -157,7 +157,7 @@ def _fails(payload: dict, *, match: str, request_date: str = "20260916") -> None
 def test_reviewed_20260916_evidence_pins_exact_fresh_diagnostic():
     assert current.REVIEWED_DUPLICATE_GROUP_WRAPPER_COMPATIBILITY_ID == (
         "CURRENT_FOTMOB_REVIEWED_DUPLICATE_GROUP_WRAPPER_20260905_20260906_"
-        "20260907_20260916_V4"
+        "20260907_20260916_20260917_V5"
     )
     assert current.REVIEWED_DUPLICATE_GROUP_WRAPPER_20260916_SOURCE_RUN_ID == 34726297627
     assert (
@@ -245,7 +245,7 @@ def test_reviewed_20260916_wrapper_fields_fail_closed(mutate, match):
 
 
 def test_reviewed_20260916_shape_cannot_escape_exact_request_date():
-    _fails(_payload(), request_date="20260917", match="escaped exact request date")
+    _fails(_payload(), request_date="20260917", match="occurrence count changed")
 
 
 def test_reviewed_20260916_shape_requires_exactly_four_wrappers():
