@@ -61,4 +61,41 @@ The exact raw provider response remains authoritative evidence and the parsed ev
 
 This compatibility policy grants source-schema compatibility only. It independently grants no fixture reconciliation, model, canonical market mapping, Price-all, Router, Portfolio, final selection, share-code transport, login, cookies, wallet, staking, BET, or wager authority.
 
-The next operational gate remains the exact final `target=15 scope=three-day` Shadow proof after this compatibility change is merged and hosted tests are green.
+At the time of the earlier compatibility evidence above, the next operational
+gate was the exact final `target=15 scope=three-day` Shadow proof. That
+historical gate statement is superseded by the post-PR #360 P3.0-E1 evidence
+below. This document does not authorize a Current Shadow run or a P3.0-E1
+retry; any later live capture requires separate owner authorization.
+
+## Post-PR #360 P3.0-E1 blocker diagnostic evidence
+
+P3.0-E1 run `34896432610` on main
+`18576eff9e62c643666702838302ff32bf8d70bc` failed before paired corpus
+creation with `provider team label whitespace shape is outside reviewed evidence`.
+Its failure artifact was `10368987784` with SHA-256
+`2f55f576e8c8b9d1b3b64a7699c9bea89dda73e10063868e9b0f251e1eaac856`.
+
+The owner-gated diagnostic run `34897587697` retained artifact `10369576508`
+(SHA-256 `d056a7a93adf8c8780355ade436b4c02a772684d3ad08325aecb41f485677f9c`).
+Its catalog was observed at `2026-09-14T21:14:57.988182Z` with raw SHA-256
+`57d15deab140a60aa39c92ce24799e1a56a99cf549c753a7bb0a5a8e53696d1b`.
+It observed 194 active tournaments and acquired 194 responses, with zero
+acquisition failures, 193 parser accepts, one parser rejection, 874 retained
+event rows independently inspected, one whitespace-bearing team-label field,
+and one unique whitespace tuple.
+
+That exact tuple is category `sr:category:951`, tournament
+`sr:tournament:20162`, event `sr:match:73806008`, field `homeTeamName`, raw
+label `SC Kiyovu ` with one trailing ASCII `U+0020`, and projection
+`SC Kiyovu`. The retained tournament raw SHA-256 is
+`652a5fd4a33b95a4b0ed261740d486156c8fe85b8c842c659a5bc0bc39a00ce9` and
+its observation time is `2026-09-14T21:16:10.040050Z`.
+
+This event-bound tuple does not make other `SC Kiyovu ` occurrences
+automatically safe, does not create generic trimming authority, and does not
+replace previously reviewed event `sr:match:73805972`. Raw provider bytes
+remain authoritative. This diagnostic does not prove fixture identity, market
+identity, or wager authority.
+
+Current control state: the P3.0-E1 retry has not been performed, the P3.0
+comparator remains unstarted, and P3.1 remains unstarted.
