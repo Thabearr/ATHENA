@@ -305,7 +305,10 @@ def test_afc_cl2_duplicate_group_wrapper_rejects_cross_pairing_wrong_20260917_co
     payload = _afc_payload(request_date="20260917")
     payload["leagues"][0]["matches"][0]["leagueId"] = 9469
     raw = _raw(payload)
-    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="match.leagueId"):
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="PR89->PR87->PR39 structural chain failed",
+    ):
         adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260917"))
 
 
