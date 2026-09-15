@@ -61,7 +61,11 @@ The exact raw provider response remains authoritative evidence and the parsed ev
 
 This compatibility policy grants source-schema compatibility only. It independently grants no fixture reconciliation, model, canonical market mapping, Price-all, Router, Portfolio, final selection, share-code transport, login, cookies, wallet, staking, BET, or wager authority.
 
-The next operational gate remains the exact final `target=15 scope=three-day` Shadow proof after this compatibility change is merged and hosted tests are green.
+At the time of the earlier compatibility evidence above, the next operational
+gate was the exact final `target=15 scope=three-day` Shadow proof. That
+historical gate statement is superseded by the post-PR #360 P3.0-E1 evidence
+below. This document does not authorize a Current Shadow run or a P3.0-E1
+retry; any later live capture requires separate owner authorization.
 
 ## Post-PR #360 P3.0-E1 blocker diagnostic evidence
 
@@ -92,3 +96,6 @@ automatically safe, does not create generic trimming authority, and does not
 replace previously reviewed event `sr:match:73805972`. Raw provider bytes
 remain authoritative. This diagnostic does not prove fixture identity, market
 identity, or wager authority.
+
+Current control state: the P3.0-E1 retry has not been performed, the P3.0
+comparator remains unstarted, and P3.1 remains unstarted.
