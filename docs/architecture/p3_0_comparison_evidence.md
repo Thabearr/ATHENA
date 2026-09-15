@@ -179,9 +179,15 @@ legacy decision evidence; missing replay lineage remains explicit.
 
 `.github/workflows/p3-0-comparison-evidence-capture.yml` is
 `workflow_dispatch` only. It has no schedule and no issue-comment trigger. It
-restores only the already-reviewed Current Shadow history/bootstrap material,
-resolves exact lineage main, invokes the paired collector and uploads the P3.0
-artifact.
+restores the already-reviewed Current Shadow history/bootstrap material and, for
+exact reconciliation replay continuity, establishes a worker-local fixture-
+identity state path before capture. It may restore that exact state document
+only from a successful main-branch `current-shadow-all-market-request` artifact;
+when no such document is available, the configured empty worker-local path still
+persists same-worker learning for replay verification. The identity module
+continues to validate restored bytes and enforce append-only retained-state
+ancestry fail-closed. The workflow then resolves exact lineage main, invokes the
+paired collector and uploads the P3.0 artifact.
 
 The workflow contains no email step and no login/cookie/wallet/staking/wagering
 or share-code create/reload operation. It must not be triggered pre-merge.
