@@ -72,8 +72,16 @@ TEAM_LABEL_COMPATIBILITY_POLICY_ID = team_label_compatibility.POLICY_ID
 TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
     team_label_compatibility.EXPECTED_POLICY_SHA256
 )
+FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID = (
+    "ATHENA_CURRENT_SHADOW_EXACT_CROSS_OBSERVATION_EVENT_OVERLAP_V1"
+)
+FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID = 35246536029
+FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID = 10508071809
+FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256 = (
+    "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
+)
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "f5751670b3fff1edbf60e7e6d5e34fb94f1bc68b32fa995173765b5083448356"
+EXPECTED_CONTRACT_SHA256 = "43e2c58eaf36b4fab3d2303afb99806fa6a5f5372c9325fa61425517c341a0c8"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -342,6 +350,10 @@ def calculate_contract_sha256() -> str:
     payload = {
         "base_contract_sha256": legacy.base.EXPECTED_CONTRACT_SHA256,
         "candidate_local_direct_detail_policy": CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY,
+        "fanout_overlap_compatibility_policy_id": FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID,
+        "fanout_overlap_evidence_workflow_run_id": FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID,
+        "fanout_overlap_evidence_artifact_id": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID,
+        "fanout_overlap_evidence_artifact_sha256": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256,
         "fixture_team_alias_policy_id": FIXTURE_TEAM_ALIAS_POLICY_ID,
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
@@ -360,7 +372,7 @@ def calculate_contract_sha256() -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def validate_contract() -> Mapping[str, str]:
+def validate_contract() -> Mapping[str, Any]:
     legacy.base.validate_contract()
     if fixture_aliases.registry_sha256() != FIXTURE_TEAM_ALIAS_REGISTRY_SHA256:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
@@ -385,6 +397,10 @@ def validate_contract() -> Mapping[str, str]:
     return {
         "contract_sha256": actual,
         "base_contract_sha256": legacy.base.EXPECTED_CONTRACT_SHA256,
+        "fanout_overlap_compatibility_policy_id": FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID,
+        "fanout_overlap_evidence_workflow_run_id": FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID,
+        "fanout_overlap_evidence_artifact_id": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID,
+        "fanout_overlap_evidence_artifact_sha256": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256,
         "fixture_team_alias_policy_id": FIXTURE_TEAM_ALIAS_POLICY_ID,
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
@@ -712,6 +728,10 @@ __all__ = [
     "CurrentShadowSportyBetCatalogFanoutReconciliationError",
     "CurrentShadowSportyBetCatalogFanoutSnapshot",
     "EXPECTED_CONTRACT_SHA256",
+    "FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID",
+    "FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID",
+    "FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256",
+    "FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID",
     "FANOUT_POLICY",
     "FIXTURE_STABLE_IDENTITY_POLICY_ID",
     "FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256",
