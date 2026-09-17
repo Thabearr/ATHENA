@@ -25,7 +25,19 @@ def test_bridge_is_issue_comment_only_and_owner_bound_to_master_issue() -> None:
     assert "github.event.comment.user.login == github.repository_owner" in text
     assert "github.event.comment.body == '/athena-run-p3-e1'" in text
     assert 'if issue.get("number") != 337:' in text
-    assert 'comment.get("body") != os.environ["EXPECTED_COMMAND"]' in text
+    assert 'comment.get("body") != command' in text
+
+
+def test_bridge_requires_unique_exact_owner_authorization_comment() -> None:
+    text = _workflow()
+
+    assert "issues: read" in text
+    assert "issues/337/comments?per_page=100&page={page}" in text
+    assert 'row.get("user", {}).get("login") == owner' in text
+    assert 'row.get("body") == command' in text
+    assert "if len(exact_authorizations) != 1:" in text
+    assert 'exact_authorizations[0].get("id") != comment["id"]' in text
+    assert "authorization pagination exceeded bound" in text
 
 
 def test_bridge_derives_exact_seven_day_utc_window_and_cap_50() -> None:
