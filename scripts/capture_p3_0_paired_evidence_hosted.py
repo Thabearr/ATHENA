@@ -30,6 +30,7 @@ from scripts import current_shadow_history_github_persistent_cache as history_gi
 from scripts import current_shadow_history_semantic_replay_reuse as semantic_replay_reuse
 from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_all_market_summary_reuse as summary_cli
+from scripts import p3_0_duplicate_event_conflict_diagnostic as duplicate_event_diagnostic
 
 
 PRE_CAPTURE_BUDGET_SECONDS = 15 * 60
@@ -173,8 +174,9 @@ def _hosted_deadline() -> Iterator[None]:
 
 def main(argv: Sequence[str] | None = None) -> int:
     with _current_shadow_runtime_reuse():
-        with _hosted_deadline():
-            return collector.main(argv)
+        with duplicate_event_diagnostic.scoped_duplicate_conflict_diagnostic():
+            with _hosted_deadline():
+                return collector.main(argv)
 
 
 if __name__ == "__main__":
