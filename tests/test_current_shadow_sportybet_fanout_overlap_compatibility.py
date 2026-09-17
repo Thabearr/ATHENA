@@ -13,6 +13,30 @@ OBSERVED = datetime(2026, 9, 17, 16, 27, 30, tzinfo=UTC)
 EVENT_ID = "sr:match:73806008"
 
 
+def test_overlap_policy_identity_is_evidence_pinned_in_shadow_contract():
+    identity = fanout.validate_contract()
+    assert fanout.FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID == (
+        "ATHENA_CURRENT_SHADOW_EXACT_CROSS_OBSERVATION_EVENT_OVERLAP_V1"
+    )
+    assert fanout.FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID == 35246536029
+    assert fanout.FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID == 10508071809
+    assert fanout.FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256 == (
+        "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
+    )
+    assert fanout.EXPECTED_CONTRACT_SHA256 == (
+        "43e2c58eaf36b4fab3d2303afb99806fa6a5f5372c9325fa61425517c341a0c8"
+    )
+    assert fanout.calculate_contract_sha256() == fanout.EXPECTED_CONTRACT_SHA256
+    assert identity["fanout_overlap_compatibility_policy_id"] == (
+        fanout.FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID
+    )
+    assert identity["fanout_overlap_evidence_workflow_run_id"] == 35246536029
+    assert identity["fanout_overlap_evidence_artifact_id"] == 10508071809
+    assert identity["fanout_overlap_evidence_artifact_sha256"] == (
+        fanout.FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256
+    )
+
+
 def _raw(value):
     return json.dumps(
         value,
