@@ -55,7 +55,7 @@ def test_bridge_is_one_shot_per_exact_main_and_fails_if_main_moves() -> None:
 
     assert 'main_sha != os.environ["GITHUB_SHA"]' in text
     assert "event=workflow_dispatch&branch=main&per_page=100" in text
-    assert 'select(.head_sha == \"${EXACT_MAIN_SHA}\")' in text
+    assert r'select(.head_sha == \"${EXACT_MAIN_SHA}\")' in text
     assert 'if [ "${existing_count}" != "0" ]; then' in text
     assert 'if [ "${live_main_sha}" != "${EXACT_MAIN_SHA}" ]; then' in text
 
