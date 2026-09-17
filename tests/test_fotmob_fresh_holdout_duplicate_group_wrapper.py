@@ -149,11 +149,17 @@ def _payload() -> dict:
     }
 
 
-def _afc_wrapper(*, group_name: str, name: str, matches: list[dict]) -> dict:
+def _afc_wrapper(
+    *,
+    group_name: str,
+    name: str,
+    matches: list[dict],
+    wrapper_id: int = adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID,
+) -> dict:
     return {
         "ccode": "INT",
         "groupName": group_name,
-        "id": adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID,
+        "id": wrapper_id,
         "internalRank": 0,
         "isGroup": True,
         "matches": matches,
@@ -165,7 +171,14 @@ def _afc_wrapper(*, group_name: str, name: str, matches: list[dict]) -> dict:
     }
 
 
-def _afc_match(*, fixture_id: int, home_id: int, away_id: int, kickoff: str) -> dict:
+def _afc_match(
+    *,
+    fixture_id: int,
+    home_id: int,
+    away_id: int,
+    kickoff: str,
+    wrapper_id: int = adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID,
+) -> dict:
     kickoff_utc = dt.datetime.fromisoformat(kickoff[:-1] + "+00:00")
     match = _match(
         fixture_id=fixture_id,
@@ -175,16 +188,25 @@ def _afc_match(*, fixture_id: int, home_id: int, away_id: int, kickoff: str) -> 
         display_time=kickoff_utc.strftime("%d.%m.%Y %H:%M"),
         timestamp_ms=int(kickoff_utc.timestamp() * 1_000),
     )
-    match["leagueId"] = adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID
+    match["leagueId"] = wrapper_id
     return match
 
 
-def _afc_payload(*, request_date: str) -> dict:
-    labels = (
-        adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260916_LABEL_PAIRS
-        if request_date == "20260916"
-        else adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260917_LABEL_PAIRS
-    )
+def _afc_payload(*, request_date: str, direct: bool = False) -> dict:
+    if direct:
+        labels = (
+            adapter.REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260916_LABEL_PAIRS
+            if request_date == "20260916"
+            else adapter.REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260917_LABEL_PAIRS
+        )
+        wrapper_id = adapter.REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_WRAPPER_ID
+    else:
+        labels = (
+            adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260916_LABEL_PAIRS
+            if request_date == "20260916"
+            else adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260917_LABEL_PAIRS
+        )
+        wrapper_id = adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID
     kickoff_date = f"{request_date[:4]}-{request_date[4:6]}-{request_date[6:]}"
     wrappers = []
     for index, (group_name, name) in enumerate(labels):
@@ -194,10 +216,18 @@ def _afc_payload(*, request_date: str) -> dict:
                 home_id=70_000 + index * 10 + offset,
                 away_id=80_000 + index * 10 + offset,
                 kickoff=f"{kickoff_date}T{10 + offset:02d}:00:00.000Z",
+                wrapper_id=wrapper_id,
             )
             for offset in range(2)
         ]
-        wrappers.append(_afc_wrapper(group_name=group_name, name=name, matches=fixtures))
+        wrappers.append(
+            _afc_wrapper(
+                group_name=group_name,
+                name=name,
+                matches=fixtures,
+                wrapper_id=wrapper_id,
+            )
+        )
     return {"date": request_date, "leagues": wrappers}
 
 
@@ -227,9 +257,48 @@ def test_reviewed_afc_cl2_duplicate_group_wrappers_qualify_only_for_each_exact_d
     }
 
 
+@pytest.mark.parametrize(
+    ("request_date", "expected_ids"),
+    (
+        ("20260916", (6_054_000, 6_054_010, 6_054_020, 6_054_030, 6_054_001, 6_054_011, 6_054_021, 6_054_031)),
+        ("20260917", (6_054_000, 6_054_010, 6_054_020, 6_054_001, 6_054_011, 6_054_021)),
+    ),
+)
+def test_reviewed_afc_cl2_direct_9469_hyphenated_wrappers_preserve_original_source_lineage(
+    request_date: str,
+    expected_ids: tuple[int, ...],
+) -> None:
+    payload = _afc_payload(request_date=request_date, direct=True)
+    raw = _raw(payload)
+    manifest = _manifest(raw, request_date=request_date)
+
+    rows = adapter.qualify_capture_fixtures(raw, manifest)
+
+    assert tuple(item.fixture_id for item in rows) == expected_ids
+    assert {item.wrapper_id for item in rows} == {9469}
+    assert {item.provider_primary_id for item in rows} == {9469}
+    assert {item.capture_raw_sha256 for item in rows} == {manifest.raw_sha256}
+    assert {item.capture_manifest_sha256 for item in rows} == {
+        capture_contract.sha256_data_matches_capture_manifest(manifest)
+    }
+
+
 @pytest.mark.parametrize("request_date", ("20260915", "20260918"))
 def test_afc_cl2_duplicate_group_wrapper_rejects_unreviewed_dates(request_date: str) -> None:
     payload = _afc_payload(request_date="20260916")
+    payload["date"] = request_date
+    raw = _raw(payload)
+
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="escaped exact request date",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date=request_date))
+
+
+@pytest.mark.parametrize("request_date", ("20260915", "20260918"))
+def test_afc_cl2_direct_9469_wrapper_rejects_unreviewed_dates(request_date: str) -> None:
+    payload = _afc_payload(request_date="20260916", direct=True)
     payload["date"] = request_date
     raw = _raw(payload)
 
@@ -276,6 +345,95 @@ def test_afc_cl2_duplicate_group_wrapper_rejects_every_fixed_metadata_drift(
     value: object,
 ) -> None:
     payload = _afc_payload(request_date="20260916")
+    payload["leagues"][0][field] = value
+    raw = _raw(payload)
+
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match=field):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260916"))
+
+
+def test_afc_cl2_direct_9469_rejects_cross_combinations_and_exact_label_drift() -> None:
+    payload = _afc_payload(request_date="20260916", direct=True)
+    for league, (_, old_name) in zip(
+        payload["leagues"],
+        adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260916_LABEL_PAIRS,
+        strict=True,
+    ):
+        league["name"] = old_name
+    raw = _raw(payload)
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="label pairing"):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260916"))
+
+    payload = _afc_payload(request_date="20260917")
+    for league, (_, new_name) in zip(
+        payload["leagues"],
+        adapter.REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260917_LABEL_PAIRS,
+        strict=True,
+    ):
+        league["name"] = new_name
+    raw = _raw(payload)
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="label pairing"):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260917"))
+
+    payload = _afc_payload(request_date="20260916", direct=True)
+    payload["leagues"][0]["name"] = "AFC Champions League Two- A"
+    raw = _raw(payload)
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="label pairing"):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260916"))
+
+
+def test_afc_cl2_direct_9469_rejects_mixed_wrapper_ids_missing_extra_and_key_drift() -> None:
+    payload = _afc_payload(request_date="20260916", direct=True)
+    for league in payload["leagues"][:2]:
+        league["id"] = adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID
+        for match in league["matches"]:
+            match["leagueId"] = adapter.REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID
+    raw = _raw(payload)
+    with pytest.raises(
+        adapter.FreshHoldoutCaptureQualificationAdapterError,
+        match="unreviewed duplicate competition wrapper id",
+    ):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260916"))
+
+    payload = _afc_payload(request_date="20260916", direct=True)
+    payload["leagues"].pop()
+    raw = _raw(payload)
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="occurrence count"):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260916"))
+
+    payload = _afc_payload(request_date="20260917", direct=True)
+    extra = copy.deepcopy(payload["leagues"][-1])
+    extra["groupName"] = "I"
+    extra["name"] = "AFC Champions League Two - I"
+    payload["leagues"].append(extra)
+    raw = _raw(payload)
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="occurrence count"):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260917"))
+
+    payload = _afc_payload(request_date="20260916", direct=True)
+    payload["leagues"][0]["unexpected"] = True
+    raw = _raw(payload)
+    with pytest.raises(adapter.FreshHoldoutCaptureQualificationAdapterError, match="key set"):
+        adapter.qualify_capture_fixtures(raw, _manifest(raw, request_date="20260916"))
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("primaryId", 9470),
+        ("parentLeagueId", 9470),
+        ("parentLeagueName", "AFC Champions League Two "),
+        ("ccode", "int"),
+        ("internalRank", 1),
+        ("isGroup", 1),
+        ("simpleLeague", 0),
+    ),
+)
+def test_afc_cl2_direct_9469_rejects_metadata_and_exact_boolean_type_drift(
+    field: str,
+    value: object,
+) -> None:
+    payload = _afc_payload(request_date="20260916", direct=True)
     payload["leagues"][0][field] = value
     raw = _raw(payload)
 
@@ -477,7 +635,7 @@ def test_reviewed_duplicate_wrapper_cannot_mix_with_spillover_policy():
 
 def test_duplicate_group_receipt_binds_exact_failure_evidence_and_no_authority():
     receipt = adapter.adapter_receipt()
-    assert receipt["adapter_id"] == "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V4"
+    assert receipt["adapter_id"] == "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V5"
     assert receipt["duplicate_group_source_workflow_run_id"] == 33823663641
     assert receipt["duplicate_group_source_actions_artifact_id"] == 9919255715
     assert receipt["duplicate_group_source_actions_artifact_sha256"] == (
@@ -499,6 +657,7 @@ def test_duplicate_group_receipt_binds_exact_failure_evidence_and_no_authority()
     assert receipt["duplicate_group_wrappers_structurally_revalidated_separately"] is True
     assert receipt["duplicate_group_labels_not_merged_or_semantically_interpreted"] is True
     assert receipt["afc_cl2_duplicate_group_wrapper_id"] == 1000001775
+    assert receipt["afc_cl2_direct_duplicate_group_wrapper_id"] == 9469
     assert receipt["afc_cl2_duplicate_group_primary_id"] == 9469
     assert receipt["afc_cl2_duplicate_group_parent_league_id"] == 9469
     assert receipt["afc_cl2_duplicate_group_wrapper_keys"] == [
@@ -547,6 +706,35 @@ def test_duplicate_group_receipt_binds_exact_failure_evidence_and_no_authority()
             "source_raw_sha256": "714b9a570fc47f852de00b52ff6aa1d380723c8ce465a4d934909b49a0bdb0f4",
         },
     ]
+    assert receipt["afc_cl2_direct_duplicate_group_reviewed_shapes"] == [
+        {
+            "request_date": "20260916",
+            "occurrence_count": 4,
+            "label_pairs": [
+                ["A", "AFC Champions League Two - A"],
+                ["C", "AFC Champions League Two - C"],
+                ["D", "AFC Champions League Two - D"],
+                ["E", "AFC Champions League Two - E"],
+            ],
+            "capture_id": "cfb3e84e5320df1eb6a3815d",
+            "observed_at": "2026-09-17T11:47:06.351029Z",
+            "manifest_sha256": "f5ddae844ce3edde251ec8dd796834edebf2da8a0b609a8bd2d75cefdc2449ff",
+            "raw_sha256": "0306c7d476fd4dd371ffae9df8b7e3320d984a8d01e42c4e8214cd6ef361efb9",
+        },
+        {
+            "request_date": "20260917",
+            "occurrence_count": 3,
+            "label_pairs": [
+                ["F", "AFC Champions League Two - F"],
+                ["G", "AFC Champions League Two - G"],
+                ["H", "AFC Champions League Two - H"],
+            ],
+            "capture_id": "ee34920dfb0c20c32d2342cb",
+            "observed_at": "2026-09-17T11:47:06.810894Z",
+            "manifest_sha256": "55fa312fc307c20e593c8034d6e922d8f61f59305fdad70d20b3ea60b1894284",
+            "raw_sha256": "9cb9d9c3155c9f2cec4c297758f49e54a29916503b4359c22ed5f2a65dc5c81f",
+        },
+    ]
     assert receipt["afc_cl2_fresh_holdout_blocker"] == {
         "workflow_run_id": 34940212010,
         "actions_artifact_id": 10385590240,
@@ -557,8 +745,30 @@ def test_duplicate_group_receipt_binds_exact_failure_evidence_and_no_authority()
         "manifest_sha256": "4c0217c1c436ca883c4759296421d1a91d74f20467ce8204ac0d2f6b7283ea0c",
         "raw_sha256": "174c3ddcd14b7b32e433ab501d2603c1b3905fd80cc1870ffab47f68c3c216a3",
     }
+    assert receipt["afc_cl2_9469_fresh_holdout_blocker"] == {
+        "workflow_run_id": 35216759649,
+        "source_watchdog_run_id": 35216267242,
+        "actions_artifact_id": 10494774380,
+        "actions_artifact_sha256": "783ca8f80aa35d7310f7c8db4d552c8f21066dc95e234b83e78cdafab968a784",
+        "inner_tar_sha256": "bd7be278d0371661729564e026bc1c78bd3f4bd943ef9602c609716c1db746c4",
+        "capture_lineages": [
+            {
+                "request_date": "20260916",
+                "capture_id": "cfb3e84e5320df1eb6a3815d",
+                "observed_at": "2026-09-17T11:47:06.351029Z",
+                "manifest_sha256": "f5ddae844ce3edde251ec8dd796834edebf2da8a0b609a8bd2d75cefdc2449ff",
+                "raw_sha256": "0306c7d476fd4dd371ffae9df8b7e3320d984a8d01e42c4e8214cd6ef361efb9",
+            },
+            {
+                "request_date": "20260917",
+                "capture_id": "ee34920dfb0c20c32d2342cb",
+                "observed_at": "2026-09-17T11:47:06.810894Z",
+                "manifest_sha256": "55fa312fc307c20e593c8034d6e922d8f61f59305fdad70d20b3ea60b1894284",
+                "raw_sha256": "9cb9d9c3155c9f2cec4c297758f49e54a29916503b4359c22ed5f2a65dc5c81f",
+            },
+        ],
+    }
     assert receipt["compatibility_projection_is_not_source_evidence"] is True
     assert receipt["duplicate_group_labels_are_opaque"] is True
     assert receipt["football_semantics_not_promoted"] is True
-    assert receipt["compatibility_projection_is_not_source_evidence"] is True
     assert all(value is False for value in receipt["safety"].values())
