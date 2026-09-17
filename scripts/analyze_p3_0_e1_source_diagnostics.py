@@ -1,0 +1,249 @@
+"""Offline-only audit of a retained P3.0-E1 source-diagnostics artifact.
+
+This tool describes captured identity evidence; it never grants reconciliation
+authority, writes identity state, or contacts a provider.
+"""
+from __future__ import annotations
+
+import argparse
+from datetime import datetime, timezone
+import hashlib
+import json
+from pathlib import Path, PurePosixPath
+import sys
+from typing import Any, Iterable, Mapping
+import zipfile
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from domain import current_shadow_fixture_identity_aliases as aliases
+
+
+SCHEMA_VERSION = 1
+POLICY_ID = "ATHENA_P3_0_E1_RETAINED_SOURCE_DIAGNOSTICS_AUDIT_V1"
+FAILURE_RECEIPT = "artifacts/p3-0-comparison-evidence/p3-0-capture-failure.json"
+
+
+class SourceDiagnosticsAuditError(RuntimeError):
+    """The retained artifact is malformed or does not meet the audit contract."""
+
+
+def _canonical(value: Any) -> bytes:
+    return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _zip_entries(path: Path) -> Mapping[str, bytes]:
+    try:
+        with zipfile.ZipFile(path) as archive:
+            entries: dict[str, bytes] = {}
+            for info in archive.infolist():
+                name = info.filename
+                pure = PurePosixPath(name)
+                if pure.is_absolute() or ".." in pure.parts or name in entries:
+                    raise SourceDiagnosticsAuditError("unsafe or duplicate ZIP entry")
+                if info.is_dir():
+                    continue
+                entries[name] = archive.read(info)
+    except (OSError, zipfile.BadZipFile) as exc:
+        raise SourceDiagnosticsAuditError("malformed source-diagnostics ZIP") from exc
+    return entries
+
+
+def _directory_entries(path: Path) -> Mapping[str, bytes]:
+    if not path.is_dir():
+        raise SourceDiagnosticsAuditError("artifact path must be a ZIP or directory")
+    entries: dict[str, bytes] = {}
+    for file_path in sorted(path.rglob("*")):
+        if not file_path.is_file():
+            continue
+        relative = file_path.relative_to(path).as_posix()
+        if ".." in PurePosixPath(relative).parts:
+            raise SourceDiagnosticsAuditError("unsafe artifact directory entry")
+        entries[relative] = file_path.read_bytes()
+    return entries
+
+
+def _json(raw: bytes, label: str) -> Any:
+    try:
+        return json.loads(raw.decode("utf-8", errors="strict"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise SourceDiagnosticsAuditError(f"malformed JSON: {label}") from exc
+
+
+def _utc_text(value: Any) -> str | None:
+    if type(value) is not str:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        return None
+    return parsed.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _provider_kickoff(value: Any) -> str | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return datetime.fromtimestamp(float(value) / 1000, tz=timezone.utc).isoformat().replace("+00:00", "Z")
+    except (ValueError, OSError, OverflowError):
+        return None
+
+
+def _walk(value: Any) -> Iterable[dict[str, Any]]:
+    stack = [value]
+    while stack:
+        current = stack.pop()
+        if type(current) is dict:
+            yield current
+            stack.extend(current.values())
+        elif type(current) is list:
+            stack.extend(current)
+
+
+def _provider_events(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
+    events: dict[str, dict[str, Any]] = {}
+    paths = sorted(path for path in entries if "/tournaments/" in path and path.endswith(".json"))
+    if not paths:
+        raise SourceDiagnosticsAuditError("retained SportyBet tournament evidence missing")
+    for path in paths:
+        raw = entries[path]
+        for value in _walk(_json(raw, path)):
+            event_id = value.get("eventId")
+            sport = value.get("sport")
+            if type(event_id) is not str or type(sport) is not dict:
+                continue
+            category = sport.get("category")
+            tournament = category.get("tournament") if type(category) is dict else None
+            kickoff = _provider_kickoff(value.get("estimateStartTime"))
+            fields = (value.get("homeTeamId"), value.get("homeTeamName"), value.get("awayTeamId"), value.get("awayTeamName"), category.get("id") if type(category) is dict else None, tournament.get("id") if type(tournament) is dict else None, tournament.get("name") if type(tournament) is dict else None)
+            if kickoff is None or not all(type(item) is str for item in fields):
+                continue
+            row = {"provider_event_id": event_id, "provider_category_id": fields[4], "provider_tournament_id": fields[5], "provider_competition": fields[6], "provider_home_competitor_id": fields[0], "provider_home": fields[1], "provider_away_competitor_id": fields[2], "provider_away": fields[3], "kickoff_utc": kickoff, "provider_raw_sha256": [hashlib.sha256(raw).hexdigest()]}
+            prior = events.get(event_id)
+            if prior is not None and {key: value for key, value in prior.items() if key != "provider_raw_sha256"} != {key: value for key, value in row.items() if key != "provider_raw_sha256"}:
+                raise SourceDiagnosticsAuditError("conflicting retained provider event")
+            if prior is None:
+                events[event_id] = row
+            elif row["provider_raw_sha256"][0] not in prior["provider_raw_sha256"]:
+                prior["provider_raw_sha256"].append(row["provider_raw_sha256"][0])
+    for row in events.values():
+        row["provider_raw_sha256"].sort()
+    return [events[key] for key in sorted(events)]
+
+
+def _fotmob_fixtures(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
+    fixtures: dict[int, dict[str, Any]] = {}
+    paths = sorted(path for path in entries if "/fotmob-data-matches-captures/" in path and path.endswith("/response.json"))
+    if not paths:
+        raise SourceDiagnosticsAuditError("retained FotMob captures missing")
+    for path in paths:
+        raw = entries[path]
+        payload = _json(raw, path)
+        leagues = payload.get("leagues") if type(payload) is dict else None
+        if type(leagues) is not list:
+            raise SourceDiagnosticsAuditError("retained FotMob capture has no leagues")
+        for league in leagues:
+            matches = league.get("matches") if type(league) is dict else None
+            if type(matches) is not list:
+                continue
+            for match in matches:
+                home = match.get("home") if type(match) is dict else None
+                away = match.get("away") if type(match) is dict else None
+                status = match.get("status") if type(match) is dict else None
+                if not all(type(item) is dict for item in (home, away, status)):
+                    continue
+                kickoff = _utc_text(status.get("utcTime"))
+                fixture_id = match.get("id")
+                values = (league.get("ccode"), league.get("primaryId"), league.get("name"), home.get("id"), home.get("name"), home.get("longName"), away.get("id"), away.get("name"), away.get("longName"))
+                if (
+                    type(fixture_id) is not int
+                    or kickoff is None
+                    or type(values[0]) is not str
+                    or type(values[1]) is not int
+                    or type(values[2]) is not str
+                    or type(values[3]) is not int
+                    or type(values[4]) is not str
+                    or type(values[5]) is not str
+                    or type(values[6]) is not int
+                    or type(values[7]) is not str
+                    or type(values[8]) is not str
+                ):
+                    continue
+                row = {"fotmob_fixture_id": fixture_id, "ccode": values[0], "primary_competition_id": values[1], "competition": values[2], "home_team_id": values[3], "home": values[4], "home_long_name": values[5], "away_team_id": values[6], "away": values[7], "away_long_name": values[8], "kickoff_utc": kickoff, "fotmob_raw_sha256": hashlib.sha256(raw).hexdigest()}
+                prior = fixtures.get(fixture_id)
+                if prior is not None and prior != row:
+                    raise SourceDiagnosticsAuditError("conflicting retained FotMob fixture")
+                fixtures[fixture_id] = row
+    return [fixtures[key] for key in sorted(fixtures)]
+
+
+def _candidate_kind(event: Mapping[str, Any], fixture: Mapping[str, Any]) -> str | None:
+    home = aliases.team_identity_matches(competition=fixture["competition"], fotmob_name=fixture["home"], sportybet_name=event["provider_home"])
+    away = aliases.team_identity_matches(competition=fixture["competition"], fotmob_name=fixture["away"], sportybet_name=event["provider_away"])
+    if not (home and away):
+        return None
+    if fixture["home"] == event["provider_home"] and fixture["away"] == event["provider_away"]:
+        return "EXACT_LITERAL"
+    return "EXPLICIT_ALIAS_COMPATIBLE"
+
+
+def analyze(path: str | Path, *, expected_zip_sha256: str | None = None) -> dict[str, Any]:
+    artifact = Path(path)
+    artifact_sha256 = None
+    if artifact.is_file():
+        artifact_sha256 = hashlib.sha256(artifact.read_bytes()).hexdigest()
+        if expected_zip_sha256 is not None and artifact_sha256 != expected_zip_sha256.lower():
+            raise SourceDiagnosticsAuditError("source-diagnostics ZIP SHA-256 mismatch")
+        entries = _zip_entries(artifact)
+    else:
+        if expected_zip_sha256 is not None:
+            raise SourceDiagnosticsAuditError("expected ZIP SHA-256 requires a ZIP input")
+        entries = _directory_entries(artifact)
+    receipt_raw = entries.get(FAILURE_RECEIPT)
+    if receipt_raw is None:
+        raise SourceDiagnosticsAuditError("P3.0 failure receipt missing")
+    receipt = _json(receipt_raw, FAILURE_RECEIPT)
+    if type(receipt) is not dict or type(receipt.get("exact_commit_sha")) is not str:
+        raise SourceDiagnosticsAuditError("P3.0 failure receipt malformed")
+    fixtures = _fotmob_fixtures(entries)
+    events = _provider_events(entries)
+    audited = []
+    for event in events:
+        same_kickoff = [fixture for fixture in fixtures if fixture["kickoff_utc"] == event["kickoff_utc"]]
+        candidates = []
+        compatible = []
+        for fixture in same_kickoff:
+            kind = _candidate_kind(event, fixture)
+            if kind is not None:
+                compatible.append((fixture, kind))
+            candidates.append({**fixture, "identity_result": kind or "UNSUPPORTED"})
+        if not candidates:
+            classification = "NO_SAME_KICKOFF_CANDIDATE"
+        elif len(compatible) == 1:
+            classification = compatible[0][1]
+        elif len(compatible) > 1:
+            classification = "AMBIGUOUS"
+        else:
+            classification = "SAME_KICKOFF_UNSUPPORTED"
+        audited.append({**event, "same_kickoff_candidates": candidates, "classification": classification})
+    return {"schema_version": SCHEMA_VERSION, "policy_id": POLICY_ID, "artifact_sha256": artifact_sha256, "failure_run_id": receipt.get("capture_id"), "executed_commit_sha": receipt["exact_commit_sha"], "provider_event_count": len(events), "fotmob_fixture_count": len(fixtures), "events": audited, "summary": {key: sum(row["classification"] == key for row in audited) for key in sorted({row["classification"] for row in audited})}, "authority": {"audit_only": True, "fixture_reconciliation": False, "persistent_identity_mutation": False, "network": False, "provider_acquisition": False, "pricing": False, "selection": False, "wager": False}}
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("artifact")
+    parser.add_argument("--expected-zip-sha256")
+    args = parser.parse_args(argv)
+    try:
+        report = analyze(args.artifact, expected_zip_sha256=args.expected_zip_sha256)
+    except SourceDiagnosticsAuditError as exc:
+        parser.error(str(exc))
+    sys.stdout.buffer.write(_canonical(report) + b"\n")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

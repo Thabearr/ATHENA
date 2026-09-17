@@ -44,12 +44,36 @@ def _reviewed(
 
 
 def test_registry_identity_is_deterministic_and_pinned():
-    assert aliases.POLICY_ID == "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V1"
+    assert aliases.POLICY_ID == "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V2"
     assert aliases.REGISTRY_SHA256 == (
-        "9615b71a563b3704c607fb7cd1ebd652165ebd36d50971570486f7f6fab24d07"
+        "2183576a068f365ded201b8b2d6aaf02395598ec51738275a16021b4d94ca091"
     )
     assert aliases.registry_sha256() == aliases.REGISTRY_SHA256
-    assert len(aliases.TEAM_ALIASES) == 44
+    assert len(aliases.TEAM_ALIASES) == 49
+
+
+@pytest.mark.parametrize(
+    ("competition", "fotmob_home", "sportybet_home", "fotmob_away", "sportybet_away"),
+    (
+        ("Premier League", "Okzhetpes Kokshetau", "FC Okzhetpes", "Zhenis", "FC Zhenis"),
+        ("China League", "Yanbian Longding", "Yanbian Longding", "Guangdong GZ-Power", "Guandong GZ-Power FC"),
+        ("China League", "Dalian K'un City", "Dalian Kun City", "Ningbo Professional", "Ningbo Professional FC"),
+    ),
+)
+def test_run_35277452572_explicit_aliases_match_only_the_evidenced_pairs(
+    competition, fotmob_home, sportybet_home, fotmob_away, sportybet_away
+):
+    row = _reviewed(
+        competition=competition,
+        home=fotmob_home,
+        away=fotmob_away,
+    )
+    event = _event(
+        competition=competition,
+        home=sportybet_home,
+        away=sportybet_away,
+    )
+    assert aliases.match_event(event, (row,)) == (row,)
 
 
 def test_literal_identity_still_matches_without_registry_entry():

@@ -27,13 +27,28 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
-POLICY_ID = "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V1"
+POLICY_ID = "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V2"
 MATCHING_BASIS = (
     "EXACT_COMPETITION_FULL_UTC_HOME_AWAY_ORIENTATION_"
     "LITERAL_OR_EXPLICIT_COMPETITION_SCOPED_TEAM_ALIAS_"
     "NO_FUZZY_NO_SUBSTRING_NO_SUFFIX_RULE_NO_REVERSAL_NO_TIME_TOLERANCE"
 )
-EVIDENCE_BASIS = "CURRENT_SHADOW_RUN34_RETAINED_FOTMOB_AND_SPORTYBET_SOURCE_EVIDENCE"
+EVIDENCE_BASIS = (
+    "CURRENT_SHADOW_RUN34_AND_P3_0_E1_RUN35277452572_RETAINED_"
+    "FOTMOB_AND_SPORTYBET_SOURCE_EVIDENCE"
+)
+EVIDENCE_LINEAGE = {
+    "historical": "CURRENT_SHADOW_RUN34_RETAINED_FOTMOB_AND_SPORTYBET_SOURCE_EVIDENCE",
+    "run_35277452572": {
+        "source_diagnostics_artifact_id": "10520479660",
+        "source_diagnostics_zip_sha256": (
+            "7e97785ce12d1158455fe49138376cfffa7057b294e84c8ff7316479d5949a8c"
+        ),
+        "fotmob_20260918_raw_sha256": (
+            "0366592e6b227956d222d67de43031da82de9e4cc063f1529c01db85de722c9d"
+        ),
+    },
+}
 
 
 @dataclass(frozen=True, order=True)
@@ -109,6 +124,15 @@ TEAM_ALIASES: tuple[TeamAlias, ...] = tuple(sorted((
     TeamAlias("Saudi Pro League", "Al Ahli", "Al Ahli Saudi FC"),
     TeamAlias("Super League", "FC Zürich", "FC Zurich"),
     TeamAlias("Super League", "Young Boys", "Young Boys Bern"),
+
+    # P3.0-E1 run 35277452572 retained source diagnostics, 2026-09-18.
+    # These remain exact competition-scoped display pairs; they are not suffix
+    # or punctuation rules and grant no authority outside Shadow reconciliation.
+    TeamAlias("China League", "Dalian K'un City", "Dalian Kun City"),
+    TeamAlias("China League", "Guangdong GZ-Power", "Guandong GZ-Power FC"),
+    TeamAlias("China League", "Ningbo Professional", "Ningbo Professional FC"),
+    TeamAlias("Premier League", "Okzhetpes Kokshetau", "FC Okzhetpes"),
+    TeamAlias("Premier League", "Zhenis", "FC Zhenis"),
 )))
 
 
@@ -150,6 +174,7 @@ def registry_payload() -> dict[str, Any]:
         "policy_id": POLICY_ID,
         "matching_basis": MATCHING_BASIS,
         "evidence_basis": EVIDENCE_BASIS,
+        "evidence_lineage": EVIDENCE_LINEAGE,
         "aliases": [
             {
                 "competition": row.competition,
@@ -246,6 +271,7 @@ REGISTRY_SHA256 = registry_sha256()
 
 __all__ = [
     "EVIDENCE_BASIS",
+    "EVIDENCE_LINEAGE",
     "MATCHING_BASIS",
     "POLICY_ID",
     "REGISTRY_SHA256",
