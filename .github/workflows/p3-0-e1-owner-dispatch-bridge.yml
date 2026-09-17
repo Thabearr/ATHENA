@@ -1,0 +1,192 @@
+name: ATHENA P3.0-E1 owner dispatch bridge
+run-name: ATHENA P3.0-E1 owner bridge comment=${{ github.event.comment.id }}
+
+on:
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+  issues: read
+  actions: write
+
+concurrency:
+  group: p3-0-e1-owner-dispatch-bridge
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: >-
+      github.event.issue.number == 337 &&
+      github.event.comment.user.login == github.repository_owner &&
+      github.event.comment.body == '/athena-run-p3-e1'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Bind unique owner authorization, exact main, and prospective request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_COMMAND: /athena-run-p3-e1
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import datetime as dt
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          event = json.loads(Path(os.environ["GITHUB_EVENT_PATH"]).read_text(encoding="utf-8"))
+          issue = event.get("issue") or {}
+          comment = event.get("comment") or {}
+          repository = event.get("repository") or {}
+          owner = repository.get("owner", {}).get("login")
+          command = os.environ["EXPECTED_COMMAND"]
+
+          if issue.get("number") != 337:
+              raise SystemExit("P3.0-E1 bridge escaped master issue #337")
+          if comment.get("user", {}).get("login") != owner:
+              raise SystemExit("P3.0-E1 bridge requires repository-owner authorization")
+          if comment.get("body") != command:
+              raise SystemExit("P3.0-E1 bridge command drifted")
+          if type(comment.get("id")) is not int:
+              raise SystemExit("P3.0-E1 bridge comment id is malformed")
+
+          repo = os.environ["GITHUB_REPOSITORY"]
+          exact_authorizations = []
+          page = 1
+          while True:
+              raw = subprocess.check_output(
+                  [
+                      "gh",
+                      "api",
+                      f"repos/{repo}/issues/337/comments?per_page=100&page={page}",
+                  ],
+                  text=True,
+              )
+              rows = json.loads(raw)
+              if type(rows) is not list:
+                  raise SystemExit("issue-comment authorization query changed shape")
+              exact_authorizations.extend(
+                  row
+                  for row in rows
+                  if row.get("user", {}).get("login") == owner
+                  and row.get("body") == command
+              )
+              if len(rows) < 100:
+                  break
+              page += 1
+              if page > 100:
+                  raise SystemExit("issue-comment authorization pagination exceeded bound")
+
+          if len(exact_authorizations) != 1:
+              raise SystemExit(
+                  "P3.0-E1 bridge requires exactly one owner authorization comment"
+              )
+          if exact_authorizations[0].get("id") != comment["id"]:
+              raise SystemExit("P3.0-E1 bridge authorization comment is not unique current event")
+
+          main_sha = subprocess.check_output(
+              ["gh", "api", f"repos/{repo}/git/ref/heads/main", "--jq", ".object.sha"],
+              text=True,
+          ).strip()
+          if len(main_sha) != 40:
+              raise SystemExit("current main SHA is malformed")
+          if main_sha != os.environ["GITHUB_SHA"]:
+              raise SystemExit("issue-comment workflow is not executing at exact current main")
+
+          today = dt.datetime.now(dt.timezone.utc).date()
+          fixture_dates = ",".join(
+              (today + dt.timedelta(days=offset)).strftime("%Y%m%d")
+              for offset in range(7)
+          )
+          output = Path(os.environ["GITHUB_OUTPUT"])
+          with output.open("a", encoding="utf-8") as handle:
+              handle.write(f"main_sha={main_sha}\n")
+              handle.write(f"fixture_dates={fixture_dates}\n")
+              handle.write("fixture_cap=50\n")
+          print(f"exact_main={main_sha}")
+          print(f"fixture_dates={fixture_dates}")
+          print("fixture_cap=50")
+          PY
+
+      - name: Prove one-shot current-head dispatch has not already occurred
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXACT_MAIN_SHA: ${{ steps.request.outputs.main_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          PAGE_SIZE = 100
+          MAX_WORKFLOW_DISPATCH_HISTORY_PAGES = 100
+          repo = os.environ["GITHUB_REPOSITORY"]
+          exact_main_sha = os.environ["EXACT_MAIN_SHA"]
+          matching_runs = 0
+
+          for page in range(1, MAX_WORKFLOW_DISPATCH_HISTORY_PAGES + 1):
+              raw = subprocess.check_output(
+                  [
+                      "gh",
+                      "api",
+                      (
+                          f"repos/{repo}/actions/workflows/"
+                          "p3-0-comparison-evidence-capture.yml/runs?"
+                          f"event=workflow_dispatch&branch=main&per_page={PAGE_SIZE}&page={page}"
+                      ),
+                  ],
+                  text=True,
+              )
+              response = json.loads(raw)
+              if type(response) is not dict:
+                  raise SystemExit("one-shot workflow-dispatch response changed shape")
+              workflow_runs = response.get("workflow_runs")
+              if type(workflow_runs) is not list:
+                  raise SystemExit("one-shot workflow-dispatch runs are malformed")
+
+              for run in workflow_runs:
+                  if type(run) is not dict or type(run.get("head_sha")) is not str:
+                      raise SystemExit("one-shot workflow-dispatch run is malformed")
+                  if run["head_sha"] == exact_main_sha:
+                      matching_runs += 1
+
+              if len(workflow_runs) < PAGE_SIZE:
+                  break
+          else:
+              raise SystemExit(
+                  "one-shot workflow-dispatch pagination exceeded bound before exhaustion"
+              )
+
+          if matching_runs != 0:
+              raise SystemExit(
+                  "P3.0-E1 already has "
+                  f"{matching_runs} workflow_dispatch run(s) at exact current main "
+                  f"{exact_main_sha}."
+              )
+          PY
+
+      - name: Dispatch exactly one P3.0-E1 prospective capture
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXACT_MAIN_SHA: ${{ steps.request.outputs.main_sha }}
+          ATHENA_P3_FIXTURE_DATES: ${{ steps.request.outputs.fixture_dates }}
+          ATHENA_P3_FIXTURE_CAP: ${{ steps.request.outputs.fixture_cap }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          live_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          if [ "${live_main_sha}" != "${EXACT_MAIN_SHA}" ]; then
+            echo "main advanced before P3.0-E1 dispatch" >&2
+            exit 1
+          fi
+          gh workflow run p3-0-comparison-evidence-capture.yml \
+            --repo "${GITHUB_REPOSITORY}" \
+            --ref main \
+            -f fixture_dates="${ATHENA_P3_FIXTURE_DATES}" \
+            -f fixture_cap="${ATHENA_P3_FIXTURE_CAP}"
