@@ -1,5 +1,6 @@
 from scripts._p3_0_paired_capture_part1 import *  # noqa: F401,F403
 
+
 def _legacy_observations(sources: Sequence[Any]) -> dict[str, Mapping[str, Any]]:
     """Run each exact fixture independently so filtered/error rows cannot shift
     positional pairing or be attached to a different canonical fixture.
@@ -57,6 +58,121 @@ def _artifact_hashes(repository_root: Path) -> dict[str, Any]:
     }
 
 
+_ZERO_ROUTER_DIAGNOSTIC_PREFIX = "P3.0-E1 source acquisition produced zero Router inputs: "
+
+
+def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
+    """Fail closed when source acquisition cannot yield one exact Router input.
+
+    The Current Shadow source bundle already carries bounded reconciliation counts.
+    Preserve those counts in the failure message so the hosted failure artifact can
+    identify the next evidence boundary without another provider acquisition.
+    """
+    router_inputs = getattr(sources_bundle, "router_inputs", None)
+    if type(router_inputs) is not tuple:
+        raise P30PairedCaptureError("P3.0-E1 source bundle router_inputs is malformed")
+    if router_inputs:
+        return
+
+    def checked_count(name: str) -> int:
+        value = getattr(sources_bundle, name, None)
+        if type(value) is not int or value < 0:
+            raise P30PairedCaptureError(
+                f"P3.0-E1 zero Router input diagnostic is malformed: {name}"
+            )
+        return value
+
+    top_counts = {
+        "reviewed_fixture_count": checked_count("reviewed_fixture_count"),
+        "reconciled_fixture_count": checked_count("reconciled_fixture_count"),
+        "provider_event_count": checked_count("provider_event_count"),
+        "priced_fixture_count": checked_count("priced_fixture_count"),
+    }
+    summary = getattr(sources_bundle, "source_summary", None)
+    if not isinstance(summary, Mapping):
+        raise P30PairedCaptureError(
+            "P3.0-E1 zero Router input diagnostic is malformed: source_summary"
+        )
+    reconciliation_by_date = summary.get("current_reconciliation_by_request_date")
+    if not isinstance(reconciliation_by_date, Mapping) or not reconciliation_by_date:
+        raise P30PairedCaptureError(
+            "P3.0-E1 zero Router input diagnostic is malformed: reconciliation_by_date"
+        )
+
+    request_date_counts: dict[str, list[int]] = {}
+    disposition_totals: dict[str, int] = {}
+    for request_date in sorted(reconciliation_by_date):
+        if (
+            type(request_date) is not str
+            or len(request_date) != 8
+            or not request_date.isdigit()
+        ):
+            raise P30PairedCaptureError(
+                "P3.0-E1 zero Router input diagnostic is malformed: request_date"
+            )
+        row = reconciliation_by_date[request_date]
+        if not isinstance(row, Mapping):
+            raise P30PairedCaptureError(
+                "P3.0-E1 zero Router input diagnostic is malformed: reconciliation_row"
+            )
+        provider_count = row.get("provider_event_count")
+        reconciled_count = row.get("reconciled_fixture_count")
+        if (
+            type(provider_count) is not int
+            or provider_count < 0
+            or type(reconciled_count) is not int
+            or reconciled_count < 0
+        ):
+            raise P30PairedCaptureError(
+                "P3.0-E1 zero Router input diagnostic is malformed: request_date_counts"
+            )
+        request_date_counts[request_date] = [provider_count, reconciled_count]
+
+        dispositions = row.get("disposition_counts")
+        if not isinstance(dispositions, Mapping):
+            raise P30PairedCaptureError(
+                "P3.0-E1 zero Router input diagnostic is malformed: disposition_counts"
+            )
+        for disposition in sorted(dispositions):
+            count = dispositions[disposition]
+            if type(disposition) is not str or not disposition or type(count) is not int or count < 0:
+                raise P30PairedCaptureError(
+                    "P3.0-E1 zero Router input diagnostic is malformed: disposition_row"
+                )
+            disposition_totals[disposition] = disposition_totals.get(disposition, 0) + count
+
+    diagnostic = {
+        **top_counts,
+        "request_date_counts": request_date_counts,
+        "disposition_totals": {key: disposition_totals[key] for key in sorted(disposition_totals)},
+    }
+
+    def encoded(value: Mapping[str, Any]) -> str:
+        return json.dumps(
+            dict(value),
+            ensure_ascii=False,
+            allow_nan=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+
+    payload = encoded(diagnostic)
+    if len(_ZERO_ROUTER_DIAGNOSTIC_PREFIX) + len(payload) > FAILURE_MESSAGE_MAX_CHARS:
+        payload = encoded({
+            **top_counts,
+            "request_date_count": len(request_date_counts),
+            "disposition_totals": diagnostic["disposition_totals"],
+        })
+    if len(_ZERO_ROUTER_DIAGNOSTIC_PREFIX) + len(payload) > FAILURE_MESSAGE_MAX_CHARS:
+        payload = encoded(top_counts)
+    message = _ZERO_ROUTER_DIAGNOSTIC_PREFIX + payload
+    if len(message) > FAILURE_MESSAGE_MAX_CHARS:
+        raise P30PairedCaptureError(
+            "P3.0-E1 zero Router input diagnostic exceeded the failure-message bound"
+        )
+    raise P30PairedCaptureError(message)
+
+
 def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
                     output_dir: Path, repository_root: Path | None = None) -> Mapping[str, Any]:
     if type(fixture_cap) is not int or not 1 <= fixture_cap <= MAX_FIXTURE_CAP:
@@ -73,6 +189,7 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
         repository_root=root, lineage_main_sha=lineage_main_sha,
         request_dates=request_dates,
     )
+    _require_nonempty_router_inputs(sources_bundle)
     selected_sources = tuple(sorted(
         sources_bundle.router_inputs,
         key=lambda source: (source.fixture_identity, source.provider_event_id),
