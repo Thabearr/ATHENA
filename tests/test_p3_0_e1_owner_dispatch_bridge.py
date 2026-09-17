@@ -54,9 +54,17 @@ def test_bridge_is_one_shot_per_exact_main_and_fails_if_main_moves() -> None:
     text = _workflow()
 
     assert 'main_sha != os.environ["GITHUB_SHA"]' in text
-    assert "event=workflow_dispatch&branch=main&per_page=100" in text
-    assert r'select(.head_sha == \"${EXACT_MAIN_SHA}\")' in text
-    assert 'if [ "${existing_count}" != "0" ]; then' in text
+    assert "PAGE_SIZE = 100" in text
+    assert "MAX_WORKFLOW_DISPATCH_HISTORY_PAGES = 100" in text
+    assert "for page in range(1, MAX_WORKFLOW_DISPATCH_HISTORY_PAGES + 1):" in text
+    assert "event=workflow_dispatch&branch=main&per_page={PAGE_SIZE}&page={page}" in text
+    assert "if type(response) is not dict:" in text
+    assert "if type(workflow_runs) is not list:" in text
+    assert 'type(run.get("head_sha")) is not str' in text
+    assert 'if run["head_sha"] == exact_main_sha:' in text
+    assert "if len(workflow_runs) < PAGE_SIZE:" in text
+    assert "pagination exceeded bound before exhaustion" in text
+    assert "if matching_runs != 0:" in text
     assert 'if [ "${live_main_sha}" != "${EXACT_MAIN_SHA}" ]; then' in text
 
 

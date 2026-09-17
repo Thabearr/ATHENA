@@ -119,15 +119,57 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          existing_count="$(
-            gh api \
-              "repos/${GITHUB_REPOSITORY}/actions/workflows/p3-0-comparison-evidence-capture.yml/runs?event=workflow_dispatch&branch=main&per_page=100" \
-              --jq ".workflow_runs | map(select(.head_sha == \"${EXACT_MAIN_SHA}\")) | length"
-          )"
-          if [ "${existing_count}" != "0" ]; then
-            echo "P3.0-E1 already has ${existing_count} workflow_dispatch run(s) at exact current main ${EXACT_MAIN_SHA}." >&2
-            exit 1
-          fi
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+
+          PAGE_SIZE = 100
+          MAX_WORKFLOW_DISPATCH_HISTORY_PAGES = 100
+          repo = os.environ["GITHUB_REPOSITORY"]
+          exact_main_sha = os.environ["EXACT_MAIN_SHA"]
+          matching_runs = 0
+
+          for page in range(1, MAX_WORKFLOW_DISPATCH_HISTORY_PAGES + 1):
+              raw = subprocess.check_output(
+                  [
+                      "gh",
+                      "api",
+                      (
+                          f"repos/{repo}/actions/workflows/"
+                          "p3-0-comparison-evidence-capture.yml/runs?"
+                          f"event=workflow_dispatch&branch=main&per_page={PAGE_SIZE}&page={page}"
+                      ),
+                  ],
+                  text=True,
+              )
+              response = json.loads(raw)
+              if type(response) is not dict:
+                  raise SystemExit("one-shot workflow-dispatch response changed shape")
+              workflow_runs = response.get("workflow_runs")
+              if type(workflow_runs) is not list:
+                  raise SystemExit("one-shot workflow-dispatch runs are malformed")
+
+              for run in workflow_runs:
+                  if type(run) is not dict or type(run.get("head_sha")) is not str:
+                      raise SystemExit("one-shot workflow-dispatch run is malformed")
+                  if run["head_sha"] == exact_main_sha:
+                      matching_runs += 1
+
+              if len(workflow_runs) < PAGE_SIZE:
+                  break
+          else:
+              raise SystemExit(
+                  "one-shot workflow-dispatch pagination exceeded bound before exhaustion"
+              )
+
+          if matching_runs != 0:
+              raise SystemExit(
+                  "P3.0-E1 already has "
+                  f"{matching_runs} workflow_dispatch run(s) at exact current main "
+                  f"{exact_main_sha}."
+              )
+          PY
 
       - name: Dispatch exactly one P3.0-E1 prospective capture
         env:
