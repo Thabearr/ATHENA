@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections import Counter
 from contextlib import contextmanager
+import dataclasses
 import hashlib
 import json
 import os
@@ -71,14 +72,24 @@ TEAM_LABEL_COMPATIBILITY_POLICY_ID = team_label_compatibility.POLICY_ID
 TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
     team_label_compatibility.EXPECTED_POLICY_SHA256
 )
+FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID = (
+    "ATHENA_CURRENT_SHADOW_EXACT_CROSS_OBSERVATION_EVENT_OVERLAP_V1"
+)
+FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID = 35246536029
+FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID = 10508071809
+FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256 = (
+    "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
+)
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "f5751670b3fff1edbf60e7e6d5e34fb94f1bc68b32fa995173765b5083448356"
+EXPECTED_CONTRACT_SHA256 = "43e2c58eaf36b4fab3d2303afb99806fa6a5f5372c9325fa61425517c341a0c8"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
 ProviderCatalogTournament = legacy.ProviderCatalogTournament
 ProviderTournamentObservation = legacy.ProviderTournamentObservation
-CurrentShadowSportyBetCatalogFanoutSnapshot = legacy.CurrentShadowSportyBetCatalogFanoutSnapshot
+_LegacyCurrentShadowSportyBetCatalogFanoutSnapshot = (
+    legacy.CurrentShadowSportyBetCatalogFanoutSnapshot
+)
 CurrentShadowDirectConfirmationDisposition = legacy.CurrentShadowDirectConfirmationDisposition
 CurrentShadowDirectConfirmationFailureRow = legacy.CurrentShadowDirectConfirmationFailureRow
 CurrentShadowSportyBetCatalogFanoutReconciliationBundle = (
@@ -91,6 +102,81 @@ CurrentShadowSportyBetCatalogFanoutReconciliationError = (
     legacy.CurrentShadowSportyBetCatalogFanoutReconciliationError
 )
 SportyBetCurrentEventDiscoveryError = legacy.SportyBetCurrentEventDiscoveryError
+
+# Run 35246536029 reached the frozen snapshot after parsing every active fanout
+# observation and after `_dedupe_events` had already proved duplicate event IDs
+# identity-equivalent. The later list-equality coverage check then failed because
+# the same exact event may be returned by more than one active provider tournament.
+# Keep that compatibility builder/replay-scoped so raw observations remain exact.
+_fanout_overlap_scope_depth = 0
+
+
+@dataclasses.dataclass(frozen=True)
+class CurrentShadowSportyBetCatalogFanoutSnapshot(
+    _LegacyCurrentShadowSportyBetCatalogFanoutSnapshot
+):
+    """Current-Shadow overlay admitting exact cross-observation event overlap only."""
+
+    def __post_init__(self) -> None:
+        try:
+            super().__post_init__()
+            return
+        except CurrentShadowSportyBetCatalogFanoutReconciliationError as exc:
+            if str(exc) != "observation/event identity coverage mismatch":
+                raise
+
+        if _fanout_overlap_scope_depth <= 0:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "overlapping fanout event coverage is builder/replay scoped"
+            )
+
+        logical_ids = tuple(item.event_id for item in self.events)
+        observed_ids = tuple(
+            event_id for observation in self.observations for event_id in observation.event_ids
+        )
+        if set(observed_ids) != set(logical_ids):
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "observation/event identity coverage mismatch"
+            )
+        counts = Counter(observed_ids)
+        overlapping_ids = {event_id for event_id, count in counts.items() if count > 1}
+        if not overlapping_ids:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "observation/event identity coverage mismatch"
+            )
+
+        logical_by_id = {item.event_id: item for item in self.events}
+        for event_id in overlapping_ids:
+            claimants = tuple(
+                observation
+                for observation in self.observations
+                if event_id in observation.event_ids
+            )
+            retained = logical_by_id[event_id]
+            claimant_ancestry = {
+                (observation.raw_sha256, observation.observed_at)
+                for observation in claimants
+            }
+            if (
+                len(claimants) < 2
+                or (retained.source_raw_sha256, retained.source_observed_at)
+                not in claimant_ancestry
+            ):
+                raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                    "overlapping fanout event retained ancestry mismatch"
+                )
+
+        # These checks occur after the frozen coverage assertion and therefore
+        # must still run on the narrow overlap-compatible path.
+        if self.observation_authority != OBSERVATION_AUTHORITY:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "snapshot observation authority mismatch"
+            )
+        if self.provider_event_timestamp is not None or self.provider_snapshot_id is not None:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "snapshot cannot invent provider timestamp/snapshot ID"
+            )
+
 
 time = legacy.time
 _canonical = legacy._canonical
@@ -246,10 +332,28 @@ def _shadow_parser_scope() -> Iterator[None]:
         base._parse_tournament_response = previous_base_parser
 
 
+@contextmanager
+def _shadow_snapshot_scope() -> Iterator[None]:
+    """Use overlap compatibility only while current Shadow builds or replays raw evidence."""
+    global _fanout_overlap_scope_depth
+    previous_base_snapshot = base.CurrentShadowSportyBetCatalogFanoutSnapshot
+    _fanout_overlap_scope_depth += 1
+    base.CurrentShadowSportyBetCatalogFanoutSnapshot = CurrentShadowSportyBetCatalogFanoutSnapshot
+    try:
+        yield
+    finally:
+        base.CurrentShadowSportyBetCatalogFanoutSnapshot = previous_base_snapshot
+        _fanout_overlap_scope_depth -= 1
+
+
 def calculate_contract_sha256() -> str:
     payload = {
         "base_contract_sha256": legacy.base.EXPECTED_CONTRACT_SHA256,
         "candidate_local_direct_detail_policy": CANDIDATE_LOCAL_DIRECT_DETAIL_POLICY,
+        "fanout_overlap_compatibility_policy_id": FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID,
+        "fanout_overlap_evidence_workflow_run_id": FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID,
+        "fanout_overlap_evidence_artifact_id": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID,
+        "fanout_overlap_evidence_artifact_sha256": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256,
         "fixture_team_alias_policy_id": FIXTURE_TEAM_ALIAS_POLICY_ID,
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
@@ -268,7 +372,7 @@ def calculate_contract_sha256() -> str:
     return hashlib.sha256(raw).hexdigest()
 
 
-def validate_contract() -> Mapping[str, str]:
+def validate_contract() -> Mapping[str, Any]:
     legacy.base.validate_contract()
     if fixture_aliases.registry_sha256() != FIXTURE_TEAM_ALIAS_REGISTRY_SHA256:
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
@@ -293,6 +397,10 @@ def validate_contract() -> Mapping[str, str]:
     return {
         "contract_sha256": actual,
         "base_contract_sha256": legacy.base.EXPECTED_CONTRACT_SHA256,
+        "fanout_overlap_compatibility_policy_id": FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID,
+        "fanout_overlap_evidence_workflow_run_id": FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID,
+        "fanout_overlap_evidence_artifact_id": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID,
+        "fanout_overlap_evidence_artifact_sha256": FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256,
         "fixture_team_alias_policy_id": FIXTURE_TEAM_ALIAS_POLICY_ID,
         "fixture_team_alias_registry_sha256": FIXTURE_TEAM_ALIAS_REGISTRY_SHA256,
         "fixture_stable_identity_policy_id": FIXTURE_STABLE_IDENTITY_POLICY_ID,
@@ -513,7 +621,7 @@ def capture_current_catalog_fanout_discovery(
 ):
     validate_contract()
     _sync_wrapper_hooks()
-    with _shadow_parser_scope():
+    with _shadow_snapshot_scope(), _shadow_parser_scope():
         return legacy.capture_current_catalog_fanout_discovery(
             repository_root=repository_root,
             execute_live_network=execute_live_network,
@@ -525,7 +633,7 @@ def verify_current_catalog_fanout_discovery(
 ):
     validate_contract()
     _sync_wrapper_hooks()
-    with _shadow_parser_scope():
+    with _shadow_snapshot_scope(), _shadow_parser_scope():
         return legacy.verify_current_catalog_fanout_discovery(
             evidence_directory,
             repository_root=repository_root,
@@ -543,7 +651,7 @@ def reconcile_current_events_from_catalog_fanout(
     validate_contract()
     _begin_identity_scope(fotmob_captures, fanout_evidence_directory)
     _sync_wrapper_hooks()
-    with _shadow_parser_scope():
+    with _shadow_snapshot_scope(), _shadow_parser_scope():
         result = legacy.reconcile_current_events_from_catalog_fanout(
             repository_root=repository_root,
             fanout_evidence_directory=fanout_evidence_directory,
@@ -564,7 +672,7 @@ def discover_and_reconcile_current_events(
     validate_contract()
     _begin_identity_scope(fotmob_captures)
     _sync_wrapper_hooks()
-    with _shadow_parser_scope():
+    with _shadow_snapshot_scope(), _shadow_parser_scope():
         result = legacy.discover_and_reconcile_current_events(
             repository_root=repository_root,
             fotmob_admission_value=fotmob_admission_value,
@@ -595,7 +703,7 @@ def verify_current_event_discovery_reconciliation_bundle(value: Any):
             )
         current_state = _identity_state_snapshot()
         _verify_identity_state_append_only_extension(retained_state, current_state)
-    with _shadow_parser_scope():
+    with _shadow_snapshot_scope(), _shadow_parser_scope():
         if expected_state is None:
             return legacy.verify_current_event_discovery_reconciliation_bundle(value)
         with _retained_identity_serialization_scope(expected_state):
@@ -620,6 +728,10 @@ __all__ = [
     "CurrentShadowSportyBetCatalogFanoutReconciliationError",
     "CurrentShadowSportyBetCatalogFanoutSnapshot",
     "EXPECTED_CONTRACT_SHA256",
+    "FANOUT_OVERLAP_COMPATIBILITY_POLICY_ID",
+    "FANOUT_OVERLAP_EVIDENCE_ARTIFACT_ID",
+    "FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256",
+    "FANOUT_OVERLAP_EVIDENCE_WORKFLOW_RUN_ID",
     "FANOUT_POLICY",
     "FIXTURE_STABLE_IDENTITY_POLICY_ID",
     "FIXTURE_STABLE_IDENTITY_REGISTRY_SHA256",
