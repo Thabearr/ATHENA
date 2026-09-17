@@ -181,3 +181,17 @@ jobs:
           path: artifacts/p3-0-comparison-evidence
           if-no-files-found: error
           retention-days: 30
+
+      - name: Upload P3.0-E1 source diagnostics on capture failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: p3-0-comparison-evidence-source-diagnostics
+          path: |
+            artifacts/p3-0-comparison-evidence
+            .cache/athena-research/fotmob-data-matches-captures
+            .cache/athena-research/current-shadow-sportybet-catalog-fanout
+            .cache/athena-research/sportybet-live-event-quote-evidence
+            .cache/athena-research/current-shadow-fixture-identity-v2
+          if-no-files-found: warn
+          retention-days: 30
