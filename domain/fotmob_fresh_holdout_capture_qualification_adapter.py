@@ -45,7 +45,7 @@ import domain.fotmob_utc_native_expected_goals_fresh_holdout as fresh
 
 
 SCHEMA_VERSION = 1
-ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V4"
+ADAPTER_ID = "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V5"
 ADAPTER_STATE = "REVIEWED_STRUCTURAL_COMPATIBILITY_ONLY_NO_FOOTBALL_SEMANTIC_PROMOTION"
 
 FRESH_HOLDOUT_CORE_BLOB_SHA = "5dabab12d5205d384fd3904cda0e68661ef90791"
@@ -98,8 +98,8 @@ REQUEST_BUCKET_SPILLOVER_RULE = (
 )
 REVIEWED_DUPLICATE_GROUP_WRAPPER_RULE = (
     "EXACT_20260905_WRAPPER_10369_GROUP_A_B_AND_EXACT_20260916_20260917_"
-    "WRAPPER_1000001775_AFC_CL_TWO_GROUPS_SEPARATE_VALIDATION_ONLY_"
-    "NO_GROUP_SEMANTICS_NO_MERGE_NO_FUZZY"
+    "AFC_CL_TWO_WRAPPER_1000001775_NON_HYPHENATED_OR_WRAPPER_9469_"
+    "HYPHENATED_GROUPS_SEPARATE_VALIDATION_ONLY_NO_GROUP_SEMANTICS_NO_MERGE_NO_FUZZY"
 )
 
 SOURCE_WORKFLOW_RUN_ID = 32583079461
@@ -161,6 +161,7 @@ REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS = (
 REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME = "FIFA U-20 World Cup"
 
 REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID = 1000001775
+REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_WRAPPER_ID = 9469
 REVIEWED_AFC_CL2_DUPLICATE_GROUP_PRIMARY_ID = 9469
 REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_ID = 9469
 REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_NAME = "AFC Champions League Two"
@@ -216,6 +217,17 @@ REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260917_LABEL_PAIRS = (
     ("G", "AFC Champions League Two G"),
     ("H", "AFC Champions League Two H"),
 )
+REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260916_LABEL_PAIRS = (
+    ("A", "AFC Champions League Two - A"),
+    ("C", "AFC Champions League Two - C"),
+    ("D", "AFC Champions League Two - D"),
+    ("E", "AFC Champions League Two - E"),
+)
+REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260917_LABEL_PAIRS = (
+    ("F", "AFC Champions League Two - F"),
+    ("G", "AFC Champions League Two - G"),
+    ("H", "AFC Champions League Two - H"),
+)
 FRESH_HOLDOUT_AFC_CL2_BLOCKER_WORKFLOW_RUN_ID = 34940212010
 FRESH_HOLDOUT_AFC_CL2_BLOCKER_ACTIONS_ARTIFACT_ID = 10385590240
 FRESH_HOLDOUT_AFC_CL2_BLOCKER_ACTIONS_ARTIFACT_SHA256 = (
@@ -231,6 +243,31 @@ FRESH_HOLDOUT_AFC_CL2_BLOCKER_MANIFEST_SHA256 = (
 )
 FRESH_HOLDOUT_AFC_CL2_BLOCKER_RAW_SHA256 = (
     "174c3ddcd14b7b32e433ab501d2603c1b3905fd80cc1870ffab47f68c3c216a3"
+)
+FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_WORKFLOW_RUN_ID = 35216759649
+FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_SOURCE_WATCHDOG_RUN_ID = 35216267242
+FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_ACTIONS_ARTIFACT_ID = 10494774380
+FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_ACTIONS_ARTIFACT_SHA256 = (
+    "783ca8f80aa35d7310f7c8db4d552c8f21066dc95e234b83e78cdafab968a784"
+)
+FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_INNER_TAR_SHA256 = (
+    "bd7be278d0371661729564e026bc1c78bd3f4bd943ef9602c609716c1db746c4"
+)
+FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_CAPTURE_LINEAGES = (
+    {
+        "request_date": "20260916",
+        "capture_id": "cfb3e84e5320df1eb6a3815d",
+        "observed_at": "2026-09-17T11:47:06.351029Z",
+        "manifest_sha256": "f5ddae844ce3edde251ec8dd796834edebf2da8a0b609a8bd2d75cefdc2449ff",
+        "raw_sha256": "0306c7d476fd4dd371ffae9df8b7e3320d984a8d01e42c4e8214cd6ef361efb9",
+    },
+    {
+        "request_date": "20260917",
+        "capture_id": "ee34920dfb0c20c32d2342cb",
+        "observed_at": "2026-09-17T11:47:06.810894Z",
+        "manifest_sha256": "55fa312fc307c20e593c8034d6e922d8f61f59305fdad70d20b3ea60b1894284",
+        "raw_sha256": "9cb9d9c3155c9f2cec4c297758f49e54a29916503b4359c22ed5f2a65dc5c81f",
+    },
 )
 
 
@@ -280,6 +317,38 @@ _REVIEWED_DUPLICATE_GROUP_SHAPES = (
         wrapper_id=REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID,
         occurrence_count=3,
         label_pairs=REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260917_LABEL_PAIRS,
+        expected_metadata=(
+            ("primaryId", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PRIMARY_ID),
+            ("parentLeagueId", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_ID),
+            ("isGroup", True),
+            ("ccode", "INT"),
+            ("parentLeagueName", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_NAME),
+            ("internalRank", 0),
+            ("simpleLeague", False),
+        ),
+        exact_wrapper_keys=REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_KEYS,
+    ),
+    _ReviewedDuplicateGroupShape(
+        request_date=REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260916_REQUEST_DATE,
+        wrapper_id=REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_WRAPPER_ID,
+        occurrence_count=4,
+        label_pairs=REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260916_LABEL_PAIRS,
+        expected_metadata=(
+            ("primaryId", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PRIMARY_ID),
+            ("parentLeagueId", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_ID),
+            ("isGroup", True),
+            ("ccode", "INT"),
+            ("parentLeagueName", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_NAME),
+            ("internalRank", 0),
+            ("simpleLeague", False),
+        ),
+        exact_wrapper_keys=REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_KEYS,
+    ),
+    _ReviewedDuplicateGroupShape(
+        request_date=REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260917_REQUEST_DATE,
+        wrapper_id=REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_WRAPPER_ID,
+        occurrence_count=3,
+        label_pairs=REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260917_LABEL_PAIRS,
         expected_metadata=(
             ("primaryId", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PRIMARY_ID),
             ("parentLeagueId", REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_ID),
@@ -552,7 +621,11 @@ def _reviewed_duplicate_group_shape(
         if duplicated == {shape.wrapper_id} and request_date == shape.request_date
     ]
     if not matching_shapes:
-        if duplicated in ({REVIEWED_DUPLICATE_GROUP_WRAPPER_ID}, {REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID}):
+        if duplicated in (
+            {REVIEWED_DUPLICATE_GROUP_WRAPPER_ID},
+            {REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID},
+            {REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_WRAPPER_ID},
+        ):
             raise _error("reviewed duplicate group wrapper escaped exact request date")
         raise _error("unreviewed duplicate competition wrapper id in fresh holdout capture")
     return matching_shapes[0]
@@ -1132,6 +1205,7 @@ def adapter_receipt() -> dict[str, Any]:
         "duplicate_group_label_pairs": [list(item) for item in REVIEWED_DUPLICATE_GROUP_LABEL_PAIRS],
         "duplicate_group_parent_league_name": REVIEWED_DUPLICATE_GROUP_PARENT_LEAGUE_NAME,
         "afc_cl2_duplicate_group_wrapper_id": REVIEWED_AFC_CL2_DUPLICATE_GROUP_WRAPPER_ID,
+        "afc_cl2_direct_duplicate_group_wrapper_id": REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_WRAPPER_ID,
         "afc_cl2_duplicate_group_primary_id": REVIEWED_AFC_CL2_DUPLICATE_GROUP_PRIMARY_ID,
         "afc_cl2_duplicate_group_parent_league_id": REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_ID,
         "afc_cl2_duplicate_group_parent_league_name": REVIEWED_AFC_CL2_DUPLICATE_GROUP_PARENT_LEAGUE_NAME,
@@ -1160,6 +1234,20 @@ def adapter_receipt() -> dict[str, Any]:
                 "source_raw_sha256": REVIEWED_AFC_CL2_DUPLICATE_GROUP_20260917_SOURCE_RAW_SHA256,
             },
         ],
+        "afc_cl2_direct_duplicate_group_reviewed_shapes": [
+            {
+                "request_date": "20260916",
+                "occurrence_count": 4,
+                "label_pairs": [list(item) for item in REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260916_LABEL_PAIRS],
+                **dict(FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_CAPTURE_LINEAGES[0]),
+            },
+            {
+                "request_date": "20260917",
+                "occurrence_count": 3,
+                "label_pairs": [list(item) for item in REVIEWED_AFC_CL2_DIRECT_DUPLICATE_GROUP_20260917_LABEL_PAIRS],
+                **dict(FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_CAPTURE_LINEAGES[1]),
+            },
+        ],
         "afc_cl2_fresh_holdout_blocker": {
             "workflow_run_id": FRESH_HOLDOUT_AFC_CL2_BLOCKER_WORKFLOW_RUN_ID,
             "actions_artifact_id": FRESH_HOLDOUT_AFC_CL2_BLOCKER_ACTIONS_ARTIFACT_ID,
@@ -1169,6 +1257,14 @@ def adapter_receipt() -> dict[str, Any]:
             "observed_at": FRESH_HOLDOUT_AFC_CL2_BLOCKER_OBSERVED_AT,
             "manifest_sha256": FRESH_HOLDOUT_AFC_CL2_BLOCKER_MANIFEST_SHA256,
             "raw_sha256": FRESH_HOLDOUT_AFC_CL2_BLOCKER_RAW_SHA256,
+        },
+        "afc_cl2_9469_fresh_holdout_blocker": {
+            "workflow_run_id": FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_WORKFLOW_RUN_ID,
+            "source_watchdog_run_id": FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_SOURCE_WATCHDOG_RUN_ID,
+            "actions_artifact_id": FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_ACTIONS_ARTIFACT_ID,
+            "actions_artifact_sha256": FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_ACTIONS_ARTIFACT_SHA256,
+            "inner_tar_sha256": FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_INNER_TAR_SHA256,
+            "capture_lineages": [dict(item) for item in FRESH_HOLDOUT_AFC_CL2_9469_BLOCKER_CAPTURE_LINEAGES],
         },
         "duplicate_group_wrappers_structurally_revalidated_separately": True,
         "duplicate_group_labels_not_merged_or_semantically_interpreted": True,

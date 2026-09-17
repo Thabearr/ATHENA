@@ -330,7 +330,7 @@ def test_settlement_structural_projection_composes_with_shortname_without_semant
 
 def test_receipt_binds_exact_sep10_failure_evidence_and_grants_no_authority() -> None:
     receipt = adapter.adapter_receipt()
-    assert receipt["adapter_id"] == "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V4"
+    assert receipt["adapter_id"] == "FOTMOB_FRESH_HOLDOUT_REVIEWED_SCHEMA_ADAPTER_V5"
     assert receipt["reviewed_team_shortname_key"] == "shortName"
     assert receipt["reviewed_team_shortname_rule"] == (
         "OPTIONAL_MATCH_TEAM_SHORTNAME_EXACT_STRING_NULL_FORBIDDEN_OPAQUE_"
