@@ -8,9 +8,9 @@ _unscoped_main = main
 
 
 def main(argv=None):
-    """Run the paired collector with the supported Current Shadow reconciliation scope."""
+    """Run the paired collector under the full supported Current Shadow pre-Router scope."""
 
-    with _request_reconciliation.scoped_current_request_reconciliation_compatibility():
+    with _request_reconciliation.scoped_current_request_pre_router_compatibility():
         return _unscoped_main(argv)
 
 
