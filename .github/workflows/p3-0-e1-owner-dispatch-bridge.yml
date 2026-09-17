@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: read
+  issues: read
   actions: write
 
 concurrency:
@@ -22,7 +23,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Bind exact main and derive bounded prospective request
+      - name: Bind unique owner authorization, exact main, and prospective request
         id: request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,15 +42,52 @@ jobs:
           issue = event.get("issue") or {}
           comment = event.get("comment") or {}
           repository = event.get("repository") or {}
+          owner = repository.get("owner", {}).get("login")
+          command = os.environ["EXPECTED_COMMAND"]
 
           if issue.get("number") != 337:
               raise SystemExit("P3.0-E1 bridge escaped master issue #337")
-          if comment.get("user", {}).get("login") != repository.get("owner", {}).get("login"):
+          if comment.get("user", {}).get("login") != owner:
               raise SystemExit("P3.0-E1 bridge requires repository-owner authorization")
-          if comment.get("body") != os.environ["EXPECTED_COMMAND"]:
+          if comment.get("body") != command:
               raise SystemExit("P3.0-E1 bridge command drifted")
+          if type(comment.get("id")) is not int:
+              raise SystemExit("P3.0-E1 bridge comment id is malformed")
 
           repo = os.environ["GITHUB_REPOSITORY"]
+          exact_authorizations = []
+          page = 1
+          while True:
+              raw = subprocess.check_output(
+                  [
+                      "gh",
+                      "api",
+                      f"repos/{repo}/issues/337/comments?per_page=100&page={page}",
+                  ],
+                  text=True,
+              )
+              rows = json.loads(raw)
+              if type(rows) is not list:
+                  raise SystemExit("issue-comment authorization query changed shape")
+              exact_authorizations.extend(
+                  row
+                  for row in rows
+                  if row.get("user", {}).get("login") == owner
+                  and row.get("body") == command
+              )
+              if len(rows) < 100:
+                  break
+              page += 1
+              if page > 100:
+                  raise SystemExit("issue-comment authorization pagination exceeded bound")
+
+          if len(exact_authorizations) != 1:
+              raise SystemExit(
+                  "P3.0-E1 bridge requires exactly one owner authorization comment"
+              )
+          if exact_authorizations[0].get("id") != comment["id"]:
+              raise SystemExit("P3.0-E1 bridge authorization comment is not unique current event")
+
           main_sha = subprocess.check_output(
               ["gh", "api", f"repos/{repo}/git/ref/heads/main", "--jq", ".object.sha"],
               text=True,
