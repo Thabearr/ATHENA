@@ -81,7 +81,7 @@ FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256 = (
     "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
 )
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "d0a623b8915795e87c0d0d1b4d44a4a218fde09f95249c08c8f423d57abe661f"
+EXPECTED_CONTRACT_SHA256 = "64a68a09b1da57d026ca4d29d5ff7b49a0652430df303dec6538b0d02cad0013"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -464,6 +464,7 @@ _IDENTITY_STATE_PAYLOAD_KEYS = frozenset({
     "policy_id",
     "matching_basis",
     "seed_registry_sha256",
+    "alias_registry_ancestry",
     "learned_team_identities",
     "learned_competition_identities",
     "evidence_records",
@@ -477,6 +478,7 @@ _IDENTITY_STATE_IMMUTABLE_KEYS = (
     "authority",
 )
 _IDENTITY_STATE_APPEND_ONLY_KEYS = (
+    "alias_registry_ancestry",
     "learned_team_identities",
     "learned_competition_identities",
     "evidence_records",
@@ -516,6 +518,53 @@ def _copy_identity_state(payload: Mapping[str, Any]) -> dict[str, Any]:
     ))
 
 
+def _alias_ancestry_rows(value: Any) -> tuple[tuple[str, str], ...]:
+    if type(value) is not list or not value:
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "Shadow fixture identity alias ancestry drifted"
+        )
+    rows: list[tuple[str, str]] = []
+    for row in value:
+        if (
+            type(row) is not dict
+            or set(row) != {"policy_id", "registry_sha256"}
+            or type(row.get("policy_id")) is not str
+            or type(row.get("registry_sha256")) is not str
+        ):
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                "Shadow fixture identity alias ancestry drifted"
+            )
+        rows.append((row["policy_id"], row["registry_sha256"]))
+    if len(set(rows)) != len(rows):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "Shadow fixture identity alias ancestry drifted"
+        )
+    return tuple(rows)
+
+
+def _verify_alias_ancestry_prefix(retained: Any, current: Any) -> None:
+    """Allow only an ordered V1 -> V2 reviewed alias-policy extension."""
+    retained_rows = _alias_ancestry_rows(retained)
+    current_rows = _alias_ancestry_rows(current)
+    v1 = (
+        fixture_identity_v2._REVIEWED_ALIAS_V1["policy_id"],
+        fixture_identity_v2._REVIEWED_ALIAS_V1["registry_sha256"],
+    )
+    v2 = (
+        fixture_identity_v2._REVIEWED_ALIAS_V2["policy_id"],
+        fixture_identity_v2._REVIEWED_ALIAS_V2["registry_sha256"],
+    )
+    permitted_prefixes = {(v1,), (v2,), (v1, v2)}
+    if (
+        retained_rows not in permitted_prefixes
+        or current_rows not in {(v2,), (v1, v2)}
+        or current_rows[:len(retained_rows)] != retained_rows
+    ):
+        raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+            "persisted Shadow fixture identity state changed retained policy ancestry"
+        )
+
+
 def _verify_identity_state_append_only_extension(
     retained: Mapping[str, Any],
     current: Mapping[str, Any],
@@ -533,7 +582,12 @@ def _verify_identity_state_append_only_extension(
             raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
                 "persisted Shadow fixture identity state changed retained policy ancestry"
             )
+    _verify_alias_ancestry_prefix(
+        retained["alias_registry_ancestry"], current["alias_registry_ancestry"]
+    )
     for key in _IDENTITY_STATE_APPEND_ONLY_KEYS:
+        if key == "alias_registry_ancestry":
+            continue
         retained_rows = retained[key]
         current_rows = current[key]
         if type(retained_rows) is not list or type(current_rows) is not list:

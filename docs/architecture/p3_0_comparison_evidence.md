@@ -205,3 +205,33 @@ authorized bounded post-merge capture must first produce real complete rows,
 and the resulting corpus must then be reviewed for the P3.0 one-week or
 sufficiently-large requirement before the comparator is implemented. P3.1 has
 not started.
+
+## Post-PR #371 persisted identity-state alias ancestry migration
+
+Owner authorization comment `5722646108` was consumed for bridge run
+`35287227717`, which dispatched P3.0-E1 capture run `35287237183` on
+`be8e35dd179b44b76ff3aee1f7b3dfdad55a3f6c` for fixture dates
+`20260917` through `20260923` with cap `50`. The capture failed only in the
+Router-only capture step with `CurrentShadowFixtureIdentityStateError: identity
+state seed registry drifted`. Its failure artifact was `10524269182`
+(`a9d0aed1a581a4804bf2bf3cb9cdc4bd290777a3e219fe3dd5de9cddd496e7ab`);
+the retained source-diagnostics artifact was `10524693269`
+(`062890dd79e4806e2f21dd90708de9205aceea1d5a2fbd90cb582ce1cffe880e`).
+
+The workflow had restored trusted-main Current Shadow identity state from run
+`34141385342`, whose source head was
+`012f15f8ea81dc32c3404880a854815e5e7078ca`. The retained document was valid
+schema v1. Its field named `seed_registry_sha256` was actually the complete
+stable-identity registry hash, including the reviewed display-name alias policy.
+PR #371 changed aliases from V1 to V2 without changing stable seed tables, so
+the valid restored document was incorrectly rejected as seed drift.
+
+State schema v2 separates immutable seed-only identity from ordered reviewed
+alias-policy ancestry. It accepts only the exact V1-to-V2 transition recorded
+in the stable identity registry; it does not accept arbitrary prior hashes,
+corrupt state, conflicts, or evidence-less learned bindings. Migration preserves
+the validated learned identities, evidence records, authority, exact matching,
+and append-only retained replay protections. It adds no provider retry and no
+model, pricing, Router, Portfolio, login, cookie, wallet, stake, wager, or
+share-code authority. P3.0 comparator and P3.1 remain not started, and
+`SOURCE_REVIEW_COUNTER` remains `4 / 5`.
