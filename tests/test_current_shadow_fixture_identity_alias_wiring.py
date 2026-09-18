@@ -33,6 +33,29 @@ def test_shadow_reconciliation_contract_binds_exact_alias_registry():
     assert identity["team_label_compatibility_policy_sha256"] == label_compat.EXPECTED_POLICY_SHA256
 
 
+def test_stable_identity_keeps_seed_ancestry_separate_from_reviewed_alias_ancestry():
+    seed_payload = stable_identity.seed_registry_payload()
+    stable_payload = stable_identity.registry_payload()
+    assert stable_identity.SEED_REGISTRY_SHA256 == stable_identity.seed_registry_sha256()
+    assert stable_payload["seed_registry_sha256"] == stable_identity.SEED_REGISTRY_SHA256
+    assert "legacy_alias_registry_sha256" not in seed_payload
+    assert "alias" not in " ".join(seed_payload)
+    assert stable_payload["reviewed_alias_registry_transition"]["from"] == (
+        stable_identity._REVIEWED_ALIAS_V1
+    )
+    assert stable_payload["reviewed_alias_registry_transition"]["to"] == (
+        stable_identity._REVIEWED_ALIAS_V2
+    )
+    assert stable_payload["reviewed_alias_registry_transition"]["source_seed_registry_sha256"] == (
+        stable_identity._LEGACY_V1_SEED_REGISTRY_SHA256
+    )
+    assert stable_payload["reviewed_alias_registry_transition"]["target_seed_registry_sha256"] == (
+        stable_identity.SEED_REGISTRY_SHA256
+    )
+    assert stable_identity._REVIEWED_ALIAS_V2["policy_id"] == aliases.POLICY_ID
+    assert stable_identity._REVIEWED_ALIAS_V2["registry_sha256"] == aliases.REGISTRY_SHA256
+
+
 def test_candidate_local_shadow_module_preserves_alias_fallback_without_mutating_frozen_reviewed_module():
     kickoff = datetime(2026, 9, 1, 18, 45, tzinfo=UTC)
     event = SimpleNamespace(

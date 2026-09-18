@@ -20,7 +20,8 @@ from typing import Any, Iterable, Sequence
 from domain import current_shadow_fixture_identity_aliases as aliases
 
 SCHEMA_VERSION = 1
-STATE_SCHEMA_VERSION = 1
+STATE_SCHEMA_VERSION = 2
+SEED_REGISTRY_SCHEMA_VERSION = 1
 POLICY_ID = "ATHENA_CURRENT_SHADOW_STABLE_SOURCE_PROVIDER_IDENTITY_V2"
 MATCHING_BASIS = (
     "EXACT_FULL_UTC_HOME_AWAY_STABLE_FOTMOB_PROVIDER_NATIVE_IDS_"
@@ -32,6 +33,37 @@ EVIDENCE_BASIS = (
     "3ff8371b67cf4b197cdf03b5215dfd52ad45ecbfa6a65f12d7dc00a1169420f8"
 )
 STATE_FILENAME = "current-shadow-fixture-identity-v2-state.json"
+
+# These are the only reviewed alias-policy identities that can participate in
+# persisted stable-ID ancestry.  The V1 identity and full stable-registry hash
+# were derived from trusted-main state source 012f15f8; V2 is PR #371's
+# append-only retained-evidence alias extension.  This compatibility authority
+# is deliberately part of registry_payload(), rather than an unhashed fallback.
+_REVIEWED_ALIAS_V1 = {
+    "policy_id": "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V1",
+    "registry_sha256": "9615b71a563b3704c607fb7cd1ebd652165ebd36d50971570486f7f6fab24d07",
+}
+_REVIEWED_ALIAS_V2 = {
+    "policy_id": "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V2",
+    "registry_sha256": "2183576a068f365ded201b8b2d6aaf02395598ec51738275a16021b4d94ca091",
+}
+_LEGACY_V1_FULL_REGISTRY_SHA256 = (
+    "a0dfd70b2750612498133393b0ff556c818008778d51f8a5cbd9bf005704b3f4"
+)
+_LEGACY_V1_SEED_REGISTRY_SHA256 = (
+    "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79"
+)
+_ALIAS_ANCESTRY_NODE_KEYS = frozenset({"policy_id", "registry_sha256"})
+_REVIEWED_COMPLETE_ALIAS_ANCESTRIES = (
+    (_REVIEWED_ALIAS_V2,),
+    (_REVIEWED_ALIAS_V1, _REVIEWED_ALIAS_V2),
+)
+
+if (
+    aliases.POLICY_ID != _REVIEWED_ALIAS_V2["policy_id"]
+    or aliases.REGISTRY_SHA256 != _REVIEWED_ALIAS_V2["registry_sha256"]
+):
+    raise RuntimeError("reviewed alias policy identity drifted")
 
 _COMPETITOR_RE = re.compile(r"^sr:competitor:[1-9][0-9]*$", re.ASCII)
 _CATEGORY_RE = re.compile(r"^sr:category:.+$", re.ASCII)
@@ -115,6 +147,7 @@ _comp_forward: dict[tuple[str, int], tuple[str, str]] = {}
 _comp_reverse: dict[tuple[str, str], tuple[str, int]] = {}
 _evidence_records: list[dict[str, Any]] = []
 _state_path: Path | None = None
+_alias_registry_ancestry: list[dict[str, str]] = []
 
 
 def reset_runtime_evidence() -> None:
@@ -125,6 +158,7 @@ def reset_runtime_evidence() -> None:
     _comp_forward.clear()
     _comp_reverse.clear()
     _evidence_records.clear()
+    _alias_registry_ancestry[:] = [dict(_REVIEWED_ALIAS_V2)]
     for source_id, provider_id in TEAM_IDENTITY_SEEDS:
         _team_forward[source_id] = provider_id
         _team_reverse[provider_id] = source_id
@@ -390,8 +424,12 @@ def _learned_comp_rows() -> list[list[Any]]:
     ]
 
 
-def _evidence_supports_team(source_id: int, provider_id: str) -> bool:
-    for record in _evidence_records:
+def _evidence_supports_team(
+    source_id: int,
+    provider_id: str,
+    evidence_records: Sequence[dict[str, Any]] | None = None,
+) -> bool:
+    for record in (_evidence_records if evidence_records is None else evidence_records):
         for side in ("home", "away"):
             if (
                 record.get(f"{side}_source_team_id") == source_id
@@ -401,15 +439,49 @@ def _evidence_supports_team(source_id: int, provider_id: str) -> bool:
     return False
 
 
-def _evidence_supports_comp(row: list[Any]) -> bool:
+def _evidence_supports_comp(
+    row: list[Any], evidence_records: Sequence[dict[str, Any]] | None = None
+) -> bool:
     ccode, primary, category, tournament = row
     return any(
         record.get("source_ccode") == ccode
         and record.get("source_primary_competition_id") == primary
         and record.get("provider_category_id") == category
         and record.get("provider_tournament_id") == tournament
-        for record in _evidence_records
+        for record in (_evidence_records if evidence_records is None else evidence_records)
     )
+
+
+def seed_registry_payload() -> dict[str, Any]:
+    """Return immutable stable-ID seed ancestry, excluding alias policy."""
+    return {
+        "schema_version": SEED_REGISTRY_SCHEMA_VERSION,
+        "team_identity_seeds": [list(x) for x in TEAM_IDENTITY_SEEDS],
+        "competition_identity_seeds": [list(x) for x in COMPETITION_IDENTITY_SEEDS],
+    }
+
+
+def seed_registry_sha256() -> str:
+    return hashlib.sha256(_canonical(seed_registry_payload())).hexdigest()
+
+
+SEED_REGISTRY_SHA256 = seed_registry_sha256()
+
+
+def _state_authority() -> dict[str, bool]:
+    return {
+        "research_shadow_fixture_reconciliation": True,
+        "production_model": False,
+        "pricing": False,
+        "selection": False,
+        "sportybet_execution": False,
+        "login": False,
+        "cookies": False,
+        "wallet": False,
+        "staking": False,
+        "bet": False,
+        "wager_placed": False,
+    }
 
 
 def _state_payload() -> dict[str, Any]:
@@ -417,23 +489,12 @@ def _state_payload() -> dict[str, Any]:
         "schema_version": STATE_SCHEMA_VERSION,
         "policy_id": POLICY_ID,
         "matching_basis": MATCHING_BASIS,
-        "seed_registry_sha256": REGISTRY_SHA256,
+        "seed_registry_sha256": SEED_REGISTRY_SHA256,
+        "alias_registry_ancestry": [dict(row) for row in _alias_registry_ancestry],
         "learned_team_identities": _learned_team_rows(),
         "learned_competition_identities": _learned_comp_rows(),
         "evidence_records": sorted(_evidence_records, key=lambda row: _canonical(row)),
-        "authority": {
-            "research_shadow_fixture_reconciliation": True,
-            "production_model": False,
-            "pricing": False,
-            "selection": False,
-            "sportybet_execution": False,
-            "login": False,
-            "cookies": False,
-            "wallet": False,
-            "staking": False,
-            "bet": False,
-            "wager_placed": False,
-        },
+        "authority": _state_authority(),
     }
 
 
@@ -455,69 +516,198 @@ def _persist_state() -> None:
     temporary.replace(_state_path)
 
 
-def _validate_loaded_payload(payload: Any) -> None:
-    if type(payload) is not dict:
-        raise CurrentShadowFixtureIdentityStateError("identity state payload must be an object")
-    if payload.get("schema_version") != STATE_SCHEMA_VERSION:
-        raise CurrentShadowFixtureIdentityStateError("identity state schema drifted")
-    if payload.get("policy_id") != POLICY_ID or payload.get("matching_basis") != MATCHING_BASIS:
-        raise CurrentShadowFixtureIdentityStateError("identity state policy drifted")
-    if payload.get("seed_registry_sha256") != REGISTRY_SHA256:
-        raise CurrentShadowFixtureIdentityStateError("identity state seed registry drifted")
+_LEGACY_STATE_PAYLOAD_KEYS = frozenset({
+    "schema_version", "policy_id", "matching_basis", "seed_registry_sha256",
+    "learned_team_identities", "learned_competition_identities", "evidence_records",
+    "authority",
+})
+_STATE_V2_PAYLOAD_KEYS = _LEGACY_STATE_PAYLOAD_KEYS | {"alias_registry_ancestry"}
+
+
+def _require_exact_payload_keys(payload: dict[str, Any], expected: frozenset[str]) -> None:
+    if set(payload) != expected:
+        raise CurrentShadowFixtureIdentityStateError("identity state payload shape drifted")
+
+
+def _alias_ancestry_tuple(value: Any, *, require_current: bool) -> tuple[tuple[str, str], ...]:
+    if type(value) is not list or not value:
+        raise CurrentShadowFixtureIdentityStateError("identity state alias ancestry missing")
+    rows: list[tuple[str, str]] = []
+    for row in value:
+        if (
+            type(row) is not dict
+            or set(row) != _ALIAS_ANCESTRY_NODE_KEYS
+            or type(row.get("policy_id")) is not str
+            or not row["policy_id"]
+            or type(row.get("registry_sha256")) is not str
+            or _SHA_RE.fullmatch(row["registry_sha256"]) is None
+        ):
+            raise CurrentShadowFixtureIdentityStateError("identity state alias ancestry is malformed")
+        rows.append((row["policy_id"], row["registry_sha256"]))
+    if len(set(rows)) != len(rows):
+        raise CurrentShadowFixtureIdentityStateError("identity state alias ancestry is duplicated")
+    accepted = {
+        tuple((row["policy_id"], row["registry_sha256"]) for row in chain)
+        for chain in _REVIEWED_COMPLETE_ALIAS_ANCESTRIES
+    }
+    ancestry = tuple(rows)
+    if require_current and ancestry not in accepted:
+        raise CurrentShadowFixtureIdentityStateError("identity state alias ancestry is unreviewed")
+    return ancestry
+
+
+def _validate_collections(payload: dict[str, Any]) -> None:
     if type(payload.get("learned_team_identities")) is not list:
         raise CurrentShadowFixtureIdentityStateError("identity state team mappings missing")
     if type(payload.get("learned_competition_identities")) is not list:
         raise CurrentShadowFixtureIdentityStateError("identity state competition mappings missing")
-    if type(payload.get("evidence_records")) is not list:
+    if type(payload.get("evidence_records")) is not list or any(
+        type(row) is not dict for row in payload["evidence_records"]
+    ):
         raise CurrentShadowFixtureIdentityStateError("identity state evidence records missing")
+    if payload.get("authority") != _state_authority():
+        raise CurrentShadowFixtureIdentityStateError("identity state authority drifted")
+
+
+def _validate_loaded_payload(payload: Any) -> tuple[list[dict[str, str]], bool]:
+    if type(payload) is not dict:
+        raise CurrentShadowFixtureIdentityStateError("identity state payload must be an object")
+    if payload.get("policy_id") != POLICY_ID or payload.get("matching_basis") != MATCHING_BASIS:
+        raise CurrentShadowFixtureIdentityStateError("identity state policy drifted")
+    if payload.get("schema_version") == 1:
+        _require_exact_payload_keys(payload, _LEGACY_STATE_PAYLOAD_KEYS)
+        if payload.get("seed_registry_sha256") != _LEGACY_V1_FULL_REGISTRY_SHA256:
+            raise CurrentShadowFixtureIdentityStateError("identity state seed registry drifted")
+        if _LEGACY_V1_SEED_REGISTRY_SHA256 != SEED_REGISTRY_SHA256:
+            raise CurrentShadowFixtureIdentityStateError(
+                "identity state reviewed migration seed ancestry drifted"
+            )
+        if seed_registry_sha256() != SEED_REGISTRY_SHA256:
+            raise CurrentShadowFixtureIdentityStateError(
+                "identity state current seed registry calculation drifted"
+            )
+        _validate_collections(payload)
+        return [dict(_REVIEWED_ALIAS_V1), dict(_REVIEWED_ALIAS_V2)], True
+    if payload.get("schema_version") != STATE_SCHEMA_VERSION:
+        raise CurrentShadowFixtureIdentityStateError("identity state schema drifted")
+    _require_exact_payload_keys(payload, _STATE_V2_PAYLOAD_KEYS)
+    if payload.get("seed_registry_sha256") != SEED_REGISTRY_SHA256:
+        raise CurrentShadowFixtureIdentityStateError("identity state seed registry drifted")
+    ancestry = _alias_ancestry_tuple(payload.get("alias_registry_ancestry"), require_current=True)
+    _validate_collections(payload)
+    return [
+        {"policy_id": policy_id, "registry_sha256": registry_sha256}
+        for policy_id, registry_sha256 in ancestry
+    ], False
+
+
+def _validate_loaded_bindings(payload: dict[str, Any]) -> tuple[
+    dict[int, str], dict[str, int], dict[tuple[str, int], tuple[str, str]],
+    dict[tuple[str, str], tuple[str, int]], list[dict[str, Any]],
+]:
+    records = list(payload["evidence_records"])
+    team_forward = dict(TEAM_IDENTITY_SEEDS)
+    team_reverse = {provider_id: source_id for source_id, provider_id in TEAM_IDENTITY_SEEDS}
+    comp_forward = {
+        (ccode, primary): (category, tournament)
+        for ccode, primary, category, tournament in COMPETITION_IDENTITY_SEEDS
+    }
+    comp_reverse = {provider: source for source, provider in comp_forward.items()}
+    for row in payload["learned_team_identities"]:
+        if (
+            type(row) is not list or len(row) != 2 or type(row[0]) is not int
+            or row[0] <= 0 or type(row[1]) is not str
+            or _COMPETITOR_RE.fullmatch(row[1]) is None
+            or not _evidence_supports_team(row[0], row[1], records)
+            or row[0] in dict(TEAM_IDENTITY_SEEDS)
+            or row[1] in team_reverse
+            or row[0] in team_forward
+        ):
+            raise CurrentShadowFixtureIdentityStateError(
+                "identity state team mapping conflicts or lacks evidence"
+            )
+        team_forward[row[0]] = row[1]
+        team_reverse[row[1]] = row[0]
+    seeded_competitions = {
+        (ccode, primary) for ccode, primary, _category, _tournament in COMPETITION_IDENTITY_SEEDS
+    }
+    for row in payload["learned_competition_identities"]:
+        if (
+            type(row) is not list or len(row) != 4 or type(row[0]) is not str
+            or not row[0] or type(row[1]) is not int or row[1] <= 0 or type(row[2]) is not str
+            or _CATEGORY_RE.fullmatch(row[2]) is None or type(row[3]) is not str
+            or _TOURNAMENT_RE.fullmatch(row[3]) is None
+            or not _evidence_supports_comp(row, records)
+            or (row[0], row[1]) in seeded_competitions
+            or (row[0], row[1]) in comp_forward
+            or (row[2], row[3]) in comp_reverse
+        ):
+            raise CurrentShadowFixtureIdentityStateError(
+                "identity state competition mapping conflicts or lacks evidence"
+            )
+        source = (row[0], row[1])
+        provider = (row[2], row[3])
+        comp_forward[source] = provider
+        comp_reverse[provider] = source
+    return team_forward, team_reverse, comp_forward, comp_reverse, records
+
+
+def _runtime_state_snapshot() -> tuple[Any, ...]:
+    return (
+        _state_path, dict(_team_forward), dict(_team_reverse), dict(_comp_forward),
+        dict(_comp_reverse), list(_evidence_records), [dict(row) for row in _alias_registry_ancestry],
+    )
+
+
+def _restore_runtime_state(snapshot: tuple[Any, ...]) -> None:
+    global _state_path
+    state_path, team_forward, team_reverse, comp_forward, comp_reverse, records, ancestry = snapshot
+    _state_path = state_path
+    _team_forward.clear(); _team_forward.update(team_forward)
+    _team_reverse.clear(); _team_reverse.update(team_reverse)
+    _comp_forward.clear(); _comp_forward.update(comp_forward)
+    _comp_reverse.clear(); _comp_reverse.update(comp_reverse)
+    _evidence_records[:] = records
+    _alias_registry_ancestry[:] = ancestry
 
 
 def configure_persistent_state(path: Any | None) -> None:
     global _state_path
-    _state_path = None if path in (None, "") else Path(path)
-    if _state_path is None or not _state_path.exists():
+    requested_path = None if path in (None, "") else Path(path)
+    if requested_path is None or not requested_path.exists():
+        _state_path = requested_path
         return
+    previous = _runtime_state_snapshot()
     try:
-        document = json.loads(_state_path.read_text(encoding="utf-8"))
+        document = json.loads(requested_path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise CurrentShadowFixtureIdentityStateError("identity state cannot be read exactly") from exc
-    if type(document) is not dict or type(document.get("state_sha256")) is not str:
-        raise CurrentShadowFixtureIdentityStateError("identity state document is invalid")
-    payload = document.get("payload")
-    _validate_loaded_payload(payload)
-    actual = hashlib.sha256(_canonical(payload)).hexdigest()
-    if document["state_sha256"] != actual or _SHA_RE.fullmatch(actual) is None:
-        raise CurrentShadowFixtureIdentityStateError("identity state hash mismatch")
-
-    _evidence_records[:] = list(payload["evidence_records"])
-    team_rows = payload["learned_team_identities"]
-    comp_rows = payload["learned_competition_identities"]
-    for row in team_rows:
+    try:
         if (
-            type(row) is not list
-            or len(row) != 2
-            or type(row[0]) is not int
-            or row[0] <= 0
-            or type(row[1]) is not str
-            or _COMPETITOR_RE.fullmatch(row[1]) is None
-            or not _evidence_supports_team(row[0], row[1])
-            or not _bind_team(row[0], row[1])
+            type(document) is not dict or set(document) != {"payload", "state_sha256"}
+            or type(document.get("state_sha256")) is not str
+            or _SHA_RE.fullmatch(document["state_sha256"]) is None
         ):
-            raise CurrentShadowFixtureIdentityStateError("identity state team mapping conflicts or lacks evidence")
-    for row in comp_rows:
-        if (
-            type(row) is not list
-            or len(row) != 4
-            or type(row[0]) is not str
-            or type(row[1]) is not int
-            or type(row[2]) is not str
-            or _CATEGORY_RE.fullmatch(row[2]) is None
-            or type(row[3]) is not str
-            or _TOURNAMENT_RE.fullmatch(row[3]) is None
-            or not _evidence_supports_comp(row)
-            or not _bind_comp((row[0], row[1]), (row[2], row[3]))
-        ):
-            raise CurrentShadowFixtureIdentityStateError("identity state competition mapping conflicts or lacks evidence")
+            raise CurrentShadowFixtureIdentityStateError("identity state document is invalid")
+        payload = document.get("payload")
+        actual = hashlib.sha256(_canonical(payload)).hexdigest()
+        if document["state_sha256"] != actual:
+            raise CurrentShadowFixtureIdentityStateError("identity state hash mismatch")
+        ancestry, migrated = _validate_loaded_payload(payload)
+        bindings = _validate_loaded_bindings(payload)
+        _state_path = requested_path
+        team_forward, team_reverse, comp_forward, comp_reverse, records = bindings
+        _team_forward.clear(); _team_forward.update(team_forward)
+        _team_reverse.clear(); _team_reverse.update(team_reverse)
+        _comp_forward.clear(); _comp_forward.update(comp_forward)
+        _comp_reverse.clear(); _comp_reverse.update(comp_reverse)
+        _evidence_records[:] = records
+        _alias_registry_ancestry[:] = ancestry
+        if migrated:
+            _persist_state()
+    except Exception:
+        _restore_runtime_state(previous)
+        raise
 
 
 def _new_evidence_record(
@@ -633,9 +823,23 @@ def registry_payload() -> dict[str, Any]:
         "matching_basis": MATCHING_BASIS,
         "evidence_basis": EVIDENCE_BASIS,
         "state_filename": STATE_FILENAME,
-        "team_identity_seeds": [list(x) for x in TEAM_IDENTITY_SEEDS],
-        "competition_identity_seeds": [list(x) for x in COMPETITION_IDENTITY_SEEDS],
-        "legacy_alias_registry_sha256": aliases.REGISTRY_SHA256,
+        "seed_registry_sha256": SEED_REGISTRY_SHA256,
+        "seed_registry_payload": seed_registry_payload(),
+        "reviewed_alias_registry_ancestry": [
+            [dict(row) for row in chain]
+            for chain in _REVIEWED_COMPLETE_ALIAS_ANCESTRIES
+        ],
+        "reviewed_alias_registry_transition": {
+            "source_state_schema_version": 1,
+            "target_state_schema_version": STATE_SCHEMA_VERSION,
+            "from": dict(_REVIEWED_ALIAS_V1),
+            "to": dict(_REVIEWED_ALIAS_V2),
+            "legacy_full_fixture_identity_registry_sha256": _LEGACY_V1_FULL_REGISTRY_SHA256,
+            "source_seed_registry_sha256": _LEGACY_V1_SEED_REGISTRY_SHA256,
+            "target_seed_registry_sha256": SEED_REGISTRY_SHA256,
+            "source_head": "012f15f8ea81dc32c3404880a854815e5e7078ca",
+            "successor_main": "be8e35dd179b44b76ff3aee1f7b3dfdad55a3f6c",
+        },
         "authority": {
             "research_shadow_fixture_reconciliation": True,
             "persistent_identity_learning": True,
@@ -670,6 +874,8 @@ __all__ = [
     "MATCHING_BASIS",
     "POLICY_ID",
     "REGISTRY_SHA256",
+    "SEED_REGISTRY_SHA256",
+    "SEED_REGISTRY_SCHEMA_VERSION",
     "SCHEMA_VERSION",
     "STATE_FILENAME",
     "STATE_SCHEMA_VERSION",
@@ -682,6 +888,8 @@ __all__ = [
     "observe_provider_payload",
     "registry_payload",
     "registry_sha256",
+    "seed_registry_payload",
+    "seed_registry_sha256",
     "reset_runtime_evidence",
     "state_sha256",
 ]
