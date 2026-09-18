@@ -263,6 +263,7 @@ def test_exact_reviewed_v1_state_migrates_to_v2_without_losing_learned_facts(tmp
     assert payload["alias_registry_ancestry"] == [
         identity._REVIEWED_ALIAS_V1,
         identity._REVIEWED_ALIAS_V2,
+        identity._REVIEWED_ALIAS_V3,
     ]
     for key in (
         "learned_team_identities", "learned_competition_identities", "evidence_records", "authority"
@@ -372,16 +373,54 @@ def test_native_v2_accepts_fresh_and_migrated_reviewed_ancestry(tmp_path):
     fresh_path = tmp_path / "fresh.json"
     _write_document(fresh_path, identity._state_payload())
     identity.configure_persistent_state(fresh_path)
-    assert identity._state_payload()["alias_registry_ancestry"] == [identity._REVIEWED_ALIAS_V2]
+    assert identity._state_payload()["alias_registry_ancestry"] == [identity._REVIEWED_ALIAS_V3]
 
     migrated_path = tmp_path / "migrated.json"
     migrated = identity._state_payload()
     migrated["alias_registry_ancestry"] = [
-        dict(identity._REVIEWED_ALIAS_V1), dict(identity._REVIEWED_ALIAS_V2)
+        dict(identity._REVIEWED_ALIAS_V1),
+        dict(identity._REVIEWED_ALIAS_V2),
+        dict(identity._REVIEWED_ALIAS_V3),
     ]
     _write_document(migrated_path, migrated)
     identity.configure_persistent_state(migrated_path)
     assert identity._state_payload()["alias_registry_ancestry"] == migrated["alias_registry_ancestry"]
+
+
+@pytest.mark.parametrize(
+    "historical_ancestry, expected_ancestry",
+    [
+        ([identity._REVIEWED_ALIAS_V2], [identity._REVIEWED_ALIAS_V2, identity._REVIEWED_ALIAS_V3]),
+        ([identity._REVIEWED_ALIAS_V1, identity._REVIEWED_ALIAS_V2], [identity._REVIEWED_ALIAS_V1, identity._REVIEWED_ALIAS_V2, identity._REVIEWED_ALIAS_V3]),
+    ],
+)
+def test_historical_v2_alias_ancestry_is_atomically_extended_to_v3(tmp_path, historical_ancestry, expected_ancestry):
+    state_path = tmp_path / identity.STATE_FILENAME
+    payload = identity._state_payload()
+    payload["alias_registry_ancestry"] = [dict(row) for row in historical_ancestry]
+    _write_document(state_path, payload)
+    identity.configure_persistent_state(state_path)
+    persisted = json.loads(state_path.read_text(encoding="utf-8"))["payload"]
+    assert persisted["alias_registry_ancestry"] == expected_ancestry
+
+
+@pytest.mark.parametrize(
+    "ancestry",
+    [
+        [identity._REVIEWED_ALIAS_V1, identity._REVIEWED_ALIAS_V3],
+        [identity._REVIEWED_ALIAS_V3, identity._REVIEWED_ALIAS_V2],
+        [identity._REVIEWED_ALIAS_V2, identity._REVIEWED_ALIAS_V2, identity._REVIEWED_ALIAS_V3],
+    ],
+)
+def test_v3_ancestry_rejects_skips_reversal_and_duplicates_atomically(tmp_path, ancestry):
+    state_path = tmp_path / identity.STATE_FILENAME
+    payload = identity._state_payload()
+    payload["alias_registry_ancestry"] = [dict(row) for row in ancestry]
+    _write_document(state_path, payload)
+    before = state_path.read_bytes()
+    with pytest.raises(identity.CurrentShadowFixtureIdentityStateError):
+        identity.configure_persistent_state(state_path)
+    assert state_path.read_bytes() == before
 
 
 def test_reviewed_historical_seed_identity_equals_current_only_for_this_transition():
@@ -397,15 +436,19 @@ def test_reviewed_historical_seed_identity_equals_current_only_for_this_transiti
 def test_retained_alias_ancestry_is_ordered_reviewed_prefix(monkeypatch):
     bundle = _verified_bundle(monkeypatch)
     retained = bundle._fixture_stable_identity_state_snapshot
-    retained["alias_registry_ancestry"] = [dict(identity._REVIEWED_ALIAS_V1)]
+    retained["alias_registry_ancestry"] = [
+        dict(identity._REVIEWED_ALIAS_V1), dict(identity._REVIEWED_ALIAS_V2)
+    ]
     bundle._fixture_stable_identity_state_sha256 = fanout._identity_state_sha256(retained)
     identity._alias_registry_ancestry[:] = [
-        dict(identity._REVIEWED_ALIAS_V1), dict(identity._REVIEWED_ALIAS_V2)
+        dict(identity._REVIEWED_ALIAS_V1),
+        dict(identity._REVIEWED_ALIAS_V2),
+        dict(identity._REVIEWED_ALIAS_V3),
     ]
     assert fanout.verify_current_event_discovery_reconciliation_bundle(bundle) is bundle
 
     identity._alias_registry_ancestry[:] = [
-        dict(identity._REVIEWED_ALIAS_V2), dict(identity._REVIEWED_ALIAS_V1)
+        dict(identity._REVIEWED_ALIAS_V3), dict(identity._REVIEWED_ALIAS_V2)
     ]
     with pytest.raises(fanout.CurrentShadowSportyBetCatalogFanoutReconciliationError):
         fanout.verify_current_event_discovery_reconciliation_bundle(bundle)
@@ -414,14 +457,16 @@ def test_retained_alias_ancestry_is_ordered_reviewed_prefix(monkeypatch):
 @pytest.mark.parametrize(
     "current_ancestry",
     [
-        [identity._REVIEWED_ALIAS_V1, {"policy_id": "UNKNOWN", "registry_sha256": "1" * 64}, identity._REVIEWED_ALIAS_V2],
-        [{"policy_id": identity._REVIEWED_ALIAS_V1["policy_id"], "registry_sha256": identity._REVIEWED_ALIAS_V2["registry_sha256"]}, identity._REVIEWED_ALIAS_V2],
+        [identity._REVIEWED_ALIAS_V1, {"policy_id": "UNKNOWN", "registry_sha256": "1" * 64}, identity._REVIEWED_ALIAS_V3],
+        [{"policy_id": identity._REVIEWED_ALIAS_V1["policy_id"], "registry_sha256": identity._REVIEWED_ALIAS_V3["registry_sha256"]}, identity._REVIEWED_ALIAS_V3],
     ],
 )
 def test_retained_replay_rejects_unknown_or_cross_paired_alias_ancestry(monkeypatch, current_ancestry):
     bundle = _verified_bundle(monkeypatch)
     retained = bundle._fixture_stable_identity_state_snapshot
-    retained["alias_registry_ancestry"] = [dict(identity._REVIEWED_ALIAS_V1)]
+    retained["alias_registry_ancestry"] = [
+        dict(identity._REVIEWED_ALIAS_V1), dict(identity._REVIEWED_ALIAS_V2)
+    ]
     bundle._fixture_stable_identity_state_sha256 = fanout._identity_state_sha256(retained)
     identity._alias_registry_ancestry[:] = [dict(row) for row in current_ancestry]
 

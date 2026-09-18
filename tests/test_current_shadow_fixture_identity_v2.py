@@ -97,7 +97,7 @@ def _reviewed(*, match_id: int, kickoff: datetime, competition: str, home: str, 
 
 def test_registry_identity_is_pinned_to_retained_run38_evidence():
     assert identity.POLICY_ID == "ATHENA_CURRENT_SHADOW_STABLE_SOURCE_PROVIDER_IDENTITY_V2"
-    assert identity.REGISTRY_SHA256 == "5fbbd1f20e85ba0559328048e9fa8fcca5ed2e127a3adb215a46a6c6a3ddffd6"
+    assert identity.REGISTRY_SHA256 == "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
     assert identity.registry_sha256() == identity.REGISTRY_SHA256
     assert len(identity.TEAM_IDENTITY_SEEDS) == 64
     assert len(identity.COMPETITION_IDENTITY_SEEDS) == 12

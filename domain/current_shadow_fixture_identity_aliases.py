@@ -27,7 +27,7 @@ from typing import Any, Mapping, Sequence
 
 
 SCHEMA_VERSION = 1
-POLICY_ID = "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V2"
+POLICY_ID = "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V3"
 MATCHING_BASIS = (
     "EXACT_COMPETITION_FULL_UTC_HOME_AWAY_ORIENTATION_"
     "LITERAL_OR_EXPLICIT_COMPETITION_SCOPED_TEAM_ALIAS_"
@@ -46,6 +46,13 @@ EVIDENCE_LINEAGE = {
         ),
         "fotmob_20260918_raw_sha256": (
             "0366592e6b227956d222d67de43031da82de9e4cc063f1529c01db85de722c9d"
+        ),
+    },
+    "run_35404223536": {
+        "source_main": "07b5c2bbcb803675aa538464cc528f8993f8d7bb",
+        "source_diagnostics_artifact_id": "10571711837",
+        "source_diagnostics_zip_sha256": (
+            "4f5947c2317fb42709001174e72e72d51881f4389f35ebdd8657ec6b2713c959"
         ),
     },
 }
@@ -133,6 +140,16 @@ TEAM_ALIASES: tuple[TeamAlias, ...] = tuple(sorted((
     TeamAlias("China League", "Ningbo Professional", "Ningbo Professional FC"),
     TeamAlias("Premier League", "Okzhetpes Kokshetau", "FC Okzhetpes"),
     TeamAlias("Premier League", "Zhenis", "FC Zhenis"),
+
+    # P3.0-E1 run 35404223536 retained source diagnostics, 2026-09-18/19.
+    # Each pair is literal and competition-scoped evidence, not a reusable
+    # suffix, gender-marker, accent, or competition-name normalization rule.
+    TeamAlias("K-League 1", "Gimcheon Sangmu", "Gimcheon Sangmu FC"),
+    TeamAlias("Liga 1", "Asociación Deportiva Tarma", "Asociacion Deportiva Tarma"),
+    TeamAlias("Major League Soccer", "Red Bull New York", "New York Red Bulls"),
+    TeamAlias("NWSL", "Kansas City Current (W)", "Kansas City Current"),
+    TeamAlias("NWSL", "San Diego Wave FC (W)", "San Diego Wave FC"),
+    TeamAlias("Primera Division Apertura", "Municipal Pérez Zeledón", "Perez Zeledon"),
 )))
 
 
