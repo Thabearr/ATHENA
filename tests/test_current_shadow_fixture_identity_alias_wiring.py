@@ -46,6 +46,12 @@ def test_stable_identity_keeps_seed_ancestry_separate_from_reviewed_alias_ancest
     assert stable_payload["reviewed_alias_registry_transition"]["to"] == (
         stable_identity._REVIEWED_ALIAS_V2
     )
+    assert stable_payload["reviewed_alias_registry_transition"]["source_seed_registry_sha256"] == (
+        stable_identity._LEGACY_V1_SEED_REGISTRY_SHA256
+    )
+    assert stable_payload["reviewed_alias_registry_transition"]["target_seed_registry_sha256"] == (
+        stable_identity.SEED_REGISTRY_SHA256
+    )
     assert stable_identity._REVIEWED_ALIAS_V2["policy_id"] == aliases.POLICY_ID
     assert stable_identity._REVIEWED_ALIAS_V2["registry_sha256"] == aliases.REGISTRY_SHA256
 

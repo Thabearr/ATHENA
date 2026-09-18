@@ -322,6 +322,25 @@ def test_legacy_state_hash_corruption_fails_before_migration(tmp_path):
         identity.configure_persistent_state(state_path)
 
 
+def test_legacy_migration_rejects_future_current_seed_drift_before_loading(tmp_path, monkeypatch):
+    state_path = tmp_path / identity.STATE_FILENAME
+    _write_document(state_path, _legacy_payload())
+    before_file, before_state = state_path.read_bytes(), identity._state_payload()
+    monkeypatch.setattr(identity, "SEED_REGISTRY_SHA256", "0" * 64)
+
+    with pytest.raises(
+        identity.CurrentShadowFixtureIdentityStateError,
+        match="reviewed migration seed ancestry drifted",
+    ):
+        identity.configure_persistent_state(state_path)
+
+    assert state_path.read_bytes() == before_file
+    monkeypatch.setattr(
+        identity, "SEED_REGISTRY_SHA256", identity._LEGACY_V1_SEED_REGISTRY_SHA256
+    )
+    assert identity._state_payload() == before_state
+
+
 @pytest.mark.parametrize(
     "mutator",
     [
@@ -331,6 +350,12 @@ def test_legacy_state_hash_corruption_fails_before_migration(tmp_path):
         lambda payload: payload.__setitem__("alias_registry_ancestry", [identity._REVIEWED_ALIAS_V1]),
         lambda payload: payload.__setitem__("alias_registry_ancestry", [identity._REVIEWED_ALIAS_V2, identity._REVIEWED_ALIAS_V1]),
         lambda payload: payload.__setitem__("alias_registry_ancestry", [identity._REVIEWED_ALIAS_V1, identity._REVIEWED_ALIAS_V1]),
+        lambda payload: payload.__setitem__("alias_registry_ancestry", [identity._REVIEWED_ALIAS_V2, identity._REVIEWED_ALIAS_V2]),
+        lambda payload: payload.__setitem__("alias_registry_ancestry", [{**identity._REVIEWED_ALIAS_V2, "unexpected": True}]),
+        lambda payload: payload.__setitem__("alias_registry_ancestry", [identity._REVIEWED_ALIAS_V1, {"policy_id": "UNKNOWN", "registry_sha256": "1" * 64}]),
+        lambda payload: payload.__setitem__("alias_registry_ancestry", [{"policy_id": identity._REVIEWED_ALIAS_V1["policy_id"], "registry_sha256": identity._REVIEWED_ALIAS_V2["registry_sha256"]}]),
+        lambda payload: payload.__setitem__("alias_registry_ancestry", [{"policy_id": identity._REVIEWED_ALIAS_V2["policy_id"], "registry_sha256": identity._REVIEWED_ALIAS_V1["registry_sha256"]}]),
+        lambda payload: payload.__setitem__("alias_registry_ancestry", [{"policy_id": "UNKNOWN", "registry_sha256": "1" * 64}]),
         lambda payload: payload.__setitem__("authority", {}),
     ],
 )
@@ -359,6 +384,16 @@ def test_native_v2_accepts_fresh_and_migrated_reviewed_ancestry(tmp_path):
     assert identity._state_payload()["alias_registry_ancestry"] == migrated["alias_registry_ancestry"]
 
 
+def test_reviewed_historical_seed_identity_equals_current_only_for_this_transition():
+    assert identity.SEED_REGISTRY_SHA256 == identity.seed_registry_sha256()
+    assert identity._LEGACY_V1_SEED_REGISTRY_SHA256 == identity.SEED_REGISTRY_SHA256
+    descriptor = identity.registry_payload()["reviewed_alias_registry_transition"]
+    assert descriptor["source_seed_registry_sha256"] == identity._LEGACY_V1_SEED_REGISTRY_SHA256
+    assert descriptor["target_seed_registry_sha256"] == identity.SEED_REGISTRY_SHA256
+    assert descriptor["source_state_schema_version"] == 1
+    assert descriptor["target_state_schema_version"] == 2
+
+
 def test_retained_alias_ancestry_is_ordered_reviewed_prefix(monkeypatch):
     bundle = _verified_bundle(monkeypatch)
     retained = bundle._fixture_stable_identity_state_snapshot
@@ -372,5 +407,23 @@ def test_retained_alias_ancestry_is_ordered_reviewed_prefix(monkeypatch):
     identity._alias_registry_ancestry[:] = [
         dict(identity._REVIEWED_ALIAS_V2), dict(identity._REVIEWED_ALIAS_V1)
     ]
+    with pytest.raises(fanout.CurrentShadowSportyBetCatalogFanoutReconciliationError):
+        fanout.verify_current_event_discovery_reconciliation_bundle(bundle)
+
+
+@pytest.mark.parametrize(
+    "current_ancestry",
+    [
+        [identity._REVIEWED_ALIAS_V1, {"policy_id": "UNKNOWN", "registry_sha256": "1" * 64}, identity._REVIEWED_ALIAS_V2],
+        [{"policy_id": identity._REVIEWED_ALIAS_V1["policy_id"], "registry_sha256": identity._REVIEWED_ALIAS_V2["registry_sha256"]}, identity._REVIEWED_ALIAS_V2],
+    ],
+)
+def test_retained_replay_rejects_unknown_or_cross_paired_alias_ancestry(monkeypatch, current_ancestry):
+    bundle = _verified_bundle(monkeypatch)
+    retained = bundle._fixture_stable_identity_state_snapshot
+    retained["alias_registry_ancestry"] = [dict(identity._REVIEWED_ALIAS_V1)]
+    bundle._fixture_stable_identity_state_sha256 = fanout._identity_state_sha256(retained)
+    identity._alias_registry_ancestry[:] = [dict(row) for row in current_ancestry]
+
     with pytest.raises(fanout.CurrentShadowSportyBetCatalogFanoutReconciliationError):
         fanout.verify_current_event_discovery_reconciliation_bundle(bundle)

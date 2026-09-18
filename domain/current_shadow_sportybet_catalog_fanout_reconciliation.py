@@ -81,7 +81,7 @@ FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256 = (
     "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
 )
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "64a68a09b1da57d026ca4d29d5ff7b49a0652430df303dec6538b0d02cad0013"
+EXPECTED_CONTRACT_SHA256 = "941ce2d1eba567bd6e57aa0be8d7417f0c5d9631c5c94a500399e77d653d697b"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow

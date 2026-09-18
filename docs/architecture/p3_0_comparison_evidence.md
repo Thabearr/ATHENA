@@ -235,3 +235,17 @@ and append-only retained replay protections. It adds no provider retry and no
 model, pricing, Router, Portfolio, login, cookie, wallet, stake, wager, or
 share-code authority. P3.0 comparator and P3.1 remain not started, and
 `SOURCE_REVIEW_COUNTER` remains `4 / 5`.
+
+Follow-up review found that schema-v1 admission still needed to bind the
+historical immutable seed-only identity directly, rather than relying only on
+the historical full registry hash. The reviewed transition now records the
+historical seed-only SHA-256
+`7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79`
+and requires it to equal the current seed-only registry identity. Accordingly,
+this alias-only V1-to-V2 migration is unavailable after any future seed-table
+change; that change requires a new reviewed migration contract. The corrected
+stable-identity registry SHA-256 is
+`5fbbd1f20e85ba0559328048e9fa8fcca5ed2e127a3adb215a46a6c6a3ddffd6`
+and the corrected fanout contract SHA-256 is
+`941ce2d1eba567bd6e57aa0be8d7417f0c5d9631c5c94a500399e77d653d697b`.
+No provider retry or authority change was used for this repair.

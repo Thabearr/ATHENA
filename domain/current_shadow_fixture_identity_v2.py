@@ -50,6 +50,9 @@ _REVIEWED_ALIAS_V2 = {
 _LEGACY_V1_FULL_REGISTRY_SHA256 = (
     "a0dfd70b2750612498133393b0ff556c818008778d51f8a5cbd9bf005704b3f4"
 )
+_LEGACY_V1_SEED_REGISTRY_SHA256 = (
+    "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79"
+)
 _ALIAS_ANCESTRY_NODE_KEYS = frozenset({"policy_id", "registry_sha256"})
 _REVIEWED_COMPLETE_ALIAS_ANCESTRIES = (
     (_REVIEWED_ALIAS_V2,),
@@ -575,6 +578,14 @@ def _validate_loaded_payload(payload: Any) -> tuple[list[dict[str, str]], bool]:
         _require_exact_payload_keys(payload, _LEGACY_STATE_PAYLOAD_KEYS)
         if payload.get("seed_registry_sha256") != _LEGACY_V1_FULL_REGISTRY_SHA256:
             raise CurrentShadowFixtureIdentityStateError("identity state seed registry drifted")
+        if _LEGACY_V1_SEED_REGISTRY_SHA256 != SEED_REGISTRY_SHA256:
+            raise CurrentShadowFixtureIdentityStateError(
+                "identity state reviewed migration seed ancestry drifted"
+            )
+        if seed_registry_sha256() != SEED_REGISTRY_SHA256:
+            raise CurrentShadowFixtureIdentityStateError(
+                "identity state current seed registry calculation drifted"
+            )
         _validate_collections(payload)
         return [dict(_REVIEWED_ALIAS_V1), dict(_REVIEWED_ALIAS_V2)], True
     if payload.get("schema_version") != STATE_SCHEMA_VERSION:
@@ -819,9 +830,13 @@ def registry_payload() -> dict[str, Any]:
             for chain in _REVIEWED_COMPLETE_ALIAS_ANCESTRIES
         ],
         "reviewed_alias_registry_transition": {
+            "source_state_schema_version": 1,
+            "target_state_schema_version": STATE_SCHEMA_VERSION,
             "from": dict(_REVIEWED_ALIAS_V1),
             "to": dict(_REVIEWED_ALIAS_V2),
             "legacy_full_fixture_identity_registry_sha256": _LEGACY_V1_FULL_REGISTRY_SHA256,
+            "source_seed_registry_sha256": _LEGACY_V1_SEED_REGISTRY_SHA256,
+            "target_seed_registry_sha256": SEED_REGISTRY_SHA256,
             "source_head": "012f15f8ea81dc32c3404880a854815e5e7078ca",
             "successor_main": "be8e35dd179b44b76ff3aee1f7b3dfdad55a3f6c",
         },
