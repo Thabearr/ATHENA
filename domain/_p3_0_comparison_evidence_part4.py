@@ -258,6 +258,7 @@ def _contract_payload() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION, "policy_id": POLICY_ID,
         "as_of_proof_policy_id": AS_OF_PROOF_POLICY_ID,
+        "legacy_runtime_safety_metadata_quarantine_policy_id": RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID,
         "price_output_kind": PRICE_OUTPUT_KIND, "router_output_kind": ROUTER_OUTPUT_KIND,
         "fixture_identity_keys": sorted(FIXTURE_IDENTITY_KEYS), "timing_keys": sorted(TIMING_KEYS),
         "canonical_authority_keys": sorted(CANONICAL_AUTHORITY_KEYS),
@@ -271,6 +272,7 @@ def _contract_payload() -> dict[str, Any]:
         "legacy_input_fields": sorted(_LEGACY_INPUT_FIELDS),
         "legacy_analysis_fields": sorted(_LEGACY_ANALYSIS_FIELDS),
         "legacy_exported_fields": sorted(_LEGACY_EXPORTED_FIELDS),
+        "quarantined_runtime_safety_keys": sorted(_QUARANTINED_RUNTIME_SAFETY_KEYS),
         "forbidden_exact_keys": sorted(_FORBIDDEN_EXACT_KEYS),
         "forbidden_tokens": sorted(_FORBIDDEN_TOKENS),
         "allowed_false_safety_keys": sorted(_ALLOWED_FALSE_SAFETY_KEYS),
@@ -288,8 +290,8 @@ def _contract_payload() -> dict[str, Any]:
 def calculate_contract_sha256() -> str:
     return canonical_sha256(_contract_payload())
 
-# Re-pinned after the P3.0-E1 trust-boundary hardening in PR #353.
-EXPECTED_CONTRACT_SHA256 = "464a80970a108efb6d9dcd1f5d1692c521f165d86d7b954b232b90df9fee651b"
+# Re-pinned after P3_LEGACY_RUNTIME_SAFETY_METADATA_QUARANTINE_V1 in post-#375 recovery.
+EXPECTED_CONTRACT_SHA256 = "e1bf125894460ef8d8b1a778211de16914caa18e8c71157425b290e37779053e"
 
 
 def validate_contract() -> str:
@@ -304,6 +306,7 @@ __all__ = [
     "EXPECTED_COMPONENTS", "EXPECTED_CONTRACT_SHA256", "FIXTURE_IDENTITY_KEYS",
     "JOIN_STATES", "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "POLICY_ID",
     "PRICE_OUTPUT_KIND", "REQUIRED_CANONICAL_RESPONSIBILITIES", "ROUTER_OUTPUT_KIND",
+    "RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID",
     "SCHEMA_VERSION", "TIMING_KEYS", "build_as_of_proof", "build_capture_bundle",
     "build_fixture_record", "build_join_receipt", "calculate_contract_sha256",
     "canonical_json_bytes", "canonical_sha256", "fixture_storage_key", "load_json_bytes",

@@ -25,7 +25,9 @@ from domain import current_shadow_fixture_identity_aliases as aliases
 
 SCHEMA_VERSION = 1
 POLICY_ID = "ATHENA_P3_0_E1_RETAINED_SOURCE_DIAGNOSTICS_AUDIT_V1"
-FAILURE_RECEIPT = "artifacts/p3-0-comparison-evidence/p3-0-capture-failure.json"
+ACTIVE_FAILURE_RECEIPT = "artifacts/p3-0-comparison-evidence/capture/p3-0-capture-failure.json"
+HISTORICAL_FAILURE_RECEIPT = "artifacts/p3-0-comparison-evidence/p3-0-capture-failure.json"
+FAILURE_RECEIPT = ACTIVE_FAILURE_RECEIPT
 
 
 class SourceDiagnosticsAuditError(RuntimeError):
@@ -340,10 +342,29 @@ def analyze(path: str | Path, *, expected_zip_sha256: str | None = None) -> dict
         if expected_zip_sha256 is not None:
             raise SourceDiagnosticsAuditError("expected ZIP SHA-256 requires a ZIP input")
         entries = _directory_entries(artifact)
-    receipt_raw = entries.get(FAILURE_RECEIPT)
-    if receipt_raw is None:
-        raise SourceDiagnosticsAuditError("P3.0 failure receipt missing")
-    receipt = _json(receipt_raw, FAILURE_RECEIPT)
+    active_receipt_raw = entries.get(ACTIVE_FAILURE_RECEIPT)
+    historical_receipt_raw = entries.get(HISTORICAL_FAILURE_RECEIPT)
+    if active_receipt_raw is not None and historical_receipt_raw is not None:
+        if active_receipt_raw != historical_receipt_raw:
+            raise SourceDiagnosticsAuditError(
+                "conflicting P3.0 failure receipts in envelope and capture child"
+            )
+        receipt_raw = active_receipt_raw
+        receipt_label = ACTIVE_FAILURE_RECEIPT
+    elif active_receipt_raw is not None:
+        receipt_raw = active_receipt_raw
+        receipt_label = ACTIVE_FAILURE_RECEIPT
+    elif historical_receipt_raw is not None:
+        receipt_raw = historical_receipt_raw
+        receipt_label = HISTORICAL_FAILURE_RECEIPT
+    else:
+        bare_receipt_raw = entries.get("p3-0-capture-failure.json")
+        if bare_receipt_raw is not None:
+            receipt_raw = bare_receipt_raw
+            receipt_label = "p3-0-capture-failure.json"
+        else:
+            raise SourceDiagnosticsAuditError("P3.0 failure receipt missing")
+    receipt = _json(receipt_raw, receipt_label)
     if type(receipt) is not dict or type(receipt.get("exact_commit_sha")) is not str:
         raise SourceDiagnosticsAuditError("P3.0 failure receipt malformed")
     fixtures = _fotmob_fixtures(entries)

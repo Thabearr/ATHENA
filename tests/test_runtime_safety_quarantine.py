@@ -236,3 +236,104 @@ def test_blocked_slips_cannot_be_split_or_merged() -> None:
     assert merged["success"] is False
     assert merged["legs"] == []
     assert merged["total_estimated_odds"] == 0.0
+
+
+def test_p3_legacy_runtime_safety_metadata_quarantine_v1() -> None:
+    import pytest
+    from domain.p3_0_comparison_evidence import (
+        LegacyEvidenceObserver,
+        P30ComparisonEvidenceError,
+        project_legacy_output,
+    )
+    from services.analysis_pipeline import AnalysisPipeline
+
+    fake_match = _bet_analysis()
+
+    class StubAnalyst:
+        def compile_master_fixture_prediction(self, fixture_context):
+            assert fixture_context["fixture_id"] == 123
+            return dict(fake_match)
+
+    pipeline = object.__new__(AnalysisPipeline)
+    pipeline.analyst = StubAnalyst()
+    pipeline.form_svc = None
+    pipeline._evidence_observer = None
+    pipeline._resolve_team_id = lambda team_name: 1 if team_name == "Home" else 2
+
+    fixture = {
+        "fixture_id": 123,
+        "league": "Premier League",
+        "home_team": "Home",
+        "away_team": "Away",
+        "match_date": "2026-08-22T15:00:00Z",
+        "data_source": "fotmob",
+    }
+
+    rows_without_observer = pipeline.run_pipeline_snapshot(override_fixtures=[fixture])
+
+    observer = LegacyEvidenceObserver()
+    rows_with_observer = pipeline.run_pipeline_snapshot(
+        override_fixtures=[fixture], evidence_observer=observer
+    )
+
+    assert rows_with_observer == rows_without_observer
+
+    obs = observer.observations()
+    assert len(obs) == 1
+    observation = obs[0]
+
+    def _assert_quarantined_absent(val) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                assert k not in (
+                    "runtime_authorization_state",
+                    "runtime_authorization_reasons",
+                    "kelly_stake_pct",
+                    "legacy_kelly_stake_pct_before_runtime_gate",
+                )
+                _assert_quarantined_absent(v)
+        elif isinstance(val, list):
+            for item in val:
+                _assert_quarantined_absent(item)
+
+    _assert_quarantined_absent(observation["legacy_output"])
+
+    legacy_out = observation["legacy_output"]
+    assert legacy_out["exported_row"]["decision_status"] == DecisionStatus.ANALYTICAL_CANDIDATE.value
+    assert (
+        legacy_out["exported_row"]["legacy_decision_status_before_runtime_gate"]
+        == DecisionStatus.BET.value
+    )
+    assert "evidence_report" in legacy_out["exported_row"]
+    report = legacy_out["exported_row"]["evidence_report"]
+    assert report["final_decision"] == DecisionStatus.ANALYTICAL_CANDIDATE.value
+    assert (
+        report["legacy_decision_status_before_runtime_gate"]
+        == DecisionStatus.BET.value
+    )
+    assert "decision_reasons" in report
+
+    for bad_key in (
+        "authorization",
+        "proxy_authorization",
+        "bearer",
+        "password",
+        "token",
+        "session",
+        "cookie",
+        "secret",
+    ):
+        bad_pre = dict(fake_match)
+        bad_pre[bad_key] = "credential_value"
+        with pytest.raises(
+            P30ComparisonEvidenceError, match="sensitive evidence key is forbidden"
+        ):
+            project_legacy_output(bad_pre, fake_match, rows_without_observer[0])
+
+        bad_nested = dict(fake_match)
+        bad_nested["evidence_report"] = dict(fake_match["evidence_report"])
+        bad_nested["evidence_report"][bad_key] = "nested_credential"
+        with pytest.raises(
+            P30ComparisonEvidenceError, match="sensitive evidence key is forbidden"
+        ):
+            project_legacy_output(bad_nested, fake_match, rows_without_observer[0])

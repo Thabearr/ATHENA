@@ -133,6 +133,8 @@ def _failure_chain(exc: BaseException) -> tuple[list[dict[str, str]], bool]:
 
 def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id: str,
                   started_at: str, exc: BaseException) -> None:
+    if (output_dir / "manifest.json").exists():
+        return
     output_dir.mkdir(parents=True, exist_ok=True)
     failure_chain, failure_chain_truncated = _failure_chain(exc)
     value = {

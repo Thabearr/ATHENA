@@ -321,6 +321,10 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
         )
         records.append(record)
         artifacts.extend(_source_artifacts(source))
+    if selected_sources and not records:
+        raise P30PairedCaptureError(
+            "P3.0-E1 zero fixture records after non-empty source selection"
+        )
     bundle = evidence.build_capture_bundle(
         repository_commit_sha=exact_commit_sha,
         capture_id=capture_id,
@@ -371,18 +375,38 @@ def main(argv: Sequence[str] | None = None) -> int:
             request_dates=requested, fixture_cap=args.fixture_cap,
             output_dir=args.output_dir, repository_root=root,
         )
-        complete = sum(
+        fixture_count = len(bundle["fixture_records"])
+        complete_fixture_count = sum(
             row["completeness_receipt"]["state"] == "P3_0_CAPTURE_COMPLETE"
             for row in bundle["fixture_records"]
         )
-        print(json.dumps({
-            "status": "P3_0_E1_CAPTURE_WRITTEN",
-            "capture_id": bundle["capture_id"],
-            "fixture_count": len(bundle["fixture_records"]),
-            "complete_fixture_count": complete,
-            "canonical_sha256": bundle["canonical_sha256"],
-        }, sort_keys=True))
-        return 0
+        incomplete_fixture_count = fixture_count - complete_fixture_count
+        missing_reason_counts: dict[str, int] = {}
+        for row in bundle["fixture_records"]:
+            for reason in row["completeness_receipt"].get("missing_reasons") or []:
+                missing_reason_counts[reason] = missing_reason_counts.get(reason, 0) + 1
+
+        if fixture_count > 0 and complete_fixture_count == fixture_count:
+            print(json.dumps({
+                "status": "P3_0_E1_CAPTURE_WRITTEN",
+                "capture_id": bundle["capture_id"],
+                "fixture_count": fixture_count,
+                "complete_fixture_count": complete_fixture_count,
+                "incomplete_fixture_count": 0,
+                "canonical_sha256": bundle["canonical_sha256"],
+            }, sort_keys=True))
+            return 0
+        else:
+            print(json.dumps({
+                "status": "P3_0_E1_CAPTURE_PARTIAL",
+                "capture_id": bundle["capture_id"],
+                "fixture_count": fixture_count,
+                "complete_fixture_count": complete_fixture_count,
+                "incomplete_fixture_count": incomplete_fixture_count,
+                "missing_reason_counts": missing_reason_counts,
+                "canonical_sha256": bundle["canonical_sha256"],
+            }, sort_keys=True), file=sys.stderr)
+            return 1
     except Exception as exc:
         _safe_failure(
             args.output_dir, exact_commit_sha=exact_sha,

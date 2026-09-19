@@ -624,6 +624,88 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
             "Check I failed: production_sportybet_execution authority must be False"
         )
 
+    from domain.p3_0_comparison_evidence import (
+        LegacyEvidenceObserver,
+        P30ComparisonEvidenceError,
+        project_legacy_output,
+        validate_contract,
+    )
+    from services.analysis_pipeline import (
+        LEGACY_RUNTIME_AUTHORIZATION_STATE,
+        LEGACY_RUNTIME_BET_BLOCK_REASON,
+        apply_runtime_authorization,
+    )
+
+    contract_sha = validate_contract()
+
+    sample_analysis = {
+        "fixture_id": "test_fixture_ml_1",
+        "home_team": "DC United",
+        "away_team": "Charlotte FC",
+        "league": "Major League Soccer",
+        "match_date": "2026-09-19",
+        "decision_status": "BET",
+        "recommended_analytical_verdict": "BET",
+        "edge_differential": 0.05,
+        "edge_is_bookmaker_value": True,
+        "bookmaker_odds": 2.1,
+        "bookmaker_probability": 0.48,
+        "edge_pp": 5.0,
+        "upset_alert": False,
+        "risk_score": 10.0,
+        "stale_data": False,
+        "viable_markets": [],
+        "accumulator_eligible_selection": "HOME",
+        "reasoning_verdicts": ["VALUE"],
+        "no_bet_reasons": [],
+        "evidence_report": {
+            "final_decision": "BET",
+            "legacy_decision_status_before_runtime_gate": "BET",
+            "decision_reasons": ["Cleared analytical checks."],
+            "runtime_authorization_state": LEGACY_RUNTIME_AUTHORIZATION_STATE,
+            "runtime_authorization_reasons": [LEGACY_RUNTIME_BET_BLOCK_REASON],
+        },
+    }
+    quarantined = apply_runtime_authorization(sample_analysis)
+    projected = project_legacy_output(
+        pre_gate=quarantined,
+        authorized=quarantined,
+        exported=quarantined,
+    )
+
+    def _assert_quarantined_keys_absent(val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                if k in (
+                    "runtime_authorization_state",
+                    "runtime_authorization_reasons",
+                    "kelly_stake_pct",
+                    "legacy_kelly_stake_pct_before_runtime_gate",
+                ):
+                    raise P30LiveReadinessError(
+                        f"Check I failed: quarantined key '{k}' found in projected output"
+                    )
+                _assert_quarantined_keys_absent(v)
+        elif isinstance(val, list):
+            for item in val:
+                _assert_quarantined_keys_absent(item)
+
+    _assert_quarantined_keys_absent(projected)
+
+    bad_analysis = dict(quarantined)
+    bad_analysis["authorization"] = "secret_bearer_token"
+    credential_rejected = False
+    try:
+        project_legacy_output(
+            pre_gate=bad_analysis,
+            authorized=bad_analysis,
+            exported=bad_analysis,
+        )
+    except P30ComparisonEvidenceError:
+        credential_rejected = True
+    if not credential_rejected:
+        raise P30LiveReadinessError("Check I failed: credential-like key was not rejected")
+
     return {
         "status": "PASSED",
         "canonical_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
@@ -632,6 +714,9 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         "supported_and_p3_strategy_unified": True,
         "paginated_runtime_reconciliation_authority": False,
         "catalog_fanout_runtime_authority": False,
+        "contract_sha256": contract_sha,
+        "runtime_safety_quarantine_verified": True,
+        "credential_protection_verified": True,
     }
 
 
@@ -790,11 +875,27 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
             "Check L failed: readiness gate must execute strictly before paired evidence capture"
         )
 
+    capture_lines = [line for line in lines if "--output-dir" in line]
+    if not capture_lines:
+        raise P30LiveReadinessError("Check L failed: --output-dir not found in capture workflow")
+    if not any("artifacts/p3-0-comparison-evidence/capture" in line for line in capture_lines):
+        raise P30LiveReadinessError(
+            "Check L failed: capture step --output-dir must be artifacts/p3-0-comparison-evidence/capture"
+        )
+    envelope_dir = repository_root / "artifacts" / "p3-0-comparison-evidence"
+    child_dir = envelope_dir / "capture"
+    if child_dir.exists():
+        raise P30LiveReadinessError(
+            "Check L failed: capture child directory must not exist prior to capture execution"
+        )
+
     return {
         "status": "PASSED",
         "workflow_step_order_verified": True,
         "readiness_step_index": readiness_idx,
         "capture_step_index": capture_idx,
+        "envelope_child_separation_verified": True,
+        "capture_child_path": "artifacts/p3-0-comparison-evidence/capture",
     }
 
 

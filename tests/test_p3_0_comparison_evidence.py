@@ -1,7 +1,7 @@
 from tests._p3_0_comparison_evidence_support import *  # noqa: F401,F403
 
 def test_contract_is_re_pinned_after_hardening():
-    assert evidence.validate_contract() == "464a80970a108efb6d9dcd1f5d1692c521f165d86d7b954b232b90df9fee651b"
+    assert evidence.validate_contract() == "e1bf125894460ef8d8b1a778211de16914caa18e8c71157425b290e37779053e"
 
 
 def test_complete_requires_semantic_evidence_and_explicit_asof_proof():

@@ -265,3 +265,125 @@ def test_bundle_and_artifact_are_deterministic(tmp_path):
     output = tmp_path / "capture"
     evidence.write_capture_artifact(first, output)
     assert evidence.verify_capture_artifact(output) == first
+
+
+def test_fix_b_readiness_envelope_vs_immutable_capture_child_offline_proof(tmp_path):
+    """Prove Fix B: readiness envelope and immutable capture child are distinct and safe."""
+    # 1. readiness creates envelope
+    envelope_dir = tmp_path / "artifacts" / "p3-0-comparison-evidence"
+    envelope_dir.mkdir(parents=True, exist_ok=True)
+    readiness_receipt = envelope_dir / "p3-0-e1-live-readiness.json"
+    readiness_content = b'{"status":"P3_0_E1_LIVE_READINESS_VERIFIED"}\n'
+    readiness_receipt.write_bytes(readiness_content)
+
+    # 2. readiness receipt exists
+    assert readiness_receipt.exists()
+
+    # 3. capture child does not exist
+    capture_child = envelope_dir / "capture"
+    assert not capture_child.exists()
+
+    # 4. deterministic valid capture publishes into child
+    bundle = _bundle()
+    published = evidence.write_capture_artifact(bundle, capture_child)
+    assert published == capture_child
+    assert capture_child.exists()
+
+    # 5. capture verifies
+    verified = evidence.verify_capture_artifact(capture_child)
+    assert verified["canonical_sha256"] == bundle["canonical_sha256"]
+
+    # 6. readiness receipt bytes unchanged
+    assert readiness_receipt.read_bytes() == readiness_content
+
+    # 7. preexisting child fails closed
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence.write_capture_artifact(bundle, capture_child)
+
+    # 8. no overwrite occurs
+    verified_after = evidence.verify_capture_artifact(capture_child)
+    assert verified_after["canonical_sha256"] == bundle["canonical_sha256"]
+
+
+def test_deterministic_post_router_failure_reproduction_not_retained_model_reexecution(tmp_path):
+    """Prove structural fix for run 35467453094 without claiming model reexecution.
+
+    Fixture: FOTMOB:5071367, provider event: sr:match:66299552 (DC United vs Charlotte FC).
+    """
+    from domain.p3_0_comparison_evidence import (
+        LegacyEvidenceObserver,
+        P30ComparisonEvidenceError,
+    )
+    from domain._p3_0_comparison_evidence_part1 import _reject_sensitive_key
+    from services.analysis_pipeline import (
+        LEGACY_RUNTIME_AUTHORIZATION_STATE,
+        LEGACY_RUNTIME_BET_BLOCK_REASON,
+        apply_runtime_authorization,
+    )
+
+    legacy_analysis = {
+        "fixture_id": "5071367",
+        "home_team": "DC United",
+        "away_team": "Charlotte FC",
+        "league": "Major League Soccer",
+        "match_date": "2026-09-19T23:30:00Z",
+        "decision_status": "BET",
+        "evidence_report": {
+            "final_decision": "BET",
+            "decision_reasons": ["Cleared."],
+            "runtime_authorization_state": LEGACY_RUNTIME_AUTHORIZATION_STATE,
+            "runtime_authorization_reasons": [LEGACY_RUNTIME_BET_BLOCK_REASON],
+        },
+    }
+    quarantined = apply_runtime_authorization(legacy_analysis)
+
+    # Before fix: _reject_sensitive_key rejects "runtime_authorization_state"
+    with pytest.raises(P30ComparisonEvidenceError, match="sensitive evidence key is forbidden"):
+        _reject_sensitive_key(
+            "runtime_authorization_state",
+            "legacy_exported_row.evidence_report.runtime_authorization_state",
+            LEGACY_RUNTIME_AUTHORIZATION_STATE,
+        )
+
+    # Before fix: output path collides with readiness envelope
+    envelope = tmp_path / "artifacts" / "p3-0-comparison-evidence"
+    envelope.mkdir(parents=True, exist_ok=True)
+    readiness_file = envelope / "p3-0-e1-live-readiness.json"
+    readiness_file.write_text('{"status":"P3_0_E1_LIVE_READINESS_VERIFIED"}')
+    bundle = _bundle()
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence.write_capture_artifact(bundle, envelope)
+
+    # After fix:
+    # 1. Runtime metadata is quarantined from copied P3 evidence
+    observer = LegacyEvidenceObserver()
+    observer(
+        fixture_context={
+            "fixture_id": "5071367",
+            "home_team": "DC United",
+            "away_team": "Charlotte FC",
+            "match_date": "2026-09-19",
+        },
+        pre_gate=quarantined,
+        authorized=quarantined,
+        exported={
+            "fixture_id": "5071367",
+            "fixture": "DC United vs Charlotte FC",
+            "home_team": "DC United",
+            "away_team": "Charlotte FC",
+            "league": "Major League Soccer",
+            "match_date": "2026-09-19",
+            "decision_status": "ANALYTICAL_CANDIDATE",
+            "evidence_report": quarantined["evidence_report"],
+            "runtime_authorization_state": LEGACY_RUNTIME_AUTHORIZATION_STATE,
+            "runtime_authorization_reasons": [LEGACY_RUNTIME_BET_BLOCK_REASON],
+        },
+    )
+    obs = observer.observations()
+    assert len(obs) == 1
+
+    # 2. Immutable capture child publishes cleanly without colliding with envelope
+    capture_child = envelope / "capture"
+    published = evidence.write_capture_artifact(bundle, capture_child)
+    assert published == capture_child
+    assert readiness_file.exists()
