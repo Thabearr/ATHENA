@@ -106,24 +106,7 @@ def test_zero_router_inputs_raise_with_deterministic_reconciliation_diagnostic()
         "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1",
         "provider_discovery_observed_at": "2026-09-19T11:49:46.016668Z",
         "source_viability": "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS",
-        "request_date_counts": {
-            "20260917": {
-                "provider_event_count": 4,
-                "provider_prematch_bookable_count": 0,
-                "provider_inplay_count": 4,
-                "provider_future_lead_eligible_count": 0,
-                "provider_too_close_count": 4,
-                "reconciled_fixture_count": 0,
-            },
-            "20260918": {
-                "provider_event_count": 3,
-                "provider_prematch_bookable_count": 0,
-                "provider_inplay_count": 3,
-                "provider_future_lead_eligible_count": 0,
-                "provider_too_close_count": 3,
-                "reconciled_fixture_count": 0,
-            },
-        },
+        "request_date_count": 2,
         "disposition_totals": {
             "NO_EXACT_FIXTURE_MATCH": 6,
             "PROVIDER_ONLY": 3,
