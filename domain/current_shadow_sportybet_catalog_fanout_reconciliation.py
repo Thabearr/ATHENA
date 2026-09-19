@@ -111,30 +111,75 @@ SportyBetCurrentEventDiscoveryError = legacy.SportyBetCurrentEventDiscoveryError
 _fanout_overlap_scope_depth = 0
 
 
-def validate_fanout_request_scope(observations: Sequence[Any]) -> None:
+def validate_fanout_request_scope(
+    observations: Sequence[Any],
+    *,
+    events: Sequence[Any] | None = None,
+    require_proven: bool = True,
+) -> str:
     """Validate that tournament fanout observations are actually scoped by request.
 
-    If distinct tournament requests return identical non-empty event sets,
-    the provider endpoint is echoing global data rather than filtering by tournament.
-    Fails closed with FANOUT_REQUEST_SCOPE_UNPROVEN.
+    Checks:
+    1. Both requested (category_id, tournament_id) and returned event native (category_id, tournament_id)
+       match when native event scope is available.
+    2. Distinct tournament requests do not return identical non-empty event sets (which indicates
+       the provider endpoint is returning global data rather than filtering by tournament scope).
+
+    Returns:
+        "FANOUT_REQUEST_SCOPE_PROVEN" if request scoping is proven,
+        "FANOUT_REQUEST_SCOPE_UNPROVEN" if unproven and require_proven is False.
+
+    Raises:
+        CurrentShadowSportyBetCatalogFanoutReconciliationError if unproven and require_proven is True.
     """
     if len(observations) < 2:
-        return
+        return "FANOUT_REQUEST_SCOPE_PROVEN"
+
+    # 1. Check requested scope vs returned event native scope if events are provided
+    if events is not None:
+        event_by_id = {getattr(e, "event_id", None): e for e in events if getattr(e, "event_id", None) is not None}
+        for obs in observations:
+            req_cat = getattr(obs, "category_id", None)
+            req_tourn = getattr(obs, "tournament_id", None)
+            if req_cat is not None and req_tourn is not None:
+                for eid in getattr(obs, "event_ids", ()):
+                    ev = event_by_id.get(eid)
+                    if ev is not None:
+                        ev_cat = getattr(ev, "category_id", None)
+                        ev_tourn = getattr(ev, "tournament_id", None)
+                        if ev_cat is not None and ev_tourn is not None:
+                            if ev_cat != req_cat or ev_tourn != req_tourn:
+                                msg = (
+                                    f"FANOUT_REQUEST_SCOPE_UNPROVEN: returned event {eid} native scope "
+                                    f"({ev_cat}, {ev_tourn}) does not match requested scope ({req_cat}, {req_tourn})"
+                                )
+                                if require_proven:
+                                    raise CurrentShadowSportyBetCatalogFanoutReconciliationError(msg)
+                                return "FANOUT_REQUEST_SCOPE_UNPROVEN"
+
+    # 2. Check for identical event sets across distinct requests
     non_empty = [obs for obs in observations if getattr(obs, "event_ids", None)]
-    if len(non_empty) < 2:
-        return
-    event_set_counts = Counter(tuple(obs.event_ids) for obs in non_empty)
-    for event_set, count in event_set_counts.items():
-        if count >= 2 and len(event_set) >= 2:
-            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
-                f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical {len(event_set)} events "
-                f"returned across {count} distinct tournament requests"
-            )
-        if count >= 3:
-            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
-                f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical event set "
-                f"returned across {count} distinct tournament requests"
-            )
+    if len(non_empty) >= 2:
+        event_set_counts = Counter(tuple(obs.event_ids) for obs in non_empty)
+        for event_set, count in event_set_counts.items():
+            if count >= 2 and len(event_set) >= 2:
+                msg = (
+                    f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical {len(event_set)} events "
+                    f"returned across {count} distinct tournament requests"
+                )
+                if require_proven:
+                    raise CurrentShadowSportyBetCatalogFanoutReconciliationError(msg)
+                return "FANOUT_REQUEST_SCOPE_UNPROVEN"
+            if count >= 3:
+                msg = (
+                    f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical event set "
+                    f"returned across {count} distinct tournament requests"
+                )
+                if require_proven:
+                    raise CurrentShadowSportyBetCatalogFanoutReconciliationError(msg)
+                return "FANOUT_REQUEST_SCOPE_UNPROVEN"
+
+    return "FANOUT_REQUEST_SCOPE_PROVEN"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -144,7 +189,11 @@ class CurrentShadowSportyBetCatalogFanoutSnapshot(
     """Current-Shadow overlay admitting exact cross-observation event overlap only."""
 
     def __post_init__(self) -> None:
-        validate_fanout_request_scope(self.observations)
+        # Separate historical snapshot replay validity from request-scope authority assessment.
+        scope_status = validate_fanout_request_scope(
+            self.observations, events=self.events, require_proven=False
+        )
+        object.__setattr__(self, "_fanout_request_scope_status", scope_status)
         try:
             super().__post_init__()
             return

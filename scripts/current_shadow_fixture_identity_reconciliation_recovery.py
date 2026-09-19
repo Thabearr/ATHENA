@@ -151,33 +151,38 @@ class RecoveryHooks:
 
 
 def install(reconciliation_module: Any) -> RecoveryHooks:
+    has_legacy = hasattr(reconciliation_module, "legacy")
     hooks = RecoveryHooks(
         original_match_event=identity.match_event,
         original_matching_basis=reconciliation_module.MATCHING_BASIS,
         original_expected_contract_sha256=reconciliation_module.EXPECTED_CONTRACT_SHA256,
-        original_legacy_matching_basis=reconciliation_module.legacy.MATCHING_BASIS,
+        original_legacy_matching_basis=(
+            reconciliation_module.legacy.MATCHING_BASIS if has_legacy else ""
+        ),
         original_legacy_expected_contract_sha256=(
-            reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256
+            reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 if has_legacy else ""
         ),
     )
     identity.match_event = match_event
-    reconciliation_module.MATCHING_BASIS = MATCHING_BASIS
-    reconciliation_module.legacy.MATCHING_BASIS = MATCHING_BASIS
-    expected = reconciliation_module.calculate_contract_sha256()
-    reconciliation_module.EXPECTED_CONTRACT_SHA256 = expected
-    reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 = expected
-    reconciliation_module.validate_contract()
+    if has_legacy:
+        reconciliation_module.MATCHING_BASIS = MATCHING_BASIS
+        reconciliation_module.legacy.MATCHING_BASIS = MATCHING_BASIS
+        expected = reconciliation_module.calculate_contract_sha256()
+        reconciliation_module.EXPECTED_CONTRACT_SHA256 = expected
+        reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 = expected
+        reconciliation_module.validate_contract()
     return hooks
 
 
 def restore(reconciliation_module: Any, hooks: RecoveryHooks) -> None:
     identity.match_event = hooks.original_match_event
-    reconciliation_module.MATCHING_BASIS = hooks.original_matching_basis
-    reconciliation_module.EXPECTED_CONTRACT_SHA256 = hooks.original_expected_contract_sha256
-    reconciliation_module.legacy.MATCHING_BASIS = hooks.original_legacy_matching_basis
-    reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 = (
-        hooks.original_legacy_expected_contract_sha256
-    )
+    if hasattr(reconciliation_module, "legacy"):
+        reconciliation_module.MATCHING_BASIS = hooks.original_matching_basis
+        reconciliation_module.EXPECTED_CONTRACT_SHA256 = hooks.original_expected_contract_sha256
+        reconciliation_module.legacy.MATCHING_BASIS = hooks.original_legacy_matching_basis
+        reconciliation_module.legacy.EXPECTED_CONTRACT_SHA256 = (
+            hooks.original_legacy_expected_contract_sha256
+        )
 
 
 __all__ = [

@@ -284,12 +284,13 @@ Post-PR #373 live capture run `35409481576` revealed a recurring failure loop at
 the pre-router source boundary where zero Router inputs were produced despite
 reconciled identities. Architectural analysis identified two root causes:
 
-### Root Cause A: Tournament Fanout Endpoint Scope Collapse (Global Echo)
+### Root Cause A: Tournament Fanout Endpoint Scope Collapse (Global-Echo Pattern Diagnostic)
 
 The SportyBet tournament fanout endpoint (`/api/ng/factsCenter/pc/upcomingEvents`)
-returned identical 10 global events across multiple distinct tournament requests,
-echoing global upcoming events rather than filtering by tournament scope. This
-was masked in earlier tests but caused complete discovery failure during live
+returned identical 10 global events across multiple distinct tournament requests.
+The retained responses do not demonstrate that the request-target category/tournament
+parameters scope the response (referred to as the "global-echo pattern" ATHENA diagnostic
+label). This was masked in earlier tests but caused complete discovery failure during live
 execution.
 
 Resolution:

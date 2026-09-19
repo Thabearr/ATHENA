@@ -28,8 +28,8 @@ from typing import Any, Callable, Mapping
 from domain import current_fotmob_latest_durable_fresh_history as latest_history
 from domain import current_shadow_canonical_core_adapter as shadow_core_adapter
 from domain import sportybet_share_code as share_module
-from domain import current_shadow_sportybet_catalog_fanout_reconciliation as reconciliation
 from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
+reconciliation = paginated_discovery
 from domain._current_shadow_price_core import ShadowPriceError
 from domain.fotmob_data_matches_capture import (
     RAW_FILENAME,
@@ -768,47 +768,23 @@ def acquire_current_shadow_pre_router_bundle(
         Any,
     ]] = []
     emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
-    if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE":
-        discovery_directory, discovery_manifest = (
-            paginated_discovery.capture_current_paginated_discovery(
-                repository_root=repository_root,
-                execute_live_network=execute_live_network,
-            )
-        )
-        for execution, request_date in fixture_sources:
-            raw, manifest = _source_capture(execution, repository_root)
-            admission = execution.bootstrap.verified_artifact.admission
-            current_events = paginated_discovery.reconcile_current_events_from_paginated_discovery(
-                repository_root=repository_root,
-                discovery_evidence_directory=discovery_directory,
-                fotmob_admission_value=admission,
-                fotmob_captures=((raw, manifest),),
-                execute_live_network=execute_live_network,
-            )
-            source_rows.append((request_date, execution, raw, manifest, current_events))
-        provider_discovery_manifest_sha256 = discovery_manifest.canonical_sha256
-        provider_catalog_fanout_snapshot_sha256 = discovery_manifest.canonical_sha256
-        provider_discovery_page_count = len(discovery_manifest.pages)
-        provider_discovery_event_count = len(discovery_manifest.events)
-        provider_discovery_observation_count = len(discovery_manifest.pages)
-        provider_catalog_active_tournament_count = len(discovery_manifest.pages)
-        provider_catalog_tournament_observation_count = len(discovery_manifest.pages)
-    else:
-        fanout_directory, fanout_snapshot = reconciliation.capture_current_catalog_fanout_discovery(
+    discovery_directory, discovery_manifest = (
+        paginated_discovery.capture_current_paginated_discovery(
             repository_root=repository_root,
             execute_live_network=execute_live_network,
         )
-        for execution, request_date in fixture_sources:
-            raw, manifest = _source_capture(execution, repository_root)
-            admission = execution.bootstrap.verified_artifact.admission
-            current_events = reconciliation.reconcile_current_events_from_catalog_fanout(
-                repository_root=repository_root,
-                fanout_evidence_directory=fanout_directory,
-                fotmob_admission_value=admission,
-                fotmob_captures=((raw, manifest),),
-                execute_live_network=execute_live_network,
-            )
-            source_rows.append((request_date, execution, raw, manifest, current_events))
+    )
+    for execution, request_date in fixture_sources:
+        raw, manifest = _source_capture(execution, repository_root)
+        admission = execution.bootstrap.verified_artifact.admission
+        current_events = paginated_discovery.reconcile_current_events_from_paginated_discovery(
+            repository_root=repository_root,
+            discovery_evidence_directory=discovery_directory,
+            fotmob_admission_value=admission,
+            fotmob_captures=((raw, manifest),),
+            execute_live_network=execute_live_network,
+        )
+        source_rows.append((request_date, execution, raw, manifest, current_events))
 
     provider_event_ids = {
         row.event_id
@@ -862,35 +838,20 @@ def acquire_current_shadow_pre_router_bundle(
             "current_reconciliation_contract_sha256": current_events.contract_sha256,
             "provider_event_count": len(current_events.rows),
             "reconciled_fixture_count": len(current_events.matched_rows),
-            "provider_catalog_fanout_snapshot_sha256": (
-                discovery_manifest.canonical_sha256
-                if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE"
-                else current_events.fanout_snapshot_sha256
-            ),
-            **({
-                "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256
-            } if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE" else {}),
+            "provider_discovery_strategy_id": paginated_discovery.POLICY_ID,
+            "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
             "disposition_counts": _disposition_counts(current_events),
         }
         for request_date, _execution, _raw, _manifest, current_events in source_rows
     }
-    if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE":
-        discovery_summary = {
-            "provider_catalog_fanout_snapshot_sha256": discovery_manifest.canonical_sha256,
-            "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
-            "provider_discovery_page_count": len(discovery_manifest.pages),
-            "provider_discovery_event_count": len(discovery_manifest.events),
-            "provider_discovery_observation_count": len(discovery_manifest.pages),
-            "provider_catalog_active_tournament_count": len(discovery_manifest.pages),
-            "provider_catalog_tournament_observation_count": len(discovery_manifest.pages),
-        }
-    else:
-        discovery_summary = {
-            "provider_catalog_fanout_snapshot_sha256": fanout_snapshot.canonical_sha256,
-            "provider_catalog_active_tournament_count": len(fanout_snapshot.tournaments),
-            "provider_catalog_tournament_observation_count": len(fanout_snapshot.observations),
-            "provider_discovery_observation_count": 1 + len(fanout_snapshot.observations),
-        }
+    discovery_summary = {
+        "provider_discovery_strategy_id": paginated_discovery.POLICY_ID,
+        "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
+        "provider_discovery_page_count": len(discovery_manifest.pages),
+        "provider_discovery_event_count": len(discovery_manifest.events),
+        "provider_discovery_observation_count": len(discovery_manifest.pages),
+        "provider_discovery_source_method": paginated_discovery.DISCOVERY_SOURCE_METHOD,
+    }
     source_progress_summary: dict[str, Any] = {
         "selected_fixture_request_date": primary_date,
         "fixture_search_day_count": len(searched_dates),
