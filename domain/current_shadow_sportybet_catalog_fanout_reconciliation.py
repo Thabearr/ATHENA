@@ -111,6 +111,32 @@ SportyBetCurrentEventDiscoveryError = legacy.SportyBetCurrentEventDiscoveryError
 _fanout_overlap_scope_depth = 0
 
 
+def validate_fanout_request_scope(observations: Sequence[Any]) -> None:
+    """Validate that tournament fanout observations are actually scoped by request.
+
+    If distinct tournament requests return identical non-empty event sets,
+    the provider endpoint is echoing global data rather than filtering by tournament.
+    Fails closed with FANOUT_REQUEST_SCOPE_UNPROVEN.
+    """
+    if len(observations) < 2:
+        return
+    non_empty = [obs for obs in observations if getattr(obs, "event_ids", None)]
+    if len(non_empty) < 2:
+        return
+    event_set_counts = Counter(tuple(obs.event_ids) for obs in non_empty)
+    for event_set, count in event_set_counts.items():
+        if count >= 2 and len(event_set) >= 2:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical {len(event_set)} events "
+                f"returned across {count} distinct tournament requests"
+            )
+        if count >= 3:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical event set "
+                f"returned across {count} distinct tournament requests"
+            )
+
+
 @dataclasses.dataclass(frozen=True)
 class CurrentShadowSportyBetCatalogFanoutSnapshot(
     _LegacyCurrentShadowSportyBetCatalogFanoutSnapshot
@@ -118,6 +144,7 @@ class CurrentShadowSportyBetCatalogFanoutSnapshot(
     """Current-Shadow overlay admitting exact cross-observation event overlap only."""
 
     def __post_init__(self) -> None:
+        validate_fanout_request_scope(self.observations)
         try:
             super().__post_init__()
             return
@@ -809,6 +836,7 @@ __all__ = [
     "reconcile_current_events_from_catalog_fanout",
     "tournament_request_target",
     "validate_contract",
+    "validate_fanout_request_scope",
     "verify_current_catalog_fanout_discovery",
     "verify_current_event_discovery_reconciliation_bundle",
 ]

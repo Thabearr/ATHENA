@@ -141,7 +141,17 @@ def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
                 )
             disposition_totals[disposition] = disposition_totals.get(disposition, 0) + count
 
+    if top_counts["provider_event_count"] == 0:
+        failure_code = "NO_RECONCILED_PROVIDER_EVENTS_DISCOVERED"
+    elif top_counts["reconciled_fixture_count"] == 0:
+        failure_code = "NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART"
+    elif top_counts["priced_fixture_count"] == 0:
+        failure_code = "NO_MARKETS_RECONCILED_FOR_ROUTER"
+    else:
+        failure_code = "ZERO_ROUTER_INPUTS_POST_PRICING"
+
     diagnostic = {
+        "failure_code": failure_code,
         **top_counts,
         "request_date_counts": request_date_counts,
         "disposition_totals": {key: disposition_totals[key] for key in sorted(disposition_totals)},

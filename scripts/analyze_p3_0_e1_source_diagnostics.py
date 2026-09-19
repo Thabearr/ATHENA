@@ -17,6 +17,9 @@ import zipfile
 if __package__ in (None, ""):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from config.competition_review_priority import (
+    resolve_source_competition_review_priority,
+)
 from domain import current_shadow_fixture_identity_aliases as aliases
 
 
@@ -106,8 +109,14 @@ def _walk(value: Any) -> Iterable[dict[str, Any]]:
 def _provider_events(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
     events: dict[str, dict[str, Any]] = {}
     paths = sorted(path for path in entries if "/tournaments/" in path and path.endswith(".json"))
-    if not paths:
-        raise SourceDiagnosticsAuditError("retained SportyBet tournament evidence missing")
+    paginated_paths = sorted(
+        path for path in entries
+        if "/sportybet-current-event-discovery/" in path
+        and path.endswith(".json")
+        and not path.endswith("manifest.json")
+    )
+    if not paths and not paginated_paths:
+        raise SourceDiagnosticsAuditError("retained SportyBet discovery/tournament evidence missing")
     for path in paths:
         raw = entries[path]
         for value in _walk(_json(raw, path)):
@@ -122,6 +131,43 @@ def _provider_events(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
             if kickoff is None or not all(type(item) is str for item in fields):
                 continue
             row = {"provider_event_id": event_id, "provider_category_id": fields[4], "provider_tournament_id": fields[5], "provider_competition": fields[6], "provider_home_competitor_id": fields[0], "provider_home": fields[1], "provider_away_competitor_id": fields[2], "provider_away": fields[3], "kickoff_utc": kickoff, "provider_raw_sha256": [hashlib.sha256(raw).hexdigest()]}
+            prior = events.get(event_id)
+            if prior is not None and {key: value for key, value in prior.items() if key != "provider_raw_sha256"} != {key: value for key, value in row.items() if key != "provider_raw_sha256"}:
+                raise SourceDiagnosticsAuditError("conflicting retained provider event")
+            if prior is None:
+                events[event_id] = row
+            elif row["provider_raw_sha256"][0] not in prior["provider_raw_sha256"]:
+                prior["provider_raw_sha256"].append(row["provider_raw_sha256"][0])
+    for path in paginated_paths:
+        raw = entries[path]
+        for value in _walk(_json(raw, path)):
+            event_id = value.get("eventId")
+            if type(event_id) is not str:
+                continue
+            kickoff = _provider_kickoff(value.get("estimateStartTime"))
+            fields = (
+                value.get("homeTeamId") or value.get("homeTeamName"),
+                value.get("homeTeamName"),
+                value.get("awayTeamId") or value.get("awayTeamName"),
+                value.get("awayTeamName"),
+                value.get("categoryId") or "discovery_category",
+                value.get("tournamentId") or "discovery_tournament",
+                value.get("tournamentName") or value.get("leagueName") or "discovery_competition",
+            )
+            if kickoff is None or not all(type(item) is str for item in fields):
+                continue
+            row = {
+                "provider_event_id": event_id,
+                "provider_category_id": fields[4],
+                "provider_tournament_id": fields[5],
+                "provider_competition": fields[6],
+                "provider_home_competitor_id": fields[0],
+                "provider_home": fields[1],
+                "provider_away_competitor_id": fields[2],
+                "provider_away": fields[3],
+                "kickoff_utc": kickoff,
+                "provider_raw_sha256": [hashlib.sha256(raw).hexdigest()],
+            }
             prior = events.get(event_id)
             if prior is not None and {key: value for key, value in prior.items() if key != "provider_raw_sha256"} != {key: value for key, value in row.items() if key != "provider_raw_sha256"}:
                 raise SourceDiagnosticsAuditError("conflicting retained provider event")
@@ -181,6 +227,11 @@ def _fotmob_fixtures(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
 
 
 def _candidate_kind(event: Mapping[str, Any], fixture: Mapping[str, Any]) -> str | None:
+    priority = resolve_source_competition_review_priority(
+        fixture.get("ccode", ""), fixture.get("competition", "")
+    )
+    if priority is None:
+        return None
     home = aliases.team_identity_matches(competition=fixture["competition"], fotmob_name=fixture["home"], sportybet_name=event["provider_home"])
     away = aliases.team_identity_matches(competition=fixture["competition"], fotmob_name=fixture["away"], sportybet_name=event["provider_away"])
     if not (home and away):
@@ -211,25 +262,75 @@ def analyze(path: str | Path, *, expected_zip_sha256: str | None = None) -> dict
     fixtures = _fotmob_fixtures(entries)
     events = _provider_events(entries)
     audited = []
+    total_raw_counterparts = 0
+    total_policy_approved_counterparts = 0
+    total_reconciled_counterparts = 0
+    unadmitted_competitions: set[str] = set()
+
     for event in events:
         same_kickoff = [fixture for fixture in fixtures if fixture["kickoff_utc"] == event["kickoff_utc"]]
         candidates = []
         compatible = []
         for fixture in same_kickoff:
-            kind = _candidate_kind(event, fixture)
-            if kind is not None:
-                compatible.append((fixture, kind))
-            candidates.append({**fixture, "identity_result": kind or "UNSUPPORTED"})
+            total_raw_counterparts += 1
+            is_policy_approved = resolve_source_competition_review_priority(
+                fixture.get("ccode", ""), fixture.get("competition", "")
+            ) is not None
+            if not is_policy_approved:
+                kind = None
+                identity_result = "POLICY_UNAPPROVED_COMPETITION"
+                unadmitted_competitions.add(fixture["competition"])
+            else:
+                total_policy_approved_counterparts += 1
+                kind = _candidate_kind(event, fixture)
+                identity_result = kind or "UNSUPPORTED"
+                if kind is not None:
+                    compatible.append((fixture, kind))
+                    total_reconciled_counterparts += 1
+            candidates.append({
+                **fixture,
+                "policy_approved": is_policy_approved,
+                "identity_result": identity_result,
+            })
         if not candidates:
             classification = "NO_SAME_KICKOFF_CANDIDATE"
         elif len(compatible) == 1:
             classification = compatible[0][1]
         elif len(compatible) > 1:
             classification = "AMBIGUOUS"
-        else:
+        elif any(c.get("policy_approved") for c in candidates):
             classification = "SAME_KICKOFF_UNSUPPORTED"
+        else:
+            classification = "SAME_KICKOFF_POLICY_EXCLUDED"
         audited.append({**event, "same_kickoff_candidates": candidates, "classification": classification})
-    return {"schema_version": SCHEMA_VERSION, "policy_id": POLICY_ID, "artifact_sha256": artifact_sha256, "failure_run_id": receipt.get("capture_id"), "executed_commit_sha": receipt["exact_commit_sha"], "provider_event_count": len(events), "fotmob_fixture_count": len(fixtures), "events": audited, "summary": {key: sum(row["classification"] == key for row in audited) for key in sorted({row["classification"] for row in audited})}, "authority": {"audit_only": True, "fixture_reconciliation": False, "persistent_identity_mutation": False, "network": False, "provider_acquisition": False, "pricing": False, "selection": False, "wager": False}}
+
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "policy_id": POLICY_ID,
+        "artifact_sha256": artifact_sha256,
+        "failure_run_id": receipt.get("capture_id"),
+        "executed_commit_sha": receipt["exact_commit_sha"],
+        "provider_event_count": len(events),
+        "fotmob_fixture_count": len(fixtures),
+        "events": audited,
+        "summary": {
+            **{key: sum(row["classification"] == key for row in audited) for key in sorted({row["classification"] for row in audited})},
+            "raw_counterparts_total": total_raw_counterparts,
+            "policy_approved_counterparts_total": total_policy_approved_counterparts,
+            "reconciliation_authorized_counterparts_total": total_reconciled_counterparts,
+            "unadmitted_competitions_excluded": sorted(unadmitted_competitions),
+        },
+        "authority": {
+            "audit_only": True,
+            "fixture_reconciliation": False,
+            "persistent_identity_mutation": False,
+            "network": False,
+            "provider_acquisition": False,
+            "pricing": False,
+            "selection": False,
+            "wager": False,
+        },
+    }
 
 
 def main(argv: list[str] | None = None) -> int:

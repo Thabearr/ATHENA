@@ -29,6 +29,7 @@ from domain import current_fotmob_latest_durable_fresh_history as latest_history
 from domain import current_shadow_canonical_core_adapter as shadow_core_adapter
 from domain import sportybet_share_code as share_module
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as reconciliation
+from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
 from domain._current_shadow_price_core import ShadowPriceError
 from domain.fotmob_data_matches_capture import (
     RAW_FILENAME,
@@ -643,19 +644,15 @@ def _source_capture(execution: current_fotmob_source.CurrentFotMobReviewedSource
 
 
 def _issue_current_fixture_sources(
-    *, repository_root: Path,
+    *, repository_root: Path, execute_live_network: bool = True
 ) -> tuple[
     tuple[tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str], ...],
     tuple[str, ...],
 ]:
     """Collect every reviewed non-empty UTC catalogue in the fixed horizon.
 
-    PR-F live evidence proved that stopping on the first non-empty date can leave
-    the runner with a one-fixture universe late in the UTC day while later dates
-    inside the already reviewed bounded horizon remain unexamined.  The current
-    runner therefore acquires every policy-approved date in the fixed horizon
-    before any SportyBet reconciliation.  Empty dates remain explicit and other
-    source failures still fail closed.
+    Searches from today UTC forward up to CURRENT_FIXTURE_SEARCH_DAY_COUNT days.
+    Fails closed if no policy-approved fixtures exist within the fixed horizon.
     """
 
     today = _now().date()
@@ -669,7 +666,7 @@ def _issue_current_fixture_sources(
                 request_date=request_date,
                 timezone="UTC",
                 ccode3="NGA",
-                execute_live_network=True,
+                execute_live_network=execute_live_network,
                 repository_root=repository_root,
             )
         except current_fotmob_source.CurrentFotMobReviewedSourceError as exc:
@@ -695,12 +692,49 @@ def _disposition_counts(
     return {key: counts[key] for key in sorted(counts)}
 
 
-def _acquire_router_inputs(
+def _issue_exact_fixture_sources(
+    *,
+    repository_root: Path,
+    request_dates: tuple[str, ...],
+    execute_live_network: bool = True,
+) -> tuple[
+    tuple[tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str], ...],
+    tuple[str, ...],
+]:
+    attempted: list[str] = []
+    sources: list[tuple[current_fotmob_source.CurrentFotMobReviewedSourceExecution, str]] = []
+    for request_date in request_dates:
+        attempted.append(request_date)
+        try:
+            execution = current_fotmob_source.issue_current_shadow_fotmob_reviewed_source(
+                request_date=request_date,
+                timezone="UTC",
+                ccode3="NGA",
+                execute_live_network=execute_live_network,
+                repository_root=repository_root,
+            )
+        except current_fotmob_source.CurrentFotMobReviewedSourceError as exc:
+            if str(exc) == current_fotmob_source.STATUS_NO_FIXTURES:
+                continue
+            raise
+        sources.append((execution, request_date))
+    if not sources:
+        raise CurrentShadowAllMarketRunnerError(
+            "NO_POLICY_APPROVED_CURRENT_FOTMOB_FIXTURES_IN_REQUESTED_DATES:"
+            + ",".join(attempted)
+        )
+    return tuple(sources), tuple(attempted)
+
+
+def acquire_current_shadow_pre_router_bundle(
     *,
     repository_root: Path,
     lineage_main_sha: str,
+    request_dates: tuple[str, ...] | None = None,
+    capture_mode: str = "SUPPORTED_REQUEST",
     stage_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
+    execute_live_network: bool = True,
 ) -> CurrentShadowRunnerSourceBundle:
     emit = (lambda _stage: None) if stage_callback is None else stage_callback
     if progress_callback is None:
@@ -714,31 +748,41 @@ def _acquire_router_inputs(
     else:
         progress = progress_callback
     emit(STAGE_CURRENT_FOTMOB_SOURCE)
-    fixture_sources, searched_dates = _issue_current_fixture_sources(
-        repository_root=repository_root
-    )
+    if request_dates is not None:
+        fixture_sources, searched_dates = _issue_exact_fixture_sources(
+            repository_root=repository_root,
+            request_dates=request_dates,
+            execute_live_network=execute_live_network,
+        )
+    else:
+        fixture_sources, searched_dates = _issue_current_fixture_sources(
+            repository_root=repository_root,
+            execute_live_network=execute_live_network,
+        )
 
     source_rows: list[tuple[
         str,
         current_fotmob_source.CurrentFotMobReviewedSourceExecution,
         bytes,
         Any,
-        reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle,
+        Any,
     ]] = []
     emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
-    fanout_directory, fanout_snapshot = reconciliation.capture_current_catalog_fanout_discovery(
-        repository_root=repository_root,
-        execute_live_network=True,
+    discovery_directory, discovery_manifest = (
+        paginated_discovery.capture_current_paginated_discovery(
+            repository_root=repository_root,
+            execute_live_network=execute_live_network,
+        )
     )
     for execution, request_date in fixture_sources:
         raw, manifest = _source_capture(execution, repository_root)
         admission = execution.bootstrap.verified_artifact.admission
-        current_events = reconciliation.reconcile_current_events_from_catalog_fanout(
+        current_events = paginated_discovery.reconcile_current_events_from_paginated_discovery(
             repository_root=repository_root,
-            fanout_evidence_directory=fanout_directory,
+            discovery_evidence_directory=discovery_directory,
             fotmob_admission_value=admission,
             fotmob_captures=((raw, manifest),),
-            execute_live_network=True,
+            execute_live_network=execute_live_network,
         )
         source_rows.append((request_date, execution, raw, manifest, current_events))
 
@@ -794,14 +838,15 @@ def _acquire_router_inputs(
             "current_reconciliation_contract_sha256": current_events.contract_sha256,
             "provider_event_count": len(current_events.rows),
             "reconciled_fixture_count": len(current_events.matched_rows),
-            "provider_catalog_fanout_snapshot_sha256": current_events.fanout_snapshot_sha256,
+            "provider_catalog_fanout_snapshot_sha256": discovery_manifest.canonical_sha256,
+            "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
             "disposition_counts": _disposition_counts(current_events),
         }
         for request_date, _execution, _raw, _manifest, current_events in source_rows
     }
     source_progress_summary: dict[str, Any] = {
         "selected_fixture_request_date": primary_date,
-        "fixture_search_day_count": CURRENT_FIXTURE_SEARCH_DAY_COUNT,
+        "fixture_search_day_count": len(searched_dates),
         "searched_fixture_request_dates": list(searched_dates),
         "policy_approved_fixture_request_dates": [
             request_date for request_date, _execution, _raw, _manifest, _events in source_rows
@@ -816,10 +861,13 @@ def _acquire_router_inputs(
         "current_reconciliation_contract_sha256": primary_events.contract_sha256,
         "current_reconciliation_by_request_date": reconciliation_by_date,
         "matched_provider_event_ids": sorted(matched_provider_dates),
-        "provider_catalog_fanout_snapshot_sha256": fanout_snapshot.canonical_sha256,
-        "provider_catalog_active_tournament_count": len(fanout_snapshot.tournaments),
-        "provider_catalog_tournament_observation_count": len(fanout_snapshot.observations),
-        "provider_discovery_observation_count": 1 + len(fanout_snapshot.observations),
+        "provider_catalog_fanout_snapshot_sha256": discovery_manifest.canonical_sha256,
+        "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
+        "provider_discovery_page_count": len(discovery_manifest.pages),
+        "provider_discovery_event_count": len(discovery_manifest.events),
+        "provider_discovery_observation_count": len(discovery_manifest.pages),
+        "provider_catalog_active_tournament_count": len(discovery_manifest.pages),
+        "provider_catalog_tournament_observation_count": len(discovery_manifest.pages),
         "wager_placed": False,
     }
     progress(
@@ -951,6 +999,24 @@ def _acquire_router_inputs(
         router_selected_count=selected,
         router_no_bet_count=no_bet,
         source_summary=summary,
+    )
+
+
+def _acquire_router_inputs(
+    *,
+    repository_root: Path,
+    lineage_main_sha: str,
+    stage_callback: Callable[[str], None] | None = None,
+    progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
+) -> CurrentShadowRunnerSourceBundle:
+    return acquire_current_shadow_pre_router_bundle(
+        repository_root=repository_root,
+        lineage_main_sha=lineage_main_sha,
+        request_dates=None,
+        capture_mode="SUPPORTED_REQUEST",
+        stage_callback=stage_callback,
+        progress_callback=progress_callback,
+        execute_live_network=True,
     )
 
 
@@ -1296,5 +1362,6 @@ __all__ = [
     "STATUS_PROVIDER_CHANGED",
     "STATUS_REPRICE_REQUIRED",
     "STATUS_SOURCE_INCOMPLETE",
+    "acquire_current_shadow_pre_router_bundle",
     "execute_current_shadow_all_market",
 ]
