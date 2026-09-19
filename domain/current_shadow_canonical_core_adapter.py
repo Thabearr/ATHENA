@@ -28,6 +28,9 @@ from domain import current_shadow_all_market_price_all as _legacy_price
 from domain import current_shadow_all_market_router as _legacy_router
 from domain import run_contracts as _run_contracts
 from domain._current_shadow_price_core import ShadowPriceError
+from domain._current_shadow_quote_binding import (
+    verify_current_shadow_price_context as _underlying_verify_current_shadow_price_context,
+)
 
 
 POLICY_ID = "CURRENT_SHADOW_SHARED_CANONICAL_CORE_P2_1_COMPATIBILITY_V1"
@@ -246,7 +249,7 @@ def build_current_shadow_price_context_from_reconciliation(*args: Any, **kwargs:
 
 
 def verify_current_shadow_price_context(value: Any) -> Any:
-    return _legacy_price.verify_current_shadow_price_context(value)
+    return _underlying_verify_current_shadow_price_context(value)
 
 
 def _with_price_context_verifier(callable_obj: Any, *args: Any, **kwargs: Any) -> Any:

@@ -357,14 +357,12 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
     return {
         "status": "PASSED",
         "real_retained_boundary": {
-            "real_retained_paginated_raw_page_replay": "UNAVAILABLE",
-            "search_provenance": {
-                "runs_searched": runs_searched,
-                "result": "NO_HISTORICAL_RETAINED_PAGINATED_RAW_PAGE_ARTIFACT_FOUND",
-            },
-            "exact_offline_counterpart_replay": "counterpart_matched",
+            "paginated_raw_page_replay": "UNAVAILABLE",
+            "runs_searched": runs_searched,
+            "result": "NO_VERIFIED_RETAINED_PAGINATED_RAW_PAGE_ARTIFACT_AVAILABLE",
         },
         "synthetic_end_to_end_boundary": {
+            "synthetic_counterpart_matching_verified": True,
             "contracts_verified": True,
         },
     }
@@ -637,7 +635,6 @@ def check_n_no_dispatch_or_comment_mutation_authority(repository_root: Path) -> 
         },
         "script_static_mutation_surfaces_clean": True,
         "readiness_exposes_dispatch_or_comment_api": False,
-        "live_dispatch_performed": False,
     }
 
 

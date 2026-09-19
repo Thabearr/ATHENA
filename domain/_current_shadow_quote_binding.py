@@ -16,6 +16,7 @@ from typing import Any, Mapping
 from domain import current_all_market_shadow_probability_settlement as prc
 from domain import current_direct_provider_live_quote_mapping_consumption as current_quotes
 from domain import current_sportybet_semantic_registry as prb
+from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
 from domain import sportybet_current_event_discovery_reconciliation as current_reconciliation
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as catalog_fanout_reconciliation
 from domain import current_shadow_sportybet_upcoming_reconciliation as shadow_reconciliation
@@ -250,7 +251,11 @@ def build_current_shadow_price_context_from_reconciliation(
         raise ShadowPriceError("fixture_identity must be non-empty")
     if type(provider_event_id) is not str or not provider_event_id.strip():
         raise ShadowPriceError("provider_event_id must be non-empty")
-    if type(current_reconciliation_bundle) is current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
+    if getattr(current_reconciliation_bundle, "dataset_name", None) == paginated_discovery.DATASET_NAME:
+        verifier = paginated_discovery.verify_current_event_discovery_reconciliation_bundle
+        reconciliation_error = paginated_discovery.CurrentShadowPaginatedDiscoveryReconciliationError
+        fixture_basis = "PR251_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(current_reconciliation_bundle) is current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle:
         verifier = current_reconciliation.verify_current_event_discovery_reconciliation_bundle
         reconciliation_error = current_reconciliation.SportyBetCurrentEventDiscoveryError
         fixture_basis = "PR251_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"

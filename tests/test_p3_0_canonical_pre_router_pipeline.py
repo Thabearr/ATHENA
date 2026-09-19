@@ -31,6 +31,7 @@ from domain.fotmob_fixture_candidate_review import (
 )
 from domain.fotmob_fixture_candidates import build_fotmob_fixture_candidate_bundle
 from domain.fotmob_fixture_catalog_handoff import (
+    FotMobFixtureCatalogHandoffError,
     build_fotmob_fixture_catalog_handoff,
     sha256_fotmob_fixture_catalog_handoff,
 )
@@ -134,6 +135,13 @@ def _fotmob_capture(
     return raw, manifest
 
 
+from domain.current_fotmob_fixture_review_policy import (
+    build_current_shadow_fotmob_fixture_review_policy_result,
+)
+from domain.markets import MarketId
+from domain import current_all_market_shadow_probability_settlement as prc
+
+
 def _fotmob_admission(
     tmp_path: Path,
     *,
@@ -154,22 +162,15 @@ def _fotmob_admission(
         kickoff=kickoff,
     )
     candidate_bundle = build_fotmob_fixture_candidate_bundle((capture,))
-    decisions = tuple(
-        FotMobFixtureCandidateReviewDecision(
-            source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
-            source_match_id=candidate.source_match_id,
-            candidate_sha256=sha256_fotmob_fixture_candidate(candidate),
-            disposition=FixtureCandidateReviewDisposition.APPROVED,
-            reviewed_at=datetime(2026, 9, 20, 8, 30, tzinfo=UTC),
-            reviewer_reference="operator:pr374-fixture-review",
-            notes="explicit reviewed FotMob fixture identity",
-        )
-        for candidate in candidate_bundle.candidates
-    )
-    review_bundle = build_fotmob_fixture_candidate_review_bundle(
+    # Blocker 2: Run REAL Current Shadow review policy used by production
+    policy_result = build_current_shadow_fotmob_fixture_review_policy_result(
         candidate_bundle,
-        decisions,
+        reviewed_at=datetime(2026, 9, 20, 8, 10, tzinfo=UTC),
     )
+    if disposition == ReviewedFixtureCatalogAdmissionDisposition.ADMITTED:
+        assert policy_result.policy_approved_count == len(match_ids)
+        assert policy_result.review_bundle.approved_count == len(match_ids)
+    review_bundle = policy_result.review_bundle
     handoff = build_fotmob_fixture_catalog_handoff(candidate_bundle, review_bundle)
     raw = capture[0]
     for item in handoff.catalog_inputs:
@@ -280,9 +281,9 @@ def _detail_raw(
             "id": "1",
             "desc": "1X2",
             "outcomes": [
-                {"id": "1", "desc": "1", "odds": "2.0", "isActive": 1},
-                {"id": "X", "desc": "X", "odds": "3.0", "isActive": 1},
-                {"id": "2", "desc": "2", "odds": "4.0", "isActive": 1},
+                {"id": "1", "desc": "Home", "odds": "2.0", "isActive": 1},
+                {"id": "2", "desc": "Draw", "odds": "3.0", "isActive": 1},
+                {"id": "3", "desc": "Away", "odds": "4.0", "isActive": 1},
             ],
         }
     ]
@@ -449,14 +450,25 @@ def test_verify_p3_0_e1_live_readiness_runs_offline_and_passes(monkeypatch: pyte
 
 
 def test_readiness_double_run_produces_identical_sha(monkeypatch: pytest.MonkeyPatch):
-    """Blocker 6: verify readiness run twice produces identical SHA-256."""
+    """Blocker 8: verify readiness run twice under same env produces identical SHA-256 and semantic equality."""
     repo_root = Path(__file__).resolve().parents[1]
-    monkeypatch.setenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", "c5ec9a23486a594d2df279521b6065744fa9a389")
+    expected_main = "c5ec9a23486a594d2df279521b6065744fa9a389"
+    monkeypatch.setenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", expected_main)
     report1 = verify_p3_0_e1_live_readiness.run_all_readiness_checks(repository_root=repo_root)
     report2 = verify_p3_0_e1_live_readiness.run_all_readiness_checks(repository_root=repo_root)
+
+    # Exact SHA-256 digest equality
     assert report1["sha256"] == report2["sha256"]
     assert report1["exact_commit_sha"] == report2["exact_commit_sha"]
     assert report1["resolved_lineage_main_sha"] == report2["resolved_lineage_main_sha"]
+    assert report1["resolved_lineage_main_sha"] == expected_main
+
+    # Exact canonical semantic equality excluding wall-clock evaluated_at
+    payload1 = {k: v for k, v in report1.items() if k != "evaluated_at"}
+    payload2 = {k: v for k, v in report2.items() if k != "evaluated_at"}
+    assert payload1 == payload2
+    assert payload1["status"] == "P3_0_E1_LIVE_READINESS_VERIFIED"
+    assert len(payload1["checks"]) == 14
 
 
 def test_readiness_check_b_fails_closed_when_env_missing(monkeypatch: pytest.MonkeyPatch):
@@ -543,10 +555,36 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
         lambda *_args: (raw_fotmob_bytes, raw_manifest),
     )
     monkeypatch.setattr(runner, "_legacy_bootstrap_bytes", lambda: b"{}")
+    dummy_history = object.__new__(
+        runner.latest_history.CurrentLatestDurableFreshHistoryHandoff
+    )
+    object.__setattr__(dummy_history, "schema_version", 1)
+    object.__setattr__(
+        dummy_history,
+        "dataset_name",
+        "athena-current-fotmob-latest-durable-fresh-history-v1",
+    )
+    object.__setattr__(
+        dummy_history,
+        "status",
+        "CURRENT_FOTMOB_LATEST_DURABLE_FRESH_HISTORY_VERIFIED",
+    )
+    object.__setattr__(dummy_history, "source_bundle", None)
+    object.__setattr__(
+        dummy_history, "latest_applicable_success_selection_proven", True
+    )
+    object.__setattr__(
+        dummy_history, "current_fresh_history_prefix_complete", True
+    )
+    object.__setattr__(
+        dummy_history, "next_required_boundary", "PRICE_ALL_CURRENT_SHADOW"
+    )
+    object.__setattr__(dummy_history, "evidence", {})
+    object.__setattr__(dummy_history, "authority", {})
     monkeypatch.setattr(
         runner.latest_history,
         "build_current_fotmob_latest_durable_fresh_history_handoff",
-        lambda **_kw: object(),
+        lambda **_kw: dummy_history,
     )
     monkeypatch.setattr(
         runner.latest_history,
@@ -554,53 +592,32 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
         lambda _h: "h" * 64,
     )
 
-    # Price-All and Router test doubles consuming real reconciliation bundle output
-    def _build_context(**kw: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            fixture_identity=kw["fixture_identity"],
-            provider_event_id=kw["provider_event_id"],
-            current_reconciliation_bundle=kw["current_reconciliation_bundle"],
-        )
-
-    def _price_fixture(ctx: SimpleNamespace) -> SimpleNamespace:
-        return SimpleNamespace(
-            fixture_identity=ctx.fixture_identity,
-            provider_event_id=ctx.provider_event_id,
-        )
-
-    def _route(priced: SimpleNamespace) -> SimpleNamespace:
-        return SimpleNamespace(
-            status=SimpleNamespace(value="SELECTED"),
-            priced=priced,
-        )
-
-    def _build_router_input(price_all_bundle: Any, router_decision: Any) -> SimpleNamespace:
-        return SimpleNamespace(
-            price_all_bundle=price_all_bundle,
-            router_decision=router_decision,
+    # Real PR-C scan provider for the price context builder
+    def _mock_scan_current_fixture_all_markets(
+        *,
+        complete_current_history: Any,
+        fixture_identity: str,
+        provider_semantic_registry: Any = None,
+    ) -> Any:
+        return prc.scan_fixture_all_markets(
+            fixture_identity=fixture_identity,
+            research_xg=prc.ResearchXGRates(
+                calibrated_home=2.0,
+                calibrated_away=0.7,
+                sealed_prediction_sha256="a" * 64,
+                history_prefix_identity="b" * 64,
+                source_fixture_identity=fixture_identity,
+            ),
+            kickoff_utc_iso=KICKOFF.isoformat().replace("+00:00", "Z"),
+            provider_semantic_by_market={m: "SUPPORTED" for m in MarketId},
         )
 
     monkeypatch.setattr(
-        runner.price_module,
-        "build_current_shadow_price_context_from_reconciliation",
-        _build_context,
+        "domain._current_shadow_quote_binding.prc.scan_current_fixture_all_markets",
+        _mock_scan_current_fixture_all_markets,
     )
-    monkeypatch.setattr(
-        runner.price_module,
-        "price_all_shadow_fixture",
-        _price_fixture,
-    )
-    monkeypatch.setattr(
-        runner.router_module,
-        "route_shadow_price_results",
-        _route,
-    )
-    monkeypatch.setattr(
-        runner.portfolio_module,
-        "build_shadow_portfolio_router_input",
-        _build_router_input,
-    )
-    monkeypatch.setattr(runner, "_runtime_progress_diagnostics", lambda _inp: {})
+    # Price-All, Router, and Portfolio modules run with REAL production functions
+    # (runner.price_module, runner.router_module, runner.portfolio_module from shadow_core_adapter)
 
     # Run SUPPORTED_REQUEST through real capture & reconciliation
     supported_bundle = runner.acquire_current_shadow_pre_router_bundle(
@@ -631,6 +648,40 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
     assert len(supported_bundle.router_inputs) == len(p3_bundle.router_inputs)
     assert supported_bundle.router_inputs == p3_bundle.router_inputs
 
+    # Blocker 1: Assert exact priced fixture identity, provider event identity,
+    # at least one priced market/opportunity, real Router decision vocabulary,
+    # and resulting router input identity.
+    s_inp = supported_bundle.router_inputs[0]
+    p_inp = p3_bundle.router_inputs[0]
+    assert s_inp.price_all_bundle.fixture_identity == f"FOTMOB:{FIXTURE_ID}"
+    assert p_inp.price_all_bundle.fixture_identity == f"FOTMOB:{FIXTURE_ID}"
+    assert s_inp.price_all_bundle._context.provider_event_id == EVENT_ID
+    assert p_inp.price_all_bundle._context.provider_event_id == EVENT_ID
+    assert s_inp.fixture_identity == f"FOTMOB:{FIXTURE_ID}"
+    assert p_inp.fixture_identity == f"FOTMOB:{FIXTURE_ID}"
+    assert s_inp.provider_event_id == EVENT_ID
+    assert p_inp.provider_event_id == EVENT_ID
+    # At least one priced market/opportunity
+    priced_results = [
+        r for r in s_inp.price_all_bundle.results if r.disposition.value == "PRICED"
+    ]
+    assert len(priced_results) >= 1
+    assert all(r.provider_event_id == EVENT_ID for r in priced_results)
+    assert len({r.market_id for r in s_inp.price_all_bundle.results}) == 15
+    assert len(s_inp.price_all_bundle.results) == 44
+
+    # Real Router decision vocabulary
+    assert s_inp.router_decision.status.value in {"SELECTED", "NO_BET"}
+    assert p_inp.router_decision.status.value in {"SELECTED", "NO_BET"}
+    assert s_inp.router_decision.status == p_inp.router_decision.status
+    assert s_inp.router_decision.router_policy_id == "SHADOW_SOURCE_ALIGNED_SETTLEMENT_AWARE_ROUTER_V3"
+    assert s_inp.router_decision.value_first_policy_id == "SHADOW_CONSERVATIVE_FROZEN_THRESHOLDS_V1"
+
+    # Resulting router input identity
+    assert s_inp.to_dict() == p_inp.to_dict()
+    assert s_inp.price_all_bundle_sha256 == p_inp.price_all_bundle_sha256
+    assert s_inp.router_decision_sha256 == p_inp.router_decision_sha256
+
     # Assert discovery strategy equality and truthful vocabulary
     strategy_id = "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1"
     assert supported_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
@@ -648,16 +699,52 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
 # ---------------------------------------------------------------------------
 
 def test_adversarial_1_unapproved_competition(tmp_path: Path):
-    """1. Unapproved competition (e.g. K-League 1) is rejected by review policy before reconciliation."""
+    """1. Unapproved competition (e.g. K-League 1) is excluded by review policy before reconciliation."""
     priority = resolve_source_competition_review_priority("KOR", "K-League 1")
     assert priority is None
 
-    # When candidate review rejects the competition and admission disposition is REJECTED,
-    # reconcile_current_events_from_paginated_discovery fails closed.
-    admission, captures = _fotmob_admission(
-        tmp_path,
+    # Feed unapproved KOR / K-League 1 raw capture into candidate bundle
+    capture = _fotmob_capture(
         competition="K-League 1",
+        home="Jeonbuk Hyundai Motors",
+        away="FC Seoul",
+        kickoff=KICKOFF,
+    )
+    candidate_bundle = build_fotmob_fixture_candidate_bundle((capture,))
+    assert candidate_bundle.candidate_count == 1
+    candidate = candidate_bundle.candidates[0]
+    assert candidate.source_competition_name == "K-League 1"
+
+    # Run actual production review policy path
+    policy_result = build_current_shadow_fotmob_fixture_review_policy_result(
+        candidate_bundle,
+        reviewed_at=datetime(2026, 9, 20, 8, 10, tzinfo=UTC),
+    )
+    # Real policy strictly excludes unapproved competition
+    assert policy_result.exact_competition_identity_count == 0
+    assert policy_result.policy_approved_count == 0
+    assert policy_result.review_bundle.approved_count == 0
+    assert len(policy_result.review_bundle.decisions) == 0
+
+    # Handoff construction fails closed because 0 candidates were approved by review policy
+    with pytest.raises(
+        FotMobFixtureCatalogHandoffError,
+        match="at least one explicit approved catalog input is required for handoff",
+    ):
+        build_fotmob_fixture_catalog_handoff(
+            candidate_bundle, policy_result.review_bundle
+        )
+
+    # Even if an unadmitted / rejected admission decision is attempted, reconciliation fails closed
+    valid_admission, valid_captures = _fotmob_admission(tmp_path)
+    rejected_decision = dataclasses.replace(
+        valid_admission.decision,
         disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
+    )
+    rejected_admission = dataclasses.replace(
+        valid_admission,
+        decision=rejected_decision,
+        admitted_fixtures=(),
     )
     with pytest.raises(
         reviewed_discovery.SportyBetCurrentEventDiscoveryError,
@@ -666,8 +753,8 @@ def test_adversarial_1_unapproved_competition(tmp_path: Path):
         paginated_discovery.reconcile_current_events_from_paginated_discovery(
             repository_root=tmp_path,
             discovery_evidence_directory=tmp_path,
-            fotmob_admission_value=admission,
-            fotmob_captures=captures,
+            fotmob_admission_value=rejected_admission,
+            fotmob_captures=valid_captures,
             execute_live_network=False,
         )
 
@@ -766,60 +853,60 @@ def test_adversarial_10_unknown_alias(monkeypatch: pytest.MonkeyPatch, tmp_path:
 
 
 def test_adversarial_11_wrong_native_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """11. Wrong provider-native competitor identity does not authorize fixture."""
+    """11. Wrong provider-native competitor identity does not authorize fixture on real reconciliation path."""
     fixture_identity.reset_runtime_evidence()
     try:
-        fotmob_payload = json.dumps({
-            "leagues": [{
-                "ccode": "USA",
-                "primaryId": 130,
-                "name": "Major League Soccer",
-                "matches": [{
-                    "id": 5071366,
-                    "home": {"id": 546238, "name": "New York City FC", "longName": "New York City FC"},
-                    "away": {"id": 6514, "name": "Red Bull New York", "longName": "Red Bull New York"},
-                    "status": {"utcTime": KICKOFF.isoformat().replace("+00:00", "Z")},
-                }],
-            }]
-        }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-        # Observed provider has WRONG competitor IDs (sr:competitor:999999 and sr:competitor:888888)
-        # instead of registered sr:competitor:167510 and sr:competitor:2506
-        wrong_provider_payload = json.dumps({
-            "events": [{
-                "eventId": "sr:match:99999999",
-                "estimateStartTime": int(KICKOFF.timestamp() * 1000),
-                "homeTeamId": "sr:competitor:999999",
-                "homeTeamName": "New York City FC",
-                "awayTeamId": "sr:competitor:888888",
-                "awayTeamName": "New York Red Bulls",
-                "sport": {
-                    "category": {"id": "sr:category:26", "tournament": {"id": "sr:tournament:242", "name": "MLS"}}
-                },
-            }]
-        }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
-
-        fixture_identity._bind_team(546238, "sr:competitor:167510")
-        fixture_identity._bind_team(6514, "sr:competitor:2506")
-        fixture_identity.observe_fotmob_payload(fotmob_payload)
-        fixture_identity.observe_provider_payload(wrong_provider_payload)
-
-        test_event = SimpleNamespace(
+        # Provider raw discovery event with wrong competitor identity
+        wrong_event = _event(
             event_id="sr:match:99999999",
-            kickoff_utc=KICKOFF,
-            competition_name="Major League Soccer",
-            home_team_name="New York City FC",
-            away_team_name="New York Red Bulls",
-        )
-        test_row = SimpleNamespace(
-            source_fixture_identifier="5071366",
+            home="Completely Wrong Team FC",
+            away="Other Wrong FC",
             kickoff=KICKOFF,
-            competition="Major League Soccer",
-            home_team="New York City FC",
-            away_team="Red Bull New York",
         )
-        matches = identity_recovery.match_event(test_event, (test_row,))
-        # Wrong competitor ID fails stable identity matching
-        assert matches == ()
+        # Run through actual paginated discovery and reconciliation path
+        bundle = _run_paginated(monkeypatch, tmp_path, events=[wrong_event])
+        assert len(bundle.rows) == 1
+        row = bundle.rows[0]
+        # Require no fixture reconciliation authorization, exact disposition, and no matched fixture
+        assert row.fixture_reconciliation_authorized is False
+        assert row.matched_fotmob_fixture_id is None
+        assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.NO_EXACT_REVIEWED_FOTMOB_MATCH
+        assert bundle.matched_rows == ()
+
+        # Direct detail directory is not populated for un-reconciled event
+        assert "sr:match:99999999" not in dict(bundle._detail_directories)
+
+        # No Price-All / Router progression: acquire_current_shadow_pre_router_bundle produces 0 priced fixtures
+        # and 0 router inputs
+        admission, captures = _fotmob_admission(tmp_path / "case11")
+        raw_fotmob_bytes, raw_manifest = captures[0]
+        execution = SimpleNamespace(
+            bootstrap=SimpleNamespace(
+                verified_artifact=SimpleNamespace(admission=admission),
+                fixtures=admission.admitted_fixtures,
+            ),
+            summary=lambda: {"fixture_source": "offline-premier-league"},
+        )
+        monkeypatch.setattr(
+            runner,
+            "_issue_current_fixture_sources",
+            lambda **_kw: ([(execution, "20260920")], ("20260920",)),
+        )
+        monkeypatch.setattr(
+            runner,
+            "_source_capture",
+            lambda *_args: (raw_fotmob_bytes, raw_manifest),
+        )
+        monkeypatch.setattr(runner, "_legacy_bootstrap_bytes", lambda: b"{}")
+
+        pre_router_bundle = runner.acquire_current_shadow_pre_router_bundle(
+            repository_root=tmp_path,
+            lineage_main_sha="1" * 40,
+            capture_mode="SUPPORTED_REQUEST",
+        )
+        assert pre_router_bundle.reconciled_fixture_count == 0
+        assert pre_router_bundle.priced_fixture_count == 0
+        assert pre_router_bundle.router_inputs == ()
     finally:
         fixture_identity.reset_runtime_evidence()
 
