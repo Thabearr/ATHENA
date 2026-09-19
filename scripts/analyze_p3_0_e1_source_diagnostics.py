@@ -115,7 +115,13 @@ def _provider_events(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
         and path.endswith(".json")
         and not path.endswith("manifest.json")
     )
-    if not paths and not paginated_paths:
+    upcoming_paths = sorted(
+        path
+        for path in entries
+        if "/current-shadow-sportybet-upcoming-discovery/" in path
+        and path.endswith("/upcoming.raw.json")
+    )
+    if not paths and not paginated_paths and not upcoming_paths:
         raise SourceDiagnosticsAuditError("retained SportyBet discovery/tournament evidence missing")
     for path in paths:
         raw = entries[path]
@@ -175,6 +181,87 @@ def _provider_events(entries: Mapping[str, bytes]) -> list[dict[str, Any]]:
                 events[event_id] = row
             elif row["provider_raw_sha256"][0] not in prior["provider_raw_sha256"]:
                 prior["provider_raw_sha256"].append(row["provider_raw_sha256"][0])
+    for path in upcoming_paths:
+        raw = entries[path]
+        payload = _json(raw, path)
+        data = payload.get("data") if type(payload) is dict else None
+        if type(data) is not list:
+            raise SourceDiagnosticsAuditError("upcoming raw discovery data is missing")
+        for value in data:
+            if type(value) is not dict:
+                continue
+            event_id = value.get("eventId")
+            sport = value.get("sport")
+            category = sport.get("category") if type(sport) is dict else None
+            tournament = category.get("tournament") if type(category) is dict else None
+            kickoff = _provider_kickoff(value.get("estimateStartTime"))
+            fields = (
+                value.get("homeTeamId"),
+                value.get("homeTeamName"),
+                value.get("awayTeamId"),
+                value.get("awayTeamName"),
+                category.get("id") if type(category) is dict else None,
+                tournament.get("id") if type(tournament) is dict else None,
+                tournament.get("name") if type(tournament) is dict else None,
+            )
+            if (
+                type(event_id) is not str
+                or kickoff is None
+                or not all(type(item) is str for item in fields)
+            ):
+                continue
+            row = {
+                "provider_event_id": event_id,
+                "provider_category_id": fields[4],
+                "provider_tournament_id": fields[5],
+                "provider_competition": fields[6],
+                "provider_home_competitor_id": fields[0],
+                "provider_home": fields[1],
+                "provider_away_competitor_id": fields[2],
+                "provider_away": fields[3],
+                "kickoff_utc": kickoff,
+                "provider_raw_sha256": [hashlib.sha256(raw).hexdigest()],
+                "provider_source": "CURRENT_SHADOW_UPCOMING_DISCOVERY",
+                "event_status": value.get("status"),
+                "booking_status": value.get("bookingStatus"),
+                "match_status": value.get("matchStatus"),
+                "prematch_bookable_observed": (
+                    str(value.get("bookingStatus") or "").strip().casefold() != "unavailable"
+                    and value.get("status") in (None, 0, "0")
+                    and value.get("setScore") in (None, "")
+                    and value.get("playedSeconds") in (None, "")
+                    and (
+                        not str(value.get("matchStatus") or "").strip()
+                        or "not start" in str(value.get("matchStatus") or "").strip().casefold()
+                        or str(value.get("matchStatus") or "").strip().casefold() == "ns"
+                    )
+                ),
+            }
+            prior = events.get(event_id)
+            core_keys = {
+                "provider_event_id",
+                "provider_category_id",
+                "provider_tournament_id",
+                "provider_competition",
+                "provider_home_competitor_id",
+                "provider_home",
+                "provider_away_competitor_id",
+                "provider_away",
+                "kickoff_utc",
+            }
+            if prior is not None and {
+                key: prior.get(key) for key in core_keys
+            } != {key: row.get(key) for key in core_keys}:
+                raise SourceDiagnosticsAuditError("conflicting retained provider event")
+            if prior is None:
+                events[event_id] = row
+            else:
+                prior.update({
+                    key: value for key, value in row.items()
+                    if key not in {"provider_raw_sha256"}
+                })
+                if row["provider_raw_sha256"][0] not in prior["provider_raw_sha256"]:
+                    prior["provider_raw_sha256"].append(row["provider_raw_sha256"][0])
     for row in events.values():
         row["provider_raw_sha256"].sort()
     return [events[key] for key in sorted(events)]
@@ -261,6 +348,68 @@ def analyze(path: str | Path, *, expected_zip_sha256: str | None = None) -> dict
         raise SourceDiagnosticsAuditError("P3.0 failure receipt malformed")
     fixtures = _fotmob_fixtures(entries)
     events = _provider_events(entries)
+    upcoming_events = [
+        event for event in events
+        if event.get("provider_source") == "CURRENT_SHADOW_UPCOMING_DISCOVERY"
+    ]
+    upcoming_source_assessment: dict[str, Any] | None = None
+    if upcoming_events:
+        manifest_paths = sorted(
+            path
+            for path in entries
+            if "/current-shadow-sportybet-upcoming-discovery/" in path
+            and path.endswith("/manifest.json")
+        )
+        if not manifest_paths:
+            raise SourceDiagnosticsAuditError(
+                "active upcoming discovery manifest is missing"
+            )
+        manifests = [_json(entries[path], path) for path in manifest_paths]
+        if len(manifests) != len(set(manifest.get("raw_sha256") for manifest in manifests)):
+            raise SourceDiagnosticsAuditError("conflicting upcoming discovery manifests")
+        first_manifest = manifests[0] if manifests else {}
+        prematch_count = sum(
+            event.get("prematch_bookable_observed") is True for event in upcoming_events
+        )
+        inplay_count = sum(event.get("event_status") in (1, "1") for event in upcoming_events)
+        observed_at = first_manifest.get("observed_at")
+        kickoff_evaluation = None
+        if type(observed_at) is str:
+            kickoff_evaluation = _utc_text(observed_at)
+        future_lead_count = 0
+        too_close_count = 0
+        for event in upcoming_events:
+            if kickoff_evaluation is None:
+                continue
+            kickoff = datetime.fromisoformat(event["kickoff_utc"].replace("Z", "+00:00"))
+            observed = datetime.fromisoformat(kickoff_evaluation.replace("Z", "+00:00"))
+            if (kickoff - observed).total_seconds() > 120 and event.get("prematch_bookable_observed") is True:
+                future_lead_count += 1
+            if (kickoff - observed).total_seconds() <= 120:
+                too_close_count += 1
+        source_method = first_manifest.get(
+            "source_method",
+            "PUBLIC_ANONYMOUS_FACTS_CENTER_WAP_CONFIGURABLE_UPCOMING_EVENTS_GET",
+        )
+        strategy_id = "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+        upcoming_source_assessment = {
+            "provider_event_count": len(upcoming_events),
+            "provider_prematch_bookable_count": prematch_count,
+            "provider_inplay_count": inplay_count,
+            "provider_future_lead_eligible_count": future_lead_count,
+            "provider_too_close_count": too_close_count,
+            "provider_discovery_source_method": source_method,
+            "provider_discovery_strategy_id": strategy_id,
+            "provider_discovery_observed_at": observed_at,
+            "source_viability": (
+                "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS"
+                if prematch_count == 0
+                else "PROSPECTIVE_DISCOVERY_ELIGIBLE"
+                if future_lead_count > 0
+                else "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS"
+            ),
+            "active_upcoming_manifest_count": len(manifests),
+        }
     audited = []
     total_raw_counterparts = 0
     total_policy_approved_counterparts = 0
@@ -311,6 +460,10 @@ def analyze(path: str | Path, *, expected_zip_sha256: str | None = None) -> dict
         "failure_run_id": receipt.get("capture_id"),
         "executed_commit_sha": receipt["exact_commit_sha"],
         "provider_event_count": len(events),
+        "active_upcoming_source_assessment": upcoming_source_assessment,
+        "historical_paginated_source_present": any(
+            "/sportybet-current-event-discovery/" in path for path in entries
+        ),
         "fotmob_fixture_count": len(fixtures),
         "events": audited,
         "summary": {

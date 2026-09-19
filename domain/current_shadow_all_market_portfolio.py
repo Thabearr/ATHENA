@@ -18,9 +18,6 @@ from typing import Any, Iterable, Mapping, Optional, Sequence
 
 from domain import current_shadow_all_market_price_all as price_all
 from domain import current_shadow_all_market_router as router
-from domain import (
-    current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery,
-)
 from domain import sportybet_current_event_discovery_reconciliation as reconciliation
 from domain._accumulator_optimizer_contracts import (
     EXPECTED_ACCUMULATOR_OPTIMIZER_CONTRACT_SHA256_BY_VERSION,
@@ -233,9 +230,11 @@ def build_shadow_portfolio_router_input(
     if context._current_reconciliation_bundle is None:
         raise CurrentShadowPortfolioError("PR-D context omitted retained current reconciliation")
     bundle = context._current_reconciliation_bundle
-    if getattr(bundle, "dataset_name", None) == paginated_discovery.DATASET_NAME:
-        verifier = paginated_discovery.verify_current_event_discovery_reconciliation_bundle
-        error_cls = paginated_discovery.CurrentShadowPaginatedDiscoveryReconciliationError
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_reconciliation
+
+    if type(bundle) is upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
+        verifier = upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        error_cls = upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
     else:
         verifier = reconciliation.verify_current_event_discovery_reconciliation_bundle
         error_cls = reconciliation.SportyBetCurrentEventDiscoveryError

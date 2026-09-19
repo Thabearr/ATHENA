@@ -30,6 +30,7 @@ import types
 from typing import Any, Iterator
 
 from domain import current_shadow_fixture_identity_aliases as fixture_aliases
+from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
 from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
 from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
 from domain import current_shadow_sportybet_team_label_compatibility as team_label_compatibility
@@ -247,35 +248,6 @@ def validate_contract() -> Mapping[str, Any]:
 # Stable identity tracking & state scoping
 # ---------------------------------------------------------------------------
 
-_replay_identity_state_sha256: str | None = None
-
-
-_IDENTITY_STATE_PAYLOAD_KEYS = frozenset({
-    "schema_version",
-    "policy_id",
-    "matching_basis",
-    "seed_registry_sha256",
-    "alias_registry_ancestry",
-    "learned_team_identities",
-    "learned_competition_identities",
-    "evidence_records",
-    "authority",
-})
-_IDENTITY_STATE_IMMUTABLE_KEYS = (
-    "schema_version",
-    "policy_id",
-    "matching_basis",
-    "seed_registry_sha256",
-    "authority",
-)
-_IDENTITY_STATE_APPEND_ONLY_KEYS = (
-    "alias_registry_ancestry",
-    "learned_team_identities",
-    "learned_competition_identities",
-    "evidence_records",
-)
-
-
 def _copy_identity_state(state: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(
         dict(state),
@@ -287,71 +259,11 @@ def _copy_identity_state(state: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _identity_state_snapshot() -> dict[str, Any]:
-    payload = fixture_identity_v2._state_payload()
-    return json.loads(json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ))
+    return identity_compatibility.identity_state_snapshot()
 
 
 def _identity_state_sha256(snapshot: Mapping[str, Any]) -> str:
-    raw = _canonical_bytes(_copy_identity_state(snapshot), newline=False)
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _verify_identity_state_append_only_extension(
-    retained_state: Mapping[str, Any],
-    current_state: Mapping[str, Any],
-) -> None:
-    if (
-        set(retained_state) != _IDENTITY_STATE_PAYLOAD_KEYS
-        or set(current_state) != _IDENTITY_STATE_PAYLOAD_KEYS
-    ):
-        raise CurrentShadowPaginatedDiscoveryReconciliationError(
-            "persisted Shadow fixture identity state payload shape drifted"
-        )
-    for key in _IDENTITY_STATE_IMMUTABLE_KEYS:
-        if retained_state[key] != current_state[key]:
-            raise CurrentShadowPaginatedDiscoveryReconciliationError(
-                "persisted Shadow fixture identity state changed retained policy ancestry"
-            )
-    for key in _IDENTITY_STATE_APPEND_ONLY_KEYS:
-        retained_rows = retained_state.get(key, [])
-        current_rows = current_state.get(key, [])
-        if len(current_rows) < len(retained_rows):
-            raise CurrentShadowPaginatedDiscoveryReconciliationError(
-                f"persisted Shadow fixture identity state shrunk for {key}"
-            )
-        retained_counter = Counter(
-            json.dumps(row, sort_keys=True, separators=(",", ":"))
-            for row in retained_rows
-        )
-        current_counter = Counter(
-            json.dumps(row, sort_keys=True, separators=(",", ":"))
-            for row in current_rows
-        )
-        if retained_counter - current_counter:
-            raise CurrentShadowPaginatedDiscoveryReconciliationError(
-                f"persisted Shadow fixture identity state is not an append-only extension of retained {key}"
-            )
-
-
-def _begin_identity_scope(
-    fotmob_captures: Sequence[Any],
-    discovery_evidence_directory: Path | None = None,
-) -> None:
-    fixture_identity_v2.reset_runtime_evidence()
-    fixture_identity_v2.configure_persistent_state(
-        os.environ.get("ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH")
-    )
-    fixture_identity_v2.observe_fotmob_captures(fotmob_captures)
-    if discovery_evidence_directory is not None:
-        fixture_identity_v2.observe_provider_directory(
-            discovery_evidence_directory
-        )
+    return identity_compatibility.identity_state_sha256(snapshot)
 
 
 def _bind_identity_state(bundle: Any) -> Any:
@@ -384,91 +296,58 @@ def _bind_retained_identity_state(
     return bundle
 
 
-# ---------------------------------------------------------------------------
-# Event matching under Current Shadow compatibility
-# ---------------------------------------------------------------------------
+# The implementation lives in the source-agnostic compatibility owner.  These
+# narrow adapters preserve the historical module's replay API without making
+# its paginated acquisition path the active Current Shadow authority.
+def _identity_state_snapshot() -> dict[str, Any]:
+    return identity_compatibility.identity_state_snapshot()
+
+
+def _identity_state_sha256(snapshot: Mapping[str, Any]) -> str:
+    return identity_compatibility.identity_state_sha256(snapshot)
+
+
+def _verify_identity_state_append_only_extension(
+    retained_state: Mapping[str, Any],
+    current_state: Mapping[str, Any],
+) -> None:
+    try:
+        identity_compatibility.verify_identity_state_append_only_extension(
+            retained_state, current_state
+        )
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
+
+
+def _begin_identity_scope(
+    fotmob_captures: Sequence[Any],
+    discovery_evidence_directory: Path | None = None,
+) -> None:
+    try:
+        identity_compatibility.begin_identity_scope(
+            fotmob_captures, discovery_evidence_directory
+        )
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
+
 
 def _project_event_labels(
     event: SportyBetDiscoveredEvent,
 ) -> SportyBetDiscoveredEvent:
-    """Apply reviewed team label compatibility (e.g. whitespace projection)."""
     try:
-        projected_home = team_label_compatibility.project_team_label(
-            event_id=event.event_id,
-            field="homeTeamName",
-            value=event.home_team_name,
-        )
-        projected_away = team_label_compatibility.project_team_label(
-            event_id=event.event_id,
-            field="awayTeamName",
-            value=event.away_team_name,
-        )
-    except team_label_compatibility.CurrentShadowSportyBetTeamLabelCompatibilityError as exc:
-        raise CurrentShadowPaginatedDiscoveryReconciliationError(
-            str(exc)
-        ) from exc
-    if (
-        projected_home == event.home_team_name
-        and projected_away == event.away_team_name
-    ):
-        return event
-    return SportyBetDiscoveredEvent(
-        event_id=event.event_id,
-        home_team_name=projected_home,
-        away_team_name=projected_away,
-        competition_name=event.competition_name,
-        competition_basis=event.competition_basis,
-        kickoff_utc=event.kickoff_utc,
-        booking_status=event.booking_status,
-        event_status=event.event_status,
-        match_status=event.match_status,
-        prematch_bookable_observed=event.prematch_bookable_observed,
-        source_page_num=event.source_page_num,
-        source_raw_sha256=event.source_raw_sha256,
-        source_observed_at=event.source_observed_at,
-    )
+        return identity_compatibility.project_event_labels(event)
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
 
 
 def _match_current_shadow_event(
     event: SportyBetDiscoveredEvent,
     reviewed_rows: Sequence[FotMobReviewedFixtureCatalogInput],
 ) -> tuple[FotMobReviewedFixtureCatalogInput, ...]:
-    """Match a discovered event using the full Current Shadow identity stack.
-
-    Hierarchy:
-    1. Run-199 overlay match (which delegates first to V3 recovery, then V2 stable,
-       then aliases, and finally run-199 specific retained aliases).
-    2. Fallback to direct V3 identity recovery match.
-    3. Fallback to V2 stable identity match.
-    4. Fallback to reviewed aliases match.
-    5. Fallback to exact literal match.
-    """
-    # Run-199 overlay incorporates V2 stable and reviewed aliases
-    result = run199_identity.match_event(event, reviewed_rows)
-    if result:
-        return result
-
-    # V3 identity recovery handles competition drift with confirmed teams
-    result_v3 = identity_recovery.match_event(event, reviewed_rows)
-    if result_v3:
-        return result_v3
-
-    # V2 stable identity
-    result_v2 = fixture_identity_v2.match_event(event, reviewed_rows)
-    if result_v2:
-        return result_v2
-
-    # Exact literal matching
-    if event.competition_name is None:
-        return ()
-    return tuple(
-        item
-        for item in reviewed_rows
-        if item.home_team == event.home_team_name
-        and item.away_team == event.away_team_name
-        and item.competition == event.competition_name
-        and item.kickoff.astimezone(timezone.utc) == event.kickoff_utc
-    )
+    try:
+        return identity_compatibility.match_current_shadow_event(event, reviewed_rows)
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
 
 
 class _Legacy:

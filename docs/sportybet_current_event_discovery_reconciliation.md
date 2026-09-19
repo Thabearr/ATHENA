@@ -1,5 +1,11 @@
 # SportyBet current event discovery + source-replayed FotMob reconciliation
 
+> Runtime continuity note: the `liveOrPrematchEvents` contract documented
+> below remains historical/replayable evidence. Current Shadow and P3.0-E1
+> prospective runtime discovery uses the independently reviewed upcoming
+> contract in `domain/current_shadow_sportybet_upcoming_reconciliation.py`:
+> `/api/ng/factsCenter/wapConfigurableUpcomingEvents?sportId=sr%3Asport%3A1&_t=<response-scoped nonce>`.
+
 ## Purpose
 
 PR #251 closes the autonomous event-identity gap left after Portfolio Optimizer v2. The direct SportyBet quote lane already knew how to read one exact `sr:match:<id>` once that provider event ID was known. This boundary discovers current SportyBet football event IDs and reconciles them conservatively to ATHENA's reviewed FotMob fixture truth.

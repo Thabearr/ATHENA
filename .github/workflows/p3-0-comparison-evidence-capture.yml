@@ -200,6 +200,7 @@ jobs:
             .cache/athena-research/fotmob-data-matches-captures
             .cache/athena-research/current-shadow-sportybet-catalog-fanout
             .cache/athena-research/sportybet-current-event-discovery
+            .cache/athena-research/current-shadow-sportybet-upcoming-discovery
             .cache/athena-research/sportybet-live-event-quote-evidence
             .cache/athena-research/current-shadow-fixture-identity-v2
           if-no-files-found: warn

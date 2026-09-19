@@ -28,8 +28,8 @@ from typing import Any, Callable, Mapping
 from domain import current_fotmob_latest_durable_fresh_history as latest_history
 from domain import current_shadow_canonical_core_adapter as shadow_core_adapter
 from domain import sportybet_share_code as share_module
-from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
-reconciliation = paginated_discovery
+from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery
+reconciliation = upcoming_discovery
 from domain._current_shadow_price_core import ShadowPriceError
 from domain.fotmob_data_matches_capture import (
     RAW_FILENAME,
@@ -773,7 +773,7 @@ def acquire_current_shadow_pre_router_bundle(
     ]] = []
     emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
     discovery_directory, discovery_manifest = (
-        paginated_discovery.capture_current_paginated_discovery(
+        upcoming_discovery.capture_current_upcoming_discovery(
             repository_root=repository_root,
             execute_live_network=execute_live_network,
         )
@@ -781,7 +781,7 @@ def acquire_current_shadow_pre_router_bundle(
     for execution, request_date in fixture_sources:
         raw, manifest = _source_capture(execution, repository_root)
         admission = execution.bootstrap.verified_artifact.admission
-        current_events = paginated_discovery.reconcile_current_events_from_paginated_discovery(
+        current_events = upcoming_discovery.reconcile_current_events_from_upcoming_discovery(
             repository_root=repository_root,
             discovery_evidence_directory=discovery_directory,
             fotmob_admission_value=admission,
@@ -836,25 +836,45 @@ def acquire_current_shadow_pre_router_bundle(
     first_matched = next((item for item in source_rows if item[4].matched_rows), None)
     primary = first_matched or source_rows[0]
     primary_date, primary_execution, _primary_raw, _primary_manifest, primary_events = primary
+    discovery_assessment = upcoming_discovery.prospective_discovery_assessment(
+        discovery_manifest,
+        evaluation_time=_now(),
+    )
     reconciliation_by_date = {
         request_date: {
             "current_reconciliation_sha256": current_events.canonical_sha256,
             "current_reconciliation_contract_sha256": current_events.contract_sha256,
             "provider_event_count": len(current_events.rows),
             "reconciled_fixture_count": len(current_events.matched_rows),
-            "provider_discovery_strategy_id": paginated_discovery.POLICY_ID,
+            "provider_discovery_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
             "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
+            "provider_discovery_source_method": upcoming_discovery.DISCOVERY_SOURCE_METHOD,
+            "provider_prematch_bookable_count": discovery_assessment[
+                "provider_prematch_bookable_count"
+            ],
+            "provider_inplay_count": discovery_assessment["provider_inplay_count"],
+            "provider_future_lead_eligible_count": discovery_assessment[
+                "provider_future_lead_eligible_count"
+            ],
+            "provider_too_close_count": discovery_assessment[
+                "provider_too_close_count"
+            ],
+            "provider_discovery_observed_at": discovery_assessment[
+                "provider_discovery_observed_at"
+            ],
+            "source_viability": discovery_assessment["source_viability"],
             "disposition_counts": _disposition_counts(current_events),
         }
         for request_date, _execution, _raw, _manifest, current_events in source_rows
     }
     discovery_summary = {
-        "provider_discovery_strategy_id": paginated_discovery.POLICY_ID,
+        "provider_discovery_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
         "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
-        "provider_discovery_page_count": len(discovery_manifest.pages),
+        "provider_discovery_page_count": discovery_assessment["captured_page_count"],
         "provider_discovery_event_count": len(discovery_manifest.events),
-        "provider_discovery_observation_count": len(discovery_manifest.pages),
-        "provider_discovery_source_method": paginated_discovery.DISCOVERY_SOURCE_METHOD,
+        "provider_discovery_observation_count": 1,
+        "provider_discovery_source_method": upcoming_discovery.DISCOVERY_SOURCE_METHOD,
+        **dict(discovery_assessment),
     }
     source_progress_summary: dict[str, Any] = {
         "selected_fixture_request_date": primary_date,

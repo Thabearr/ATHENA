@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import json
 from urllib.parse import parse_qs, urlsplit
 
+from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_sportybet_upcoming_reconciliation as current
 
 UTC = timezone.utc
@@ -64,6 +65,13 @@ def test_contract_mirrors_exact_pr258_upcoming_path_without_changing_shared_cont
         "64c7a2b71304f94a39de7e608be1f76a10e14a1a52a338f89d1c695ba0e5f1ee"
     )
     assert current.EXPECTED_CONTRACT_SHA256 == current.calculate_contract_sha256()
+    assert current.CURRENT_SHADOW_UPCOMING_POLICY_ID == (
+        "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    )
+    assert current.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == (
+        current.calculate_current_shadow_upcoming_compatibility_sha256()
+    )
+    assert runner.reconciliation is current
 
 
 def test_request_matches_pr258_public_anonymous_upcoming_shape():
@@ -94,3 +102,18 @@ def test_exact_pr258_upcoming_row_preserves_identity_competition_and_kickoff():
     assert event.prematch_bookable_observed is True
     assert event.source_raw_sha256 == snapshot.raw_sha256
     assert event.source_observed_at == OBSERVED
+
+
+def test_upcoming_source_assessment_exposes_prospective_counts():
+    snapshot = current._parse_snapshot(
+        _pr258_shape(), request_nonce_ms=NONCE, observed_at=OBSERVED
+    )
+    assessment = current.prospective_discovery_assessment(
+        snapshot, evaluation_time=OBSERVED
+    )
+    assert assessment["provider_event_count"] == 1
+    assert assessment["provider_prematch_bookable_count"] == 1
+    assert assessment["provider_inplay_count"] == 0
+    assert assessment["provider_future_lead_eligible_count"] == 1
+    assert assessment["provider_too_close_count"] == 0
+    assert assessment["source_viability"] == current.PROSPECTIVE_DISCOVERY_ELIGIBLE

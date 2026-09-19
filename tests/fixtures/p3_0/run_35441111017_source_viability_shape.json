@@ -1,0 +1,23 @@
+{
+  "evidence_kind": "DETERMINISTIC_SHAPE_REPRODUCTION_NOT_RETAINED_BYTES",
+  "run_id": "35441111017",
+  "primary_artifact_id": 10584076663,
+  "primary_artifact_zip_sha256": "81b7e0dfb9fb91cbc961d591c876010330025da24f1aafa3dca4ff038c93222e",
+  "diagnostics_artifact_id": 10584211437,
+  "diagnostics_artifact_zip_sha256": "a9facd41768ad271cae6ccb72f0c092b6f640d82daf0de5c46509af55766064d",
+  "raw_page_sha256": "f13f112afa8c376a9cc95b6b0e1a1c254592786a8574acb59b93d377ddea792c",
+  "source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_LIVE_OR_PREMATCH_EVENTS_GET",
+  "request_target": "/api/ng/factsCenter/liveOrPrematchEvents?sportId=sr%3Asport%3A1&pageSize=100&pageNum=1",
+  "observed_at": "2026-09-19T11:49:46.016668Z",
+  "provider_page_item_count": 79,
+  "captured_page_count": 1,
+  "event_count": 136,
+  "event_status_counts": {"1": 136},
+  "prematch_bookable_counts": {"false": 136},
+  "booking_status_counts": {"Booked": 136},
+  "match_status_counts": {"H1": 38, "HT": 43, "H2": 55},
+  "kickoff_min": "2026-09-19T10:00:00.000000Z",
+  "kickoff_max": "2026-09-19T11:45:00.000000Z",
+  "pagination_termination_basis": "SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE",
+  "source_viability": "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS"
+}

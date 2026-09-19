@@ -14,6 +14,7 @@ from config.competition_review_priority import (
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_fixture_identity_v2 as fixture_identity
 from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
+from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery
 from domain.current_shadow_sportybet_catalog_fanout_reconciliation import (
     CurrentShadowSportyBetCatalogFanoutReconciliationError,
     validate_fanout_request_scope,
@@ -225,6 +226,18 @@ def _event(
         "status": status,
         "bookingStatus": booking_status,
         "matchStatus": "Not started" if status in (0, "0", None) else "Live",
+        "sport": {
+            "id": "sr:sport:1",
+            "name": "Football",
+            "category": {
+                "id": "sr:category:1",
+                "name": "England",
+                "tournament": {
+                    "id": "sr:tournament:1",
+                    "name": tournament_name or "Premier League",
+                },
+            },
+        },
     }
     if tournament_name is not None:
         value["tournamentName"] = tournament_name
@@ -311,6 +324,26 @@ def _install_discovery(
         return raw, 200, observed + timedelta(seconds=page_num - 1)
 
     monkeypatch.setattr(reviewed_discovery, "_network_fetch_page", fetch)
+
+
+def _install_upcoming_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    events: Any,
+    *,
+    tournament_name: str = "Premier League",
+    observed: datetime = DISCOVERY_OBSERVED,
+) -> None:
+    raw = json.dumps(
+        {"bizCode": 10000, "data": list(events)},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    nonce = _epoch_ms(observed) - 250
+
+    def fetch() -> tuple[bytes, int, datetime, int]:
+        return raw, 200, observed, nonce
+
+    monkeypatch.setattr(upcoming_discovery, "_network_fetch_snapshot", fetch)
 
 
 def _install_detail(
@@ -540,7 +573,7 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
         summary=lambda: {"fixture_source": "offline-premier-league"},
     )
 
-    _install_discovery(monkeypatch, [_event()], tournament_name="Premier League")
+    _install_upcoming_discovery(monkeypatch, [_event()], tournament_name="Premier League")
     _install_detail(monkeypatch)
     monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
 
@@ -683,12 +716,12 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
     assert s_inp.router_decision_sha256 == p_inp.router_decision_sha256
 
     # Assert discovery strategy equality and truthful vocabulary
-    strategy_id = "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1"
+    strategy_id = "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
     assert supported_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert p3_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert "provider_catalog_fanout_snapshot_sha256" not in supported_bundle.source_summary
     assert "provider_catalog_fanout_snapshot_sha256" not in p3_bundle.source_summary
-    assert supported_bundle.source_summary["provider_discovery_page_count"] == 2
+    assert supported_bundle.source_summary["provider_discovery_page_count"] == 1
     assert supported_bundle.source_summary["provider_discovery_event_count"] == 1
     assert supported_bundle.source_summary["current_reconciliation_sha256"] == p3_bundle.source_summary["current_reconciliation_sha256"]
     assert supported_bundle.source_summary["current_reconciliation_sha256"] is not None
