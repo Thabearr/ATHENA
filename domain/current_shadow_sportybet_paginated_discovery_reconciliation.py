@@ -250,16 +250,51 @@ def validate_contract() -> Mapping[str, Any]:
 _replay_identity_state_sha256: str | None = None
 
 
+_IDENTITY_STATE_PAYLOAD_KEYS = frozenset({
+    "schema_version",
+    "policy_id",
+    "matching_basis",
+    "seed_registry_sha256",
+    "alias_registry_ancestry",
+    "learned_team_identities",
+    "learned_competition_identities",
+    "evidence_records",
+    "authority",
+})
+_IDENTITY_STATE_IMMUTABLE_KEYS = (
+    "schema_version",
+    "policy_id",
+    "matching_basis",
+    "seed_registry_sha256",
+    "authority",
+)
+_IDENTITY_STATE_APPEND_ONLY_KEYS = (
+    "alias_registry_ancestry",
+    "learned_team_identities",
+    "learned_competition_identities",
+    "evidence_records",
+)
+
+
 def _copy_identity_state(state: Mapping[str, Any]) -> dict[str, Any]:
-    return {
-        "competitions": [dict(row) for row in state.get("competitions", [])],
-        "teams": [dict(row) for row in state.get("teams", [])],
-        "evidence": [dict(row) for row in state.get("evidence", [])],
-    }
+    return json.loads(json.dumps(
+        dict(state),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ))
 
 
 def _identity_state_snapshot() -> dict[str, Any]:
-    return _copy_identity_state(fixture_identity_v2.state_snapshot())
+    payload = fixture_identity_v2._state_payload()
+    return json.loads(json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ))
 
 
 def _identity_state_sha256(snapshot: Mapping[str, Any]) -> str:
@@ -271,7 +306,19 @@ def _verify_identity_state_append_only_extension(
     retained_state: Mapping[str, Any],
     current_state: Mapping[str, Any],
 ) -> None:
-    for key in ("competitions", "teams", "evidence"):
+    if (
+        set(retained_state) != _IDENTITY_STATE_PAYLOAD_KEYS
+        or set(current_state) != _IDENTITY_STATE_PAYLOAD_KEYS
+    ):
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(
+            "persisted Shadow fixture identity state payload shape drifted"
+        )
+    for key in _IDENTITY_STATE_IMMUTABLE_KEYS:
+        if retained_state[key] != current_state[key]:
+            raise CurrentShadowPaginatedDiscoveryReconciliationError(
+                "persisted Shadow fixture identity state changed retained policy ancestry"
+            )
+    for key in _IDENTITY_STATE_APPEND_ONLY_KEYS:
         retained_rows = retained_state.get(key, [])
         current_rows = current_state.get(key, [])
         if len(current_rows) < len(retained_rows):
@@ -575,21 +622,23 @@ def _build_shadow_bundle(
             direct_raw_sha = inventory.source_raw_sha256
 
             # For identity check, compare with projected or raw names
-            home_matches = inventory.home_team_name in (
-                event.home_team_name,
-                team_label_compatibility.project_team_label(
+            home_matches = (
+                inventory.home_team_name == event.home_team_name
+                or team_label_compatibility.project_team_label(
                     event_id=event.event_id,
                     field="homeTeamName",
                     value=inventory.home_team_name,
-                ),
+                )
+                == event.home_team_name
             )
-            away_matches = inventory.away_team_name in (
-                event.away_team_name,
-                team_label_compatibility.project_team_label(
+            away_matches = (
+                inventory.away_team_name == event.away_team_name
+                or team_label_compatibility.project_team_label(
                     event_id=event.event_id,
                     field="awayTeamName",
                     value=inventory.away_team_name,
-                ),
+                )
+                == event.away_team_name
             )
             if (
                 inventory.event_id != event.event_id

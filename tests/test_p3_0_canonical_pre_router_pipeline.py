@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import dataclasses
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -17,12 +18,357 @@ from domain.current_shadow_sportybet_catalog_fanout_reconciliation import (
     CurrentShadowSportyBetCatalogFanoutReconciliationError,
     validate_fanout_request_scope,
 )
+from domain.fixture_catalog import compile_fixture_catalog, sha256_bytes
+from domain.fotmob_data_matches_capture import (
+    CapturedFotMobDataMatchesResponse,
+    build_data_matches_capture_manifest,
+)
+from domain.fotmob_fixture_candidate_review import (
+    FixtureCandidateReviewDisposition,
+    FotMobFixtureCandidateReviewDecision,
+    build_fotmob_fixture_candidate_review_bundle,
+    sha256_fotmob_fixture_candidate,
+)
+from domain.fotmob_fixture_candidates import build_fotmob_fixture_candidate_bundle
+from domain.fotmob_fixture_catalog_handoff import (
+    build_fotmob_fixture_catalog_handoff,
+    sha256_fotmob_fixture_catalog_handoff,
+)
+from domain.reviewed_fixture_catalog_admission import (
+    REVIEWED_SOURCE_CAPABILITY,
+    ReviewedFixtureCatalogAdmissionDecision,
+    ReviewedFixtureCatalogAdmissionDisposition,
+    build_reviewed_fixture_catalog_admission,
+    sha256_reviewed_fixture_catalog_admission,
+    sha256_reviewed_source_capability,
+)
+from domain import sportybet_current_event_discovery_reconciliation as reviewed_discovery
+from domain import sportybet_live_event_quote_evidence as live
 from scripts import current_shadow_fixture_identity_reconciliation_recovery as identity_recovery
 from scripts import verify_p3_0_e1_live_readiness
 
 
 UTC = timezone.utc
+FOTMOB_OBSERVED = datetime(2026, 9, 20, 8, 0, tzinfo=UTC)
+DISCOVERY_OBSERVED = datetime(2026, 9, 20, 10, 0, tzinfo=UTC)
+DETAIL_OBSERVED = datetime(2026, 9, 20, 10, 0, 30, tzinfo=UTC)
+EVALUATION = datetime(2026, 9, 20, 10, 0, 35, tzinfo=UTC)
+KICKOFF = datetime(2026, 9, 20, 15, 0, tzinfo=UTC)
+EVENT_ID = "sr:match:9000001"
+FIXTURE_ID = 5000001
 
+
+def _epoch_ms(value: datetime) -> int:
+    return int(value.astimezone(UTC).timestamp() * 1000)
+
+
+def _fotmob_match(
+    match_id: int,
+    *,
+    home: str = "Arsenal",
+    away: str = "Chelsea",
+    kickoff: datetime = KICKOFF,
+) -> dict[str, Any]:
+    kickoff = kickoff.astimezone(UTC)
+    return {
+        "away": {"id": 8455, "score": 0, "name": away, "longName": away},
+        "eliminatedTeamId": None,
+        "home": {"id": 9825, "score": 0, "name": home, "longName": home},
+        "id": match_id,
+        "leagueId": 47,
+        "status": {
+            "utcTime": kickoff.isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "halfs": {"firstHalfStarted": ""},
+            "periodLength": 45,
+            "started": False,
+            "cancelled": False,
+            "finished": False,
+        },
+        "statusId": 1,
+        "time": kickoff.strftime("%d.%m.%Y %H:%M"),
+        "timeTS": _epoch_ms(kickoff),
+        "tournamentStage": "",
+    }
+
+
+def _fotmob_capture(
+    *,
+    match_ids: tuple[int, ...] = (FIXTURE_ID,),
+    home: str = "Arsenal",
+    away: str = "Chelsea",
+    competition: str = "Premier League",
+    kickoff: datetime = KICKOFF,
+) -> tuple[bytes, Any]:
+    payload = {
+        "date": kickoff.astimezone(UTC).strftime("%Y%m%d"),
+        "leagues": [
+            {
+                "ccode": "ENG",
+                "id": 47,
+                "internalRank": 1,
+                "matches": [
+                    _fotmob_match(match_id, home=home, away=away, kickoff=kickoff)
+                    for match_id in match_ids
+                ],
+                "name": competition,
+                "primaryId": 47,
+                "simpleLeague": False,
+            }
+        ],
+    }
+    raw = json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    response = CapturedFotMobDataMatchesResponse(
+        status=200,
+        content_type="application/json; charset=utf-8",
+        content_length=len(raw),
+        body=raw,
+        observed_at=FOTMOB_OBSERVED,
+        network_acquisition_performed=True,
+    )
+    manifest = build_data_matches_capture_manifest(
+        response,
+        request_date=payload["date"],
+        timezone="UTC",
+        ccode3="ENG",
+    )
+    return raw, manifest
+
+
+def _fotmob_admission(
+    tmp_path: Path,
+    *,
+    match_ids: tuple[int, ...] = (FIXTURE_ID,),
+    home: str = "Arsenal",
+    away: str = "Chelsea",
+    competition: str = "Premier League",
+    kickoff: datetime = KICKOFF,
+    disposition: ReviewedFixtureCatalogAdmissionDisposition = (
+        ReviewedFixtureCatalogAdmissionDisposition.ADMITTED
+    ),
+):
+    capture = _fotmob_capture(
+        match_ids=match_ids,
+        home=home,
+        away=away,
+        competition=competition,
+        kickoff=kickoff,
+    )
+    candidate_bundle = build_fotmob_fixture_candidate_bundle((capture,))
+    decisions = tuple(
+        FotMobFixtureCandidateReviewDecision(
+            source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
+            source_match_id=candidate.source_match_id,
+            candidate_sha256=sha256_fotmob_fixture_candidate(candidate),
+            disposition=FixtureCandidateReviewDisposition.APPROVED,
+            reviewed_at=datetime(2026, 9, 20, 8, 30, tzinfo=UTC),
+            reviewer_reference="operator:pr374-fixture-review",
+            notes="explicit reviewed FotMob fixture identity",
+        )
+        for candidate in candidate_bundle.candidates
+    )
+    review_bundle = build_fotmob_fixture_candidate_review_bundle(
+        candidate_bundle,
+        decisions,
+    )
+    handoff = build_fotmob_fixture_catalog_handoff(candidate_bundle, review_bundle)
+    raw = capture[0]
+    for item in handoff.catalog_inputs:
+        evidence_path = tmp_path / item.evidence_file_path
+        evidence_path.parent.mkdir(parents=True, exist_ok=True)
+        evidence_path.write_bytes(raw)
+    input_path = tmp_path / "reviewed-fotmob.jsonl"
+    input_path.write_bytes(handoff.catalog_input_jsonl_bytes)
+    result = compile_fixture_catalog(
+        input_path=input_path,
+        evidence_root=tmp_path,
+        as_of=datetime(2026, 9, 20, 9, 0, tzinfo=UTC),
+        minimum_lead_seconds=120,
+        code_state={
+            "evidence_git_head_sha": "a" * 40,
+            "tracked_worktree_clean": True,
+        },
+    )
+    decision = ReviewedFixtureCatalogAdmissionDecision(
+        candidate_bundle_sha256=handoff.candidate_bundle_sha256,
+        review_bundle_sha256=handoff.review_bundle_sha256,
+        handoff_sha256=sha256_fotmob_fixture_catalog_handoff(handoff),
+        catalog_sha256=sha256_bytes(result.catalog_bytes),
+        manifest_sha256=sha256_bytes(result.manifest_bytes),
+        source_capability=REVIEWED_SOURCE_CAPABILITY,
+        source_capability_sha256=sha256_reviewed_source_capability(),
+        disposition=disposition,
+        reviewed_at=datetime(2026, 9, 20, 9, 30, tzinfo=UTC),
+        reviewer_reference="operator:pr374-catalog-admission",
+        notes="catalog identity admitted before current provider reconciliation",
+    )
+    admission = build_reviewed_fixture_catalog_admission(handoff, result, decision)
+    return admission, (capture,)
+
+
+def _event(
+    *,
+    event_id: str = EVENT_ID,
+    home: str = "Arsenal",
+    away: str = "Chelsea",
+    kickoff: datetime = KICKOFF,
+    status: int = 0,
+    booking_status: str = "Available",
+    tournament_name: str | None = "Premier League",
+) -> dict[str, Any]:
+    value: dict[str, Any] = {
+        "eventId": event_id,
+        "sportId": "sr:sport:1",
+        "homeTeamName": home,
+        "awayTeamName": away,
+        "estimateStartTime": int(kickoff.timestamp() * 1000),
+        "status": status,
+        "bookingStatus": booking_status,
+        "matchStatus": "Not started" if status in (0, "0", None) else "Live",
+    }
+    if tournament_name is not None:
+        value["tournamentName"] = tournament_name
+    return value
+
+
+def _discovery_raw(
+    events: Any,
+    *,
+    tournament_name: str | None = "Premier League",
+    pad_to_page_size: bool = True,
+) -> bytes:
+    if tournament_name is None:
+        data = list(events)
+    else:
+        data = [{"name": tournament_name, "events": list(events)}]
+    if pad_to_page_size and len(data) < reviewed_discovery.PAGE_SIZE:
+        data = data + [
+            {"name": f"Empty Tournament {i}", "events": []}
+            for i in range(reviewed_discovery.PAGE_SIZE - len(data))
+        ]
+    return json.dumps(
+        {"bizCode": 10000, "data": data},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _empty_discovery_raw() -> bytes:
+    return b'{"bizCode":10000,"data":[]}'
+
+
+def _detail_raw(
+    *,
+    event_id: str = EVENT_ID,
+    home: str = "Arsenal",
+    away: str = "Chelsea",
+    kickoff: datetime = KICKOFF,
+    status: int = 0,
+    booking_status: str = "Available",
+    tournament_name: str = "Premier League",
+) -> bytes:
+    event = _event(
+        event_id=event_id,
+        home=home,
+        away=away,
+        kickoff=kickoff,
+        status=status,
+        booking_status=booking_status,
+        tournament_name=tournament_name,
+    )
+    event["markets"] = [
+        {
+            "id": "1",
+            "desc": "1X2",
+            "outcomes": [
+                {"id": "1", "desc": "1", "odds": "2.0", "isActive": 1},
+                {"id": "X", "desc": "X", "odds": "3.0", "isActive": 1},
+                {"id": "2", "desc": "2", "odds": "4.0", "isActive": 1},
+            ],
+        }
+    ]
+    return json.dumps(
+        {"bizCode": 10000, "data": {"event": event}},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _install_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+    events: Any,
+    *,
+    tournament_name: str = "Premier League",
+    observed: datetime = DISCOVERY_OBSERVED,
+) -> None:
+    pages = {
+        1: _discovery_raw(events, tournament_name=tournament_name),
+        2: _empty_discovery_raw(),
+    }
+
+    def fetch(page_num: int) -> tuple[bytes, int, datetime]:
+        raw = pages.get(page_num, _empty_discovery_raw())
+        return raw, 200, observed + timedelta(seconds=page_num - 1)
+
+    monkeypatch.setattr(reviewed_discovery, "_network_fetch_page", fetch)
+
+
+def _install_detail(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    raw: bytes | None = None,
+    observed: datetime = DETAIL_OBSERVED,
+) -> None:
+    detail_bytes = _detail_raw() if raw is None else raw
+
+    def fetch(event_id: str) -> tuple[bytes, int, datetime]:
+        payload = json.loads(detail_bytes)
+        assert event_id == payload["data"]["event"]["eventId"]
+        return detail_bytes, 200, observed
+
+    monkeypatch.setattr(live, "_network_fetch", fetch)
+
+
+def _run_paginated(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    events: Any = None,
+    tournament_name: str = "Premier League",
+    admission: Any = None,
+    captures: Any = None,
+    detail_raw: bytes | None = None,
+    discovery_observed: datetime = DISCOVERY_OBSERVED,
+    detail_observed: datetime = DETAIL_OBSERVED,
+    evaluation: datetime = EVALUATION,
+) -> paginated_discovery.SportyBetCurrentEventDiscoveryReconciliationBundle:
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    if admission is None or captures is None:
+        admission, captures = _fotmob_admission(tmp_path)
+    _install_discovery(
+        monkeypatch,
+        [_event()] if events is None else events,
+        tournament_name=tournament_name,
+        observed=discovery_observed,
+    )
+    _install_detail(monkeypatch, raw=detail_raw, observed=detail_observed)
+    monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: evaluation)
+
+    discovery_dir, _manifest = paginated_discovery.capture_current_paginated_discovery(
+        repository_root=tmp_path,
+        execute_live_network=True,
+    )
+    return paginated_discovery.reconcile_current_events_from_paginated_discovery(
+        repository_root=tmp_path,
+        discovery_evidence_directory=discovery_dir,
+        fotmob_admission_value=admission,
+        fotmob_captures=captures,
+        execute_live_network=True,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Contract and Scoping Tests
+# ---------------------------------------------------------------------------
 
 def test_paginated_discovery_contract_is_pinned_and_zero_authority():
     contract = paginated_discovery.validate_contract()
@@ -63,8 +409,38 @@ def test_fanout_request_scope_rejection_on_global_echo():
         validate_fanout_request_scope([obs1, obs2])
 
 
-def test_verify_p3_0_e1_live_readiness_runs_offline_and_passes():
+def test_fanout_request_scope_unproven_on_run_35409481576_shape():
+    """Run 35409481576 shape: observations without events or without native scope return UNPROVEN."""
+    obs1 = SimpleNamespace(event_ids=("sr:match:101",), category_id="sr:category:1", tournament_id="sr:tournament:1")
+    obs2 = SimpleNamespace(event_ids=("sr:match:102",), category_id="sr:category:1", tournament_id="sr:tournament:2")
+    # No logical events provided
+    status = validate_fanout_request_scope([obs1, obs2], events=None, require_proven=False)
+    assert status == "FANOUT_REQUEST_SCOPE_UNPROVEN"
+
+    # Events provided but missing native category/tournament IDs
+    ev1 = SimpleNamespace(event_id="sr:match:101")
+    ev2 = SimpleNamespace(event_id="sr:match:102")
+    status = validate_fanout_request_scope([obs1, obs2], events=[ev1, ev2], require_proven=False)
+    assert status == "FANOUT_REQUEST_SCOPE_UNPROVEN"
+
+
+def test_fanout_request_scope_proven_on_genuinely_scoped_positive_case():
+    """Genuinely scoped positive case satisfies all 6 conditions."""
+    obs1 = SimpleNamespace(event_ids=("sr:match:1", "sr:match:2"), category_id="sr:category:1", tournament_id="sr:tournament:1")
+    obs2 = SimpleNamespace(event_ids=("sr:match:3", "sr:match:4"), category_id="sr:category:1", tournament_id="sr:tournament:2")
+    events = [
+        SimpleNamespace(event_id="sr:match:1", category_id="sr:category:1", tournament_id="sr:tournament:1"),
+        SimpleNamespace(event_id="sr:match:2", category_id="sr:category:1", tournament_id="sr:tournament:1"),
+        SimpleNamespace(event_id="sr:match:3", category_id="sr:category:1", tournament_id="sr:tournament:2"),
+        SimpleNamespace(event_id="sr:match:4", category_id="sr:category:1", tournament_id="sr:tournament:2"),
+    ]
+    status = validate_fanout_request_scope([obs1, obs2], events=events)
+    assert status == "FANOUT_REQUEST_SCOPE_PROVEN"
+
+
+def test_verify_p3_0_e1_live_readiness_runs_offline_and_passes(monkeypatch: pytest.MonkeyPatch):
     repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", "c5ec9a23486a594d2df279521b6065744fa9a389")
     report = verify_p3_0_e1_live_readiness.run_all_readiness_checks(repository_root=repo_root)
     assert report["status"] == "P3_0_E1_LIVE_READINESS_VERIFIED"
     assert len(report["checks"]) == 14
@@ -72,153 +448,99 @@ def test_verify_p3_0_e1_live_readiness_runs_offline_and_passes():
     assert (repo_root / "p3-0-e1-live-readiness.json").exists()
 
 
+def test_readiness_double_run_produces_identical_sha(monkeypatch: pytest.MonkeyPatch):
+    """Blocker 6: verify readiness run twice produces identical SHA-256."""
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", "c5ec9a23486a594d2df279521b6065744fa9a389")
+    report1 = verify_p3_0_e1_live_readiness.run_all_readiness_checks(repository_root=repo_root)
+    report2 = verify_p3_0_e1_live_readiness.run_all_readiness_checks(repository_root=repo_root)
+    assert report1["sha256"] == report2["sha256"]
+    assert report1["exact_commit_sha"] == report2["exact_commit_sha"]
+    assert report1["resolved_lineage_main_sha"] == report2["resolved_lineage_main_sha"]
+
+
+def test_readiness_check_b_fails_closed_when_env_missing(monkeypatch: pytest.MonkeyPatch):
+    """Blocker 4: check_b fails closed when ATHENA_EXPECTED_LINEAGE_MAIN_SHA is missing."""
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.delenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", raising=False)
+    with pytest.raises(
+        verify_p3_0_e1_live_readiness.P30LiveReadinessError,
+        match="ATHENA_EXPECTED_LINEAGE_MAIN_SHA environment variable is required",
+    ):
+        verify_p3_0_e1_live_readiness.check_b_lineage_main(repo_root)
+
+
+def test_readiness_check_b_fails_closed_when_env_malformed(monkeypatch: pytest.MonkeyPatch):
+    """Blocker 4: check_b fails closed when ATHENA_EXPECTED_LINEAGE_MAIN_SHA is malformed."""
+    repo_root = Path(__file__).resolve().parents[1]
+    monkeypatch.setenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", "not-a-valid-40-hex-sha")
+    with pytest.raises(
+        verify_p3_0_e1_live_readiness.P30LiveReadinessError,
+        match="is not 40 hex chars",
+    ):
+        verify_p3_0_e1_live_readiness.check_b_lineage_main(repo_root)
+
+
+def test_readiness_check_b_passes_with_valid_env(monkeypatch: pytest.MonkeyPatch):
+    """Blocker 4: check_b records checked_out_head_sha and resolved_lineage_main_sha."""
+    repo_root = Path(__file__).resolve().parents[1]
+    expected_main = "c5ec9a23486a594d2df279521b6065744fa9a389"
+    monkeypatch.setenv("ATHENA_EXPECTED_LINEAGE_MAIN_SHA", expected_main)
+    res = verify_p3_0_e1_live_readiness.check_b_lineage_main(repo_root)
+    assert res["status"] == "PASSED"
+    assert res["resolved_lineage_main_sha"] == expected_main
+    assert len(res["checked_out_head_sha"]) == 40
+
+
+def test_acquire_current_shadow_pre_router_bundle_rejects_unknown_capture_mode(tmp_path: Path):
+    """Blocker 8: acquire_current_shadow_pre_router_bundle fails closed on unknown capture_mode."""
+    with pytest.raises(
+        runner.CurrentShadowAllMarketRunnerError,
+        match="unsupported pre-router capture mode: UNKNOWN_MODE",
+    ):
+        runner.acquire_current_shadow_pre_router_bundle(
+            repository_root=tmp_path,
+            lineage_main_sha="1" * 40,
+            capture_mode="UNKNOWN_MODE",
+        )
+
+
 # ---------------------------------------------------------------------------
-# Full admission-aware Pre-Router Pipeline & Equivalence Test (Blocker 7)
+# Full admission-aware Pre-Router Pipeline & Equivalence Test (Blocker 1)
 # ---------------------------------------------------------------------------
-
-def _build_admitted_seam(tmp_path: Path):
-    """Build a deterministic offline seam using English Premier League."""
-    kickoff = datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC)
-    fixture_id = "5000001"
-    event_id = "sr:match:9000001"
-
-    # 1. Raw FotMob
-    fotmob_match = {
-        "id": int(fixture_id),
-        "home": {"id": 9825, "name": "Arsenal", "longName": "Arsenal"},
-        "away": {"id": 8455, "name": "Chelsea", "longName": "Chelsea"},
-        "status": {"utcTime": kickoff.isoformat().replace("+00:00", "Z")},
-    }
-    fotmob_league = {
-        "ccode": "ENG",
-        "primaryId": 47,
-        "name": "Premier League",
-        "matches": [fotmob_match],
-    }
-    raw_fotmob_bytes = json.dumps({"leagues": [fotmob_league]}).encode("utf-8")
-    raw_manifest = {"sha256": "f" * 64}
-
-    # 2. Candidate bundle & reviewed admission
-    candidate_row = SimpleNamespace(
-        source_fixture_identifier=fixture_id,
-        kickoff=kickoff,
-        competition="Premier League",
-        home_team="Arsenal",
-        away_team="Chelsea",
-        ccode="ENG",
-        primary_id=47,
-    )
-    admission = SimpleNamespace(
-        to_dict=lambda: {
-            "candidate_bundle_sha256": "1" * 64,
-            "review_bundle_sha256": "2" * 64,
-            "handoff_sha256": "3" * 64,
-            "catalog_sha256": "4" * 64,
-            "manifest_sha256": "5" * 64,
-        },
-        fixtures=(candidate_row,),
-    )
-    execution = SimpleNamespace(
-        bootstrap=SimpleNamespace(
-            verified_artifact=SimpleNamespace(admission=admission),
-            fixtures=(candidate_row,),
-        ),
-        summary=lambda: {"fixture_source": "offline-premier-league"},
-    )
-
-    # 3. Paginated provider discovery manifest
-    page = SimpleNamespace(page_num=1, raw_sha256="p" * 64)
-    discovered_event = SimpleNamespace(
-        event_id=event_id,
-        home_team_name="Arsenal",
-        away_team_name="Chelsea",
-        competition_name="Premier League",
-        competition_basis="REVIEWED",
-        kickoff_utc=kickoff,
-        booking_status="Open",
-        event_status=0,
-        match_status="Not started",
-        prematch_bookable_observed=True,
-        source_page_num=1,
-        source_raw_sha256="p" * 64,
-        source_observed_at=datetime(2026, 9, 20, 12, 0, 0, tzinfo=UTC),
-    )
-    discovery_manifest = SimpleNamespace(
-        canonical_sha256="m" * 64,
-        pages=(page,),
-        events=(discovered_event,),
-    )
-
-    # 4. Exact reconciliation bundle
-    matched_row = SimpleNamespace(
-        event_id=event_id,
-        home_team_name="Arsenal",
-        away_team_name="Chelsea",
-        competition_name="Premier League",
-        kickoff_utc=kickoff,
-        disposition=SimpleNamespace(value="UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILED"),
-        exact_fotmob_match_count=1,
-        matched_fotmob_fixture_id=fixture_id,
-        fixture_reconciliation_authorized=True,
-    )
-    reconciliation_bundle = SimpleNamespace(
-        canonical_sha256="r" * 64,
-        contract_sha256=paginated_discovery.EXPECTED_CONTRACT_SHA256,
-        rows=(matched_row,),
-        matched_rows=(matched_row,),
-        discovery_manifest_sha256="m" * 64,
-    )
-
-    # 5. Price-All and Router test doubles
-    priced_bundle = SimpleNamespace(
-        fixture_identity=f"FOTMOB:{fixture_id}",
-        provider_event_id=event_id,
-    )
-    router_decision = SimpleNamespace(
-        status=SimpleNamespace(value="SELECTED"),
-        priced=priced_bundle,
-    )
-    router_input = SimpleNamespace(
-        price_all_bundle=priced_bundle,
-        router_decision=router_decision,
-    )
-
-    return {
-        "execution": execution,
-        "raw_fotmob_bytes": raw_fotmob_bytes,
-        "raw_manifest": raw_manifest,
-        "discovery_manifest": discovery_manifest,
-        "reconciliation_bundle": reconciliation_bundle,
-        "priced_bundle": priced_bundle,
-        "router_decision": router_decision,
-        "router_input": router_input,
-    }
-
 
 def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
-    seam = _build_admitted_seam(tmp_path)
+    """Blocker 1: Proves SUPPORTED_REQUEST and P3_E1_PRE_ROUTER_CAPTURE produce identical
+
+    non-zero router inputs and identical discovery strategy IDs through the complete
+    pre-Router pipeline with real FotMob capture, admission, paginated discovery,
+    reconciliation, direct detail inventory, Price-All, and Router.
+    """
+    admission, captures = _fotmob_admission(tmp_path)
+    raw_fotmob_bytes, raw_manifest = captures[0]
+    execution = SimpleNamespace(
+        bootstrap=SimpleNamespace(
+            verified_artifact=SimpleNamespace(admission=admission),
+            fixtures=admission.admitted_fixtures,
+        ),
+        summary=lambda: {"fixture_source": "offline-premier-league"},
+    )
+
+    _install_discovery(monkeypatch, [_event()], tournament_name="Premier League")
+    _install_detail(monkeypatch)
+    monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
 
     monkeypatch.setattr(
         runner,
         "_issue_current_fixture_sources",
-        lambda **_kw: ([(seam["execution"], "20260920")], ("20260920",)),
+        lambda **_kw: ([(execution, "20260920")], ("20260920",)),
     )
     monkeypatch.setattr(
         runner,
         "_source_capture",
-        lambda *_args: (seam["raw_fotmob_bytes"], seam["raw_manifest"]),
-    )
-    monkeypatch.setattr(
-        runner.paginated_discovery,
-        "capture_current_paginated_discovery",
-        lambda **_kw: (tmp_path, seam["discovery_manifest"]),
-    )
-    monkeypatch.setattr(
-        runner.paginated_discovery,
-        "reconcile_current_events_from_paginated_discovery",
-        lambda **_kw: seam["reconciliation_bundle"],
+        lambda *_args: (raw_fotmob_bytes, raw_manifest),
     )
     monkeypatch.setattr(runner, "_legacy_bootstrap_bytes", lambda: b"{}")
     monkeypatch.setattr(
@@ -231,36 +553,63 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
         "sha256_current_fotmob_latest_durable_fresh_history_handoff",
         lambda _h: "h" * 64,
     )
+
+    # Price-All and Router test doubles consuming real reconciliation bundle output
+    def _build_context(**kw: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            fixture_identity=kw["fixture_identity"],
+            provider_event_id=kw["provider_event_id"],
+            current_reconciliation_bundle=kw["current_reconciliation_bundle"],
+        )
+
+    def _price_fixture(ctx: SimpleNamespace) -> SimpleNamespace:
+        return SimpleNamespace(
+            fixture_identity=ctx.fixture_identity,
+            provider_event_id=ctx.provider_event_id,
+        )
+
+    def _route(priced: SimpleNamespace) -> SimpleNamespace:
+        return SimpleNamespace(
+            status=SimpleNamespace(value="SELECTED"),
+            priced=priced,
+        )
+
+    def _build_router_input(price_all_bundle: Any, router_decision: Any) -> SimpleNamespace:
+        return SimpleNamespace(
+            price_all_bundle=price_all_bundle,
+            router_decision=router_decision,
+        )
+
     monkeypatch.setattr(
         runner.price_module,
         "build_current_shadow_price_context_from_reconciliation",
-        lambda **kw: SimpleNamespace(**kw),
+        _build_context,
     )
     monkeypatch.setattr(
         runner.price_module,
         "price_all_shadow_fixture",
-        lambda _ctx: seam["priced_bundle"],
+        _price_fixture,
     )
     monkeypatch.setattr(
         runner.router_module,
         "route_shadow_price_results",
-        lambda _p: seam["router_decision"],
+        _route,
     )
     monkeypatch.setattr(
         runner.portfolio_module,
         "build_shadow_portfolio_router_input",
-        lambda **_kw: seam["router_input"],
+        _build_router_input,
     )
     monkeypatch.setattr(runner, "_runtime_progress_diagnostics", lambda _inp: {})
 
-    # Run SUPPORTED_REQUEST
+    # Run SUPPORTED_REQUEST through real capture & reconciliation
     supported_bundle = runner.acquire_current_shadow_pre_router_bundle(
         repository_root=tmp_path,
         lineage_main_sha="1" * 40,
         capture_mode="SUPPORTED_REQUEST",
     )
 
-    # Run P3_E1_PRE_ROUTER_CAPTURE
+    # Run P3_E1_PRE_ROUTER_CAPTURE through real capture & reconciliation
     p3_bundle = runner.acquire_current_shadow_pre_router_bundle(
         repository_root=tmp_path,
         lineage_main_sha="1" * 40,
@@ -288,153 +637,205 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
     assert p3_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert "provider_catalog_fanout_snapshot_sha256" not in supported_bundle.source_summary
     assert "provider_catalog_fanout_snapshot_sha256" not in p3_bundle.source_summary
-    assert supported_bundle.source_summary["provider_discovery_page_count"] == 1
+    assert supported_bundle.source_summary["provider_discovery_page_count"] == 2
     assert supported_bundle.source_summary["provider_discovery_event_count"] == 1
+    assert supported_bundle.source_summary["current_reconciliation_sha256"] == p3_bundle.source_summary["current_reconciliation_sha256"]
+    assert supported_bundle.source_summary["current_reconciliation_sha256"] is not None
 
 
 # ---------------------------------------------------------------------------
-# 12 Adversarial Variant Tests
+# 12 Real-Path Adversarial Variant Tests (Blocker 2)
 # ---------------------------------------------------------------------------
 
-def test_adversarial_1_unapproved_competition():
-    """Unapproved competition (e.g. K-League 1) is rejected by review policy."""
+def test_adversarial_1_unapproved_competition(tmp_path: Path):
+    """1. Unapproved competition (e.g. K-League 1) is rejected by review policy before reconciliation."""
     priority = resolve_source_competition_review_priority("KOR", "K-League 1")
     assert priority is None
 
-
-def test_adversarial_2_reversed_home_away():
-    """Reversed home and away teams fails exact reconciliation."""
-    rows = [SimpleNamespace(
-        source_fixture_identifier="5000001",
-        kickoff=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-        competition="Premier League",
-        home_team="Arsenal",
-        away_team="Chelsea",
-    )]
-    event = SimpleNamespace(
-        event_id="sr:match:9000001",
-        kickoff_utc=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-        competition_name="Premier League",
-        home_team_name="Chelsea",
-        away_team_name="Arsenal",
+    # When candidate review rejects the competition and admission disposition is REJECTED,
+    # reconcile_current_events_from_paginated_discovery fails closed.
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        competition="K-League 1",
+        disposition=ReviewedFixtureCatalogAdmissionDisposition.REJECTED,
     )
-    assert paginated_discovery._match_current_shadow_event(event, rows) == ()
-
-
-def test_adversarial_3_kickoff_plus_one_second():
-    """Kickoff skew of +1s fails exact reconciliation."""
-    rows = [SimpleNamespace(
-        source_fixture_identifier="5000001",
-        kickoff=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-        competition="Premier League",
-        home_team="Arsenal",
-        away_team="Chelsea",
-    )]
-    event = SimpleNamespace(
-        event_id="sr:match:9000001",
-        kickoff_utc=datetime(2026, 9, 20, 15, 0, 1, tzinfo=UTC),
-        competition_name="Premier League",
-        home_team_name="Arsenal",
-        away_team_name="Chelsea",
-    )
-    assert paginated_discovery._match_current_shadow_event(event, rows) == ()
-
-
-def test_adversarial_4_duplicate_ambiguous_provider_events():
-    """Two provider events for the same fixture produce AMBIGUOUS_PROVIDER_EVENT_FOR_FIXTURE."""
-    # When two provider events match the same FotMob fixture, count > 1
-    counts = {"5000001": 2}
-    assert counts["5000001"] > 1
-
-
-def test_adversarial_5_duplicate_ambiguous_fotmob_events():
-    """Two FotMob fixtures matching the same provider event produce AMBIGUOUS_FOTMOB."""
-    rows = [
-        SimpleNamespace(
-            source_fixture_identifier="5000001",
-            kickoff=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-            competition="Premier League",
-            home_team="Arsenal",
-            away_team="Chelsea",
-        ),
-        SimpleNamespace(
-            source_fixture_identifier="5000002",
-            kickoff=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-            competition="Premier League",
-            home_team="Arsenal",
-            away_team="Chelsea",
-        ),
-    ]
-    event = SimpleNamespace(
-        event_id="sr:match:9000001",
-        kickoff_utc=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-        competition_name="Premier League",
-        home_team_name="Arsenal",
-        away_team_name="Chelsea",
-    )
-    matches = paginated_discovery._match_current_shadow_event(event, rows)
-    assert len(matches) == 2
-
-
-def test_adversarial_6_stale_discovery_evidence():
-    """Discovery age exceeding MAX_SOURCE_AGE_SECONDS is marked DISCOVERY_EVIDENCE_STALE."""
-    discovery_age = paginated_discovery.MAX_SOURCE_AGE_SECONDS + 1
-    assert discovery_age > paginated_discovery.MAX_SOURCE_AGE_SECONDS
-
-
-def test_adversarial_7_stale_direct_detail_evidence():
-    """Direct event-detail age exceeding MAX_SOURCE_AGE_SECONDS is marked DIRECT_EVENT_DETAIL_STALE."""
-    direct_age = paginated_discovery.MAX_SOURCE_AGE_SECONDS + 1
-    assert direct_age > paginated_discovery.MAX_SOURCE_AGE_SECONDS
-
-
-def test_adversarial_8_direct_detail_identity_mismatch():
-    """Direct event detail with different team names results in DIRECT_EVENT_DETAIL_IDENTITY_MISMATCH."""
-    event_home = "Arsenal"
-    detail_home = "Different Arsenal"
-    assert detail_home != event_home
-
-
-def test_adversarial_9_nonbookable_event():
-    """Event with prematch_bookable_observed=False is classified NONBOOKABLE."""
-    event = SimpleNamespace(prematch_bookable_observed=False)
-    assert not event.prematch_bookable_observed
-
-
-def test_adversarial_10_unknown_alias():
-    """Unknown team alias that does not match literal or alias registry returns empty match."""
-    rows = [SimpleNamespace(
-        source_fixture_identifier="5000001",
-        kickoff=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-        competition="Premier League",
-        home_team="Arsenal",
-        away_team="Chelsea",
-    )]
-    event = SimpleNamespace(
-        event_id="sr:match:9000001",
-        kickoff_utc=datetime(2026, 9, 20, 15, 0, 0, tzinfo=UTC),
-        competition_name="Premier League",
-        home_team_name="Unknown FC",
-        away_team_name="Chelsea",
-    )
-    assert paginated_discovery._match_current_shadow_event(event, rows) == ()
-
-
-def test_adversarial_11_wrong_native_identity():
-    """Wrong competitor ID binding fails stable identity matching."""
-    # When competitor ID does not match bound competitor ID, match fails
-    bound_id = "sr:competitor:100"
-    observed_id = "sr:competitor:999"
-    assert bound_id != observed_id
-
-
-def test_adversarial_12_changed_admission_identity():
-    """Changed admission identity fails contract validation."""
     with pytest.raises(
-        paginated_discovery.CurrentShadowPaginatedDiscoveryReconciliationError,
+        reviewed_discovery.SportyBetCurrentEventDiscoveryError,
+        match="FotMob reviewed catalog must have exact ADMITTED disposition",
     ):
-        # Calculating contract with wrong policy fails
-        paginated_discovery._verify_identity_state_append_only_extension(
-            {"competitions": [{"id": 1}], "teams": [], "evidence": []},
-            {"competitions": [], "teams": [], "evidence": []},
+        paginated_discovery.reconcile_current_events_from_paginated_discovery(
+            repository_root=tmp_path,
+            discovery_evidence_directory=tmp_path,
+            fotmob_admission_value=admission,
+            fotmob_captures=captures,
+            execute_live_network=False,
+        )
+
+
+def test_adversarial_2_reversed_home_away(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """2. Home/away reversed produces NO_EXACT_REVIEWED_FOTMOB_MATCH on the real reconciliation path."""
+    # Discovered event has Chelsea at home, Arsenal away; FotMob admission has Arsenal at home, Chelsea away.
+    reversed_event = _event(home="Chelsea", away="Arsenal", kickoff=KICKOFF)
+    bundle = _run_paginated(monkeypatch, tmp_path, events=[reversed_event])
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.NO_EXACT_REVIEWED_FOTMOB_MATCH
+    assert row.fixture_reconciliation_authorized is False
+    assert row.matched_fotmob_fixture_id is None
+
+
+def test_adversarial_3_kickoff_plus_one_second(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """3. Kickoff +1s produces NO_EXACT_REVIEWED_FOTMOB_MATCH on the real reconciliation path."""
+    skewed_event = _event(kickoff=KICKOFF + timedelta(seconds=1))
+    bundle = _run_paginated(monkeypatch, tmp_path, events=[skewed_event])
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.NO_EXACT_REVIEWED_FOTMOB_MATCH
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_4_duplicate_ambiguous_provider_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """4. Duplicate provider events targeting one reviewed fixture produce AMBIGUOUS_PROVIDER_EVENT_FOR_FIXTURE."""
+    event1 = _event(event_id="sr:match:9000001")
+    event2 = _event(event_id="sr:match:9000002")
+    bundle = _run_paginated(monkeypatch, tmp_path, events=[event1, event2])
+    assert len(bundle.rows) == 2
+    for row in bundle.rows:
+        assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.AMBIGUOUS_PROVIDER_EVENT_FOR_FIXTURE
+        assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_5_duplicate_ambiguous_fotmob_events(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """5. Duplicate reviewed FotMob candidates produce AMBIGUOUS_EXACT_REVIEWED_FOTMOB_MATCH."""
+    admission, captures = _fotmob_admission(tmp_path, match_ids=(5000001, 5000002))
+    bundle = _run_paginated(monkeypatch, tmp_path, admission=admission, captures=captures)
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.AMBIGUOUS_EXACT_REVIEWED_FOTMOB_MATCH
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_6_stale_discovery_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """6. Stale discovery timestamp produces DISCOVERY_EVIDENCE_STALE on the real reconciliation path."""
+    stale_observed = EVALUATION - timedelta(seconds=paginated_discovery.MAX_SOURCE_AGE_SECONDS + 10)
+    bundle = _run_paginated(monkeypatch, tmp_path, discovery_observed=stale_observed)
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.DISCOVERY_EVIDENCE_STALE
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_7_stale_direct_detail_evidence(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """7. Stale direct-detail timestamp produces DIRECT_EVENT_DETAIL_STALE on the real reconciliation path."""
+    stale_detail = EVALUATION - timedelta(seconds=paginated_discovery.MAX_SOURCE_AGE_SECONDS + 10)
+    bundle = _run_paginated(monkeypatch, tmp_path, detail_observed=stale_detail)
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.DIRECT_EVENT_DETAIL_STALE
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_8_direct_detail_identity_mismatch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """8. Direct detail identity mismatch produces DIRECT_EVENT_DETAIL_IDENTITY_MISMATCH."""
+    mismatched_raw = _detail_raw(home="Different Arsenal FC")
+    bundle = _run_paginated(monkeypatch, tmp_path, detail_raw=mismatched_raw)
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.DIRECT_EVENT_DETAIL_IDENTITY_MISMATCH
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_9_nonbookable_event(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """9. Nonbookable discovery event produces DISCOVERY_EVENT_NOT_PREMATCH_BOOKABLE."""
+    nonbookable = _event(booking_status="Unavailable")
+    bundle = _run_paginated(monkeypatch, tmp_path, events=[nonbookable])
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.DISCOVERY_EVENT_NOT_PREMATCH_BOOKABLE
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_10_unknown_alias(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """10. Unknown alias/team label produces NO_EXACT_REVIEWED_FOTMOB_MATCH."""
+    unknown_event = _event(home="Completely Unknown FC")
+    bundle = _run_paginated(monkeypatch, tmp_path, events=[unknown_event])
+    assert len(bundle.rows) == 1
+    row = bundle.rows[0]
+    assert row.disposition == reviewed_discovery.CurrentEventReconciliationDisposition.NO_EXACT_REVIEWED_FOTMOB_MATCH
+    assert row.fixture_reconciliation_authorized is False
+
+
+def test_adversarial_11_wrong_native_identity(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """11. Wrong provider-native competitor identity does not authorize fixture."""
+    fixture_identity.reset_runtime_evidence()
+    try:
+        fotmob_payload = json.dumps({
+            "leagues": [{
+                "ccode": "USA",
+                "primaryId": 130,
+                "name": "Major League Soccer",
+                "matches": [{
+                    "id": 5071366,
+                    "home": {"id": 546238, "name": "New York City FC", "longName": "New York City FC"},
+                    "away": {"id": 6514, "name": "Red Bull New York", "longName": "Red Bull New York"},
+                    "status": {"utcTime": KICKOFF.isoformat().replace("+00:00", "Z")},
+                }],
+            }]
+        }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        # Observed provider has WRONG competitor IDs (sr:competitor:999999 and sr:competitor:888888)
+        # instead of registered sr:competitor:167510 and sr:competitor:2506
+        wrong_provider_payload = json.dumps({
+            "events": [{
+                "eventId": "sr:match:99999999",
+                "estimateStartTime": int(KICKOFF.timestamp() * 1000),
+                "homeTeamId": "sr:competitor:999999",
+                "homeTeamName": "New York City FC",
+                "awayTeamId": "sr:competitor:888888",
+                "awayTeamName": "New York Red Bulls",
+                "sport": {
+                    "category": {"id": "sr:category:26", "tournament": {"id": "sr:tournament:242", "name": "MLS"}}
+                },
+            }]
+        }, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+
+        fixture_identity._bind_team(546238, "sr:competitor:167510")
+        fixture_identity._bind_team(6514, "sr:competitor:2506")
+        fixture_identity.observe_fotmob_payload(fotmob_payload)
+        fixture_identity.observe_provider_payload(wrong_provider_payload)
+
+        test_event = SimpleNamespace(
+            event_id="sr:match:99999999",
+            kickoff_utc=KICKOFF,
+            competition_name="Major League Soccer",
+            home_team_name="New York City FC",
+            away_team_name="New York Red Bulls",
+        )
+        test_row = SimpleNamespace(
+            source_fixture_identifier="5071366",
+            kickoff=KICKOFF,
+            competition="Major League Soccer",
+            home_team="New York City FC",
+            away_team="Red Bull New York",
+        )
+        matches = identity_recovery.match_event(test_event, (test_row,))
+        # Wrong competitor ID fails stable identity matching
+        assert matches == ()
+    finally:
+        fixture_identity.reset_runtime_evidence()
+
+
+def test_adversarial_12_changed_admission_identity(tmp_path: Path):
+    """12. Changed/tampered FotMob admission identity fails exact admission replay validation."""
+    admission, _captures = _fotmob_admission(tmp_path / "admitted")
+    other_capture = _fotmob_capture(home="Other Home FC")
+    with pytest.raises(
+        reviewed_discovery.SportyBetCurrentEventDiscoveryError,
+        match="FotMob reviewed-catalog source replay failed closed",
+    ):
+        paginated_discovery.reconcile_current_events_from_paginated_discovery(
+            repository_root=tmp_path,
+            discovery_evidence_directory=tmp_path,
+            fotmob_admission_value=admission,
+            fotmob_captures=(other_capture,),
+            execute_live_network=False,
         )

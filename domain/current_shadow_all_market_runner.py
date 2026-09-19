@@ -736,6 +736,10 @@ def acquire_current_shadow_pre_router_bundle(
     progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
     execute_live_network: bool = True,
 ) -> CurrentShadowRunnerSourceBundle:
+    if capture_mode not in {"SUPPORTED_REQUEST", "P3_E1_PRE_ROUTER_CAPTURE"}:
+        raise CurrentShadowAllMarketRunnerError(
+            f"unsupported pre-router capture mode: {capture_mode}"
+        )
     emit = (lambda _stage: None) if stage_callback is None else stage_callback
     if progress_callback is None:
         def progress(

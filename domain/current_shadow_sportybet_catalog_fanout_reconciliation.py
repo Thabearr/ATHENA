@@ -119,65 +119,86 @@ def validate_fanout_request_scope(
 ) -> str:
     """Validate that tournament fanout observations are actually scoped by request.
 
-    Checks:
-    1. Both requested (category_id, tournament_id) and returned event native (category_id, tournament_id)
-       match when native event scope is available.
-    2. Distinct tournament requests do not return identical non-empty event sets (which indicates
-       the provider endpoint is returning global data rather than filtering by tournament scope).
+    Returns "FANOUT_REQUEST_SCOPE_PROVEN" only if ALL 6 conditions are met:
+    1. >= 2 distinct requested (category_id, tournament_id) pairs.
+    2. Every observation has explicit category_id and tournament_id.
+    3. Every event ID resolves to a logical event in `events`.
+    4. Every logical event exposes native category_id and tournament_id.
+    5. Every observation's event native (category_id, tournament_id) equals the requested pair.
+    6. No global echo (distinct requests do not return identical multi-event sets).
 
-    Returns:
-        "FANOUT_REQUEST_SCOPE_PROVEN" if request scoping is proven,
-        "FANOUT_REQUEST_SCOPE_UNPROVEN" if unproven and require_proven is False.
-
-    Raises:
-        CurrentShadowSportyBetCatalogFanoutReconciliationError if unproven and require_proven is True.
+    Otherwise returns "FANOUT_REQUEST_SCOPE_UNPROVEN" (or raises
+    CurrentShadowSportyBetCatalogFanoutReconciliationError if require_proven is True).
     """
-    if len(observations) < 2:
-        return "FANOUT_REQUEST_SCOPE_PROVEN"
+    def _fail(msg: str) -> str:
+        if require_proven:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                f"FANOUT_REQUEST_SCOPE_UNPROVEN: {msg}"
+            )
+        return "FANOUT_REQUEST_SCOPE_UNPROVEN"
 
-    # 1. Check requested scope vs returned event native scope if events are provided
-    if events is not None:
-        event_by_id = {getattr(e, "event_id", None): e for e in events if getattr(e, "event_id", None) is not None}
-        for obs in observations:
-            req_cat = getattr(obs, "category_id", None)
-            req_tourn = getattr(obs, "tournament_id", None)
-            if req_cat is not None and req_tourn is not None:
-                for eid in getattr(obs, "event_ids", ()):
-                    ev = event_by_id.get(eid)
-                    if ev is not None:
-                        ev_cat = getattr(ev, "category_id", None)
-                        ev_tourn = getattr(ev, "tournament_id", None)
-                        if ev_cat is not None and ev_tourn is not None:
-                            if ev_cat != req_cat or ev_tourn != req_tourn:
-                                msg = (
-                                    f"FANOUT_REQUEST_SCOPE_UNPROVEN: returned event {eid} native scope "
-                                    f"({ev_cat}, {ev_tourn}) does not match requested scope ({req_cat}, {req_tourn})"
-                                )
-                                if require_proven:
-                                    raise CurrentShadowSportyBetCatalogFanoutReconciliationError(msg)
-                                return "FANOUT_REQUEST_SCOPE_UNPROVEN"
+    if not observations or len(observations) < 2:
+        return _fail("fewer than 2 observations provided")
 
-    # 2. Check for identical event sets across distinct requests
+    # 1 & 2: Explicit requested pairs and >= 2 distinct pairs
+    requested_pairs: set[tuple[str, str]] = set()
+    for obs in observations:
+        req_cat = getattr(obs, "category_id", None)
+        req_tourn = getattr(obs, "tournament_id", None)
+        if not req_cat or not req_tourn:
+            return _fail(f"observation {obs} missing explicit category_id or tournament_id")
+        requested_pairs.add((req_cat, req_tourn))
+
+    if len(requested_pairs) < 2:
+        return _fail(f"only {len(requested_pairs)} distinct requested tournament pair(s), >= 2 required")
+
+    # 6: No global echo
     non_empty = [obs for obs in observations if getattr(obs, "event_ids", None)]
     if len(non_empty) >= 2:
         event_set_counts = Counter(tuple(obs.event_ids) for obs in non_empty)
         for event_set, count in event_set_counts.items():
             if count >= 2 and len(event_set) >= 2:
-                msg = (
-                    f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical {len(event_set)} events "
-                    f"returned across {count} distinct tournament requests"
+                return _fail(
+                    f"identical {len(event_set)} events returned across {count} distinct tournament requests"
                 )
-                if require_proven:
-                    raise CurrentShadowSportyBetCatalogFanoutReconciliationError(msg)
-                return "FANOUT_REQUEST_SCOPE_UNPROVEN"
             if count >= 3:
-                msg = (
-                    f"FANOUT_REQUEST_SCOPE_UNPROVEN: identical event set "
-                    f"returned across {count} distinct tournament requests"
+                return _fail(
+                    f"identical event set returned across {count} distinct tournament requests"
                 )
-                if require_proven:
-                    raise CurrentShadowSportyBetCatalogFanoutReconciliationError(msg)
-                return "FANOUT_REQUEST_SCOPE_UNPROVEN"
+
+    # 3, 4, 5: Events resolution and native scope matching
+    if events is None:
+        return _fail("no logical events provided to verify native scoping")
+
+    event_by_id = {
+        getattr(e, "event_id", None): e
+        for e in events
+        if getattr(e, "event_id", None) is not None
+    }
+    total_event_count = 0
+    for obs in observations:
+        req_cat = getattr(obs, "category_id", None)
+        req_tourn = getattr(obs, "tournament_id", None)
+        obs_event_ids = getattr(obs, "event_ids", ())
+        if not obs_event_ids:
+            continue
+        total_event_count += len(obs_event_ids)
+        for eid in obs_event_ids:
+            ev = event_by_id.get(eid)
+            if ev is None:
+                return _fail(f"event {eid} does not resolve to a logical event")
+            ev_cat = getattr(ev, "category_id", None)
+            ev_tourn = getattr(ev, "tournament_id", None)
+            if not ev_cat or not ev_tourn:
+                return _fail(f"event {eid} does not expose native category_id and tournament_id")
+            if (ev_cat, ev_tourn) != (req_cat, req_tourn):
+                return _fail(
+                    f"returned event {eid} native scope ({ev_cat}, {ev_tourn}) "
+                    f"does not match requested scope ({req_cat}, {req_tourn})"
+                )
+
+    if total_event_count == 0:
+        return _fail("no events observed across observations")
 
     return "FANOUT_REQUEST_SCOPE_PROVEN"
 
