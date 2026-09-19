@@ -62,6 +62,7 @@ def test_zero_router_inputs_raise_with_deterministic_reconciliation_diagnostic()
 
     diagnostic = _diagnostic_from_error(caught.value)
     assert diagnostic == {
+        "failure_code": "NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART",
         "reviewed_fixture_count": 6,
         "reconciled_fixture_count": 0,
         "provider_event_count": 7,
@@ -76,6 +77,32 @@ def test_zero_router_inputs_raise_with_deterministic_reconciliation_diagnostic()
         },
     }
     assert len(str(caught.value)) <= capture.FAILURE_MESSAGE_MAX_CHARS
+
+
+def test_zero_router_inputs_taxonomy_codes():
+    # NO_RECONCILED_PROVIDER_EVENTS_DISCOVERED
+    b0 = _bundle()
+    b0.provider_event_count = 0
+    with pytest.raises(capture.P30PairedCaptureError) as c0:
+        capture._require_nonempty_router_inputs(b0)
+    assert _diagnostic_from_error(c0.value)["failure_code"] == "NO_RECONCILED_PROVIDER_EVENTS_DISCOVERED"
+
+    # NO_MARKETS_RECONCILED_FOR_ROUTER
+    b1 = _bundle()
+    b1.reconciled_fixture_count = 2
+    b1.priced_fixture_count = 0
+    with pytest.raises(capture.P30PairedCaptureError) as c1:
+        capture._require_nonempty_router_inputs(b1)
+    assert _diagnostic_from_error(c1.value)["failure_code"] == "NO_MARKETS_RECONCILED_FOR_ROUTER"
+
+    # ZERO_ROUTER_INPUTS_POST_PRICING
+    b2 = _bundle()
+    b2.reconciled_fixture_count = 2
+    b2.priced_fixture_count = 2
+    with pytest.raises(capture.P30PairedCaptureError) as c2:
+        capture._require_nonempty_router_inputs(b2)
+    assert _diagnostic_from_error(c2.value)["failure_code"] == "ZERO_ROUTER_INPUTS_POST_PRICING"
+
 
 
 def test_zero_router_diagnostic_rejects_malformed_source_summary_fail_closed():

@@ -370,7 +370,7 @@ def _collect_sources(
     request_dates: tuple[str, ...],
     execute_live_network: bool = True,
 ) -> Any:
-    return shadow_runner.acquire_current_shadow_pre_router_bundle(
+    return shadow_runner._acquire_router_inputs(
         repository_root=repository_root,
         lineage_main_sha=lineage_main_sha,
         request_dates=request_dates,

@@ -768,23 +768,47 @@ def acquire_current_shadow_pre_router_bundle(
         Any,
     ]] = []
     emit(STAGE_SPORTYBET_DISCOVERY_RECONCILIATION)
-    discovery_directory, discovery_manifest = (
-        paginated_discovery.capture_current_paginated_discovery(
+    if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE":
+        discovery_directory, discovery_manifest = (
+            paginated_discovery.capture_current_paginated_discovery(
+                repository_root=repository_root,
+                execute_live_network=execute_live_network,
+            )
+        )
+        for execution, request_date in fixture_sources:
+            raw, manifest = _source_capture(execution, repository_root)
+            admission = execution.bootstrap.verified_artifact.admission
+            current_events = paginated_discovery.reconcile_current_events_from_paginated_discovery(
+                repository_root=repository_root,
+                discovery_evidence_directory=discovery_directory,
+                fotmob_admission_value=admission,
+                fotmob_captures=((raw, manifest),),
+                execute_live_network=execute_live_network,
+            )
+            source_rows.append((request_date, execution, raw, manifest, current_events))
+        provider_discovery_manifest_sha256 = discovery_manifest.canonical_sha256
+        provider_catalog_fanout_snapshot_sha256 = discovery_manifest.canonical_sha256
+        provider_discovery_page_count = len(discovery_manifest.pages)
+        provider_discovery_event_count = len(discovery_manifest.events)
+        provider_discovery_observation_count = len(discovery_manifest.pages)
+        provider_catalog_active_tournament_count = len(discovery_manifest.pages)
+        provider_catalog_tournament_observation_count = len(discovery_manifest.pages)
+    else:
+        fanout_directory, fanout_snapshot = reconciliation.capture_current_catalog_fanout_discovery(
             repository_root=repository_root,
             execute_live_network=execute_live_network,
         )
-    )
-    for execution, request_date in fixture_sources:
-        raw, manifest = _source_capture(execution, repository_root)
-        admission = execution.bootstrap.verified_artifact.admission
-        current_events = paginated_discovery.reconcile_current_events_from_paginated_discovery(
-            repository_root=repository_root,
-            discovery_evidence_directory=discovery_directory,
-            fotmob_admission_value=admission,
-            fotmob_captures=((raw, manifest),),
-            execute_live_network=execute_live_network,
-        )
-        source_rows.append((request_date, execution, raw, manifest, current_events))
+        for execution, request_date in fixture_sources:
+            raw, manifest = _source_capture(execution, repository_root)
+            admission = execution.bootstrap.verified_artifact.admission
+            current_events = reconciliation.reconcile_current_events_from_catalog_fanout(
+                repository_root=repository_root,
+                fanout_evidence_directory=fanout_directory,
+                fotmob_admission_value=admission,
+                fotmob_captures=((raw, manifest),),
+                execute_live_network=execute_live_network,
+            )
+            source_rows.append((request_date, execution, raw, manifest, current_events))
 
     provider_event_ids = {
         row.event_id
@@ -838,12 +862,35 @@ def acquire_current_shadow_pre_router_bundle(
             "current_reconciliation_contract_sha256": current_events.contract_sha256,
             "provider_event_count": len(current_events.rows),
             "reconciled_fixture_count": len(current_events.matched_rows),
-            "provider_catalog_fanout_snapshot_sha256": discovery_manifest.canonical_sha256,
-            "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
+            "provider_catalog_fanout_snapshot_sha256": (
+                discovery_manifest.canonical_sha256
+                if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE"
+                else current_events.fanout_snapshot_sha256
+            ),
+            **({
+                "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256
+            } if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE" else {}),
             "disposition_counts": _disposition_counts(current_events),
         }
         for request_date, _execution, _raw, _manifest, current_events in source_rows
     }
+    if capture_mode == "P3_E1_PRE_ROUTER_CAPTURE":
+        discovery_summary = {
+            "provider_catalog_fanout_snapshot_sha256": discovery_manifest.canonical_sha256,
+            "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
+            "provider_discovery_page_count": len(discovery_manifest.pages),
+            "provider_discovery_event_count": len(discovery_manifest.events),
+            "provider_discovery_observation_count": len(discovery_manifest.pages),
+            "provider_catalog_active_tournament_count": len(discovery_manifest.pages),
+            "provider_catalog_tournament_observation_count": len(discovery_manifest.pages),
+        }
+    else:
+        discovery_summary = {
+            "provider_catalog_fanout_snapshot_sha256": fanout_snapshot.canonical_sha256,
+            "provider_catalog_active_tournament_count": len(fanout_snapshot.tournaments),
+            "provider_catalog_tournament_observation_count": len(fanout_snapshot.observations),
+            "provider_discovery_observation_count": 1 + len(fanout_snapshot.observations),
+        }
     source_progress_summary: dict[str, Any] = {
         "selected_fixture_request_date": primary_date,
         "fixture_search_day_count": len(searched_dates),
@@ -861,13 +908,7 @@ def acquire_current_shadow_pre_router_bundle(
         "current_reconciliation_contract_sha256": primary_events.contract_sha256,
         "current_reconciliation_by_request_date": reconciliation_by_date,
         "matched_provider_event_ids": sorted(matched_provider_dates),
-        "provider_catalog_fanout_snapshot_sha256": discovery_manifest.canonical_sha256,
-        "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
-        "provider_discovery_page_count": len(discovery_manifest.pages),
-        "provider_discovery_event_count": len(discovery_manifest.events),
-        "provider_discovery_observation_count": len(discovery_manifest.pages),
-        "provider_catalog_active_tournament_count": len(discovery_manifest.pages),
-        "provider_catalog_tournament_observation_count": len(discovery_manifest.pages),
+        **discovery_summary,
         "wager_placed": False,
     }
     progress(
@@ -1006,17 +1047,20 @@ def _acquire_router_inputs(
     *,
     repository_root: Path,
     lineage_main_sha: str,
+    request_dates: tuple[str, ...] | None = None,
+    capture_mode: str = "SUPPORTED_REQUEST",
     stage_callback: Callable[[str], None] | None = None,
     progress_callback: Callable[[str, str, Mapping[str, int], Mapping[str, Any]], None] | None = None,
+    execute_live_network: bool = True,
 ) -> CurrentShadowRunnerSourceBundle:
     return acquire_current_shadow_pre_router_bundle(
         repository_root=repository_root,
         lineage_main_sha=lineage_main_sha,
-        request_dates=None,
-        capture_mode="SUPPORTED_REQUEST",
+        request_dates=request_dates,
+        capture_mode=capture_mode,
         stage_callback=stage_callback,
         progress_callback=progress_callback,
-        execute_live_network=True,
+        execute_live_network=execute_live_network,
     )
 
 
