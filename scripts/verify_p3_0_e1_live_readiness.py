@@ -889,6 +889,77 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
             "Check L failed: capture child directory must not exist prior to capture execution"
         )
 
+    # Execute offline publication/completion proof
+    from domain import p3_0_comparison_evidence as evidence
+    from scripts import _p3_0_paired_capture_part1 as capture_part1
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="p3-0-readiness-envelope-") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        envelope = temp_dir / "artifacts" / "p3-0-comparison-evidence"
+        envelope.mkdir(parents=True, exist_ok=True)
+
+        readiness_file = envelope / READINESS_FILENAME
+        receipt_content = b'{"status":"P3_0_E1_LIVE_READINESS_VERIFIED"}\n'
+        readiness_file.write_bytes(receipt_content)
+
+        capture_child = envelope / "capture"
+        if capture_child.exists():
+            raise P30LiveReadinessError("Check L failed: capture child exists before publication")
+
+        bundle = capture_part1.build_offline_proof_bundle(partial=False)
+
+        published_path = evidence.write_capture_artifact(bundle, capture_child)
+        if published_path != capture_child:
+            raise P30LiveReadinessError("Check L failed: write_capture_artifact returned unexpected path")
+
+        verified = evidence.verify_capture_artifact(capture_child)
+        if verified["canonical_sha256"] != bundle["canonical_sha256"]:
+            raise P30LiveReadinessError("Check L failed: verified capture bundle SHA drifted")
+
+        if readiness_file.read_bytes() != receipt_content:
+            raise P30LiveReadinessError("Check L failed: readiness receipt was mutated during publication")
+
+        preexisting_rejected = False
+        try:
+            evidence.write_capture_artifact(bundle, capture_child)
+        except evidence.P30ComparisonEvidenceError as exc:
+            if "capture output directory already exists" in str(exc):
+                preexisting_rejected = True
+        if not preexisting_rejected:
+            raise P30LiveReadinessError("Check L failed: preexisting capture child did not fail closed")
+
+        complete_exit, complete_payload = capture_part1.classify_published_capture_result(bundle)
+        if complete_exit != 0 or complete_payload.get("status") != "P3_0_E1_CAPTURE_WRITTEN":
+            raise P30LiveReadinessError("Check L failed: complete bundle did not classify as exit 0 / CAPTURE_WRITTEN")
+
+        partial_bundle = capture_part1.build_offline_proof_bundle(partial=True)
+        partial_exit, partial_payload = capture_part1.classify_published_capture_result(partial_bundle)
+        if (
+            partial_exit != 1
+            or partial_payload.get("failure_code") != evidence.PAIRED_CAPTURE_PARTIAL
+            or evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE not in partial_payload.get("capture_stage_causes", [])
+        ):
+            raise P30LiveReadinessError("Check L failed: partial bundle did not classify as exit 1 / PAIRED_CAPTURE_PARTIAL")
+
+        partial_child = envelope / "partial_capture"
+        evidence.write_capture_artifact(partial_bundle, partial_child)
+        manifest_bytes_before = (partial_child / "manifest.json").read_bytes()
+        bundle_bytes_before = (partial_child / "bundle.json").read_bytes()
+
+        capture_part1._safe_failure(
+            partial_child, exact_commit_sha="a" * 40, capture_id="test-partial",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("partial test"),
+        )
+        if (partial_child / "p3-0-capture-failure.json").exists():
+            raise P30LiveReadinessError("Check L failed: failure receipt was created in published capture child")
+
+        if (partial_child / "manifest.json").read_bytes() != manifest_bytes_before:
+            raise P30LiveReadinessError("Check L failed: partial manifest.json was mutated")
+        if (partial_child / "bundle.json").read_bytes() != bundle_bytes_before:
+            raise P30LiveReadinessError("Check L failed: partial bundle.json was mutated")
+        evidence.verify_capture_artifact(partial_child)
+
     return {
         "status": "PASSED",
         "workflow_step_order_verified": True,
@@ -896,6 +967,11 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         "capture_step_index": capture_idx,
         "envelope_child_separation_verified": True,
         "capture_child_path": "artifacts/p3-0-comparison-evidence/capture",
+        "offline_publication_verified": True,
+        "preexisting_child_rejected": True,
+        "complete_corpus_exit_zero_verified": True,
+        "partial_corpus_nonzero_verified": True,
+        "partial_artifact_immutability_verified": True,
     }
 
 

@@ -387,3 +387,140 @@ def test_deterministic_post_router_failure_reproduction_not_retained_model_reexe
     published = evidence.write_capture_artifact(bundle, capture_child)
     assert published == capture_child
     assert readiness_file.exists()
+
+
+def test_readiness_check_l_offline_publication_proof():
+    """Verify Check L executes all 12 points of the offline publication/completion proof."""
+    from scripts.verify_p3_0_e1_live_readiness import check_l_workflows_integrity
+
+    repo_root = Path(__file__).resolve().parents[1]
+    result = check_l_workflows_integrity(repo_root)
+    assert result["status"] == "PASSED"
+    assert result["workflow_step_order_verified"] is True
+    assert result["envelope_child_separation_verified"] is True
+    assert result["capture_child_path"] == "artifacts/p3-0-comparison-evidence/capture"
+    assert result["offline_publication_verified"] is True
+    assert result["preexisting_child_rejected"] is True
+    assert result["complete_corpus_exit_zero_verified"] is True
+    assert result["partial_corpus_nonzero_verified"] is True
+    assert result["partial_artifact_immutability_verified"] is True
+
+
+def test_post_router_capture_stage_failure_taxonomy(tmp_path):
+    """Verify explicit machine-readable post-Router capture-stage failure taxonomy.
+
+    Tests:
+    1. LEGACY_EVIDENCE_OBSERVER_INCOMPLETE per-fixture observation/export evidence.
+    2. PAIRED_CAPTURE_PARTIAL classification with exit 1 and preserved artifact bytes.
+    3. CAPTURE_ARTIFACT_PUBLICATION_FAILED wrapping with preserved cause.
+    4. Source acquisition failure is NOT mislabeled as publication failure.
+    """
+    from domain import p3_0_comparison_evidence as evidence
+    from scripts import (
+        _p3_0_paired_capture_part1 as capture_part1,
+        _p3_0_paired_capture_part2 as capture_part2,
+    )
+
+    # 1. LEGACY_EVIDENCE_OBSERVER_INCOMPLETE: test per-fixture recording
+    mock_source = SimpleNamespace(
+        fixture_identity="FOTMOB:999999",
+        provider_event_id="sr:match:999999",
+    )
+
+    class DummyEmptyPipeline:
+        def run_pipeline_snapshot(self, **kwargs):
+            return []
+
+    orig_pipeline = capture_part2._legacy_pipeline
+    orig_override = capture_part2._legacy_override_fixture
+    capture_part2._legacy_pipeline = lambda: DummyEmptyPipeline()
+    capture_part2._legacy_override_fixture = lambda s: {"fixture_id": 999999}
+    try:
+        by_fixture, incomplete = capture_part2._legacy_observations([mock_source])
+        assert len(incomplete) == 1
+        assert incomplete[0]["failure_code"] == evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE
+        assert incomplete[0]["fixture_identity"] == "FOTMOB:999999"
+        assert incomplete[0]["provider_event_id"] == "sr:match:999999"
+        assert incomplete[0]["observation_count"] == 0
+        assert incomplete[0]["exported_row_count"] == 0
+    finally:
+        capture_part2._legacy_pipeline = orig_pipeline
+        capture_part2._legacy_override_fixture = orig_override
+
+
+    # 2. PAIRED_CAPTURE_PARTIAL: test classification, exit code 1, and artifact immutability
+    partial_bundle = capture_part1.build_offline_proof_bundle(partial=True)
+    exit_code, payload = capture_part1.classify_published_capture_result(
+        partial_bundle,
+        capture_stage_causes=[evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE],
+    )
+    assert exit_code == 1
+    assert payload["status"] == "P3_0_E1_CAPTURE_PARTIAL"
+    assert payload["failure_code"] == evidence.PAIRED_CAPTURE_PARTIAL
+    assert payload["incomplete_fixture_count"] > 0
+    assert payload["complete_fixture_count"] < payload["fixture_count"]
+    assert payload["capture_stage_causes"] == [evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE]
+
+
+    # Verify partial artifact immutability
+    partial_dir = tmp_path / "partial_output"
+    evidence.write_capture_artifact(partial_bundle, partial_dir)
+    manifest_bytes_before = (partial_dir / "manifest.json").read_bytes()
+    bundle_bytes_before = (partial_dir / "bundle.json").read_bytes()
+
+    # Call _safe_failure and verify it never mutates published child
+    capture_part1._safe_failure(
+        partial_dir,
+        exact_commit_sha="a" * 40,
+        capture_id="partial-test",
+        started_at="2026-09-20T00:00:00.000000Z",
+        exc=RuntimeError("partial run failed"),
+    )
+    assert not (partial_dir / "p3-0-capture-failure.json").exists()
+    assert (partial_dir / "manifest.json").read_bytes() == manifest_bytes_before
+    assert (partial_dir / "bundle.json").read_bytes() == bundle_bytes_before
+    evidence.verify_capture_artifact(partial_dir)
+
+    # 3. CAPTURE_ARTIFACT_PUBLICATION_FAILED: test wrapping and preserved cause
+    try:
+        try:
+            raise OSError("disk full simulation")
+        except OSError as inner:
+            pub_err = capture_part1.P30PairedCaptureError(
+                f"CAPTURE_ARTIFACT_PUBLICATION_FAILED: OSError: {inner}"
+            )
+            pub_err.failure_code = evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+            raise pub_err from inner
+    except capture_part1.P30PairedCaptureError as raised_pub_err:
+        assert raised_pub_err.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+        assert isinstance(raised_pub_err.__cause__, OSError)
+        assert str(raised_pub_err.__cause__) == "disk full simulation"
+        failure_dir = tmp_path / "failure_receipt_dir"
+        capture_part1._safe_failure(
+            failure_dir,
+            exact_commit_sha="b" * 40,
+            capture_id="pub-failure-test",
+            started_at="2026-09-20T00:00:00.000000Z",
+            exc=raised_pub_err,
+        )
+        receipt = json.loads((failure_dir / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+        assert receipt["failure_code"] == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+        assert receipt["failure_type"] == "P30PairedCaptureError"
+        assert receipt["failure_chain"][1]["exception_type"] == "OSError"
+        assert receipt["failure_chain"][1]["message"] == "disk full simulation"
+
+    # 4. Source acquisition failure is NOT mislabeled as publication failure
+    source_err = capture_part1.P30PairedCaptureError(
+        'P3.0-E1 source acquisition produced zero Router inputs: {"failure_code":"PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS"}'
+    )
+    source_failure_dir = tmp_path / "source_failure_dir"
+    capture_part1._safe_failure(
+        source_failure_dir,
+        exact_commit_sha="c" * 40,
+        capture_id="source-failure-test",
+        started_at="2026-09-20T00:00:00.000000Z",
+        exc=source_err,
+    )
+    source_receipt = json.loads((source_failure_dir / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+    assert source_receipt.get("failure_code") != evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+    assert source_receipt.get("failure_code") != evidence.PAIRED_CAPTURE_PARTIAL

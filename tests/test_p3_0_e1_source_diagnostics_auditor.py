@@ -154,3 +154,51 @@ def test_retained_run_35467453094_evidence_metadata_and_shape():
     assert run_id == 35467453094
     assert primary_artifact_id == 10591773690
     assert diagnostics_artifact_id == 10591842671
+
+
+def test_runtime_architecture_invariants_preserved():
+    """Verify runtime architecture invariants remain preserved as required by PR #376 review.
+
+    Invariants:
+    - Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1.
+    - Paginated source is historical only (paginated_runtime_reconciliation_authority: False).
+    - Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce.
+    - Stable identity SHA is fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f.
+    - State schema version is 2.
+    - Zero changes / zero execution authority for Price-All, Router, Portfolio.
+    """
+    from domain import (
+        current_shadow_all_market_runner as runner,
+        current_shadow_fixture_identity_v2 as identity,
+        current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
+        current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery,
+    )
+
+
+    # 1. Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1
+    assert upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+
+    # 2. Paginated source is historical only (paginated_runtime_reconciliation_authority: False)
+    assert runner.reconciliation is not paginated
+    assert runner.reconciliation is upcoming_discovery
+    from scripts.verify_p3_0_e1_live_readiness import check_i_pre_router_pipeline_readiness
+    repo_root = Path(__file__).resolve().parents[1]
+    check_i = check_i_pre_router_pipeline_readiness(repo_root)
+    assert check_i["paginated_runtime_reconciliation_authority"] is False
+
+
+    # 3. Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce
+    assert identity._REVIEWED_ALIAS_V3["registry_sha256"] == "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
+
+    # 4. Stable identity SHA is fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f
+    assert identity.REGISTRY_SHA256 == "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+
+    # 5. State schema version is 2
+    assert identity.STATE_SCHEMA_VERSION == 2
+
+    # 6. Zero changes / zero execution authority for Price-All, Router, Portfolio
+    assert runner.AUTHORITY.get("production_sportybet_execution") is False
+    assert runner.AUTHORITY.get("wager_placed") is False
+    assert runner.AUTHORITY.get("staking") is False
+    assert runner.AUTHORITY.get("wallet") is False
+    assert runner.AUTHORITY.get("login") is False

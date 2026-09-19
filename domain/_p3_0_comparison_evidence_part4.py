@@ -259,6 +259,11 @@ def _contract_payload() -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION, "policy_id": POLICY_ID,
         "as_of_proof_policy_id": AS_OF_PROOF_POLICY_ID,
         "legacy_runtime_safety_metadata_quarantine_policy_id": RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID,
+        "capture_artifact_envelope_relative": P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE,
+        "capture_immutable_child_relative": P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE,
+        "capture_publication_policy_id": P3_CAPTURE_PUBLICATION_POLICY_ID,
+        "partial_corpus_process_policy_id": P3_PARTIAL_CORPUS_PROCESS_POLICY_ID,
+        "capture_stage_failure_taxonomy": sorted(P3_CAPTURE_STAGE_FAILURE_TAXONOMY),
         "price_output_kind": PRICE_OUTPUT_KIND, "router_output_kind": ROUTER_OUTPUT_KIND,
         "fixture_identity_keys": sorted(FIXTURE_IDENTITY_KEYS), "timing_keys": sorted(TIMING_KEYS),
         "canonical_authority_keys": sorted(CANONICAL_AUTHORITY_KEYS),
@@ -290,8 +295,8 @@ def _contract_payload() -> dict[str, Any]:
 def calculate_contract_sha256() -> str:
     return canonical_sha256(_contract_payload())
 
-# Re-pinned after P3_LEGACY_RUNTIME_SAFETY_METADATA_QUARANTINE_V1 in post-#375 recovery.
-EXPECTED_CONTRACT_SHA256 = "e1bf125894460ef8d8b1a778211de16914caa18e8c71157425b290e37779053e"
+# Re-pinned after capture envelope, child, policies, and failure taxonomy binding.
+EXPECTED_CONTRACT_SHA256 = "09a18f8a8a197744b7fa335ec8c237168e2efe6992f71663df0ba3146510b329"
 
 
 def validate_contract() -> str:
@@ -302,14 +307,18 @@ def validate_contract() -> str:
 
 
 __all__ = [
-    "AS_OF_PROOF_POLICY_ID", "CANONICAL_AUTHORITY_KEYS", "COMPLETENESS_STATES",
-    "EXPECTED_COMPONENTS", "EXPECTED_CONTRACT_SHA256", "FIXTURE_IDENTITY_KEYS",
-    "JOIN_STATES", "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "POLICY_ID",
-    "PRICE_OUTPUT_KIND", "REQUIRED_CANONICAL_RESPONSIBILITIES", "ROUTER_OUTPUT_KIND",
-    "RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID",
-    "SCHEMA_VERSION", "TIMING_KEYS", "build_as_of_proof", "build_capture_bundle",
-    "build_fixture_record", "build_join_receipt", "calculate_contract_sha256",
-    "canonical_json_bytes", "canonical_sha256", "fixture_storage_key", "load_json_bytes",
+    "AS_OF_PROOF_POLICY_ID", "CANONICAL_AUTHORITY_KEYS", "CAPTURE_ARTIFACT_PUBLICATION_FAILED",
+    "COMPLETENESS_STATES", "EXPECTED_COMPONENTS", "EXPECTED_CONTRACT_SHA256",
+    "FIXTURE_IDENTITY_KEYS", "JOIN_STATES", "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
+    "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE",
+    "P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE", "P3_CAPTURE_PUBLICATION_POLICY_ID",
+    "P3_CAPTURE_STAGE_FAILURE_TAXONOMY", "P3_PARTIAL_CORPUS_PROCESS_POLICY_ID",
+    "PAIRED_CAPTURE_PARTIAL", "POLICY_ID", "PRICE_OUTPUT_KIND",
+    "REQUIRED_CANONICAL_RESPONSIBILITIES", "ROUTER_OUTPUT_KIND",
+    "RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID", "SCHEMA_VERSION", "TIMING_KEYS",
+    "build_as_of_proof", "build_capture_bundle", "build_fixture_record",
+    "build_join_receipt", "calculate_contract_sha256", "canonical_json_bytes",
+    "canonical_sha256", "fixture_storage_key", "load_json_bytes",
     "normalize_canonical_authority", "normalize_canonical_fixture_state",
     "normalize_price_all_output", "normalize_probability_bundle", "normalize_provider_semantics",
     "normalize_quote_snapshot", "normalize_router_output", "normalize_fixture_identity",

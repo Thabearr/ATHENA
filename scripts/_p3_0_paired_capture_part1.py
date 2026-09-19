@@ -156,6 +156,12 @@ def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id:
         "stake": False,
         "wager_placed": False,
     }
+    failure_code = getattr(exc, "failure_code", None)
+    if failure_code is not None:
+        value["failure_code"] = failure_code
+    elif "CAPTURE_ARTIFACT_PUBLICATION_FAILED" in str(exc):
+        value["failure_code"] = evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+
     diagnostic_prefix = "P3.0-E1 source acquisition produced zero Router inputs: "
     failure_message = value["failure_message"]
     if isinstance(failure_message, str) and failure_message.startswith(diagnostic_prefix):
@@ -402,6 +408,376 @@ def _collect_sources(
         execute_live_network=execute_live_network,
     )
 
+
+
+def classify_published_capture_result(
+    bundle: Mapping[str, Any],
+    *,
+    capture_stage_causes: Sequence[str] | None = None,
+) -> tuple[int, dict[str, Any]]:
+    fixture_records = bundle.get("fixture_records") or []
+    fixture_count = len(fixture_records)
+    complete_fixture_count = sum(
+        row["completeness_receipt"]["state"] == "P3_0_CAPTURE_COMPLETE"
+        for row in fixture_records
+    )
+    incomplete_fixture_count = fixture_count - complete_fixture_count
+    missing_reason_counts: dict[str, int] = {}
+    for row in fixture_records:
+        for reason in row["completeness_receipt"].get("missing_reasons") or []:
+            missing_reason_counts[reason] = missing_reason_counts.get(reason, 0) + 1
+
+    causes = set(capture_stage_causes or ())
+    legacy_exec = bundle.get("legacy_execution_identity") or {}
+    if legacy_exec.get("legacy_observer_incompleteness"):
+        causes.add(evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE)
+    elif any(
+        "MISSING_LEGACY_OUTPUT" in (row.get("completeness_receipt", {}).get("missing_reasons") or [])
+        for row in fixture_records
+    ):
+        causes.add(evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE)
+
+    if fixture_count > 0 and complete_fixture_count == fixture_count:
+        payload = {
+            "status": "P3_0_E1_CAPTURE_WRITTEN",
+            "capture_id": bundle["capture_id"],
+            "fixture_count": fixture_count,
+            "complete_fixture_count": complete_fixture_count,
+            "incomplete_fixture_count": 0,
+            "canonical_sha256": bundle["canonical_sha256"],
+        }
+        return 0, payload
+    else:
+        payload = {
+            "status": "P3_0_E1_CAPTURE_PARTIAL",
+            "failure_code": evidence.PAIRED_CAPTURE_PARTIAL,
+            "capture_id": bundle["capture_id"],
+            "fixture_count": fixture_count,
+            "complete_fixture_count": complete_fixture_count,
+            "incomplete_fixture_count": incomplete_fixture_count,
+            "missing_reason_counts": missing_reason_counts,
+            "canonical_sha256": bundle["canonical_sha256"],
+        }
+        if causes:
+            payload["capture_stage_causes"] = sorted(causes)
+        return 1, payload
+
+
+def build_offline_proof_bundle(*, partial: bool = False) -> dict[str, Any]:
+    from domain.markets import MarketId
+    from domain.market_probabilities import (
+        MarketProbabilityBundle,
+        MarketProbabilityDistribution,
+        ProbabilityAvailability,
+    )
+
+    start = "2026-09-30T12:00:00.000000Z"
+    end = "2026-09-30T12:04:00.000000Z"
+    kickoff = "2026-10-01T15:00:00.000000Z"
+    quote_time = "2026-09-30T12:01:00.000000Z"
+    canonical_time = "2026-09-30T12:02:00.000000Z"
+    legacy_time = "2026-09-30T12:03:00.000000Z"
+    fixture_id_str = "FOTMOB:fixture-100"
+
+    identity = {
+        "fixture_identity": fixture_id_str,
+        "fixture_identity_policy": FIXTURE_IDENTITY_POLICY,
+        "home_team": "Alpha FC",
+        "away_team": "Beta FC",
+        "home_source_id": None,
+        "away_source_id": None,
+        "competition_identity": None,
+        "competition_name": "Test League",
+        "kickoff": kickoff,
+        "fixture_source": "FOTMOB",
+        "fixture_source_event_id": "fixture-100",
+        "fixture_source_observed_at": None,
+        "fixture_source_artifact_sha256": None,
+        "fixture_source_manifest_sha256": None,
+    }
+    timing = {
+        "legacy_evidence_observed_at": legacy_time,
+        "legacy_evaluation_time": legacy_time,
+        "probability_evaluation_time": canonical_time,
+        "provider_quote_observed_at": quote_time,
+        "canonical_price_all_evaluation_time": canonical_time,
+        "canonical_router_evaluation_time": canonical_time,
+        "kickoff_time": kickoff,
+    }
+    fallback_shas = {
+        "provider_market_semantics": ("737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830", "46eaf64b6704e1b7b47123a9a182346e0403cbe6"),
+        "price_all_and_de_vig": ("30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425", "cf7214a6103d91a2974e3eb00c705f65c841d458"),
+        "market_router": ("85b4b5c712154f7d4708eb53e9cadfcb7c65dc21bdb12cd94cf1b8cd48795e32", "3011b65fcd62e5ae91fcede967b8cba4f85cdda7"),
+        "portfolio_optimizer": ("916247c4a891e3c0a2b8205b9d33000987471a54107f2b3d508c8e5ab1e9a99c", "d600d5d88baf5628df23441a9216c2fc68352e45"),
+        "delivery_share_code_transport": ("ac73deca0834187480c656482a78f9048381fe2f07abacfe10b84d30c73502cb", "28c44656915607315e0227f54bcff7cc7af103c7"),
+    }
+    authority_records = []
+    for resp in sorted(evidence.EXPECTED_COMPONENTS):
+        contract, blob = fallback_shas[resp]
+        authority_records.append({
+            "responsibility_id": resp,
+            "component_id": evidence.EXPECTED_COMPONENTS[resp],
+            "contract_sha256": contract,
+            "artifact_git_blob_sha": blob,
+            "allowed_profiles": ["SHADOW"],
+            "main_authority": False,
+        })
+    authority = {
+        "canonical_core_policy_id": "ATHENA_SHARED_CANONICAL_CORE_V1",
+        "canonical_core_contract_sha256": "af4a73f8852893e7391ae85bac092105d305fa5b9e77af273809fcdcb3dc4c4a",
+        "authority_manifest_sha256": "d" * 64,
+        "registry_canonical_sha256": "e" * 64,
+        "authority_profile": "SHADOW",
+        "resolved_components": authority_records,
+    }
+    legacy_input = {
+        "fixture_id": fixture_id_str,
+        "home_team": "Alpha FC",
+        "away_team": "Beta FC",
+        "home_id": 1,
+        "away_id": 2,
+        "match_date": kickoff,
+        "data_source": "P3_0_E1_CURRENT_SHADOW_RECONCILED",
+        "is_knockout": False,
+    }
+    analysis = {
+        "decision_status": "ANALYTICAL_CANDIDATE",
+        "recommended_analytical_verdict": "HOME_WIN",
+        "bookmaker_odds": None,
+        "viable_markets": [{"verdict": "HOME_WIN", "prob": 0.6, "kelly_stake_pct": 5.0}],
+        "accumulator_eligible_selection": None,
+        "no_bet_reasons": [],
+        "evidence_report": {
+            "final_decision": "ANALYTICAL_CANDIDATE",
+            "decision_reasons": ["test"],
+            "possession": {"home": 55.0, "away": 45.0},
+            "market_evaluations": [{"market_id": "MATCH_RESULT", "kelly_stake_pct": 5.0}],
+        },
+    }
+    legacy_output = evidence.project_legacy_output(
+        analysis,
+        analysis,
+        {
+            "fixture_id": fixture_id_str,
+            "fixture": "Alpha FC vs Beta FC",
+            "home_team": "Alpha FC",
+            "away_team": "Beta FC",
+            "league": "Test League",
+            "match_date": kickoff,
+            "decision_status": "ANALYTICAL_CANDIDATE",
+            "verdict": "HOME_WIN",
+            "no_bet_reasons": ["legacy runtime authorization gate"],
+            "evidence_report": analysis["evidence_report"],
+            "source": "P3_0_E1_CURRENT_SHADOW_RECONCILED",
+        },
+    )
+    fixture_state = {
+        "fixture_identity": fixture_id_str,
+        "provider_event_id": "100",
+        "home_team": "Alpha FC",
+        "away_team": "Beta FC",
+        "competition": "Test League",
+        "kickoff_utc": kickoff,
+        "source_observed_at": quote_time,
+        "fixture_reconciliation_sha256": "6" * 64,
+        "source_raw_sha256": "3" * 64,
+        "source_manifest_sha256": "4" * 64,
+        "source_inventory_sha256": "5" * 64,
+    }
+    markets = tuple(
+        MarketProbabilityDistribution(
+            market_id=m,
+            availability=ProbabilityAvailability.BLOCKED,
+            topology=None,
+            probability_method=None,
+            probability_input_namespace=None,
+            calibration_status=None,
+            event_probabilities=(),
+            settlement_distributions=(),
+            blocker_reason="TEST_BLOCKED_WITHOUT_FABRICATION",
+            source_projection_sha256=(f"{idx + 1:x}" * 64)[:64],
+        )
+        for idx, m in enumerate(MarketId)
+    )
+    prob_bundle = MarketProbabilityBundle(
+        fixture_identity=fixture_id_str,
+        score_grid=None,
+        markets=markets,
+        specialist_outputs=(),
+        model_evidence={"artifact_sha256": "1" * 64},
+    )
+    probability = {
+        "policy_id": prob_bundle.to_dict()["policy_id"],
+        "canonical_sha256": prob_bundle.canonical_sha256,
+        "payload": prob_bundle.to_dict(),
+    }
+    provider = {
+        "canonical_contract_sha256": "737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830",
+        "registry_sha256": "2" * 64,
+        "registry_policy_id": "PRB_EXACT_CURRENT_SPORTYBET_SEMANTIC_POLICIES_V1",
+        "registry_evaluation_time": canonical_time,
+        "provider_event_id": "100",
+        "source_raw_sha256": "3" * 64,
+        "source_manifest_sha256": "4" * 64,
+        "source_inventory_sha256": "5" * 64,
+        "fixture_reconciliation_sha256": "6" * 64,
+    }
+    def _compact_sha(v: Any) -> str:
+        raw = json.dumps(v, ensure_ascii=False, allow_nan=False, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(raw).hexdigest()
+    quote_row = {
+        "fixture_identity": fixture_id_str,
+        "provider_event_id": "100",
+        "market_id": "MATCH_RESULT",
+        "outcome_id": "HOME",
+        "line": None,
+        "provider_line": None,
+        "provider_market_id": "1",
+        "provider_market_name": "1X2",
+        "provider_specifier": None,
+        "provider_outcome_id": "1",
+        "provider_outcome_name": "Home",
+        "odds_raw": "1.50",
+        "decimal_odds": 1.5,
+        "observed_at": quote_time,
+        "kickoff_utc": kickoff,
+        "source_raw_sha256": "3" * 64,
+        "source_manifest_sha256": "4" * 64,
+        "source_inventory_sha256": "5" * 64,
+        "provider_semantic_status": "SUPPORTED",
+        "provider_registry_sha256": "2" * 64,
+        "provider_observation_sha256": "8" * 64,
+        "fixture_reconciliation_sha256": "6" * 64,
+        "current_mapping_rebind_sha256": None,
+        "bridge_bundle_sha256": None,
+        "bookable": True,
+    }
+    quote_row["quote_identity_sha256"] = _compact_sha(quote_row)
+    quote_core = {
+        "fixture_identity": fixture_id_str,
+        "provider_event_id": "100",
+        "evaluation_time": canonical_time,
+        "quotes": [quote_row],
+    }
+    quote = {**quote_core, "canonical_sha256": evidence.canonical_sha256(quote_core)}
+    price_result = {
+        "fixture_identity": fixture_id_str,
+        "market_id": "MATCH_RESULT",
+        "outcome_id": "HOME",
+        "line": None,
+        "disposition": "PRICED",
+        "model_probability": 0.6,
+        "decimal_odds": 1.5,
+        "quote_identity_sha256": quote_row["quote_identity_sha256"],
+        "provider_event_id": "100",
+        "prc_scan_sha256": "9" * 64,
+        "prc_assessment_sha256": "a" * 64,
+        "provider_registry_sha256": "2" * 64,
+        "fixture_reconciliation_sha256": "6" * 64,
+        "source_raw_sha256": "3" * 64,
+        "source_manifest_sha256": "4" * 64,
+        "source_inventory_sha256": "5" * 64,
+    }
+    price_payload = {
+        "schema_version": 2,
+        "dataset_name": "athena-current-shadow-all-market-price-all-router-v2",
+        "fixture_identity": fixture_id_str,
+        "evaluation_time": canonical_time,
+        "results": [price_result],
+        "authority": {"staking": False, "bet": False, "wager_placed": False},
+        "wager_placed": False,
+    }
+    price = {
+        "owner_responsibility_id": "price_all_and_de_vig",
+        "owner_component_id": "domain.price_all",
+        "payload_kind": evidence.PRICE_OUTPUT_KIND,
+        "payload_sha256": _compact_sha(price_payload),
+        "payload": price_payload,
+    }
+    opp_id = "b" * 64
+    router_payload = {
+        "schema_version": 2,
+        "dataset_name": "athena-current-shadow-all-market-price-all-router-v2",
+        "fixture_identity": fixture_id_str,
+        "status": "SELECTED",
+        "selected_opportunity_id": opp_id,
+        "runner_up_opportunity_id": None,
+        "strongest_rejected_opportunity_id": None,
+        "opportunities": [{
+            "opportunity_id": opp_id,
+            "price_result": price_result,
+            "eligibility": "ELIGIBLE",
+            "rejection_reasons": [],
+        }],
+        "price_all_bundle_sha256": price["payload_sha256"],
+        "router_policy_id": "TEST_ROUTER_POLICY",
+        "authority": {"staking": False, "bet": False, "wager_placed": False},
+        "value_first_selected_opportunity_id": opp_id,
+        "value_first_runner_up_opportunity_id": None,
+        "value_first_counterfactual_opportunity_id": None,
+        "wager_placed": False,
+    }
+    router = {
+        "owner_responsibility_id": "market_router",
+        "owner_component_id": "domain.market_router_canonical_adapter",
+        "payload_kind": evidence.ROUTER_OUTPUT_KIND,
+        "payload_sha256": _compact_sha(router_payload),
+        "payload": router_payload,
+    }
+
+    record_kwargs = dict(
+        fixture_capture_id="FOTMOB-fixture-100",
+        capture_id="capture-offline-proof",
+        capture_started_at=start,
+        capture_completed_at=end,
+        legacy_identity=None if partial else identity,
+        canonical_identity=identity,
+        timing=timing,
+        canonical_authority=authority,
+        legacy_input=None if partial else legacy_input,
+        legacy_output=None if partial else legacy_output,
+        canonical_fixture_state=fixture_state,
+        probability_bundle=probability,
+        provider_semantics=provider,
+        quote_snapshot=quote,
+        price_all_output=price,
+        router_output=router,
+    )
+    record = evidence.build_fixture_record(**record_kwargs)
+
+    legacy_exec = {
+        "policy_id": POLICY_ID,
+        "supported_path": "AccaBuilder->AnalysisPipeline.run_pipeline_snapshot",
+    }
+    if partial:
+        legacy_exec["legacy_observer_incompleteness"] = [{
+            "failure_code": evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE,
+            "fixture_identity": fixture_id_str,
+            "provider_event_id": "100",
+            "observation_count": 0,
+            "exported_row_count": 0,
+        }]
+
+    bundle = evidence.build_capture_bundle(
+        repository_commit_sha="c" * 40,
+        capture_id="capture-offline-proof",
+        capture_started_at=start,
+        capture_completed_at=end,
+        requested_dates=["20261001"],
+        legacy_execution_identity=legacy_exec,
+        canonical_execution_identity={"path": "Current Shadow Price-All -> Router"},
+        authority_state={"main_authority": False, "authority_profile": "SHADOW", "wager_placed": False},
+        source_artifacts=[{
+            "fixture_identity": fixture_id_str,
+            "provider_event_id": "100",
+            "source_raw_sha256": "3" * 64,
+            "source_manifest_sha256": "4" * 64,
+            "source_inventory_sha256": "5" * 64,
+            "fixture_reconciliation_sha256": "6" * 64,
+        }],
+        fixture_records=[record],
+    )
+    return bundle
 
 
 __all__ = tuple(name for name in globals() if not name.startswith("__"))
