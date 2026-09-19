@@ -129,6 +129,15 @@ class CurrentShadowSportyBetUpcomingReconciliationError(ValueError):
 SportyBetCurrentEventDiscoveryError = CurrentShadowSportyBetUpcomingReconciliationError
 
 
+class _Legacy:
+    """Compatibility proxy for reviewed request-worker hook installation."""
+
+    reviewed = reviewed
+
+
+legacy = _Legacy()
+
+
 def _canonical(value: Any, *, newline: bool = False) -> bytes:
     try:
         raw = json.dumps(
@@ -1305,6 +1314,7 @@ __all__ = [
     "calculate_current_shadow_upcoming_compatibility_sha256",
     "capture_current_upcoming_discovery",
     "discover_and_reconcile_current_events",
+    "legacy",
     "prospective_discovery_assessment",
     "reconcile_current_events_from_upcoming_discovery",
     "request_target",
