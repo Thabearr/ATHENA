@@ -424,6 +424,13 @@ def _match_current_shadow_event(
     )
 
 
+class _Legacy:
+    reviewed = reviewed_discovery
+
+
+legacy = _Legacy()
+
+
 # ---------------------------------------------------------------------------
 # Discovery & Reconciliation APIs
 # ---------------------------------------------------------------------------
@@ -437,6 +444,9 @@ def capture_current_paginated_discovery(
         repository_root=repository_root,
         execute_live_network=execute_live_network,
     )
+
+
+capture_current_catalog_fanout_discovery = capture_current_paginated_discovery
 
 
 def verify_current_paginated_discovery(
@@ -901,8 +911,10 @@ __all__ = [
     "TEAM_LABEL_COMPATIBILITY_POLICY_ID",
     "TEAM_LABEL_COMPATIBILITY_POLICY_SHA256",
     "calculate_contract_sha256",
+    "capture_current_catalog_fanout_discovery",
     "capture_current_paginated_discovery",
     "discover_and_reconcile_current_events",
+    "legacy",
     "reconcile_current_events_from_paginated_discovery",
     "validate_contract",
     "verify_current_event_discovery_reconciliation_bundle",
