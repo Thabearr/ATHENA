@@ -27,7 +27,7 @@ from typing import Any
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_fixture_date_request as fixture_dates
 from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
-from domain import current_shadow_sportybet_catalog_fanout_reconciliation as reconciliation
+from domain import current_shadow_sportybet_paginated_discovery_reconciliation as reconciliation
 from domain import current_shadow_sportybet_tolerant_live_inventory as tolerant_inventory
 from domain import sportybet_current_event_discovery_reconciliation as reviewed
 from scripts import current_shadow_current_asof_elo_only_fallback as xg_fallback
@@ -118,14 +118,18 @@ def _detail_inventory(directory: Path, *, repository_root: Path):
 
 
 def _install_reconciliation_compatibility() -> tuple[Any, dict[str, Any]]:
-    proxy = reconciliation.legacy.reviewed
-    previous = dict(getattr(proxy, "__dict__", {}))
-    proxy._match_event = run199_identity.match_event
-    proxy._detail_inventory_from_directory = _detail_inventory
-    return proxy, previous
+    if hasattr(reconciliation, "legacy"):
+        proxy = reconciliation.legacy.reviewed
+        previous = dict(getattr(proxy, "__dict__", {}))
+        proxy._match_event = run199_identity.match_event
+        proxy._detail_inventory_from_directory = _detail_inventory
+        return proxy, previous
+    return None, {}
 
 
 def _restore_reconciliation_compatibility(proxy: Any, previous: dict[str, Any]) -> None:
+    if proxy is None:
+        return
     current = getattr(proxy, "__dict__", {})
     for key in tuple(current):
         if key not in previous:

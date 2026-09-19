@@ -65,6 +65,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cache_dir='.cache/athena-research/current-shadow-history-github-binary-cache-v1'
+          mkdir -p "${cache_dir}"
+          printf 'ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR=%s\n' "${cache_dir}" >> "${GITHUB_ENV}"
           restored=false
           mapfile -t prime_runs < <(
             gh api \
@@ -103,6 +105,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p .cache/athena-research/pr119-bootstrap
+          bootstrap_path='.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson'
+          printf 'ATHENA_PR119_BOOTSTRAP_PATH=%s\n' "${bootstrap_path}" >> "${GITHUB_ENV}"
           gh release download athena-fresh-holdout-bootstrap-v1 \
             --repo "${GITHUB_REPOSITORY}" \
             --pattern pr119-materialized.ndjson \
@@ -110,7 +114,7 @@ jobs:
             --clobber
           printf '%s  %s\n' \
             'e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2' \
-            '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
+            "${bootstrap_path}" \
             | sha256sum --check --strict
 
       - name: Restore prior persistent Shadow identity state
@@ -160,6 +164,10 @@ jobs:
           test "${#lineage_main_sha}" -eq 40
           printf 'ATHENA_EXPECTED_LINEAGE_MAIN_SHA=%s\n' "${lineage_main_sha}" >> "${GITHUB_ENV}"
 
+      - name: Verify P3.0-E1 live readiness (no network)
+        run: |
+          python scripts/verify_p3_0_e1_live_readiness.py
+
       - name: Capture paired P3.0 evidence through Router only
         env:
           GH_TOKEN: ${{ github.token }}
@@ -191,6 +199,7 @@ jobs:
             artifacts/p3-0-comparison-evidence
             .cache/athena-research/fotmob-data-matches-captures
             .cache/athena-research/current-shadow-sportybet-catalog-fanout
+            .cache/athena-research/sportybet-current-event-discovery
             .cache/athena-research/sportybet-live-event-quote-evidence
             .cache/athena-research/current-shadow-fixture-identity-v2
           if-no-files-found: warn

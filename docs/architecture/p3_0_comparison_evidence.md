@@ -277,3 +277,62 @@ The transition is bound to this retained run and diagnostics digest. No live
 retry, provider acquisition, model/pricing/Router/Portfolio change, or authority
 increase occurs in this continuity work. P3.0 comparator and P3.1 remain not
 started; `SOURCE_REVIEW_COUNTER` remains `4 / 5`.
+
+## Canonical source-to-Router live readiness and pre-router architecture closure
+
+Post-PR #373 live capture run `35409481576` revealed a recurring failure loop at
+the pre-router source boundary where zero Router inputs were produced despite
+reconciled identities. Architectural analysis identified two root causes:
+
+### Root Cause A: Tournament Fanout Endpoint Scope Collapse (Global-Echo Pattern Diagnostic)
+
+The SportyBet tournament fanout endpoint (`/api/ng/factsCenter/pc/upcomingEvents`)
+returned identical 10 global events across multiple distinct tournament requests.
+The retained responses do not demonstrate that the request-target category/tournament
+parameters scope the response (referred to as the "global-echo pattern" ATHENA diagnostic
+label). This was masked in earlier tests but caused complete discovery failure during live
+execution.
+
+Resolution:
+1. `validate_fanout_request_scope` in
+   `domain.current_shadow_sportybet_catalog_fanout_reconciliation` asserts that
+   distinct tournament requests return distinct event sets; any repeated identical
+   event set fails closed with `FANOUT_REQUEST_SCOPE_UNPROVEN`.
+2. The pre-router acquisition path in `domain.current_shadow_all_market_runner`
+   was canonicalized to use the already-reviewed, deterministic paginated global
+   discovery endpoint (`/api/ng/factsCenter/liveOrPrematchEvents?sportId=sr:sport:1&pageSize=100&pageNum=<n>`)
+   via `domain.current_shadow_sportybet_paginated_discovery_reconciliation`.
+3. The paginated discovery contract is pinned to SHA-256:
+   `98bedacc3ccbc080312855fdd973545374ba2448dc89b841420bc70147ffaf21`.
+
+### Root Cause B: Pre-Router Candidate Classification & Failure Taxonomy
+
+Counterpart audit diagnostics previously conflated raw kickoff-matching events,
+policy-approved counterparts, and reconciliation-authorized counterparts, obscuring
+why events were rejected.
+
+Resolution:
+1. `scripts.analyze_p3_0_e1_source_diagnostics` strictly classifies candidates into:
+   - `RAW_FOTMOB_COUNTERPART`: Same kickoff time only;
+   - `CURRENT_SHADOW_POLICY_APPROVED_FOTMOB_COUNTERPART`: Admitted by competition hierarchy;
+   - `RECONCILIATION_AUTHORIZED_COUNTERPART`: Fully authorized by identity recovery / alias registry.
+   Unadmitted competitions (e.g., K-League 1, NWSL) are classified as
+   `POLICY_UNAPPROVED_COMPETITION` and excluded from compatibility summaries.
+2. `scripts._p3_0_paired_capture_part2` enforces a bounded taxonomy of failure reasons:
+   - `NO_RECONCILED_PROVIDER_EVENTS_DISCOVERED`
+   - `NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART`
+   - `NO_MARKETS_RECONCILED_FOR_ROUTER`
+   - `ZERO_ROUTER_INPUTS_POST_PRICING`
+
+### Pre-Flight No-Network Live Readiness Gate
+
+`scripts/verify_p3_0_e1_live_readiness.py` executes 14 offline checks (Checks A
+through N) before any live provider acquisition is permitted in CI:
+- Strict socket/network blocking assertion (`strict_network_block`);
+- Codebase compilation and lineage main SHA verification (`c5ec9a23486a594d2df279521b6065744fa9a389`);
+- Pinned discovery contracts and fanout scope validation;
+- Workflow and safety invariant assertions (`login`, `cookies`, `wallet`, `staking`, `bet`, `wager_placed` = False);
+- Zero live authorizations spent invariant.
+
+The gate writes `p3-0-e1-live-readiness.json` with status
+`P3_0_E1_LIVE_READINESS_VERIFIED` and an exact SHA-256 hash.

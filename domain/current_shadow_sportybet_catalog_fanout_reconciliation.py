@@ -111,6 +111,98 @@ SportyBetCurrentEventDiscoveryError = legacy.SportyBetCurrentEventDiscoveryError
 _fanout_overlap_scope_depth = 0
 
 
+def validate_fanout_request_scope(
+    observations: Sequence[Any],
+    *,
+    events: Sequence[Any] | None = None,
+    require_proven: bool = True,
+) -> str:
+    """Validate that tournament fanout observations are actually scoped by request.
+
+    Returns "FANOUT_REQUEST_SCOPE_PROVEN" only if ALL 6 conditions are met:
+    1. >= 2 distinct requested (category_id, tournament_id) pairs.
+    2. Every observation has explicit category_id and tournament_id.
+    3. Every event ID resolves to a logical event in `events`.
+    4. Every logical event exposes native category_id and tournament_id.
+    5. Every observation's event native (category_id, tournament_id) equals the requested pair.
+    6. No global echo (distinct requests do not return identical multi-event sets).
+
+    Otherwise returns "FANOUT_REQUEST_SCOPE_UNPROVEN" (or raises
+    CurrentShadowSportyBetCatalogFanoutReconciliationError if require_proven is True).
+    """
+    def _fail(msg: str) -> str:
+        if require_proven:
+            raise CurrentShadowSportyBetCatalogFanoutReconciliationError(
+                f"FANOUT_REQUEST_SCOPE_UNPROVEN: {msg}"
+            )
+        return "FANOUT_REQUEST_SCOPE_UNPROVEN"
+
+    if not observations or len(observations) < 2:
+        return _fail("fewer than 2 observations provided")
+
+    # 1 & 2: Explicit requested pairs and >= 2 distinct pairs
+    requested_pairs: set[tuple[str, str]] = set()
+    for obs in observations:
+        req_cat = getattr(obs, "category_id", None)
+        req_tourn = getattr(obs, "tournament_id", None)
+        if not req_cat or not req_tourn:
+            return _fail(f"observation {obs} missing explicit category_id or tournament_id")
+        requested_pairs.add((req_cat, req_tourn))
+
+    if len(requested_pairs) < 2:
+        return _fail(f"only {len(requested_pairs)} distinct requested tournament pair(s), >= 2 required")
+
+    # 6: No global echo
+    non_empty = [obs for obs in observations if getattr(obs, "event_ids", None)]
+    if len(non_empty) >= 2:
+        event_set_counts = Counter(tuple(obs.event_ids) for obs in non_empty)
+        for event_set, count in event_set_counts.items():
+            if count >= 2 and len(event_set) >= 2:
+                return _fail(
+                    f"identical {len(event_set)} events returned across {count} distinct tournament requests"
+                )
+            if count >= 3:
+                return _fail(
+                    f"identical event set returned across {count} distinct tournament requests"
+                )
+
+    # 3, 4, 5: Events resolution and native scope matching
+    if events is None:
+        return _fail("no logical events provided to verify native scoping")
+
+    event_by_id = {
+        getattr(e, "event_id", None): e
+        for e in events
+        if getattr(e, "event_id", None) is not None
+    }
+    total_event_count = 0
+    for obs in observations:
+        req_cat = getattr(obs, "category_id", None)
+        req_tourn = getattr(obs, "tournament_id", None)
+        obs_event_ids = getattr(obs, "event_ids", ())
+        if not obs_event_ids:
+            continue
+        total_event_count += len(obs_event_ids)
+        for eid in obs_event_ids:
+            ev = event_by_id.get(eid)
+            if ev is None:
+                return _fail(f"event {eid} does not resolve to a logical event")
+            ev_cat = getattr(ev, "category_id", None)
+            ev_tourn = getattr(ev, "tournament_id", None)
+            if not ev_cat or not ev_tourn:
+                return _fail(f"event {eid} does not expose native category_id and tournament_id")
+            if (ev_cat, ev_tourn) != (req_cat, req_tourn):
+                return _fail(
+                    f"returned event {eid} native scope ({ev_cat}, {ev_tourn}) "
+                    f"does not match requested scope ({req_cat}, {req_tourn})"
+                )
+
+    if total_event_count == 0:
+        return _fail("no events observed across observations")
+
+    return "FANOUT_REQUEST_SCOPE_PROVEN"
+
+
 @dataclasses.dataclass(frozen=True)
 class CurrentShadowSportyBetCatalogFanoutSnapshot(
     _LegacyCurrentShadowSportyBetCatalogFanoutSnapshot
@@ -118,6 +210,11 @@ class CurrentShadowSportyBetCatalogFanoutSnapshot(
     """Current-Shadow overlay admitting exact cross-observation event overlap only."""
 
     def __post_init__(self) -> None:
+        # Separate historical snapshot replay validity from request-scope authority assessment.
+        scope_status = validate_fanout_request_scope(
+            self.observations, events=self.events, require_proven=False
+        )
+        object.__setattr__(self, "_fanout_request_scope_status", scope_status)
         try:
             super().__post_init__()
             return
@@ -809,6 +906,7 @@ __all__ = [
     "reconcile_current_events_from_catalog_fanout",
     "tournament_request_target",
     "validate_contract",
+    "validate_fanout_request_scope",
     "verify_current_catalog_fanout_discovery",
     "verify_current_event_discovery_reconciliation_bundle",
 ]

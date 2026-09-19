@@ -363,21 +363,20 @@ def _legacy_pipeline() -> Any:
     return AccaBuilder(days_ahead=1).pipeline
 
 
-def _collect_sources(*, repository_root: Path, lineage_main_sha: str,
-                     request_dates: tuple[str, ...]) -> Any:
-    original_issuer = shadow_runner._issue_current_fixture_sources
-    shadow_runner._issue_current_fixture_sources = (
-        lambda *, repository_root: shadow_daily._issue_exact_fixture_sources(
-            repository_root=repository_root, request_dates=request_dates
-        )
+def _collect_sources(
+    *,
+    repository_root: Path,
+    lineage_main_sha: str,
+    request_dates: tuple[str, ...],
+    execute_live_network: bool = True,
+) -> Any:
+    return shadow_runner._acquire_router_inputs(
+        repository_root=repository_root,
+        lineage_main_sha=lineage_main_sha,
+        request_dates=request_dates,
+        capture_mode="P3_E1_PRE_ROUTER_CAPTURE",
+        execute_live_network=execute_live_network,
     )
-    try:
-        return shadow_runner._acquire_router_inputs(
-            repository_root=repository_root,
-            lineage_main_sha=lineage_main_sha,
-        )
-    finally:
-        shadow_runner._issue_current_fixture_sources = original_issuer
 
 
 
