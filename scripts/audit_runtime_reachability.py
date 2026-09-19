@@ -860,17 +860,11 @@ def _probe_current_shadow(source_commit: str, profile: str) -> tuple[dict[str, A
             "issue_current_shadow_fotmob_reviewed_source",
             forbidden_network("current_fotmob_source"),
         ))
-        if hasattr(runner.reconciliation, "capture_current_catalog_fanout_discovery"):
+        if hasattr(runner.reconciliation, "capture_current_upcoming_discovery"):
             stack.enter_context(_temporary_attribute(
                 runner.reconciliation,
-                "capture_current_catalog_fanout_discovery",
-                forbidden_network("sportybet_catalog_fanout"),
-            ))
-        if hasattr(runner.reconciliation, "capture_current_paginated_discovery"):
-            stack.enter_context(_temporary_attribute(
-                runner.reconciliation,
-                "capture_current_paginated_discovery",
-                forbidden_network("sportybet_paginated_discovery"),
+                "capture_current_upcoming_discovery",
+                forbidden_network("sportybet_upcoming_discovery"),
             ))
         stack.enter_context(_temporary_attribute(
             runner.share_module,

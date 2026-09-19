@@ -7,6 +7,7 @@ from types import SimpleNamespace
 import pytest
 
 from domain import current_shadow_fixture_identity_v2 as identity
+from domain import current_shadow_fixture_identity_compatibility as compatibility
 
 
 UTC = timezone.utc
@@ -265,3 +266,27 @@ def test_corrupt_persistent_identity_state_fails_closed(tmp_path):
     identity.reset_runtime_evidence()
     with pytest.raises(identity.CurrentShadowFixtureIdentityStateError):
         identity.configure_persistent_state(state_path)
+
+
+def test_persisted_identity_append_only_guard_rejects_shrink_and_remap():
+    retained = compatibility.identity_state_snapshot()
+    retained["learned_team_identities"] = [[910001, "sr:competitor:991001"]]
+    retained["learned_competition_identities"] = [["NEW", 888, "sr:category:998", "sr:tournament:998"]]
+    retained["evidence_records"] = [{"provider_event_id": "sr:match:99100001"}]
+    shrunk = json.loads(json.dumps(retained))
+    shrunk["learned_team_identities"] = []
+    with pytest.raises(compatibility.CurrentShadowFixtureIdentityCompatibilityError, match="shrunk"):
+        compatibility.verify_identity_state_append_only_extension(retained, shrunk)
+    remapped = json.loads(json.dumps(retained))
+    remapped["learned_team_identities"][0] = [910001, "sr:competitor:991002"]
+    with pytest.raises(compatibility.CurrentShadowFixtureIdentityCompatibilityError, match="append-only"):
+        compatibility.verify_identity_state_append_only_extension(retained, remapped)
+
+
+def test_persisted_identity_conflicting_tournament_and_competitor_fail_closed():
+    state = compatibility.identity_state_snapshot()
+    state["learned_team_identities"] = [[910001, "sr:competitor:991001"]]
+    state["learned_competition_identities"] = [["NEW", 888, "sr:category:998", "sr:tournament:998"]]
+    state["evidence_records"] = []
+    with pytest.raises(identity.CurrentShadowFixtureIdentityStateError, match="conflicts or lacks evidence"):
+        identity._validate_loaded_bindings(state)

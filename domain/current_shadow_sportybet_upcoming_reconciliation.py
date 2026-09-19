@@ -30,6 +30,12 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
+from domain import current_shadow_fixture_identity_aliases as fixture_aliases
+from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
+from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
+from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
+from domain import current_shadow_sportybet_team_label_compatibility as team_label_compatibility
+from domain import current_shadow_sportybet_tolerant_live_inventory as tolerant_inventory
 from domain import sportybet_current_event_discovery_reconciliation as reviewed
 from domain import sportybet_live_event_quote_evidence as live
 from domain.fotmob_data_matches_capture import FotMobDataMatchesCaptureManifest
@@ -44,6 +50,7 @@ from domain.sportybet_lite_source_capture import (
     sha256_bytes,
 )
 from scripts import run_pr258_sportybet_live_transport_proof as pr258
+from scripts import current_shadow_fixture_identity_reconciliation_recovery as identity_recovery
 
 SCHEMA_VERSION = 1
 CONTRACT_VERSION = 1
@@ -75,6 +82,12 @@ MATCHING_BASIS = reviewed.MATCHING_BASIS
 DETAIL_CONFIRMATION_POLICY = reviewed.DETAIL_CONFIRMATION_POLICY
 NEXT_BOUNDARY = "CURRENT_SHADOW_PRICE_ALL_EXACT_PROVIDER_EVENT_EVIDENCE_REQUIRED"
 EXPECTED_CONTRACT_SHA256 = "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
+UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 = EXPECTED_CONTRACT_SHA256
+CURRENT_SHADOW_UPCOMING_POLICY_ID = "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+CURRENT_SHADOW_UPCOMING_STATUS = "CURRENT_SHADOW_UPCOMING_DISCOVERY_RECONCILIATION_VERIFIED"
+CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = "29a250f3b7db3b0d84e8852df4a119df34e3eab914d5ac4e56c25d2e19ef64f2"
+PROSPECTIVE_DISCOVERY_ELIGIBLE = "PROSPECTIVE_DISCOVERY_ELIGIBLE"
+PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS = "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS"
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
 
 AUTHORITY = types.MappingProxyType(
@@ -89,9 +102,19 @@ AUTHORITY = types.MappingProxyType(
         "final_selection": False,
         "accumulator_slip_construction": False,
         "sportybet_execution": False,
+        "login": False,
+        "cookies": False,
+        "wallet": False,
         "staking": False,
         "bet": False,
         "wager_placed": False,
+    }
+)
+_UPSTREAM_CONTRACT_AUTHORITY = types.MappingProxyType(
+    {
+        key: value
+        for key, value in AUTHORITY.items()
+        if key not in {"login", "cookies", "wallet"}
     }
 )
 
@@ -104,6 +127,15 @@ class CurrentShadowSportyBetUpcomingReconciliationError(ValueError):
 
 
 SportyBetCurrentEventDiscoveryError = CurrentShadowSportyBetUpcomingReconciliationError
+
+
+class _Legacy:
+    """Compatibility proxy for reviewed request-worker hook installation."""
+
+    reviewed = reviewed
+
+
+legacy = _Legacy()
 
 
 def _canonical(value: Any, *, newline: bool = False) -> bytes:
@@ -210,7 +242,7 @@ def _contract_payload() -> dict[str, Any]:
         "live_event_source_contract_sha256": live.EXPECTED_CONTRACT_SHA256,
         "pr258_upcoming_path": pr258.UPCOMING_PATH,
         "next_boundary": NEXT_BOUNDARY,
-        "authority": dict(AUTHORITY),
+        "authority": dict(_UPSTREAM_CONTRACT_AUTHORITY),
     }
 
 
@@ -236,6 +268,10 @@ def validate_contract() -> Mapping[str, str]:
         raise CurrentShadowSportyBetUpcomingReconciliationError(
             "PR258 upcoming-event byte bound drifted"
         )
+    if EXPECTED_CONTRACT_SHA256 != UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "upstream upcoming source contract pin drifted"
+        )
     if reviewed_identity["current_event_discovery_contract_sha256"] != reviewed.EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowSportyBetUpcomingReconciliationError(
             "reviewed exact reconciliation contract drifted"
@@ -249,13 +285,69 @@ def validate_contract() -> Mapping[str, str]:
         raise CurrentShadowSportyBetUpcomingReconciliationError(
             "PR-F upcoming reconciliation contract drifted"
         )
+    if fixture_aliases.registry_sha256() != fixture_aliases.REGISTRY_SHA256:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "Current Shadow V3 alias registry identity drifted"
+        )
+    if fixture_identity_v2.registry_sha256() != fixture_identity_v2.REGISTRY_SHA256:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "Current Shadow stable identity registry identity drifted"
+        )
+    if team_label_compatibility.policy_sha256() != team_label_compatibility.EXPECTED_POLICY_SHA256:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "Current Shadow team-label compatibility identity drifted"
+        )
+    if run199_identity.policy_sha256() != run199_identity.POLICY_SHA256:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "Current Shadow run-199 identity policy drifted"
+        )
+    identity_compatibility.validate_contract()
+    if CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 != calculate_current_shadow_upcoming_compatibility_sha256():
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "Current Shadow upcoming compatibility contract drifted"
+        )
     return types.MappingProxyType(
         {
             "contract_sha256": actual,
+            "upstream_upcoming_source_contract_sha256": UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256,
+            "current_shadow_upcoming_policy_id": CURRENT_SHADOW_UPCOMING_POLICY_ID,
+            "current_shadow_upcoming_compatibility_sha256": CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256,
+            "identity_compatibility_policy_id": identity_compatibility.POLICY_ID,
+            "identity_compatibility_policy_sha256": identity_compatibility.EXPECTED_POLICY_SHA256,
             "reviewed_reconciliation_contract_sha256": reviewed.EXPECTED_CONTRACT_SHA256,
             "live_event_source_contract_sha256": live.EXPECTED_CONTRACT_SHA256,
         }
     )
+
+
+def _compatibility_payload() -> dict[str, Any]:
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "policy_id": CURRENT_SHADOW_UPCOMING_POLICY_ID,
+        "status": CURRENT_SHADOW_UPCOMING_STATUS,
+        "upstream_upcoming_source_contract_sha256": UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256,
+        "fixture_team_alias_policy_id": fixture_aliases.POLICY_ID,
+        "fixture_team_alias_registry_sha256": fixture_aliases.REGISTRY_SHA256,
+        "fixture_stable_identity_policy_id": fixture_identity_v2.POLICY_ID,
+        "fixture_stable_identity_registry_sha256": fixture_identity_v2.REGISTRY_SHA256,
+        "team_label_compatibility_policy_id": team_label_compatibility.POLICY_ID,
+        "team_label_compatibility_policy_sha256": team_label_compatibility.EXPECTED_POLICY_SHA256,
+        "run199_identity_policy_id": run199_identity.POLICY_ID,
+        "run199_identity_policy_sha256": run199_identity.POLICY_SHA256,
+        "identity_recovery_v3_policy_id": identity_recovery.POLICY_ID,
+        "identity_recovery_v3_matching_basis": identity_recovery.MATCHING_BASIS,
+        "identity_compatibility_policy_id": identity_compatibility.POLICY_ID,
+        "identity_compatibility_policy_sha256": identity_compatibility.EXPECTED_POLICY_SHA256,
+        "tolerant_direct_detail_policy_id": tolerant_inventory.POLICY_ID,
+        "matching_basis": MATCHING_BASIS + "_PLUS_CURRENT_SHADOW_IDENTITY_COMPATIBILITY_V3",
+        "freshness_seconds": MAX_SOURCE_AGE_SECONDS,
+        "minimum_lead_seconds": MINIMUM_LEAD_SECONDS,
+        "authority": dict(AUTHORITY),
+    }
+
+
+def calculate_current_shadow_upcoming_compatibility_sha256() -> str:
+    return hashlib.sha256(_canonical(_compatibility_payload())).hexdigest()
 
 
 def _evidence_root(repository_root: Path, *, create: bool) -> Path:
@@ -392,6 +484,55 @@ class CurrentShadowUpcomingDiscoverySnapshot:
     @property
     def canonical_sha256(self) -> str:
         return hashlib.sha256(_canonical(self.to_dict())).hexdigest()
+
+
+def prospective_discovery_assessment(
+    snapshot: CurrentShadowUpcomingDiscoverySnapshot,
+    *,
+    evaluation_time: datetime,
+) -> Mapping[str, Any]:
+    """Classify the first prospective-source boundary without reconciliation.
+
+    This is deliberately source-viability evidence.  It does not infer anything
+    about pages that were not acquired and it cannot produce a FotMob overlap.
+    """
+    if type(snapshot) is not CurrentShadowUpcomingDiscoverySnapshot:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "prospective discovery assessment requires an exact upcoming snapshot"
+        )
+    evaluation = _utc(evaluation_time, "evaluation_time")
+    events = snapshot.events
+    prematch_count = sum(item.prematch_bookable_observed is True for item in events)
+    inplay_count = sum(item.event_status in (1, "1") for item in events)
+    future_lead_count = sum(
+        item.prematch_bookable_observed is True
+        and (item.kickoff_utc - evaluation).total_seconds() > MINIMUM_LEAD_SECONDS
+        for item in events
+    )
+    too_close_count = sum(
+        (item.kickoff_utc - evaluation).total_seconds() <= MINIMUM_LEAD_SECONDS
+        for item in events
+    )
+    if events and prematch_count == 0:
+        verdict = PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS
+    elif future_lead_count:
+        verdict = PROSPECTIVE_DISCOVERY_ELIGIBLE
+    else:
+        verdict = PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS
+    return types.MappingProxyType(
+        {
+            "provider_event_count": len(events),
+            "provider_prematch_bookable_count": prematch_count,
+            "provider_inplay_count": inplay_count,
+            "provider_future_lead_eligible_count": future_lead_count,
+            "provider_too_close_count": too_close_count,
+            "provider_discovery_source_method": snapshot.source_method,
+            "provider_discovery_strategy_id": CURRENT_SHADOW_UPCOMING_POLICY_ID,
+            "provider_discovery_observed_at": serialize_utc(snapshot.observed_at),
+            "source_viability": verdict,
+            "captured_page_count": 1,
+        }
+    )
 
 
 def _event_from_upcoming_row(
@@ -672,6 +813,25 @@ def verify_current_upcoming_discovery(
     return snapshot
 
 
+def _read_verified_upcoming_raw(
+    evidence_directory: Path,
+    snapshot: CurrentShadowUpcomingDiscoverySnapshot,
+) -> bytes:
+    try:
+        raw = _read_regular(
+            Path(evidence_directory) / RAW_FILENAME,
+            maximum=MAX_RESPONSE_BYTES,
+            label="PR-F verified upcoming raw response",
+        )
+    except SportyBetLiteCaptureError as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
+    if sha256_bytes(raw) != snapshot.raw_sha256 or len(raw) != snapshot.raw_size:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "verified upcoming raw response identity drifted before observation"
+        )
+    return raw
+
+
 def _set_frozen(obj: Any, values: Mapping[str, Any]) -> Any:
     for key, value in values.items():
         object.__setattr__(obj, key, value)
@@ -750,6 +910,61 @@ SportyBetCurrentEventDiscoveryReconciliationBundle = (
 )
 
 
+def _begin_identity_scope(
+    fotmob_captures: Sequence[Any],
+    *,
+    provider_raw_bytes: Sequence[bytes] = (),
+) -> None:
+    """Bind the reviewed V2/V3 identity state to this upcoming-source replay."""
+    try:
+        identity_compatibility.begin_identity_scope(
+            fotmob_captures,
+            provider_raw_bytes=provider_raw_bytes,
+        )
+    except Exception as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "Current Shadow identity scope could not be established"
+        ) from exc
+
+
+def _identity_state_snapshot() -> dict[str, Any]:
+    return identity_compatibility.identity_state_snapshot()
+
+
+def _identity_state_sha256(snapshot: Mapping[str, Any]) -> str:
+    return identity_compatibility.identity_state_sha256(snapshot)
+
+
+def _verify_identity_state_append_only_extension(
+    retained_state: Mapping[str, Any],
+    current_state: Mapping[str, Any],
+) -> None:
+    try:
+        identity_compatibility.verify_identity_state_append_only_extension(
+            retained_state,
+            current_state,
+        )
+    except Exception as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
+
+
+def _project_event_labels(event: reviewed.SportyBetDiscoveredEvent) -> reviewed.SportyBetDiscoveredEvent:
+    try:
+        return identity_compatibility.project_event_labels(event)
+    except Exception as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
+
+
+def _match_current_shadow_event(
+    event: reviewed.SportyBetDiscoveredEvent,
+    reviewed_rows: Sequence[Any],
+) -> tuple[Any, ...]:
+    try:
+        return identity_compatibility.match_current_shadow_event(event, reviewed_rows)
+    except Exception as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
+
+
 def _build_bundle(
     *,
     repository_root: Path,
@@ -762,14 +977,16 @@ def _build_bundle(
 ) -> CurrentShadowSportyBetUpcomingReconciliationBundle:
     evaluation = _utc(evaluation_time, "evaluation_time")
     reviewed_rows = reviewed._reviewed_rows(admission)
+    discovery_snapshot_sha256 = discovery.canonical_sha256
+    projected_events = tuple(_project_event_labels(event) for event in discovery.events)
     provisional: dict[str, tuple[str, tuple[Any, ...]]] = {}
-    for event in discovery.events:
+    for event in projected_events:
         if not event.prematch_bookable_observed:
             provisional[event.event_id] = ("NONBOOKABLE", ())
         elif event.competition_name is None:
             provisional[event.event_id] = ("NO_COMPETITION", ())
         else:
-            matches = reviewed._match_event(event, reviewed_rows)
+            matches = _match_current_shadow_event(event, reviewed_rows)
             if not matches:
                 provisional[event.event_id] = ("NO_MATCH", ())
             elif len(matches) > 1:
@@ -792,7 +1009,7 @@ def _build_bundle(
         )
 
     rows: list[reviewed.CurrentEventReconciliationRow] = []
-    for event in discovery.events:
+    for event in projected_events:
         state, matches = provisional[event.event_id]
         discovery_age = (evaluation - event.source_observed_at).total_seconds()
         kickoff_lead = (event.kickoff_utc - evaluation).total_seconds()
@@ -825,7 +1042,7 @@ def _build_bundle(
         else:
             matched = matches[0]
             matched_id = matched.source_fixture_identifier
-            inventory = reviewed._detail_inventory_from_directory(
+            inventory = tolerant_inventory.build_shadow_live_event_quote_inventory(
                 detail_directories[event.event_id], repository_root=repository_root
             )
             direct_observed = inventory.observed_at
@@ -837,10 +1054,27 @@ def _build_bundle(
             direct_manifest_sha = inventory.source_manifest_sha256
             direct_inventory_sha = inventory.canonical_sha256
             direct_raw_sha = inventory.source_raw_sha256
+            home_matches = (
+                inventory.home_team_name == event.home_team_name
+                or team_label_compatibility.project_team_label(
+                    event_id=event.event_id,
+                    field="homeTeamName",
+                    value=inventory.home_team_name,
+                )
+                == event.home_team_name
+            )
+            away_matches = (
+                inventory.away_team_name == event.away_team_name
+                or team_label_compatibility.project_team_label(
+                    event_id=event.event_id,
+                    field="awayTeamName",
+                    value=inventory.away_team_name,
+                )
+                == event.away_team_name
+            )
             if (
                 inventory.event_id != event.event_id
-                or inventory.home_team_name != event.home_team_name
-                or inventory.away_team_name != event.away_team_name
+                or not (home_matches and away_matches)
                 or inventory.kickoff_utc != event.kickoff_utc
             ):
                 disposition = reviewed.CurrentEventReconciliationDisposition.DIRECT_EVENT_DETAIL_IDENTITY_MISMATCH
@@ -894,7 +1128,7 @@ def _build_bundle(
             "evaluation_time": evaluation,
             "max_source_age_seconds": MAX_SOURCE_AGE_SECONDS,
             "minimum_lead_seconds": MINIMUM_LEAD_SECONDS,
-            "discovery_snapshot_sha256": discovery.canonical_sha256,
+            "discovery_snapshot_sha256": discovery_snapshot_sha256,
             "source_fotmob_admission_sha256": reviewed.fotmob_admission.sha256_reviewed_fixture_catalog_admission(admission),
             "source_fotmob_candidate_bundle_sha256": admission_payload["candidate_bundle_sha256"],
             "source_fotmob_review_bundle_sha256": admission_payload["review_bundle_sha256"],
@@ -905,7 +1139,7 @@ def _build_bundle(
             "rows": ordered,
             "authority": reviewed._output_authority(ordered),
             "next_boundary": NEXT_BOUNDARY,
-            "contract_sha256": EXPECTED_CONTRACT_SHA256,
+            "contract_sha256": CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256,
             "_repository_root": Path(repository_root),
             "_discovery_directory": Path(discovery_directory),
             "_detail_directories": detail_tuple,
@@ -913,6 +1147,94 @@ def _build_bundle(
             "_fotmob_captures": captures,
         },
     )
+
+
+def reconcile_current_events_from_upcoming_discovery(
+    *,
+    repository_root: Path,
+    discovery_evidence_directory: Path,
+    fotmob_admission_value: Any,
+    fotmob_captures: Sequence[Any],
+    execute_live_network: bool,
+) -> CurrentShadowSportyBetUpcomingReconciliationBundle:
+    """Reconcile an exact upcoming response under the full Current Shadow stack."""
+    validate_contract()
+    repository = Path(repository_root).resolve(strict=True)
+    try:
+        captures = reviewed._materialize_fotmob_captures(fotmob_captures)
+        admission = reviewed._rederive_exact_fotmob_admission(
+            fotmob_admission_value,
+            captures,
+        )
+    except reviewed.SportyBetCurrentEventDiscoveryError as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
+    discovery = verify_current_upcoming_discovery(
+        discovery_evidence_directory,
+        repository_root=repository,
+    )
+    provider_raw = _read_verified_upcoming_raw(discovery_evidence_directory, discovery)
+    _begin_identity_scope(fotmob_captures, provider_raw_bytes=(provider_raw,))
+    reviewed_rows = reviewed._reviewed_rows(admission)
+    projected_events = tuple(_project_event_labels(event) for event in discovery.events)
+    provisional: dict[str, tuple[str, tuple[Any, ...]]] = {}
+    for event in projected_events:
+        if not event.prematch_bookable_observed:
+            provisional[event.event_id] = ("NONBOOKABLE", ())
+        elif event.competition_name is None:
+            provisional[event.event_id] = ("NO_COMPETITION", ())
+        else:
+            matches = _match_current_shadow_event(event, reviewed_rows)
+            if not matches:
+                provisional[event.event_id] = ("NO_MATCH", ())
+            elif len(matches) > 1:
+                provisional[event.event_id] = ("AMBIGUOUS_FOTMOB", matches)
+            else:
+                provisional[event.event_id] = ("UNIQUE", matches)
+    target_counts = Counter(
+        matches[0].source_fixture_identifier
+        for state, matches in provisional.values()
+        if state == "UNIQUE"
+    )
+    detail_dirs: dict[str, Path] = {}
+    for event_id, (state, matches) in sorted(provisional.items()):
+        if state != "UNIQUE" or target_counts[matches[0].source_fixture_identifier] != 1:
+            continue
+        detail_dir = repository / live.ALLOWED_OUTPUT_RELATIVE / event_id.replace(":", "-")
+        if execute_live_network:
+            try:
+                directory, _manifest = live.capture_live_event_quote_evidence(
+                    event_id=event_id,
+                    repository_root=repository,
+                    execute_live_network=True,
+                )
+                tolerant_inventory.build_shadow_live_event_quote_inventory(
+                    directory,
+                    repository_root=repository,
+                )
+                detail_dirs[event_id] = directory
+            except Exception as exc:
+                raise CurrentShadowSportyBetUpcomingReconciliationError(
+                    f"PR246 direct event-detail acquisition failed closed for {event_id}: {exc}"
+                ) from exc
+        elif detail_dir.exists() and detail_dir.is_dir():
+            detail_dirs[event_id] = detail_dir
+        else:
+            raise CurrentShadowSportyBetUpcomingReconciliationError(
+                f"direct event-detail evidence missing for {event_id} with execute_live_network=False"
+            )
+    bundle = _build_bundle(
+        repository_root=repository,
+        discovery_directory=discovery_evidence_directory,
+        discovery=discovery,
+        admission=admission,
+        captures=captures,
+        detail_directories=detail_dirs,
+        evaluation_time=reviewed._now_utc(),
+    )
+    snapshot = _identity_state_snapshot()
+    object.__setattr__(bundle, "_fixture_stable_identity_state_sha256", _identity_state_sha256(snapshot))
+    object.__setattr__(bundle, "_fixture_stable_identity_state_snapshot", snapshot)
+    return bundle
 
 
 def discover_and_reconcile_current_events(
@@ -938,50 +1260,12 @@ def discover_and_reconcile_current_events(
     discovery_directory, discovery = capture_current_upcoming_discovery(
         repository_root=repository, execute_live_network=True
     )
-    reviewed_rows = reviewed._reviewed_rows(admission)
-    provisional: dict[str, tuple[str, tuple[Any, ...]]] = {}
-    for event in discovery.events:
-        if not event.prematch_bookable_observed:
-            provisional[event.event_id] = ("NONBOOKABLE", ())
-        elif event.competition_name is None:
-            provisional[event.event_id] = ("NO_COMPETITION", ())
-        else:
-            matches = reviewed._match_event(event, reviewed_rows)
-            if not matches:
-                provisional[event.event_id] = ("NO_MATCH", ())
-            elif len(matches) > 1:
-                provisional[event.event_id] = ("AMBIGUOUS_FOTMOB", matches)
-            else:
-                provisional[event.event_id] = ("UNIQUE", matches)
-    counts = Counter(
-        matches[0].source_fixture_identifier
-        for state, matches in provisional.values()
-        if state == "UNIQUE"
-    )
-    detail_dirs: dict[str, Path] = {}
-    for event_id, (state, matches) in sorted(provisional.items()):
-        if state != "UNIQUE" or counts[matches[0].source_fixture_identifier] != 1:
-            continue
-        try:
-            directory, _manifest = live.capture_live_event_quote_evidence(
-                event_id=event_id,
-                repository_root=repository,
-                execute_live_network=True,
-            )
-            live.build_live_event_quote_inventory(directory, repository_root=repository)
-        except live.SportyBetLiveEventQuoteEvidenceError as exc:
-            raise CurrentShadowSportyBetUpcomingReconciliationError(
-                f"PR246 direct event-detail acquisition failed closed for {event_id}: {exc}"
-            ) from exc
-        detail_dirs[event_id] = directory
-    return _build_bundle(
+    return reconcile_current_events_from_upcoming_discovery(
         repository_root=repository,
-        discovery_directory=discovery_directory,
-        discovery=discovery,
-        admission=admission,
-        captures=captures,
-        detail_directories=detail_dirs,
-        evaluation_time=_now_utc(),
+        discovery_evidence_directory=discovery_directory,
+        fotmob_admission_value=admission,
+        fotmob_captures=fotmob_captures,
+        execute_live_network=True,
     )
 
 
@@ -993,6 +1277,16 @@ def verify_current_event_discovery_reconciliation_bundle(
             "value must be exact CurrentShadowSportyBetUpcomingReconciliationBundle"
         )
     validate_contract()
+    expected_state_sha = getattr(value, "_fixture_stable_identity_state_sha256", None)
+    retained_state = getattr(value, "_fixture_stable_identity_state_snapshot", None)
+    if type(expected_state_sha) is not str or type(retained_state) is not dict:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "retained Current Shadow upcoming identity state is unavailable"
+        )
+    if _identity_state_sha256(retained_state) != expected_state_sha:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "retained Current Shadow upcoming identity state hash drifted"
+        )
     try:
         captures = reviewed._materialize_fotmob_captures(value._fotmob_captures)
         admission = reviewed._rederive_exact_fotmob_admission(
@@ -1003,6 +1297,8 @@ def verify_current_event_discovery_reconciliation_bundle(
     discovery = verify_current_upcoming_discovery(
         value._discovery_directory, repository_root=value._repository_root
     )
+    provider_raw = _read_verified_upcoming_raw(value._discovery_directory, discovery)
+    _begin_identity_scope(captures, provider_raw_bytes=(provider_raw,))
     rebuilt = _build_bundle(
         repository_root=value._repository_root,
         discovery_directory=value._discovery_directory,
@@ -1016,6 +1312,10 @@ def verify_current_event_discovery_reconciliation_bundle(
         raise CurrentShadowSportyBetUpcomingReconciliationError(
             "PR-F upcoming reconciliation differs from exact retained-source replay"
         )
+    current_state = _identity_state_snapshot()
+    _verify_identity_state_append_only_extension(retained_state, current_state)
+    object.__setattr__(rebuilt, "_fixture_stable_identity_state_sha256", expected_state_sha)
+    object.__setattr__(rebuilt, "_fixture_stable_identity_state_snapshot", retained_state)
     return rebuilt
 
 
@@ -1025,16 +1325,25 @@ __all__ = [
     "CurrentShadowSportyBetUpcomingReconciliationBundle",
     "CurrentShadowSportyBetUpcomingReconciliationError",
     "CurrentShadowUpcomingDiscoverySnapshot",
+    "CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256",
+    "CURRENT_SHADOW_UPCOMING_POLICY_ID",
     "DATASET_NAME",
     "DISCOVERY_SOURCE_METHOD",
     "EXPECTED_CONTRACT_SHA256",
+    "PROSPECTIVE_DISCOVERY_ELIGIBLE",
+    "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS",
     "SportyBetCurrentEventDiscoveryError",
     "SportyBetCurrentEventDiscoveryReconciliationBundle",
     "STATUS",
+    "UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256",
     "UPCOMING_PATH",
     "calculate_contract_sha256",
+    "calculate_current_shadow_upcoming_compatibility_sha256",
     "capture_current_upcoming_discovery",
     "discover_and_reconcile_current_events",
+    "legacy",
+    "prospective_discovery_assessment",
+    "reconcile_current_events_from_upcoming_discovery",
     "request_target",
     "request_url",
     "validate_contract",

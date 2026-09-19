@@ -93,13 +93,45 @@ def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
         raise P30PairedCaptureError(
             "P3.0-E1 zero Router input diagnostic is malformed: source_summary"
         )
+    source_count_fields = (
+        "provider_event_count",
+        "provider_prematch_bookable_count",
+        "provider_inplay_count",
+        "provider_future_lead_eligible_count",
+        "provider_too_close_count",
+    )
+    source_counts: dict[str, int] = {}
+    for field in source_count_fields:
+        value = summary.get(field)
+        if type(value) is not int or value < 0:
+            raise P30PairedCaptureError(
+                f"P3.0-E1 zero Router input diagnostic is malformed: {field}"
+            )
+        source_counts[field] = value
+    source_method = summary.get("provider_discovery_source_method")
+    source_strategy = summary.get("provider_discovery_strategy_id")
+    source_observed_at = summary.get("provider_discovery_observed_at")
+    source_viability = summary.get("source_viability")
+    if (
+        type(source_method) is not str
+        or not source_method
+        or type(source_strategy) is not str
+        or not source_strategy
+        or type(source_observed_at) is not str
+        or not source_observed_at
+        or type(source_viability) is not str
+        or not source_viability
+    ):
+        raise P30PairedCaptureError(
+            "P3.0-E1 zero Router input diagnostic is malformed: provider discovery identity"
+        )
     reconciliation_by_date = summary.get("current_reconciliation_by_request_date")
     if not isinstance(reconciliation_by_date, Mapping) or not reconciliation_by_date:
         raise P30PairedCaptureError(
             "P3.0-E1 zero Router input diagnostic is malformed: reconciliation_by_date"
         )
 
-    request_date_counts: dict[str, list[int]] = {}
+    request_date_counts: dict[str, dict[str, int]] = {}
     disposition_totals: dict[str, int] = {}
     for request_date in sorted(reconciliation_by_date):
         if (
@@ -126,7 +158,19 @@ def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
             raise P30PairedCaptureError(
                 "P3.0-E1 zero Router input diagnostic is malformed: request_date_counts"
             )
-        request_date_counts[request_date] = [provider_count, reconciled_count]
+        row_source_counts: dict[str, int] = {}
+        for field in source_count_fields[1:]:
+            value = row.get(field)
+            if type(value) is not int or value < 0:
+                raise P30PairedCaptureError(
+                    f"P3.0-E1 zero Router input diagnostic is malformed: {field}"
+                )
+            row_source_counts[field] = value
+        request_date_counts[request_date] = {
+            "provider_event_count": provider_count,
+            **row_source_counts,
+            "reconciled_fixture_count": reconciled_count,
+        }
 
         dispositions = row.get("disposition_counts")
         if not isinstance(dispositions, Mapping):
@@ -141,7 +185,12 @@ def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
                 )
             disposition_totals[disposition] = disposition_totals.get(disposition, 0) + count
 
-    if top_counts["provider_event_count"] == 0:
+    if (
+        top_counts["provider_event_count"] > 0
+        and source_counts["provider_prematch_bookable_count"] == 0
+    ):
+        failure_code = "PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS"
+    elif top_counts["provider_event_count"] == 0:
         failure_code = "NO_RECONCILED_PROVIDER_EVENTS_DISCOVERED"
     elif top_counts["reconciled_fixture_count"] == 0:
         failure_code = "NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART"
@@ -153,6 +202,11 @@ def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
     diagnostic = {
         "failure_code": failure_code,
         **top_counts,
+        **source_counts,
+        "provider_discovery_source_method": source_method,
+        "provider_discovery_strategy_id": source_strategy,
+        "provider_discovery_observed_at": source_observed_at,
+        "source_viability": source_viability,
         "request_date_counts": request_date_counts,
         "disposition_totals": {key: disposition_totals[key] for key in sorted(disposition_totals)},
     }
@@ -169,12 +223,18 @@ def _require_nonempty_router_inputs(sources_bundle: Any) -> None:
     payload = encoded(diagnostic)
     if len(_ZERO_ROUTER_DIAGNOSTIC_PREFIX) + len(payload) > FAILURE_MESSAGE_MAX_CHARS:
         payload = encoded({
+            "failure_code": failure_code,
             **top_counts,
+            **source_counts,
+            "provider_discovery_source_method": source_method,
+            "provider_discovery_strategy_id": source_strategy,
+            "provider_discovery_observed_at": source_observed_at,
+            "source_viability": source_viability,
             "request_date_count": len(request_date_counts),
             "disposition_totals": diagnostic["disposition_totals"],
         })
     if len(_ZERO_ROUTER_DIAGNOSTIC_PREFIX) + len(payload) > FAILURE_MESSAGE_MAX_CHARS:
-        payload = encoded(top_counts)
+        payload = encoded({"failure_code": failure_code, **top_counts})
     message = _ZERO_ROUTER_DIAGNOSTIC_PREFIX + payload
     if len(message) > FAILURE_MESSAGE_MAX_CHARS:
         raise P30PairedCaptureError(

@@ -30,6 +30,7 @@ import types
 from typing import Any, Iterator
 
 from domain import current_shadow_fixture_identity_aliases as fixture_aliases
+from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
 from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
 from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
 from domain import current_shadow_sportybet_team_label_compatibility as team_label_compatibility
@@ -91,13 +92,15 @@ TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
 RUN199_IDENTITY_POLICY_ID = run199_identity.POLICY_ID
 RUN199_IDENTITY_POLICY_SHA256 = run199_identity.POLICY_SHA256
 IDENTITY_RECOVERY_V3_POLICY_ID = identity_recovery.POLICY_ID
+IDENTITY_COMPATIBILITY_POLICY_ID = identity_compatibility.POLICY_ID
+IDENTITY_COMPATIBILITY_POLICY_SHA256 = identity_compatibility.EXPECTED_POLICY_SHA256
 
 MATCHING_BASIS = (
     reviewed_discovery.MATCHING_BASIS
     + "_PLUS_CURRENT_SHADOW_TEAM_LABEL_AND_STABLE_IDENTITY_RECOVERY_V3_AND_RUN199_OVERLAY"
 )
 EXPECTED_CONTRACT_SHA256 = (
-    "98bedacc3ccbc080312855fdd973545374ba2448dc89b841420bc70147ffaf21"
+    "106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90"
 )
 
 CurrentEventReconciliationDisposition = (
@@ -189,6 +192,8 @@ def _contract_payload() -> dict[str, Any]:
         "run199_identity_policy_id": RUN199_IDENTITY_POLICY_ID,
         "run199_identity_policy_sha256": RUN199_IDENTITY_POLICY_SHA256,
         "identity_recovery_v3_policy_id": IDENTITY_RECOVERY_V3_POLICY_ID,
+        "identity_compatibility_policy_id": IDENTITY_COMPATIBILITY_POLICY_ID,
+        "identity_compatibility_policy_sha256": IDENTITY_COMPATIBILITY_POLICY_SHA256,
         "matching_basis": MATCHING_BASIS,
         "next_boundary": NEXT_BOUNDARY,
         "authority": dict(AUTHORITY),
@@ -228,6 +233,7 @@ def validate_contract() -> Mapping[str, Any]:
         raise CurrentShadowPaginatedDiscoveryReconciliationError(
             "Shadow run-199 identity policy drifted"
         )
+    identity_compatibility.validate_contract()
     actual = calculate_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowPaginatedDiscoveryReconciliationError(
@@ -239,6 +245,8 @@ def validate_contract() -> Mapping[str, Any]:
             "base_discovery_contract_sha256": (
                 reviewed_discovery.EXPECTED_CONTRACT_SHA256
             ),
+            "identity_compatibility_policy_id": IDENTITY_COMPATIBILITY_POLICY_ID,
+            "identity_compatibility_policy_sha256": IDENTITY_COMPATIBILITY_POLICY_SHA256,
         }
     )
 
@@ -246,35 +254,6 @@ def validate_contract() -> Mapping[str, Any]:
 # ---------------------------------------------------------------------------
 # Stable identity tracking & state scoping
 # ---------------------------------------------------------------------------
-
-_replay_identity_state_sha256: str | None = None
-
-
-_IDENTITY_STATE_PAYLOAD_KEYS = frozenset({
-    "schema_version",
-    "policy_id",
-    "matching_basis",
-    "seed_registry_sha256",
-    "alias_registry_ancestry",
-    "learned_team_identities",
-    "learned_competition_identities",
-    "evidence_records",
-    "authority",
-})
-_IDENTITY_STATE_IMMUTABLE_KEYS = (
-    "schema_version",
-    "policy_id",
-    "matching_basis",
-    "seed_registry_sha256",
-    "authority",
-)
-_IDENTITY_STATE_APPEND_ONLY_KEYS = (
-    "alias_registry_ancestry",
-    "learned_team_identities",
-    "learned_competition_identities",
-    "evidence_records",
-)
-
 
 def _copy_identity_state(state: Mapping[str, Any]) -> dict[str, Any]:
     return json.loads(json.dumps(
@@ -287,71 +266,11 @@ def _copy_identity_state(state: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _identity_state_snapshot() -> dict[str, Any]:
-    payload = fixture_identity_v2._state_payload()
-    return json.loads(json.dumps(
-        payload,
-        ensure_ascii=False,
-        allow_nan=False,
-        sort_keys=True,
-        separators=(",", ":"),
-    ))
+    return identity_compatibility.identity_state_snapshot()
 
 
 def _identity_state_sha256(snapshot: Mapping[str, Any]) -> str:
-    raw = _canonical_bytes(_copy_identity_state(snapshot), newline=False)
-    return hashlib.sha256(raw).hexdigest()
-
-
-def _verify_identity_state_append_only_extension(
-    retained_state: Mapping[str, Any],
-    current_state: Mapping[str, Any],
-) -> None:
-    if (
-        set(retained_state) != _IDENTITY_STATE_PAYLOAD_KEYS
-        or set(current_state) != _IDENTITY_STATE_PAYLOAD_KEYS
-    ):
-        raise CurrentShadowPaginatedDiscoveryReconciliationError(
-            "persisted Shadow fixture identity state payload shape drifted"
-        )
-    for key in _IDENTITY_STATE_IMMUTABLE_KEYS:
-        if retained_state[key] != current_state[key]:
-            raise CurrentShadowPaginatedDiscoveryReconciliationError(
-                "persisted Shadow fixture identity state changed retained policy ancestry"
-            )
-    for key in _IDENTITY_STATE_APPEND_ONLY_KEYS:
-        retained_rows = retained_state.get(key, [])
-        current_rows = current_state.get(key, [])
-        if len(current_rows) < len(retained_rows):
-            raise CurrentShadowPaginatedDiscoveryReconciliationError(
-                f"persisted Shadow fixture identity state shrunk for {key}"
-            )
-        retained_counter = Counter(
-            json.dumps(row, sort_keys=True, separators=(",", ":"))
-            for row in retained_rows
-        )
-        current_counter = Counter(
-            json.dumps(row, sort_keys=True, separators=(",", ":"))
-            for row in current_rows
-        )
-        if retained_counter - current_counter:
-            raise CurrentShadowPaginatedDiscoveryReconciliationError(
-                f"persisted Shadow fixture identity state is not an append-only extension of retained {key}"
-            )
-
-
-def _begin_identity_scope(
-    fotmob_captures: Sequence[Any],
-    discovery_evidence_directory: Path | None = None,
-) -> None:
-    fixture_identity_v2.reset_runtime_evidence()
-    fixture_identity_v2.configure_persistent_state(
-        os.environ.get("ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH")
-    )
-    fixture_identity_v2.observe_fotmob_captures(fotmob_captures)
-    if discovery_evidence_directory is not None:
-        fixture_identity_v2.observe_provider_directory(
-            discovery_evidence_directory
-        )
+    return identity_compatibility.identity_state_sha256(snapshot)
 
 
 def _bind_identity_state(bundle: Any) -> Any:
@@ -384,91 +303,60 @@ def _bind_retained_identity_state(
     return bundle
 
 
-# ---------------------------------------------------------------------------
-# Event matching under Current Shadow compatibility
-# ---------------------------------------------------------------------------
+# The implementation lives in the source-agnostic compatibility owner.  These
+# narrow adapters preserve the historical module's replay API without making
+# its paginated acquisition path the active Current Shadow authority.
+def _identity_state_snapshot() -> dict[str, Any]:
+    return identity_compatibility.identity_state_snapshot()
+
+
+def _identity_state_sha256(snapshot: Mapping[str, Any]) -> str:
+    return identity_compatibility.identity_state_sha256(snapshot)
+
+
+def _verify_identity_state_append_only_extension(
+    retained_state: Mapping[str, Any],
+    current_state: Mapping[str, Any],
+) -> None:
+    try:
+        identity_compatibility.verify_identity_state_append_only_extension(
+            retained_state, current_state
+        )
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
+
+
+def _begin_identity_scope(
+    fotmob_captures: Sequence[Any],
+    *,
+    historical_page_raw_bytes: Sequence[bytes] = (),
+) -> None:
+    try:
+        identity_compatibility.begin_identity_scope(
+            fotmob_captures,
+            historical_page_raw_bytes=historical_page_raw_bytes,
+        )
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
+
 
 def _project_event_labels(
     event: SportyBetDiscoveredEvent,
 ) -> SportyBetDiscoveredEvent:
-    """Apply reviewed team label compatibility (e.g. whitespace projection)."""
     try:
-        projected_home = team_label_compatibility.project_team_label(
-            event_id=event.event_id,
-            field="homeTeamName",
-            value=event.home_team_name,
-        )
-        projected_away = team_label_compatibility.project_team_label(
-            event_id=event.event_id,
-            field="awayTeamName",
-            value=event.away_team_name,
-        )
-    except team_label_compatibility.CurrentShadowSportyBetTeamLabelCompatibilityError as exc:
-        raise CurrentShadowPaginatedDiscoveryReconciliationError(
-            str(exc)
-        ) from exc
-    if (
-        projected_home == event.home_team_name
-        and projected_away == event.away_team_name
-    ):
-        return event
-    return SportyBetDiscoveredEvent(
-        event_id=event.event_id,
-        home_team_name=projected_home,
-        away_team_name=projected_away,
-        competition_name=event.competition_name,
-        competition_basis=event.competition_basis,
-        kickoff_utc=event.kickoff_utc,
-        booking_status=event.booking_status,
-        event_status=event.event_status,
-        match_status=event.match_status,
-        prematch_bookable_observed=event.prematch_bookable_observed,
-        source_page_num=event.source_page_num,
-        source_raw_sha256=event.source_raw_sha256,
-        source_observed_at=event.source_observed_at,
-    )
+        return identity_compatibility.project_event_labels(event)
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
 
 
 def _match_current_shadow_event(
     event: SportyBetDiscoveredEvent,
     reviewed_rows: Sequence[FotMobReviewedFixtureCatalogInput],
 ) -> tuple[FotMobReviewedFixtureCatalogInput, ...]:
-    """Match a discovered event using the full Current Shadow identity stack.
-
-    Hierarchy:
-    1. Run-199 overlay match (which delegates first to V3 recovery, then V2 stable,
-       then aliases, and finally run-199 specific retained aliases).
-    2. Fallback to direct V3 identity recovery match.
-    3. Fallback to V2 stable identity match.
-    4. Fallback to reviewed aliases match.
-    5. Fallback to exact literal match.
-    """
-    # Run-199 overlay incorporates V2 stable and reviewed aliases
-    result = run199_identity.match_event(event, reviewed_rows)
-    if result:
-        return result
-
-    # V3 identity recovery handles competition drift with confirmed teams
-    result_v3 = identity_recovery.match_event(event, reviewed_rows)
-    if result_v3:
-        return result_v3
-
-    # V2 stable identity
-    result_v2 = fixture_identity_v2.match_event(event, reviewed_rows)
-    if result_v2:
-        return result_v2
-
-    # Exact literal matching
-    if event.competition_name is None:
-        return ()
-    return tuple(
-        item
-        for item in reviewed_rows
-        if item.home_team == event.home_team_name
-        and item.away_team == event.away_team_name
-        and item.competition == event.competition_name
-        and item.kickoff.astimezone(timezone.utc) == event.kickoff_utc
-    )
+    try:
+        return identity_compatibility.match_current_shadow_event(event, reviewed_rows)
+    except Exception as exc:
+        raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
 
 
 class _Legacy:
@@ -504,6 +392,31 @@ def verify_current_paginated_discovery(
     return reviewed_discovery.verify_current_event_discovery(
         evidence_directory, repository_root=repository_root
     )
+
+
+def _read_verified_paginated_page_raws(
+    evidence_directory: Path,
+    manifest: SportyBetCurrentEventDiscoveryManifest,
+) -> tuple[bytes, ...]:
+    raw_pages: list[bytes] = []
+    for page in manifest.pages:
+        path = Path(evidence_directory) / PAGE_FILENAME_TEMPLATE.format(
+            page_num=page.page_num
+        )
+        try:
+            raw = reviewed_discovery._read_regular(
+                path,
+                maximum=MAX_RESPONSE_BYTES,
+                label=f"historical paginated discovery page {page.page_num}",
+            )
+        except SportyBetLiteCaptureError as exc:
+            raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
+        if sha256_bytes(raw) != page.raw_sha256 or len(raw) != page.raw_size:
+            raise CurrentShadowPaginatedDiscoveryReconciliationError(
+                "historical paginated raw page identity drifted before observation"
+            )
+        raw_pages.append(raw)
+    return tuple(raw_pages)
 
 
 def _build_shadow_bundle(
@@ -758,13 +671,19 @@ def reconcile_current_events_from_paginated_discovery(
     """Reconcile already-discovered events against a reviewed FotMob admission."""
     validate_contract()
     repository = Path(repository_root).resolve(strict=True)
-    _begin_identity_scope(fotmob_captures, discovery_evidence_directory)
     captures = reviewed_discovery._materialize_fotmob_captures(fotmob_captures)
     admission = reviewed_discovery._rederive_exact_fotmob_admission(
         fotmob_admission_value, captures
     )
     discovery = reviewed_discovery.verify_current_event_discovery(
         discovery_evidence_directory, repository_root=repository
+    )
+    page_raw_bytes = _read_verified_paginated_page_raws(
+        discovery_evidence_directory, discovery
+    )
+    _begin_identity_scope(
+        fotmob_captures,
+        historical_page_raw_bytes=page_raw_bytes,
     )
     reviewed = reviewed_discovery._reviewed_rows(admission)
 
@@ -869,8 +788,6 @@ def verify_current_event_discovery_reconciliation_bundle(
     validate_contract()
     captures = getattr(value, "_fotmob_captures", ())
     discovery_directory = getattr(value, "_discovery_directory", None)
-    if discovery_directory is not None:
-        _begin_identity_scope(captures, discovery_directory)
     expected_state = getattr(
         value, "_fixture_stable_identity_state_sha256", None
     )
@@ -887,10 +804,6 @@ def verify_current_event_discovery_reconciliation_bundle(
             raise CurrentShadowPaginatedDiscoveryReconciliationError(
                 "retained Shadow fixture identity state snapshot hash drifted"
             )
-        current_state = _identity_state_snapshot()
-        _verify_identity_state_append_only_extension(
-            retained_state, current_state
-        )
 
     repository = value._repository_root
     captures_mat = reviewed_discovery._materialize_fotmob_captures(
@@ -903,6 +816,18 @@ def verify_current_event_discovery_reconciliation_bundle(
         value._discovery_directory,
         repository_root=repository,
     )
+    page_raw_bytes = _read_verified_paginated_page_raws(
+        value._discovery_directory, discovery
+    )
+    _begin_identity_scope(
+        captures_mat,
+        historical_page_raw_bytes=page_raw_bytes,
+    )
+    if expected_state is not None and retained_state is not None:
+        current_state = _identity_state_snapshot()
+        _verify_identity_state_append_only_extension(
+            retained_state, current_state
+        )
     detail_dirs = dict(value._detail_directories)
     rebuilt = _build_shadow_bundle(
         repository_root=repository,

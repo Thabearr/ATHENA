@@ -15,14 +15,31 @@ def _summary(*, dispositions=None):
             "PROVIDER_ONLY": 2,
         }
     return {
+        "provider_event_count": 7,
+        "provider_prematch_bookable_count": 0,
+        "provider_inplay_count": 7,
+        "provider_future_lead_eligible_count": 0,
+        "provider_too_close_count": 7,
+        "provider_discovery_source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_LIVE_OR_PREMATCH_EVENTS_GET",
+        "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1",
+        "provider_discovery_observed_at": "2026-09-19T11:49:46.016668Z",
+        "source_viability": "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS",
         "current_reconciliation_by_request_date": {
             "20260917": {
                 "provider_event_count": 4,
+                "provider_prematch_bookable_count": 0,
+                "provider_inplay_count": 4,
+                "provider_future_lead_eligible_count": 0,
+                "provider_too_close_count": 4,
                 "reconciled_fixture_count": 0,
                 "disposition_counts": dispositions,
             },
             "20260918": {
                 "provider_event_count": 3,
+                "provider_prematch_bookable_count": 0,
+                "provider_inplay_count": 3,
+                "provider_future_lead_eligible_count": 0,
+                "provider_too_close_count": 3,
                 "reconciled_fixture_count": 0,
                 "disposition_counts": {
                     "NO_EXACT_FIXTURE_MATCH": 1,
@@ -44,6 +61,20 @@ def _bundle(*, router_inputs=(), source_summary=None):
     )
 
 
+def _mark_source_prematch_bookable(summary):
+    summary["provider_prematch_bookable_count"] = 7
+    summary["provider_inplay_count"] = 0
+    summary["provider_future_lead_eligible_count"] = 7
+    summary["provider_too_close_count"] = 0
+    summary["source_viability"] = "PROSPECTIVE_DISCOVERY_ELIGIBLE"
+    for row in summary["current_reconciliation_by_request_date"].values():
+        row["provider_prematch_bookable_count"] = row["provider_event_count"]
+        row["provider_inplay_count"] = 0
+        row["provider_future_lead_eligible_count"] = row["provider_event_count"]
+        row["provider_too_close_count"] = 0
+    return summary
+
+
 def _diagnostic_from_error(exc: BaseException):
     message = str(exc)
     assert message.startswith(capture._ZERO_ROUTER_DIAGNOSTIC_PREFIX)
@@ -62,15 +93,20 @@ def test_zero_router_inputs_raise_with_deterministic_reconciliation_diagnostic()
 
     diagnostic = _diagnostic_from_error(caught.value)
     assert diagnostic == {
-        "failure_code": "NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART",
+        "failure_code": "PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS",
         "reviewed_fixture_count": 6,
         "reconciled_fixture_count": 0,
         "provider_event_count": 7,
         "priced_fixture_count": 0,
-        "request_date_counts": {
-            "20260917": [4, 0],
-            "20260918": [3, 0],
-        },
+        "provider_prematch_bookable_count": 0,
+        "provider_inplay_count": 7,
+        "provider_future_lead_eligible_count": 0,
+        "provider_too_close_count": 7,
+        "provider_discovery_source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_LIVE_OR_PREMATCH_EVENTS_GET",
+        "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1",
+        "provider_discovery_observed_at": "2026-09-19T11:49:46.016668Z",
+        "source_viability": "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS",
+        "request_date_count": 2,
         "disposition_totals": {
             "NO_EXACT_FIXTURE_MATCH": 6,
             "PROVIDER_ONLY": 3,
@@ -91,6 +127,7 @@ def test_zero_router_inputs_taxonomy_codes():
     b1 = _bundle()
     b1.reconciled_fixture_count = 2
     b1.priced_fixture_count = 0
+    b1.source_summary = _mark_source_prematch_bookable(_summary())
     with pytest.raises(capture.P30PairedCaptureError) as c1:
         capture._require_nonempty_router_inputs(b1)
     assert _diagnostic_from_error(c1.value)["failure_code"] == "NO_MARKETS_RECONCILED_FOR_ROUTER"
@@ -99,6 +136,7 @@ def test_zero_router_inputs_taxonomy_codes():
     b2 = _bundle()
     b2.reconciled_fixture_count = 2
     b2.priced_fixture_count = 2
+    b2.source_summary = _mark_source_prematch_bookable(_summary())
     with pytest.raises(capture.P30PairedCaptureError) as c2:
         capture._require_nonempty_router_inputs(b2)
     assert _diagnostic_from_error(c2.value)["failure_code"] == "ZERO_ROUTER_INPUTS_POST_PRICING"
@@ -126,9 +164,22 @@ def test_zero_router_diagnostic_remains_bounded_with_large_disposition_vocabular
         for index in range(100)
     }
     summary = {
+        "provider_event_count": 100,
+        "provider_prematch_bookable_count": 100,
+        "provider_inplay_count": 0,
+        "provider_future_lead_eligible_count": 100,
+        "provider_too_close_count": 0,
+        "provider_discovery_source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_WAP_CONFIGURABLE_UPCOMING_EVENTS_GET",
+        "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
+        "provider_discovery_observed_at": "2026-09-19T11:49:46.016668Z",
+        "source_viability": "PROSPECTIVE_DISCOVERY_ELIGIBLE",
         "current_reconciliation_by_request_date": {
             "20260917": {
                 "provider_event_count": 100,
+                "provider_prematch_bookable_count": 100,
+                "provider_inplay_count": 0,
+                "provider_future_lead_eligible_count": 100,
+                "provider_too_close_count": 0,
                 "reconciled_fixture_count": 0,
                 "disposition_counts": many,
             }

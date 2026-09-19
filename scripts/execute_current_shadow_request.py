@@ -27,7 +27,7 @@ from typing import Any
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_fixture_date_request as fixture_dates
 from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
-from domain import current_shadow_sportybet_paginated_discovery_reconciliation as reconciliation
+from domain import current_shadow_sportybet_upcoming_reconciliation as reconciliation
 from domain import current_shadow_sportybet_tolerant_live_inventory as tolerant_inventory
 from domain import sportybet_current_event_discovery_reconciliation as reviewed
 from scripts import current_shadow_current_asof_elo_only_fallback as xg_fallback

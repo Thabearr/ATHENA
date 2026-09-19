@@ -303,7 +303,7 @@ Resolution:
    discovery endpoint (`/api/ng/factsCenter/liveOrPrematchEvents?sportId=sr:sport:1&pageSize=100&pageNum=<n>`)
    via `domain.current_shadow_sportybet_paginated_discovery_reconciliation`.
 3. The paginated discovery contract is pinned to SHA-256:
-   `98bedacc3ccbc080312855fdd973545374ba2448dc89b841420bc70147ffaf21`.
+   `106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90`.
 
 ### Root Cause B: Pre-Router Candidate Classification & Failure Taxonomy
 
@@ -336,3 +336,26 @@ through N) before any live provider acquisition is permitted in CI:
 
 The gate writes `p3-0-e1-live-readiness.json` with status
 `P3_0_E1_LIVE_READINESS_VERIFIED` and an exact SHA-256 hash.
+
+## Post-#374 prospective source continuity
+
+Retained capture run `35441111017` is a source-viability finding, not a
+FotMob identity failure. Its reviewed `liveOrPrematchEvents` page contained
+79 provider page items and 136 extracted events; all 136 were `status=1`,
+non-prematch, and H1/HT/H2 in-play rows at
+`2026-09-19T11:49:46.016668Z`. The retained shape is pinned by primary
+artifact `10584076663` (`81b7e0dfb9fb91cbc961d591c876010330025da24f1aafa3dca4ff038c93222e`)
+and diagnostics artifact `10584211437`
+(`a9facd41768ad271cae6ccb72f0c092b6f640d82daf0de5c46509af55766064d`).
+
+The canonical pre-Router source for both `SUPPORTED_REQUEST` and
+`P3_E1_PRE_ROUTER_CAPTURE` is now the already-reviewed upcoming source
+`/api/ng/factsCenter/wapConfigurableUpcomingEvents?sportId=sr%3Asport%3A1&_t=<response-scoped nonce>`
+under `ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1`. Its upstream source
+contract remains `90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff`;
+the Current Shadow compatibility wrapper is pinned separately. The old
+paginated source remains replayable historical evidence only.
+
+The first-boundary failure code for a non-empty provider universe with zero
+prematch/bookable events is `PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS`, before any
+FotMob counterpart decision, direct event detail, Price-All, or Router input.

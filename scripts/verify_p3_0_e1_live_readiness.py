@@ -216,17 +216,88 @@ def check_e_discovery_contract() -> dict[str, Any]:
     }
 
 
-def check_f_paginated_discovery_contract() -> dict[str, Any]:
-    """Check F: Current Shadow paginated discovery reconciliation contract."""
-    from domain import (
-        current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
-    )
+def check_f_upcoming_discovery_contract() -> dict[str, Any]:
+    """Check F: the reviewed upcoming source is the canonical P3 source."""
+    from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated
+    from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
+    from domain import current_shadow_fixture_identity_aliases as aliases
+    from domain import current_shadow_fixture_identity_v2 as stable_identity
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
 
-    identities = paginated.validate_contract()
+    identities = upcoming.validate_contract()
+    historical = paginated.validate_contract()
+    if identities["upstream_upcoming_source_contract_sha256"] != (
+        "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: reviewed upcoming source contract SHA drifted"
+        )
+    if identities["current_shadow_upcoming_policy_id"] != (
+        "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: Current Shadow upcoming strategy ID drifted"
+        )
+    if identities["current_shadow_upcoming_compatibility_sha256"] != (
+        "29a250f3b7db3b0d84e8852df4a119df34e3eab914d5ac4e56c25d2e19ef64f2"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: Current Shadow upcoming compatibility SHA drifted"
+        )
+    if identities["identity_compatibility_policy_id"] != identity_compatibility.POLICY_ID:
+        raise P30LiveReadinessError(
+            "Check F failed: shared identity compatibility policy ID drifted"
+        )
+    if identities["identity_compatibility_policy_sha256"] != (
+        "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: shared identity compatibility policy SHA drifted"
+        )
+    if historical["contract_sha256"] != (
+        "106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: retained paginated compatibility contract SHA drifted"
+        )
+    if aliases.REGISTRY_SHA256 != (
+        "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
+    ):
+        raise P30LiveReadinessError("Check F failed: alias V3 SHA drifted")
+    if stable_identity.REGISTRY_SHA256 != (
+        "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+    ) or stable_identity.STATE_SCHEMA_VERSION != 2:
+        raise P30LiveReadinessError(
+            "Check F failed: stable identity registry or state schema drifted"
+        )
     return {
         "status": "PASSED",
-        "paginated_discovery_contract_sha256": identities["contract_sha256"],
+        "upstream_upcoming_source_contract_sha256": identities[
+            "upstream_upcoming_source_contract_sha256"
+        ],
+        "current_shadow_upcoming_policy_id": identities[
+            "current_shadow_upcoming_policy_id"
+        ],
+        "current_shadow_upcoming_compatibility_sha256": identities[
+            "current_shadow_upcoming_compatibility_sha256"
+        ],
+        "identity_compatibility_policy_id": identities[
+            "identity_compatibility_policy_id"
+        ],
+        "identity_compatibility_policy_sha256": identities[
+            "identity_compatibility_policy_sha256"
+        ],
+        "active_discovery_root": str(upcoming.ALLOWED_OUTPUT_RELATIVE),
+        "paginated_contract_sha256_retained_historically": historical[
+            "contract_sha256"
+        ],
+        "paginated_runtime_reconciliation_authority": False,
     }
+
+
+def check_f_paginated_discovery_contract() -> dict[str, Any]:
+    """Compatibility name for older callers; the active check is upcoming."""
+    return check_f_upcoming_discovery_contract()
 
 
 def check_g_fanout_request_scope_validation() -> dict[str, Any]:
@@ -284,6 +355,7 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
     from domain import (
         current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
     )
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
     from domain import (
         sportybet_current_event_discovery_reconciliation as discovery,
     )
@@ -294,10 +366,130 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
     # Contract verification passes without network
     discovery.validate_current_event_discovery_contract()
     paginated.validate_contract()
+    upcoming.validate_contract()
 
-    # Truthful evidence inventory: no historical retained paginated raw-page artifact exists
-    # Search provenance across runs 35409481576, 35404223536, 35277452572
-    runs_searched = ["35409481576", "35404223536", "35277452572"]
+    shape_path = (
+        repository_root
+        / "tests"
+        / "fixtures"
+        / "p3_0"
+        / "run_35441111017_source_viability_shape.json"
+    )
+    try:
+        shape = json.loads(shape_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        raise P30LiveReadinessError(
+            "Check H failed: run-35441111017 source-viability shape fixture is unavailable"
+        ) from exc
+    if (
+        type(shape) is not dict
+        or shape.get("evidence_kind")
+        != "DETERMINISTIC_SHAPE_REPRODUCTION_NOT_RETAINED_BYTES"
+    ):
+        raise P30LiveReadinessError(
+            "Check H failed: source-viability fixture must identify itself as a shape reproduction"
+        )
+    exact_shape = {
+        "run_id": "35441111017",
+        "primary_artifact_id": 10584076663,
+        "primary_artifact_zip_sha256": "81b7e0dfb9fb91cbc961d591c876010330025da24f1aafa3dca4ff038c93222e",
+        "diagnostics_artifact_id": 10584211437,
+        "diagnostics_artifact_zip_sha256": "a9facd41768ad271cae6ccb72f0c092b6f640d82daf0de5c46509af55766064d",
+        "raw_page_sha256": "f13f112afa8c376a9cc95b6b0e1a1c254592786a8574acb59b93d377ddea792c",
+        "source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_LIVE_OR_PREMATCH_EVENTS_GET",
+        "request_target": "/api/ng/factsCenter/liveOrPrematchEvents?sportId=sr%3Asport%3A1&pageSize=100&pageNum=1",
+        "observed_at": "2026-09-19T11:49:46.016668Z",
+        "provider_page_item_count": 79,
+        "captured_page_count": 1,
+        "event_count": 136,
+        "event_status_counts": {"1": 136},
+        "prematch_bookable_counts": {"false": 136},
+        "booking_status_counts": {"Booked": 136},
+        "match_status_counts": {"H1": 38, "HT": 43, "H2": 55},
+        "kickoff_min": "2026-09-19T10:00:00.000000Z",
+        "kickoff_max": "2026-09-19T11:45:00.000000Z",
+        "pagination_termination_basis": "SHORT_PAGE_BELOW_REQUESTED_PAGE_SIZE",
+        "source_viability": "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS",
+    }
+    if any(shape.get(key) != value for key, value in exact_shape.items()):
+        raise P30LiveReadinessError(
+            "Check H failed: run-35441111017 source-viability shape drifted"
+        )
+
+    # Replay the exact retained source shape through the first-boundary failure
+    # taxonomy.  This is deliberately a deterministic shape reproduction: no
+    # retained provider bytes are reacquired or claimed here.
+    from scripts import _p3_0_paired_capture_part2 as paired_capture
+
+    negative_summary = {
+        "provider_event_count": 136,
+        "provider_prematch_bookable_count": 0,
+        "provider_inplay_count": 136,
+        "provider_future_lead_eligible_count": 0,
+        "provider_too_close_count": 136,
+        "provider_discovery_source_method": exact_shape["source_method"],
+        "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1",
+        "provider_discovery_observed_at": exact_shape["observed_at"],
+        "source_viability": exact_shape["source_viability"],
+        "current_reconciliation_by_request_date": {
+            date: {
+                "provider_event_count": 136,
+                "provider_prematch_bookable_count": 0,
+                "provider_inplay_count": 136,
+                "provider_future_lead_eligible_count": 0,
+                "provider_too_close_count": 136,
+                "reconciled_fixture_count": 0,
+                "disposition_counts": {
+                    "PROVIDER_EVENT_TOO_CLOSE_TO_KICKOFF": 136,
+                },
+            }
+            for date in (
+                "20260919",
+                "20260920",
+                "20260921",
+            )
+        },
+    }
+    negative_bundle = SimpleNamespace(
+        router_inputs=(),
+        reviewed_fixture_count=50,
+        reconciled_fixture_count=0,
+        provider_event_count=136,
+        priced_fixture_count=0,
+        source_summary=negative_summary,
+    )
+    try:
+        paired_capture._require_nonempty_router_inputs(negative_bundle)
+    except paired_capture.P30PairedCaptureError as exc:
+        message = str(exc)
+        if not message.startswith(paired_capture._ZERO_ROUTER_DIAGNOSTIC_PREFIX):
+            raise P30LiveReadinessError(
+                "Check H failed: source-viability replay emitted an unbounded diagnostic"
+            ) from exc
+        diagnostic = json.loads(
+            message[len(paired_capture._ZERO_ROUTER_DIAGNOSTIC_PREFIX):]
+        )
+        if diagnostic.get("failure_code") != "PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS":
+            raise P30LiveReadinessError(
+                "Check H failed: retained all-in-play shape was not classified at provider viability"
+            ) from exc
+        if "NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART" in message:
+            raise P30LiveReadinessError(
+                "Check H failed: source-viability replay fell through to FotMob counterpart failure"
+            ) from exc
+    else:
+        raise P30LiveReadinessError(
+            "Check H failed: retained all-in-play shape unexpectedly yielded Router inputs"
+        )
+
+    retained_external_evidence = {
+        "artifact_id": 10584211437,
+        "zip_sha256": "a9facd41768ad271cae6ccb72f0c092b6f640d82daf0de5c46509af55766064d",
+        "raw_page_sha256": "f13f112afa8c376a9cc95b6b0e1a1c254592786a8574acb59b93d377ddea792c",
+        "retained_bytes_exist": True,
+        "retained_bytes_checked_in": False,
+        "path": ".cache/athena-research/sportybet-current-event-discovery/0571e8445cc1b557ea581c59/page-001.json",
+    }
 
     # Exact offline counterpart matching replay
     identity.reset_runtime_evidence()
@@ -356,15 +548,31 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
 
     return {
         "status": "PASSED",
-        "real_retained_boundary": {
-            "paginated_raw_page_replay": "UNAVAILABLE",
-            "runs_searched": runs_searched,
-            "result": "NO_VERIFIED_RETAINED_PAGINATED_RAW_PAGE_ARTIFACT_AVAILABLE",
+        "run_35441111017_source_viability_shape_reproduction": {
+            **exact_shape,
+            "evidence_kind": shape["evidence_kind"],
+            "retained_external_evidence": retained_external_evidence,
+            "offline_shape_reproduction": {
+                "evidence_kind": "DETERMINISTIC_SHAPE_REPRODUCTION_NOT_RETAINED_BYTES",
+                "retained_bytes_checked_in": False,
+            },
+            "direct_detail_acquisitions": 0,
+            "reconciled_fixture_count": 0,
+            "priced_fixture_count": 0,
+            "router_input_count": 0,
         },
         "synthetic_end_to_end_boundary": {
             "synthetic_counterpart_matching_verified": True,
             "contracts_verified": True,
         },
+        "run_35441111017_offline_failure_classification": {
+            "failure_code": "PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS",
+            "direct_detail_acquisitions": 0,
+            "priced_fixture_count": 0,
+            "router_input_count": 0,
+        },
+        "active_upcoming_discovery_root": str(upcoming.ALLOWED_OUTPUT_RELATIVE),
+        "paginated_runtime_reconciliation_authority": False,
     }
 
 
@@ -372,6 +580,7 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
     """Check I: Prove supported and P3 use the exact same canonical pre-Router source strategy."""
     from domain import current_shadow_all_market_runner as runner
     from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery
     from scripts import _p3_0_paired_capture_part1 as part1
 
     if not hasattr(runner, "acquire_current_shadow_pre_router_bundle"):
@@ -382,13 +591,33 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         raise P30LiveReadinessError(
             "Check I failed: _collect_sources is missing from part1"
         )
-    if runner.reconciliation is not paginated_discovery:
+    if runner.reconciliation is not upcoming_discovery:
         raise P30LiveReadinessError(
-            "Check I failed: runner.reconciliation is not paginated_discovery"
+            "Check I failed: runner.reconciliation is not the reviewed upcoming discovery owner"
         )
-    if paginated_discovery.POLICY_ID != "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1":
+    if runner.reconciliation is paginated_discovery:
         raise P30LiveReadinessError(
-            "Check I failed: paginated discovery strategy ID drifted"
+            "Check I failed: paginated discovery remains runtime authority"
+        )
+    if upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID != (
+        "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    ):
+        raise P30LiveReadinessError(
+            "Check I failed: upcoming discovery strategy ID drifted"
+        )
+    upcoming_discovery.validate_contract()
+    runner_source = Path(runner.__file__).read_text(encoding="utf-8")
+    if runner_source.count("capture_current_upcoming_discovery(") != 1:
+        raise P30LiveReadinessError(
+            "Check I failed: runner does not have one canonical upcoming acquisition call"
+        )
+    if runner_source.count("reconcile_current_events_from_upcoming_discovery(") != 1:
+        raise P30LiveReadinessError(
+            "Check I failed: runner does not have one canonical upcoming reconciliation call"
+        )
+    if "capture_current_paginated_discovery" in runner_source:
+        raise P30LiveReadinessError(
+            "Check I failed: runner source still references paginated discovery"
         )
     if runner.AUTHORITY.get("production_sportybet_execution") is not False:
         raise P30LiveReadinessError(
@@ -397,8 +626,11 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
 
     return {
         "status": "PASSED",
-        "canonical_strategy_id": paginated_discovery.POLICY_ID,
+        "canonical_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
+        "canonical_source_method": upcoming_discovery.DISCOVERY_SOURCE_METHOD,
+        "active_diagnostics_root": str(upcoming_discovery.ALLOWED_OUTPUT_RELATIVE),
         "supported_and_p3_strategy_unified": True,
+        "paginated_runtime_reconciliation_authority": False,
         "catalog_fanout_runtime_authority": False,
     }
 
@@ -452,9 +684,25 @@ def check_k_bounded_failure_taxonomy() -> dict[str, Any]:
         provider_event_count = 10
         priced_fixture_count = 0
         source_summary = {
+            "provider_event_count": 10,
+            "provider_prematch_bookable_count": 0,
+            "provider_inplay_count": 10,
+            "provider_future_lead_eligible_count": 0,
+            "provider_too_close_count": 10,
+            "provider_discovery_source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_LIVE_OR_PREMATCH_EVENTS_GET",
+            "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1",
+            "provider_discovery_observed_at": "2026-09-19T11:49:46.016668Z",
+            "source_viability": "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS",
             "current_reconciliation_by_request_date": {
                 "20260919": {
                     "provider_event_count": 10,
+                    "provider_prematch_bookable_count": 0,
+                    "provider_inplay_count": 10,
+                    "provider_future_lead_eligible_count": 0,
+                    "provider_too_close_count": 10,
+                    "provider_discovery_source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_LIVE_OR_PREMATCH_EVENTS_GET",
+                    "provider_discovery_strategy_id": "ATHENA_CURRENT_SHADOW_PAGINATED_GLOBAL_DISCOVERY_V1",
+                    "provider_discovery_observed_at": "2026-09-19T11:49:46.016668Z",
                     "reconciled_fixture_count": 0,
                     "disposition_counts": {
                         "NO_EXACT_REVIEWED_FOTMOB_MATCH": 10
@@ -471,7 +719,7 @@ def check_k_bounded_failure_taxonomy() -> dict[str, Any]:
         if (
             part2._ZERO_ROUTER_DIAGNOSTIC_PREFIX in msg
             and len(msg) <= part2.FAILURE_MESSAGE_MAX_CHARS
-            and "NO_RECONCILIATION_AUTHORIZED_FOTMOB_COUNTERPART" in msg
+            and "PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS" in msg
         ):
             raised = True
     if not raised:
@@ -553,9 +801,7 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
 def check_m_wager_safety_invariants() -> dict[str, Any]:
     """Check M: Safety authority invariants are all False."""
     from domain import current_shadow_all_market_runner as runner
-    from domain import (
-        current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
-    )
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
 
     safety_keys = ("login", "cookies", "wallet", "staking", "bet", "wager_placed")
     for key in safety_keys:
@@ -563,11 +809,15 @@ def check_m_wager_safety_invariants() -> dict[str, Any]:
             raise P30LiveReadinessError(
                 f"Check M failed: runner AUTHORITY[{key}] is not False"
             )
-        if paginated.AUTHORITY.get(key) is not False:
+        if upcoming.AUTHORITY.get(key) is not False:
             raise P30LiveReadinessError(
-                f"Check M failed: paginated AUTHORITY[{key}] is not False"
+                f"Check M failed: upcoming AUTHORITY[{key}] is not False"
             )
-    return {"status": "PASSED", "all_safety_invariants_false": True}
+    return {
+        "status": "PASSED",
+        "all_safety_invariants_false": True,
+        "paginated_source_retained_historically_only": True,
+    }
 
 
 def check_n_no_dispatch_or_comment_mutation_authority(repository_root: Path) -> dict[str, Any]:
@@ -658,7 +908,7 @@ def run_all_readiness_checks(
                 ("check_c_network_block", check_c_network_block_assertion),
                 ("check_d_canonical_core", check_d_canonical_core_and_registries),
                 ("check_e_discovery_contract", check_e_discovery_contract),
-                ("check_f_paginated_discovery_contract", check_f_paginated_discovery_contract),
+                ("check_f_upcoming_discovery_contract", check_f_upcoming_discovery_contract),
                 ("check_g_fanout_scope", check_g_fanout_request_scope_validation),
                 ("check_h_retained_evidence", lambda: check_h_retained_evidence_verification(root)),
                 ("check_i_pre_router_pipeline", lambda: check_i_pre_router_pipeline_readiness(root)),

@@ -6,7 +6,7 @@ import pytest
 
 from domain import current_shadow_fixture_identity_aliases as aliases
 from domain import current_shadow_fixture_identity_v2 as stable_identity
-from domain import current_shadow_sportybet_paginated_discovery_reconciliation as reconciliation
+from domain import current_shadow_sportybet_upcoming_reconciliation as reconciliation
 from scripts import capture_p3_0_paired_evidence as collector
 from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_daily as current_daily
@@ -22,14 +22,14 @@ def _restore_worker_env(value):
 
 
 def test_scope_uses_full_supported_request_and_daily_pre_router_stack_and_restores():
-    assert current_daily.runner.reconciliation is current_daily.runner.paginated_discovery
+    assert current_daily.runner.reconciliation is reconciliation
     stable_match_before = stable_identity.match_event
     quote_builder_before = current_daily.quote_replay.live.build_live_event_quote_inventory
     xg_before = current_request.xg_fallback.binding._research_xg_from_validated_current_history
     worker_before = os.environ.get(all_market_cli.WORKER_ENV)
 
     with compat.scoped_current_request_pre_router_compatibility():
-        assert current_daily.runner.reconciliation is current_daily.runner.paginated_discovery
+        assert current_daily.runner.reconciliation is reconciliation
         assert (
             current_request.xg_fallback.binding._research_xg_from_validated_current_history
             is not xg_before
@@ -238,7 +238,7 @@ def test_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_seam(
         rows=matched_rows,
         matched_rows=matched_rows,
         canonical_sha256="a" * 64,
-        contract_sha256=runner.paginated_discovery.EXPECTED_CONTRACT_SHA256,
+        contract_sha256=runner.reconciliation.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256,
         discovery_manifest_sha256="b" * 64,
     )
     execution = SimpleNamespace(
@@ -263,13 +263,13 @@ def test_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_seam(
     )
     monkeypatch.setattr(runner, "_source_capture", lambda *_args: (b"{}", {}))
     monkeypatch.setattr(
-        runner.paginated_discovery,
-        "capture_current_paginated_discovery",
+        runner.reconciliation,
+        "capture_current_upcoming_discovery",
         lambda **_kwargs: (tmp_path, manifest),
     )
     monkeypatch.setattr(
-        runner.paginated_discovery,
-        "reconcile_current_events_from_paginated_discovery",
+        runner.reconciliation,
+        "reconcile_current_events_from_upcoming_discovery",
         lambda **_kwargs: frozen_events,
     )
     monkeypatch.setattr(runner, "_legacy_bootstrap_bytes", lambda: b"{}")

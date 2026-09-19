@@ -154,6 +154,28 @@ def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id:
         "stake": False,
         "wager_placed": False,
     }
+    diagnostic_prefix = "P3.0-E1 source acquisition produced zero Router inputs: "
+    failure_message = value["failure_message"]
+    if isinstance(failure_message, str) and failure_message.startswith(diagnostic_prefix):
+        try:
+            diagnostic = json.loads(failure_message[len(diagnostic_prefix):])
+        except (json.JSONDecodeError, TypeError):
+            diagnostic = None
+        if isinstance(diagnostic, dict):
+            for field in (
+                "failure_code",
+                "provider_event_count",
+                "provider_prematch_bookable_count",
+                "provider_inplay_count",
+                "provider_future_lead_eligible_count",
+                "provider_too_close_count",
+                "provider_discovery_source_method",
+                "provider_discovery_strategy_id",
+                "provider_discovery_observed_at",
+                "source_viability",
+            ):
+                if field in diagnostic:
+                    value[field] = diagnostic[field]
     (output_dir / "p3-0-capture-failure.json").write_bytes(evidence.canonical_json_bytes(value))
 
 
