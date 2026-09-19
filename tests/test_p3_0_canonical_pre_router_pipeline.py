@@ -837,15 +837,15 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
     monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
 
     # The labels alone are deliberately not a literal identity match.
-    reviewed_fixture = admission.admitted_fixtures[0]
-    assert (reviewed_fixture.home_team, reviewed_fixture.away_team) == ("QPR", "Cardiff")
+    reviewed_row = reviewed_discovery._reviewed_rows(admission)[0]
+    assert (reviewed_row.home_team, reviewed_row.away_team) == ("QPR", "Cardiff")
     assert (provider_home, provider_away) != (
-        reviewed_fixture.home_team,
-        reviewed_fixture.away_team,
+        reviewed_row.home_team,
+        reviewed_row.away_team,
     )
     assert tuple(
         item
-        for item in admission.admitted_fixtures
+        for item in (reviewed_row,)
         if item.home_team == provider_home
         and item.away_team == provider_away
         and item.competition == "Championship"
