@@ -284,7 +284,7 @@ def test_persisted_identity_append_only_guard_rejects_shrink_and_remap():
 
 
 def test_persisted_identity_conflicting_tournament_and_competitor_fail_closed():
-    state = identity.identity_state_snapshot()
+    state = compatibility.identity_state_snapshot()
     state["learned_team_identities"] = [[910001, "sr:competitor:991001"]]
     state["learned_competition_identities"] = [["NEW", 888, "sr:category:998", "sr:tournament:998"]]
     state["evidence_records"] = []
