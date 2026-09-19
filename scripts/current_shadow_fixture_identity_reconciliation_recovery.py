@@ -151,11 +151,15 @@ class RecoveryHooks:
 
 
 def install(reconciliation_module: Any) -> RecoveryHooks:
-    has_legacy = hasattr(reconciliation_module, "legacy")
+    has_legacy = hasattr(reconciliation_module, "legacy") and hasattr(
+        reconciliation_module.legacy, "MATCHING_BASIS"
+    )
     hooks = RecoveryHooks(
         original_match_event=identity.match_event,
-        original_matching_basis=reconciliation_module.MATCHING_BASIS,
-        original_expected_contract_sha256=reconciliation_module.EXPECTED_CONTRACT_SHA256,
+        original_matching_basis=getattr(reconciliation_module, "MATCHING_BASIS", ""),
+        original_expected_contract_sha256=getattr(
+            reconciliation_module, "EXPECTED_CONTRACT_SHA256", ""
+        ),
         original_legacy_matching_basis=(
             reconciliation_module.legacy.MATCHING_BASIS if has_legacy else ""
         ),
@@ -176,7 +180,9 @@ def install(reconciliation_module: Any) -> RecoveryHooks:
 
 def restore(reconciliation_module: Any, hooks: RecoveryHooks) -> None:
     identity.match_event = hooks.original_match_event
-    if hasattr(reconciliation_module, "legacy"):
+    if hasattr(reconciliation_module, "legacy") and hasattr(
+        reconciliation_module.legacy, "MATCHING_BASIS"
+    ):
         reconciliation_module.MATCHING_BASIS = hooks.original_matching_basis
         reconciliation_module.EXPECTED_CONTRACT_SHA256 = hooks.original_expected_contract_sha256
         reconciliation_module.legacy.MATCHING_BASIS = hooks.original_legacy_matching_basis
