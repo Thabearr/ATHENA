@@ -81,7 +81,7 @@ FANOUT_OVERLAP_EVIDENCE_ARTIFACT_SHA256 = (
     "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
 )
 MATCHING_BASIS = fixture_identity_v2.MATCHING_BASIS
-EXPECTED_CONTRACT_SHA256 = "941ce2d1eba567bd6e57aa0be8d7417f0c5d9631c5c94a500399e77d653d697b"
+EXPECTED_CONTRACT_SHA256 = "cf9ee8d606288eb8f3b964b5a581fca007ce3d6baf018b50633e0288dc31ce58"
 
 CurrentEventReconciliationDisposition = legacy.CurrentEventReconciliationDisposition
 CurrentEventReconciliationRow = legacy.CurrentEventReconciliationRow
@@ -543,7 +543,7 @@ def _alias_ancestry_rows(value: Any) -> tuple[tuple[str, str], ...]:
 
 
 def _verify_alias_ancestry_prefix(retained: Any, current: Any) -> None:
-    """Allow only an ordered V1 -> V2 reviewed alias-policy extension."""
+    """Allow only ordered reviewed V1 -> V2 -> V3 ancestry extension."""
     retained_rows = _alias_ancestry_rows(retained)
     current_rows = _alias_ancestry_rows(current)
     v1 = (
@@ -554,10 +554,14 @@ def _verify_alias_ancestry_prefix(retained: Any, current: Any) -> None:
         fixture_identity_v2._REVIEWED_ALIAS_V2["policy_id"],
         fixture_identity_v2._REVIEWED_ALIAS_V2["registry_sha256"],
     )
-    permitted_prefixes = {(v1,), (v2,), (v1, v2)}
+    v3 = (
+        fixture_identity_v2._REVIEWED_ALIAS_V3["policy_id"],
+        fixture_identity_v2._REVIEWED_ALIAS_V3["registry_sha256"],
+    )
+    permitted_prefixes = {(v2,), (v1, v2), (v3,), (v2, v3), (v1, v2, v3)}
     if (
         retained_rows not in permitted_prefixes
-        or current_rows not in {(v2,), (v1, v2)}
+        or current_rows not in {(v3,), (v2, v3), (v1, v2, v3)}
         or current_rows[:len(retained_rows)] != retained_rows
     ):
         raise CurrentShadowSportyBetCatalogFanoutReconciliationError(

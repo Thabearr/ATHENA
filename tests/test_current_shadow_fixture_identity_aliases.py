@@ -44,12 +44,12 @@ def _reviewed(
 
 
 def test_registry_identity_is_deterministic_and_pinned():
-    assert aliases.POLICY_ID == "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V2"
+    assert aliases.POLICY_ID == "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V3"
     assert aliases.REGISTRY_SHA256 == (
-        "2183576a068f365ded201b8b2d6aaf02395598ec51738275a16021b4d94ca091"
+        "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
     )
     assert aliases.registry_sha256() == aliases.REGISTRY_SHA256
-    assert len(aliases.TEAM_ALIASES) == 49
+    assert len(aliases.TEAM_ALIASES) == 55
 
 
 @pytest.mark.parametrize(
@@ -176,6 +176,38 @@ def test_full_utc_kickoff_is_exact_with_no_tolerance():
     row = _reviewed()
     event = _event(kickoff=KICKOFF + timedelta(seconds=1))
     assert aliases.match_event(event, (row,)) == ()
+
+
+@pytest.mark.parametrize(
+    ("competition", "fotmob", "sportybet"),
+    (
+        ("Major League Soccer", "Red Bull New York", "New York Red Bulls"),
+        ("K-League 1", "Gimcheon Sangmu", "Gimcheon Sangmu FC"),
+        ("NWSL", "San Diego Wave FC (W)", "San Diego Wave FC"),
+        ("NWSL", "Kansas City Current (W)", "Kansas City Current"),
+        ("Liga 1", "Asociación Deportiva Tarma", "Asociacion Deportiva Tarma"),
+        ("Primera Division Apertura", "Municipal Pérez Zeledón", "Perez Zeledon"),
+    ),
+)
+def test_run_35404223536_aliases_are_exact_and_competition_scoped(competition, fotmob, sportybet):
+    assert aliases.team_identity_matches(
+        competition=competition, fotmob_name=fotmob, sportybet_name=sportybet
+    )
+    assert not aliases.team_identity_matches(
+        competition="Unrelated", fotmob_name=fotmob, sportybet_name=sportybet
+    )
+
+
+def test_run_35404223536_aliases_do_not_create_generic_normalization():
+    assert not aliases.team_identity_matches(
+        competition="NWSL", fotmob_name="Example (W)", sportybet_name="Example"
+    )
+    assert not aliases.team_identity_matches(
+        competition="Liga 1", fotmob_name="Asociación Example", sportybet_name="Asociacion Example"
+    )
+    assert not aliases.team_identity_matches(
+        competition="Major League Soccer", fotmob_name="Bull Red New York", sportybet_name="New York Red Bulls"
+    )
 
 
 def test_registry_validation_rejects_ambiguous_source_mapping():

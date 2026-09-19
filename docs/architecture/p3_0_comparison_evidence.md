@@ -249,3 +249,31 @@ stable-identity registry SHA-256 is
 and the corrected fanout contract SHA-256 is
 `941ce2d1eba567bd6e57aa0be8d7417f0c5d9631c5c94a500399e77d653d697b`.
 No provider retry or authority change was used for this repair.
+
+## Run 35404223536 retained source-reconciliation continuity
+
+Authorization comment `5737234207` was consumed by bridge `35404214156`, which
+dispatched capture `35404223536` on main
+`07b5c2bbcb803675aa538464cc528f8993f8d7bb`. The bounded request used dates
+`20260918` through `20260924` and cap `50`. The capture restored the trusted
+identity state successfully, then failed closed with zero Router inputs. The
+failure artifact is `10572001772`
+(`35ab7daef5af7af7ea972f1fbfb297f04d123e0e07e303faffbf3537cd1892b1`)
+and retained diagnostics are `10571711837`
+(`4f5947c2317fb42709001174e72e72d51881f4389f35ebdd8657ec6b2713c959`).
+
+The retained artifact proves five exact full-UTC, oriented fixture identities:
+`66299550 -> 5071366`, `67817882 -> 5140036`, `67912308 -> 5161643`,
+`71936122 -> 1000017238`, and `72053630 -> 5833797`. Six literal,
+competition-scoped aliases are added as alias-policy V3; the remaining five
+provider events remain rejected. No fuzzy, suffix, `(W)`, accent, competition,
+orientation, or time-tolerance normalization is introduced.
+
+Schema-v2 persistent identity ancestry now admits only reviewed chains ending
+in V3: V3, V2->V3, or V1->V2->V3. Historical V2 snapshots are migrated by an
+atomic V2->V3 append; seed-only identity remains
+`7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79`.
+The transition is bound to this retained run and diagnostics digest. No live
+retry, provider acquisition, model/pricing/Router/Portfolio change, or authority
+increase occurs in this continuity work. P3.0 comparator and P3.1 remain not
+started; `SOURCE_REVIEW_COUNTER` remains `4 / 5`.

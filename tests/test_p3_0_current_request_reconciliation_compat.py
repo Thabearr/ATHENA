@@ -211,14 +211,15 @@ def test_collector_main_restores_scope_when_unscoped_collector_fails(monkeypatch
     assert events == ["enter", "main", "exit"]
 
 
-def test_run16_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_seam(
+def test_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_seam(
     monkeypatch, tmp_path
 ):
     """Exercise the complete supported pre-Router seam without acquisition.
 
-    The three fixture/event identities are those admitted from run-16 retained
-    evidence.  Every source, history, and quote boundary below is a frozen test
-    double; this proves only local wiring, never live quote availability.
+    The fixture/event identities are those admitted from retained run-16 and
+    run-35404223536 evidence. Every source, history, and quote boundary below
+    is a frozen test double; this proves only local wiring, never live quote
+    availability.
     """
 
     runner = current_daily.runner
@@ -226,6 +227,11 @@ def test_run16_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_
         ("sr:match:69343126", "5204254"),
         ("sr:match:69456602", "5207231"),
         ("sr:match:69456604", "5207232"),
+        ("sr:match:66299550", "5071366"),
+        ("sr:match:67817882", "5140036"),
+        ("sr:match:67912308", "5161643"),
+        ("sr:match:71936122", "1000017238"),
+        ("sr:match:72053630", "5833797"),
     )
     matched_rows = tuple(
         SimpleNamespace(
@@ -245,7 +251,7 @@ def test_run16_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_
     execution = SimpleNamespace(
         bootstrap=SimpleNamespace(
             verified_artifact=SimpleNamespace(admission=object()),
-            fixtures=(object(), object(), object()),
+            fixtures=tuple(object() for _ in recovered),
         ),
         summary=lambda: {"fixture_source": "frozen-run16"},
     )
@@ -320,9 +326,9 @@ def test_run16_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_
             lineage_main_sha="e" * 40,
         )
 
-    assert sources.reconciled_fixture_count == 3
-    assert sources.priced_fixture_count == 3
-    assert len(sources.router_inputs) == 3
+    assert sources.reconciled_fixture_count == len(recovered)
+    assert sources.priced_fixture_count == len(recovered)
+    assert len(sources.router_inputs) == len(recovered)
     assert [
         (context["provider_event_id"], context["fixture_identity"])
         for context in built_contexts

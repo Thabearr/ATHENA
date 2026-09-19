@@ -47,6 +47,10 @@ _REVIEWED_ALIAS_V2 = {
     "policy_id": "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V2",
     "registry_sha256": "2183576a068f365ded201b8b2d6aaf02395598ec51738275a16021b4d94ca091",
 }
+_REVIEWED_ALIAS_V3 = {
+    "policy_id": "ATHENA_CURRENT_SHADOW_EXPLICIT_FIXTURE_TEAM_ALIAS_V3",
+    "registry_sha256": "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce",
+}
 _LEGACY_V1_FULL_REGISTRY_SHA256 = (
     "a0dfd70b2750612498133393b0ff556c818008778d51f8a5cbd9bf005704b3f4"
 )
@@ -55,13 +59,18 @@ _LEGACY_V1_SEED_REGISTRY_SHA256 = (
 )
 _ALIAS_ANCESTRY_NODE_KEYS = frozenset({"policy_id", "registry_sha256"})
 _REVIEWED_COMPLETE_ALIAS_ANCESTRIES = (
+    (_REVIEWED_ALIAS_V3,),
+    (_REVIEWED_ALIAS_V2, _REVIEWED_ALIAS_V3),
+    (_REVIEWED_ALIAS_V1, _REVIEWED_ALIAS_V2, _REVIEWED_ALIAS_V3),
+)
+_REVIEWED_MIGRATABLE_ALIAS_ANCESTRIES = (
     (_REVIEWED_ALIAS_V2,),
     (_REVIEWED_ALIAS_V1, _REVIEWED_ALIAS_V2),
 )
 
 if (
-    aliases.POLICY_ID != _REVIEWED_ALIAS_V2["policy_id"]
-    or aliases.REGISTRY_SHA256 != _REVIEWED_ALIAS_V2["registry_sha256"]
+    aliases.POLICY_ID != _REVIEWED_ALIAS_V3["policy_id"]
+    or aliases.REGISTRY_SHA256 != _REVIEWED_ALIAS_V3["registry_sha256"]
 ):
     raise RuntimeError("reviewed alias policy identity drifted")
 
@@ -158,7 +167,7 @@ def reset_runtime_evidence() -> None:
     _comp_forward.clear()
     _comp_reverse.clear()
     _evidence_records.clear()
-    _alias_registry_ancestry[:] = [dict(_REVIEWED_ALIAS_V2)]
+    _alias_registry_ancestry[:] = [dict(_REVIEWED_ALIAS_V3)]
     for source_id, provider_id in TEAM_IDENTITY_SEEDS:
         _team_forward[source_id] = provider_id
         _team_reverse[provider_id] = source_id
@@ -550,8 +559,12 @@ def _alias_ancestry_tuple(value: Any, *, require_current: bool) -> tuple[tuple[s
         tuple((row["policy_id"], row["registry_sha256"]) for row in chain)
         for chain in _REVIEWED_COMPLETE_ALIAS_ANCESTRIES
     }
+    migratable = {
+        tuple((row["policy_id"], row["registry_sha256"]) for row in chain)
+        for chain in _REVIEWED_MIGRATABLE_ALIAS_ANCESTRIES
+    }
     ancestry = tuple(rows)
-    if require_current and ancestry not in accepted:
+    if require_current and ancestry not in accepted | migratable:
         raise CurrentShadowFixtureIdentityStateError("identity state alias ancestry is unreviewed")
     return ancestry
 
@@ -587,7 +600,11 @@ def _validate_loaded_payload(payload: Any) -> tuple[list[dict[str, str]], bool]:
                 "identity state current seed registry calculation drifted"
             )
         _validate_collections(payload)
-        return [dict(_REVIEWED_ALIAS_V1), dict(_REVIEWED_ALIAS_V2)], True
+        return [
+            dict(_REVIEWED_ALIAS_V1),
+            dict(_REVIEWED_ALIAS_V2),
+            dict(_REVIEWED_ALIAS_V3),
+        ], True
     if payload.get("schema_version") != STATE_SCHEMA_VERSION:
         raise CurrentShadowFixtureIdentityStateError("identity state schema drifted")
     _require_exact_payload_keys(payload, _STATE_V2_PAYLOAD_KEYS)
@@ -595,10 +612,21 @@ def _validate_loaded_payload(payload: Any) -> tuple[list[dict[str, str]], bool]:
         raise CurrentShadowFixtureIdentityStateError("identity state seed registry drifted")
     ancestry = _alias_ancestry_tuple(payload.get("alias_registry_ancestry"), require_current=True)
     _validate_collections(payload)
+    migratable = {
+        tuple((row["policy_id"], row["registry_sha256"]) for row in chain)
+        for chain in _REVIEWED_MIGRATABLE_ALIAS_ANCESTRIES
+    }
+    if ancestry in migratable:
+        ancestry = ancestry + ((
+            _REVIEWED_ALIAS_V3["policy_id"], _REVIEWED_ALIAS_V3["registry_sha256"]
+        ),)
+        migrated = True
+    else:
+        migrated = False
     return [
         {"policy_id": policy_id, "registry_sha256": registry_sha256}
         for policy_id, registry_sha256 in ancestry
-    ], False
+    ], migrated
 
 
 def _validate_loaded_bindings(payload: dict[str, Any]) -> tuple[
@@ -840,6 +868,31 @@ def registry_payload() -> dict[str, Any]:
             "source_head": "012f15f8ea81dc32c3404880a854815e5e7078ca",
             "successor_main": "be8e35dd179b44b76ff3aee1f7b3dfdad55a3f6c",
         },
+        "reviewed_alias_registry_transitions": [
+            {
+                "source_state_schema_version": 1,
+                "target_state_schema_version": STATE_SCHEMA_VERSION,
+                "from": dict(_REVIEWED_ALIAS_V1),
+                "to": dict(_REVIEWED_ALIAS_V2),
+                "legacy_full_fixture_identity_registry_sha256": _LEGACY_V1_FULL_REGISTRY_SHA256,
+                "source_seed_registry_sha256": _LEGACY_V1_SEED_REGISTRY_SHA256,
+                "target_seed_registry_sha256": SEED_REGISTRY_SHA256,
+                "source_head": "012f15f8ea81dc32c3404880a854815e5e7078ca",
+                "successor_main": "be8e35dd179b44b76ff3aee1f7b3dfdad55a3f6c",
+            },
+            {
+                "source_state_schema_version": STATE_SCHEMA_VERSION,
+                "target_state_schema_version": STATE_SCHEMA_VERSION,
+                "from": dict(_REVIEWED_ALIAS_V2),
+                "to": dict(_REVIEWED_ALIAS_V3),
+                "source_seed_registry_sha256": SEED_REGISTRY_SHA256,
+                "target_seed_registry_sha256": SEED_REGISTRY_SHA256,
+                "source_main": "07b5c2bbcb803675aa538464cc528f8993f8d7bb",
+                "capture_run_id": 35404223536,
+                "source_diagnostics_artifact_id": 10571711837,
+                "source_diagnostics_zip_sha256": "4f5947c2317fb42709001174e72e72d51881f4389f35ebdd8657ec6b2713c959",
+            },
+        ],
         "authority": {
             "research_shadow_fixture_reconciliation": True,
             "persistent_identity_learning": True,
