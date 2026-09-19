@@ -26,7 +26,7 @@ POLICY_ID = "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
 STATUS = "CURRENT_SHADOW_SOURCE_AGNOSTIC_IDENTITY_COMPATIBILITY_VERIFIED"
 PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID = "VERIFIED_ACTIVE_SOURCE_RAW_BYTES_ONLY"
 STATE_SCHEMA_VERSION = fixture_identity_v2.STATE_SCHEMA_VERSION
-EXPECTED_POLICY_SHA256 = "4af34c636cb7f45011f7c24ede9a92da62cda8065a3ab677b518dffb590ddca3"
+EXPECTED_POLICY_SHA256 = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
 _AUTHORITY = {
     "provider_evidence_observation": True,
     "fixture_identity_reconciliation": True,
@@ -158,6 +158,7 @@ def _policy_payload() -> dict[str, Any]:
         "v3_recovery_policy_id": identity_recovery.POLICY_ID,
         "v3_recovery_matching_basis": identity_recovery.MATCHING_BASIS,
         "provider_evidence_observation_policy_id": PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID,
+        "provider_match_evidence_persistence": "EXACTLY_ONE_MATCH_ONLY",
         "persisted_state_schema_version": STATE_SCHEMA_VERSION,
         "authority": dict(_AUTHORITY),
     }
@@ -255,16 +256,19 @@ def match_current_shadow_event(
 ) -> tuple[Any, ...]:
     """Match with the reviewed V3 -> V2 -> alias -> literal identity order."""
     result = run199_identity.match_event(event, reviewed_rows)
-    if result:
+    if len(result) == 1:
         _record_observed_provider_match(event, result)
+    if result:
         return result
     result_v3 = identity_recovery.match_event(event, reviewed_rows)
-    if result_v3:
+    if len(result_v3) == 1:
         _record_observed_provider_match(event, result_v3)
+    if result_v3:
         return result_v3
     result_v2 = fixture_identity_v2.match_event(event, reviewed_rows)
-    if result_v2:
+    if len(result_v2) == 1:
         _record_observed_provider_match(event, result_v2)
+    if result_v2:
         return result_v2
     if event.competition_name is None:
         return ()
@@ -281,7 +285,7 @@ def match_current_shadow_event(
 def _record_observed_provider_match(event: Any, result: Sequence[Any]) -> None:
     """Retain exact provider/source evidence for every successful stable match."""
     event_id = getattr(event, "event_id", None)
-    if type(event_id) is not str or not result:
+    if type(event_id) is not str or len(result) != 1:
         return
     provider = fixture_identity_v2._provider.get(event_id)
     source_id = str(getattr(result[0], "source_fixture_identifier", ""))

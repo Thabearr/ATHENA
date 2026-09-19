@@ -303,7 +303,7 @@ Resolution:
    discovery endpoint (`/api/ng/factsCenter/liveOrPrematchEvents?sportId=sr:sport:1&pageSize=100&pageNum=<n>`)
    via `domain.current_shadow_sportybet_paginated_discovery_reconciliation`.
 3. The paginated discovery contract is pinned to SHA-256:
-   `c000a9b92afa616574516032ce4bb599cba0af3702f74e1219b6cbfdffbd0dbd`.
+   `106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90`.
 
 ### Root Cause B: Pre-Router Candidate Classification & Failure Taxonomy
 

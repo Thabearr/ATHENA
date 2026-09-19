@@ -239,7 +239,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
             "Check F failed: Current Shadow upcoming strategy ID drifted"
         )
     if identities["current_shadow_upcoming_compatibility_sha256"] != (
-        "764c9c897d68ef201bbc4084f6bb3b44ebc699e614204f08693aa5e20be6beba"
+        "29a250f3b7db3b0d84e8852df4a119df34e3eab914d5ac4e56c25d2e19ef64f2"
     ):
         raise P30LiveReadinessError(
             "Check F failed: Current Shadow upcoming compatibility SHA drifted"
@@ -249,13 +249,13 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
             "Check F failed: shared identity compatibility policy ID drifted"
         )
     if identities["identity_compatibility_policy_sha256"] != (
-        "4af34c636cb7f45011f7c24ede9a92da62cda8065a3ab677b518dffb590ddca3"
+        "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
     ):
         raise P30LiveReadinessError(
             "Check F failed: shared identity compatibility policy SHA drifted"
         )
     if historical["contract_sha256"] != (
-        "c000a9b92afa616574516032ce4bb599cba0af3702f74e1219b6cbfdffbd0dbd"
+        "106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90"
     ):
         raise P30LiveReadinessError(
             "Check F failed: retained paginated compatibility contract SHA drifted"

@@ -452,7 +452,7 @@ def _run_paginated(
 def test_paginated_discovery_contract_is_pinned_and_zero_authority():
     contract = paginated_discovery.validate_contract()
     assert contract["contract_sha256"] == paginated_discovery.EXPECTED_CONTRACT_SHA256
-    assert contract["contract_sha256"] == "c000a9b92afa616574516032ce4bb599cba0af3702f74e1219b6cbfdffbd0dbd"
+    assert contract["contract_sha256"] == "106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90"
 
     authority = paginated_discovery.AUTHORITY
     assert authority["login"] is False
@@ -994,6 +994,132 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
     assert identity_compatibility.identity_state_snapshot()["schema_version"] == 2
     assert identity_compatibility.identity_state_snapshot()["learned_team_identities"] == []
     assert identity_compatibility.identity_state_snapshot()["learned_competition_identities"] == []
+
+
+def test_ambiguous_native_id_match_has_no_evidence_or_state_side_effect(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    """Ambiguous stable-ID candidates remain ambiguous without persisting row zero."""
+    native_event_id = "sr:match:9000003"
+    native_kickoff = datetime(2026, 9, 20, 15, 0, tzinfo=UTC)
+    provider_home_id = "sr:competitor:1"
+    provider_away_id = "sr:competitor:61"
+    provider_category_id = "sr:category:1"
+    provider_tournament_id = "sr:tournament:18"
+    provider_raw = json.dumps(
+        {
+            "bizCode": 10000,
+            "data": [
+                _event(
+                    event_id=native_event_id,
+                    home="QPR Provider Renamed",
+                    away="Cardiff Provider Renamed",
+                    kickoff=native_kickoff,
+                    tournament_name="Championship",
+                    home_team_id=provider_home_id,
+                    away_team_id=provider_away_id,
+                    category_id=provider_category_id,
+                    tournament_id=provider_tournament_id,
+                )
+            ],
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    admission, captures = _fotmob_admission(
+        tmp_path,
+        match_ids=(5000003, 5000004),
+        home="QPR",
+        away="Cardiff",
+        competition="Championship",
+        kickoff=native_kickoff,
+        ccode="ENG",
+        league_id=48,
+        primary_id=48,
+        home_id=10172,
+        away_id=8344,
+    )
+    nonce = _epoch_ms(DISCOVERY_OBSERVED) - 250
+
+    def fetch_upcoming() -> tuple[bytes, int, datetime, int]:
+        return provider_raw, 200, DISCOVERY_OBSERVED, nonce
+
+    monkeypatch.setattr(upcoming_discovery, "_network_fetch_snapshot", fetch_upcoming)
+    monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
+    state_path = tmp_path / "ambiguous-current-shadow-identity-state.json"
+    monkeypatch.setenv("ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH", str(state_path))
+
+    discovery_directory, _ = upcoming_discovery.capture_current_upcoming_discovery(
+        repository_root=tmp_path,
+        execute_live_network=True,
+    )
+    snapshot = upcoming_discovery.verify_current_upcoming_discovery(
+        discovery_directory,
+        repository_root=tmp_path,
+    )
+    verified_raw = upcoming_discovery._read_verified_upcoming_raw(
+        discovery_directory,
+        snapshot,
+    )
+    event = snapshot.events[0]
+    reviewed_rows = reviewed_discovery._reviewed_rows(admission)
+    assert len(reviewed_rows) == 2
+    assert (event.home_team_name, event.away_team_name) == (
+        "QPR Provider Renamed",
+        "Cardiff Provider Renamed",
+    )
+    assert (reviewed_rows[0].home_team, reviewed_rows[0].away_team) == (
+        "QPR",
+        "Cardiff",
+    )
+
+    try:
+        identity_compatibility.begin_identity_scope(
+            captures,
+            provider_raw_bytes=(verified_raw,),
+        )
+        before = identity_compatibility.identity_state_snapshot()
+        before_file_exists = state_path.exists()
+        before_file_bytes = state_path.read_bytes() if before_file_exists else None
+
+        matches = identity_compatibility.match_current_shadow_event(
+            event,
+            reviewed_rows,
+        )
+        assert len(matches) == 2
+        after_match = identity_compatibility.identity_state_snapshot()
+        assert after_match["evidence_records"] == before["evidence_records"]
+        assert after_match["learned_team_identities"] == before["learned_team_identities"]
+        assert after_match["learned_competition_identities"] == before["learned_competition_identities"]
+        assert state_path.exists() is before_file_exists
+        assert (
+            state_path.read_bytes() if state_path.exists() else None
+        ) == before_file_bytes
+
+        bundle = upcoming_discovery.reconcile_current_events_from_upcoming_discovery(
+            repository_root=tmp_path,
+            discovery_evidence_directory=discovery_directory,
+            fotmob_admission_value=admission,
+            fotmob_captures=captures,
+            execute_live_network=False,
+        )
+        row = bundle.rows[0]
+        assert row.exact_fotmob_match_count == 2
+        assert row.disposition is (
+            reviewed_discovery.CurrentEventReconciliationDisposition
+            .AMBIGUOUS_EXACT_REVIEWED_FOTMOB_MATCH
+        )
+        assert row.fixture_reconciliation_authorized is False
+        after_reconciliation = identity_compatibility.identity_state_snapshot()
+        assert after_reconciliation["evidence_records"] == before["evidence_records"]
+        assert after_reconciliation["learned_team_identities"] == before["learned_team_identities"]
+        assert after_reconciliation["learned_competition_identities"] == before["learned_competition_identities"]
+        assert state_path.exists() is before_file_exists
+        assert (
+            state_path.read_bytes() if state_path.exists() else None
+        ) == before_file_bytes
+    finally:
+        fixture_identity.reset_runtime_evidence()
 
 
 # ---------------------------------------------------------------------------
