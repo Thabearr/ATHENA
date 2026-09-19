@@ -219,6 +219,9 @@ def check_e_discovery_contract() -> dict[str, Any]:
 def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     """Check F: the reviewed upcoming source is the canonical P3 source."""
     from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated
+    from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
+    from domain import current_shadow_fixture_identity_aliases as aliases
+    from domain import current_shadow_fixture_identity_v2 as stable_identity
     from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
 
     identities = upcoming.validate_contract()
@@ -236,10 +239,36 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
             "Check F failed: Current Shadow upcoming strategy ID drifted"
         )
     if identities["current_shadow_upcoming_compatibility_sha256"] != (
-        "2c030731c8cecdc8acfb0354886cb0f8c61519ecda69c79d5558fc8a871537eb"
+        "764c9c897d68ef201bbc4084f6bb3b44ebc699e614204f08693aa5e20be6beba"
     ):
         raise P30LiveReadinessError(
             "Check F failed: Current Shadow upcoming compatibility SHA drifted"
+        )
+    if identities["identity_compatibility_policy_id"] != identity_compatibility.POLICY_ID:
+        raise P30LiveReadinessError(
+            "Check F failed: shared identity compatibility policy ID drifted"
+        )
+    if identities["identity_compatibility_policy_sha256"] != (
+        "4af34c636cb7f45011f7c24ede9a92da62cda8065a3ab677b518dffb590ddca3"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: shared identity compatibility policy SHA drifted"
+        )
+    if historical["contract_sha256"] != (
+        "c000a9b92afa616574516032ce4bb599cba0af3702f74e1219b6cbfdffbd0dbd"
+    ):
+        raise P30LiveReadinessError(
+            "Check F failed: retained paginated compatibility contract SHA drifted"
+        )
+    if aliases.REGISTRY_SHA256 != (
+        "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
+    ):
+        raise P30LiveReadinessError("Check F failed: alias V3 SHA drifted")
+    if stable_identity.REGISTRY_SHA256 != (
+        "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+    ) or stable_identity.STATE_SCHEMA_VERSION != 2:
+        raise P30LiveReadinessError(
+            "Check F failed: stable identity registry or state schema drifted"
         )
     return {
         "status": "PASSED",
@@ -251,6 +280,12 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         ],
         "current_shadow_upcoming_compatibility_sha256": identities[
             "current_shadow_upcoming_compatibility_sha256"
+        ],
+        "identity_compatibility_policy_id": identities[
+            "identity_compatibility_policy_id"
+        ],
+        "identity_compatibility_policy_sha256": identities[
+            "identity_compatibility_policy_sha256"
         ],
         "active_discovery_root": str(upcoming.ALLOWED_OUTPUT_RELATIVE),
         "paginated_contract_sha256_retained_historically": historical[
@@ -447,9 +482,14 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
             "Check H failed: retained all-in-play shape unexpectedly yielded Router inputs"
         )
 
-    # Truthful evidence inventory: no historical retained paginated raw-page artifact exists
-    # Search provenance across runs 35409481576, 35404223536, 35277452572
-    runs_searched = ["35409481576", "35404223536", "35277452572"]
+    retained_external_evidence = {
+        "artifact_id": 10584211437,
+        "zip_sha256": "a9facd41768ad271cae6ccb72f0c092b6f640d82daf0de5c46509af55766064d",
+        "raw_page_sha256": "f13f112afa8c376a9cc95b6b0e1a1c254592786a8574acb59b93d377ddea792c",
+        "retained_bytes_exist": True,
+        "retained_bytes_checked_in": False,
+        "path": ".cache/athena-research/sportybet-current-event-discovery/0571e8445cc1b557ea581c59/page-001.json",
+    }
 
     # Exact offline counterpart matching replay
     identity.reset_runtime_evidence()
@@ -510,8 +550,12 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
         "status": "PASSED",
         "run_35441111017_source_viability_shape_reproduction": {
             **exact_shape,
-            "runs_searched_for_retained_bytes": runs_searched,
-            "retained_bytes_checked_in": False,
+            "evidence_kind": shape["evidence_kind"],
+            "retained_external_evidence": retained_external_evidence,
+            "offline_shape_reproduction": {
+                "evidence_kind": "DETERMINISTIC_SHAPE_REPRODUCTION_NOT_RETAINED_BYTES",
+                "retained_bytes_checked_in": False,
+            },
             "direct_detail_acquisitions": 0,
             "reconciled_fixture_count": 0,
             "priced_fixture_count": 0,

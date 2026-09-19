@@ -92,13 +92,15 @@ TEAM_LABEL_COMPATIBILITY_POLICY_SHA256 = (
 RUN199_IDENTITY_POLICY_ID = run199_identity.POLICY_ID
 RUN199_IDENTITY_POLICY_SHA256 = run199_identity.POLICY_SHA256
 IDENTITY_RECOVERY_V3_POLICY_ID = identity_recovery.POLICY_ID
+IDENTITY_COMPATIBILITY_POLICY_ID = identity_compatibility.POLICY_ID
+IDENTITY_COMPATIBILITY_POLICY_SHA256 = identity_compatibility.EXPECTED_POLICY_SHA256
 
 MATCHING_BASIS = (
     reviewed_discovery.MATCHING_BASIS
     + "_PLUS_CURRENT_SHADOW_TEAM_LABEL_AND_STABLE_IDENTITY_RECOVERY_V3_AND_RUN199_OVERLAY"
 )
 EXPECTED_CONTRACT_SHA256 = (
-    "98bedacc3ccbc080312855fdd973545374ba2448dc89b841420bc70147ffaf21"
+    "c000a9b92afa616574516032ce4bb599cba0af3702f74e1219b6cbfdffbd0dbd"
 )
 
 CurrentEventReconciliationDisposition = (
@@ -190,6 +192,8 @@ def _contract_payload() -> dict[str, Any]:
         "run199_identity_policy_id": RUN199_IDENTITY_POLICY_ID,
         "run199_identity_policy_sha256": RUN199_IDENTITY_POLICY_SHA256,
         "identity_recovery_v3_policy_id": IDENTITY_RECOVERY_V3_POLICY_ID,
+        "identity_compatibility_policy_id": IDENTITY_COMPATIBILITY_POLICY_ID,
+        "identity_compatibility_policy_sha256": IDENTITY_COMPATIBILITY_POLICY_SHA256,
         "matching_basis": MATCHING_BASIS,
         "next_boundary": NEXT_BOUNDARY,
         "authority": dict(AUTHORITY),
@@ -229,6 +233,7 @@ def validate_contract() -> Mapping[str, Any]:
         raise CurrentShadowPaginatedDiscoveryReconciliationError(
             "Shadow run-199 identity policy drifted"
         )
+    identity_compatibility.validate_contract()
     actual = calculate_contract_sha256()
     if actual != EXPECTED_CONTRACT_SHA256:
         raise CurrentShadowPaginatedDiscoveryReconciliationError(
@@ -240,6 +245,8 @@ def validate_contract() -> Mapping[str, Any]:
             "base_discovery_contract_sha256": (
                 reviewed_discovery.EXPECTED_CONTRACT_SHA256
             ),
+            "identity_compatibility_policy_id": IDENTITY_COMPATIBILITY_POLICY_ID,
+            "identity_compatibility_policy_sha256": IDENTITY_COMPATIBILITY_POLICY_SHA256,
         }
     )
 
@@ -321,11 +328,13 @@ def _verify_identity_state_append_only_extension(
 
 def _begin_identity_scope(
     fotmob_captures: Sequence[Any],
-    discovery_evidence_directory: Path | None = None,
+    *,
+    historical_page_raw_bytes: Sequence[bytes] = (),
 ) -> None:
     try:
         identity_compatibility.begin_identity_scope(
-            fotmob_captures, discovery_evidence_directory
+            fotmob_captures,
+            historical_page_raw_bytes=historical_page_raw_bytes,
         )
     except Exception as exc:
         raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
@@ -383,6 +392,31 @@ def verify_current_paginated_discovery(
     return reviewed_discovery.verify_current_event_discovery(
         evidence_directory, repository_root=repository_root
     )
+
+
+def _read_verified_paginated_page_raws(
+    evidence_directory: Path,
+    manifest: SportyBetCurrentEventDiscoveryManifest,
+) -> tuple[bytes, ...]:
+    raw_pages: list[bytes] = []
+    for page in manifest.pages:
+        path = Path(evidence_directory) / PAGE_FILENAME_TEMPLATE.format(
+            page_num=page.page_num
+        )
+        try:
+            raw = reviewed_discovery._read_regular(
+                path,
+                maximum=MAX_RESPONSE_BYTES,
+                label=f"historical paginated discovery page {page.page_num}",
+            )
+        except SportyBetLiteCaptureError as exc:
+            raise CurrentShadowPaginatedDiscoveryReconciliationError(str(exc)) from exc
+        if sha256_bytes(raw) != page.raw_sha256 or len(raw) != page.raw_size:
+            raise CurrentShadowPaginatedDiscoveryReconciliationError(
+                "historical paginated raw page identity drifted before observation"
+            )
+        raw_pages.append(raw)
+    return tuple(raw_pages)
 
 
 def _build_shadow_bundle(
@@ -637,13 +671,19 @@ def reconcile_current_events_from_paginated_discovery(
     """Reconcile already-discovered events against a reviewed FotMob admission."""
     validate_contract()
     repository = Path(repository_root).resolve(strict=True)
-    _begin_identity_scope(fotmob_captures, discovery_evidence_directory)
     captures = reviewed_discovery._materialize_fotmob_captures(fotmob_captures)
     admission = reviewed_discovery._rederive_exact_fotmob_admission(
         fotmob_admission_value, captures
     )
     discovery = reviewed_discovery.verify_current_event_discovery(
         discovery_evidence_directory, repository_root=repository
+    )
+    page_raw_bytes = _read_verified_paginated_page_raws(
+        discovery_evidence_directory, discovery
+    )
+    _begin_identity_scope(
+        fotmob_captures,
+        historical_page_raw_bytes=page_raw_bytes,
     )
     reviewed = reviewed_discovery._reviewed_rows(admission)
 
@@ -748,8 +788,6 @@ def verify_current_event_discovery_reconciliation_bundle(
     validate_contract()
     captures = getattr(value, "_fotmob_captures", ())
     discovery_directory = getattr(value, "_discovery_directory", None)
-    if discovery_directory is not None:
-        _begin_identity_scope(captures, discovery_directory)
     expected_state = getattr(
         value, "_fixture_stable_identity_state_sha256", None
     )
@@ -766,10 +804,6 @@ def verify_current_event_discovery_reconciliation_bundle(
             raise CurrentShadowPaginatedDiscoveryReconciliationError(
                 "retained Shadow fixture identity state snapshot hash drifted"
             )
-        current_state = _identity_state_snapshot()
-        _verify_identity_state_append_only_extension(
-            retained_state, current_state
-        )
 
     repository = value._repository_root
     captures_mat = reviewed_discovery._materialize_fotmob_captures(
@@ -782,6 +816,18 @@ def verify_current_event_discovery_reconciliation_bundle(
         value._discovery_directory,
         repository_root=repository,
     )
+    page_raw_bytes = _read_verified_paginated_page_raws(
+        value._discovery_directory, discovery
+    )
+    _begin_identity_scope(
+        captures_mat,
+        historical_page_raw_bytes=page_raw_bytes,
+    )
+    if expected_state is not None and retained_state is not None:
+        current_state = _identity_state_snapshot()
+        _verify_identity_state_append_only_extension(
+            retained_state, current_state
+        )
     detail_dirs = dict(value._detail_directories)
     rebuilt = _build_shadow_bundle(
         repository_root=repository,

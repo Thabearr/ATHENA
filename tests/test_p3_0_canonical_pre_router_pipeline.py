@@ -407,7 +407,7 @@ def _run_paginated(
 def test_paginated_discovery_contract_is_pinned_and_zero_authority():
     contract = paginated_discovery.validate_contract()
     assert contract["contract_sha256"] == paginated_discovery.EXPECTED_CONTRACT_SHA256
-    assert contract["contract_sha256"] == "98bedacc3ccbc080312855fdd973545374ba2448dc89b841420bc70147ffaf21"
+    assert contract["contract_sha256"] == "c000a9b92afa616574516032ce4bb599cba0af3702f74e1219b6cbfdffbd0dbd"
 
     authority = paginated_discovery.AUTHORITY
     assert authority["login"] is False

@@ -12,14 +12,35 @@ from datetime import timezone
 import hashlib
 import json
 import os
-from pathlib import Path
 from typing import Any
 
+from domain import current_shadow_fixture_identity_aliases as alias_registry
 from domain import current_shadow_fixture_identity_run199_overlay as run199_identity
 from domain import current_shadow_fixture_identity_v2 as fixture_identity_v2
 from domain import current_shadow_sportybet_team_label_compatibility as team_label_compatibility
 from domain import sportybet_current_event_discovery_reconciliation as reviewed_discovery
 from scripts import current_shadow_fixture_identity_reconciliation_recovery as identity_recovery
+
+
+POLICY_ID = "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
+STATUS = "CURRENT_SHADOW_SOURCE_AGNOSTIC_IDENTITY_COMPATIBILITY_VERIFIED"
+PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID = "VERIFIED_ACTIVE_SOURCE_RAW_BYTES_ONLY"
+STATE_SCHEMA_VERSION = fixture_identity_v2.STATE_SCHEMA_VERSION
+EXPECTED_POLICY_SHA256 = "4af34c636cb7f45011f7c24ede9a92da62cda8065a3ab677b518dffb590ddca3"
+_AUTHORITY = {
+    "provider_evidence_observation": True,
+    "fixture_identity_reconciliation": True,
+    "provider_acquisition": False,
+    "pricing": False,
+    "market_router": False,
+    "portfolio": False,
+    "login": False,
+    "cookies": False,
+    "wallet": False,
+    "staking": False,
+    "bet": False,
+    "wager_placed": False,
+}
 
 
 class CurrentShadowFixtureIdentityCompatibilityError(ValueError):
@@ -115,17 +136,83 @@ def verify_identity_state_append_only_extension(
             )
 
 
+def _policy_payload() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "policy_id": POLICY_ID,
+        "status": STATUS,
+        "match_order": [
+            "RUN199_EXACT_FIXTURE_IDENTITY_OVERLAY",
+            "V3_IDENTITY_RECOVERY",
+            "V2_STABLE_IDENTITY",
+            "REVIEWED_LITERAL_MATCH",
+        ],
+        "team_label_policy_id": team_label_compatibility.POLICY_ID,
+        "team_label_policy_sha256": team_label_compatibility.EXPECTED_POLICY_SHA256,
+        "alias_v3_policy_id": alias_registry.POLICY_ID,
+        "alias_v3_registry_sha256": alias_registry.REGISTRY_SHA256,
+        "stable_identity_policy_id": fixture_identity_v2.POLICY_ID,
+        "stable_identity_registry_sha256": fixture_identity_v2.REGISTRY_SHA256,
+        "run199_policy_id": run199_identity.POLICY_ID,
+        "run199_policy_sha256": run199_identity.POLICY_SHA256,
+        "v3_recovery_policy_id": identity_recovery.POLICY_ID,
+        "v3_recovery_matching_basis": identity_recovery.MATCHING_BASIS,
+        "provider_evidence_observation_policy_id": PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID,
+        "persisted_state_schema_version": STATE_SCHEMA_VERSION,
+        "authority": dict(_AUTHORITY),
+    }
+
+
+def calculate_policy_sha256() -> str:
+    raw = json.dumps(
+        _policy_payload(),
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(raw).hexdigest()
+
+
+def validate_contract() -> Mapping[str, str]:
+    if STATE_SCHEMA_VERSION != 2:
+        raise CurrentShadowFixtureIdentityCompatibilityError(
+            "persisted identity state schema drifted"
+        )
+    if EXPECTED_POLICY_SHA256 == "__PENDING__":
+        raise CurrentShadowFixtureIdentityCompatibilityError(
+            "identity compatibility policy SHA is not pinned"
+        )
+    actual = calculate_policy_sha256()
+    if actual != EXPECTED_POLICY_SHA256:
+        raise CurrentShadowFixtureIdentityCompatibilityError(
+            "identity compatibility policy SHA drifted"
+        )
+    return {
+        "policy_id": POLICY_ID,
+        "policy_sha256": actual,
+        "provider_evidence_observation_policy_id": PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID,
+        "state_schema_version": str(STATE_SCHEMA_VERSION),
+    }
+
+
 def begin_identity_scope(
     fotmob_captures: Sequence[Any],
-    discovery_evidence_directory: Path | None = None,
+    *,
+    provider_raw_bytes: Sequence[bytes] = (),
+    historical_page_raw_bytes: Sequence[bytes] = (),
 ) -> None:
     fixture_identity_v2.reset_runtime_evidence()
     fixture_identity_v2.configure_persistent_state(
         os.environ.get("ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH")
     )
     fixture_identity_v2.observe_fotmob_captures(fotmob_captures)
-    if discovery_evidence_directory is not None:
-        fixture_identity_v2.observe_provider_directory(discovery_evidence_directory)
+    for raw in tuple(provider_raw_bytes) + tuple(historical_page_raw_bytes):
+        if type(raw) is not bytes or not raw:
+            raise CurrentShadowFixtureIdentityCompatibilityError(
+                "verified provider evidence must be non-empty raw bytes"
+            )
+        fixture_identity_v2.observe_provider_payload(raw)
 
 
 def project_event_labels(event: reviewed_discovery.SportyBetDiscoveredEvent) -> Any:
@@ -169,12 +256,15 @@ def match_current_shadow_event(
     """Match with the reviewed V3 -> V2 -> alias -> literal identity order."""
     result = run199_identity.match_event(event, reviewed_rows)
     if result:
+        _record_observed_provider_match(event, result)
         return result
     result_v3 = identity_recovery.match_event(event, reviewed_rows)
     if result_v3:
+        _record_observed_provider_match(event, result_v3)
         return result_v3
     result_v2 = fixture_identity_v2.match_event(event, reviewed_rows)
     if result_v2:
+        _record_observed_provider_match(event, result_v2)
         return result_v2
     if event.competition_name is None:
         return ()
@@ -188,12 +278,40 @@ def match_current_shadow_event(
     )
 
 
+def _record_observed_provider_match(event: Any, result: Sequence[Any]) -> None:
+    """Retain exact provider/source evidence for every successful stable match."""
+    event_id = getattr(event, "event_id", None)
+    if type(event_id) is not str or not result:
+        return
+    provider = fixture_identity_v2._provider.get(event_id)
+    source_id = str(getattr(result[0], "source_fixture_identifier", ""))
+    source = fixture_identity_v2._fotmob.get(source_id)
+    if provider is None or source is None:
+        return
+    evidence = fixture_identity_v2._new_evidence_record(
+        source_fixture_identifier=source_id,
+        provider_event_id=event_id,
+        source=source,
+        provider=provider,
+    )
+    if evidence not in fixture_identity_v2._evidence_records:
+        fixture_identity_v2._evidence_records.append(evidence)
+        fixture_identity_v2._persist_state()
+
+
 __all__ = [
     "CurrentShadowFixtureIdentityCompatibilityError",
+    "EXPECTED_POLICY_SHA256",
+    "POLICY_ID",
+    "PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID",
+    "STATE_SCHEMA_VERSION",
     "begin_identity_scope",
+    "calculate_policy_sha256",
     "identity_state_sha256",
     "identity_state_snapshot",
     "match_current_shadow_event",
     "project_event_labels",
+    "_record_observed_provider_match",
+    "validate_contract",
     "verify_identity_state_append_only_extension",
 ]

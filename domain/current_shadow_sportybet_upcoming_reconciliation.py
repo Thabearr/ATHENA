@@ -85,7 +85,7 @@ EXPECTED_CONTRACT_SHA256 = "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2
 UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 = EXPECTED_CONTRACT_SHA256
 CURRENT_SHADOW_UPCOMING_POLICY_ID = "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
 CURRENT_SHADOW_UPCOMING_STATUS = "CURRENT_SHADOW_UPCOMING_DISCOVERY_RECONCILIATION_VERIFIED"
-CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = "2c030731c8cecdc8acfb0354886cb0f8c61519ecda69c79d5558fc8a871537eb"
+CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = "764c9c897d68ef201bbc4084f6bb3b44ebc699e614204f08693aa5e20be6beba"
 PROSPECTIVE_DISCOVERY_ELIGIBLE = "PROSPECTIVE_DISCOVERY_ELIGIBLE"
 PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS = "PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS"
 _SHA_RE = re.compile(r"^[0-9a-f]{64}$", re.ASCII)
@@ -301,6 +301,7 @@ def validate_contract() -> Mapping[str, str]:
         raise CurrentShadowSportyBetUpcomingReconciliationError(
             "Current Shadow run-199 identity policy drifted"
         )
+    identity_compatibility.validate_contract()
     if CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 != calculate_current_shadow_upcoming_compatibility_sha256():
         raise CurrentShadowSportyBetUpcomingReconciliationError(
             "Current Shadow upcoming compatibility contract drifted"
@@ -311,6 +312,8 @@ def validate_contract() -> Mapping[str, str]:
             "upstream_upcoming_source_contract_sha256": UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256,
             "current_shadow_upcoming_policy_id": CURRENT_SHADOW_UPCOMING_POLICY_ID,
             "current_shadow_upcoming_compatibility_sha256": CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256,
+            "identity_compatibility_policy_id": identity_compatibility.POLICY_ID,
+            "identity_compatibility_policy_sha256": identity_compatibility.EXPECTED_POLICY_SHA256,
             "reviewed_reconciliation_contract_sha256": reviewed.EXPECTED_CONTRACT_SHA256,
             "live_event_source_contract_sha256": live.EXPECTED_CONTRACT_SHA256,
         }
@@ -333,6 +336,8 @@ def _compatibility_payload() -> dict[str, Any]:
         "run199_identity_policy_sha256": run199_identity.POLICY_SHA256,
         "identity_recovery_v3_policy_id": identity_recovery.POLICY_ID,
         "identity_recovery_v3_matching_basis": identity_recovery.MATCHING_BASIS,
+        "identity_compatibility_policy_id": identity_compatibility.POLICY_ID,
+        "identity_compatibility_policy_sha256": identity_compatibility.EXPECTED_POLICY_SHA256,
         "tolerant_direct_detail_policy_id": tolerant_inventory.POLICY_ID,
         "matching_basis": MATCHING_BASIS + "_PLUS_CURRENT_SHADOW_IDENTITY_COMPATIBILITY_V3",
         "freshness_seconds": MAX_SOURCE_AGE_SECONDS,
@@ -808,6 +813,25 @@ def verify_current_upcoming_discovery(
     return snapshot
 
 
+def _read_verified_upcoming_raw(
+    evidence_directory: Path,
+    snapshot: CurrentShadowUpcomingDiscoverySnapshot,
+) -> bytes:
+    try:
+        raw = _read_regular(
+            Path(evidence_directory) / RAW_FILENAME,
+            maximum=MAX_RESPONSE_BYTES,
+            label="PR-F verified upcoming raw response",
+        )
+    except SportyBetLiteCaptureError as exc:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
+    if sha256_bytes(raw) != snapshot.raw_sha256 or len(raw) != snapshot.raw_size:
+        raise CurrentShadowSportyBetUpcomingReconciliationError(
+            "verified upcoming raw response identity drifted before observation"
+        )
+    return raw
+
+
 def _set_frozen(obj: Any, values: Mapping[str, Any]) -> Any:
     for key, value in values.items():
         object.__setattr__(obj, key, value)
@@ -888,13 +912,14 @@ SportyBetCurrentEventDiscoveryReconciliationBundle = (
 
 def _begin_identity_scope(
     fotmob_captures: Sequence[Any],
-    discovery_evidence_directory: Path | None = None,
+    *,
+    provider_raw_bytes: Sequence[bytes] = (),
 ) -> None:
     """Bind the reviewed V2/V3 identity state to this upcoming-source replay."""
     try:
         identity_compatibility.begin_identity_scope(
             fotmob_captures,
-            discovery_evidence_directory,
+            provider_raw_bytes=provider_raw_bytes,
         )
     except Exception as exc:
         raise CurrentShadowSportyBetUpcomingReconciliationError(
@@ -1135,7 +1160,6 @@ def reconcile_current_events_from_upcoming_discovery(
     """Reconcile an exact upcoming response under the full Current Shadow stack."""
     validate_contract()
     repository = Path(repository_root).resolve(strict=True)
-    _begin_identity_scope(fotmob_captures, discovery_evidence_directory)
     try:
         captures = reviewed._materialize_fotmob_captures(fotmob_captures)
         admission = reviewed._rederive_exact_fotmob_admission(
@@ -1148,6 +1172,8 @@ def reconcile_current_events_from_upcoming_discovery(
         discovery_evidence_directory,
         repository_root=repository,
     )
+    provider_raw = _read_verified_upcoming_raw(discovery_evidence_directory, discovery)
+    _begin_identity_scope(fotmob_captures, provider_raw_bytes=(provider_raw,))
     reviewed_rows = reviewed._reviewed_rows(admission)
     projected_events = tuple(_project_event_labels(event) for event in discovery.events)
     provisional: dict[str, tuple[str, tuple[Any, ...]]] = {}
@@ -1268,10 +1294,11 @@ def verify_current_event_discovery_reconciliation_bundle(
         )
     except reviewed.SportyBetCurrentEventDiscoveryError as exc:
         raise CurrentShadowSportyBetUpcomingReconciliationError(str(exc)) from exc
-    _begin_identity_scope(captures, value._discovery_directory)
     discovery = verify_current_upcoming_discovery(
         value._discovery_directory, repository_root=value._repository_root
     )
+    provider_raw = _read_verified_upcoming_raw(value._discovery_directory, discovery)
+    _begin_identity_scope(captures, provider_raw_bytes=(provider_raw,))
     rebuilt = _build_bundle(
         repository_root=value._repository_root,
         discovery_directory=value._discovery_directory,

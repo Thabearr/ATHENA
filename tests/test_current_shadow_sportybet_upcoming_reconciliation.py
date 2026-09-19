@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import json
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlsplit
 
 from domain import current_shadow_all_market_runner as runner
+from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
+from domain import current_shadow_fixture_identity_v2 as identity_v2
 from domain import current_shadow_sportybet_upcoming_reconciliation as current
 
 UTC = timezone.utc
@@ -24,7 +27,9 @@ def _pr258_shape() -> bytes:
                     "estimateStartTime": KICKOFF_MS,
                     "status": 0,
                     "matchStatus": "Not start",
+                    "homeTeamId": "sr:competitor:291001",
                     "homeTeamName": "Seosan FC",
+                    "awayTeamId": "sr:competitor:291002",
                     "awayTeamName": "Namyangju FC",
                     "sport": {
                         "id": "sr:sport:1",
@@ -70,6 +75,12 @@ def test_contract_mirrors_exact_pr258_upcoming_path_without_changing_shared_cont
     )
     assert current.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == (
         current.calculate_current_shadow_upcoming_compatibility_sha256()
+    )
+    assert current.validate_contract()["identity_compatibility_policy_id"] == (
+        "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
+    )
+    assert current.validate_contract()["identity_compatibility_policy_sha256"] == (
+        "4af34c636cb7f45011f7c24ede9a92da62cda8065a3ab677b518dffb590ddca3"
     )
     assert runner.reconciliation is current
 
@@ -117,3 +128,69 @@ def test_upcoming_source_assessment_exposes_prospective_counts():
     assert assessment["provider_future_lead_eligible_count"] == 1
     assert assessment["provider_too_close_count"] == 0
     assert assessment["source_viability"] == current.PROSPECTIVE_DISCOVERY_ELIGIBLE
+
+
+def test_upcoming_raw_provider_native_ids_are_observed_before_stable_identity_match():
+    kickoff = datetime(2026, 8, 29, 7, 0, tzinfo=UTC)
+    fotmob_raw = json.dumps({
+        "leagues": [{
+            "ccode": "ENG",
+            "primaryId": 48,
+            "name": "Championship",
+            "matches": [{
+                "id": 5836800,
+                "home": {"id": 10172, "name": "QPR", "longName": "Queens Park Rangers"},
+                "away": {"id": 8344, "name": "Cardiff", "longName": "Cardiff City"},
+                "status": {"utcTime": kickoff.isoformat().replace("+00:00", "Z")},
+            }],
+        }]
+    }, separators=(",", ":")).encode()
+    provider_raw = json.dumps({
+        "bizCode": 10000,
+        "message": "0#0",
+        "data": [{
+            "eventId": "sr:match:72339764",
+            "estimateStartTime": int(kickoff.timestamp() * 1000),
+            "status": 0,
+            "matchStatus": "Not start",
+            "homeTeamId": "sr:competitor:1",
+            "homeTeamName": "QPR Provider Renamed",
+            "awayTeamId": "sr:competitor:61",
+            "awayTeamName": "Cardiff Provider Renamed",
+            "sport": {"id": "sr:sport:1", "category": {
+                "id": "sr:category:1",
+                "tournament": {"id": "sr:tournament:18", "name": "Championship"},
+            }},
+        }]
+    }, separators=(",", ":")).encode()
+    snapshot = current._parse_snapshot(
+        provider_raw, request_nonce_ms=NONCE, observed_at=OBSERVED
+    )
+    reviewed = SimpleNamespace(
+        source_fixture_identifier="5836800",
+        kickoff=kickoff,
+        competition="Championship",
+        home_team="QPR",
+        away_team="Cardiff",
+    )
+    identity_compatibility.begin_identity_scope(
+        ((fotmob_raw, {"source": "test"}),),
+        provider_raw_bytes=(provider_raw,),
+    )
+    try:
+        event = snapshot.events[0]
+        assert identity_v2._provider[event.event_id]["home_id"] == "sr:competitor:1"
+        assert identity_v2._provider[event.event_id]["away_id"] == "sr:competitor:61"
+        assert identity_v2._provider[event.event_id]["category"] == "sr:category:1"
+        assert identity_v2._provider[event.event_id]["tournament"] == "sr:tournament:18"
+        assert event.home_team_name != reviewed.home_team
+        assert event.away_team_name != reviewed.away_team
+        assert identity_compatibility.match_current_shadow_event(event, (reviewed,)) == (reviewed,)
+        evidence = identity_compatibility.identity_state_snapshot()["evidence_records"][-1]
+        assert evidence["home_provider_competitor_id"] == "sr:competitor:1"
+        assert evidence["away_provider_competitor_id"] == "sr:competitor:61"
+        assert evidence["provider_category_id"] == "sr:category:1"
+        assert evidence["provider_tournament_id"] == "sr:tournament:18"
+        assert len(identity_compatibility.identity_state_snapshot()["learned_team_identities"]) == 0
+    finally:
+        identity_v2.reset_runtime_evidence()
