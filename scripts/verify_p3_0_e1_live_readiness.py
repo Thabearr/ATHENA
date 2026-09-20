@@ -625,6 +625,8 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         )
 
     from domain.p3_0_comparison_evidence import (
+        LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID,
+        LEGACY_NUMPY_JSON_NORMALIZATION_RULES,
         LegacyEvidenceObserver,
         P30ComparisonEvidenceError,
         project_legacy_output,
@@ -637,6 +639,18 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
     )
 
     contract_sha = validate_contract()
+
+    if LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID != "P3_LEGACY_NUMPY_JSON_NORMALIZATION_V1":
+        raise P30LiveReadinessError("Check I failed: legacy numpy normalization policy ID drifted")
+    expected_rules = (
+        "NUMPY_GENERIC_ITEM_TO_CANONICAL_JSON_RECURSIVE",
+        "NUMPY_NDARRAY_TOLIST_TO_CANONICAL_JSON_RECURSIVE",
+        "DUCK_TYPED_TOLIST_ITEM_FORBIDDEN",
+        "PYTHON_NON_JSON_CONTAINERS_FORBIDDEN",
+        "NONFINITE_NUMBERS_FORBIDDEN",
+    )
+    if LEGACY_NUMPY_JSON_NORMALIZATION_RULES != expected_rules:
+        raise P30LiveReadinessError("Check I failed: legacy numpy normalization rules drifted")
 
     sample_analysis = {
         "fixture_id": "test_fixture_ml_1",
@@ -706,6 +720,61 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
     if not credential_rejected:
         raise P30LiveReadinessError("Check I failed: credential-like key was not rejected")
 
+    # Offline verification of numpy scalar projection:
+    import numpy as np
+    numpy_test_analysis = dict(quarantined)
+    numpy_test_analysis["risk_score"] = np.float64(10.0)
+    numpy_test_analysis["edge_differential"] = np.float32(0.05)
+    numpy_projected = project_legacy_output(
+        pre_gate=numpy_test_analysis,
+        authorized=numpy_test_analysis,
+        exported=numpy_test_analysis,
+    )
+    proj_risk = numpy_projected["exported_row"]["risk_score"]
+    if type(proj_risk) is not float or proj_risk != 10.0:
+        raise P30LiveReadinessError("Check I failed: np.float64 risk_score not normalized to Python float")
+
+    # Verify duck-typed object rejection without invocation:
+    class _DuckItem:
+        called = False
+        def item(self):
+            _DuckItem.called = True
+            return 1.0
+
+    duck_analysis = dict(quarantined)
+    duck_analysis["evidence_report"] = dict(quarantined["evidence_report"])
+    duck_analysis["evidence_report"]["duck"] = _DuckItem()
+    duck_rejected = False
+    try:
+        project_legacy_output(pre_gate=duck_analysis, authorized=duck_analysis, exported=duck_analysis)
+    except P30ComparisonEvidenceError:
+        duck_rejected = True
+    if not duck_rejected or _DuckItem.called:
+        raise P30LiveReadinessError("Check I failed: duck-typed object was not rejected without invocation")
+
+    # Verify tuple/set rejection:
+    tuple_analysis = dict(quarantined)
+    tuple_analysis["evidence_report"] = dict(quarantined["evidence_report"])
+    tuple_analysis["evidence_report"]["tup"] = (1, 2)
+    tuple_rejected = False
+    try:
+        project_legacy_output(pre_gate=tuple_analysis, authorized=tuple_analysis, exported=tuple_analysis)
+    except P30ComparisonEvidenceError:
+        tuple_rejected = True
+    if not tuple_rejected:
+        raise P30LiveReadinessError("Check I failed: tuple container was not rejected fail-closed")
+
+    # Verify non-finite rejection:
+    nan_analysis = dict(quarantined)
+    nan_analysis["risk_score"] = np.float64("nan")
+    nan_rejected = False
+    try:
+        project_legacy_output(pre_gate=nan_analysis, authorized=nan_analysis, exported=nan_analysis)
+    except P30ComparisonEvidenceError:
+        nan_rejected = True
+    if not nan_rejected:
+        raise P30LiveReadinessError("Check I failed: non-finite number was not rejected fail-closed")
+
     return {
         "status": "PASSED",
         "canonical_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
@@ -717,6 +786,8 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         "contract_sha256": contract_sha,
         "runtime_safety_quarantine_verified": True,
         "credential_protection_verified": True,
+        "legacy_numpy_normalization_policy_id": LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID,
+        "legacy_numpy_normalization_verified": True,
     }
 
 
