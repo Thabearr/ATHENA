@@ -131,15 +131,56 @@ def _failure_chain(exc: BaseException) -> tuple[list[dict[str, str]], bool]:
     return records, truncated
 
 
+SAFE_FAILURE_DESTINATION_POLICY_ID = (
+    "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
+)
+
+
+def _destination_preexists(path: Path) -> bool:
+    """Return True if path exists in ANY form (file, dir, symlink, etc.)."""
+    try:
+        if os.path.lexists(path):
+            return True
+        return path.exists() or path.is_symlink()
+    except OSError:
+        return True
+
+
+def _publish_capture_artifact(
+    bundle: Mapping[str, Any],
+    output_dir: Path,
+) -> Path:
+    """Publish the verified capture bundle into an immutable artifact directory.
+
+    Wraps only write_capture_artifact publication failures into
+    CAPTURE_ARTIFACT_PUBLICATION_FAILED while preserving the underlying
+    cause. Pre-validates the bundle so contract/validation errors are
+    not mislabeled as publication failures.
+    """
+    evidence.verify_capture_bundle(bundle)
+    try:
+        return evidence.write_capture_artifact(bundle, output_dir)
+    except Exception as exc:
+        publication_err = P30PairedCaptureError(
+            f"CAPTURE_ARTIFACT_PUBLICATION_FAILED: {type(exc).__name__}: {exc}"
+        )
+        publication_err.failure_code = evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED  # type: ignore[attr-defined]
+        raise publication_err from exc
+
+
 def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id: str,
                   started_at: str, exc: BaseException) -> None:
-    if (output_dir / "manifest.json").exists():
+    if _destination_preexists(output_dir):
         return
-    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        output_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
     failure_chain, failure_chain_truncated = _failure_chain(exc)
     value = {
         "schema_version": FAILURE_RECEIPT_SCHEMA_VERSION,
         "policy_id": POLICY_ID,
+        "destination_policy_id": SAFE_FAILURE_DESTINATION_POLICY_ID,
         "capture_id": capture_id,
         "status": "CAPTURE_FAILED",
         "started_at": started_at,
@@ -184,7 +225,11 @@ def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id:
             ):
                 if field in diagnostic:
                     value[field] = diagnostic[field]
-    (output_dir / "p3-0-capture-failure.json").write_bytes(evidence.canonical_json_bytes(value))
+    try:
+        (output_dir / "p3-0-capture-failure.json").write_bytes(evidence.canonical_json_bytes(value))
+    except OSError:
+        return
+
 
 
 def _authority_projection(bindings: Any) -> dict[str, Any]:

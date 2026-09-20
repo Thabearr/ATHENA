@@ -909,9 +909,9 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
 
         bundle = capture_part1.build_offline_proof_bundle(partial=False)
 
-        published_path = evidence.write_capture_artifact(bundle, capture_child)
+        published_path = capture_part1._publish_capture_artifact(bundle, capture_child)
         if published_path != capture_child:
-            raise P30LiveReadinessError("Check L failed: write_capture_artifact returned unexpected path")
+            raise P30LiveReadinessError("Check L failed: _publish_capture_artifact returned unexpected path")
 
         verified = evidence.verify_capture_artifact(capture_child)
         if verified["canonical_sha256"] != bundle["canonical_sha256"]:
@@ -920,14 +920,46 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         if readiness_file.read_bytes() != receipt_content:
             raise P30LiveReadinessError("Check L failed: readiness receipt was mutated during publication")
 
-        preexisting_rejected = False
+        child_manifest_bytes = (capture_child / "manifest.json").read_bytes()
+        child_bundle_bytes = (capture_child / "bundle.json").read_bytes()
+
+        second_pub_rejected = False
         try:
-            evidence.write_capture_artifact(bundle, capture_child)
-        except evidence.P30ComparisonEvidenceError as exc:
-            if "capture output directory already exists" in str(exc):
-                preexisting_rejected = True
-        if not preexisting_rejected:
-            raise P30LiveReadinessError("Check L failed: preexisting capture child did not fail closed")
+            capture_part1._publish_capture_artifact(bundle, capture_child)
+        except capture_part1.P30PairedCaptureError as exc:
+            if (
+                exc.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+                and isinstance(exc.__cause__, evidence.P30ComparisonEvidenceError)
+                and "capture output directory already exists" in str(exc.__cause__)
+            ):
+                second_pub_rejected = True
+        if not second_pub_rejected:
+            raise P30LiveReadinessError("Check L failed: second publication through production helper did not fail closed with CAPTURE_ARTIFACT_PUBLICATION_FAILED and exact cause")
+
+        if (capture_child / "manifest.json").read_bytes() != child_manifest_bytes:
+            raise P30LiveReadinessError("Check L failed: existing child manifest mutated during second publication attempt")
+        if (capture_child / "bundle.json").read_bytes() != child_bundle_bytes:
+            raise P30LiveReadinessError("Check L failed: existing child bundle mutated during second publication attempt")
+
+        capture_part1._safe_failure(
+            capture_child, exact_commit_sha="a" * 40, capture_id="test-preexisting",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("preexisting test"),
+        )
+        if (capture_child / "p3-0-capture-failure.json").exists():
+            raise P30LiveReadinessError("Check L failed: _safe_failure created failure receipt in preexisting published child")
+        if (capture_child / "manifest.json").read_bytes() != child_manifest_bytes:
+            raise P30LiveReadinessError("Check L failed: _safe_failure mutated manifest.json in preexisting published child")
+        if (capture_child / "bundle.json").read_bytes() != child_bundle_bytes:
+            raise P30LiveReadinessError("Check L failed: _safe_failure mutated bundle.json in preexisting published child")
+
+        empty_child = envelope / "empty_preexisting_child"
+        empty_child.mkdir(parents=True, exist_ok=False)
+        capture_part1._safe_failure(
+            empty_child, exact_commit_sha="a" * 40, capture_id="test-empty",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("empty test"),
+        )
+        if any(empty_child.iterdir()):
+            raise P30LiveReadinessError("Check L failed: _safe_failure mutated preexisting empty child directory")
 
         complete_exit, complete_payload = capture_part1.classify_published_capture_result(bundle)
         if complete_exit != 0 or complete_payload.get("status") != "P3_0_E1_CAPTURE_WRITTEN":
@@ -943,7 +975,7 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
             raise P30LiveReadinessError("Check L failed: partial bundle did not classify as exit 1 / PAIRED_CAPTURE_PARTIAL")
 
         partial_child = envelope / "partial_capture"
-        evidence.write_capture_artifact(partial_bundle, partial_child)
+        capture_part1._publish_capture_artifact(partial_bundle, partial_child)
         manifest_bytes_before = (partial_child / "manifest.json").read_bytes()
         bundle_bytes_before = (partial_child / "bundle.json").read_bytes()
 
@@ -959,6 +991,7 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         if (partial_child / "bundle.json").read_bytes() != bundle_bytes_before:
             raise P30LiveReadinessError("Check L failed: partial bundle.json was mutated")
         evidence.verify_capture_artifact(partial_child)
+
 
     return {
         "status": "PASSED",

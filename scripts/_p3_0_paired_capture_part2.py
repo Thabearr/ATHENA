@@ -368,15 +368,9 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
         source_artifacts=artifacts,
         fixture_records=records,
     )
-    try:
-        evidence.write_capture_artifact(bundle, output_dir)
-    except Exception as exc:
-        publication_err = P30PairedCaptureError(
-            f"CAPTURE_ARTIFACT_PUBLICATION_FAILED: {type(exc).__name__}: {exc}"
-        )
-        publication_err.failure_code = evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED  # type: ignore[attr-defined]
-        raise publication_err from exc
+    _publish_capture_artifact(bundle, output_dir)
     return bundle
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:

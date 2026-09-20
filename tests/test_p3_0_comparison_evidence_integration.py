@@ -3,11 +3,13 @@ from scripts import _p3_0_paired_capture_part1 as capture_part1
 
 
 def _failure_receipt(tmp_path, exc):
+    dest = tmp_path if not tmp_path.exists() else tmp_path / "receipt_child"
     capture_part1._safe_failure(
-        tmp_path, exact_commit_sha="a" * 40, capture_id="failure-test",
+        dest, exact_commit_sha="a" * 40, capture_id="failure-test",
         started_at="2026-09-12T00:00:00.000000Z", exc=exc,
     )
-    return json.loads((tmp_path / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+    return json.loads((dest / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+
 
 
 def test_failure_receipt_preserves_bounded_explicit_cause_chain(tmp_path):
@@ -481,35 +483,42 @@ def test_post_router_capture_stage_failure_taxonomy(tmp_path):
     assert (partial_dir / "bundle.json").read_bytes() == bundle_bytes_before
     evidence.verify_capture_artifact(partial_dir)
 
-    # 3. CAPTURE_ARTIFACT_PUBLICATION_FAILED: test wrapping and preserved cause
-    try:
-        try:
-            raise OSError("disk full simulation")
-        except OSError as inner:
-            pub_err = capture_part1.P30PairedCaptureError(
-                f"CAPTURE_ARTIFACT_PUBLICATION_FAILED: OSError: {inner}"
-            )
-            pub_err.failure_code = evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
-            raise pub_err from inner
-    except capture_part1.P30PairedCaptureError as raised_pub_err:
-        assert raised_pub_err.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
-        assert isinstance(raised_pub_err.__cause__, OSError)
-        assert str(raised_pub_err.__cause__) == "disk full simulation"
-        failure_dir = tmp_path / "failure_receipt_dir"
-        capture_part1._safe_failure(
-            failure_dir,
-            exact_commit_sha="b" * 40,
-            capture_id="pub-failure-test",
-            started_at="2026-09-20T00:00:00.000000Z",
-            exc=raised_pub_err,
-        )
-        receipt = json.loads((failure_dir / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
-        assert receipt["failure_code"] == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
-        assert receipt["failure_type"] == "P30PairedCaptureError"
-        assert receipt["failure_chain"][1]["exception_type"] == "OSError"
-        assert receipt["failure_chain"][1]["message"] == "disk full simulation"
+    # 3. Production publication helper and failure taxonomy
+    # Case A: Writer raises OSError
+    def _exploding_writer(bundle, dest):
+        raise OSError("disk full simulation")
 
-    # 4. Source acquisition failure is NOT mislabeled as publication failure
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(evidence, "write_capture_artifact", _exploding_writer)
+    try:
+        with pytest.raises(capture_part1.P30PairedCaptureError) as exc_info:
+            capture_part1._publish_capture_artifact(_bundle(), tmp_path / "oserror_dest")
+        pub_err = exc_info.value
+        assert pub_err.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+        assert isinstance(pub_err.__cause__, OSError)
+        assert str(pub_err.__cause__) == "disk full simulation"
+        assert "CAPTURE_ARTIFACT_PUBLICATION_FAILED: OSError: disk full simulation" in str(pub_err)
+    finally:
+        monkeypatch.undo()
+
+    # Case B: Destination already exists
+    preexisting_dest = tmp_path / "preexisting_child"
+    preexisting_dest.mkdir(parents=True, exist_ok=True)
+    with pytest.raises(capture_part1.P30PairedCaptureError) as exc_info:
+        capture_part1._publish_capture_artifact(_bundle(), preexisting_dest)
+    existing_err = exc_info.value
+    assert existing_err.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+    assert isinstance(existing_err.__cause__, evidence.P30ComparisonEvidenceError)
+    assert "capture output directory already exists" in str(existing_err.__cause__)
+    assert list(preexisting_dest.iterdir()) == []
+
+    # Case C: Valid destination publishes and verifies
+    valid_dest = tmp_path / "valid_child"
+    published_res = capture_part1._publish_capture_artifact(_bundle(), valid_dest)
+    assert published_res == valid_dest
+    assert evidence.verify_capture_artifact(valid_dest)["canonical_sha256"] == _bundle()["canonical_sha256"]
+
+    # Case D: Source failure is NOT mislabeled as publication failure
     source_err = capture_part1.P30PairedCaptureError(
         'P3.0-E1 source acquisition produced zero Router inputs: {"failure_code":"PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS"}'
     )
@@ -524,3 +533,133 @@ def test_post_router_capture_stage_failure_taxonomy(tmp_path):
     source_receipt = json.loads((source_failure_dir / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
     assert source_receipt.get("failure_code") != evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
     assert source_receipt.get("failure_code") != evidence.PAIRED_CAPTURE_PARTIAL
+
+    # Case E: Invalid bundle fails contract validation before publication
+    invalid_bundle = dict(_bundle())
+    invalid_bundle["canonical_sha256"] = "0" * 64
+    with pytest.raises(evidence.P30ComparisonEvidenceError) as exc_info:
+        capture_part1._publish_capture_artifact(invalid_bundle, tmp_path / "invalid_bundle_dest")
+    assert not isinstance(exc_info.value, capture_part1.P30PairedCaptureError)
+
+
+def test_safe_failure_preexisting_destination_regression_matrix(tmp_path):
+    """Verify _safe_failure never mutates any preexisting destination in any form.
+
+    Required matrix:
+    1. Preexisting published capture directory with manifest
+    2. Preexisting empty capture directory with no manifest
+    3. Preexisting nonempty capture directory with no manifest
+    4. Preexisting regular file at capture path
+    5. Preexisting symlink / broken symlink predicate handling
+    6. Absent destination still permits creation of failure-only child
+    7. Active failure receipt carries CAPTURE_ARTIFACT_PUBLICATION_FAILED when destination absent
+    """
+    def _snapshot_tree(root: Path) -> dict[str, tuple[int, str]]:
+        if not root.exists():
+            return {}
+        if root.is_file():
+            return {"__file__": (root.stat().st_size, hashlib.sha256(root.read_bytes()).hexdigest())}
+        snapshot = {}
+        for p in sorted(root.rglob("*")):
+            if p.is_file():
+                rel = p.relative_to(root).as_posix()
+                snapshot[rel] = (p.stat().st_size, hashlib.sha256(p.read_bytes()).hexdigest())
+        return snapshot
+
+    # 1. Preexisting published capture directory with manifest
+    published_dir = tmp_path / "preexisting_published"
+    evidence.write_capture_artifact(_bundle(), published_dir)
+    before_published = _snapshot_tree(published_dir)
+    capture_part1._safe_failure(
+        published_dir, exact_commit_sha="a" * 40, capture_id="safe-test-1",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert _snapshot_tree(published_dir) == before_published
+    assert not (published_dir / "p3-0-capture-failure.json").exists()
+
+    # 2. Preexisting empty capture directory with no manifest
+    empty_dir = tmp_path / "preexisting_empty"
+    empty_dir.mkdir(parents=True, exist_ok=False)
+    before_empty = _snapshot_tree(empty_dir)
+    capture_part1._safe_failure(
+        empty_dir, exact_commit_sha="a" * 40, capture_id="safe-test-2",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert _snapshot_tree(empty_dir) == before_empty
+    assert list(empty_dir.iterdir()) == []
+    assert not (empty_dir / "p3-0-capture-failure.json").exists()
+
+    # 3. Preexisting nonempty capture directory with no manifest
+    nonempty_dir = tmp_path / "preexisting_nonempty"
+    nonempty_dir.mkdir(parents=True, exist_ok=False)
+    (nonempty_dir / "unrelated.txt").write_text("preexisting content", encoding="utf-8")
+    sub = nonempty_dir / "nested"
+    sub.mkdir(parents=True, exist_ok=False)
+    (sub / "blob.dat").write_bytes(b"\x00\x01\x02\x03")
+    before_nonempty = _snapshot_tree(nonempty_dir)
+    capture_part1._safe_failure(
+        nonempty_dir, exact_commit_sha="a" * 40, capture_id="safe-test-3",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert _snapshot_tree(nonempty_dir) == before_nonempty
+    assert not (nonempty_dir / "p3-0-capture-failure.json").exists()
+
+    # 4. Preexisting regular file at capture path
+    file_dest = tmp_path / "preexisting_file.txt"
+    file_dest.write_bytes(b"untouchable file content")
+    before_file_bytes = file_dest.read_bytes()
+    capture_part1._safe_failure(
+        file_dest, exact_commit_sha="a" * 40, capture_id="safe-test-4",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert file_dest.is_file()
+    assert file_dest.read_bytes() == before_file_bytes
+
+    # 5. Preexisting symlink / broken symlink predicate handling
+    assert capture_part1._destination_preexists(file_dest) is True
+    assert capture_part1._destination_preexists(empty_dir) is True
+    assert capture_part1._destination_preexists(tmp_path / "definitely_absent_path") is False
+    symlink_dest = tmp_path / "test_symlink"
+    symlink_target = tmp_path / "symlink_target.txt"
+    symlink_target.write_text("target", encoding="utf-8")
+    try:
+        symlink_dest.symlink_to(symlink_target)
+        assert capture_part1._destination_preexists(symlink_dest) is True
+        capture_part1._safe_failure(
+            symlink_dest, exact_commit_sha="a" * 40, capture_id="safe-test-5",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+        )
+        assert symlink_target.read_text(encoding="utf-8") == "target"
+        symlink_target.unlink()
+        # Broken symlink must still be detected as preexisting
+        assert capture_part1._destination_preexists(symlink_dest) is True
+        capture_part1._safe_failure(
+            symlink_dest, exact_commit_sha="a" * 40, capture_id="safe-test-5b",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+        )
+    except (OSError, NotImplementedError):
+        pass  # Windows unprivileged symlinks
+
+    # 6. Absent destination still permits creation of failure-only child
+    absent_dest = tmp_path / "absent_failure_child"
+    assert not absent_dest.exists()
+    capture_part1._safe_failure(
+        absent_dest, exact_commit_sha="d" * 40, capture_id="safe-test-6",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("absent test err"),
+    )
+    assert absent_dest.exists()
+    assert (absent_dest / "p3-0-capture-failure.json").exists()
+    receipt = json.loads((absent_dest / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+    assert receipt["status"] == "CAPTURE_FAILED"
+    assert receipt["destination_policy_id"] == capture_part1.SAFE_FAILURE_DESTINATION_POLICY_ID
+
+    # 7. Active failure receipt carries CAPTURE_ARTIFACT_PUBLICATION_FAILED when destination absent
+    absent_pub_dest = tmp_path / "absent_pub_failure_child"
+    pub_err = capture_part1.P30PairedCaptureError("CAPTURE_ARTIFACT_PUBLICATION_FAILED: OSError: disk full")
+    pub_err.failure_code = evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+    capture_part1._safe_failure(
+        absent_pub_dest, exact_commit_sha="e" * 40, capture_id="safe-test-7",
+        started_at="2026-09-20T00:00:00.000000Z", exc=pub_err,
+    )
+    pub_receipt = json.loads((absent_pub_dest / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+    assert pub_receipt["failure_code"] == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
