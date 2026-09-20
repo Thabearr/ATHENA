@@ -961,6 +961,39 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         if any(empty_child.iterdir()):
             raise P30LiveReadinessError("Check L failed: _safe_failure mutated preexisting empty child directory")
 
+        # Canonical destination policy ID proof
+        if evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID != "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1":
+            raise P30LiveReadinessError("Check L failed: P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID drifted")
+        if hasattr(capture_part1, "SAFE_FAILURE_DESTINATION_POLICY_ID"):
+            raise P30LiveReadinessError("Check L failed: duplicate SAFE_FAILURE_DESTINATION_POLICY_ID found in capture script")
+
+        # Atomic claim proofs
+        missing_parent_dest = envelope / "nonexistent_parent" / "child"
+        if capture_part1._claim_absent_failure_destination(missing_parent_dest):
+            raise P30LiveReadinessError("Check L failed: atomic claim succeeded for missing parent envelope")
+        if missing_parent_dest.parent.exists():
+            raise P30LiveReadinessError("Check L failed: missing parent envelope was created during atomic claim")
+
+        atomic_child = envelope / "atomic_claim_child"
+        if not capture_part1._claim_absent_failure_destination(atomic_child):
+            raise P30LiveReadinessError("Check L failed: atomic claim failed for absent child")
+        if not atomic_child.is_dir():
+            raise P30LiveReadinessError("Check L failed: claimed atomic child is not a directory")
+        if capture_part1._claim_absent_failure_destination(atomic_child):
+            raise P30LiveReadinessError("Check L failed: second atomic claim against existing child succeeded")
+
+        absent_fail_dest = envelope / "absent_fail_child"
+        capture_part1._safe_failure(
+            absent_fail_dest, exact_commit_sha="a" * 40, capture_id="test-absent-fail",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("absent fail test"),
+        )
+        fail_receipt_path = absent_fail_dest / "p3-0-capture-failure.json"
+        if not fail_receipt_path.exists():
+            raise P30LiveReadinessError("Check L failed: _safe_failure did not create failure receipt in absent child")
+        fail_receipt = json.loads(fail_receipt_path.read_text(encoding="utf-8"))
+        if fail_receipt.get("destination_policy_id") != evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID:
+            raise P30LiveReadinessError("Check L failed: failure receipt destination_policy_id drifted")
+
         complete_exit, complete_payload = capture_part1.classify_published_capture_result(bundle)
         if complete_exit != 0 or complete_payload.get("status") != "P3_0_E1_CAPTURE_WRITTEN":
             raise P30LiveReadinessError("Check L failed: complete bundle did not classify as exit 0 / CAPTURE_WRITTEN")
@@ -1002,6 +1035,8 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         "capture_child_path": "artifacts/p3-0-comparison-evidence/capture",
         "offline_publication_verified": True,
         "preexisting_child_rejected": True,
+        "atomic_child_claim_verified": True,
+        "failure_receipt_destination_policy_verified": True,
         "complete_corpus_exit_zero_verified": True,
         "partial_corpus_nonzero_verified": True,
         "partial_artifact_immutability_verified": True,

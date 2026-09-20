@@ -131,11 +131,6 @@ def _failure_chain(exc: BaseException) -> tuple[list[dict[str, str]], bool]:
     return records, truncated
 
 
-SAFE_FAILURE_DESTINATION_POLICY_ID = (
-    "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
-)
-
-
 def _destination_preexists(path: Path) -> bool:
     """Return True if path exists in ANY form (file, dir, symlink, etc.)."""
     try:
@@ -144,6 +139,27 @@ def _destination_preexists(path: Path) -> bool:
         return path.exists() or path.is_symlink()
     except OSError:
         return True
+
+
+def _claim_absent_failure_destination(output_dir: Path) -> bool:
+    """Atomically claim an absent failure destination child inside an existing envelope.
+
+    Returns True only if this process successfully created the exact child
+    directory with parents=False and exist_ok=False. Returns False without
+    mutation if parent envelope is missing/symlinked/not a directory, or if
+    the child already exists in ANY form (directory, file, symlink), or if
+    filesystem creation fails.
+    """
+    try:
+        parent = output_dir.parent
+        if parent.is_symlink() or not parent.is_dir():
+            return False
+        if _destination_preexists(output_dir):
+            return False
+        output_dir.mkdir(parents=False, exist_ok=False)
+        return True
+    except (FileExistsError, OSError):
+        return False
 
 
 def _publish_capture_artifact(
@@ -170,17 +186,13 @@ def _publish_capture_artifact(
 
 def _safe_failure(output_dir: Path, *, exact_commit_sha: str | None, capture_id: str,
                   started_at: str, exc: BaseException) -> None:
-    if _destination_preexists(output_dir):
-        return
-    try:
-        output_dir.mkdir(parents=True, exist_ok=True)
-    except OSError:
+    if not _claim_absent_failure_destination(output_dir):
         return
     failure_chain, failure_chain_truncated = _failure_chain(exc)
     value = {
         "schema_version": FAILURE_RECEIPT_SCHEMA_VERSION,
         "policy_id": POLICY_ID,
-        "destination_policy_id": SAFE_FAILURE_DESTINATION_POLICY_ID,
+        "destination_policy_id": evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID,
         "capture_id": capture_id,
         "status": "CAPTURE_FAILED",
         "started_at": started_at,

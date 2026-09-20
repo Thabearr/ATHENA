@@ -263,6 +263,7 @@ def _contract_payload() -> dict[str, Any]:
         "capture_immutable_child_relative": P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE,
         "capture_publication_policy_id": P3_CAPTURE_PUBLICATION_POLICY_ID,
         "partial_corpus_process_policy_id": P3_PARTIAL_CORPUS_PROCESS_POLICY_ID,
+        "failure_receipt_destination_policy_id": P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID,
         "capture_stage_failure_taxonomy": sorted(P3_CAPTURE_STAGE_FAILURE_TAXONOMY),
         "price_output_kind": PRICE_OUTPUT_KIND, "router_output_kind": ROUTER_OUTPUT_KIND,
         "fixture_identity_keys": sorted(FIXTURE_IDENTITY_KEYS), "timing_keys": sorted(TIMING_KEYS),
@@ -296,7 +297,7 @@ def calculate_contract_sha256() -> str:
     return canonical_sha256(_contract_payload())
 
 # Re-pinned after capture envelope, child, policies, and failure taxonomy binding.
-EXPECTED_CONTRACT_SHA256 = "09a18f8a8a197744b7fa335ec8c237168e2efe6992f71663df0ba3146510b329"
+EXPECTED_CONTRACT_SHA256 = "0e4a311059125f7b74128e7c04c75e01889018e5f757faf33212f144457973c3"
 
 
 def validate_contract() -> str:
@@ -312,7 +313,8 @@ __all__ = [
     "FIXTURE_IDENTITY_KEYS", "JOIN_STATES", "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
     "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE",
     "P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE", "P3_CAPTURE_PUBLICATION_POLICY_ID",
-    "P3_CAPTURE_STAGE_FAILURE_TAXONOMY", "P3_PARTIAL_CORPUS_PROCESS_POLICY_ID",
+    "P3_CAPTURE_STAGE_FAILURE_TAXONOMY", "P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID",
+    "P3_PARTIAL_CORPUS_PROCESS_POLICY_ID",
     "PAIRED_CAPTURE_PARTIAL", "POLICY_ID", "PRICE_OUTPUT_KIND",
     "REQUIRED_CANONICAL_RESPONSIBILITIES", "ROUTER_OUTPUT_KIND",
     "RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID", "SCHEMA_VERSION", "TIMING_KEYS",

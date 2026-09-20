@@ -651,7 +651,7 @@ def test_safe_failure_preexisting_destination_regression_matrix(tmp_path):
     assert (absent_dest / "p3-0-capture-failure.json").exists()
     receipt = json.loads((absent_dest / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
     assert receipt["status"] == "CAPTURE_FAILED"
-    assert receipt["destination_policy_id"] == capture_part1.SAFE_FAILURE_DESTINATION_POLICY_ID
+    assert receipt["destination_policy_id"] == evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID
 
     # 7. Active failure receipt carries CAPTURE_ARTIFACT_PUBLICATION_FAILED when destination absent
     absent_pub_dest = tmp_path / "absent_pub_failure_child"
@@ -663,3 +663,167 @@ def test_safe_failure_preexisting_destination_regression_matrix(tmp_path):
     )
     pub_receipt = json.loads((absent_pub_dest / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
     assert pub_receipt["failure_code"] == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+
+
+def test_atomic_child_claim_and_contract_ownership_regressions(tmp_path):
+    """Prove all 24 required regression points for contract ownership, atomic claim, and receipts.
+
+    A. Contract ownership (1-5)
+    B. Atomic child claim (6-15)
+    C. Receipt semantics (16-19)
+    D. Readiness proofs (20-24)
+    """
+    from domain import p3_0_comparison_evidence as evidence
+    from scripts import _p3_0_paired_capture_part1 as capture_part1
+    from scripts.verify_p3_0_e1_live_readiness import check_l_workflows_integrity
+
+    # A. Contract ownership
+    # 1. evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID exists
+    assert hasattr(evidence, "P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID")
+    # 2. Exact value
+    expected_policy = "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
+    assert evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID == expected_policy
+    # 3. _contract_payload()["failure_receipt_destination_policy_id"] equals that exact constant
+    payload = evidence._contract_payload()
+    assert payload["failure_receipt_destination_policy_id"] == expected_policy
+    # 4. Script receipt uses the canonical evidence constant
+    envelope = tmp_path / "reg_envelope"
+    envelope.mkdir(parents=True, exist_ok=True)
+    child_receipt_test = envelope / "test_receipt_child"
+    capture_part1._safe_failure(
+        child_receipt_test, exact_commit_sha="f" * 40, capture_id="cap-test-reg",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("test-err"),
+    )
+    written_receipt = json.loads((child_receipt_test / "p3-0-capture-failure.json").read_text(encoding="utf-8"))
+    assert written_receipt["destination_policy_id"] == evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID
+    # 5. No duplicate literal semantic owner remains in the capture script
+    assert not hasattr(capture_part1, "SAFE_FAILURE_DESTINATION_POLICY_ID")
+    capture_script_text = Path(capture_part1.__file__).read_text(encoding="utf-8")
+    assert "SAFE_FAILURE_DESTINATION_POLICY_ID =" not in capture_script_text
+
+    # B. Atomic child claim
+    # 6. Parent envelope exists + child absent: child creation succeeds exactly once
+    atomic_child = envelope / "claim_test_child"
+    assert not atomic_child.exists()
+    assert capture_part1._claim_absent_failure_destination(atomic_child) is True
+    assert atomic_child.is_dir()
+    # 7. Second claim against same child fails closed
+    assert capture_part1._claim_absent_failure_destination(atomic_child) is False
+
+    # 8. Empty preexisting child remains untouched
+    empty_child = envelope / "empty_child"
+    empty_child.mkdir(parents=False, exist_ok=False)
+    assert capture_part1._claim_absent_failure_destination(empty_child) is False
+    capture_part1._safe_failure(
+        empty_child, exact_commit_sha="a" * 40, capture_id="cap-empty",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert list(empty_child.iterdir()) == []
+
+    # 9. Nonempty preexisting unmanifested child remains untouched
+    nonempty_child = envelope / "nonempty_child"
+    nonempty_child.mkdir(parents=False, exist_ok=False)
+    file_in_nonempty = nonempty_child / "data.bin"
+    file_in_nonempty.write_bytes(b"hello world")
+    assert capture_part1._claim_absent_failure_destination(nonempty_child) is False
+    capture_part1._safe_failure(
+        nonempty_child, exact_commit_sha="a" * 40, capture_id="cap-nonempty",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert list(nonempty_child.iterdir()) == [file_in_nonempty]
+    assert file_in_nonempty.read_bytes() == b"hello world"
+
+    # 10. Published manifest child remains untouched
+    published_child = envelope / "published_child"
+    bundle = _bundle()
+    evidence.write_capture_artifact(bundle, published_child)
+    pub_manifest_before = (published_child / "manifest.json").read_bytes()
+    assert capture_part1._claim_absent_failure_destination(published_child) is False
+    capture_part1._safe_failure(
+        published_child, exact_commit_sha="a" * 40, capture_id="cap-pub",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert not (published_child / "p3-0-capture-failure.json").exists()
+    assert (published_child / "manifest.json").read_bytes() == pub_manifest_before
+
+    # 11. Preexisting regular file remains untouched
+    regular_file = envelope / "file_child"
+    regular_file.write_bytes(b"untouchable")
+    assert capture_part1._claim_absent_failure_destination(regular_file) is False
+    capture_part1._safe_failure(
+        regular_file, exact_commit_sha="a" * 40, capture_id="cap-file",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert regular_file.is_file()
+    assert regular_file.read_bytes() == b"untouchable"
+
+    # 12. Symlink/broken symlink remains untouched where platform permits
+    sym_dest = envelope / "sym_child"
+    sym_target = envelope / "sym_target.txt"
+    sym_target.write_text("target", encoding="utf-8")
+    try:
+        sym_dest.symlink_to(sym_target)
+        assert capture_part1._claim_absent_failure_destination(sym_dest) is False
+        sym_target.unlink()
+        assert capture_part1._claim_absent_failure_destination(sym_dest) is False
+    except (OSError, NotImplementedError):
+        pass
+
+    # 13. Missing parent is NOT created
+    missing_parent = envelope / "missing_parent_dir" / "child"
+    assert not missing_parent.parent.exists()
+    assert capture_part1._claim_absent_failure_destination(missing_parent) is False
+    assert not missing_parent.parent.exists()
+    assert not missing_parent.exists()
+
+    # 14. Parent file is NOT modified
+    parent_as_file = envelope / "parent_is_a_file"
+    parent_as_file.write_bytes(b"parent content")
+    child_under_file = parent_as_file / "child"
+    assert capture_part1._claim_absent_failure_destination(child_under_file) is False
+    assert parent_as_file.read_bytes() == b"parent content"
+
+    # 15. Parent symlink is NOT traversed for failure-receipt creation
+    parent_sym_target = envelope / "real_parent_target"
+    parent_sym_target.mkdir(parents=False, exist_ok=False)
+    parent_sym = envelope / "parent_symlink"
+    try:
+        parent_sym.symlink_to(parent_sym_target, target_is_directory=True)
+        child_under_sym = parent_sym / "child"
+        assert capture_part1._claim_absent_failure_destination(child_under_sym) is False
+        assert not (parent_sym_target / "child").exists()
+    except (OSError, NotImplementedError):
+        pass
+
+    # C. Receipt semantics
+    # 16. Successful atomic claim writes exactly one p3-0-capture-failure.json
+    atomic_receipt_child = envelope / "atomic_receipt_child"
+    capture_part1._safe_failure(
+        atomic_receipt_child, exact_commit_sha="a" * 40, capture_id="cap-receipt-test",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    files_in_child = list(atomic_receipt_child.iterdir())
+    assert files_in_child == [atomic_receipt_child / "p3-0-capture-failure.json"]
+    # 17. Receipt includes canonical destination_policy_id
+    rcpt = json.loads(files_in_child[0].read_text(encoding="utf-8"))
+    assert rcpt["destination_policy_id"] == evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID
+    # 18. Existing child gets no failure receipt
+    capture_part1._safe_failure(
+        empty_child, exact_commit_sha="a" * 40, capture_id="cap-empty-2",
+        started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("err"),
+    )
+    assert not (empty_child / "p3-0-capture-failure.json").exists()
+    # 19. Original publication/source error remains process-visible even when failure receipt cannot be created
+    with pytest.raises(capture_part1.P30PairedCaptureError) as exc_info:
+        capture_part1._publish_capture_artifact(bundle, published_child)
+    assert exc_info.value.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+    assert isinstance(exc_info.value.__cause__, evidence.P30ComparisonEvidenceError)
+
+    # D. Readiness
+    # 20-24. Check L proves canonical destination policy ID, atomic claim, preexisting child no mutation, no network, 14 checks passing
+    repo_root = Path(__file__).resolve().parents[1]
+    res_l = check_l_workflows_integrity(repo_root)
+    assert res_l["status"] == "PASSED"
+    assert res_l["atomic_child_claim_verified"] is True
+    assert res_l["failure_receipt_destination_policy_verified"] is True
+    assert res_l["preexisting_child_rejected"] is True

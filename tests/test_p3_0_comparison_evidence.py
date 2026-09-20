@@ -1,7 +1,7 @@
 from tests._p3_0_comparison_evidence_support import *  # noqa: F401,F403
 
 def test_contract_is_re_pinned_after_hardening():
-    assert evidence.validate_contract() == "09a18f8a8a197744b7fa335ec8c237168e2efe6992f71663df0ba3146510b329"
+    assert evidence.validate_contract() == "0e4a311059125f7b74128e7c04c75e01889018e5f757faf33212f144457973c3"
 
 
 def test_complete_requires_semantic_evidence_and_explicit_asof_proof():
@@ -197,6 +197,7 @@ def test_contract_payload_pins_publication_envelope_and_taxonomy():
     assert evidence.P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE == "artifacts/p3-0-comparison-evidence/capture"
     assert evidence.P3_CAPTURE_PUBLICATION_POLICY_ID == "P3_E1_READINESS_ENVELOPE_IMMUTABLE_CAPTURE_CHILD_V1"
     assert evidence.P3_PARTIAL_CORPUS_PROCESS_POLICY_ID == "P3_E1_PARTIAL_CORPUS_NONZERO_IMMUTABLE_V1"
+    assert evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID == "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
     assert evidence.P3_CAPTURE_STAGE_FAILURE_TAXONOMY == frozenset({
         "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
         "PAIRED_CAPTURE_PARTIAL",
@@ -207,6 +208,7 @@ def test_contract_payload_pins_publication_envelope_and_taxonomy():
     assert payload["capture_immutable_child_relative"] == "artifacts/p3-0-comparison-evidence/capture"
     assert payload["capture_publication_policy_id"] == "P3_E1_READINESS_ENVELOPE_IMMUTABLE_CAPTURE_CHILD_V1"
     assert payload["partial_corpus_process_policy_id"] == "P3_E1_PARTIAL_CORPUS_NONZERO_IMMUTABLE_V1"
+    assert payload["failure_receipt_destination_policy_id"] == "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
     assert payload["capture_stage_failure_taxonomy"] == [
         "CAPTURE_ARTIFACT_PUBLICATION_FAILED",
         "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
