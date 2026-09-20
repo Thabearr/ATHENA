@@ -752,7 +752,24 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
     if not duck_rejected or _DuckItem.called:
         raise P30LiveReadinessError("Check I failed: duck-typed object was not rejected without invocation")
 
-    # Verify tuple/set rejection:
+    class _DuckToList:
+        called = False
+        def tolist(self):
+            _DuckToList.called = True
+            raise AssertionError("must not be called")
+
+    duck_list_analysis = dict(quarantined)
+    duck_list_analysis["evidence_report"] = dict(quarantined["evidence_report"])
+    duck_list_analysis["evidence_report"]["duck_list"] = _DuckToList()
+    duck_list_rejected = False
+    try:
+        project_legacy_output(pre_gate=duck_list_analysis, authorized=duck_list_analysis, exported=duck_list_analysis)
+    except P30ComparisonEvidenceError:
+        duck_list_rejected = True
+    if not duck_list_rejected or _DuckToList.called:
+        raise P30LiveReadinessError("Check I failed: duck-typed .tolist() object was not rejected without invocation")
+
+    # Verify tuple/set/frozenset rejection:
     tuple_analysis = dict(quarantined)
     tuple_analysis["evidence_report"] = dict(quarantined["evidence_report"])
     tuple_analysis["evidence_report"]["tup"] = (1, 2)
@@ -763,6 +780,28 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         tuple_rejected = True
     if not tuple_rejected:
         raise P30LiveReadinessError("Check I failed: tuple container was not rejected fail-closed")
+
+    set_analysis = dict(quarantined)
+    set_analysis["evidence_report"] = dict(quarantined["evidence_report"])
+    set_analysis["evidence_report"]["set_value"] = {1, 2}
+    set_rejected = False
+    try:
+        project_legacy_output(pre_gate=set_analysis, authorized=set_analysis, exported=set_analysis)
+    except P30ComparisonEvidenceError:
+        set_rejected = True
+    if not set_rejected:
+        raise P30LiveReadinessError("Check I failed: set container was not rejected fail-closed")
+
+    frozenset_analysis = dict(quarantined)
+    frozenset_analysis["evidence_report"] = dict(quarantined["evidence_report"])
+    frozenset_analysis["evidence_report"]["frozenset_value"] = frozenset({1, 2})
+    frozenset_rejected = False
+    try:
+        project_legacy_output(pre_gate=frozenset_analysis, authorized=frozenset_analysis, exported=frozenset_analysis)
+    except P30ComparisonEvidenceError:
+        frozenset_rejected = True
+    if not frozenset_rejected:
+        raise P30LiveReadinessError("Check I failed: frozenset container was not rejected fail-closed")
 
     # Verify non-finite rejection:
     nan_analysis = dict(quarantined)
@@ -788,6 +827,15 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         "credential_protection_verified": True,
         "legacy_numpy_normalization_policy_id": LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID,
         "legacy_numpy_normalization_verified": True,
+        "legacy_numpy_normalization_readiness_assertions": [
+            "NP_FLOAT64_NORMALIZED",
+            "DUCK_ITEM_REJECTED_WITHOUT_INVOCATION",
+            "DUCK_TOLIST_REJECTED_WITHOUT_INVOCATION",
+            "TUPLE_REJECTED",
+            "SET_REJECTED",
+            "FROZENSET_REJECTED",
+            "NONFINITE_REJECTED",
+        ],
     }
 
 

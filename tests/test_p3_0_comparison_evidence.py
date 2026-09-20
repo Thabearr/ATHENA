@@ -484,3 +484,28 @@ def test_legacy_numpy_and_containers_fail_closed_adversarial_suite():
     assert "runtime_authorization_state" not in raw_str
     assert "runtime_authorization_reasons" not in raw_str
     assert res["exported_row"]["evidence_report"]["clean_metric"] == 42
+
+    # Point 23: np.str_ normalizes to str (positive verification)
+    res = evidence.project_legacy_output(_analysis(), _analysis(), {
+        "fixture_id": FIXTURE, "decision_status": "NO_BET",
+        "evidence_report": {"val": np.str_("string_val")},
+    })
+    assert type(res["exported_row"]["evidence_report"]["val"]) is str
+    assert res["exported_row"]["evidence_report"]["val"] == "string_val"
+
+
+def test_readiness_check_i_normalization_coverage():
+    from scripts.verify_p3_0_e1_live_readiness import check_i_pre_router_pipeline_readiness
+    root = Path(__file__).resolve().parents[1]
+    res = check_i_pre_router_pipeline_readiness(root)
+    assert res["status"] == "PASSED"
+    assert res["legacy_numpy_normalization_verified"] is True
+    assert res["legacy_numpy_normalization_readiness_assertions"] == [
+        "NP_FLOAT64_NORMALIZED",
+        "DUCK_ITEM_REJECTED_WITHOUT_INVOCATION",
+        "DUCK_TOLIST_REJECTED_WITHOUT_INVOCATION",
+        "TUPLE_REJECTED",
+        "SET_REJECTED",
+        "FROZENSET_REJECTED",
+        "NONFINITE_REJECTED",
+    ]
