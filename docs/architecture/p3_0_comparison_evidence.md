@@ -370,3 +370,42 @@ paginated source remains replayable historical evidence only.
 The first-boundary failure code for a non-empty provider universe with zero
 prematch/bookable events is `PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS`, before any
 FotMob counterpart decision, direct event detail, Price-All, or Router input.
+
+## P3.0 offline replay corpus source gate
+
+Live-only accumulation is retired for this comparator gate. The deterministic
+offline policy is `ATHENA_P3_0_REPLAY_CORPUS_V1`; it classifies every retained
+candidate as `REPLAY_COMPLETE` or one of the bounded identity, temporal,
+contract, canonical-lineage, exact-quote, legacy-lineage, and duplicate gap
+states. The audit consumes retained evidence only and does not call a provider,
+an application pipeline, Portfolio, or any authority-bearing path.
+
+The source audit covers the 29-artifact P3.0 E1 baseline, two post-baseline
+capture failures, 87 retained Current Shadow all-market runs, and the relevant
+source-controlled P0, shape-only, post-finish, and field-trial fixtures. It
+finds 290 candidate rows but only one `REPLAY_COMPLETE` row: one fixture, one
+UTC fixture date, one competition, and one market family. The admitted row's
+exact quote is verified inside canonical bundle
+`d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191`;
+the older source audit does not project a separate quote-identity SHA, so the
+new audit records an explicit verified-in-bundle binding and does not invent
+one.
+
+The failed-requirement incidence counts overlap and are not mutually exclusive
+candidate totals: 288 contract-drift, 163 identity-unproven, 164
+temporal-lineage-unproven, 289 canonical-lineage-unavailable, 164 exact-quote-
+unavailable, and 289 supported-legacy-lineage-unavailable. Neither the
+one-week gate (10 unique rows, three competitions, three market families in a
+contiguous seven-day window) nor the sufficiently-large gate (25 unique rows,
+three competitions, five market families, two UTC fixture dates) passes.
+Numeric thresholds are therefore not the only blocker, and no acceptance
+contract amendment is proposed.
+
+The generated receipt is
+`artifacts/p3-0-replay-source-audit-v1.json`. Because its gate fails, no replay
+corpus artifact, comparator, or comparator report is produced. P0 remains
+synthetic, `SOURCE_REVIEW_COUNTER` remains `4 / 5`, MAIN and selection authority
+remain false, and P3.1 is not started. Provider acquisition, network use,
+Portfolio, share-code, login, cookies, wallet, staking, bet, and wager placement
+are all false. The terminal machine state is
+`P3_0_REPLAY_CORPUS_SOURCE_GAP`.
