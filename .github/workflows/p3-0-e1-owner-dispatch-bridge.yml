@@ -127,9 +127,12 @@ jobs:
 
           PAGE_SIZE = 100
           MAX_WORKFLOW_DISPATCH_HISTORY_PAGES = 100
-          COOLDOWN_SECONDS = 90 * 60  # Section 5: minimum 90 minutes between capture starts
-          MAX_RUNS_24H = 8            # Section 5: maximum 8 attempts in rolling 24 hours
+          COOLDOWN_SECONDS = 90 * 60  # Minimum 90 minutes between capture starts (owner mission policy)
+          MAX_RUNS_24H = 8            # Maximum 8 attempts in rolling 24 hours (owner mission policy)
           ROLLING_WINDOW_SECONDS = 24 * 3600
+          ACTIVE_CAPTURE_STATUSES = frozenset(
+              {"in_progress", "queued", "waiting", "requested", "pending"}
+          )
 
           repo = os.environ["GITHUB_REPOSITORY"]
           now = dt.datetime.now(dt.timezone.utc)
@@ -158,9 +161,14 @@ jobs:
               for run in workflow_runs:
                   if type(run) is not dict:
                       raise SystemExit("bounded-dispatch run is malformed")
+                  run_id = run.get("id")
+                  if type(run_id) is not int:
+                      raise SystemExit("bounded-dispatch run id is malformed")
                   status = run.get("status")
                   if type(status) is not str:
                       raise SystemExit("bounded-dispatch run status is malformed")
+                  if status not in ACTIVE_CAPTURE_STATUSES and status != "completed":
+                      raise SystemExit(f"bounded-dispatch unknown workflow run status: {status}")
                   created_at_raw = run.get("run_started_at") or run.get("created_at")
                   if type(created_at_raw) is not str:
                       raise SystemExit("bounded-dispatch run timestamp is malformed")
@@ -168,7 +176,11 @@ jobs:
                       run_time = dt.datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
                   except ValueError as exc:
                       raise SystemExit(f"bounded-dispatch run timestamp unparseable: {exc}")
-                  all_runs.append((run["id"], status, run_time))
+                  if run_time.tzinfo is None:
+                      raise SystemExit("bounded-dispatch run timestamp lacks timezone")
+                  if run_time > now:
+                      raise SystemExit("bounded-dispatch run timestamp is in the future")
+                  all_runs.append((run_id, status, run_time))
 
               if len(workflow_runs) < PAGE_SIZE:
                   break
@@ -178,15 +190,17 @@ jobs:
               )
 
           # 1. No capture run currently active
-          active_runs = [r for r in all_runs if r[1] in ("in_progress", "queued", "waiting", "requested")]
+          active_runs = [r for r in all_runs if r[1] in ACTIVE_CAPTURE_STATUSES]
           if active_runs:
               raise SystemExit(
                   f"P3.0-E1 capture run ({active_runs[0][0]}) is currently active with status '{active_runs[0][1]}'."
               )
 
           # 2. Minimum 90 minutes cooldown since last capture start
+          elapsed = None
           if all_runs:
-              last_run_id, _, last_run_time = all_runs[0]
+              latest_run = max(all_runs, key=lambda row: row[2])
+              last_run_id, _, last_run_time = latest_run
               elapsed = (now - last_run_time).total_seconds()
               if elapsed < COOLDOWN_SECONDS:
                   raise SystemExit(
@@ -204,7 +218,7 @@ jobs:
 
           print(
               f"Bounded corpus accumulation checks passed: {len(runs_24h)} run(s) in last 24h, "
-              f"last run started {elapsed if all_runs else 'N/A'}s ago."
+              f"last run started {f'{elapsed:.0f}' if elapsed is not None else 'N/A'}s ago."
           )
           PY
 
