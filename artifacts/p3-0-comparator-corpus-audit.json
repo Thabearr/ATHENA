@@ -1,0 +1,301 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P3_0_COMPARATOR_CORPUS_AUDIT_V1",
+  "created_at": "2026-09-20T10:18:30Z",
+  "mission_goal": "Audit all retained P3.0-E1 capture artifacts reachable across issue #337, workflow history, and repo documentation",
+  "corpus_acceptance_gates": {
+    "gate_a_one_week_coverage": {
+      "description": "At least 7 distinct UTC fixture dates inside one contiguous 7-calendar-day window, at least 10 unique complete fixture decision states, at least 3 distinct competitions, at least 3 distinct final-recommendation market families, no duplicate fixtures",
+      "satisfied": false,
+      "reasons": [
+        "Only 1 distinct UTC fixture date represented (2026-09-20), required >= 7",
+        "Only 1 unique complete fixture decision state, required >= 10",
+        "Only 1 distinct competition (Serie A), required >= 3",
+        "Only 1 distinct market family (ASIAN_HANDICAP), required >= 3"
+      ]
+    },
+    "gate_b_sufficiently_large": {
+      "description": "At least 25 unique complete fixture decision states, at least 3 distinct competitions, at least 5 distinct market families, at least 2 distinct UTC fixture dates",
+      "satisfied": false,
+      "reasons": [
+        "Only 1 unique complete fixture decision state, required >= 25",
+        "Only 1 distinct competition (Serie A), required >= 3",
+        "Only 1 distinct market family (ASIAN_HANDICAP), required >= 5",
+        "Only 1 distinct UTC fixture date (2026-09-20), required >= 2"
+      ]
+    },
+    "corpus_ready": false
+  },
+  "corpus_summary": {
+    "total_artifacts_audited": 23,
+    "corpus_complete_members_count": 1,
+    "partial_not_comparator_authority_count": 1,
+    "unusable_not_comparator_authority_count": 21,
+    "unique_complete_fixtures_count": 1,
+    "unique_utc_dates_count": 1,
+    "unique_competitions_count": 1,
+    "unique_market_families_count": 1
+  },
+  "complete_corpus_members": [
+    {
+      "run_id": 35502639963,
+      "job_id": 106057033443,
+      "artifact_id": 10603511090,
+      "artifact_name": "p3-0-comparison-evidence",
+      "artifact_digest": "sha256:abe4727ae0eaa8e6e0580b2fe4d2298711b13cca0bd00546e958f30613f87c4d",
+      "head_sha": "83fa9c4707a04742e9146a410154f5e668c6c2ea",
+      "capture_id": "p3-0-e1-83fa9c4707a0-20260920T093450939987Z",
+      "capture_state": "CAPTURE_COMPLETE",
+      "fixture_count": 1,
+      "complete_fixture_count": 1,
+      "incomplete_fixture_count": 0,
+      "fixture_identities": [
+        "FOTMOB:5749683"
+      ],
+      "fixture_kickoffs": [
+        "2026-09-20T10:30:00.000000Z"
+      ],
+      "fixture_dates": [
+        "2026-09-20"
+      ],
+      "competitions": [
+        "Serie A"
+      ],
+      "fixture_records": [
+        {
+          "fixture_identity": "FOTMOB:5749683",
+          "home_team": "Fiorentina",
+          "away_team": "Napoli",
+          "competition": "Serie A",
+          "kickoff_utc": "2026-09-20T10:30:00.000000Z",
+          "provider_event_id": "sr:match:71945268",
+          "join_state": "EXACT_SAME_FIXTURE_PROVEN",
+          "as_of_proof": "PROVEN",
+          "legacy_final_recommendation": null,
+          "legacy_decision_status": "ANALYTICAL_CANDIDATE",
+          "legacy_no_bet_reasons": [
+            "The legacy heuristic MatchAnalyst path is analysis-only. Reviewed successor model, source, pricing, selection, and BET authorization has not been granted to this runtime path."
+          ],
+          "canonical_router_recommendation": "ASIAN_HANDICAP AWAY 0.0 @ 1.61 (Fiorentina vs Napoli)",
+          "canonical_router_status": "SELECTED",
+          "canonical_selected_opportunity_id": "e2bc0bef5fe57078402d82071d999a97c2b08942f61309accae9150d5eb49cd4",
+          "market_families": [
+            "ASIAN_HANDICAP"
+          ],
+          "manifest_verifies": true,
+          "bundle_verifies": true,
+          "classification": "CORPUS_COMPLETE_MEMBER"
+        }
+      ],
+      "manifest_file_sha256": "62a52a3b9fd05953bf54a63b122fc65ab1283fe7b0c2d0e63210355a14209bcc",
+      "bundle_canonical_sha256": "d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191",
+      "manifest_verifies": true,
+      "bundle_verifies": true,
+      "classification": "CORPUS_COMPLETE_MEMBER"
+    }
+  ],
+  "partial_and_unusable_artifacts": [
+    {
+      "run_id": 35498127010,
+      "job_id": 106044853734,
+      "artifact_id": 10601394178,
+      "artifact_name": "p3-0-comparison-evidence",
+      "artifact_digest": "sha256:4f83733e1fe3c80ae60e20608696ec0958ffad8e46950f55cfbf7cb0eb52d061",
+      "head_sha": "ec6c614e6d912351b13cef520a85e553f6ed1351",
+      "capture_id": "p3-0-e1-ec6c614e6d91-20260920T075552771494Z",
+      "capture_state": "CAPTURE_PARTIAL",
+      "fixture_count": 1,
+      "complete_fixture_count": 0,
+      "incomplete_fixture_count": 1,
+      "fixture_identities": [
+        "FOTMOB:5749683"
+      ],
+      "fixture_kickoffs": [
+        "2026-09-20T10:30:00.000000Z"
+      ],
+      "fixture_dates": [
+        "2026-09-20"
+      ],
+      "competitions": [
+        "Serie A"
+      ],
+      "legacy_final_recommendation": null,
+      "canonical_router_recommendation": "ASIAN_HANDICAP AWAY 0.0 @ 1.61",
+      "market_families": [
+        "ASIAN_HANDICAP"
+      ],
+      "manifest_verifies": false,
+      "bundle_verifies": false,
+      "classification": "PARTIAL_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Legacy observer crashed on numpy float64 serialization before PR #377; completeness receipt states missing legacy context, fixture identity, and output."
+    },
+    {
+      "run_id": 35498127010,
+      "artifact_id": 10601359114,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only; does not contain comparison evidence."
+    },
+    {
+      "run_id": 35467453094,
+      "artifact_id": 10591773690,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-flight / capture failure receipt."
+    },
+    {
+      "run_id": 35467453094,
+      "artifact_id": 10591842671,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only."
+    },
+    {
+      "run_id": 35441111017,
+      "artifact_id": 10584076663,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS (source-viability shape finding; all in-play)."
+    },
+    {
+      "run_id": 35441111017,
+      "artifact_id": 10584211437,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only."
+    },
+    {
+      "run_id": 35409481576,
+      "artifact_id": 10573519700,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-router source boundary failure (global-echo pattern)."
+    },
+    {
+      "run_id": 35409481576,
+      "artifact_id": 10574445359,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only."
+    },
+    {
+      "run_id": 35404223536,
+      "artifact_id": 10572001772,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Zero Router inputs post-reconciliation."
+    },
+    {
+      "run_id": 35404223536,
+      "artifact_id": 10571711837,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only."
+    },
+    {
+      "run_id": 35287237183,
+      "artifact_id": 10524269182,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Identity state seed registry drift failure."
+    },
+    {
+      "run_id": 35287237183,
+      "artifact_id": 10524693269,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only."
+    },
+    {
+      "run_id": 35277452572,
+      "artifact_id": 10520919107,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-flight failure."
+    },
+    {
+      "run_id": 35277452572,
+      "artifact_id": 10520479660,
+      "artifact_name": "p3-0-comparison-evidence-source-diagnostics",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Diagnostic artifact only."
+    },
+    {
+      "run_id": 35264844038,
+      "artifact_id": 10516362496,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-flight failure."
+    },
+    {
+      "run_id": 35260394428,
+      "artifact_id": 10514976731,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-flight failure."
+    },
+    {
+      "run_id": 35255630033,
+      "artifact_id": 10512920633,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-flight failure."
+    },
+    {
+      "run_id": 35250817024,
+      "artifact_id": 10508984640,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Capture returned 0 fixtures (state: CAPTURE_FAILED)."
+    },
+    {
+      "run_id": 35246536029,
+      "artifact_id": 10508071809,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Pre-flight failure."
+    },
+    {
+      "run_id": 34935725002,
+      "artifact_id": 10384380348,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Early PR development failure receipt."
+    },
+    {
+      "run_id": 34896432610,
+      "artifact_id": 10368987784,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Early PR development failure receipt."
+    },
+    {
+      "run_id": 34759500319,
+      "artifact_id": 10318428390,
+      "artifact_name": "p3-0-comparison-evidence",
+      "capture_state": "CAPTURE_FAILED",
+      "classification": "UNUSABLE_NOT_COMPARATOR_AUTHORITY",
+      "exclusion_reason": "Early PR development failure receipt."
+    }
+  ],
+  "authority_boundaries": {
+    "main_authority": false,
+    "selection_authority": false,
+    "promotion_authority": false,
+    "wagering_authority": false
+  },
+  "canonical_sha256": "938b13798d86de46a4ae580a2ef64f7cb67f87a583f673fbfd24f4dae55f1a1e"
+}
