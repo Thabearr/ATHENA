@@ -112,7 +112,7 @@ jobs:
           print("fixture_cap=50")
           PY
 
-      - name: Prove one-shot current-head dispatch has not already occurred
+      - name: Prove bounded corpus accumulation rate limits, cooldown, and absence of active capture
         env:
           GH_TOKEN: ${{ github.token }}
           EXACT_MAIN_SHA: ${{ steps.request.outputs.main_sha }}
@@ -120,15 +120,23 @@ jobs:
         run: |
           set -euo pipefail
           python - <<'PY'
+          import datetime as dt
           import json
           import os
           import subprocess
 
           PAGE_SIZE = 100
           MAX_WORKFLOW_DISPATCH_HISTORY_PAGES = 100
+          COOLDOWN_SECONDS = 90 * 60  # Minimum 90 minutes between capture starts (owner mission policy)
+          MAX_RUNS_24H = 8            # Maximum 8 attempts in rolling 24 hours (owner mission policy)
+          ROLLING_WINDOW_SECONDS = 24 * 3600
+          ACTIVE_CAPTURE_STATUSES = frozenset(
+              {"in_progress", "queued", "waiting", "requested", "pending"}
+          )
+
           repo = os.environ["GITHUB_REPOSITORY"]
-          exact_main_sha = os.environ["EXACT_MAIN_SHA"]
-          matching_runs = 0
+          now = dt.datetime.now(dt.timezone.utc)
+          all_runs = []
 
           for page in range(1, MAX_WORKFLOW_DISPATCH_HISTORY_PAGES + 1):
               raw = subprocess.check_output(
@@ -145,31 +153,75 @@ jobs:
               )
               response = json.loads(raw)
               if type(response) is not dict:
-                  raise SystemExit("one-shot workflow-dispatch response changed shape")
+                  raise SystemExit("bounded-dispatch response changed shape")
               workflow_runs = response.get("workflow_runs")
               if type(workflow_runs) is not list:
-                  raise SystemExit("one-shot workflow-dispatch runs are malformed")
+                  raise SystemExit("bounded-dispatch runs are malformed")
 
               for run in workflow_runs:
-                  if type(run) is not dict or type(run.get("head_sha")) is not str:
-                      raise SystemExit("one-shot workflow-dispatch run is malformed")
-                  if run["head_sha"] == exact_main_sha:
-                      matching_runs += 1
+                  if type(run) is not dict:
+                      raise SystemExit("bounded-dispatch run is malformed")
+                  run_id = run.get("id")
+                  if type(run_id) is not int:
+                      raise SystemExit("bounded-dispatch run id is malformed")
+                  status = run.get("status")
+                  if type(status) is not str:
+                      raise SystemExit("bounded-dispatch run status is malformed")
+                  if status not in ACTIVE_CAPTURE_STATUSES and status != "completed":
+                      raise SystemExit(f"bounded-dispatch unknown workflow run status: {status}")
+                  created_at_raw = run.get("run_started_at") or run.get("created_at")
+                  if type(created_at_raw) is not str:
+                      raise SystemExit("bounded-dispatch run timestamp is malformed")
+                  try:
+                      run_time = dt.datetime.fromisoformat(created_at_raw.replace("Z", "+00:00"))
+                  except ValueError as exc:
+                      raise SystemExit(f"bounded-dispatch run timestamp unparseable: {exc}")
+                  if run_time.tzinfo is None:
+                      raise SystemExit("bounded-dispatch run timestamp lacks timezone")
+                  if run_time > now:
+                      raise SystemExit("bounded-dispatch run timestamp is in the future")
+                  all_runs.append((run_id, status, run_time))
 
               if len(workflow_runs) < PAGE_SIZE:
                   break
           else:
               raise SystemExit(
-                  "one-shot workflow-dispatch pagination exceeded bound before exhaustion"
+                  "bounded-dispatch pagination exceeded bound before exhaustion"
               )
 
-          if matching_runs != 0:
+          # 1. No capture run currently active
+          active_runs = [r for r in all_runs if r[1] in ACTIVE_CAPTURE_STATUSES]
+          if active_runs:
               raise SystemExit(
-                  "P3.0-E1 already has "
-                  f"{matching_runs} workflow_dispatch run(s) at exact current main "
-                  f"{exact_main_sha}."
+                  f"P3.0-E1 capture run ({active_runs[0][0]}) is currently active with status '{active_runs[0][1]}'."
               )
+
+          # 2. Minimum 90 minutes cooldown since last capture start
+          elapsed = None
+          if all_runs:
+              latest_run = max(all_runs, key=lambda row: row[2])
+              last_run_id, _, last_run_time = latest_run
+              elapsed = (now - last_run_time).total_seconds()
+              if elapsed < COOLDOWN_SECONDS:
+                  raise SystemExit(
+                      f"P3.0-E1 capture cooldown violated: last run ({last_run_id}) started {elapsed:.0f}s ago; "
+                      f"minimum interval is {COOLDOWN_SECONDS}s (90 minutes)."
+                  )
+
+          # 3. Maximum 8 capture attempts in any rolling 24 hours
+          runs_24h = [r for r in all_runs if (now - r[2]).total_seconds() <= ROLLING_WINDOW_SECONDS]
+          if len(runs_24h) >= MAX_RUNS_24H:
+              raise SystemExit(
+                  f"P3.0-E1 rolling 24-hour rate limit exceeded: {len(runs_24h)} run(s) in last 24 hours; "
+                  f"maximum allowed is {MAX_RUNS_24H}."
+              )
+
+          print(
+              f"Bounded corpus accumulation checks passed: {len(runs_24h)} run(s) in last 24h, "
+              f"last run started {f'{elapsed:.0f}' if elapsed is not None else 'N/A'}s ago."
+          )
           PY
+
 
       - name: Dispatch exactly one P3.0-E1 prospective capture
         env:
