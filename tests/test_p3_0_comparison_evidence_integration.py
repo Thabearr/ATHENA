@@ -827,3 +827,203 @@ def test_atomic_child_claim_and_contract_ownership_regressions(tmp_path):
     assert res_l["atomic_child_claim_verified"] is True
     assert res_l["failure_receipt_destination_policy_verified"] is True
     assert res_l["preexisting_child_rejected"] is True
+    assert res_l["writer_no_follow_preexistence_verified"] is True
+    assert res_l["parent_symlink_rejected"] is True
+    assert res_l["final_publication_recheck_verified"] is True
+
+
+def test_canonical_writer_no_follow_and_race_window_regressions(tmp_path):
+    """Prove canonical writer no-follow preexistence, parent validation, and race-window protections.
+
+    Covers:
+    1. _path_entry_preexists predicate (dir, file, live symlink, broken symlink, absent, error fail-closed).
+    2. write_capture_artifact pre-checks (existing dir, nonempty dir, file, symlink, broken symlink).
+    3. Parent envelope validation (missing parent, file parent, symlink parent, broken symlink parent).
+    4. _publish_temporary_capture_directory race-window rejection (cases A-F).
+    5. Temporary directory cleanup on publication failure.
+    6. Production wrapper taxonomy and cause preservation.
+    """
+    import shutil
+    import unittest.mock as mock
+    from domain import p3_0_comparison_evidence as evidence
+    from scripts import _p3_0_paired_capture_part1 as capture_part1
+
+    bundle = _bundle()
+    envelope = tmp_path / "writer_reg_envelope"
+    envelope.mkdir(parents=True, exist_ok=False)
+
+    # 1. _path_entry_preexists predicate
+    # 1a. Absent path => False
+    absent_p = envelope / "definitely_absent_123"
+    assert evidence._path_entry_preexists(absent_p) is False
+
+    # 1b. Directory => True
+    test_d = envelope / "test_dir"
+    test_d.mkdir(parents=False, exist_ok=False)
+    assert evidence._path_entry_preexists(test_d) is True
+
+    # 1c. Regular file => True
+    test_f = envelope / "test_file.txt"
+    test_f.write_text("content", encoding="utf-8")
+    assert evidence._path_entry_preexists(test_f) is True
+
+    # 1d. Live & broken symlink => True
+    sym_dest = envelope / "test_sym"
+    sym_tgt = envelope / "test_sym_target.txt"
+    sym_tgt.write_text("tgt", encoding="utf-8")
+    try:
+        sym_dest.symlink_to(sym_tgt)
+        assert evidence._path_entry_preexists(sym_dest) is True
+        sym_tgt.unlink()
+        assert evidence._path_entry_preexists(sym_dest) is True
+        sym_dest.unlink()
+    except (OSError, NotImplementedError):
+        pass
+
+    # 1e. Filesystem inspection error => fails closed as True
+    with mock.patch("os.lstat", side_effect=OSError("disk read error")):
+        assert evidence._path_entry_preexists(absent_p) is True
+
+    # 2. write_capture_artifact pre-checks
+    # 2a. Preexisting empty dir => raises exact error
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence.write_capture_artifact(bundle, test_d)
+
+    # 2b. Preexisting nonempty dir => raises exact error, files unmutated
+    (test_d / "keep.txt").write_text("keep this", encoding="utf-8")
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence.write_capture_artifact(bundle, test_d)
+    assert (test_d / "keep.txt").read_text(encoding="utf-8") == "keep this"
+
+    # 2c. Preexisting regular file => raises exact error, file unmutated
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence.write_capture_artifact(bundle, test_f)
+    assert test_f.read_text(encoding="utf-8") == "content"
+
+    # 2d. Preexisting broken symlink => raises exact error, symlink unmutated
+    try:
+        sym_dest.symlink_to(sym_tgt)  # sym_tgt does not exist -> broken symlink
+        with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+            evidence.write_capture_artifact(bundle, sym_dest)
+        assert sym_dest.is_symlink()
+        sym_dest.unlink()
+    except (OSError, NotImplementedError):
+        pass
+
+    # 3. Parent envelope validation
+    # 3a. Missing parent => raises parent error
+    missing_parent_dest = envelope / "missing_dir" / "capture"
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output parent must be an existing non-symlink directory"):
+        evidence.write_capture_artifact(bundle, missing_parent_dest)
+    assert not missing_parent_dest.parent.exists()
+
+    # 3b. Parent is a regular file => raises parent error
+    child_under_file = test_f / "capture"
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output parent must be an existing non-symlink directory"):
+        evidence.write_capture_artifact(bundle, child_under_file)
+
+    # 3c. Parent is a symlink to a directory => raises parent error
+    parent_sym_target = envelope / "real_parent"
+    parent_sym_target.mkdir(parents=False, exist_ok=False)
+    parent_sym = envelope / "sym_parent"
+    try:
+        parent_sym.symlink_to(parent_sym_target, target_is_directory=True)
+        child_under_sym_parent = parent_sym / "capture"
+        with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output parent must be an existing non-symlink directory"):
+            evidence.write_capture_artifact(bundle, child_under_sym_parent)
+        assert not (parent_sym_target / "capture").exists()
+    except (OSError, NotImplementedError):
+        pass
+
+    # 4. _publish_temporary_capture_directory race-window rejection (Cases A-F)
+    # Case A: Destination absent => temporary artifact publishes successfully
+    temp_a = envelope / "temp_a"
+    temp_a.mkdir(parents=False, exist_ok=False)
+    (temp_a / "file.txt").write_text("a", encoding="utf-8")
+    dest_a = envelope / "dest_a"
+    evidence._publish_temporary_capture_directory(temp_a, dest_a)
+    assert dest_a.is_dir()
+    assert (dest_a / "file.txt").read_text(encoding="utf-8") == "a"
+    assert not temp_a.exists()
+
+    # Case B: Destination is a broken symlink => fails closed, symlink unchanged
+    temp_b = envelope / "temp_b"
+    temp_b.mkdir(parents=False, exist_ok=False)
+    (temp_b / "file.txt").write_text("b", encoding="utf-8")
+    dest_b = envelope / "dest_b"
+    try:
+        dest_b.symlink_to(envelope / "nonexistent_b_target")
+        with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+            evidence._publish_temporary_capture_directory(temp_b, dest_b)
+        assert dest_b.is_symlink()
+        dest_b.unlink()
+    except (OSError, NotImplementedError):
+        pass
+    shutil.rmtree(temp_b, ignore_errors=True)
+
+    # Case C: Destination is an empty directory => fails closed, 0 mutation
+    temp_c = envelope / "temp_c"
+    temp_c.mkdir(parents=False, exist_ok=False)
+    (temp_c / "file.txt").write_text("c", encoding="utf-8")
+    dest_c = envelope / "dest_c"
+    dest_c.mkdir(parents=False, exist_ok=False)
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence._publish_temporary_capture_directory(temp_c, dest_c)
+    assert list(dest_c.iterdir()) == []
+    shutil.rmtree(temp_c, ignore_errors=True)
+
+    # Case D: Destination is a nonempty directory => fails closed, full tree bytes unchanged
+    temp_d = envelope / "temp_d"
+    temp_d.mkdir(parents=False, exist_ok=False)
+    (temp_d / "file.txt").write_text("d", encoding="utf-8")
+    dest_d = envelope / "dest_d"
+    dest_d.mkdir(parents=False, exist_ok=False)
+    (dest_d / "existing.txt").write_text("original_d", encoding="utf-8")
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence._publish_temporary_capture_directory(temp_d, dest_d)
+    assert (dest_d / "existing.txt").read_text(encoding="utf-8") == "original_d"
+    shutil.rmtree(temp_d, ignore_errors=True)
+
+    # Case E: Destination is a regular file => fails closed, bytes unchanged
+    temp_e = envelope / "temp_e"
+    temp_e.mkdir(parents=False, exist_ok=False)
+    (temp_e / "file.txt").write_text("e", encoding="utf-8")
+    dest_e = envelope / "dest_e.txt"
+    dest_e.write_text("original_e", encoding="utf-8")
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+        evidence._publish_temporary_capture_directory(temp_e, dest_e)
+    assert dest_e.read_text(encoding="utf-8") == "original_e"
+    shutil.rmtree(temp_e, ignore_errors=True)
+
+    # Case F: Destination appears after writer's initial check (deterministic TOCTOU race)
+    # We simulate this by intercepting _publish_temporary_capture_directory:
+    # right before _publish_temporary_capture_directory is called, destination is created.
+    dest_f = envelope / "dest_f"
+    assert not dest_f.exists()
+
+    orig_pub = evidence._publish_temporary_capture_directory
+    def racing_publish(temp_dir, destination):
+        # Destination appears during temporary directory build window!
+        destination.mkdir(parents=False, exist_ok=False)
+        (destination / "raced_marker.txt").write_text("raced", encoding="utf-8")
+        return orig_pub(temp_dir, destination)
+
+    with mock.patch("domain._p3_0_comparison_evidence_part4._publish_temporary_capture_directory", side_effect=racing_publish):
+        with pytest.raises(evidence.P30ComparisonEvidenceError, match="capture output directory already exists"):
+            evidence.write_capture_artifact(bundle, dest_f)
+
+    # Destination was NOT overwritten
+    assert (dest_f / "raced_marker.txt").read_text(encoding="utf-8") == "raced"
+    assert not (dest_f / "manifest.json").exists()
+
+    # 5. Temporary directory cleanup proof:
+    # No orphaned temporary directories remained in envelope
+    temp_dirs = [p for p in envelope.iterdir() if p.name.startswith("p3-0-evidence-")]
+    assert temp_dirs == []
+
+    # 6. Production wrapper wraps writer rejection as CAPTURE_ARTIFACT_PUBLICATION_FAILED
+    with pytest.raises(capture_part1.P30PairedCaptureError) as exc_info:
+        capture_part1._publish_capture_artifact(bundle, dest_f)
+    assert exc_info.value.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+    assert isinstance(exc_info.value.__cause__, evidence.P30ComparisonEvidenceError)
+    assert "capture output directory already exists" in str(exc_info.value.__cause__)

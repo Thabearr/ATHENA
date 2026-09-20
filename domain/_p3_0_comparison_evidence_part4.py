@@ -113,15 +113,55 @@ def _safe_manifest_relative(raw: Any) -> PurePosixPath:
     return posix
 
 
+def _path_entry_preexists(path: Path | str) -> bool:
+    """Return True if path entry preexists in ANY form (dir, file, symlink, broken symlink).
+
+    Fails closed (returns True) on any filesystem inspection error.
+    Returns False only when the path entry is genuinely absent.
+    """
+    try:
+        p = Path(path)
+        try:
+            os.lstat(p)
+            return True
+        except FileNotFoundError:
+            return False
+        except OSError:
+            return True
+    except Exception:
+        return True
+
+
+def _publish_temporary_capture_directory(temporary: Path, destination: Path) -> None:
+    """Publish temporary capture directory to destination, enforcing no-overwrite.
+
+    Re-checks that destination does not preexist in any form immediately before
+    calling os.replace. Fails closed with P30ComparisonEvidenceError without
+    mutating destination if destination preexists.
+    """
+    if _path_entry_preexists(destination):
+        raise P30ComparisonEvidenceError("capture output directory already exists")
+    os.replace(temporary, destination)
+
+
 def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Path) -> Path:
     validate_contract()
     checked = verify_capture_bundle(bundle)
     destination = Path(output_directory)
-    if destination.exists():
+    if _path_entry_preexists(destination):
         raise P30ComparisonEvidenceError("capture output directory already exists")
     parent = destination.parent
-    if not parent.exists() or not parent.is_dir():
-        raise P30ComparisonEvidenceError("capture output parent must already exist")
+    try:
+        if parent.is_symlink() or not parent.is_dir():
+            raise P30ComparisonEvidenceError(
+                "capture output parent must be an existing non-symlink directory"
+            )
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, P30ComparisonEvidenceError):
+            raise
+        raise P30ComparisonEvidenceError(
+            "capture output parent must be an existing non-symlink directory"
+        ) from exc
     temporary = Path(tempfile.mkdtemp(prefix="p3-0-evidence-", dir=parent))
     try:
         entries: list[dict[str, str]] = []
@@ -162,7 +202,7 @@ def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Pa
             "files": entries,
         }
         _write_json(temporary / "manifest.json", manifest)
-        os.replace(temporary, destination)
+        _publish_temporary_capture_directory(temporary, destination)
         return destination
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -326,4 +366,5 @@ __all__ = [
     "normalize_quote_snapshot", "normalize_router_output", "normalize_fixture_identity",
     "normalize_timing", "project_legacy_input", "project_legacy_output", "validate_contract",
     "verify_capture_artifact", "verify_capture_bundle", "write_capture_artifact",
+    "_path_entry_preexists", "_publish_temporary_capture_directory",
 ]

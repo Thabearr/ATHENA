@@ -1019,6 +1019,75 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         if (partial_child / "p3-0-capture-failure.json").exists():
             raise P30LiveReadinessError("Check L failed: failure receipt was created in published capture child")
 
+        # Canonical writer no-follow preexistence & broken symlink proofs
+        if not evidence._path_entry_preexists(capture_child):
+            raise P30LiveReadinessError("Check L failed: _path_entry_preexists returned False for existing capture child")
+        if evidence._path_entry_preexists(envelope / "definitely_absent_path_xyz"):
+            raise P30LiveReadinessError("Check L failed: _path_entry_preexists returned True for absent path")
+
+        broken_sym_dest = envelope / "broken_sym_dest"
+        sym_target_file = envelope / "temp_sym_target.txt"
+        sym_target_file.write_text("target", encoding="utf-8")
+        try:
+            broken_sym_dest.symlink_to(sym_target_file)
+            sym_target_file.unlink()
+            if not evidence._path_entry_preexists(broken_sym_dest):
+                raise P30LiveReadinessError("Check L failed: _path_entry_preexists returned False for broken symlink")
+            broken_sym_rejected = False
+            try:
+                capture_part1._publish_capture_artifact(bundle, broken_sym_dest)
+            except capture_part1.P30PairedCaptureError as exc:
+                if (
+                    exc.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+                    and isinstance(exc.__cause__, evidence.P30ComparisonEvidenceError)
+                    and "capture output directory already exists" in str(exc.__cause__)
+                ):
+                    broken_sym_rejected = True
+            if not broken_sym_rejected:
+                raise P30LiveReadinessError("Check L failed: broken symlink destination was not rejected by production publication helper")
+            if not broken_sym_dest.is_symlink():
+                raise P30LiveReadinessError("Check L failed: broken symlink was overwritten during rejected publication")
+        except (OSError, NotImplementedError):
+            pass
+
+        # Parent symlink rejection proof
+        sym_parent_target = envelope / "real_parent_target"
+        sym_parent_target.mkdir(parents=False, exist_ok=False)
+        sym_parent = envelope / "sym_parent_dir"
+        try:
+            sym_parent.symlink_to(sym_parent_target, target_is_directory=True)
+            child_under_sym_parent = sym_parent / "capture_child"
+            parent_sym_rejected = False
+            try:
+                evidence.write_capture_artifact(bundle, child_under_sym_parent)
+            except evidence.P30ComparisonEvidenceError as exc:
+                if "capture output parent must be an existing non-symlink directory" in str(exc):
+                    parent_sym_rejected = True
+            if not parent_sym_rejected:
+                raise P30LiveReadinessError("Check L failed: parent symlink was not rejected by writer")
+        except (OSError, NotImplementedError):
+            pass
+
+        # Final publication helper re-check proof (deterministic race window)
+        race_temp = envelope / "race_test_temp"
+        race_temp.mkdir(parents=False, exist_ok=False)
+        (race_temp / "temp_file.txt").write_text("temp", encoding="utf-8")
+        race_dest = envelope / "race_test_dest"
+        race_dest.mkdir(parents=False, exist_ok=False)
+        (race_dest / "original.txt").write_text("original", encoding="utf-8")
+        race_rejected = False
+        try:
+            evidence._publish_temporary_capture_directory(race_temp, race_dest)
+        except evidence.P30ComparisonEvidenceError as exc:
+            if "capture output directory already exists" in str(exc):
+                race_rejected = True
+        if not race_rejected:
+            raise P30LiveReadinessError("Check L failed: _publish_temporary_capture_directory did not reject preexisting destination")
+        if (race_dest / "original.txt").read_text(encoding="utf-8") != "original":
+            raise P30LiveReadinessError("Check L failed: destination was mutated during final publication rejection")
+        import shutil
+        shutil.rmtree(race_temp, ignore_errors=True)
+
         if (partial_child / "manifest.json").read_bytes() != manifest_bytes_before:
             raise P30LiveReadinessError("Check L failed: partial manifest.json was mutated")
         if (partial_child / "bundle.json").read_bytes() != bundle_bytes_before:
@@ -1037,6 +1106,9 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
         "preexisting_child_rejected": True,
         "atomic_child_claim_verified": True,
         "failure_receipt_destination_policy_verified": True,
+        "writer_no_follow_preexistence_verified": True,
+        "parent_symlink_rejected": True,
+        "final_publication_recheck_verified": True,
         "complete_corpus_exit_zero_verified": True,
         "partial_corpus_nonzero_verified": True,
         "partial_artifact_immutability_verified": True,

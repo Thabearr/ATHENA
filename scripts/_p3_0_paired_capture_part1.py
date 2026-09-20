@@ -133,12 +133,7 @@ def _failure_chain(exc: BaseException) -> tuple[list[dict[str, str]], bool]:
 
 def _destination_preexists(path: Path) -> bool:
     """Return True if path exists in ANY form (file, dir, symlink, etc.)."""
-    try:
-        if os.path.lexists(path):
-            return True
-        return path.exists() or path.is_symlink()
-    except OSError:
-        return True
+    return evidence._path_entry_preexists(path)
 
 
 def _claim_absent_failure_destination(output_dir: Path) -> bool:
