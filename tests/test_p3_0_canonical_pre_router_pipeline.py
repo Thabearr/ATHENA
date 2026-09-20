@@ -1326,6 +1326,7 @@ def test_adversarial_11_wrong_native_identity(monkeypatch: pytest.MonkeyPatch, t
             lambda *_args: (raw_fotmob_bytes, raw_manifest),
         )
         monkeypatch.setattr(runner, "_legacy_bootstrap_bytes", lambda: b"{}")
+        _install_upcoming_discovery(monkeypatch, [wrong_event], tournament_name="Premier League")
 
         pre_router_bundle = runner.acquire_current_shadow_pre_router_bundle(
             repository_root=tmp_path,
