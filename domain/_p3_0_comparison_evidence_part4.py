@@ -114,17 +114,18 @@ def _safe_manifest_relative(raw: Any) -> PurePosixPath:
 
 
 def _path_entry_preexists(path: Path | str) -> bool:
-    """Return True if path entry preexists in ANY form (dir, file, symlink, broken symlink).
+    """Check whether a path entry exists without following symlinks.
 
-    Fails closed (returns True) on any filesystem inspection error.
-    Returns False only when the path entry is genuinely absent.
+    Returns True for existing directories, regular files, symlinks, and broken symlinks.
+    Returns False when the path does not exist.
+    Fails closed (returns True) on unexpected filesystem inspection errors.
     """
     try:
         p = Path(path)
         try:
             os.lstat(p)
             return True
-        except FileNotFoundError:
+        except (FileNotFoundError, NotADirectoryError):
             return False
         except OSError:
             return True
@@ -148,8 +149,6 @@ def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Pa
     validate_contract()
     checked = verify_capture_bundle(bundle)
     destination = Path(output_directory)
-    if _path_entry_preexists(destination):
-        raise P30ComparisonEvidenceError("capture output directory already exists")
     parent = destination.parent
     try:
         if parent.is_symlink() or not parent.is_dir():
@@ -162,6 +161,8 @@ def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Pa
         raise P30ComparisonEvidenceError(
             "capture output parent must be an existing non-symlink directory"
         ) from exc
+    if _path_entry_preexists(destination):
+        raise P30ComparisonEvidenceError("capture output directory already exists")
     temporary = Path(tempfile.mkdtemp(prefix="p3-0-evidence-", dir=parent))
     try:
         entries: list[dict[str, str]] = []
