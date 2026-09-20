@@ -300,6 +300,8 @@ def _contract_payload() -> dict[str, Any]:
         "schema_version": SCHEMA_VERSION, "policy_id": POLICY_ID,
         "as_of_proof_policy_id": AS_OF_PROOF_POLICY_ID,
         "legacy_runtime_safety_metadata_quarantine_policy_id": RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID,
+        "legacy_numpy_json_normalization_policy_id": LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID,
+        "legacy_numpy_json_normalization_rules": list(LEGACY_NUMPY_JSON_NORMALIZATION_RULES),
         "capture_artifact_envelope_relative": P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE,
         "capture_immutable_child_relative": P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE,
         "capture_publication_policy_id": P3_CAPTURE_PUBLICATION_POLICY_ID,
@@ -337,8 +339,8 @@ def _contract_payload() -> dict[str, Any]:
 def calculate_contract_sha256() -> str:
     return canonical_sha256(_contract_payload())
 
-# Re-pinned after capture envelope, child, policies, and failure taxonomy binding.
-EXPECTED_CONTRACT_SHA256 = "0e4a311059125f7b74128e7c04c75e01889018e5f757faf33212f144457973c3"
+# Re-pinned after capture envelope, child, policies, failure taxonomy, and numpy normalization binding.
+EXPECTED_CONTRACT_SHA256 = "d7bb3dac550ab662374be6a7aa6c6c17870ed2925f0fa155dae8d24e07c713b7"
 
 
 def validate_contract() -> str:
@@ -352,6 +354,7 @@ __all__ = [
     "AS_OF_PROOF_POLICY_ID", "CANONICAL_AUTHORITY_KEYS", "CAPTURE_ARTIFACT_PUBLICATION_FAILED",
     "COMPLETENESS_STATES", "EXPECTED_COMPONENTS", "EXPECTED_CONTRACT_SHA256",
     "FIXTURE_IDENTITY_KEYS", "JOIN_STATES", "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
+    "LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID", "LEGACY_NUMPY_JSON_NORMALIZATION_RULES",
     "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE",
     "P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE", "P3_CAPTURE_PUBLICATION_POLICY_ID",
     "P3_CAPTURE_STAGE_FAILURE_TAXONOMY", "P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID",

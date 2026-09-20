@@ -195,6 +195,94 @@ def test_legacy_observer_holds_copies_and_quarantines_staking():
     assert "kelly_stake_pct" not in evidence.canonical_json_bytes(captured).decode()
 
 
+def test_legacy_seam_numpy_normalization_and_observer_retention():
+    import numpy as np
+
+    fixture = {
+        "fixture_id": 4452140,
+        "home_team": "Alpha FC",
+        "away_team": "Beta FC",
+        "league": "Premier League",
+        "match_date": "2026-09-30",
+        "data_source": "fotmob",
+    }
+
+    def analyst_result(*_args, **_kwargs):
+        return {
+            "decision_status": "BET",
+            "recommended_analytical_verdict": "BET",
+            "edge_differential": np.float64(0.08),
+            "edge_is_bookmaker_value": True,
+            "bookmaker_odds": np.float32(2.10),
+            "bookmaker_probability": np.float64(0.45),
+            "edge_pp": np.float64(8.0),
+            "upset_alert": np.bool_(False),
+            "risk_score": np.float64(12.5),
+            "stale_data": False,
+            "viable_markets": ["1X"],
+            "accumulator_eligible_selection": "HOME",
+            "reasoning_verdicts": ["VALUE"],
+            "no_bet_reasons": [],
+            "evidence_report": {
+                "final_decision": "BET",
+                "legacy_decision_status_before_runtime_gate": "BET",
+                "risk_metric": np.float64(12.5),
+                "array_metric": np.array([np.float64(1.0), np.float64(2.0)]),
+            },
+        }
+
+    pipeline = object.__new__(AnalysisPipeline)
+    pipeline.analyst = SimpleNamespace(compile_master_fixture_prediction=analyst_result)
+    pipeline._resolve_team_id = lambda _name: 1
+
+    observer = evidence.LegacyEvidenceObserver(
+        clock=lambda: datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+    )
+
+    baseline = pipeline.run_pipeline_snapshot(override_fixtures=[copy.deepcopy(fixture)])
+    observed = pipeline.run_pipeline_snapshot(
+        override_fixtures=[copy.deepcopy(fixture)],
+        evidence_observer=observer,
+    )
+
+    # 1. Output invariance: baseline and observed pipeline outputs are identical
+    assert len(observed) == len(baseline) == 1
+    row = observed[0]
+    base_row = baseline[0]
+    assert row["fixture_id"] == base_row["fixture_id"] == 4452140
+    assert row["decision_status"] == base_row["decision_status"] == "ANALYTICAL_CANDIDATE"  # Runtime gate mapped BET to ANALYTICAL_CANDIDATE
+    assert row["risk_score"] == base_row["risk_score"] == 12.5
+    assert row["edge"] == base_row["edge"] == 0.08
+    assert row["bookmaker_odds"] == base_row["bookmaker_odds"] == 2.10
+    assert row["bookmaker_probability"] == base_row["bookmaker_probability"] == 0.45
+    assert row["viable_markets"] == base_row["viable_markets"] == ["1X"]
+    np.testing.assert_array_equal(
+        row["evidence_report"]["array_metric"],
+        base_row["evidence_report"]["array_metric"],
+    )
+
+    # 2. Observer retention: observer successfully captured and normalized numpy types
+    observations = observer.observations()
+    assert len(observations) == 1
+    obs = observations[0]
+    legacy_output = obs["legacy_output"]
+    pre_gate = legacy_output["legacy_analysis_before_runtime_gate"]
+    assert pre_gate["risk_score"] == 12.5
+    assert type(pre_gate["risk_score"]) is float
+    assert type(pre_gate["edge_differential"]) is float
+    assert type(pre_gate["bookmaker_odds"]) is float
+    assert type(pre_gate["upset_alert"]) is bool
+
+    # 3. Canonical JSON serialization succeeds without non-JSON errors
+    raw_bytes = evidence.canonical_json_bytes(obs)
+    assert isinstance(raw_bytes, bytes)
+
+    # 4. Zero authority leakage: runtime safety keys quarantined, no sensitive material
+    assert "runtime_authorization_state" not in raw_bytes.decode()
+    assert "runtime_authorization_reasons" not in raw_bytes.decode()
+    assert "kelly_stake_pct" not in raw_bytes.decode()
+
+
 def test_pair_capture_module_has_no_delivery_email_auth_wallet_or_wager_imports():
     root = Path(__file__).resolve().parents[1]
     paths = (

@@ -18,6 +18,8 @@ import shutil
 import tempfile
 from typing import Any, Callable, Mapping, Sequence
 
+import numpy as np
+
 SCHEMA_VERSION = 1
 POLICY_ID = "ATHENA_P3_0_COMPARISON_EVIDENCE_V1"
 AS_OF_PROOF_POLICY_ID = "P3_0_SINGLE_PROSPECTIVE_CAPTURE_WINDOW_LINEAGE_V1"
@@ -30,6 +32,14 @@ P3_CAPTURE_PUBLICATION_POLICY_ID = "P3_E1_READINESS_ENVELOPE_IMMUTABLE_CAPTURE_C
 P3_PARTIAL_CORPUS_PROCESS_POLICY_ID = "P3_E1_PARTIAL_CORPUS_NONZERO_IMMUTABLE_V1"
 P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID = (
     "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
+)
+LEGACY_NUMPY_JSON_NORMALIZATION_POLICY_ID = "P3_LEGACY_NUMPY_JSON_NORMALIZATION_V1"
+LEGACY_NUMPY_JSON_NORMALIZATION_RULES = (
+    "NUMPY_GENERIC_ITEM_TO_CANONICAL_JSON_RECURSIVE",
+    "NUMPY_NDARRAY_TOLIST_TO_CANONICAL_JSON_RECURSIVE",
+    "DUCK_TYPED_TOLIST_ITEM_FORBIDDEN",
+    "PYTHON_NON_JSON_CONTAINERS_FORBIDDEN",
+    "NONFINITE_NUMBERS_FORBIDDEN",
 )
 
 LEGACY_EVIDENCE_OBSERVER_INCOMPLETE = "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE"
@@ -274,6 +284,10 @@ def _exact_keys(value: Mapping[str, Any], expected: frozenset[str], label: str) 
 
 
 def _quarantine_legacy_value(value: Any, location: str) -> Any:
+    if isinstance(value, np.generic):
+        value = value.item()
+    elif isinstance(value, np.ndarray):
+        value = value.tolist()
     if type(value) is dict:
         result: dict[str, Any] = {}
         for key, item in value.items():

@@ -42,7 +42,7 @@ Schema version: `1`.
 
 Pinned hardened schema-contract SHA-256:
 
-`0e4a311059125f7b74128e7c04c75e01889018e5f757faf33212f144457973c3`
+`d7bb3dac550ab662374be6a7aa6c6c17870ed2925f0fa155dae8d24e07c713b7`
 
 The public module is a stable facade over a private implementation. Canonical
 JSON is deterministic UTF-8 with sorted keys, compact separators and one final
@@ -107,6 +107,17 @@ The proof fails closed for missing timestamps, future-dated quote/probability at
 Price-All, Price-All after Router, non-prematch stage times, or evaluation times
 outside the single prospective capture window. It does not invent a freshness
 tolerance or backdate evidence.
+
+### Legacy NumPy and Container Normalization Policy
+
+Policy ID: `P3_LEGACY_NUMPY_JSON_NORMALIZATION_V1`.
+
+Rules:
+- `NUMPY_GENERIC_ITEM_TO_CANONICAL_JSON_RECURSIVE`: NumPy scalar values (`np.generic` such as `np.float64`, `np.int64`, `np.bool_`) are converted via `.item()` to standard Python scalars and recursively validated.
+- `NUMPY_NDARRAY_TOLIST_TO_CANONICAL_JSON_RECURSIVE`: NumPy arrays (`np.ndarray`) are converted via `.tolist()` and recursively validated.
+- `DUCK_TYPED_TOLIST_ITEM_FORBIDDEN`: Custom or arbitrary objects implementing `.item()` or `.tolist()` are rejected fail-closed without invoking those methods.
+- `PYTHON_NON_JSON_CONTAINERS_FORBIDDEN`: Non-JSON Python containers (`tuple`, `set`, `frozenset`) are rejected fail-closed.
+- `NONFINITE_NUMBERS_FORBIDDEN`: Non-finite numbers (`NaN`, `Infinity`, `-Infinity`) are rejected fail-closed.
 
 ## Legacy observer neutrality
 
