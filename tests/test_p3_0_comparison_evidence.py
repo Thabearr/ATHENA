@@ -214,3 +214,85 @@ def test_contract_payload_pins_publication_envelope_and_taxonomy():
         "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
         "PAIRED_CAPTURE_PARTIAL",
     ]
+
+
+def test_legacy_projection_normalizes_numpy_and_non_primitive_scalars_and_containers():
+    import numpy as np
+
+    # 1. Exported row containing numpy scalars and arrays
+    exported = {
+        "fixture_id": np.int64(5749683),
+        "decision_status": "ANALYTICAL_CANDIDATE",
+        "risk_score": np.float64(0.75),
+        "bookmaker_odds": np.float32(2.50),
+        "viable_markets": np.array(["1X", "OVER_15"]),
+        "evidence_report": {
+            "probabilities": {
+                "home_win": np.float64(0.55),
+                "draw": np.float64(0.25),
+                "away_win": np.float64(0.20),
+            },
+            "flags": [np.bool_(True), np.bool_(False)],
+            "counts": np.array([np.int32(1), np.int32(2)]),
+            "tuple_metric": (np.int64(10), np.float64(4.2)),
+            "set_tags": {"tag_b", "tag_a"},
+        },
+    }
+    projected = evidence.project_legacy_output(_analysis(), _analysis(), exported)
+    row = projected["exported_row"]
+
+    assert row["fixture_id"] == 5749683
+    assert type(row["fixture_id"]) is int
+    assert row["risk_score"] == 0.75
+    assert type(row["risk_score"]) is float
+    assert row["bookmaker_odds"] == float(np.float32(2.50))
+    assert type(row["bookmaker_odds"]) is float
+    assert row["viable_markets"] == ["1X", "OVER_15"]
+    assert type(row["viable_markets"]) is list
+    report = row["evidence_report"]
+    assert report["probabilities"]["home_win"] == 0.55
+    assert type(report["probabilities"]["home_win"]) is float
+    assert report["flags"] == [True, False]
+    assert type(report["flags"][0]) is bool
+    assert report["counts"] == [1, 2]
+    assert type(report["counts"][0]) is int
+    assert report["tuple_metric"] == [10, 4.2]
+    assert type(report["tuple_metric"]) is list
+    assert report["set_tags"] == ["tag_a", "tag_b"]
+
+    # 2. Input context containing numpy scalars
+    legacy_inp = {
+        **_legacy_input(),
+        "fixture_id": np.int64(5749683),
+        "current_home_form": {"points": np.int64(12), "avg_goals": np.float64(1.8)},
+    }
+    projected_inp = evidence.project_legacy_input(legacy_inp)
+    assert projected_inp["fixture_id"] == 5749683
+    assert type(projected_inp["fixture_id"]) is int
+    assert projected_inp["current_home_form"]["points"] == 12
+    assert type(projected_inp["current_home_form"]["points"]) is int
+    assert projected_inp["current_home_form"]["avg_goals"] == 1.8
+    assert type(projected_inp["current_home_form"]["avg_goals"]) is float
+
+    # 3. Canonical JSON encoding of projected outputs succeeds
+    raw_bytes = evidence.canonical_json_bytes(projected)
+    assert isinstance(raw_bytes, bytes)
+
+    # 4. Sensitive keys still rejected even if nested in numpy structures or tuples
+    with pytest.raises(evidence.P30ComparisonEvidenceError):
+        evidence.project_legacy_output(_analysis(), _analysis(), {
+            "fixture_id": FIXTURE,
+            "decision_status": "NO_BET",
+            "evidence_report": {"credentials": ({"password": "secret"},)},
+        })
+
+    # 5. Non-convertible unhandled types still fail closed
+    class CustomNonJson:
+        pass
+
+    with pytest.raises(evidence.P30ComparisonEvidenceError, match="non-JSON value"):
+        evidence.project_legacy_output(_analysis(), _analysis(), {
+            "fixture_id": FIXTURE,
+            "decision_status": "NO_BET",
+            "evidence_report": {"custom": CustomNonJson()},
+        })

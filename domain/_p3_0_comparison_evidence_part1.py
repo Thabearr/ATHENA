@@ -274,6 +274,20 @@ def _exact_keys(value: Mapping[str, Any], expected: frozenset[str], label: str) 
 
 
 def _quarantine_legacy_value(value: Any, location: str) -> Any:
+    if hasattr(value, "tolist") and callable(getattr(value, "tolist", None)):
+        try:
+            value = value.tolist()
+        except Exception:
+            pass
+    elif hasattr(value, "item") and callable(getattr(value, "item", None)) and not isinstance(value, (dict, list, tuple, set)):
+        try:
+            value = value.item()
+        except Exception:
+            pass
+    if isinstance(value, tuple):
+        value = list(value)
+    elif isinstance(value, set):
+        value = sorted(value)
     if type(value) is dict:
         result: dict[str, Any] = {}
         for key, item in value.items():
