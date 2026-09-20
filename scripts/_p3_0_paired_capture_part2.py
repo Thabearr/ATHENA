@@ -1,12 +1,15 @@
 from scripts._p3_0_paired_capture_part1 import *  # noqa: F401,F403
 
 
-def _legacy_observations(sources: Sequence[Any]) -> dict[str, Mapping[str, Any]]:
+def _legacy_observations(
+    sources: Sequence[Any],
+) -> tuple[dict[str, Mapping[str, Any]], list[dict[str, Any]]]:
     """Run each exact fixture independently so filtered/error rows cannot shift
     positional pairing or be attached to a different canonical fixture.
     """
     pipeline = _legacy_pipeline()
     by_fixture: dict[str, Mapping[str, Any]] = {}
+    incomplete: list[dict[str, Any]] = []
     for source in sources:
         observer = evidence.LegacyEvidenceObserver()
         exported = pipeline.run_pipeline_snapshot(
@@ -15,6 +18,13 @@ def _legacy_observations(sources: Sequence[Any]) -> dict[str, Mapping[str, Any]]
         )
         observations = observer.observations()
         if len(observations) != 1 or len(exported) != 1:
+            incomplete.append({
+                "failure_code": evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE,
+                "fixture_identity": source.fixture_identity,
+                "provider_event_id": source.provider_event_id,
+                "observation_count": len(observations),
+                "exported_row_count": len(exported),
+            })
             continue
         observation = observations[0]
         legacy_input = observation["legacy_input"]
@@ -33,7 +43,7 @@ def _legacy_observations(sources: Sequence[Any]) -> dict[str, Mapping[str, Any]]
         if fixture_identity in by_fixture:
             raise P30PairedCaptureError("legacy observer emitted duplicate fixture identity")
         by_fixture[fixture_identity] = observation
-    return by_fixture
+    return by_fixture, incomplete
 
 
 def _legacy_identity(source: Any, observation: Mapping[str, Any]) -> dict[str, Any]:
@@ -264,7 +274,7 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
         sources_bundle.router_inputs,
         key=lambda source: (source.fixture_identity, source.provider_event_id),
     ))[:fixture_cap]
-    legacy_by_fixture = _legacy_observations(selected_sources)
+    legacy_by_fixture, legacy_incompleteness = _legacy_observations(selected_sources)
     completed = _now()
     completed_text = _iso(completed)
     records = []
@@ -321,6 +331,10 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
         )
         records.append(record)
         artifacts.extend(_source_artifacts(source))
+    if selected_sources and not records:
+        raise P30PairedCaptureError(
+            "P3.0-E1 zero fixture records after non-empty source selection"
+        )
     bundle = evidence.build_capture_bundle(
         repository_commit_sha=exact_commit_sha,
         capture_id=capture_id,
@@ -333,6 +347,7 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
             "capture_mode": "AnalysisPipeline override_fixtures plus default-off evidence observer",
             "runtime_artifacts": _artifact_hashes(root),
             "replayability_claim": "CAPTURED_OUTPUT_ONLY_NO_FULL_HISTORICAL_REEXECUTION_CLAIM",
+            "legacy_observer_incompleteness": legacy_incompleteness,
         },
         canonical_execution_identity={
             "policy_id": POLICY_ID,
@@ -353,8 +368,9 @@ def execute_capture(*, request_dates: tuple[str, ...], fixture_cap: int,
         source_artifacts=artifacts,
         fixture_records=records,
     )
-    evidence.write_capture_artifact(bundle, output_dir)
+    _publish_capture_artifact(bundle, output_dir)
     return bundle
+
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -371,18 +387,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             request_dates=requested, fixture_cap=args.fixture_cap,
             output_dir=args.output_dir, repository_root=root,
         )
-        complete = sum(
-            row["completeness_receipt"]["state"] == "P3_0_CAPTURE_COMPLETE"
-            for row in bundle["fixture_records"]
-        )
-        print(json.dumps({
-            "status": "P3_0_E1_CAPTURE_WRITTEN",
-            "capture_id": bundle["capture_id"],
-            "fixture_count": len(bundle["fixture_records"]),
-            "complete_fixture_count": complete,
-            "canonical_sha256": bundle["canonical_sha256"],
-        }, sort_keys=True))
-        return 0
+        exit_code, payload = classify_published_capture_result(bundle)
+        if exit_code == 0:
+            print(json.dumps(payload, sort_keys=True))
+            return 0
+        else:
+            print(json.dumps(payload, sort_keys=True), file=sys.stderr)
+            return exit_code
     except Exception as exc:
         _safe_failure(
             args.output_dir, exact_commit_sha=exact_sha,

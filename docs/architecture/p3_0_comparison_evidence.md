@@ -42,7 +42,7 @@ Schema version: `1`.
 
 Pinned hardened schema-contract SHA-256:
 
-`464a80970a108efb6d9dcd1f5d1692c521f165d86d7b954b232b90df9fee651b`
+`0e4a311059125f7b74128e7c04c75e01889018e5f757faf33212f144457973c3`
 
 The public module is a stable facade over a private implementation. Canonical
 JSON is deterministic UTF-8 with sorted keys, compact separators and one final

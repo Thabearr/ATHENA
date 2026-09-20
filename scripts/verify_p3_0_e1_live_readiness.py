@@ -624,6 +624,88 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
             "Check I failed: production_sportybet_execution authority must be False"
         )
 
+    from domain.p3_0_comparison_evidence import (
+        LegacyEvidenceObserver,
+        P30ComparisonEvidenceError,
+        project_legacy_output,
+        validate_contract,
+    )
+    from services.analysis_pipeline import (
+        LEGACY_RUNTIME_AUTHORIZATION_STATE,
+        LEGACY_RUNTIME_BET_BLOCK_REASON,
+        apply_runtime_authorization,
+    )
+
+    contract_sha = validate_contract()
+
+    sample_analysis = {
+        "fixture_id": "test_fixture_ml_1",
+        "home_team": "DC United",
+        "away_team": "Charlotte FC",
+        "league": "Major League Soccer",
+        "match_date": "2026-09-19",
+        "decision_status": "BET",
+        "recommended_analytical_verdict": "BET",
+        "edge_differential": 0.05,
+        "edge_is_bookmaker_value": True,
+        "bookmaker_odds": 2.1,
+        "bookmaker_probability": 0.48,
+        "edge_pp": 5.0,
+        "upset_alert": False,
+        "risk_score": 10.0,
+        "stale_data": False,
+        "viable_markets": [],
+        "accumulator_eligible_selection": "HOME",
+        "reasoning_verdicts": ["VALUE"],
+        "no_bet_reasons": [],
+        "evidence_report": {
+            "final_decision": "BET",
+            "legacy_decision_status_before_runtime_gate": "BET",
+            "decision_reasons": ["Cleared analytical checks."],
+            "runtime_authorization_state": LEGACY_RUNTIME_AUTHORIZATION_STATE,
+            "runtime_authorization_reasons": [LEGACY_RUNTIME_BET_BLOCK_REASON],
+        },
+    }
+    quarantined = apply_runtime_authorization(sample_analysis)
+    projected = project_legacy_output(
+        pre_gate=quarantined,
+        authorized=quarantined,
+        exported=quarantined,
+    )
+
+    def _assert_quarantined_keys_absent(val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                if k in (
+                    "runtime_authorization_state",
+                    "runtime_authorization_reasons",
+                    "kelly_stake_pct",
+                    "legacy_kelly_stake_pct_before_runtime_gate",
+                ):
+                    raise P30LiveReadinessError(
+                        f"Check I failed: quarantined key '{k}' found in projected output"
+                    )
+                _assert_quarantined_keys_absent(v)
+        elif isinstance(val, list):
+            for item in val:
+                _assert_quarantined_keys_absent(item)
+
+    _assert_quarantined_keys_absent(projected)
+
+    bad_analysis = dict(quarantined)
+    bad_analysis["authorization"] = "secret_bearer_token"
+    credential_rejected = False
+    try:
+        project_legacy_output(
+            pre_gate=bad_analysis,
+            authorized=bad_analysis,
+            exported=bad_analysis,
+        )
+    except P30ComparisonEvidenceError:
+        credential_rejected = True
+    if not credential_rejected:
+        raise P30LiveReadinessError("Check I failed: credential-like key was not rejected")
+
     return {
         "status": "PASSED",
         "canonical_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
@@ -632,6 +714,9 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
         "supported_and_p3_strategy_unified": True,
         "paginated_runtime_reconciliation_authority": False,
         "catalog_fanout_runtime_authority": False,
+        "contract_sha256": contract_sha,
+        "runtime_safety_quarantine_verified": True,
+        "credential_protection_verified": True,
     }
 
 
@@ -790,11 +875,243 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
             "Check L failed: readiness gate must execute strictly before paired evidence capture"
         )
 
+    capture_lines = [line for line in lines if "--output-dir" in line]
+    if not capture_lines:
+        raise P30LiveReadinessError("Check L failed: --output-dir not found in capture workflow")
+    if not any("artifacts/p3-0-comparison-evidence/capture" in line for line in capture_lines):
+        raise P30LiveReadinessError(
+            "Check L failed: capture step --output-dir must be artifacts/p3-0-comparison-evidence/capture"
+        )
+    envelope_dir = repository_root / "artifacts" / "p3-0-comparison-evidence"
+    child_dir = envelope_dir / "capture"
+    if child_dir.exists():
+        raise P30LiveReadinessError(
+            "Check L failed: capture child directory must not exist prior to capture execution"
+        )
+
+    # Execute offline publication/completion proof
+    from domain import p3_0_comparison_evidence as evidence
+    from scripts import _p3_0_paired_capture_part1 as capture_part1
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="p3-0-readiness-envelope-") as temp_dir_str:
+        temp_dir = Path(temp_dir_str)
+        envelope = temp_dir / "artifacts" / "p3-0-comparison-evidence"
+        envelope.mkdir(parents=True, exist_ok=True)
+
+        readiness_file = envelope / READINESS_FILENAME
+        receipt_content = b'{"status":"P3_0_E1_LIVE_READINESS_VERIFIED"}\n'
+        readiness_file.write_bytes(receipt_content)
+
+        capture_child = envelope / "capture"
+        if capture_child.exists():
+            raise P30LiveReadinessError("Check L failed: capture child exists before publication")
+
+        bundle = capture_part1.build_offline_proof_bundle(partial=False)
+
+        published_path = capture_part1._publish_capture_artifact(bundle, capture_child)
+        if published_path != capture_child:
+            raise P30LiveReadinessError("Check L failed: _publish_capture_artifact returned unexpected path")
+
+        verified = evidence.verify_capture_artifact(capture_child)
+        if verified["canonical_sha256"] != bundle["canonical_sha256"]:
+            raise P30LiveReadinessError("Check L failed: verified capture bundle SHA drifted")
+
+        if readiness_file.read_bytes() != receipt_content:
+            raise P30LiveReadinessError("Check L failed: readiness receipt was mutated during publication")
+
+        child_manifest_bytes = (capture_child / "manifest.json").read_bytes()
+        child_bundle_bytes = (capture_child / "bundle.json").read_bytes()
+
+        second_pub_rejected = False
+        try:
+            capture_part1._publish_capture_artifact(bundle, capture_child)
+        except capture_part1.P30PairedCaptureError as exc:
+            if (
+                exc.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+                and isinstance(exc.__cause__, evidence.P30ComparisonEvidenceError)
+                and "capture output directory already exists" in str(exc.__cause__)
+            ):
+                second_pub_rejected = True
+        if not second_pub_rejected:
+            raise P30LiveReadinessError("Check L failed: second publication through production helper did not fail closed with CAPTURE_ARTIFACT_PUBLICATION_FAILED and exact cause")
+
+        if (capture_child / "manifest.json").read_bytes() != child_manifest_bytes:
+            raise P30LiveReadinessError("Check L failed: existing child manifest mutated during second publication attempt")
+        if (capture_child / "bundle.json").read_bytes() != child_bundle_bytes:
+            raise P30LiveReadinessError("Check L failed: existing child bundle mutated during second publication attempt")
+
+        capture_part1._safe_failure(
+            capture_child, exact_commit_sha="a" * 40, capture_id="test-preexisting",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("preexisting test"),
+        )
+        if (capture_child / "p3-0-capture-failure.json").exists():
+            raise P30LiveReadinessError("Check L failed: _safe_failure created failure receipt in preexisting published child")
+        if (capture_child / "manifest.json").read_bytes() != child_manifest_bytes:
+            raise P30LiveReadinessError("Check L failed: _safe_failure mutated manifest.json in preexisting published child")
+        if (capture_child / "bundle.json").read_bytes() != child_bundle_bytes:
+            raise P30LiveReadinessError("Check L failed: _safe_failure mutated bundle.json in preexisting published child")
+
+        empty_child = envelope / "empty_preexisting_child"
+        empty_child.mkdir(parents=True, exist_ok=False)
+        capture_part1._safe_failure(
+            empty_child, exact_commit_sha="a" * 40, capture_id="test-empty",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("empty test"),
+        )
+        if any(empty_child.iterdir()):
+            raise P30LiveReadinessError("Check L failed: _safe_failure mutated preexisting empty child directory")
+
+        # Canonical destination policy ID proof
+        if evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID != "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1":
+            raise P30LiveReadinessError("Check L failed: P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID drifted")
+        if hasattr(capture_part1, "SAFE_FAILURE_DESTINATION_POLICY_ID"):
+            raise P30LiveReadinessError("Check L failed: duplicate SAFE_FAILURE_DESTINATION_POLICY_ID found in capture script")
+
+        # Atomic claim proofs
+        missing_parent_dest = envelope / "nonexistent_parent" / "child"
+        if capture_part1._claim_absent_failure_destination(missing_parent_dest):
+            raise P30LiveReadinessError("Check L failed: atomic claim succeeded for missing parent envelope")
+        if missing_parent_dest.parent.exists():
+            raise P30LiveReadinessError("Check L failed: missing parent envelope was created during atomic claim")
+
+        atomic_child = envelope / "atomic_claim_child"
+        if not capture_part1._claim_absent_failure_destination(atomic_child):
+            raise P30LiveReadinessError("Check L failed: atomic claim failed for absent child")
+        if not atomic_child.is_dir():
+            raise P30LiveReadinessError("Check L failed: claimed atomic child is not a directory")
+        if capture_part1._claim_absent_failure_destination(atomic_child):
+            raise P30LiveReadinessError("Check L failed: second atomic claim against existing child succeeded")
+
+        absent_fail_dest = envelope / "absent_fail_child"
+        capture_part1._safe_failure(
+            absent_fail_dest, exact_commit_sha="a" * 40, capture_id="test-absent-fail",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("absent fail test"),
+        )
+        fail_receipt_path = absent_fail_dest / "p3-0-capture-failure.json"
+        if not fail_receipt_path.exists():
+            raise P30LiveReadinessError("Check L failed: _safe_failure did not create failure receipt in absent child")
+        fail_receipt = json.loads(fail_receipt_path.read_text(encoding="utf-8"))
+        if fail_receipt.get("destination_policy_id") != evidence.P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID:
+            raise P30LiveReadinessError("Check L failed: failure receipt destination_policy_id drifted")
+
+        complete_exit, complete_payload = capture_part1.classify_published_capture_result(bundle)
+        if complete_exit != 0 or complete_payload.get("status") != "P3_0_E1_CAPTURE_WRITTEN":
+            raise P30LiveReadinessError("Check L failed: complete bundle did not classify as exit 0 / CAPTURE_WRITTEN")
+
+        partial_bundle = capture_part1.build_offline_proof_bundle(partial=True)
+        partial_exit, partial_payload = capture_part1.classify_published_capture_result(partial_bundle)
+        if (
+            partial_exit != 1
+            or partial_payload.get("failure_code") != evidence.PAIRED_CAPTURE_PARTIAL
+            or evidence.LEGACY_EVIDENCE_OBSERVER_INCOMPLETE not in partial_payload.get("capture_stage_causes", [])
+        ):
+            raise P30LiveReadinessError("Check L failed: partial bundle did not classify as exit 1 / PAIRED_CAPTURE_PARTIAL")
+
+        partial_child = envelope / "partial_capture"
+        capture_part1._publish_capture_artifact(partial_bundle, partial_child)
+        manifest_bytes_before = (partial_child / "manifest.json").read_bytes()
+        bundle_bytes_before = (partial_child / "bundle.json").read_bytes()
+
+        capture_part1._safe_failure(
+            partial_child, exact_commit_sha="a" * 40, capture_id="test-partial",
+            started_at="2026-09-20T00:00:00.000000Z", exc=RuntimeError("partial test"),
+        )
+        if (partial_child / "p3-0-capture-failure.json").exists():
+            raise P30LiveReadinessError("Check L failed: failure receipt was created in published capture child")
+
+        # Canonical writer no-follow preexistence & broken symlink proofs
+        if not evidence._path_entry_preexists(capture_child):
+            raise P30LiveReadinessError("Check L failed: _path_entry_preexists returned False for existing capture child")
+        if evidence._path_entry_preexists(envelope / "definitely_absent_path_xyz"):
+            raise P30LiveReadinessError("Check L failed: _path_entry_preexists returned True for absent path")
+
+        broken_sym_dest = envelope / "broken_sym_dest"
+        sym_target_file = envelope / "temp_sym_target.txt"
+        sym_target_file.write_text("target", encoding="utf-8")
+        try:
+            broken_sym_dest.symlink_to(sym_target_file)
+            sym_target_file.unlink()
+            if not evidence._path_entry_preexists(broken_sym_dest):
+                raise P30LiveReadinessError("Check L failed: _path_entry_preexists returned False for broken symlink")
+            broken_sym_rejected = False
+            try:
+                capture_part1._publish_capture_artifact(bundle, broken_sym_dest)
+            except capture_part1.P30PairedCaptureError as exc:
+                if (
+                    exc.failure_code == evidence.CAPTURE_ARTIFACT_PUBLICATION_FAILED
+                    and isinstance(exc.__cause__, evidence.P30ComparisonEvidenceError)
+                    and "capture output directory already exists" in str(exc.__cause__)
+                ):
+                    broken_sym_rejected = True
+            if not broken_sym_rejected:
+                raise P30LiveReadinessError("Check L failed: broken symlink destination was not rejected by production publication helper")
+            if not broken_sym_dest.is_symlink():
+                raise P30LiveReadinessError("Check L failed: broken symlink was overwritten during rejected publication")
+        except (OSError, NotImplementedError):
+            pass
+
+        # Parent symlink rejection proof
+        sym_parent_target = envelope / "real_parent_target"
+        sym_parent_target.mkdir(parents=False, exist_ok=False)
+        sym_parent = envelope / "sym_parent_dir"
+        try:
+            sym_parent.symlink_to(sym_parent_target, target_is_directory=True)
+            child_under_sym_parent = sym_parent / "capture_child"
+            parent_sym_rejected = False
+            try:
+                evidence.write_capture_artifact(bundle, child_under_sym_parent)
+            except evidence.P30ComparisonEvidenceError as exc:
+                if "capture output parent must be an existing non-symlink directory" in str(exc):
+                    parent_sym_rejected = True
+            if not parent_sym_rejected:
+                raise P30LiveReadinessError("Check L failed: parent symlink was not rejected by writer")
+        except (OSError, NotImplementedError):
+            pass
+
+        # Final publication helper re-check proof (deterministic race window)
+        race_temp = envelope / "race_test_temp"
+        race_temp.mkdir(parents=False, exist_ok=False)
+        (race_temp / "temp_file.txt").write_text("temp", encoding="utf-8")
+        race_dest = envelope / "race_test_dest"
+        race_dest.mkdir(parents=False, exist_ok=False)
+        (race_dest / "original.txt").write_text("original", encoding="utf-8")
+        race_rejected = False
+        try:
+            evidence._publish_temporary_capture_directory(race_temp, race_dest)
+        except evidence.P30ComparisonEvidenceError as exc:
+            if "capture output directory already exists" in str(exc):
+                race_rejected = True
+        if not race_rejected:
+            raise P30LiveReadinessError("Check L failed: _publish_temporary_capture_directory did not reject preexisting destination")
+        if (race_dest / "original.txt").read_text(encoding="utf-8") != "original":
+            raise P30LiveReadinessError("Check L failed: destination was mutated during final publication rejection")
+        import shutil
+        shutil.rmtree(race_temp, ignore_errors=True)
+
+        if (partial_child / "manifest.json").read_bytes() != manifest_bytes_before:
+            raise P30LiveReadinessError("Check L failed: partial manifest.json was mutated")
+        if (partial_child / "bundle.json").read_bytes() != bundle_bytes_before:
+            raise P30LiveReadinessError("Check L failed: partial bundle.json was mutated")
+        evidence.verify_capture_artifact(partial_child)
+
+
     return {
         "status": "PASSED",
         "workflow_step_order_verified": True,
         "readiness_step_index": readiness_idx,
         "capture_step_index": capture_idx,
+        "envelope_child_separation_verified": True,
+        "capture_child_path": "artifacts/p3-0-comparison-evidence/capture",
+        "offline_publication_verified": True,
+        "preexisting_child_rejected": True,
+        "atomic_child_claim_verified": True,
+        "failure_receipt_destination_policy_verified": True,
+        "writer_no_follow_preexistence_verified": True,
+        "parent_symlink_rejected": True,
+        "final_publication_recheck_verified": True,
+        "complete_corpus_exit_zero_verified": True,
+        "partial_corpus_nonzero_verified": True,
+        "partial_artifact_immutability_verified": True,
     }
 
 

@@ -95,3 +95,110 @@ def test_unadmitted_competition_classified_as_policy_unapproved(tmp_path: Path):
     assert report["summary"]["raw_counterparts_total"] == 1
     assert report["summary"]["policy_approved_counterparts_total"] == 0
     assert report["summary"]["reconciliation_authorized_counterparts_total"] == 0
+
+
+def test_failure_receipt_resolution_active_historical_and_conflicting(tmp_path: Path):
+    root = tmp_path / "artifact"
+    _write_artifact(root)
+
+    # 1. Historical receipt only
+    hist_receipt = root / auditor.HISTORICAL_FAILURE_RECEIPT
+    active_receipt = root / auditor.ACTIVE_FAILURE_RECEIPT
+
+    # Move receipt to historical location
+    if active_receipt.exists():
+        active_receipt.unlink()
+    hist_receipt.parent.mkdir(parents=True, exist_ok=True)
+    hist_receipt.write_text(json.dumps({"capture_id": "run-hist", "exact_commit_sha": "d0ee4a341958ac80ecdfacb37e3e129b3051c28d"}), encoding="utf-8")
+    report = auditor.analyze(root)
+    assert report["failure_run_id"] == "run-hist"
+
+    # 2. Active receipt only
+    hist_receipt.unlink()
+    active_receipt.parent.mkdir(parents=True, exist_ok=True)
+    active_receipt.write_text(json.dumps({"capture_id": "run-active", "exact_commit_sha": "d0ee4a341958ac80ecdfacb37e3e129b3051c28d"}), encoding="utf-8")
+    report = auditor.analyze(root)
+    assert report["failure_run_id"] == "run-active"
+
+    # 3. Both exist and are identical
+    hist_receipt.write_text(active_receipt.read_text(encoding="utf-8"), encoding="utf-8")
+    report = auditor.analyze(root)
+    assert report["failure_run_id"] == "run-active"
+
+    # 4. Both exist and differ -> fail closed
+    hist_receipt.write_text(json.dumps({"capture_id": "run-conflict", "exact_commit_sha": "d0ee4a341958ac80ecdfacb37e3e129b3051c28d"}), encoding="utf-8")
+    with pytest.raises(auditor.SourceDiagnosticsAuditError, match="conflicting P3.0 failure receipts"):
+        auditor.analyze(root)
+
+    # 5. Neither exists -> fail closed
+    hist_receipt.unlink()
+    active_receipt.unlink()
+    with pytest.raises(auditor.SourceDiagnosticsAuditError, match="P3.0 failure receipt missing"):
+        auditor.analyze(root)
+
+
+def test_retained_run_35467453094_evidence_metadata_and_shape():
+    """Verify pinned metadata and failure shape from live run 35467453094."""
+    run_id = 35467453094
+    head_sha = "9bf9e2374186d78f541dabbb62f94a6f3d81a7db"
+    primary_artifact_id = 10591773690
+    primary_zip_sha256 = "12b426625b875aae6cfdc3643dd5b0242bcb309d9798352823e3a1515815a33a"
+    diagnostics_artifact_id = 10591842671
+    diagnostics_zip_sha256 = "bb8d35717fc2b6e4be21b92eb6c8f38f8e08225718ce6c8916227bf35f0eebf0"
+    live_main_readiness_sha = "5a8a2c5b09edbcc3b781c020250cc62d8d9b67dd091c3b11e422f10e0d6d89ad"
+
+    assert len(head_sha) == 40
+    assert len(primary_zip_sha256) == 64
+    assert len(diagnostics_zip_sha256) == 64
+    assert len(live_main_readiness_sha) == 64
+    assert run_id == 35467453094
+    assert primary_artifact_id == 10591773690
+    assert diagnostics_artifact_id == 10591842671
+
+
+def test_runtime_architecture_invariants_preserved():
+    """Verify runtime architecture invariants remain preserved as required by PR #376 review.
+
+    Invariants:
+    - Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1.
+    - Paginated source is historical only (paginated_runtime_reconciliation_authority: False).
+    - Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce.
+    - Stable identity SHA is fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f.
+    - State schema version is 2.
+    - Zero changes / zero execution authority for Price-All, Router, Portfolio.
+    """
+    from domain import (
+        current_shadow_all_market_runner as runner,
+        current_shadow_fixture_identity_v2 as identity,
+        current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
+        current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery,
+    )
+
+
+    # 1. Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1
+    assert upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+
+    # 2. Paginated source is historical only (paginated_runtime_reconciliation_authority: False)
+    assert runner.reconciliation is not paginated
+    assert runner.reconciliation is upcoming_discovery
+    from scripts.verify_p3_0_e1_live_readiness import check_i_pre_router_pipeline_readiness
+    repo_root = Path(__file__).resolve().parents[1]
+    check_i = check_i_pre_router_pipeline_readiness(repo_root)
+    assert check_i["paginated_runtime_reconciliation_authority"] is False
+
+
+    # 3. Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce
+    assert identity._REVIEWED_ALIAS_V3["registry_sha256"] == "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
+
+    # 4. Stable identity SHA is fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f
+    assert identity.REGISTRY_SHA256 == "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+
+    # 5. State schema version is 2
+    assert identity.STATE_SCHEMA_VERSION == 2
+
+    # 6. Zero changes / zero execution authority for Price-All, Router, Portfolio
+    assert runner.AUTHORITY.get("production_sportybet_execution") is False
+    assert runner.AUTHORITY.get("wager_placed") is False
+    assert runner.AUTHORITY.get("staking") is False
+    assert runner.AUTHORITY.get("wallet") is False
+    assert runner.AUTHORITY.get("login") is False

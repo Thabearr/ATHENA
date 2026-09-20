@@ -24,6 +24,23 @@ AS_OF_PROOF_POLICY_ID = "P3_0_SINGLE_PROSPECTIVE_CAPTURE_WINDOW_LINEAGE_V1"
 PRICE_OUTPUT_KIND = "P2_1_SHADOW_COMPATIBILITY_PRICE_ALL_CANONICAL_OWNER_GUARDED_V1"
 ROUTER_OUTPUT_KIND = "P2_1_SHADOW_COMPATIBILITY_ROUTER_CANONICAL_OWNER_GUARDED_V1"
 SHADOW_PRICE_DATASET_NAME = "athena-current-shadow-all-market-price-all-router-v2"
+P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE = "artifacts/p3-0-comparison-evidence"
+P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE = "artifacts/p3-0-comparison-evidence/capture"
+P3_CAPTURE_PUBLICATION_POLICY_ID = "P3_E1_READINESS_ENVELOPE_IMMUTABLE_CAPTURE_CHILD_V1"
+P3_PARTIAL_CORPUS_PROCESS_POLICY_ID = "P3_E1_PARTIAL_CORPUS_NONZERO_IMMUTABLE_V1"
+P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID = (
+    "P3_E1_FAILURE_RECEIPT_ONLY_WHEN_CAPTURE_DESTINATION_ABSENT_V1"
+)
+
+LEGACY_EVIDENCE_OBSERVER_INCOMPLETE = "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE"
+PAIRED_CAPTURE_PARTIAL = "PAIRED_CAPTURE_PARTIAL"
+CAPTURE_ARTIFACT_PUBLICATION_FAILED = "CAPTURE_ARTIFACT_PUBLICATION_FAILED"
+
+P3_CAPTURE_STAGE_FAILURE_TAXONOMY = frozenset({
+    LEGACY_EVIDENCE_OBSERVER_INCOMPLETE,
+    PAIRED_CAPTURE_PARTIAL,
+    CAPTURE_ARTIFACT_PUBLICATION_FAILED,
+})
 
 JOIN_STATES = frozenset({
     "EXACT_SAME_FIXTURE_PROVEN", "LEGACY_ONLY", "CANONICAL_ONLY",
@@ -71,6 +88,16 @@ EXPECTED_COMPONENT_IDENTITIES = {
 }
 REQUIRED_CANONICAL_RESPONSIBILITIES = frozenset(EXPECTED_COMPONENTS)
 
+RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID = "P3_LEGACY_RUNTIME_SAFETY_METADATA_QUARANTINE_V1"
+_QUARANTINED_RUNTIME_SAFETY_KEYS = frozenset({
+    "runtime_authorization_state",
+    "runtime_authorization_reasons",
+})
+_QUARANTINED_LEGACY_STAKING_KEYS = frozenset({
+    "kelly_stake_pct",
+    "legacy_kelly_stake_pct_before_runtime_gate",
+})
+
 _LEGACY_INPUT_FIELDS = frozenset({
     "fixture_id", "home_team", "away_team", "home_id", "away_id",
     "match_date", "data_source", "is_knockout", "current_home_form",
@@ -83,14 +110,12 @@ _LEGACY_ANALYSIS_FIELDS = frozenset({
     "edge_is_bookmaker_value", "bookmaker_odds", "bookmaker_probability",
     "edge_pp", "upset_alert", "risk_score", "stale_data",
     "viable_markets", "accumulator_eligible_selection", "reasoning_verdicts",
-    "no_bet_reasons", "evidence_report", "runtime_authorization_state",
-    "runtime_authorization_reasons",
+    "no_bet_reasons", "evidence_report",
 })
 _LEGACY_EXPORTED_FIELDS = frozenset({
     "fixture_id", "fixture", "home_team", "away_team", "league", "match_date",
     "decision_status", "legacy_decision_status_before_runtime_gate",
-    "runtime_authorization_state", "runtime_authorization_reasons", "upset_alert",
-    "risk_score", "stale_data", "edge", "edge_is_bookmaker_value",
+    "upset_alert", "risk_score", "stale_data", "edge", "edge_is_bookmaker_value",
     "bookmaker_odds", "bookmaker_probability", "edge_pp",
     "verdict", "viable_markets", "accumulator_eligible_selection",
     "no_bet_reasons", "evidence_report", "source",
@@ -252,7 +277,9 @@ def _quarantine_legacy_value(value: Any, location: str) -> Any:
     if type(value) is dict:
         result: dict[str, Any] = {}
         for key, item in value.items():
-            if key in {"kelly_stake_pct", "legacy_kelly_stake_pct_before_runtime_gate"}:
+            if key in _QUARANTINED_LEGACY_STAKING_KEYS:
+                continue
+            if key in _QUARANTINED_RUNTIME_SAFETY_KEYS:
                 continue
             _reject_sensitive_key(key, f"{location}.{key}", item)
             result[key] = _quarantine_legacy_value(item, f"{location}.{key}")
@@ -266,7 +293,16 @@ def _quarantine_legacy_value(value: Any, location: str) -> Any:
 def _project_allowed(value: Mapping[str, Any], allowed: frozenset[str], label: str) -> dict[str, Any]:
     if type(value) is not dict:
         raise P30ComparisonEvidenceError(f"{label} must be a plain JSON object")
-    projected = {key: _quarantine_legacy_value(value[key], f"{label}.{key}") for key in sorted(set(value) & allowed)}
+    for key, item in value.items():
+        if key in _QUARANTINED_RUNTIME_SAFETY_KEYS or key in _QUARANTINED_LEGACY_STAKING_KEYS:
+            continue
+        _reject_sensitive_key(key, f"{label}.{key}", item)
+    projected = {
+        key: _quarantine_legacy_value(value[key], f"{label}.{key}")
+        for key in sorted(set(value) & allowed)
+        if key not in _QUARANTINED_RUNTIME_SAFETY_KEYS
+        and key not in _QUARANTINED_LEGACY_STAKING_KEYS
+    }
     _validate_json_value(projected, label)
     return load_json_bytes(canonical_json_bytes(projected))
 

@@ -113,15 +113,56 @@ def _safe_manifest_relative(raw: Any) -> PurePosixPath:
     return posix
 
 
+def _path_entry_preexists(path: Path | str) -> bool:
+    """Check whether a path entry exists without following symlinks.
+
+    Returns True for existing directories, regular files, symlinks, and broken symlinks.
+    Returns False when the path does not exist.
+    Fails closed (returns True) on unexpected filesystem inspection errors.
+    """
+    try:
+        p = Path(path)
+        try:
+            os.lstat(p)
+            return True
+        except (FileNotFoundError, NotADirectoryError):
+            return False
+        except OSError:
+            return True
+    except Exception:
+        return True
+
+
+def _publish_temporary_capture_directory(temporary: Path, destination: Path) -> None:
+    """Publish temporary capture directory to destination, enforcing no-overwrite.
+
+    Re-checks that destination does not preexist in any form immediately before
+    calling os.replace. Fails closed with P30ComparisonEvidenceError without
+    mutating destination if destination preexists.
+    """
+    if _path_entry_preexists(destination):
+        raise P30ComparisonEvidenceError("capture output directory already exists")
+    os.replace(temporary, destination)
+
+
 def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Path) -> Path:
     validate_contract()
     checked = verify_capture_bundle(bundle)
     destination = Path(output_directory)
-    if destination.exists():
-        raise P30ComparisonEvidenceError("capture output directory already exists")
     parent = destination.parent
-    if not parent.exists() or not parent.is_dir():
-        raise P30ComparisonEvidenceError("capture output parent must already exist")
+    try:
+        if parent.is_symlink() or not parent.is_dir():
+            raise P30ComparisonEvidenceError(
+                "capture output parent must be an existing non-symlink directory"
+            )
+    except (OSError, ValueError) as exc:
+        if isinstance(exc, P30ComparisonEvidenceError):
+            raise
+        raise P30ComparisonEvidenceError(
+            "capture output parent must be an existing non-symlink directory"
+        ) from exc
+    if _path_entry_preexists(destination):
+        raise P30ComparisonEvidenceError("capture output directory already exists")
     temporary = Path(tempfile.mkdtemp(prefix="p3-0-evidence-", dir=parent))
     try:
         entries: list[dict[str, str]] = []
@@ -162,7 +203,7 @@ def write_capture_artifact(bundle: Mapping[str, Any], output_directory: str | Pa
             "files": entries,
         }
         _write_json(temporary / "manifest.json", manifest)
-        os.replace(temporary, destination)
+        _publish_temporary_capture_directory(temporary, destination)
         return destination
     except Exception:
         shutil.rmtree(temporary, ignore_errors=True)
@@ -258,6 +299,13 @@ def _contract_payload() -> dict[str, Any]:
     return {
         "schema_version": SCHEMA_VERSION, "policy_id": POLICY_ID,
         "as_of_proof_policy_id": AS_OF_PROOF_POLICY_ID,
+        "legacy_runtime_safety_metadata_quarantine_policy_id": RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID,
+        "capture_artifact_envelope_relative": P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE,
+        "capture_immutable_child_relative": P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE,
+        "capture_publication_policy_id": P3_CAPTURE_PUBLICATION_POLICY_ID,
+        "partial_corpus_process_policy_id": P3_PARTIAL_CORPUS_PROCESS_POLICY_ID,
+        "failure_receipt_destination_policy_id": P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID,
+        "capture_stage_failure_taxonomy": sorted(P3_CAPTURE_STAGE_FAILURE_TAXONOMY),
         "price_output_kind": PRICE_OUTPUT_KIND, "router_output_kind": ROUTER_OUTPUT_KIND,
         "fixture_identity_keys": sorted(FIXTURE_IDENTITY_KEYS), "timing_keys": sorted(TIMING_KEYS),
         "canonical_authority_keys": sorted(CANONICAL_AUTHORITY_KEYS),
@@ -271,6 +319,7 @@ def _contract_payload() -> dict[str, Any]:
         "legacy_input_fields": sorted(_LEGACY_INPUT_FIELDS),
         "legacy_analysis_fields": sorted(_LEGACY_ANALYSIS_FIELDS),
         "legacy_exported_fields": sorted(_LEGACY_EXPORTED_FIELDS),
+        "quarantined_runtime_safety_keys": sorted(_QUARANTINED_RUNTIME_SAFETY_KEYS),
         "forbidden_exact_keys": sorted(_FORBIDDEN_EXACT_KEYS),
         "forbidden_tokens": sorted(_FORBIDDEN_TOKENS),
         "allowed_false_safety_keys": sorted(_ALLOWED_FALSE_SAFETY_KEYS),
@@ -288,8 +337,8 @@ def _contract_payload() -> dict[str, Any]:
 def calculate_contract_sha256() -> str:
     return canonical_sha256(_contract_payload())
 
-# Re-pinned after the P3.0-E1 trust-boundary hardening in PR #353.
-EXPECTED_CONTRACT_SHA256 = "464a80970a108efb6d9dcd1f5d1692c521f165d86d7b954b232b90df9fee651b"
+# Re-pinned after capture envelope, child, policies, and failure taxonomy binding.
+EXPECTED_CONTRACT_SHA256 = "0e4a311059125f7b74128e7c04c75e01889018e5f757faf33212f144457973c3"
 
 
 def validate_contract() -> str:
@@ -300,16 +349,23 @@ def validate_contract() -> str:
 
 
 __all__ = [
-    "AS_OF_PROOF_POLICY_ID", "CANONICAL_AUTHORITY_KEYS", "COMPLETENESS_STATES",
-    "EXPECTED_COMPONENTS", "EXPECTED_CONTRACT_SHA256", "FIXTURE_IDENTITY_KEYS",
-    "JOIN_STATES", "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "POLICY_ID",
-    "PRICE_OUTPUT_KIND", "REQUIRED_CANONICAL_RESPONSIBILITIES", "ROUTER_OUTPUT_KIND",
-    "SCHEMA_VERSION", "TIMING_KEYS", "build_as_of_proof", "build_capture_bundle",
-    "build_fixture_record", "build_join_receipt", "calculate_contract_sha256",
-    "canonical_json_bytes", "canonical_sha256", "fixture_storage_key", "load_json_bytes",
+    "AS_OF_PROOF_POLICY_ID", "CANONICAL_AUTHORITY_KEYS", "CAPTURE_ARTIFACT_PUBLICATION_FAILED",
+    "COMPLETENESS_STATES", "EXPECTED_COMPONENTS", "EXPECTED_CONTRACT_SHA256",
+    "FIXTURE_IDENTITY_KEYS", "JOIN_STATES", "LEGACY_EVIDENCE_OBSERVER_INCOMPLETE",
+    "LegacyEvidenceObserver", "P30ComparisonEvidenceError", "P3_CAPTURE_ARTIFACT_ENVELOPE_RELATIVE",
+    "P3_CAPTURE_IMMUTABLE_CHILD_RELATIVE", "P3_CAPTURE_PUBLICATION_POLICY_ID",
+    "P3_CAPTURE_STAGE_FAILURE_TAXONOMY", "P3_FAILURE_RECEIPT_DESTINATION_POLICY_ID",
+    "P3_PARTIAL_CORPUS_PROCESS_POLICY_ID",
+    "PAIRED_CAPTURE_PARTIAL", "POLICY_ID", "PRICE_OUTPUT_KIND",
+    "REQUIRED_CANONICAL_RESPONSIBILITIES", "ROUTER_OUTPUT_KIND",
+    "RUNTIME_SAFETY_METADATA_QUARANTINE_POLICY_ID", "SCHEMA_VERSION", "TIMING_KEYS",
+    "build_as_of_proof", "build_capture_bundle", "build_fixture_record",
+    "build_join_receipt", "calculate_contract_sha256", "canonical_json_bytes",
+    "canonical_sha256", "fixture_storage_key", "load_json_bytes",
     "normalize_canonical_authority", "normalize_canonical_fixture_state",
     "normalize_price_all_output", "normalize_probability_bundle", "normalize_provider_semantics",
     "normalize_quote_snapshot", "normalize_router_output", "normalize_fixture_identity",
     "normalize_timing", "project_legacy_input", "project_legacy_output", "validate_contract",
     "verify_capture_artifact", "verify_capture_bundle", "write_capture_artifact",
+    "_path_entry_preexists", "_publish_temporary_capture_directory",
 ]
