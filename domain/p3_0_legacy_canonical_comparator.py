@@ -42,6 +42,13 @@ from domain.markets import (
     canonicalize_market_id,
     resolve_legacy_selection,
 )
+from domain.p3_0_p0_canonical_acceptance import (
+    run_p0_1_acceptance,
+    run_p0_2_acceptance,
+    run_p0_3_acceptance,
+    run_p0_4_acceptance,
+    run_p0_5_acceptance,
+)
 from domain.p3_0_replay_corpus import (
     canonical_json_bytes,
     canonical_sha256,
@@ -108,6 +115,27 @@ EXPECTED_ARTIFACT_DIGEST = "sha256:abe4727ae0eaa8e6e0580b2fe4d2298711b13cca0bd00
 EXPECTED_MANIFEST_SHA256 = "62a52a3b9fd05953bf54a63b122fc65ab1283fe7b0c2d0e63210355a14209bcc"
 EXPECTED_BUNDLE_CANONICAL_SHA256 = "d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191"
 EXPECTED_QUOTE_IDENTITY_SHA256 = "7f6fb592626f12779b4824371bdf53ab45073e2125fee60e58f27d727fa2be11"
+
+EXPECTED_AS_OF_PROOF_CANONICAL_SHA256 = "8f9084d17bd64ce3d908b8b312e951dda7d041dd36ebda642a3dcafefadef1ee"
+EXPECTED_AS_OF_PROOF_FILE_SHA256 = "a96bf59a20fe8c602f47e976950916956e37c48fe4f38023fbac0fbc0c0d31ed"
+EXPECTED_JOIN_RECEIPT_CANONICAL_SHA256 = "b879850d385d71ae80d7f77ffc4ef07939ef633e4e4f27c75818b746bf988330"
+EXPECTED_JOIN_RECEIPT_FILE_SHA256 = "8d915727ba5fb235e08672547b112ade8dc48654925f8bd746bd1d5fceabf373"
+
+EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256 = "737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830"
+EXPECTED_PROVIDER_SEMANTICS_REGISTRY_POLICY_ID = "PRB_EXACT_CURRENT_SPORTYBET_SEMANTIC_POLICIES_V1"
+EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256 = "dc9c67ebaea9a63e63acad4c56ad9a76d3a95c9beb84681141ad4c3aab85b734"
+
+EXPECTED_QUOTE_PROVIDER_OBSERVATION_SHA256 = "70cdfedb8b23f8421652231248f46fcd95eb37964957cd2bb1a23ec61fcc05b2"
+EXPECTED_QUOTE_RECONCILIATION_SHA256 = "4be11f13481659f02e96254b026ddc458cd2d1316388ccce41faadcf637bbcc7"
+EXPECTED_QUOTE_SOURCE_RAW_SHA256 = "f20d02bcfe29c1e2a06430aa9c5355064e7c9bc8a489e0eac7421a0256a23d9c"
+EXPECTED_QUOTE_SOURCE_INVENTORY_SHA256 = "8b2af58168c07f9fc4e7e4fb375cb41a90099de263cf10cc8b9f3457213b29d0"
+EXPECTED_QUOTE_SOURCE_MANIFEST_SHA256 = "56c02aa9904283ab9d11d87aa34153205144bb1729b413810127408e1857e45f"
+
+EXPECTED_SELECTED_QUOTE_OBSERVATION_SHA256 = EXPECTED_QUOTE_PROVIDER_OBSERVATION_SHA256
+EXPECTED_SELECTED_QUOTE_RECONCILIATION_SHA256 = EXPECTED_QUOTE_RECONCILIATION_SHA256
+EXPECTED_SELECTED_QUOTE_RAW_SHA256 = EXPECTED_QUOTE_SOURCE_RAW_SHA256
+EXPECTED_SELECTED_QUOTE_INVENTORY_SHA256 = EXPECTED_QUOTE_SOURCE_INVENTORY_SHA256
+EXPECTED_SELECTED_QUOTE_MANIFEST_SHA256 = EXPECTED_QUOTE_SOURCE_MANIFEST_SHA256
 
 VERIFIED_REAL_ROW_CANDIDATE_ID = "p3-e1:10603511090:0"
 VERIFIED_REAL_ROW_FIXTURE_ID = "FOTMOB:5749683"
@@ -203,6 +231,70 @@ def _validate_real_row_source(source: Mapping[str, Any]) -> None:
         raise ComparatorError("real row paired_bundle_canonical_sha256 mismatch")
     if hashes.get("quote_identity_sha256") != EXPECTED_QUOTE_IDENTITY_SHA256:
         raise ComparatorError("real row quote_identity_sha256 mismatch")
+
+    # Hash semantics: explicitly check canonical and file-byte SHAs
+    as_of_canonical = hashes.get("as_of_proof_canonical_sha256") or source.get("fixture", {}).get("as_of_proof_canonical_sha256")
+    if as_of_canonical != EXPECTED_AS_OF_PROOF_CANONICAL_SHA256:
+        raise ComparatorError(f"as_of_proof_canonical_sha256 mismatch: {as_of_canonical}")
+    as_of_file = hashes.get("as_of_proof_file_sha256") or source.get("fixture", {}).get("as_of_proof_file_sha256")
+    if as_of_file != EXPECTED_AS_OF_PROOF_FILE_SHA256:
+        raise ComparatorError(f"as_of_proof_file_sha256 mismatch: {as_of_file}")
+
+    join_canonical = hashes.get("join_receipt_canonical_sha256") or source.get("fixture", {}).get("join_receipt_canonical_sha256")
+    if join_canonical != EXPECTED_JOIN_RECEIPT_CANONICAL_SHA256:
+        raise ComparatorError(f"join_receipt_canonical_sha256 mismatch: {join_canonical}")
+    join_file = hashes.get("join_receipt_file_sha256") or source.get("fixture", {}).get("join_receipt_file_sha256")
+    if join_file != EXPECTED_JOIN_RECEIPT_FILE_SHA256:
+        raise ComparatorError(f"join_receipt_file_sha256 mismatch: {join_file}")
+
+    # Validate full as_of_proof object
+    as_of_proof = source.get("as_of_proof")
+    if not isinstance(as_of_proof, Mapping):
+        raise ComparatorError("real row source missing as_of_proof object")
+    if as_of_proof.get("result") != "PROVEN":
+        raise ComparatorError("real row as_of_proof result is not PROVEN")
+    if as_of_proof.get("canonical_sha256") != EXPECTED_AS_OF_PROOF_CANONICAL_SHA256:
+        raise ComparatorError("as_of_proof canonical_sha256 mismatch")
+    from domain import p3_0_comparison_evidence as evidence
+    rebuilt_as_of = evidence.build_as_of_proof(
+        capture_id=as_of_proof.get("capture_id", ""),
+        fixture_identity=as_of_proof.get("fixture_identity", ""),
+        capture_started_at=as_of_proof.get("capture_started_at", ""),
+        capture_completed_at=as_of_proof.get("capture_completed_at", ""),
+        timing=as_of_proof.get("timing", {}),
+    )
+    if rebuilt_as_of.get("result") != "PROVEN":
+        raise ComparatorError(f"rebuilt as_of_proof is not PROVEN: {rebuilt_as_of.get('reasons')}")
+    if rebuilt_as_of.get("canonical_sha256") != EXPECTED_AS_OF_PROOF_CANONICAL_SHA256:
+        raise ComparatorError("rebuilt as_of_proof canonical SHA mismatch")
+
+    # Validate provider_semantics object
+    provider_semantics = source.get("provider_semantics")
+    if not isinstance(provider_semantics, Mapping):
+        raise ComparatorError("real row source missing provider_semantics object")
+    if provider_semantics.get("canonical_contract_sha256") != EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256:
+        raise ComparatorError("provider_semantics canonical_contract_sha256 mismatch")
+    if provider_semantics.get("registry_policy_id") != EXPECTED_PROVIDER_SEMANTICS_REGISTRY_POLICY_ID:
+        raise ComparatorError("provider_semantics registry_policy_id mismatch")
+    if provider_semantics.get("registry_sha256") != EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256:
+        raise ComparatorError("provider_semantics registry_sha256 mismatch")
+
+    # Validate quote ancestry
+    quote = source.get("quote", {})
+    if quote.get("provider_observation_sha256") != EXPECTED_QUOTE_PROVIDER_OBSERVATION_SHA256:
+        raise ComparatorError("quote provider_observation_sha256 mismatch")
+    if quote.get("reconciliation_sha256") != EXPECTED_QUOTE_RECONCILIATION_SHA256:
+        raise ComparatorError("quote reconciliation_sha256 mismatch")
+    if quote.get("source_raw_sha256") != EXPECTED_QUOTE_SOURCE_RAW_SHA256:
+        raise ComparatorError("quote source_raw_sha256 mismatch")
+    if quote.get("source_inventory_sha256") != EXPECTED_QUOTE_SOURCE_INVENTORY_SHA256:
+        raise ComparatorError("quote source_inventory_sha256 mismatch")
+    if quote.get("source_manifest_sha256") != EXPECTED_QUOTE_SOURCE_MANIFEST_SHA256:
+        raise ComparatorError("quote source_manifest_sha256 mismatch")
+    if quote.get("provider_registry_sha256") != EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256:
+        raise ComparatorError("quote provider_registry_sha256 mismatch")
+    if quote.get("provider_semantic_status") != "SUPPORTED_WITH_EXACT_LINE_POLICY":
+        raise ComparatorError("quote provider_semantic_status mismatch")
 
     fixture = source.get("fixture", {})
     if fixture.get("fixture_identity") != VERIFIED_REAL_ROW_FIXTURE_ID:
@@ -501,20 +593,23 @@ def compare_real_row(
         not quote_sha
         or quote_sha != EXPECTED_QUOTE_IDENTITY_SHA256
         or quote_odds != 1.61
-        or not quote_data.get("provider_observation_sha256")
-        or not quote_data.get("reconciliation_sha256")
+        or quote_data.get("provider_observation_sha256") != EXPECTED_QUOTE_PROVIDER_OBSERVATION_SHA256
+        or quote_data.get("reconciliation_sha256") != EXPECTED_QUOTE_RECONCILIATION_SHA256
+        or quote_data.get("source_raw_sha256") != EXPECTED_QUOTE_SOURCE_RAW_SHA256
+        or quote_data.get("source_inventory_sha256") != EXPECTED_QUOTE_SOURCE_INVENTORY_SHA256
+        or quote_data.get("source_manifest_sha256") != EXPECTED_QUOTE_SOURCE_MANIFEST_SHA256
         or (quote_observed_at and kickoff and quote_observed_at >= kickoff)
     )
     if rule_2_violated:
         high_severity_checks["rule_2_stale_missing_unverified_quote"] = {
             "result": RULE_STATUS_FAIL,
-            "reason": "Exact provider quote identity, observation ancestry, reconciliation ancestry, or pre-kickoff freshness is unverified.",
+            "reason": "Exact provider quote identity, observation ancestry, reconciliation ancestry, raw/manifest/inventory provenance, or pre-kickoff freshness is unverified.",
         }
         any_high_severity_failure = True
     else:
         high_severity_checks["rule_2_stale_missing_unverified_quote"] = {
             "result": RULE_STATUS_PASS,
-            "reason": "Exact quote identity, observation digest, reconciliation digest, and pre-kickoff freshness are verified.",
+            "reason": "Exact quote identity, observation digest, reconciliation digest, source raw/inventory/manifest digests, and pre-kickoff freshness are verified.",
         }
 
     # Rule 3: fixture identity mismatch
@@ -539,27 +634,49 @@ def compare_real_row(
         }
 
     # Rule 4: semantic registry violation
+    from domain.provider_market_semantics import validate_provider_market_semantics_contract
+    rule_4_reasons: list[str] = []
+    try:
+        semantics_contract = validate_provider_market_semantics_contract()
+        if semantics_contract.get("canonical_provider_market_semantics_contract_sha256") != EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256:
+            rule_4_reasons.append("canonical_provider_market_semantics_contract_sha256 mismatch")
+    except Exception as exc:
+        rule_4_reasons.append(f"validate_provider_market_semantics_contract failed: {exc}")
+
+    provider_semantics = candidate.get("provider_semantics", {})
+    if provider_semantics.get("canonical_contract_sha256") != EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256:
+        rule_4_reasons.append("retained provider_semantics canonical_contract_sha256 mismatch")
+    if provider_semantics.get("registry_policy_id") != EXPECTED_PROVIDER_SEMANTICS_REGISTRY_POLICY_ID:
+        rule_4_reasons.append("retained provider_semantics registry_policy_id mismatch")
+    if provider_semantics.get("registry_sha256") != EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256:
+        rule_4_reasons.append("retained provider_semantics registry_sha256 mismatch")
+
+    if quote_data.get("provider_registry_sha256") != EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256:
+        rule_4_reasons.append("quote provider_registry_sha256 does not match retained provider semantics registry SHA")
+    if quote_data.get("provider_semantic_status") != "SUPPORTED_WITH_EXACT_LINE_POLICY":
+        rule_4_reasons.append("quote provider_semantic_status is not SUPPORTED_WITH_EXACT_LINE_POLICY")
+    if quote_data.get("provider_specifier") != "hcp=0" or canonical_line != 0.0:
+        rule_4_reasons.append("quote specifier hcp=0 not bound to exact line 0.0")
+
     try:
         m_id = MarketId(canonical_market)
         o_id = OutcomeId(canonical_outcome)
-        rule_4_violated = (
-            m_id is not MarketId.ASIAN_HANDICAP
-            or o_id is not OutcomeId.AWAY
-            or canonical_line != 0.0
-        )
+        if m_id is not MarketId.ASIAN_HANDICAP or o_id is not OutcomeId.AWAY or canonical_line != 0.0:
+            rule_4_reasons.append("canonical market/outcome/line does not match ASIAN_HANDICAP AWAY 0.0")
     except (ValueError, TypeError):
-        rule_4_violated = True
+        rule_4_reasons.append("invalid canonical MarketId or OutcomeId")
 
+    rule_4_violated = bool(rule_4_reasons)
     if rule_4_violated:
         high_severity_checks["rule_4_semantic_registry_violation"] = {
             "result": RULE_STATUS_FAIL,
-            "reason": "Selected opportunity market/outcome/line violates canonical market semantics or registration contracts.",
+            "reason": f"Provider market semantics registry contract violation: {'; '.join(rule_4_reasons)}",
         }
         any_high_severity_failure = True
     else:
         high_severity_checks["rule_4_semantic_registry_violation"] = {
             "result": RULE_STATUS_PASS,
-            "reason": "MarketId, OutcomeId, and line conform to reviewed canonical market registry and exact line policy.",
+            "reason": "MarketId, OutcomeId, and line conform to reviewed canonical market registry and exact line policy, bound to validated provider semantic contract.",
         }
 
     # Rule 5: shortfall padding violation
@@ -637,37 +754,83 @@ def compare_real_row(
         }
 
     # Rule 9: probability/quote as-of incompatibility
-    timing_incompatible = False
-    if quote_observed_at and kickoff:
-        timing_incompatible = quote_observed_at >= kickoff
-    if timing_incompatible:
+    as_of_proof = candidate.get("as_of_proof", {})
+    timing = as_of_proof.get("timing", {})
+    quote_obs = timing.get("provider_quote_observed_at") or quote_observed_at
+    prob_eval = timing.get("probability_evaluation_time")
+    price_eval = timing.get("canonical_price_all_evaluation_time")
+    router_eval = timing.get("canonical_router_evaluation_time")
+    capture_start = as_of_proof.get("capture_started_at")
+    capture_end = as_of_proof.get("capture_completed_at")
+
+    rule_9_reasons: list[str] = []
+    if as_of_proof.get("result") != "PROVEN":
+        rule_9_reasons.append("as-of proof is not PROVEN")
+    if quote_obs and price_eval and quote_obs > price_eval:
+        rule_9_reasons.append("quote future-dated at price-all evaluation time")
+    if prob_eval and price_eval and prob_eval > price_eval:
+        rule_9_reasons.append("probability future-dated at price-all evaluation time")
+    if price_eval and router_eval and price_eval > router_eval:
+        rule_9_reasons.append("price-all evaluation after router evaluation time")
+    if capture_start and capture_end:
+        for t_name, t_val in (
+            ("quote_observed", quote_obs),
+            ("prob_eval", prob_eval),
+            ("price_eval", price_eval),
+            ("router_eval", router_eval),
+        ):
+            if t_val and not (capture_start <= t_val <= capture_end):
+                rule_9_reasons.append(f"{t_name} outside capture window [{capture_start}, {capture_end}]")
+    if kickoff:
+        for t_name, t_val in (
+            ("quote_observed", quote_obs),
+            ("prob_eval", prob_eval),
+            ("price_eval", price_eval),
+            ("router_eval", router_eval),
+        ):
+            if t_val and t_val >= kickoff:
+                rule_9_reasons.append(f"{t_name} at or after kickoff UTC {kickoff}")
+
+    rule_9_violated = bool(rule_9_reasons)
+    if rule_9_violated:
         high_severity_checks["rule_9_probability_quote_as_of_incompatible"] = {
             "result": RULE_STATUS_FAIL,
-            "reason": "Quote observed timestamp occurs at or after kickoff UTC.",
+            "reason": f"As-of temporal sequence or capture window violated: {'; '.join(rule_9_reasons)}",
         }
         any_high_severity_failure = True
     else:
         high_severity_checks["rule_9_probability_quote_as_of_incompatible"] = {
             "result": RULE_STATUS_PASS,
-            "reason": "As-of timing sequence is verified: quote observed_at <= evaluation_time < kickoff_utc.",
+            "reason": "Complete as-of timing sequence verified: quote <= price_all <= router, prob <= price_all, inside capture window, strictly pre-kickoff.",
         }
 
     # Rule 10: post-event data leakage
-    post_event_leakage = False
-    for ts in (source_observed_at, quote_observed_at):
-        if ts and kickoff and ts >= kickoff:
-            post_event_leakage = True
-            break
-    if post_event_leakage:
+    legacy_eval = timing.get("legacy_evaluation_time")
+    legacy_obs = timing.get("legacy_evidence_observed_at")
+    rule_10_reasons: list[str] = []
+    for ts_name, ts_val in (
+        ("legacy_evaluation_time", legacy_eval),
+        ("legacy_evidence_observed_at", legacy_obs),
+        ("probability_evaluation_time", prob_eval),
+        ("provider_quote_observed_at", quote_obs),
+        ("canonical_price_all_evaluation_time", price_eval),
+        ("canonical_router_evaluation_time", router_eval),
+        ("source_observed_at", source_observed_at),
+    ):
+        if ts_val and kickoff and ts_val >= kickoff:
+            rule_10_reasons.append(f"{ts_name} ({ts_val}) at or after kickoff UTC ({kickoff})")
+
+    rule_10_violated = bool(rule_10_reasons)
+    if rule_10_violated:
         high_severity_checks["rule_10_post_event_data_leakage"] = {
             "result": RULE_STATUS_FAIL,
-            "reason": "Evidence contains timestamps at or after kickoff UTC.",
+            "reason": f"Evidence contains timestamps at or after kickoff UTC: {'; '.join(rule_10_reasons)}",
         }
         any_high_severity_failure = True
     else:
         high_severity_checks["rule_10_post_event_data_leakage"] = {
             "result": RULE_STATUS_PASS,
-            "reason": "All source, quote, and evaluation timestamps precede kickoff UTC; zero post-event leakage.",
+            "reason": "All legacy, source, quote, probability, Price-All, and Router timestamps precede kickoff UTC; zero post-event leakage.",
         }
 
     # Difference classification logic derived from evidence:
@@ -678,13 +841,13 @@ def compare_real_row(
         explanation = "High-severity invariant checks failed against verified evidence."
     elif legacy_rec is not None and canonical_rec is not None and legacy_rec == canonical_rec:
         primary_classification = DIFFERENCE_MATCH
-        severity_classification = HIGH_SEVERITY_EXPLAINED
+        severity_classification = None
         unexplained_blocker = False
         explanation = "Legacy and canonical recommendations match exactly."
     elif legacy_rec is None and canonical_router_status == "SELECTED" and legacy_disposition == "ANALYTICAL_ONLY_NO_BET":
         # Legacy path is analytical-only without BET authorization; canonical has a valid SHADOW selection.
         primary_classification = DIFFERENCE_EXPECTED_POLICY
-        severity_classification = HIGH_SEVERITY_EXPLAINED
+        severity_classification = None
         unexplained_blocker = False
         explanation = (
             "The legacy MatchAnalyst path is strictly analytical and possesses no pricing or "
@@ -694,17 +857,17 @@ def compare_real_row(
         )
     elif legacy_rec is not None and canonical_rec is None:
         primary_classification = DIFFERENCE_LEGACY_ONLY
-        severity_classification = HIGH_SEVERITY_EXPLAINED
+        severity_classification = None
         unexplained_blocker = False
         explanation = "Legacy path issued recommendation while canonical path remained NO_BET."
     elif legacy_rec is None and canonical_rec is not None:
         primary_classification = DIFFERENCE_CANONICAL_ONLY
-        severity_classification = HIGH_SEVERITY_EXPLAINED
+        severity_classification = None
         unexplained_blocker = False
         explanation = "Canonical path issued recommendation while legacy path had no recommendation."
     else:
         primary_classification = DIFFERENCE_NON_COMPARABLE
-        severity_classification = HIGH_SEVERITY_EXPLAINED
+        severity_classification = None
         unexplained_blocker = False
         explanation = "Decision evidence semantics cannot be directly compared."
 
@@ -838,249 +1001,28 @@ def _make_synthetic_opportunity(
 def evaluate_p0_case(case: Mapping[str, Any]) -> dict[str, Any]:
     """Evaluate canonical behavior against a reviewed synthetic P0 defect class.
 
-    Executes actual canonical pricing/routing/validation components and derives
-    PASS/FAIL from observed component output, not static claims.
+    Executes actual canonical pricing/routing/validation components via
+    domain.p3_0_p0_canonical_acceptance and derives PASS/FAIL from observed
+    component output, not static claims.
     """
     case_id = case.get("case_id", "")
 
     if case_id == "LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION":
-        # Executable proof: In the absence of an exact provider quote, canonical routing
-        # treats unpriced opportunities as non-selectable (REJECTED), resulting in no selectable
-        # recommendation (empty eligible set).
-        unpriced_opp = _make_synthetic_opportunity(
-            market=MarketId.MATCH_RESULT,
-            outcome=OutcomeId.HOME,
-            eligibility=OpportunityEligibility.REJECTED,
-            rejection_reasons=("Price disposition UNPRICED_NO_EXACT_QUOTE: exact provider quote absent",),
-        )
-        ranked, eligible, rejected = canonical_router._rank_opportunities([unpriced_opp])
-        canonical_avoids_defect = (len(eligible) == 0 and len(rejected) == 1)
-        observed_canonical = (
-            "Canonical routing observed 0 eligible opportunities and 1 rejected unpriced opportunity; "
-            "fail-closed boundary prevents recommendation without exact verified provider price."
-        )
-        return {
-            "canonical_avoids_defect": canonical_avoids_defect,
-            "canonical_property": "No selectable market opportunity exists without exact verified provider price/availability.",
-            "case_id": case_id,
-            "execution_evidence": {
-                "eligible_count": len(eligible),
-                "observed_disposition": PriceDisposition.UNPRICED_NO_EXACT_QUOTE.value,
-                "rejected_count": len(rejected),
-            },
-            "label": SYNTHETIC_P0_LABEL,
-            "observed_canonical_behavior": observed_canonical,
-            "observed_legacy_problem": case.get("observed_problem"),
-            "result": "PASS" if canonical_avoids_defect else "FAIL",
-        }
+        result = run_p0_1_acceptance()
+    elif case_id == "LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT":
+        result = run_p0_2_acceptance()
+    elif case_id == "LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION":
+        result = run_p0_3_acceptance()
+    elif case_id == "LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO":
+        result = run_p0_4_acceptance()
+    elif case_id == "LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE":
+        result = run_p0_5_acceptance()
+    else:
+        raise ComparatorError(f"unknown P0 case_id: {case_id}")
 
-    if case_id == "LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT":
-        # Executable proof: Run canonical evaluation for the same underlying prediction state
-        # under two distinct exact provider price states.
-        # Prove that net expected value and rank keys respond directly to price and quote identity is bound.
-        event_prob = 0.65
-        odds_1 = 1.50
-        odds_2 = 2.10
-        quote_sha_1 = hashlib.sha256(b"quote_1").hexdigest()
-        quote_sha_2 = hashlib.sha256(b"quote_2").hexdigest()
-
-        ev_1 = round(event_prob * odds_1 - 1.0, 6)  # -0.025
-        ev_2 = round(event_prob * odds_2 - 1.0, 6)  # 0.365
-
-        opp_1 = _make_synthetic_opportunity(
-            market=MarketId.MATCH_RESULT,
-            outcome=OutcomeId.HOME,
-            odds=odds_1,
-            ev=ev_1,
-            confidence=event_prob,
-            quote_sha=quote_sha_1,
-        )
-        opp_2 = _make_synthetic_opportunity(
-            market=MarketId.MATCH_RESULT,
-            outcome=OutcomeId.HOME,
-            odds=odds_2,
-            ev=ev_2,
-            confidence=event_prob,
-            quote_sha=quote_sha_2,
-        )
-
-        key_1 = canonical_router._selection_rank_key(opp_1)
-        key_2 = canonical_router._selection_rank_key(opp_2)
-
-        price_participated = (
-            opp_1.quote_sha256 != opp_2.quote_sha256
-            and opp_1.robust_net_expected_value != opp_2.robust_net_expected_value
-            and key_1 != key_2
-        )
-        return {
-            "canonical_avoids_defect": price_participated,
-            "canonical_property": "Provider pricing directly participates in MarketRouter robust-net-expected-value calculation and selection.",
-            "case_id": case_id,
-            "execution_evidence": {
-                "ev_state_1": ev_1,
-                "ev_state_2": ev_2,
-                "quote_sha_1": quote_sha_1,
-                "quote_sha_2": quote_sha_2,
-                "rank_keys_differ": (key_1 != key_2),
-            },
-            "label": SYNTHETIC_P0_LABEL,
-            "observed_canonical_behavior": (
-                f"Under quote 1 (odds {odds_1}), EV is {ev_1}; under quote 2 (odds {odds_2}), "
-                f"EV is {ev_2}. Canonical selection rank key responds directly to provider price."
-            ),
-            "observed_legacy_problem": case.get("observed_problem"),
-            "result": "PASS" if price_participated else "FAIL",
-        }
-
-    if case_id == "LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION":
-        # Executable proof: When provider price/availability is absent, actual canonical output
-        # remains non-selectable / fail-closed (NO_BET disposition).
-        unavailable_opp = _make_synthetic_opportunity(
-            market=MarketId.TOTAL_GOALS,
-            outcome=OutcomeId.UNDER,
-            line=2.5,
-            eligibility=OpportunityEligibility.REJECTED,
-            rejection_reasons=("PriceDisposition.UNPRICED_CURRENTLY_UNAVAILABLE: provider market closed",),
-        )
-        ranked, eligible, rejected = canonical_router._rank_opportunities([unavailable_opp])
-        fail_closed_verified = (
-            len(eligible) == 0
-            and len(rejected) == 1
-            and unavailable_opp.eligibility is OpportunityEligibility.REJECTED
-        )
-        return {
-            "canonical_avoids_defect": fail_closed_verified,
-            "canonical_property": "Absence of exact provider price/availability produces explicit non-selectable NO_BET disposition.",
-            "case_id": case_id,
-            "execution_evidence": {
-                "eligible_count": len(eligible),
-                "observed_disposition": PriceDisposition.UNPRICED_CURRENTLY_UNAVAILABLE.value,
-                "rejected_count": len(rejected),
-            },
-            "label": SYNTHETIC_P0_LABEL,
-            "observed_canonical_behavior": (
-                "Absence of provider pricing produces explicit REJECTED eligibility and non-selectable "
-                "disposition; no actionable recommendation is issued."
-            ),
-            "observed_legacy_problem": case.get("observed_problem"),
-            "result": "PASS" if fail_closed_verified else "FAIL",
-        }
-
-    if case_id == "LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO":
-        # Executable proof: Attempt to pass the legacy ad-hoc display identity "Home or Over 1.5"
-        # through the canonical market/semantic boundary. The canonical system must reject it.
-        legacy_label = "Home or Over 1.5"
-        rejected_by_canonical = False
-        rejection_error_type = ""
-        try:
-            resolve_legacy_selection(legacy_label)
-        except UnknownSelectionError as exc:
-            rejected_by_canonical = True
-            rejection_error_type = type(exc).__name__
-        except Exception as exc:
-            rejected_by_canonical = True
-            rejection_error_type = type(exc).__name__
-
-        try:
-            canonicalize_market_id(legacy_label)
-            rejected_by_market_canonicalizer = False
-        except UnknownMarketError:
-            rejected_by_market_canonicalizer = True
-
-        combos_strictly_rejected = rejected_by_canonical and rejected_by_market_canonicalizer
-        return {
-            "canonical_avoids_defect": combos_strictly_rejected,
-            "canonical_property": "Decision authority requires exact registered canonical MarketId and OutcomeId identities.",
-            "case_id": case_id,
-            "execution_evidence": {
-                "rejected_by_legacy_resolver": rejected_by_canonical,
-                "rejected_by_market_canonicalizer": rejected_by_market_canonicalizer,
-                "rejection_error_type": rejection_error_type,
-            },
-            "label": SYNTHETIC_P0_LABEL,
-            "observed_canonical_behavior": (
-                f"Ad-hoc label '{legacy_label}' was rejected by canonical market contracts with "
-                f"{rejection_error_type}; non-registered composite labels cannot enter canonical authority."
-            ),
-            "observed_legacy_problem": case.get("observed_problem"),
-            "result": "PASS" if combos_strictly_rejected else "FAIL",
-        }
-
-    if case_id == "LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE":
-        # Executable proof:
-        # Construct two eligible canonical opportunities with:
-        # - equal robust net expected value (0.10)
-        # - equal prediction confidence (0.70)
-        # - distinct canonical prediction identities:
-        #   Opp X: MATCH_RESULT HOME None -> prediction key: ('MATCH_RESULT', 'HOME', 'NONE')
-        #   Opp Y: TOTAL_GOALS OVER 2.5 -> prediction key: ('TOTAL_GOALS', 'OVER', '0x1.4000000000000p+1')
-        # Since 'MATCH_RESULT' < 'TOTAL_GOALS', Opp X must win the tie deterministically.
-        #
-        # Verify:
-        # A. input order [X, Y] selects X
-        # B. input order [Y, X] selects X
-        # C. Mutating quote-dependent fields on X (giving X worse opportunity_id 'zzz...', older quote age,
-        #    different quote SHA) DOES NOT change the tie winner: X still wins!
-        opp_x = _make_synthetic_opportunity(
-            market=MarketId.MATCH_RESULT,
-            outcome=OutcomeId.HOME,
-            line=None,
-            ev=0.10,
-            confidence=0.70,
-            odds=1.50,
-            opp_id="zzz" * 21 + "z",
-            quote_sha="1" * 64,
-            quote_age=800.0,
-        )
-        opp_y = _make_synthetic_opportunity(
-            market=MarketId.TOTAL_GOALS,
-            outcome=OutcomeId.OVER,
-            line=2.5,
-            ev=0.10,
-            confidence=0.70,
-            odds=2.20,
-            opp_id="aaa" * 21 + "a",
-            quote_sha="2" * 64,
-            quote_age=1.0,
-        )
-
-        ranked_ab, eligible_ab, _ = canonical_router._rank_opportunities([opp_x, opp_y])
-        ranked_ba, eligible_ba, _ = canonical_router._rank_opportunities([opp_y, opp_x])
-
-        winner_ab = eligible_ab[0]
-        winner_ba = eligible_ba[0]
-
-        tie_broken_by_prediction_key = (
-            winner_ab.prediction_identity_sha256 == opp_x.prediction_identity_sha256
-            and winner_ba.prediction_identity_sha256 == opp_x.prediction_identity_sha256
-            and winner_ab.market_id is MarketId.MATCH_RESULT
-            and winner_ba.market_id is MarketId.MATCH_RESULT
-        )
-
-        return {
-            "canonical_avoids_defect": tie_broken_by_prediction_key,
-            "canonical_property": (
-                "Equal-value ties are resolved deterministically by quote-independent canonical "
-                "prediction key (market_id, outcome_id, line), not opportunity ID and not candidate construction order."
-            ),
-            "case_id": case_id,
-            "execution_evidence": {
-                "tie_authority": "quote_independent_prediction_key",
-                "winner_input_order_xy": winner_ab.market_id.value,
-                "winner_input_order_yx": winner_ba.market_id.value,
-                "winner_opportunity_id": winner_ab.opportunity_id,
-            },
-            "label": SYNTHETIC_P0_LABEL,
-            "observed_canonical_behavior": (
-                "Under equal EV (0.10) and equal confidence (0.70), reversing candidate input order "
-                "and assigning lower opportunity_id to Opp Y did not alter the winner. Opp X "
-                "(MATCH_RESULT) won deterministically via quote-independent prediction key."
-            ),
-            "observed_legacy_problem": case.get("observed_problem"),
-            "result": "PASS" if tie_broken_by_prediction_key else "FAIL",
-        }
-
-    raise ComparatorError(f"unknown P0 case_id: {case_id}")
+    if "observed_problem" in case:
+        result["observed_legacy_problem"] = case["observed_problem"]
+    return result
 
 
 def _validate_source_audit_content(source_audit: Mapping[str, Any]) -> None:
@@ -1178,9 +1120,25 @@ def build_comparison_report(
     canonical_only_recommendations = sum(1 for r in real_row_comparisons if r.get("primary_classification") == DIFFERENCE_CANONICAL_ONLY)
     potential_high_severity = sum(1 for r in real_row_comparisons if r.get("primary_classification") == DIFFERENCE_POTENTIAL_HIGH_SEVERITY)
 
-    explained_high_severity = sum(1 for r in real_row_comparisons if r.get("severity_classification") == HIGH_SEVERITY_EXPLAINED)
-    confirmed_defects = sum(1 for r in real_row_comparisons if r.get("severity_classification") == HIGH_SEVERITY_DEFECT)
-    unexplained_high_severity = sum(1 for r in real_row_comparisons if r.get("severity_classification") == HIGH_SEVERITY_BLOCKER)
+    explained_high_severity = sum(
+        1 for r in real_row_comparisons
+        if r.get("primary_classification") == DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+        and r.get("severity_classification") == HIGH_SEVERITY_EXPLAINED
+    )
+    confirmed_defects = sum(
+        1 for r in real_row_comparisons
+        if r.get("primary_classification") == DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+        and r.get("severity_classification") == HIGH_SEVERITY_DEFECT
+    )
+    unexplained_high_severity = sum(
+        1 for r in real_row_comparisons
+        if r.get("primary_classification") == DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+        and r.get("severity_classification") == HIGH_SEVERITY_BLOCKER
+    )
+    high_severity_rule_not_applicable_count = sum(
+        sum(1 for chk in r.get("high_severity_rules_checked", {}).values() if chk.get("result") == RULE_STATUS_NOT_APPLICABLE)
+        for r in real_row_comparisons
+    )
 
     competitions = sorted(list({r["competition"] for r in real_row_comparisons if "competition" in r}))
     market_families = sorted(list({r["market_family"] for r in real_row_comparisons if "market_family" in r}))
@@ -1195,6 +1153,7 @@ def build_comparison_report(
         "exact_matches": exact_matches,
         "expected_policy_differences": expected_policy_differences,
         "explained_high_severity": explained_high_severity,
+        "high_severity_rule_not_applicable_count": high_severity_rule_not_applicable_count,
         "legacy_only_recommendations": legacy_only_recommendations,
         "market_families": market_families,
         "non_comparable_rows": non_comparable_rows,
@@ -1294,8 +1253,19 @@ def validate_comparison_report(report: Mapping[str, Any]) -> None:
         raise ComparatorError("report report_builder_sha256 must be a valid 64-character hex SHA-256")
 
     summary = report.get("summary", {})
-    if summary.get("unexplained_high_severity") != 0:
+    potential = summary.get("potential_high_severity", 0)
+    explained = summary.get("explained_high_severity", 0)
+    confirmed = summary.get("confirmed_defects", 0)
+    unexplained = summary.get("unexplained_high_severity", 0)
+    if potential != explained + confirmed + unexplained:
+        raise ComparatorError(
+            f"report severity arithmetic invariant failed: potential ({potential}) != "
+            f"explained ({explained}) + confirmed ({confirmed}) + unexplained ({unexplained})"
+        )
+    if unexplained != 0:
         raise ComparatorError("report has unexplained high severity finding")
+    if "high_severity_rule_not_applicable_count" not in summary:
+        raise ComparatorError("report summary missing high_severity_rule_not_applicable_count")
 
     # Verify summary dynamically matches real_row_comparisons
     row_comparisons = report.get("real_row_comparisons", [])
@@ -1363,6 +1333,18 @@ __all__ = (
     "DIFFERENCE_NON_COMPARABLE",
     "DIFFERENCE_POTENTIAL_HIGH_SEVERITY",
     "DIFFERENCE_TAXONOMY",
+    "EXPECTED_AS_OF_PROOF_CANONICAL_SHA256",
+    "EXPECTED_AS_OF_PROOF_FILE_SHA256",
+    "EXPECTED_JOIN_RECEIPT_CANONICAL_SHA256",
+    "EXPECTED_JOIN_RECEIPT_FILE_SHA256",
+    "EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256",
+    "EXPECTED_PROVIDER_SEMANTICS_REGISTRY_POLICY_ID",
+    "EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256",
+    "EXPECTED_SELECTED_QUOTE_INVENTORY_SHA256",
+    "EXPECTED_SELECTED_QUOTE_MANIFEST_SHA256",
+    "EXPECTED_SELECTED_QUOTE_OBSERVATION_SHA256",
+    "EXPECTED_SELECTED_QUOTE_RAW_SHA256",
+    "EXPECTED_SELECTED_QUOTE_RECONCILIATION_SHA256",
     "FUTURE_EVIDENCE_REQUIREMENT",
     "HIGH_SEVERITY_BLOCKER",
     "HIGH_SEVERITY_DEFECT",

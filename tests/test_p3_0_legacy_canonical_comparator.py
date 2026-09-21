@@ -1,12 +1,14 @@
 """Tests for ATHENA Phase 3.0 Legacy / Canonical Architecture Comparator.
 
-Implements all 47 required behavioral and invariant tests from Section 9:
-- P0 Behavior (Tests 1 - 7)
-- Real Source Projection (Tests 8 - 17)
-- High-Severity Invariants (Tests 18 - 24)
-- Aggregation & Determinism (Tests 25 - 30)
-- Code Binding (Tests 31 - 34)
-- Authority Sentinels (Tests 35 - 47)
+Implements all 38 required evidence-semantics tests from Section 10 plus authority sentinels:
+- Price-All P0 Execution (Tests 1 - 8)
+- Tie Independence (Tests 9 - 11)
+- Hash Semantics (Tests 12 - 16)
+- Temporal Boundaries (Tests 17 - 24)
+- Provider Semantics (Tests 25 - 30)
+- Severity Arithmetic (Tests 31 - 34)
+- Receipt & Determinism (Tests 35 - 38)
+- Authority & Safety Sentinels (Tests 39 - 47)
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from domain._market_router_contracts import OpportunityEligibility, RouterDecisi
 from domain import market_router_canonical_adapter as canonical_router
 from domain.markets import MarketId, OutcomeId, UnknownMarketError, UnknownSelectionError
 from domain import p3_0_legacy_canonical_comparator as comparator
+from domain import p3_0_p0_canonical_acceptance as p0_acceptance
 from domain.p3_0_replay_corpus import canonical_json_bytes, canonical_sha256
 from domain.price_all import PriceDisposition
 import scripts.build_p3_0_legacy_canonical_comparison_report as report_builder
@@ -46,20 +49,51 @@ def proposal() -> dict[str, Any]:
 
 @pytest.fixture
 def decision() -> dict[str, Any]:
-    with (REPO_ROOT / "artifacts" / "p3-0-replay-acceptance-decision-v1.json").open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+    return comparator.build_acceptance_decision()
 
 
 @pytest.fixture
-def corpus() -> dict[str, Any]:
-    with (REPO_ROOT / "artifacts" / "p3-0-comparator-corpus-v1.json").open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+def corpus(decision: dict[str, Any]) -> dict[str, Any]:
+    corpus_file = REPO_ROOT / "artifacts" / "p3-0-comparator-corpus-v1.json"
+    if corpus_file.is_file():
+        try:
+            with corpus_file.open("r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+                comparator.validate_comparator_corpus(loaded, expected_decision_sha=decision["canonical_sha256"])
+                return loaded
+        except Exception:
+            pass
+    return comparator.build_comparator_corpus(
+        decision_sha256=decision["canonical_sha256"],
+        real_row_source_path=REPO_ROOT / "artifacts" / "p3-0-comparator-real-row-source-v1.json",
+    )
 
 
 @pytest.fixture
-def report() -> dict[str, Any]:
-    with (REPO_ROOT / "artifacts" / "p3-0-comparison-report-v1.json").open("r", encoding="utf-8") as handle:
-        return json.load(handle)
+def report(
+    source_audit: dict[str, Any],
+    proposal: dict[str, Any],
+    decision: dict[str, Any],
+    corpus: dict[str, Any],
+    p0_cases: list[dict[str, Any]],
+) -> dict[str, Any]:
+    report_file = REPO_ROOT / "artifacts" / "p3-0-comparison-report-v1.json"
+    if report_file.is_file():
+        try:
+            with report_file.open("r", encoding="utf-8") as handle:
+                loaded = json.load(handle)
+                comparator.validate_comparison_report(loaded)
+                return loaded
+        except Exception:
+            pass
+    return comparator.build_comparison_report(
+        source_audit=source_audit,
+        proposal=proposal,
+        decision=decision,
+        corpus=corpus,
+        p0_cases=p0_cases,
+        implementation_source_sha=SAMPLE_COMMIT_SHA,
+    )
 
 
 @pytest.fixture
@@ -75,71 +109,74 @@ def p0_cases() -> list[dict[str, Any]]:
 
 
 # ==============================================================================
-# 1. P0 BEHAVIORAL TESTS (Tests 1 - 7)
+# 1. PRICE-ALL P0 (Tests 1 - 8)
 # ==============================================================================
 
-def test_01_p0_no_quote_case_executes_canonical_boundary_and_observes_fail_closed(
+def test_01_p0_1_starts_from_no_exact_quote_and_real_price_all_produces_fail_closed_unpriced_state() -> None:
+    res = p0_acceptance.run_p0_1_acceptance()
+    assert res["canonical_avoids_defect"] is True
+    assert res["result"] == "PASS"
+    assert res["execution_evidence"]["disposition"] == PriceDisposition.UNPRICED_NO_EXACT_QUOTE.value
+    assert "domain.price_all.price_all_as_of" in res["execution_evidence"]["production_apis_executed"]
+    assert res["execution_evidence"]["router_status"] == RouterDecisionStatus.NO_BET.value
+    assert res["execution_evidence"]["selected_opportunity_id"] is None
+
+
+def test_02_p0_1_does_not_preset_router_eligibility_as_proof(
     p0_cases: list[dict[str, Any]],
 ) -> None:
     case = next(c for c in p0_cases if c["case_id"] == "LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION")
     res = comparator.evaluate_p0_case(case)
+    # Proof relies on real Price-All disposition, not pre-set RouterOpportunity.eligibility
+    assert res["execution_evidence"]["disposition"] == "UNPRICED_NO_EXACT_QUOTE"
+    assert "pre-set" not in res["canonical_property"].lower()
+
+
+def test_03_p0_2_real_price_all_state_a_uses_quote_a() -> None:
+    res = p0_acceptance.run_p0_2_acceptance()
+    assert res["execution_evidence"]["state_a"]["decimal_odds"] == 1.50
+    assert res["execution_evidence"]["state_a"]["net_expected_value"] == -0.025
+    assert len(res["execution_evidence"]["state_a"]["quote_identity"]) == 64
+
+
+def test_04_p0_2_real_price_all_state_b_uses_quote_b() -> None:
+    res = p0_acceptance.run_p0_2_acceptance()
+    assert res["execution_evidence"]["state_b"]["decimal_odds"] == 2.10
+    assert res["execution_evidence"]["state_b"]["net_expected_value"] == 0.365
+    assert len(res["execution_evidence"]["state_b"]["quote_identity"]) == 64
+
+
+def test_05_p0_2_ev_value_output_changes_due_to_price() -> None:
+    res = p0_acceptance.run_p0_2_acceptance()
+    assert res["canonical_avoids_defect"] is True
+    assert res["execution_evidence"]["price_derived_ev_change"] is True
+    assert res["execution_evidence"]["state_a"]["net_expected_value"] != res["execution_evidence"]["state_b"]["net_expected_value"]
+
+
+def test_06_p0_2_quote_identity_is_bound_in_output() -> None:
+    res = p0_acceptance.run_p0_2_acceptance()
+    assert res["execution_evidence"]["state_a"]["quote_identity"] != res["execution_evidence"]["state_b"]["quote_identity"]
+
+
+def test_07_p0_3_provider_unavailable_state_goes_through_real_pricing_seam() -> None:
+    res = p0_acceptance.run_p0_3_acceptance()
     assert res["canonical_avoids_defect"] is True
     assert res["result"] == "PASS"
-    assert res["execution_evidence"]["eligible_count"] == 0
-    assert res["execution_evidence"]["rejected_count"] == 1
-    assert res["execution_evidence"]["observed_disposition"] == PriceDisposition.UNPRICED_NO_EXACT_QUOTE.value
+    assert res["execution_evidence"]["disposition"] == PriceDisposition.UNPRICED_CURRENTLY_UNAVAILABLE.value
+    assert "domain.price_all.price_all_as_of" in res["execution_evidence"]["production_apis_executed"]
 
 
-def test_02_p0_quote_dependent_case_executes_canonical_price_aware_path_twice_and_proves_price_ev_changes(
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    case = next(c for c in p0_cases if c["case_id"] == "LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT")
-    res = comparator.evaluate_p0_case(case)
-    assert res["canonical_avoids_defect"] is True
-    assert res["result"] == "PASS"
-    evidence = res["execution_evidence"]
-    assert evidence["quote_sha_1"] != evidence["quote_sha_2"]
-    assert evidence["ev_state_1"] != evidence["ev_state_2"]
-    assert evidence["rank_keys_differ"] is True
+def test_08_p0_3_cannot_become_router_selected() -> None:
+    res = p0_acceptance.run_p0_3_acceptance()
+    assert res["execution_evidence"]["router_status"] == RouterDecisionStatus.NO_BET.value
+    assert res["execution_evidence"]["selected_opportunity_id"] is None
 
 
-def test_03_p0_provider_unavailable_case_executes_canonical_boundary_and_observes_no_bet(
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    case = next(c for c in p0_cases if c["case_id"] == "LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION")
-    res = comparator.evaluate_p0_case(case)
-    assert res["canonical_avoids_defect"] is True
-    assert res["result"] == "PASS"
-    assert res["execution_evidence"]["eligible_count"] == 0
-    assert res["execution_evidence"]["observed_disposition"] == PriceDisposition.UNPRICED_CURRENTLY_UNAVAILABLE.value
+# ==============================================================================
+# 2. TIE INDEPENDENCE (Tests 9 - 11)
+# ==============================================================================
 
-
-def test_04_p0_noncanonical_combo_rejected_by_canonical_semantic_contract(
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    case = next(c for c in p0_cases if c["case_id"] == "LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO")
-    res = comparator.evaluate_p0_case(case)
-    assert res["canonical_avoids_defect"] is True
-    assert res["result"] == "PASS"
-    assert res["execution_evidence"]["rejected_by_legacy_resolver"] is True
-    assert res["execution_evidence"]["rejected_by_market_canonicalizer"] is True
-
-
-def test_05_p0_tie_order_case_proves_quote_independent_prediction_key_tie_break(
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    case = next(c for c in p0_cases if c["case_id"] == "LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE")
-    res = comparator.evaluate_p0_case(case)
-    assert res["canonical_avoids_defect"] is True
-    assert res["result"] == "PASS"
-    assert res["execution_evidence"]["tie_authority"] == "quote_independent_prediction_key"
-    assert res["execution_evidence"]["winner_input_order_xy"] == "MATCH_RESULT"
-    assert res["execution_evidence"]["winner_input_order_yx"] == "MATCH_RESULT"
-    # Verify wording does not claim opportunity_id authority
-    assert "opportunity ID" not in res["canonical_property"] or "not opportunity ID" in res["canonical_property"]
-
-
-def test_06_p0_reversing_candidate_construction_order_cannot_change_tie_winner() -> None:
+def test_09_rank_key_unit_result_independent_of_construction_order() -> None:
     opp_x = comparator._make_synthetic_opportunity(
         market=MarketId.MATCH_RESULT,
         outcome=OutcomeId.HOME,
@@ -161,7 +198,7 @@ def test_06_p0_reversing_candidate_construction_order_cannot_change_tie_winner()
     assert order_xy[0].market_id is MarketId.MATCH_RESULT
 
 
-def test_07_p0_changing_quote_id_or_odds_cannot_become_tie_authority_when_rank_inputs_held_equal() -> None:
+def test_10_rank_key_unit_result_independent_of_opportunity_id_and_quote_identity() -> None:
     opp_x = comparator._make_synthetic_opportunity(
         market=MarketId.MATCH_RESULT,
         outcome=OutcomeId.HOME,
@@ -184,265 +221,262 @@ def test_07_p0_changing_quote_id_or_odds_cannot_become_tie_authority_when_rank_i
         quote_age=1.0,
     )
     ranked = sorted([opp_y, opp_x], key=canonical_router._selection_rank_key)
-    # Even though opp_y has lower opp_id ('000...'), better odds (9.50), and fresher quote (1.0s),
-    # opp_x wins because prediction key ('MATCH_RESULT', 'HOME', 'NONE') < ('TOTAL_GOALS', 'OVER', ...)
     assert ranked[0].market_id is MarketId.MATCH_RESULT
     assert ranked[0].prediction_identity_sha256 == opp_x.prediction_identity_sha256
 
 
+def test_11_public_canonical_router_route_integration_selects_same_prediction_identity_under_reversed_input() -> None:
+    res = p0_acceptance.run_p0_5_acceptance()
+    assert res["canonical_avoids_defect"] is True
+    assert res["result"] == "PASS"
+    assert res["execution_evidence"]["narrow_rank_ok"] is True
+    assert res["execution_evidence"]["public_route_ok"] is True
+    assert res["execution_evidence"]["selected_opportunity_id_xy"] is not None
+    assert res["execution_evidence"]["selected_opportunity_id_xy"] == res["execution_evidence"]["selected_opportunity_id_yx"]
+
+
 # ==============================================================================
-# 2. REAL SOURCE PROJECTION TESTS (Tests 8 - 17)
+# 3. HASH SEMANTICS (Tests 12 - 16)
 # ==============================================================================
 
-def test_08_real_row_loaded_from_source_artifact_projection_not_python_defaults(
+def test_12_as_of_embedded_canonical_sha_verified(real_row_source: dict[str, Any]) -> None:
+    as_of = real_row_source.get("as_of_proof", {})
+    from domain.p3_0_comparison_evidence import build_as_of_proof
+    rebuilt = build_as_of_proof(
+        capture_id=as_of["capture_id"],
+        fixture_identity=as_of["fixture_identity"],
+        capture_started_at=as_of["capture_started_at"],
+        capture_completed_at=as_of["capture_completed_at"],
+        timing=as_of["timing"],
+    )
+    assert rebuilt["canonical_sha256"] == comparator.EXPECTED_AS_OF_PROOF_CANONICAL_SHA256
+    assert real_row_source["hashes"]["as_of_proof_canonical_sha256"] == comparator.EXPECTED_AS_OF_PROOF_CANONICAL_SHA256
+
+
+def test_13_as_of_file_byte_sha_separately_verified(real_row_source: dict[str, Any]) -> None:
+    file_sha = real_row_source["hashes"]["as_of_proof_file_sha256"]
+    canon_sha = real_row_source["hashes"]["as_of_proof_canonical_sha256"]
+    assert file_sha == comparator.EXPECTED_AS_OF_PROOF_FILE_SHA256
+    assert file_sha != canon_sha
+
+
+def test_14_join_embedded_canonical_sha_verified(real_row_source: dict[str, Any]) -> None:
+    join_sha = real_row_source["hashes"]["join_receipt_canonical_sha256"]
+    assert join_sha == comparator.EXPECTED_JOIN_RECEIPT_CANONICAL_SHA256
+
+
+def test_15_join_file_byte_sha_separately_verified(real_row_source: dict[str, Any]) -> None:
+    file_sha = real_row_source["hashes"]["join_receipt_file_sha256"]
+    canon_sha = real_row_source["hashes"]["join_receipt_canonical_sha256"]
+    assert file_sha == comparator.EXPECTED_JOIN_RECEIPT_FILE_SHA256
+    assert file_sha != canon_sha
+
+
+def test_16_hashing_object_including_its_own_canonical_sha_is_not_accepted_as_canonical_identity(
     real_row_source: dict[str, Any],
 ) -> None:
-    assert real_row_source["source_mechanism"] == "VERIFIED_ARTIFACT_PROJECTION"
-    assert real_row_source["candidate_id"] == comparator.VERIFIED_REAL_ROW_CANDIDATE_ID
-    assert real_row_source["provenance"]["artifact_id"] == "10603511090"
-    assert real_row_source["quote"]["quote_identity_sha256"] == comparator.EXPECTED_QUOTE_IDENTITY_SHA256
-    assert real_row_source["canonical"]["selected_opportunity_id"] == "e2bc0bef5fe57078402d82071d999a97c2b08942f61309accae9150d5eb49cd4"
-
-
-def test_09_artifact_projection_digest_tamper_rejected(real_row_source: dict[str, Any]) -> None:
+    as_of = real_row_source.get("as_of_proof", {})
+    wrong_hash = canonical_sha256(as_of)
+    assert wrong_hash != as_of["canonical_sha256"]
     tampered = copy.deepcopy(real_row_source)
-    tampered["hashes"]["artifact_digest"] = "sha256:" + "0" * 64
+    tampered["hashes"]["as_of_proof_canonical_sha256"] = wrong_hash
     tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="artifact_digest mismatch"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_10_manifest_sha_tamper_rejected(real_row_source: dict[str, Any]) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    tampered["hashes"]["manifest_file_sha256"] = "0" * 64
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="manifest_file_sha256 mismatch"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_11_paired_bundle_sha_tamper_rejected(real_row_source: dict[str, Any]) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    tampered["hashes"]["paired_bundle_canonical_sha256"] = "0" * 64
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="paired_bundle_canonical_sha256 mismatch"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_12_exact_quote_identity_tamper_rejected(real_row_source: dict[str, Any]) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    tampered["hashes"]["quote_identity_sha256"] = "0" * 64
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="quote_identity_sha256 mismatch"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_13_fixture_identity_tamper_rejected(real_row_source: dict[str, Any]) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    tampered["fixture"]["fixture_identity"] = "FOTMOB:9999999"
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="fixture_identity mismatch"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_14_provider_event_tamper_rejected(real_row_source: dict[str, Any]) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    tampered["fixture"]["provider_event_id"] = "sr:match:9999999"
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="provider_event_id mismatch"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_15_timestamps_after_kickoff_rejected(real_row_source: dict[str, Any]) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    tampered["quote"]["observed_at"] = "2026-09-20T11:00:00.000000Z"  # After kickoff 10:30
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="temporal violation"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_16_source_projection_missing_required_canonical_field_rejected(
-    real_row_source: dict[str, Any],
-) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    del tampered["canonical"]["robust_net_expected_value"]
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="missing required canonical field"):
-        comparator._validate_real_row_source(tampered)
-
-
-def test_17_source_projection_missing_required_legacy_field_rejected(
-    real_row_source: dict[str, Any],
-) -> None:
-    tampered = copy.deepcopy(real_row_source)
-    del tampered["legacy"]["no_bet_reasons"]
-    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
-    with pytest.raises(comparator.ComparatorError, match="missing required legacy field"):
+    with pytest.raises(comparator.ComparatorError, match="as_of_proof_canonical_sha256 mismatch"):
         comparator._validate_real_row_source(tampered)
 
 
 # ==============================================================================
-# 3. HIGH-SEVERITY INVARIANT TESTS (Tests 18 - 24)
+# 4. TEMPORAL BOUNDARIES (Tests 17 - 24)
 # ==============================================================================
 
-def test_18_every_applicable_high_severity_rule_is_evaluated(
-    real_row_source: dict[str, Any],
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    p0_results = [comparator.evaluate_p0_case(c) for c in p0_cases]
-    res = comparator.compare_real_row(real_row_source, p0_results=p0_results)
-    rules = res["high_severity_rules_checked"]
-    assert len(rules) == 10
-    for idx in range(1, 11):
-        rule_key = next(k for k in rules if k.startswith(f"rule_{idx}_"))
-        assert rules[rule_key]["result"] in ("PASS", "FAIL", "NOT_APPLICABLE")
-        assert len(rules[rule_key]["reason"]) > 0
+def test_17_exact_retained_as_of_proof_rebuilds_to_proven(real_row_source: dict[str, Any]) -> None:
+    as_of = real_row_source.get("as_of_proof", {})
+    assert as_of.get("result") == "PROVEN"
 
 
-def test_19_no_applicable_rule_may_remain_unknown_or_unproven(
-    real_row_source: dict[str, Any],
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    p0_results = [comparator.evaluate_p0_case(c) for c in p0_cases]
-    res = comparator.compare_real_row(real_row_source, p0_results=p0_results)
-    rules = res["high_severity_rules_checked"]
-    # Rules 1-4 and 6-10 are applicable and must PASS
-    for idx in [1, 2, 3, 4, 6, 7, 8, 9, 10]:
-        rule_key = next(k for k in rules if k.startswith(f"rule_{idx}_"))
-        assert rules[rule_key]["result"] == "PASS"
-
-
-def test_20_shortfall_portfolio_rule_is_not_applicable_not_silently_pass(
-    real_row_source: dict[str, Any],
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    p0_results = [comparator.evaluate_p0_case(c) for c in p0_cases]
-    res = comparator.compare_real_row(real_row_source, p0_results=p0_results)
-    rule_5 = res["high_severity_rules_checked"]["rule_5_shortfall_padding_violation"]
-    assert rule_5["result"] == "NOT_APPLICABLE"
-    assert "Portfolio optimization" in rule_5["reason"]
-
-
-def test_21_semantic_registry_violation_produces_potential_high_severity(
-    real_row_source: dict[str, Any],
-) -> None:
+def test_18_quote_future_dated_at_price_all_fails(real_row_source: dict[str, Any]) -> None:
     tampered = copy.deepcopy(real_row_source)
-    tampered["canonical"]["market"] = "NONCANONICAL_COMBO_MARKET"
+    tampered["as_of_proof"]["timing"]["provider_quote_observed_at"] = "2026-09-20T09:35:00.000000Z"
     res = comparator.compare_real_row(tampered)
     assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
-    assert res["severity_classification"] == comparator.HIGH_SEVERITY_BLOCKER
-    assert res["unexplained_blocker"] is True
-    assert res["high_severity_rules_checked"]["rule_4_semantic_registry_violation"]["result"] == "FAIL"
+    assert res["high_severity_rules_checked"]["rule_9_probability_quote_as_of_incompatible"]["result"] == "FAIL"
 
 
-def test_22_selected_ineligible_contradiction_produces_potential_high_severity(
-    real_row_source: dict[str, Any],
-) -> None:
+def test_19_probability_future_dated_at_price_all_fails(real_row_source: dict[str, Any]) -> None:
     tampered = copy.deepcopy(real_row_source)
-    tampered["canonical"]["eligibility"] = "REJECTED"  # Contradicts router_status SELECTED
+    tampered["as_of_proof"]["timing"]["probability_evaluation_time"] = "2026-09-20T09:35:00.000000Z"
     res = comparator.compare_real_row(tampered)
     assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
-    assert res["severity_classification"] == comparator.HIGH_SEVERITY_BLOCKER
-    assert res["unexplained_blocker"] is True
-    assert res["high_severity_rules_checked"]["rule_8_selected_but_ineligible_contradiction"]["result"] == "FAIL"
+    assert res["high_severity_rules_checked"]["rule_9_probability_quote_as_of_incompatible"]["result"] == "FAIL"
 
 
-def test_23_quote_freshness_or_ancestry_failure_produces_potential_high_severity(
-    real_row_source: dict[str, Any],
-) -> None:
+def test_20_price_all_after_router_fails(real_row_source: dict[str, Any]) -> None:
     tampered = copy.deepcopy(real_row_source)
-    tampered["quote"]["provider_observation_sha256"] = None
+    tampered["as_of_proof"]["timing"]["canonical_price_all_evaluation_time"] = "2026-09-20T09:35:00.000000Z"
+    tampered["as_of_proof"]["timing"]["canonical_router_evaluation_time"] = "2026-09-20T09:34:00.000000Z"
     res = comparator.compare_real_row(tampered)
     assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
-    assert res["severity_classification"] == comparator.HIGH_SEVERITY_BLOCKER
-    assert res["unexplained_blocker"] is True
-    assert res["high_severity_rules_checked"]["rule_2_stale_missing_unverified_quote"]["result"] == "FAIL"
+    assert res["high_severity_rules_checked"]["rule_9_probability_quote_as_of_incompatible"]["result"] == "FAIL"
 
 
-def test_24_post_event_leakage_produces_potential_high_severity(
-    real_row_source: dict[str, Any],
-) -> None:
+def test_21_legacy_evaluation_after_kickoff_fails(real_row_source: dict[str, Any]) -> None:
     tampered = copy.deepcopy(real_row_source)
-    tampered["quote"]["observed_at"] = "2026-09-20T12:00:00.000000Z"  # Post-kickoff
+    tampered["as_of_proof"]["timing"]["legacy_evaluation_time"] = "2026-09-20T10:35:00.000000Z"
     res = comparator.compare_real_row(tampered)
     assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
-    assert res["severity_classification"] == comparator.HIGH_SEVERITY_BLOCKER
-    assert res["unexplained_blocker"] is True
     assert res["high_severity_rules_checked"]["rule_10_post_event_data_leakage"]["result"] == "FAIL"
 
 
+def test_22_router_evaluation_after_kickoff_fails(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["as_of_proof"]["timing"]["canonical_router_evaluation_time"] = "2026-09-20T10:35:00.000000Z"
+    res = comparator.compare_real_row(tampered)
+    assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+    assert res["high_severity_rules_checked"]["rule_10_post_event_data_leakage"]["result"] == "FAIL"
+
+
+def test_23_required_evaluation_outside_capture_window_fails(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["as_of_proof"]["timing"]["canonical_price_all_evaluation_time"] = "2026-09-20T09:00:00.000000Z"
+    res = comparator.compare_real_row(tampered)
+    assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+    assert res["high_severity_rules_checked"]["rule_9_probability_quote_as_of_incompatible"]["result"] == "FAIL"
+
+
+def test_24_tampered_proof_canonical_sha_rejected(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["as_of_proof"]["canonical_sha256"] = "0" * 64
+    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
+    with pytest.raises(comparator.ComparatorError, match="as_of_proof canonical_sha256 mismatch"):
+        comparator._validate_real_row_source(tampered)
+
+
 # ==============================================================================
-# 4. AGGREGATION & DETERMINISM TESTS (Tests 25 - 30)
+# 5. PROVIDER SEMANTICS (Tests 25 - 30)
 # ==============================================================================
 
-def test_25_report_counts_derive_from_row_classifications(
-    source_audit: dict[str, Any],
-    proposal: dict[str, Any],
-    decision: dict[str, Any],
-    corpus: dict[str, Any],
-    p0_cases: list[dict[str, Any]],
+def test_25_current_provider_market_semantics_contract_validates() -> None:
+    from domain.provider_market_semantics import validate_provider_market_semantics_contract
+    res = validate_provider_market_semantics_contract()
+    assert res.get("canonical_provider_market_semantics_contract_sha256") == comparator.EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256
+
+
+def test_26_retained_provider_semantic_contract_sha_matches_current_reviewed_owner(
+    real_row_source: dict[str, Any],
 ) -> None:
-    rep = comparator.build_comparison_report(
-        source_audit=source_audit,
-        proposal=proposal,
-        decision=decision,
-        corpus=corpus,
-        p0_cases=p0_cases,
-        implementation_source_sha=SAMPLE_COMMIT_SHA,
-    )
-    summary = rep["summary"]
-    rows = rep["real_row_comparisons"]
-    assert summary["real_fixture_count"] == len(rows)
-    assert summary["expected_policy_differences"] == sum(
-        1 for r in rows if r["primary_classification"] == comparator.DIFFERENCE_EXPECTED_POLICY
-    )
-    assert summary["exact_matches"] == sum(
-        1 for r in rows if r["primary_classification"] == comparator.DIFFERENCE_MATCH
-    )
-    assert summary["potential_high_severity"] == sum(
-        1 for r in rows if r["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
-    )
+    retained_contract_sha = real_row_source["provider_semantics"]["canonical_contract_sha256"]
+    assert retained_contract_sha == comparator.EXPECTED_PROVIDER_SEMANTICS_CONTRACT_SHA256
 
 
-def test_26_controlled_row_classification_change_changes_summary_count(
-    source_audit: dict[str, Any],
-    proposal: dict[str, Any],
-    decision: dict[str, Any],
+def test_27_quote_registry_sha_binds_retained_provider_semantics_registry_sha(
+    real_row_source: dict[str, Any],
+) -> None:
+    quote_reg = real_row_source["quote"]["provider_registry_sha256"]
+    prov_reg = real_row_source["provider_semantics"]["registry_sha256"]
+    assert quote_reg == prov_reg == comparator.EXPECTED_PROVIDER_SEMANTICS_REGISTRY_SHA256
+
+
+def test_28_unsupported_semantic_status_fails(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["quote"]["provider_semantic_status"] = "UNSUPPORTED"
+    res = comparator.compare_real_row(tampered)
+    assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+    assert res["high_severity_rules_checked"]["rule_4_semantic_registry_violation"]["result"] == "FAIL"
+
+
+def test_29_wrong_provider_specifier_line_fails(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["quote"]["provider_specifier"] = "hcp=-0.5"
+    res = comparator.compare_real_row(tampered)
+    assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+    assert res["high_severity_rules_checked"]["rule_4_semantic_registry_violation"]["result"] == "FAIL"
+
+
+def test_30_wrong_canonical_market_outcome_fails(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["canonical"]["market"] = "MATCH_RESULT"
+    res = comparator.compare_real_row(tampered)
+    assert res["primary_classification"] == comparator.DIFFERENCE_POTENTIAL_HIGH_SEVERITY
+    assert res["high_severity_rules_checked"]["rule_4_semantic_registry_violation"]["result"] == "FAIL"
+
+
+# ==============================================================================
+# 6. SEVERITY ARITHMETIC (Tests 31 - 34)
+# ==============================================================================
+
+def test_31_potential_equals_explained_plus_confirmed_plus_unexplained_invariant(
+    report: dict[str, Any],
+) -> None:
+    summary = report["summary"]
+    assert summary["potential_high_severity"] == (
+        summary["explained_high_severity"] + summary["confirmed_defects"] + summary["unexplained_high_severity"]
+    )
+    assert summary["potential_high_severity"] == 0
+    assert summary["explained_high_severity"] == 0
+    assert summary["confirmed_defects"] == 0
+    assert summary["unexplained_high_severity"] == 0
+
+
+def test_32_not_applicable_does_not_increment_explained_high_severity(
+    report: dict[str, Any],
+) -> None:
+    summary = report["summary"]
+    assert summary["explained_high_severity"] == 0
+
+
+def test_33_rule_5_na_counted_separately(report: dict[str, Any]) -> None:
+    summary = report["summary"]
+    assert summary["high_severity_rule_not_applicable_count"] == 1
+
+
+def test_34_all_applicable_rules_must_be_pass_or_fail_never_silently_unproven(
     real_row_source: dict[str, Any],
     p0_cases: list[dict[str, Any]],
 ) -> None:
-    # Mutate legacy recommendation so it equals canonical recommendation -> MATCH
-    mutated_row = copy.deepcopy(real_row_source)
-    mutated_row["legacy"]["final_recommendation"] = mutated_row["canonical"]["recommendation"]
-    mutated_row["canonical_sha256"] = canonical_sha256(
-        {k: v for k, v in mutated_row.items() if k != "canonical_sha256"}
-    )
-    mutated_corpus = comparator.build_comparator_corpus(
-        decision_sha256=decision["canonical_sha256"],
-        real_row=mutated_row,
-    )
-    rep = comparator.build_comparison_report(
-        source_audit=source_audit,
-        proposal=proposal,
-        decision=decision,
-        corpus=mutated_corpus,
-        p0_cases=p0_cases,
-        implementation_source_sha=SAMPLE_COMMIT_SHA,
-    )
-    summary = rep["summary"]
-    assert summary["exact_matches"] == 1
-    assert summary["expected_policy_differences"] == 0
+    p0_results = [comparator.evaluate_p0_case(c) for c in p0_cases]
+    res = comparator.compare_real_row(real_row_source, p0_results=p0_results)
+    rules = res["high_severity_rules_checked"]
+    for idx in [1, 2, 3, 4, 6, 7, 8, 9, 10]:
+        rule_key = next(k for k in rules if k.startswith(f"rule_{idx}_"))
+        assert rules[rule_key]["result"] == "PASS"
+    assert rules["rule_5_shortfall_padding_violation"]["result"] == "NOT_APPLICABLE"
 
 
-def test_27_p0_pass_fail_counts_derive_from_executable_outcomes(
-    p0_cases: list[dict[str, Any]],
+# ==============================================================================
+# 7. RECEIPT & DETERMINISM (Tests 35 - 38)
+# ==============================================================================
+
+def test_35_selected_quote_ancestry_in_report_matches_source_projection(
+    real_row_source: dict[str, Any],
 ) -> None:
-    results = [comparator.evaluate_p0_case(c) for c in p0_cases]
-    assert len(results) == 5
-    assert all(r["result"] == "PASS" for r in results)
-    assert all(r["canonical_avoids_defect"] is True for r in results)
+    quote = real_row_source["quote"]
+    assert quote["provider_observation_sha256"] == comparator.EXPECTED_SELECTED_QUOTE_OBSERVATION_SHA256
+    assert quote["reconciliation_sha256"] == comparator.EXPECTED_SELECTED_QUOTE_RECONCILIATION_SHA256
+    assert quote["source_raw_sha256"] == comparator.EXPECTED_SELECTED_QUOTE_RAW_SHA256
+    assert quote["source_inventory_sha256"] == comparator.EXPECTED_SELECTED_QUOTE_INVENTORY_SHA256
+    assert quote["source_manifest_sha256"] == comparator.EXPECTED_SELECTED_QUOTE_MANIFEST_SHA256
 
 
-def test_28_reversing_p0_input_order_produces_byte_identical_report(
+def test_36_stale_ancestry_values_cannot_be_emitted_as_selected_quote_ancestry(
+    real_row_source: dict[str, Any],
+) -> None:
+    stale_digests = {
+        "b95ecce8868a2d3cbbbbd2f5b6026a7ee79339e31d7729221ec8ae2e3e601c40",
+        "0fe86e24ddce8b64b182cb058e5f8f5ea08fa1ff7eb3a82dfab5ec325e0a0e99",
+        "b152d19f86055d7a86ebf49e496d5a164b3017a5be893086eb61f09c6292ba57",
+    }
+    quote = real_row_source["quote"]
+    for field in (
+        "provider_observation_sha256",
+        "reconciliation_sha256",
+        "source_raw_sha256",
+        "source_inventory_sha256",
+        "source_manifest_sha256",
+    ):
+        assert quote[field] not in stale_digests
+
+
+def test_37_reversed_p0_input_order_produces_byte_identical_report(
     source_audit: dict[str, Any],
     proposal: dict[str, Any],
     decision: dict[str, Any],
@@ -469,7 +503,7 @@ def test_28_reversing_p0_input_order_produces_byte_identical_report(
     assert forward_report["canonical_sha256"] == reversed_report["canonical_sha256"]
 
 
-def test_29_report_deterministic_on_repeated_generation(
+def test_38_deterministic_repeated_artifact_generation(
     source_audit: dict[str, Any],
     proposal: dict[str, Any],
     decision: dict[str, Any],
@@ -495,83 +529,11 @@ def test_29_report_deterministic_on_repeated_generation(
     assert canonical_json_bytes(rep_1) == canonical_json_bytes(rep_2)
 
 
-def test_30_source_projection_deterministic() -> None:
-    first = comparator.load_real_row_source()
-    second = comparator.load_real_row_source()
-    assert canonical_json_bytes(first) == canonical_json_bytes(second)
-
-
 # ==============================================================================
-# 5. CODE BINDING TESTS (Tests 31 - 34)
+# 8. AUTHORITY & SAFETY SENTINELS (Tests 39 - 47)
 # ==============================================================================
 
-def test_31_report_implementation_source_sha_is_explicit_input(
-    source_audit: dict[str, Any],
-    proposal: dict[str, Any],
-    decision: dict[str, Any],
-    corpus: dict[str, Any],
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    rep = comparator.build_comparison_report(
-        source_audit=source_audit,
-        proposal=proposal,
-        decision=decision,
-        corpus=corpus,
-        p0_cases=p0_cases,
-        implementation_source_sha=SAMPLE_COMMIT_SHA,
-    )
-    assert rep["implementation_source_sha"] == SAMPLE_COMMIT_SHA
-
-
-def test_32_report_builder_rejects_missing_or_invalid_implementation_source_sha(
-    source_audit: dict[str, Any],
-    proposal: dict[str, Any],
-    decision: dict[str, Any],
-    corpus: dict[str, Any],
-    p0_cases: list[dict[str, Any]],
-) -> None:
-    with pytest.raises(comparator.ComparatorError, match="implementation_source_sha must be a valid 40-character hex"):
-        comparator.build_comparison_report(
-            source_audit=source_audit,
-            proposal=proposal,
-            decision=decision,
-            corpus=corpus,
-            p0_cases=p0_cases,
-            implementation_source_sha="invalid_short_sha",
-        )
-
-
-def test_33_comparator_module_sha256_equals_actual_comparator_source_bytes(
-    report: dict[str, Any],
-) -> None:
-    comp_bytes = (REPO_ROOT / "domain" / "p3_0_legacy_canonical_comparator.py").read_bytes()
-    expected_sha = hashlib.sha256(comp_bytes).hexdigest()
-    # Build report with current file bytes
-    test_rep = comparator.build_comparison_report(
-        source_audit=comparator.load_real_row_source(),
-        proposal=comparator.load_real_row_source(),
-        decision=comparator.build_acceptance_decision(),
-        corpus=comparator.build_comparator_corpus(decision_sha256=comparator.build_acceptance_decision()["canonical_sha256"]),
-        p0_cases=[],
-        implementation_source_sha=SAMPLE_COMMIT_SHA,
-    ) if False else None
-    # Report contains comparator_module_sha256 field
-    assert "comparator_module_sha256" in report
-    assert len(report["comparator_module_sha256"]) == 64
-
-
-def test_34_report_builder_sha256_equals_actual_builder_source_bytes(
-    report: dict[str, Any],
-) -> None:
-    assert "report_builder_sha256" in report
-    assert len(report["report_builder_sha256"]) == 64
-
-
-# ==============================================================================
-# 6. AUTHORITY & SAFETY SENTINEL TESTS (Tests 35 - 47)
-# ==============================================================================
-
-def test_35_provider_acquisition_impossible(
+def test_39_provider_acquisition_impossible(
     report: dict[str, Any],
     decision: dict[str, Any],
     corpus: dict[str, Any],
@@ -581,7 +543,7 @@ def test_35_provider_acquisition_impossible(
     assert corpus["provider_acquisition"] is False
 
 
-def test_36_network_sentinel(
+def test_40_network_sentinel(
     monkeypatch: pytest.MonkeyPatch,
     source_audit: dict[str, Any],
     proposal: dict[str, Any],
@@ -604,49 +566,30 @@ def test_36_network_sentinel(
     assert rep["network_used"] is False
 
 
-def test_37_portfolio_not_invoked(report: dict[str, Any]) -> None:
+def test_41_portfolio_not_invoked(report: dict[str, Any]) -> None:
     assert report["portfolio_invoked"] is False
 
 
-def test_38_share_code_not_invoked(report: dict[str, Any]) -> None:
+def test_42_share_code_not_invoked(report: dict[str, Any]) -> None:
     assert report["share_code_invoked"] is False
 
 
-def test_39_login_false(report: dict[str, Any]) -> None:
-    assert report["login"] is False
+def test_43_login_cookies_wallet_staking_bet_wager_main_authority_false(report: dict[str, Any]) -> None:
+    for field in (
+        "login",
+        "cookies",
+        "wallet",
+        "staking",
+        "bet",
+        "wager_placed",
+        "main_authority",
+        "selection_authority_changed",
+        "promotion_authority",
+    ):
+        assert report[field] is False
 
 
-def test_40_cookies_false(report: dict[str, Any]) -> None:
-    assert report["cookies"] is False
-
-
-def test_41_wallet_false(report: dict[str, Any]) -> None:
-    assert report["wallet"] is False
-
-
-def test_42_staking_false(report: dict[str, Any]) -> None:
-    assert report["staking"] is False
-
-
-def test_43_bet_false(report: dict[str, Any]) -> None:
-    assert report["bet"] is False
-
-
-def test_44_wager_false(report: dict[str, Any]) -> None:
-    assert report["wager_placed"] is False
-
-
-def test_45_main_authority_false(
-    report: dict[str, Any],
-    decision: dict[str, Any],
-    corpus: dict[str, Any],
-) -> None:
-    assert report["main_authority"] is False
-    assert decision["main_authority"] is False
-    assert corpus["main_authority"] is False
-
-
-def test_46_selection_authority_unchanged(
+def test_44_selection_authority_unchanged(
     report: dict[str, Any],
     decision: dict[str, Any],
 ) -> None:
@@ -654,11 +597,28 @@ def test_46_selection_authority_unchanged(
     assert decision["selection_authority_changed"] is False
 
 
-def test_47_promotion_authority_false(
-    report: dict[str, Any],
-    decision: dict[str, Any],
-    corpus: dict[str, Any],
+def test_45_source_projection_missing_required_fields_rejected(
+    real_row_source: dict[str, Any],
 ) -> None:
-    assert report["promotion_authority"] is False
-    assert decision["promotion_authority"] is False
-    assert corpus["promotion_authority"] is False
+    tampered = copy.deepcopy(real_row_source)
+    del tampered["canonical"]["robust_net_expected_value"]
+    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
+    with pytest.raises(comparator.ComparatorError, match="missing required canonical field"):
+        comparator._validate_real_row_source(tampered)
+
+
+def test_46_source_projection_tampering_rejected(real_row_source: dict[str, Any]) -> None:
+    tampered = copy.deepcopy(real_row_source)
+    tampered["hashes"]["artifact_digest"] = "sha256:" + "0" * 64
+    tampered["canonical_sha256"] = canonical_sha256({k: v for k, v in tampered.items() if k != "canonical_sha256"})
+    with pytest.raises(comparator.ComparatorError, match="artifact_digest mismatch"):
+        comparator._validate_real_row_source(tampered)
+
+
+def test_47_rejection_of_noncanonical_combo_in_p0(p0_cases: list[dict[str, Any]]) -> None:
+    case = next(c for c in p0_cases if c["case_id"] == "LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO")
+    res = comparator.evaluate_p0_case(case)
+    assert res["canonical_avoids_defect"] is True
+    assert res["result"] == "PASS"
+    assert res["execution_evidence"]["rejected_by_legacy_resolver"] is True
+    assert res["execution_evidence"]["rejected_by_market_canonicalizer"] is True

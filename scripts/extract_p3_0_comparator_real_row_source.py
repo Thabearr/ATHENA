@@ -107,18 +107,49 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
                 f"Expected exactly 1 fixture record in bundle, got {len(fixture_records)}"
             )
         record = fixture_records[0]
+        fixture_dir = "fixtures/b92977dd70219469b3fe580de952e1f56d37616f14f8ecebb944949f5974d065"
 
         # 3. Verify join receipt
         join_receipt = record.get("join_receipt", {})
         if join_receipt.get("join_state") != "EXACT_SAME_FIXTURE_PROVEN":
             raise ExtractionError(f"Join receipt not proven: {join_receipt.get('join_state')}")
-        join_sha = canonical_sha256(join_receipt)
+        join_receipt_canonical_sha = join_receipt.get("canonical_sha256")
+        if not join_receipt_canonical_sha or len(join_receipt_canonical_sha) != 64:
+            raise ExtractionError("join_receipt canonical_sha256 missing or invalid")
+        join_receipt_file_sha = manifest_files.get(f"{fixture_dir}/join-receipt.json")
+        rebuilt_join = evidence.build_join_receipt(
+            join_receipt.get("legacy_fixture_identity"),
+            join_receipt.get("canonical_fixture_identity"),
+            record.get("as_of_proof"),
+        )
+        if rebuilt_join.get("canonical_sha256") != join_receipt_canonical_sha:
+            raise ExtractionError("Join receipt canonical SHA mismatch on rebuild")
 
         # 4. Verify as-of proof
         as_of_proof = record.get("as_of_proof", {})
         if as_of_proof.get("result") != "PROVEN":
             raise ExtractionError(f"As-of proof not proven: {as_of_proof.get('result')}")
-        as_of_sha = canonical_sha256(as_of_proof)
+        as_of_proof_canonical_sha = as_of_proof.get("canonical_sha256")
+        if not as_of_proof_canonical_sha or len(as_of_proof_canonical_sha) != 64:
+            raise ExtractionError("as_of_proof canonical_sha256 missing or invalid")
+        as_of_proof_file_sha = manifest_files.get(f"{fixture_dir}/as-of-proof.json")
+        rebuilt_as_of = evidence.build_as_of_proof(
+            capture_id=as_of_proof["capture_id"],
+            fixture_identity=as_of_proof["fixture_identity"],
+            capture_started_at=as_of_proof["capture_started_at"],
+            capture_completed_at=as_of_proof["capture_completed_at"],
+            timing=as_of_proof["timing"],
+        )
+        if rebuilt_as_of.get("result") != "PROVEN":
+            raise ExtractionError(f"Rebuilt as-of proof not proven: {rebuilt_as_of.get('reasons')}")
+        if rebuilt_as_of.get("canonical_sha256") != as_of_proof_canonical_sha:
+            raise ExtractionError("As-of proof canonical SHA mismatch on rebuild")
+
+        # 4b. Verify provider semantics
+        provider_semantics = record.get("provider_semantics") or json.loads(
+            z.read(f"capture/{fixture_dir}/provider-semantics.json").decode("utf-8")
+        )
+        provider_semantics_file_sha = manifest_files.get(f"{fixture_dir}/provider-semantics.json")
 
         # 5. Verify fixture state and orientation
         fixture_state = record.get("canonical_fixture_state", {})
@@ -196,6 +227,7 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
         probability_bundle_file_sha = manifest_files.get(f"{fixture_dir}/probability-bundle.json")
 
         payload: dict[str, Any] = {
+            "as_of_proof": as_of_proof,
             "candidate_id": EXPECTED_CANDIDATE_ID,
             "canonical": {
                 "decimal_odds": decimal_odds,
@@ -216,26 +248,37 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
                 "selected_opportunity_id": selected_opp_id,
             },
             "fixture": {
-                "as_of_proof_sha256": as_of_sha,
+                "as_of_proof_canonical_sha256": as_of_proof_canonical_sha,
+                "as_of_proof_file_sha256": as_of_proof_file_sha,
+                "as_of_proof_sha256": as_of_proof_canonical_sha,
                 "away_team": away,
                 "canonical_fixture_state_sha256": manifest_files.get(f"{fixture_dir}/canonical-fixture-state.json"),
                 "competition": competition,
                 "fixture_identity": fixture_id,
                 "home_team": home,
-                "join_receipt_sha256": join_sha,
+                "join_receipt_canonical_sha256": join_receipt_canonical_sha,
+                "join_receipt_file_sha256": join_receipt_file_sha,
+                "join_receipt_sha256": join_receipt_canonical_sha,
                 "kickoff_utc": kickoff_utc,
                 "provider_event_id": provider_event_id,
                 "source_observed_at": source_observed_at,
             },
             "hashes": {
                 "artifact_digest": EXPECTED_ARTIFACT_DIGEST,
+                "as_of_proof_canonical_sha256": as_of_proof_canonical_sha,
+                "as_of_proof_file_sha256": as_of_proof_file_sha,
                 "canonical_price_all_output_sha256": price_all_output_file_sha,
                 "canonical_probability_bundle_sha256": probability_bundle_file_sha,
                 "canonical_router_output_sha256": router_output_file_sha,
+                "join_receipt_canonical_sha256": join_receipt_canonical_sha,
+                "join_receipt_file_sha256": join_receipt_file_sha,
                 "legacy_input_file_sha256": legacy_input_file_sha,
                 "legacy_output_file_sha256": legacy_output_file_sha,
                 "manifest_file_sha256": EXPECTED_MANIFEST_SHA256,
                 "paired_bundle_canonical_sha256": EXPECTED_BUNDLE_CANONICAL_SHA256,
+                "provider_semantics_contract_sha256": provider_semantics.get("canonical_contract_sha256"),
+                "provider_semantics_file_sha256": provider_semantics_file_sha,
+                "provider_semantics_registry_sha256": provider_semantics.get("registry_sha256"),
                 "quote_identity_sha256": EXPECTED_QUOTE_IDENTITY_SHA256,
             },
             "legacy": {
@@ -259,6 +302,7 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
                 "paired_bundle_canonical_sha256": EXPECTED_BUNDLE_CANONICAL_SHA256,
                 "source_file_in_artifact": "capture/bundle.json",
             },
+            "provider_semantics": provider_semantics,
             "quote": {
                 "decimal_odds": matched_quote.get("decimal_odds"),
                 "mapping_contract_identity": matched_quote.get("provider_semantic_status"),
@@ -269,6 +313,7 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
                 "provider_outcome_id": matched_quote.get("provider_outcome_id"),
                 "provider_outcome_name": matched_quote.get("provider_outcome_name"),
                 "provider_registry_sha256": matched_quote.get("provider_registry_sha256"),
+                "provider_semantic_status": matched_quote.get("provider_semantic_status"),
                 "provider_specifier": matched_quote.get("provider_specifier"),
                 "quote_identity_sha256": EXPECTED_QUOTE_IDENTITY_SHA256,
                 "reconciliation_sha256": matched_quote.get("fixture_reconciliation_sha256"),
