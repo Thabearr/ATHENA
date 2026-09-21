@@ -442,8 +442,12 @@ Following the exhaustive adjudication of all 290 retained replay candidates, the
   - Real replay row count: 1
   - Synthetic cases admitted: 0 (strictly segregated)
 - **Comparison Report Artifact**: `artifacts/p3-0-comparison-report-v1.json`
-  - Canonical SHA-256: `9809b25a63d0c87ead280ec67701e66b960e223bf5906c08a0ae1cd57b65624d`
-  - Implementation Source Commit: `b7b3e93fc34667453b2f4abee5d6113c0109434a`
+  - Canonical SHA-256: `35c230cca862ae3b27ceabe73df83c6ba71fb2b6a73cd508ad118112182e699b`
+  - Implementation Source Commit: `cf1d9c24fbfa28f7e94dad3d96be4ef2b8c6ce5a`
+  - Comparator Module Byte SHA-256: `f0b7e4fb89cf068b223438dde998121bbeee622ae6f860f7e865b955f2ef0853`
+  - Report Builder Byte SHA-256: `0d74fe23bb6c85d87d3145db9753ec0260c979c7714471a390ec56b0eb009191`
+  - P0 Acceptance Module Byte SHA-256: `7110928a9e77ddaa2443ef0e96c6c7da1e5647f8c56889bca31390bb0e6f7a06`
+  - Real Row Source Byte SHA-256: `ea813b8f3f92ce31844c341529bb25317ac3e4cbcff3307c5d784fdad1773ad7`
   - Real replay row count: 1
   - Synthetic P0 case count: 5
 
@@ -482,13 +486,13 @@ Following the exhaustive adjudication of all 290 retained replay candidates, the
   - Registry SHA-256: `dc9c67ebaea9a63e63acad4c56ad9a76d3a95c9beb84681141ad4c3aab85b734`
   - Semantic status: `SUPPORTED_WITH_EXACT_LINE_POLICY`
   - Specifier / Line: `hcp=0` / `0.0`
-- **Retained Authority Structures & Fail-Closed Validation**:
-  - `retained_capture_authority_state`: SHADOW profile, `main_authority = false`, `provider_acquisition = true` (capturing historical evidence)
-  - `canonical_execution_identity`: SHADOW profile, `stopped_after = PRICE_ALL_ROUTER`
-  - `canonical_authority`: SHADOW profile
-  - `router_authority`: `production_selection = false`, `sportybet_execution = false`, `wager_placed = false`
-  - `router_wager_placed`: `false`
-  - Provider acquisition distinction: `retained_capture_provider_acquisition = true` (historical capture provenance) vs `comparator_provider_acquisition = false` (current offline replay)
+- **Retained Authority Structures & Fail-Closed Validation (Rule 7)**:
+  - `retained_capture_authority_state`: Verified fail-closed across 10 required keys (`allowed_profiles`, `bet`, `cookies`, `login`, `main_authority`, `phase6`, `profile`, `provider_acquisition`, `staking`, `wallet`). Enforces `profile == "SHADOW"`, `main_authority = false`, and `provider_acquisition = true` (retained historical capture provenance).
+  - `canonical_execution_identity`: Verified fail-closed across 7 required keys (`allowed_profiles`, `canonical_core_sha256`, `collector_entrypoint`, `main_authority`, `profile`, `resolved_component_count`, `stopped_after`). Enforces `profile == "SHADOW"`, `main_authority = false`, `resolved_component_count == 5`, and `stopped_after == "PRICE_ALL_ROUTER"`.
+  - `canonical_authority`: Verified fail-closed with resolved component count = 5, strictly matching the 5 reviewed canonical responsibilities: `delivery_share_code_transport`, `market_router`, `portfolio_optimizer`, `price_all_and_de_vig`, `provider_market_semantics`. Each component enforces `main_authority = false` and `allowed_profiles` containing `"SHADOW"`.
+  - `router_authority`: Verified fail-closed requiring `profile == "SHADOW"`, `main_authority = false`, all 17 production execution fields strictly `false` (`accumulator`, `bet`, `cookies`, `login`, `phase6`, `production_market_router`, `production_model`, `production_portfolio`, `production_price_all`, `production_probability`, `production_selection`, `share_code_generation`, `slip_construction`, `sportybet_execution`, `staking`, `wager_placed`, `wallet`), and all 4 research fields strictly `true` (`research_counterfactual_recording`, `research_current_quote_consumption`, `research_shadow_market_routing`, `research_shadow_price_all`).
+  - `router_wager_placed`: Strictly verified `false`.
+  - Provider acquisition distinction: `retained_capture_provider_acquisition = true` (historical capture provenance recorded in evidence) vs `comparator_provider_acquisition = false` (current offline replay execution without live provider access). Verified zero live provider calls (`provider_acquisition = false`, `network_used = false`).
 
 ### Real-Row Comparison Semantics
 
