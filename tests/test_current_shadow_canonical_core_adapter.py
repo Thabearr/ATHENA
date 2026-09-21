@@ -24,7 +24,8 @@ def test_shadow_adapter_resolves_exact_source_controlled_five_component_core() -
         record.responsibility_id: record.component_id for record in bindings.records
     } == dict(adapter.EXPECTED_COMPONENTS)
     assert all(
-        record.allowed_profiles == ("SHADOW",) and record.main_authority is False
+        record.allowed_profiles == ("MAIN", "SHADOW")
+        and record.main_authority is True
         for record in bindings.records
     )
 
@@ -64,8 +65,9 @@ def test_stage_compatibility_calls_are_guarded_by_exact_canonical_owner(
             seen.append(responsibility_id)
             return SimpleNamespace(
                 component_id=adapter.EXPECTED_COMPONENTS[responsibility_id],
-                allowed_profiles=("SHADOW",),
-                main_authority=False,
+                allowed_profiles=("MAIN", "SHADOW"),
+                promotion_state=adapter._registry.APPROVED_FOR_MAIN,
+                main_authority=True,
             )
 
     monkeypatch.setattr(adapter, "resolve_shadow_canonical_core", lambda: FakeBindings())
@@ -122,8 +124,9 @@ def test_price_context_verifier_monkeypatch_seam_reaches_delegated_price_all(
         def record_for(self, responsibility_id: str):
             return SimpleNamespace(
                 component_id=adapter.EXPECTED_COMPONENTS[responsibility_id],
-                allowed_profiles=("SHADOW",),
-                main_authority=False,
+                allowed_profiles=("MAIN", "SHADOW"),
+                promotion_state=adapter._registry.APPROVED_FOR_MAIN,
+                main_authority=True,
             )
 
     def installed_verifier(value):
@@ -155,8 +158,9 @@ def test_portfolio_reconciliation_monkeypatch_seam_is_preserved(
         def record_for(self, responsibility_id: str):
             return SimpleNamespace(
                 component_id=adapter.EXPECTED_COMPONENTS[responsibility_id],
-                allowed_profiles=("SHADOW",),
-                main_authority=False,
+                allowed_profiles=("MAIN", "SHADOW"),
+                promotion_state=adapter._registry.APPROVED_FOR_MAIN,
+                main_authority=True,
             )
 
     monkeypatch.setattr(adapter, "resolve_shadow_canonical_core", lambda: FakeBindings())

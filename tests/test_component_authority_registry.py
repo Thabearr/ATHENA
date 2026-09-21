@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -30,6 +31,9 @@ P2_1_COMPATIBILITY_ALIASES = (
         "alias_id": "domain.current_shadow_all_market_router",
         "target_component_id": "domain.market_router_canonical_adapter",
     },
+)
+PROMOTION_RECEIPT_PATH = (
+    ROOT / "artifacts/architecture/p3_1_main_canonical_core_promotion_v1.json"
 )
 
 
@@ -86,7 +90,7 @@ def test_registry_contract_and_default_source_are_exact() -> None:
     assert registry.ComponentAuthorityRegistry.from_dict(source).to_dict() == loaded.to_dict()
 
 
-def test_default_registry_binds_exact_p1_3_through_p2_0_component_contracts() -> None:
+def test_default_registry_binds_exact_promoted_main_component_contracts() -> None:
     loaded = registry.load_default_registry()
     expected = {
         "delivery_share_code_transport": (
@@ -125,13 +129,13 @@ def test_default_registry_binds_exact_p1_3_through_p2_0_component_contracts() ->
         assert item.contract_sha256 == contract_sha256
         assert item.artifact_git_blob_sha == _git_blob_sha(path)
         assert item.role == registry.CHAMPION
-        assert item.allowed_profiles == (registry.SHADOW,)
-        assert item.promotion_state == registry.REGISTERED_CHAMPION
-        assert item.main_authority is False
+        assert item.allowed_profiles == (registry.MAIN, registry.SHADOW)
+        assert item.promotion_state == registry.APPROVED_FOR_MAIN
+        assert item.main_authority is True
         assert item.compatible_schema_versions == (1,)
 
 
-def test_each_seeded_responsibility_has_one_shadow_champion_and_zero_main_authority() -> None:
+def test_each_seeded_responsibility_has_one_shared_main_and_shadow_champion() -> None:
     loaded = registry.load_default_registry()
     for item in loaded.records:
         resolved = loaded.resolve_champion(
@@ -141,24 +145,48 @@ def test_each_seeded_responsibility_has_one_shadow_champion_and_zero_main_author
             required_schema_version=1,
         )
         assert resolved is item
-        with pytest.raises(
-            registry.ComponentAuthorityRegistryError,
-            match="not eligible for requested profile|APPROVED_FOR_MAIN",
-        ):
-            loaded.resolve_champion(
-                item.responsibility_id,
-                item.regime_id,
-                profile=registry.MAIN,
-                required_schema_version=1,
-            )
+        assert loaded.resolve_champion(
+            item.responsibility_id,
+            item.regime_id,
+            profile=registry.MAIN,
+            required_schema_version=1,
+        ) is item
 
-    assert all(item.main_authority is False for item in loaded.records)
+    assert all(item.main_authority is True for item in loaded.records)
     assert loaded.resolve_research_challengers(
         "market_router",
         REGIME,
         profile=registry.SHADOW,
         required_schema_version=1,
     ) == ()
+
+
+def test_p3_1_promotion_receipt_binds_registry_and_safety_state() -> None:
+    receipt = json.loads(PROMOTION_RECEIPT_PATH.read_text(encoding="utf-8"))
+    canonical_sha256 = receipt.pop("canonical_sha256")
+    canonical = json.dumps(
+        receipt, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+    ).encode("utf-8")
+    assert hashlib.sha256(canonical).hexdigest() == canonical_sha256
+    assert receipt["policy_id"] == "ATHENA_P3_1_MAIN_CANONICAL_CORE_PROMOTION_V1"
+    assert receipt["registry_canonical_sha256_after"] == registry.load_default_registry().canonical_sha256
+    assert len(receipt["promoted_identities"]) == 5
+    assert receipt["authority_transition"] == {
+        "allowed_profiles": {"before": ["SHADOW"], "after": ["MAIN", "SHADOW"]},
+        "promotion_state": {"before": "REGISTERED_CHAMPION", "after": "APPROVED_FOR_MAIN"},
+        "main_authority": {"before": False, "after": True},
+    }
+    assert receipt["aliases_unchanged"] is True
+    assert receipt["caller_migration_performed"] is False
+    assert receipt["market_selector_removed"] is False
+    assert receipt["production_wager_authority_added"] is False
+    assert receipt["p3_1_exit_gate_claimed"] is False
+    assert receipt["next_required_step"] == "P3_1_MAIN_CALLER_MIGRATION"
+    for key in (
+        "provider_acquisition_performed", "current_shadow_triggered",
+        "fresh_holdout_triggered", "login", "cookies", "wallet", "staking", "wager",
+    ):
+        assert receipt[key] is False
 
 
 def test_registration_never_implies_main_promotion() -> None:

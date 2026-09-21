@@ -147,11 +147,13 @@ def resolve_shadow_canonical_core() -> _core.CanonicalCoreBindings:
             "Current Shadow canonical-core component set drifted"
         )
     if any(
-        record.allowed_profiles != ("SHADOW",) or record.main_authority is not False
+        record.allowed_profiles != ("MAIN", "SHADOW")
+        or record.promotion_state != _registry.APPROVED_FOR_MAIN
+        or record.main_authority is not True
         for record in bindings.records
     ):
         raise CurrentShadowCanonicalCoreAdapterError(
-            "Current Shadow canonical-core authority escaped SHADOW-only state"
+            "Current Shadow canonical-core promoted authority drifted"
         )
     _validate_compatibility_aliases(bindings)
     return bindings
@@ -193,8 +195,9 @@ def _require(responsibility_id: str) -> None:
         ) from exc
     if (
         record.component_id != expected
-        or record.allowed_profiles != ("SHADOW",)
-        or record.main_authority is not False
+        or record.allowed_profiles != ("MAIN", "SHADOW")
+        or record.promotion_state != _registry.APPROVED_FOR_MAIN
+        or record.main_authority is not True
     ):
         raise CurrentShadowCanonicalCoreAdapterError(
             f"Current Shadow canonical responsibility {responsibility_id} drifted"

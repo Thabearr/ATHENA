@@ -18,7 +18,7 @@ The core consumes an existing `AuthorityManifest`, source-controlled component r
 
 `resolve_canonical_core()` accepts the existing `domain.run_contracts.AuthorityManifest`, a regime, and schema version. Its public authority path always reloads the reviewed source-controlled registry; it accepts no caller-provided in-memory registry. Private test-only helpers may exercise malformed registry fixtures, but cannot become a public authority path. Each resolved record is checked against the live component contract and source Git blob before bindings are returned.
 
-The current `CURRENT_SPORTYBET_PROVIDER` records are `SHADOW`-eligible only and have `main_authority=false`. A `MAIN` resolution therefore fails closed. SHADOW eligibility is not production promotion and does not create an automatic promotion path.
+P3.1 PR A promotes the exact five `CURRENT_SPORTYBET_PROVIDER` records for both `MAIN` and `SHADOW`. Both profiles resolve the same responsibility, component, contract, artifact, and schema identities; profile-specific binding hashes may differ because the authority profile is part of the binding. This promotion does not migrate a MAIN caller or grant wager authority.
 
 ## Reviewed P2.0 identities
 
@@ -50,7 +50,7 @@ The runner resolves the five-component core before provider acquisition. If regi
 
 Current Shadow still carries reviewed profile-specific source/context and terminal receipt shapes. To keep P2.1 behavior-preserving, the adapter temporarily delegates those shapes to the existing Shadow implementation only after the corresponding canonical owner and source-controlled alias have both been proven. This is the transition window explicitly allowed by the v2 specification: the legacy wrappers are retained as implementation/evidence dependencies, but they are no longer the runner's directly imported ownership boundary and cannot independently establish authority. Existing bounded fresh-reprice and reconciliation monkeypatch seams are preserved.
 
-P2.1 does **not** claim that the legacy payload classes have been deleted or that frozen v2/v3 dependencies are gone. Their differential removal remains later P3.2/P3.3 work. It also does not migrate MAIN.
+P2.1 does **not** claim that the legacy payload classes have been deleted or that frozen v2/v3 dependencies are gone. Their differential removal remains later P3.2/P3.3 work. P3.1 PR A adds MAIN registry eligibility only; MAIN caller migration remains P3.1 PR B.
 
 ## Behavioral contract
 
@@ -60,6 +60,6 @@ Pre-merge proof remains synthetic/offline. The controlling v2 specification requ
 
 ## Safety, formulas, and rollback
 
-P2.1 changes no football, calibration, Price-All, Router, Portfolio, provider-market, or share-code mathematics. It grants no MAIN, login, cookie, wallet, staking, bet, or wager authority and grants no deletion authority. Current Shadow source acquisition remains a SHADOW orchestration responsibility outside the pure core.
+P3.1 PR A changes no football, calibration, Price-All, Router, Portfolio, provider-market, or share-code mathematics. It grants MAIN component-resolution authority but no login, cookie, wallet, staking, bet, wager, caller-migration, or deletion authority. Current Shadow source acquisition remains a SHADOW orchestration responsibility outside the pure core.
 
 Rollback is a source-controlled reversal of the runner import/compatibility migration plus the three one-way alias entries. Because the legacy wrappers remain retained during this transition, rollback requires no evidence deletion, no registry promotion/demotion, and no provider operation.
