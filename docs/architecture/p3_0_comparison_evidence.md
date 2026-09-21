@@ -370,3 +370,169 @@ paginated source remains replayable historical evidence only.
 The first-boundary failure code for a non-empty provider universe with zero
 prematch/bookable events is `PROVIDER_DISCOVERY_NO_PREMATCH_EVENTS`, before any
 FotMob counterpart decision, direct event detail, Price-All, or Router input.
+
+## P3.0 offline replay corpus source gate
+
+Live-only accumulation is retired for this comparator gate. The deterministic
+offline policy is `ATHENA_P3_0_REPLAY_CORPUS_V1`; it classifies every retained
+candidate as `REPLAY_COMPLETE` or one of the bounded identity, temporal,
+contract, canonical-lineage, exact-quote, legacy-lineage, and duplicate gap
+states. The audit consumes retained evidence only and does not call a provider,
+an application pipeline, Portfolio, or any authority-bearing path.
+
+The source audit covers the 29-artifact P3.0 E1 baseline, two post-baseline
+capture failures, 87 retained Current Shadow all-market runs, and the relevant
+source-controlled P0, shape-only, post-finish, and field-trial fixtures. It
+finds 290 candidate rows but only one `REPLAY_COMPLETE` row: one fixture, one
+UTC fixture date, one competition, and one market family. The admitted row's
+exact quote is verified inside canonical bundle
+`d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191`;
+the older source audit does not project a separate quote-identity SHA, so the
+new audit records an explicit verified-in-bundle binding and does not invent
+one.
+
+The failed-requirement incidence counts overlap and are not mutually exclusive
+candidate totals: 288 contract-drift, 163 identity-unproven, 164
+temporal-lineage-unproven, 289 canonical-lineage-unavailable, 164 exact-quote-
+unavailable, and 289 supported-legacy-lineage-unavailable. Neither the
+one-week gate (10 unique rows, three competitions, three market families in a
+contiguous seven-day window) nor the sufficiently-large gate (25 unique rows,
+three competitions, five market families, two UTC fixture dates) passes.
+Numeric thresholds are therefore not the only blocker, and no acceptance
+contract amendment is proposed.
+
+The generated receipt is
+`artifacts/p3-0-replay-source-audit-v1.json`. Because its gate fails, no replay
+corpus artifact, comparator, or comparator report is produced. P0 remains
+synthetic, `SOURCE_REVIEW_COUNTER` remains `4 / 5`, MAIN and selection authority
+remain false, and P3.1 is not started. Provider acquisition, network use,
+Portfolio, share-code, login, cookies, wallet, staking, bet, and wager placement
+are all false. The terminal machine state is
+`P3_0_REPLAY_CORPUS_SOURCE_GAP`.
+
+## P3.0 historical-source-gap exception and comparator closure
+
+Following the exhaustive adjudication of all 290 retained replay candidates, the repository owner evaluated the formal amendment proposal (`artifacts/p3-0-replay-acceptance-amendment-proposal-v1.json`) and authorized closure under an explicit historical-source-gap exception:
+
+- **Owner Decision**: `APPROVE_AMENDED_ACCEPTANCE_GATE`
+- **Decision Basis**: `EXHAUSTIVE_HISTORICAL_SOURCE_GAP`
+- **Accepted Exception Gate**: `P3_0_HISTORICAL_SOURCE_GAP_EXCEPTION_V1`
+- **Acceptance Decision Policy ID**: `ATHENA_P3_0_REPLAY_ACCEPTANCE_DECISION_V1`
+- **Acceptance Decision Canonical SHA-256**: `9e976c04968e652e9b5827f0aa3afa0f0e281718ae1cba4d61424de8639acbf5`
+
+### Source Gap Adjudication Truth
+
+- Total retained candidates audited: 290
+- Complete real replay rows: 1 (`p3-e1:10603511090:0`, Fiorentina vs Napoli, 2026-09-20, Serie A, Asian Handicap)
+- True source absence candidates: 289 (289/290 lack supported `AnalysisPipeline` legacy context; 289/290 lack raw canonical replay inputs)
+- Maximum technically recoverable real paired rows: 1
+- Original operational thresholds:
+  - R1 (One-Week Replay): `FAIL` (`original_r1_satisfied = false`)
+  - R2 (Sufficiently Large Replay): `FAIL` (`original_r2_satisfied = false`)
+- Empirical breadth limitation: Broad multi-league, multi-date, and multi-market empirical equivalence was **not** proven and is explicitly disclaimed.
+
+### Frozen Artifacts and Comparator Execution
+
+- **Comparator Policy**: `ATHENA_P3_0_LEGACY_CANONICAL_COMPARATOR_V1`
+- **Real-Row Source Projection Artifact**: `artifacts/p3-0-comparator-real-row-source-v1.json`
+  - Canonical SHA-256: `3d2fc88ef1a2f933b1183e41279e61673acf7ece0a015d4865bfb38c00c0fa68`
+  - Extracted from: GitHub Actions artifact 10603511090 (manifest `62a52a3b9fd05953bf54a63b122fc65ab1283fe7b0c2d0e63210355a14209bcc`)
+- **Comparator Corpus Artifact**: `artifacts/p3-0-comparator-corpus-v1.json`
+  - Canonical SHA-256: `cde5973ac47dc2558f1a43a0bbbe43788d1f1b703dadc6440be2103b95537ecd`
+  - Real replay row count: 1
+  - Synthetic cases admitted: 0 (strictly segregated)
+- **Comparison Report Artifact**: `artifacts/p3-0-comparison-report-v1.json`
+  - Canonical SHA-256: `35c230cca862ae3b27ceabe73df83c6ba71fb2b6a73cd508ad118112182e699b`
+  - Implementation Source Commit: `cf1d9c24fbfa28f7e94dad3d96be4ef2b8c6ce5a`
+  - Comparator Module Byte SHA-256: `f0b7e4fb89cf068b223438dde998121bbeee622ae6f860f7e865b955f2ef0853`
+  - Report Builder Byte SHA-256: `0d74fe23bb6c85d87d3145db9753ec0260c979c7714471a390ec56b0eb009191`
+  - P0 Acceptance Module Byte SHA-256: `7110928a9e77ddaa2443ef0e96c6c7da1e5647f8c56889bca31390bb0e6f7a06`
+  - Real Row Source Byte SHA-256: `ea813b8f3f92ce31844c341529bb25317ac3e4cbcff3307c5d784fdad1773ad7`
+  - Real replay row count: 1
+  - Synthetic P0 case count: 5
+
+### Cryptographic Hash Semantics, Lineage, and Timing
+
+- **As-Of Proof**:
+  - Embedded canonical SHA-256: `8f9084d17bd64ce3d908b8b312e951dda7d041dd36ebda642a3dcafefadef1ee`
+  - File-byte SHA-256 (`as-of-proof.json`): `a96bf59a20fe8c602f47e976950916956e37c48fe4f38023fbac0fbc0c0d31ed`
+  - Policy: `P3_0_SINGLE_PROSPECTIVE_CAPTURE_WINDOW_LINEAGE_V1` (Result: `PROVEN`)
+  - Exact Microsecond Retained Timestamps:
+    - `capture_started_at`: `2026-09-20T09:34:50.939987Z`
+    - `capture_completed_at`: `2026-09-20T09:56:52.828587Z`
+    - `provider_quote_observed_at`: `2026-09-20T09:34:56.927358Z`
+    - `probability_evaluation_time`: `2026-09-20T09:34:57.123353Z`
+    - `canonical_price_all_evaluation_time`: `2026-09-20T09:34:57.123353Z`
+    - `canonical_router_evaluation_time`: `2026-09-20T09:34:57.123353Z`
+    - `legacy_evaluation_time`: `2026-09-20T09:56:52.743879Z`
+    - `legacy_evidence_observed_at`: `2026-09-20T09:56:52.743879Z`
+    - `kickoff_time`: `2026-09-20T10:30:00.000000Z`
+- **Join Receipt**:
+  - Embedded canonical SHA-256: `b879850d385d71ae80d7f77ffc4ef07939ef633e4e4f27c75818b746bf988330`
+  - File-byte SHA-256 (`join-receipt.json`): `8d915727ba5fb235e08672547b112ade8dc48654925f8bd746bd1d5fceabf373`
+  - Disposition: `EXACT_SAME_FIXTURE_PROVEN`
+- **Selected Quote Ancestry (Artifact 10603511090)**:
+  - Exact quote identity SHA-256: `7f6fb592626f12779b4824371bdf53ab45073e2125fee60e58f27d727fa2be11`
+  - Provider observation SHA-256: `70cdfedb8b23f8421652231248f46fcd95eb37964957cd2bb1a23ec61fcc05b2`
+  - Reconciliation SHA-256: `4be11f13481659f02e96254b026ddc458cd2d1316388ccce41faadcf637bbcc7`
+  - Source raw SHA-256: `f20d02bcfe29c1e2a06430aa9c5355064e7c9bc8a489e0eac7421a0256a23d9c`
+  - Source inventory SHA-256: `8b2af58168c07f9fc4e7e4fb375cb41a90099de263cf10cc8b9f3457213b29d0`
+  - Source manifest SHA-256: `56c02aa9904283ab9d11d87aa34153205144bb1729b413810127408e1857e45f`
+  - Quote observed at: `2026-09-20T09:34:56.927358Z`
+  - Quote source capture started at: `2026-09-20T09:34:50.939987Z`
+- **Provider Semantics Binding**:
+  - Validated contract SHA-256: `737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830`
+  - Registry policy ID: `PRB_EXACT_CURRENT_SPORTYBET_SEMANTIC_POLICIES_V1`
+  - Registry SHA-256: `dc9c67ebaea9a63e63acad4c56ad9a76d3a95c9beb84681141ad4c3aab85b734`
+  - Semantic status: `SUPPORTED_WITH_EXACT_LINE_POLICY`
+  - Specifier / Line: `hcp=0` / `0.0`
+- **Retained Authority Structures & Fail-Closed Validation (Rule 7)**:
+  - `retained_capture_authority_state`: Verified fail-closed across 10 required keys (`authority_profile`, `main_authority`, `login`, `cookies`, `wallet`, `staking`, `wager_placed`, `share_code_generation`, `portfolio_optimization`, `provider_acquisition`). Exact retained values: `authority_profile = "SHADOW"`, `main_authority = false`, `login = false`, `cookies = false`, `wallet = false`, `staking = false`, `wager_placed = false`, `share_code_generation = false`, `portfolio_optimization = false`, `provider_acquisition = true` (retained historical capture provenance).
+  - `canonical_execution_identity`: Verified fail-closed across 7 required semantic fields (`authority_profile`, `canonical_core_policy_id`, `policy_id`, `portfolio_optimization_invoked`, `share_code_invoked`, `source_path`, `stopped_after`). Exact retained values: `authority_profile = "SHADOW"`, `canonical_core_policy_id = "ATHENA_SHARED_CANONICAL_CORE_V1"`, `policy_id = "ATHENA_P3_0_PROSPECTIVE_PAIRED_CAPTURE_V1"`, `portfolio_optimization_invoked = false`, `share_code_invoked = false`, `source_path = "current_shadow_all_market_runner._acquire_router_inputs"`, `stopped_after = "PRICE_ALL_ROUTER"`.
+  - `canonical_authority`: Verified fail-closed with `authority_profile = "SHADOW"`, `canonical_core_policy_id = "ATHENA_SHARED_CANONICAL_CORE_V1"`, resolved component count = 5, strictly matching the 5 reviewed canonical responsibility IDs: `delivery_share_code_transport`, `market_router`, `portfolio_optimizer`, `price_all_and_de_vig`, `provider_market_semantics`. Every resolved component has `main_authority = false` and `allowed_profiles` containing `"SHADOW"`.
+  - `router_authority`: Verified fail-closed requiring all 17 production execution fields strictly `false` (`accumulator`, `bet`, `cookies`, `login`, `phase6`, `production_market_router`, `production_model`, `production_portfolio`, `production_price_all`, `production_probability`, `production_selection`, `share_code_generation`, `slip_construction`, `sportybet_execution`, `staking`, `wager_placed`, `wallet`) and all 4 research-shadow fields strictly `true` (`research_counterfactual_recording`, `research_current_quote_consumption`, `research_shadow_market_routing`, `research_shadow_price_all`). The `router_authority` object does not contain `profile` or `main_authority` fields.
+  - `router_wager_placed`: Separately retained field; strictly verified `false`.
+  - Provider acquisition distinction: `retained_capture_provider_acquisition = true` (the historical prospective paired capture originally acquired provider evidence) vs `comparator_provider_acquisition = false` (current offline comparator performs no new provider acquisition; `provider_acquisition = false`, `network_used = false`).
+
+### Real-Row Comparison Semantics
+
+- **Fixture Identity**: `FOTMOB:5749683` / `sr:match:71945268` (Fiorentina vs Napoli, Serie A, 2026-09-20T10:30:00Z)
+- **Legacy Side**: `legacy_final_recommendation = null`, `legacy_decision_status = ANALYTICAL_CANDIDATE`. AnalysisPipeline path is analysis-only without selection or BET authorization.
+- **Canonical Side**: `canonical_router_status = SELECTED`, `canonical_router_recommendation = "ASIAN_HANDICAP AWAY 0.0 @ 1.61 (Fiorentina vs Napoli)"` with verified exact quote identity `7f6fb592626f12779b4824371bdf53ab45073e2125fee60e58f27d727fa2be11` inside bundle `d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191` loaded via verified artifact projection.
+- **Classification**: `EXPECTED_POLICY_DIFFERENCE` (`severity_classification = None`).
+- **Probability Comparison**: `NOT_COMPARABLE` (legacy heuristic scores are not calibrated de-vigged event probabilities).
+- **Price Availability**: Legacy has no price access; canonical binds verified provider quote @ 1.61.
+
+### P0 Synthetic Acceptance Cases
+
+All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/legacy_market_selection_cases_v1.json`) were evaluated against the real canonical components via `domain.p3_0_p0_canonical_acceptance` and passed:
+1. `LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION` -> PASS (Real Price-All evaluated unpriced candidate to `PriceDisposition.UNPRICED_NO_EXACT_QUOTE`; Router produced `NO_BET` with `selected_opportunity_id=None`).
+2. `LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT` -> PASS (Real Price-All under quote A @ 1.50 derived EV=-0.025, verified via `verify_price_all_evaluation`, producing Router `NO_BET` with `selected_opportunity_id=None`; under quote B @ 2.10 derived EV=+0.365, verified via `verify_price_all_evaluation`, producing Router `SELECTED`. Both Price-All and Router respond directly to provider pricing).
+3. `LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION` -> PASS (Real Price-All evaluated provider-unavailable bookable=False quote to `PriceDisposition.UNPRICED_CURRENTLY_UNAVAILABLE`; Router produced `NO_BET`).
+4. `LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO` -> PASS (Only registered canonical `MarketId` and `OutcomeId` identities are routed; ad-hoc composite labels strictly rejected).
+5. `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` -> PASS (Genuine public integration proof with true-tie rank inputs `robust_net_expected_value = 0.20`, `prediction_confidence = 0.60`, `tie_inputs_equal = True`; narrow rank key proof and public `canonical_router.route` integration confirmed identical selection under candidate orders `[X, Y]` and `[Y, X]`; ties resolved deterministically by canonical prediction key `("BTTS", "YES", "NONE") < ("MATCH_RESULT", "HOME", "NONE")`).
+
+### High-Severity Rules and Finding Outcome
+
+- Potential high severity findings: 0
+- Explained high severity findings: 0
+- Confirmed defects: 0
+- Unexplained high severity findings: **0** (`UNEXPLAINED_BLOCKER = 0`)
+- High severity rule NOT_APPLICABLE count: 1 (Rule 5 shortfall padding)
+- Severity arithmetic invariant: `potential == explained + confirmed + unexplained` (0 == 0 + 0 + 0) `PASS`
+
+### Safety and Authority Boundaries
+
+- `provider_acquisition = false` (zero live network / external provider calls)
+- `comparator_provider_acquisition = false`
+- `retained_capture_provider_acquisition = true`
+- `network_used = false`
+- `portfolio_invoked = false`
+- `share_code_invoked = false`
+- `login = false`, `cookies = false`, `wallet = false`, `staking = false`, `bet = false`, `wager_placed = false`
+- `main_authority = false`
+- `selection_authority_changed = false`
+- `promotion_authority = false`
+- `P3.1`: **NOT STARTED**
+- `SOURCE_REVIEW_COUNTER`: **4 / 5** while unmerged
+- Terminal machine state: `P3_0_COMPARATOR_MERGE_REQUIRED`
