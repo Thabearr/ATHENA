@@ -20,6 +20,15 @@ The core consumes an existing `AuthorityManifest`, source-controlled component r
 
 P3.1 PR A promotes the exact five `CURRENT_SPORTYBET_PROVIDER` records for both `MAIN` and `SHADOW`. Both profiles resolve the same responsibility, component, contract, artifact, and schema identities; profile-specific binding hashes may differ because the authority profile is part of the binding. This promotion does not migrate a MAIN caller or grant wager authority.
 
+P3.1 PR B consumes that MAIN resolution authority at the
+`PredictionService` presentation boundary.  The new service-level adapter
+resolves the source-controlled MAIN core and verifies a supplied canonical
+`RouterDecision` before projecting its selected market into the legacy
+`Prediction` output shape.  It adds no provider acquisition, Current Shadow
+execution, share-code capability, or Router/Price-All/Portfolio formula change;
+the shared core remains pure and a missing canonical decision fails closed to
+`No Recommendation`.
+
 ## Reviewed P2.0 identities
 
 The P2.0 provider-semantics contract is `737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830`. It pins delegated implementation blob `646bf93549d0d859f00e1d42ba72aaa17a84a6e7` and façade artifact blob `46eaf64b6704e1b7b47123a9a182346e0403cbe6`. The shared-core contract is `af4a73f8852893e7391ae85bac092105d305fa5b9e77af273809fcdcb3dc4c4a`; the corresponding five-record registry canonical SHA-256 at the P2.0 merge boundary is `7569dea91ba4c690a1121ea252e51566a7e3cacd80e1120774bd706d2b4eab03`.

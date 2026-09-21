@@ -158,9 +158,11 @@ def test_build_acca_runtime_trace_does_not_execute_predictionservice_or_marketse
     assert ("engine.market_selector", "MarketSelector.select") not in executed
 
 
-def test_prediction_service_supplemental_trace_reaches_legacy_market_selector() -> None:
+def test_frozen_p05_prediction_service_trace_preserves_historical_legacy_selector() -> None:
     payload = audit.build_runtime_evidence(audit.BASELINE_MAIN)
     trace = payload["supplemental_legacy_prediction_service_trace"]
+    assert trace["source_commit"] == audit.BASELINE_MAIN
+    assert payload["source_commit"] == audit.BASELINE_MAIN
     ordered = [
         (row["module"], row["qualname"], row["checkpoint_kind"])
         for row in trace["checkpoints"]
@@ -278,7 +280,7 @@ def test_runtime_evidence_grants_no_cleanup_production_or_wager_authority() -> N
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P0.5 evidence: legacy selector currently recommends without reviewed quote authority",
+    reason="Frozen P0.5 evidence: legacy selector historically recommended without reviewed quote authority",
 )
 def test_future_legacy_selector_requires_quote_before_recommendation() -> None:
     case = audit._legacy_cases()[0]
@@ -287,7 +289,7 @@ def test_future_legacy_selector_requires_quote_before_recommendation() -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P0.5 evidence: legacy selector currently ignores attached quote-like/provider-like fields",
+    reason="Frozen P0.5 evidence: legacy selector historically ignored attached quote-like/provider-like fields",
 )
 def test_future_legacy_selector_output_is_not_quote_independent() -> None:
     cases = audit._legacy_cases()
@@ -296,7 +298,7 @@ def test_future_legacy_selector_output_is_not_quote_independent() -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P0.5 evidence: provider absence has no explicit unpriced selector disposition",
+    reason="Frozen P0.5 evidence: provider absence historically had no explicit unpriced selector disposition",
 )
 def test_future_legacy_selector_fails_closed_without_provider_availability() -> None:
     case = audit._legacy_cases()[2]
@@ -305,7 +307,7 @@ def test_future_legacy_selector_fails_closed_without_provider_availability() -> 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P0.5 evidence: ad-hoc Home or Over 1.5 can currently become the legacy recommendation",
+    reason="Frozen P0.5 evidence: ad-hoc Home or Over 1.5 historically became the legacy recommendation",
 )
 def test_future_legacy_selector_emits_only_reviewed_canonical_market_identity() -> None:
     case = audit._legacy_cases()[3]
@@ -314,7 +316,7 @@ def test_future_legacy_selector_emits_only_reviewed_canonical_market_identity() 
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P0.5 evidence: equal legacy scores are currently resolved by append/stable-sort order",
+    reason="Frozen P0.5 evidence: equal legacy scores were historically resolved by append/stable-sort order",
 )
 def test_future_legacy_selector_does_not_leave_equal_top_scores_to_construction_order() -> None:
     case = audit._legacy_cases()[4]
