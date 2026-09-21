@@ -17,7 +17,7 @@ A record can resolve for `MAIN` only when all of the following are true:
 - `promotion_state == APPROVED_FOR_MAIN`; and
 - `main_authority == true`.
 
-Registration alone cannot satisfy those conditions. The default P1.7 registry grants **zero MAIN authority**.
+Registration alone cannot satisfy those conditions. The historical P1.7 registry granted **zero MAIN authority**; P3.1 PR A explicitly promotes the five reviewed shared champions for MAIN while preserving their SHADOW eligibility. SHADOW resolution does not require this MAIN promotion.
 
 Research challengers use the separate `RESEARCH_CHALLENGER` role. They are accepted only when their profile eligibility is exactly `SHADOW`, `main_authority` is false, and their promotion state remains in the research lifecycle (`REGISTERED_CHALLENGER`, `SHADOW_EVALUATION`, `PROSPECTIVE_WALK_FORWARD_EVIDENCE`, or `REVIEW_REQUIRED`). There is no direct registry transition from a research result to MAIN.
 

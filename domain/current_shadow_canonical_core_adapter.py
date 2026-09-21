@@ -147,13 +147,11 @@ def resolve_shadow_canonical_core() -> _core.CanonicalCoreBindings:
             "Current Shadow canonical-core component set drifted"
         )
     if any(
-        record.allowed_profiles != ("MAIN", "SHADOW")
-        or record.promotion_state != _registry.APPROVED_FOR_MAIN
-        or record.main_authority is not True
+        "SHADOW" not in record.allowed_profiles
         for record in bindings.records
     ):
         raise CurrentShadowCanonicalCoreAdapterError(
-            "Current Shadow canonical-core promoted authority drifted"
+            "Current Shadow canonical-core SHADOW eligibility drifted"
         )
     _validate_compatibility_aliases(bindings)
     return bindings
@@ -193,12 +191,7 @@ def _require(responsibility_id: str) -> None:
         raise CurrentShadowCanonicalCoreAdapterError(
             f"Current Shadow canonical responsibility {responsibility_id} is unavailable"
         ) from exc
-    if (
-        record.component_id != expected
-        or record.allowed_profiles != ("MAIN", "SHADOW")
-        or record.promotion_state != _registry.APPROVED_FOR_MAIN
-        or record.main_authority is not True
-    ):
+    if record.component_id != expected or "SHADOW" not in record.allowed_profiles:
         raise CurrentShadowCanonicalCoreAdapterError(
             f"Current Shadow canonical responsibility {responsibility_id} drifted"
         )
