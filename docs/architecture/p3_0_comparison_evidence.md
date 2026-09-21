@@ -435,35 +435,59 @@ Following the exhaustive adjudication of all 290 retained replay candidates, the
 
 - **Comparator Policy**: `ATHENA_P3_0_LEGACY_CANONICAL_COMPARATOR_V1`
 - **Real-Row Source Projection Artifact**: `artifacts/p3-0-comparator-real-row-source-v1.json`
-  - Canonical SHA-256: `cdd985cebafe3c757f27e28c6c76e5290f4dd5e3493ac4618d2a82f9518dd0a7`
+  - Canonical SHA-256: `3a43a8dcd01c4f0450519aa8b44e61c7f69252248cb3cd1e33eb3a00ea2a4cf3`
   - Extracted from: GitHub Actions artifact 10603511090 (manifest `62a52a3b9fd05953bf54a63b122fc65ab1283fe7b0c2d0e63210355a14209bcc`)
 - **Comparator Corpus Artifact**: `artifacts/p3-0-comparator-corpus-v1.json`
-  - Canonical SHA-256: `f8471d959e46dfe20328e56fb592a102a0b9388dcf9d77d45e1135fb3dac79ae`
+  - Canonical SHA-256: `9a7822337137feb992d895fd3deb02712fefdeeb37912e658bf6503609b1195e`
   - Real replay row count: 1
   - Synthetic cases admitted: 0 (strictly segregated)
 - **Comparison Report Artifact**: `artifacts/p3-0-comparison-report-v1.json`
-  - Canonical SHA-256: `0d37d24360e18c82e44fb69679aa95739b02636c5ed61c016e410314b877d89a`
-  - Implementation Source Commit: `e591cce0c0dc31401fe78a0f56d772a6b574905c`
+  - Canonical SHA-256: `27765bec9b48a008f0e8cf40ebeba6ea2599aed4eff33c943ce87b471e9a7ac9`
+  - Implementation Source Commit: `04e8db6c0fdcec3d930eb4cc6aabf7bcc147f27e`
   - Real replay row count: 1
   - Synthetic P0 case count: 5
+
+### Cryptographic Hash Semantics and Lineage
+
+- **As-Of Proof**:
+  - Embedded canonical SHA-256: `8f9084d17bd64ce3d908b8b312e951dda7d041dd36ebda642a3dcafefadef1ee`
+  - File-byte SHA-256 (`as-of-proof.json`): `a96bf59a20fe8c602f47e976950916956e37c48fe4f38023fbac0fbc0c0d31ed`
+  - Policy: `P3_0_SINGLE_PROSPECTIVE_CAPTURE_WINDOW_LINEAGE_V1` (Result: `PROVEN`)
+- **Join Receipt**:
+  - Embedded canonical SHA-256: `b879850d385d71ae80d7f77ffc4ef07939ef633e4e4f27c75818b746bf988330`
+  - File-byte SHA-256 (`join-receipt.json`): `8d915727ba5fb235e08672547b112ade8dc48654925f8bd746bd1d5fceabf373`
+  - Disposition: `EXACT_SAME_FIXTURE_PROVEN`
+- **Selected Quote Ancestry (Artifact 10603511090)**:
+  - Exact quote identity SHA-256: `7f6fb592626f12779b4824371bdf53ab45073e2125fee60e58f27d727fa2be11`
+  - Provider observation SHA-256: `70cdfedb8b23f8421652231248f46fcd95eb37964957cd2bb1a23ec61fcc05b2`
+  - Reconciliation SHA-256: `4be11f13481659f02e96254b026ddc458cd2d1316388ccce41faadcf637bbcc7`
+  - Source raw SHA-256: `f20d02bcfe29c1e2a06430aa9c5355064e7c9bc8a489e0eac7421a0256a23d9c`
+  - Source inventory SHA-256: `8b2af58168c07f9fc4e7e4fb375cb41a90099de263cf10cc8b9f3457213b29d0`
+  - Source manifest SHA-256: `56c02aa9904283ab9d11d87aa34153205144bb1729b413810127408e1857e45f`
+- **Provider Semantics Binding**:
+  - Validated contract SHA-256: `737a463bd26a5333a45fe50aef21fd3b4a76ec3395041e56f3a105f32bd0f830`
+  - Registry policy ID: `PRB_EXACT_CURRENT_SPORTYBET_SEMANTIC_POLICIES_V1`
+  - Registry SHA-256: `dc9c67ebaea9a63e63acad4c56ad9a76d3a95c9beb84681141ad4c3aab85b734`
+  - Semantic status: `SUPPORTED_WITH_EXACT_LINE_POLICY`
+  - Specifier / Line: `hcp=0` / `0.0`
 
 ### Real-Row Comparison Semantics
 
 - **Fixture Identity**: `FOTMOB:5749683` / `sr:match:71945268` (Fiorentina vs Napoli, Serie A, 2026-09-20T10:30:00Z)
 - **Legacy Side**: `legacy_final_recommendation = null`, `legacy_decision_status = ANALYTICAL_CANDIDATE`. AnalysisPipeline path is analysis-only without selection or BET authorization.
 - **Canonical Side**: `canonical_router_status = SELECTED`, `canonical_router_recommendation = "ASIAN_HANDICAP AWAY 0.0 @ 1.61 (Fiorentina vs Napoli)"` with verified exact quote identity `7f6fb592626f12779b4824371bdf53ab45073e2125fee60e58f27d727fa2be11` inside bundle `d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191` loaded via verified artifact projection.
-- **Classification**: `EXPECTED_POLICY_DIFFERENCE` (`severity_classification = EXPLAINED_EXPECTED`).
+- **Classification**: `EXPECTED_POLICY_DIFFERENCE` (`severity_classification = None`).
 - **Probability Comparison**: `NOT_COMPARABLE` (legacy heuristic scores are not calibrated de-vigged event probabilities).
 - **Price Availability**: Legacy has no price access; canonical binds verified provider quote @ 1.61.
 
 ### P0 Synthetic Acceptance Cases
 
-All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/legacy_market_selection_cases_v1.json`) were evaluated against the canonical architecture and passed:
-1. `LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION` -> PASS (Canonical Router enforces quote requirement; unpriced candidates yield `NO_BET`).
-2. `LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT` -> PASS (Provider pricing directly drives net expected value and ranking).
-3. `LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION` -> PASS (Missing provider availability produces explicit fail-closed non-selectable disposition).
-4. `LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO` -> PASS (Only registered canonical `MarketId` and `OutcomeId` identities are routed).
-5. `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` -> PASS (Equal-value ties resolved deterministically by quote-independent prediction identity `(market_id, outcome_id, line)`, not list append order and not opportunity ID).
+All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/legacy_market_selection_cases_v1.json`) were evaluated against the real canonical components via `domain.p3_0_p0_canonical_acceptance` and passed:
+1. `LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION` -> PASS (Real Price-All evaluated unpriced candidate to `PriceDisposition.UNPRICED_NO_EXACT_QUOTE`; Router produced `NO_BET` with `selected_opportunity_id=None`).
+2. `LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT` -> PASS (Real Price-All under quote A @ 1.50 derived EV=-0.025; under quote B @ 2.10 derived EV=+0.365. Net expected value and quote binding respond directly to provider pricing).
+3. `LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION` -> PASS (Real Price-All evaluated provider-unavailable bookable=False quote to `PriceDisposition.UNPRICED_CURRENTLY_UNAVAILABLE`; Router produced `NO_BET`).
+4. `LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO` -> PASS (Only registered canonical `MarketId` and `OutcomeId` identities are routed; ad-hoc composite labels strictly rejected).
+5. `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` -> PASS (Narrow rank key proof and public `canonical_router.route` integration confirmed identical selection under candidate orders `[X, Y]` and `[Y, X]`; ties resolved deterministically by canonical prediction key `(market_id, outcome_id, line)`).
 
 ### High-Severity Rules and Finding Outcome
 
@@ -471,6 +495,8 @@ All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/le
 - Explained high severity findings: 0
 - Confirmed defects: 0
 - Unexplained high severity findings: **0** (`UNEXPLAINED_BLOCKER = 0`)
+- High severity rule NOT_APPLICABLE count: 1 (Rule 5 shortfall padding)
+- Severity arithmetic invariant: `potential == explained + confirmed + unexplained` (0 == 0 + 0 + 0) `PASS`
 
 ### Safety and Authority Boundaries
 
