@@ -116,7 +116,49 @@ def _p3_baseline(
                     "exact_quote_proven": member["bundle_verifies"] is True,
                     "legacy_lineage_proven": member["bundle_verifies"] is True,
                     "failed_requirement_detail": None,
+                    "repairability_class": replay.COMPLETE,
                     "offline_repairability": "NOT_REQUIRED_REPLAY_COMPLETE",
+                    "historical_contract_analysis": "HISTORICAL_CONTRACT_VERIFIABLE_AND_SEMANTICALLY_COMPATIBLE",
+                    "identity_recovery_analysis": "EXACT_IDENTITY_PROVEN",
+                    "legacy_lineage_analysis": "LEGACY_PRESERVED_COMPLETE",
+                    "quote_lineage_analysis": "EXACT_QUOTE_COMPLETE",
+                    "temporal_lineage_analysis": "TEMPORAL_ORDER_VALID",
+                    "exact_fixture_identity_present": True,
+                    "exact_home_away_orientation_present": True,
+                    "competition_identity_present": True,
+                    "kickoff_utc_present": True,
+                    "source_identity_present": True,
+                    "source_observed_at_present": True,
+                    "capture_or_run_identity_present": True,
+                    "exact_provider_event_id_present": True,
+                    "exact_quote_identity_present": True,
+                    "quote_decimal_odds_present": True,
+                    "quote_market_identity_present": True,
+                    "quote_outcome_identity_present": True,
+                    "quote_line_present_if_required": True,
+                    "quote_observed_at_present": True,
+                    "quote_source_digest_present": True,
+                    "quote_reconciliation_ancestry_present": True,
+                    "canonical_probability_present": True,
+                    "canonical_probability_contract_valid": True,
+                    "price_all_output_present": True,
+                    "price_all_contract_valid": True,
+                    "router_output_present": True,
+                    "router_contract_valid": True,
+                    "canonical_owner_identity_present": True,
+                    "supported_legacy_input_present": True,
+                    "supported_legacy_output_present": True,
+                    "supported_legacy_path_proven": True,
+                    "exact_legacy_as_of_present": True,
+                    "legacy_quote_binding_proven_if_required": True,
+                    "prematch_temporal_order_valid": True,
+                    "no_post_event_input": True,
+                    "no_later_quote_reuse": True,
+                    "historical_head_sha_present": True,
+                    "historical_contract_identity_present": True,
+                    "historical_contract_source_recoverable_from_git": True,
+                    "current_contract_replay_possible": True,
+                    "source_bytes_immutable_and_verified": True,
                     "hashes": {
                         "artifact_digest": member["artifact_digest"],
                         "canonical_lineage_sha256": member["bundle_canonical_sha256"],
@@ -154,7 +196,49 @@ def _p3_baseline(
                 "exact_quote_proven": False,
                 "legacy_lineage_proven": False,
                 "failed_requirement_detail": item["exclusion_reason"],
+                "repairability_class": replay.TRUE_SOURCE_ABSENCE,
                 "offline_repairability": "MISSING_CAPTURE_BYTES_CANNOT_BE_FABRICATED",
+                "historical_contract_analysis": "OTHER_EXACT_BLOCKER",
+                "identity_recovery_analysis": "IDENTITY_EVIDENCE_ABSENT",
+                "legacy_lineage_analysis": "LEGACY_CONTEXT_ABSENT",
+                "quote_lineage_analysis": "QUOTE_GAP",
+                "temporal_lineage_analysis": "TEMPORAL_GAP",
+                "exact_fixture_identity_present": bool(fixture_identity),
+                "exact_home_away_orientation_present": False,
+                "competition_identity_present": bool(item.get("competitions")),
+                "kickoff_utc_present": bool(item.get("fixture_kickoffs")),
+                "source_identity_present": True,
+                "source_observed_at_present": False,
+                "capture_or_run_identity_present": True,
+                "exact_provider_event_id_present": False,
+                "exact_quote_identity_present": False,
+                "quote_decimal_odds_present": False,
+                "quote_market_identity_present": False,
+                "quote_outcome_identity_present": False,
+                "quote_line_present_if_required": False,
+                "quote_observed_at_present": False,
+                "quote_source_digest_present": False,
+                "quote_reconciliation_ancestry_present": False,
+                "canonical_probability_present": False,
+                "canonical_probability_contract_valid": False,
+                "price_all_output_present": False,
+                "price_all_contract_valid": False,
+                "router_output_present": False,
+                "router_contract_valid": False,
+                "canonical_owner_identity_present": False,
+                "supported_legacy_input_present": False,
+                "supported_legacy_output_present": False,
+                "supported_legacy_path_proven": False,
+                "exact_legacy_as_of_present": False,
+                "legacy_quote_binding_proven_if_required": False,
+                "prematch_temporal_order_valid": False,
+                "no_post_event_input": True,
+                "no_later_quote_reuse": True,
+                "historical_head_sha_present": True,
+                "historical_contract_identity_present": False,
+                "historical_contract_source_recoverable_from_git": True,
+                "current_contract_replay_possible": False,
+                "source_bytes_immutable_and_verified": True,
                 "hashes": {"artifact_digest": item["artifact_digest"]},
             }
         )
@@ -250,6 +334,12 @@ def _current_shadow(
                     value = detail.get(field)
                     if isinstance(value, str) and value:
                         hashes[field] = value
+
+            temporal_proven = bool(
+                identity_proven
+                and str(receipt.get("observed_at")) < str(detail.get("kickoff_utc"))
+            )
+
             candidates.append(
                 {
                     "candidate_id": f"current-shadow:{run_dir.name}:{fixture}",
@@ -273,10 +363,7 @@ def _current_shadow(
                     else [],
                     "duplicate": False,
                     "identity_proven": identity_proven,
-                    "temporal_lineage_proven": bool(
-                        identity_proven
-                        and str(receipt.get("observed_at")) < str(detail.get("kickoff_utc"))
-                    ),
+                    "temporal_lineage_proven": temporal_proven,
                     "contract_current": False,
                     "canonical_lineage_proven": False,
                     "exact_quote_proven": quote_proven,
@@ -288,11 +375,69 @@ def _current_shadow(
                         "canonical payloads required for replay admission; other routed "
                         "rows also lack complete fixture and quote projections."
                     ),
+                    "repairability_class": replay.TRUE_SOURCE_ABSENCE,
                     "offline_repairability": (
                         "EVIDENCE_EXISTS_BUT_REPLAY_ADAPTER_AND_CONTRACT_MIGRATION_REQUIRED"
                         if identity_proven
                         else "PRESERVED_RECEIPT_PROJECTION_INSUFFICIENT_WITHOUT_FABRICATION"
                     ),
+                    "historical_contract_analysis": "TRUE_SEMANTIC_CONTRACT_DRIFT",
+                    "identity_recovery_analysis": (
+                        "EXACT_IDENTITY_PROVEN"
+                        if identity_proven
+                        else "IDENTITY_REQUIRES_NEW_AUTHORITY"
+                    ),
+                    "legacy_lineage_analysis": "LEGACY_CONTEXT_ABSENT",
+                    "quote_lineage_analysis": (
+                        "EXACT_QUOTE_COMPLETE" if quote_proven else "QUOTE_GAP"
+                    ),
+                    "temporal_lineage_analysis": (
+                        "TEMPORAL_ORDER_VALID" if temporal_proven else "TEMPORAL_GAP"
+                    ),
+                    "exact_fixture_identity_present": bool(fixture),
+                    "exact_home_away_orientation_present": bool(detail and detail.get("home_team")),
+                    "competition_identity_present": bool(detail and detail.get("competition")),
+                    "kickoff_utc_present": bool(detail and detail.get("kickoff_utc")),
+                    "source_identity_present": True,
+                    "source_observed_at_present": bool(receipt.get("observed_at")),
+                    "capture_or_run_identity_present": True,
+                    "exact_provider_event_id_present": bool(
+                        detail.get("provider_event_id") if detail else opportunity.get("provider_event_id")
+                    ),
+                    "exact_quote_identity_present": quote_proven,
+                    "quote_decimal_odds_present": bool(detail and detail.get("decimal_odds")),
+                    "quote_market_identity_present": bool(
+                        detail and (detail.get("provider_market_id") or detail.get("market_id"))
+                    ),
+                    "quote_outcome_identity_present": bool(
+                        detail and (detail.get("provider_outcome_id") or detail.get("outcome_id"))
+                    ),
+                    "quote_line_present_if_required": bool(detail and ("line" in detail)),
+                    "quote_observed_at_present": quote_proven,
+                    "quote_source_digest_present": bool(detail and detail.get("source_raw_sha256")),
+                    "quote_reconciliation_ancestry_present": bool(
+                        detail and detail.get("fixture_reconciliation_sha256")
+                    ),
+                    "canonical_probability_present": False,
+                    "canonical_probability_contract_valid": False,
+                    "price_all_output_present": False,
+                    "price_all_contract_valid": False,
+                    "router_output_present": False,
+                    "router_contract_valid": False,
+                    "canonical_owner_identity_present": False,
+                    "supported_legacy_input_present": False,
+                    "supported_legacy_output_present": False,
+                    "supported_legacy_path_proven": False,
+                    "exact_legacy_as_of_present": False,
+                    "legacy_quote_binding_proven_if_required": False,
+                    "prematch_temporal_order_valid": temporal_proven,
+                    "no_post_event_input": True,
+                    "no_later_quote_reuse": True,
+                    "historical_head_sha_present": bool(receipt.get("exact_commit_sha")),
+                    "historical_contract_identity_present": True,
+                    "historical_contract_source_recoverable_from_git": True,
+                    "current_contract_replay_possible": False,
+                    "source_bytes_immutable_and_verified": True,
                     "hashes": hashes,
                 }
             )

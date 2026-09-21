@@ -243,3 +243,185 @@ def test_source_gap_is_exact_and_all_authority_flags_remain_false():
         "promotion_authority",
     ):
         assert result[field] is False
+
+
+def test_primary_exclusion_cannot_hide_all_gap_reasons():
+    row = candidate(
+        identity_proven=False,
+        legacy_lineage_proven=False,
+        failed_requirement_detail="identity and legacy missing",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["classification"] == replay.REPLAY_IDENTITY_UNPROVEN
+    assert replay.REPLAY_IDENTITY_UNPROVEN in cand["all_gap_reasons"]
+    assert replay.REPLAY_UNAVAILABLE_LEGACY_LINEAGE in cand["all_gap_reasons"]
+    assert result["all_gap_reasons"][replay.REPLAY_UNAVAILABLE_LEGACY_LINEAGE] == 1
+
+
+def test_identity_first_failure_still_reports_legacy_missing():
+    row = candidate(
+        identity_proven=False,
+        legacy_lineage_proven=False,
+        failed_requirement_detail="identity and legacy missing",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["classification"] == replay.REPLAY_IDENTITY_UNPROVEN
+    assert replay.REPLAY_UNAVAILABLE_LEGACY_LINEAGE in cand["all_gap_reasons"]
+    assert cand["legacy_lineage_analysis"] == "LEGACY_CONTEXT_ABSENT"
+
+
+def test_contract_first_failure_still_reports_quote_missing():
+    row = candidate(
+        contract_current=False,
+        exact_quote_proven=False,
+        failed_requirement_detail="contract and quote missing",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["classification"] == replay.REPLAY_CONTRACT_DRIFT
+    assert replay.REPLAY_UNAVAILABLE_EXACT_QUOTE in cand["all_gap_reasons"]
+    assert cand["quote_lineage_analysis"] == "QUOTE_GAP"
+
+
+def test_historical_contract_source_present_in_git_distinguished_from_source_absence():
+    row = candidate(
+        contract_current=False,
+        historical_contract_source_recoverable_from_git=True,
+        current_contract_replay_possible=False,
+        failed_requirement_detail="contract drift but source in git",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["historical_contract_source_recoverable_from_git"] is True
+    assert cand["current_contract_replay_possible"] is False
+    assert result["historical_contract_analysis"]["HISTORICAL_CONTRACT_SOURCE_MISSING"] == 0
+
+
+def test_historical_contract_semantic_incompatibility_remains_excluded():
+    row = candidate(
+        contract_current=False,
+        historical_contract_analysis="TRUE_SEMANTIC_CONTRACT_DRIFT",
+        failed_requirement_detail="semantic contract drift",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["classification"] == replay.REPLAY_CONTRACT_DRIFT
+    assert cand["historical_contract_analysis"] == "TRUE_SEMANTIC_CONTRACT_DRIFT"
+    assert result["replay_complete_count"] == 0
+
+
+def test_current_core_replayable_historical_artifact_classified_recoverable():
+    row = candidate(
+        contract_current=False,
+        current_contract_replay_possible=True,
+        failed_requirement_detail="current core replay possible offline",
+    )
+    assert replay.classify_repairability(row, [replay.REPLAY_CONTRACT_DRIFT]) == replay.CURRENT_CORE_REPLAY_INPUTS_AVAILABLE
+
+
+def test_exact_existing_reviewed_identity_mapping_can_recover_identity():
+    row = candidate(
+        identity_proven=True,
+        exact_fixture_identity_present=True,
+        exact_home_away_orientation_present=True,
+        provider_event_id="sr:match:72339758",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["identity_recovery_analysis"] == "EXACT_IDENTITY_PROVEN"
+    assert cand["exact_fixture_identity_present"] is True
+
+
+def test_unreviewed_fuzzy_identity_cannot():
+    row = candidate(
+        identity_proven=False,
+        failed_requirement_detail="unreviewed or fuzzy identity",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["identity_recovery_analysis"] == "IDENTITY_REQUIRES_NEW_AUTHORITY"
+    assert cand["classification"] == replay.REPLAY_IDENTITY_UNPROVEN
+
+
+def test_no_new_alias_is_generated():
+    row = candidate(
+        market_families=["ASIAN_HANDICAP"],
+        identity_proven=False,
+        failed_requirement_detail="identity unproven",
+    )
+    result = audit([row])
+    cand = result["candidates"][0]
+    assert cand["market_families"] == ["ASIAN_HANDICAP"]
+    assert "ALIAS" not in " ".join(cand["market_families"])
+
+
+def test_seven_day_source_window_may_contain_zero_admission_dates():
+    result = audit([candidate(kickoff_utc="2026-09-20T12:00:00Z")])
+    window = result["source_window"]
+    assert window["contiguous_calendar_days"] == 7
+    assert len(window["zero_admission_dates"]) > 0
+    assert window["full_7_day_source_window_enumerated"] is True
+
+
+def test_r1_does_not_require_seven_admitted_dates():
+    rows = []
+    # 10 rows on only 2 distinct dates across 3 competitions and 3 market families inside 7-day window
+    for index in range(10):
+        d_str = "2026-09-15" if index < 5 else "2026-09-20"
+        rows.append(
+            candidate(
+                candidate_id=f"r1-test-{index}",
+                fixture_identity=f"FOTMOB:{index}",
+                competition=f"League {index % 3}",
+                kickoff_utc=f"{d_str}T12:00:00Z",
+                market_families=[f"FAMILY_{index % 3}"],
+            )
+        )
+    result = audit(rows)
+    assert result["acceptance_gates"]["ONE_WEEK_REPLAY"]["satisfied"] is True
+    assert result["acceptance_gates"]["accepted_gate"] == "ONE_WEEK_REPLAY"
+
+
+def test_upper_bound_count_deterministic():
+    first = audit([candidate()])
+    second = audit([candidate()])
+    assert first["upper_bound_replayability"] == second["upper_bound_replayability"]
+
+
+def test_upper_bound_diversity_deterministic():
+    first = audit([candidate()])
+    second = audit([candidate()])
+    assert first["upper_bound_replayability"]["maximum_attainable_competitions"] == second["upper_bound_replayability"]["maximum_attainable_competitions"]
+    assert first["upper_bound_replayability"]["maximum_attainable_market_families"] == second["upper_bound_replayability"]["maximum_attainable_market_families"]
+
+
+def test_repairability_classification_deterministic():
+    row = candidate(
+        legacy_lineage_proven=False,
+        failed_requirement_detail="legacy missing",
+    )
+    first = replay.classify_repairability(row, [replay.REPLAY_UNAVAILABLE_LEGACY_LINEAGE])
+    second = replay.classify_repairability(row, [replay.REPLAY_UNAVAILABLE_LEGACY_LINEAGE])
+    assert first == second == replay.TRUE_SOURCE_ABSENCE
+
+
+def test_proposed_acceptance_amendment_is_never_auto_applied():
+    result = audit([candidate(
+        legacy_lineage_proven=False,
+        failed_requirement_detail="legacy missing",
+    )])
+    assert result["source_gap"]["acceptance_contract_amendment_proposed"] is True
+    assert result["acceptance_gates"]["accepted_gate"] is None
+    assert result["status"] == replay.SOURCE_GAP_STATUS
+
+
+def test_source_gap_conclusion_requires_exhausted_recoverability_analysis():
+    result = audit([candidate(
+        legacy_lineage_proven=False,
+        failed_requirement_detail="legacy missing",
+    )])
+    assert "dominant_actual_missing_source_category" in result["source_gap"]
+    assert "upper_bound_replayability" in result
+    assert result["upper_bound_replayability"]["true_source_absence_count"] >= 1
