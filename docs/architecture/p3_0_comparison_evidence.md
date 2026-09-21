@@ -409,3 +409,75 @@ remain false, and P3.1 is not started. Provider acquisition, network use,
 Portfolio, share-code, login, cookies, wallet, staking, bet, and wager placement
 are all false. The terminal machine state is
 `P3_0_REPLAY_CORPUS_SOURCE_GAP`.
+
+## P3.0 historical-source-gap exception and comparator closure
+
+Following the exhaustive adjudication of all 290 retained replay candidates, the repository owner evaluated the formal amendment proposal (`artifacts/p3-0-replay-acceptance-amendment-proposal-v1.json`) and authorized closure under an explicit historical-source-gap exception:
+
+- **Owner Decision**: `APPROVE_AMENDED_ACCEPTANCE_GATE`
+- **Decision Basis**: `EXHAUSTIVE_HISTORICAL_SOURCE_GAP`
+- **Accepted Exception Gate**: `P3_0_HISTORICAL_SOURCE_GAP_EXCEPTION_V1`
+- **Acceptance Decision Policy ID**: `ATHENA_P3_0_REPLAY_ACCEPTANCE_DECISION_V1`
+- **Acceptance Decision Canonical SHA-256**: `9e976c04968e652e9b5827f0aa3afa0f0e281718ae1cba4d61424de8639acbf5`
+
+### Source Gap Adjudication Truth
+
+- Total retained candidates audited: 290
+- Complete real replay rows: 1 (`p3-e1:10603511090:0`, Fiorentina vs Napoli, 2026-09-20, Serie A, Asian Handicap)
+- True source absence candidates: 289 (289/290 lack supported `AnalysisPipeline` legacy context; 289/290 lack raw canonical replay inputs)
+- Maximum technically recoverable real paired rows: 1
+- Original operational thresholds:
+  - R1 (One-Week Replay): `FAIL` (`original_r1_satisfied = false`)
+  - R2 (Sufficiently Large Replay): `FAIL` (`original_r2_satisfied = false`)
+- Empirical breadth limitation: Broad multi-league, multi-date, and multi-market empirical equivalence was **not** proven and is explicitly disclaimed.
+
+### Frozen Artifacts and Comparator Execution
+
+- **Comparator Policy**: `ATHENA_P3_0_LEGACY_CANONICAL_COMPARATOR_V1`
+- **Comparator Corpus Artifact**: `artifacts/p3-0-comparator-corpus-v1.json`
+  - Canonical SHA-256: `276ae20b450376b61933114ffa1c0e8cdfad57682bf1956a29f3d0f42f4c1133`
+  - Real replay row count: 1
+  - Synthetic cases admitted: 0 (strictly segregated)
+- **Comparison Report Artifact**: `artifacts/p3-0-comparison-report-v1.json`
+  - Canonical SHA-256: `40b320ee4bf25e6df72b718b334d15b4a5a8d39c255ac92d7586bd2c3361aa50`
+  - Real replay row count: 1
+  - Synthetic P0 case count: 5
+
+### Real-Row Comparison Semantics
+
+- **Fixture Identity**: `FOTMOB:5749683` / `sr:match:71945268` (Fiorentina vs Napoli, Serie A, 2026-09-20T10:30:00Z)
+- **Legacy Side**: `legacy_final_recommendation = null`, `legacy_decision_status = ANALYTICAL_CANDIDATE`. AnalysisPipeline path is analysis-only without selection or BET authorization.
+- **Canonical Side**: `canonical_router_status = SELECTED`, `canonical_router_recommendation = "ASIAN_HANDICAP AWAY 0.0 @ 1.61 (Fiorentina vs Napoli)"` with verified exact quote binding inside bundle `d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191`.
+- **Classification**: `EXPECTED_POLICY_DIFFERENCE` (`severity_classification = EXPLAINED_EXPECTED`).
+- **Probability Comparison**: `NOT_COMPARABLE` (legacy heuristic scores are not calibrated de-vigged event probabilities).
+- **Price Availability**: Legacy has no price access; canonical binds verified provider quote @ 1.61.
+
+### P0 Synthetic Acceptance Cases
+
+All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/legacy_market_selection_cases_v1.json`) were evaluated against the canonical architecture and passed:
+1. `LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION` -> PASS (Canonical Router enforces quote requirement; unpriced candidates yield `NO_BET`).
+2. `LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT` -> PASS (Provider pricing directly drives net expected value and ranking).
+3. `LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION` -> PASS (Missing provider availability produces explicit fail-closed non-selectable disposition).
+4. `LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO` -> PASS (Only registered canonical `MarketId` and `OutcomeId` identities are routed).
+5. `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` -> PASS (Equal-value ties resolved deterministically by canonical opportunity identity, not list append order).
+
+### High-Severity Rules and Finding Outcome
+
+- Potential high severity findings: 0
+- Explained high severity findings: 0
+- Confirmed defects: 0
+- Unexplained high severity findings: **0** (`UNEXPLAINED_BLOCKER = 0`)
+
+### Safety and Authority Boundaries
+
+- `provider_acquisition = false` (zero live network / external provider calls)
+- `network_used = false`
+- `portfolio_invoked = false`
+- `share_code_invoked = false`
+- `login = false`, `cookies = false`, `wallet = false`, `staking = false`, `bet = false`, `wager_placed = false`
+- `main_authority = false`
+- `selection_authority_changed = false`
+- `promotion_authority = false`
+- `P3.1`: **NOT STARTED**
+- `SOURCE_REVIEW_COUNTER`: **4 / 5** while unmerged
+- Terminal machine state: `P3_0_COMPARATOR_MERGE_REQUIRED`
