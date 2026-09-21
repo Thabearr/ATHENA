@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 
 from scripts import audit_p3_1_main_caller_migration as audit
 
@@ -31,9 +32,15 @@ def test_migration_receipt_binds_pr_a_registry_and_frozen_p05_history():
     assert payload["promoted_registry_canonical_sha256"] == audit.PROMOTED_REGISTRY_SHA256
     assert payload["historical_p0_5_artifact_preserved"] is True
     assert payload["historical_p0_5_market_selector_reachability"] is True
-    assert hashlib.sha256(audit.HISTORICAL_P05_ARTIFACT.read_bytes()).hexdigest() == (
+    source_bytes = subprocess.check_output([
+        "git",
+        "show",
+        f"HEAD:{audit.HISTORICAL_P05_ARTIFACT.relative_to(audit.REPOSITORY_ROOT).as_posix()}",
+    ])
+    assert hashlib.sha256(source_bytes).hexdigest() == (
         audit.HISTORICAL_P05_ARTIFACT_SHA256
     )
+    assert audit.HISTORICAL_P05_ARTIFACT.read_bytes().replace(b"\r\n", b"\n") == source_bytes
     assert payload["current_build_acca_market_selector_executed_count"] == 0
 
 
@@ -94,4 +101,3 @@ def test_migration_receipt_records_scope_and_safety_guards():
 def test_committed_receipt_matches_deterministic_audit_output():
     committed = json.loads(Path(audit.DEFAULT_OUTPUT).read_bytes())
     assert committed == audit.build_migration_evidence()
-

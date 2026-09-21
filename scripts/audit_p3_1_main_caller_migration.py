@@ -13,6 +13,7 @@ from datetime import timedelta
 import hashlib
 import json
 from pathlib import Path
+import subprocess
 from typing import Any, Iterator
 
 from domain import canonical_core
@@ -38,7 +39,7 @@ BASE_MAIN_SHA = "20a6aaaaa2912369298004eff27b868bffb2f7dd"
 P3_1_PR_A_MERGE_COMMIT_SHA = BASE_MAIN_SHA
 P3_1_PR_A_RECEIPT_SHA256 = "f0b67e693fe440813e34a249aaffe2bb043e5617e1717ea7e2f291de20334f8c"
 PROMOTED_REGISTRY_SHA256 = "d52fbb292ddaea9ba2e94fda036f715db5ced7248187814fd29ac7859de26104"
-HISTORICAL_P05_ARTIFACT_SHA256 = "3ea90c5e0e797c027ad7a516db62f95e8bf9c7239b6074651bcdf64a6a03d65e"
+HISTORICAL_P05_ARTIFACT_SHA256 = "a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4"
 ROUTER_COMPONENT_ID = presentation.EXPECTED_ROUTER_COMPONENT_ID
 ROUTER_CONTRACT_SHA256 = presentation.EXPECTED_ROUTER_CONTRACT_SHA256
 ROUTER_ARTIFACT_GIT_BLOB_SHA = presentation.EXPECTED_ROUTER_ARTIFACT_GIT_BLOB_SHA
@@ -60,6 +61,24 @@ def _load_json(path: Path) -> dict[str, Any]:
     if type(value) is not dict:
         raise ValueError(f"expected object artifact: {path}")
     return value
+
+
+def _source_controlled_historical_bytes() -> bytes:
+    """Read the frozen artifact as Git stores it, independent of checkout EOLs."""
+
+    relative = HISTORICAL_P05_ARTIFACT.relative_to(REPOSITORY_ROOT).as_posix()
+    try:
+        source_bytes = subprocess.check_output(
+            ["git", "show", f"HEAD:{relative}"],
+            cwd=REPOSITORY_ROOT,
+            stderr=subprocess.DEVNULL,
+        )
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("could not read source-controlled frozen P0.5 artifact") from exc
+    working_bytes = HISTORICAL_P05_ARTIFACT.read_bytes()
+    if working_bytes.replace(b"\r\n", b"\n") != source_bytes:
+        raise ValueError("frozen P0.5 runtime artifact changed")
+    return source_bytes
 
 
 class _PatchStack:
@@ -208,9 +227,9 @@ def _run_case(*, probability: float | None) -> dict[str, Any]:
 
 
 def _historical_evidence() -> tuple[dict[str, Any], dict[str, Any]]:
-    raw = HISTORICAL_P05_ARTIFACT.read_bytes()
+    raw = _source_controlled_historical_bytes()
     if hashlib.sha256(raw).hexdigest() != HISTORICAL_P05_ARTIFACT_SHA256:
-        raise ValueError("frozen P0.5 runtime artifact changed")
+        raise ValueError("frozen P0.5 runtime artifact source identity drifted")
     frozen = _load_json(HISTORICAL_P05_ARTIFACT)
     build_acca = frozen["supported_root_observations"]["build_acca"]
     trace = frozen["supplemental_legacy_prediction_service_trace"]
