@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import ast
+import io
 from datetime import timedelta
+from contextlib import redirect_stdout
 from pathlib import Path
 
 import pytest
@@ -11,6 +13,7 @@ from domain import markets
 from domain import price_all
 from domain._market_router_contracts import RouterDecisionStatus
 from engine.market_selector import MarketSelector
+from engine.report_generator import ReportGenerator
 from models.prediction import Prediction
 from services import main_canonical_prediction_adapter as presentation
 from services.prediction_service import PredictionService
@@ -238,3 +241,66 @@ def test_projection_is_deterministic_and_never_uses_quote_or_legacy_scores(monke
     assert result_one.recommended_market == result_two.recommended_market
     assert result_one.market_confidence == result_two.market_confidence
     assert result_one.ranked_markets == result_two.ranked_markets
+
+
+def _attach_fake_quote_attributes(prediction: Prediction) -> Prediction:
+    prediction.odds = 99.0
+    prediction.decimal_odds = 99.0
+    prediction.provider_event_id = "fake-event"
+    prediction.provider_market_id = "fake-market"
+    prediction.quote_identity_sha256 = "f" * 64
+    prediction.provider_quote = {"odds": 99.0}
+    prediction.recommended_market = "Home Win"
+    prediction.market_confidence = 99.0
+    prediction.ranked_markets = [("Home Win", 99.0)]
+    return prediction
+
+
+def test_fake_quote_provider_attributes_have_no_authority_without_router_decision():
+    result = presentation.project_canonical_router_decision(
+        _attach_fake_quote_attributes(_prediction())
+    )
+    assert result.recommended_market == "No Recommendation"
+    assert result.market_confidence == 0.0
+    assert result.ranked_markets == []
+    assert presentation.NO_ROUTER_REASON in result.reasons
+
+
+def test_fake_quote_provider_attributes_cannot_change_selected_projection(monkeypatch):
+    selected = _decision(monkeypatch, 0.60)
+    clean = presentation.project_canonical_router_decision(_prediction(), selected)
+    polluted = presentation.project_canonical_router_decision(
+        _attach_fake_quote_attributes(_prediction()), selected
+    )
+    assert polluted.recommended_market == clean.recommended_market
+    assert polluted.market_confidence == clean.market_confidence
+    assert polluted.ranked_markets == clean.ranked_markets
+
+
+def test_report_generator_preserves_legacy_output_shape_for_no_decision_and_selected(
+    monkeypatch,
+):
+    no_decision = _service(monkeypatch).predict({})
+    no_decision_output = io.StringIO()
+    with redirect_stdout(no_decision_output):
+        ReportGenerator().generate(no_decision)
+    rendered_no_decision = no_decision_output.getvalue()
+    for field in (
+        "Home FC vs Away FC",
+        "League: Synthetic League",
+        "Home Win Probability",
+        "Draw Probability",
+        "Away Win Probability",
+        "Confidence",
+        "Risk Score",
+        "Recommended Market",
+        "No Recommendation",
+    ):
+        assert field in rendered_no_decision
+
+    selected = _decision(monkeypatch, 0.60)
+    selected_prediction = _service(monkeypatch).predict({}, router_decision=selected)
+    selected_output = io.StringIO()
+    with redirect_stdout(selected_output):
+        ReportGenerator().generate(selected_prediction)
+    assert "Recommended Market : Home Win" in selected_output.getvalue()

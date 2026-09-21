@@ -181,9 +181,9 @@ P0.5 does not create or reload a real SportyBet code.
 ## Reproducible legacy MarketSelector problem cases
 
 `tests/fixtures/architecture/legacy_market_selection_cases_v1.json` freezes five
-current behaviors for later migration review:
+historical P0.5 observed behaviors for later migration review:
 
-| Case ID | Current observed behavior |
+| Case ID | Historical P0.5 observed behavior |
 | --- | --- |
 | `LEGACY_SELECTOR_NO_QUOTE_RECOMMENDATION` | Recommends `Both Teams To Score` at `84.0` with no bookmaker quote/value input. |
 | `LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT` | Quote-like/provider-like attributes do not participate in `MarketSelector.select`; the same heuristic recommendation remains. |
