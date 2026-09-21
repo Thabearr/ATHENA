@@ -19,8 +19,9 @@ def test_source_controlled_shadow_wrapper_aliases_resolve_to_exact_core_owners()
         owner_record = bindings.record_for(responsibility_id)
         assert alias_record == owner_record
         assert alias_record.component_id == adapter.EXPECTED_COMPONENTS[responsibility_id]
-        assert alias_record.allowed_profiles == (registry.SHADOW,)
-        assert alias_record.main_authority is False
+        assert alias_record.allowed_profiles == (registry.MAIN, registry.SHADOW)
+        assert alias_record.promotion_state == registry.APPROVED_FOR_MAIN
+        assert alias_record.main_authority is True
 
     summary = adapter.canonical_core_summary()
     assert summary["compatibility_aliases"] == {
@@ -76,14 +77,14 @@ def test_shadow_alias_cannot_be_retargeted_to_another_registered_champion(
         adapter.resolve_shadow_canonical_core()
 
 
-def test_compatibility_aliases_do_not_expand_authority() -> None:
+def test_compatibility_aliases_inherit_promoted_owner_without_expanding_shadow_caller_authority() -> None:
     source_registry = registry.load_default_registry()
     for alias_id in adapter.COMPATIBILITY_ALIASES:
         record = source_registry.resolve_component(alias_id)
         assert record.role == registry.CHAMPION
-        assert record.promotion_state == registry.REGISTERED_CHAMPION
-        assert record.allowed_profiles == (registry.SHADOW,)
-        assert record.main_authority is False
+        assert record.promotion_state == registry.APPROVED_FOR_MAIN
+        assert record.allowed_profiles == (registry.MAIN, registry.SHADOW)
+        assert record.main_authority is True
 
     assert adapter.AUTHORITY["source_controlled_compatibility_aliases"] is True
     assert adapter.AUTHORITY["main_authority"] is False
