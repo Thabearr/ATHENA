@@ -205,6 +205,204 @@ def load_real_row_source(
     return dict(source)
 
 
+REQUIRED_RETAINED_AUTH_KEYS = (
+    "authority_profile",
+    "main_authority",
+    "login",
+    "cookies",
+    "wallet",
+    "staking",
+    "wager_placed",
+    "share_code_generation",
+    "portfolio_optimization",
+    "provider_acquisition",
+)
+
+REQUIRED_CANON_EXEC_KEYS = (
+    "authority_profile",
+    "canonical_core_policy_id",
+    "policy_id",
+    "portfolio_optimization_invoked",
+    "share_code_invoked",
+    "stopped_after",
+    "source_path",
+)
+
+EXPECTED_CANON_RESPONSIBILITIES = frozenset({
+    "delivery_share_code_transport",
+    "market_router",
+    "portfolio_optimizer",
+    "price_all_and_de_vig",
+    "provider_market_semantics",
+})
+
+ROUTER_EXECUTION_FALSE_FIELDS = (
+    "accumulator",
+    "bet",
+    "cookies",
+    "login",
+    "phase6",
+    "production_market_router",
+    "production_model",
+    "production_portfolio",
+    "production_price_all",
+    "production_probability",
+    "production_selection",
+    "share_code_generation",
+    "slip_construction",
+    "sportybet_execution",
+    "staking",
+    "wager_placed",
+    "wallet",
+)
+
+ROUTER_RESEARCH_TRUE_FIELDS = (
+    "research_counterfactual_recording",
+    "research_current_quote_consumption",
+    "research_shadow_market_routing",
+    "research_shadow_price_all",
+)
+
+
+def _validate_authority_evidence(candidate: Mapping[str, Any]) -> list[str]:
+    """Validate all required authority evidence facts fail-closed.
+
+    Returns a list of failure reasons. If the list is empty, authority
+    evidence is verified and safe.
+    """
+    reasons: list[str] = []
+
+    # 3A. retained_capture_authority_state
+    retained_auth = candidate.get("retained_capture_authority_state")
+    if not isinstance(retained_auth, Mapping):
+        reasons.append("missing retained_capture_authority_state")
+    else:
+        for req_key in REQUIRED_RETAINED_AUTH_KEYS:
+            if req_key not in retained_auth:
+                reasons.append(f"retained_capture_authority_state missing {req_key}")
+        if retained_auth.get("authority_profile") != "SHADOW":
+            reasons.append(f"retained authority_profile {retained_auth.get('authority_profile')} is not SHADOW")
+        if retained_auth.get("main_authority") is not False:
+            reasons.append("retained main_authority is not False")
+        for false_field in (
+            "login",
+            "cookies",
+            "wallet",
+            "staking",
+            "wager_placed",
+            "share_code_generation",
+            "portfolio_optimization",
+        ):
+            if retained_auth.get(false_field) is not False:
+                reasons.append(f"retained {false_field} is not False")
+        if "provider_acquisition" not in retained_auth:
+            reasons.append("retained provider_acquisition is missing")
+        elif retained_auth.get("provider_acquisition") is not True:
+            reasons.append("retained provider_acquisition is not True")
+
+    if "retained_capture_provider_acquisition" not in candidate:
+        reasons.append("candidate retained_capture_provider_acquisition is missing")
+    elif candidate.get("retained_capture_provider_acquisition") is not True:
+        reasons.append("candidate retained_capture_provider_acquisition is not True")
+
+    if "comparator_provider_acquisition" not in candidate:
+        reasons.append("candidate comparator_provider_acquisition is missing")
+    elif candidate.get("comparator_provider_acquisition") is not False:
+        reasons.append("candidate comparator_provider_acquisition is not False")
+
+    # 3B. canonical_execution_identity
+    canon_exec = candidate.get("canonical_execution_identity")
+    if not isinstance(canon_exec, Mapping):
+        reasons.append("missing canonical_execution_identity")
+    else:
+        for req_key in REQUIRED_CANON_EXEC_KEYS:
+            if req_key not in canon_exec:
+                reasons.append(f"canonical_execution_identity missing {req_key}")
+        if canon_exec.get("authority_profile") != "SHADOW":
+            reasons.append(f"canonical_execution_identity authority_profile {canon_exec.get('authority_profile')} is not SHADOW")
+        if canon_exec.get("canonical_core_policy_id") != "ATHENA_SHARED_CANONICAL_CORE_V1":
+            reasons.append(f"canonical_execution_identity canonical_core_policy_id {canon_exec.get('canonical_core_policy_id')} mismatch")
+        if canon_exec.get("policy_id") != "ATHENA_P3_0_PROSPECTIVE_PAIRED_CAPTURE_V1":
+            reasons.append(f"canonical_execution_identity policy_id {canon_exec.get('policy_id')} mismatch")
+        if canon_exec.get("portfolio_optimization_invoked") is not False:
+            reasons.append("canonical_execution_identity portfolio_optimization_invoked is not False")
+        if canon_exec.get("share_code_invoked") is not False:
+            reasons.append("canonical_execution_identity share_code_invoked is not False")
+        if canon_exec.get("stopped_after") != "PRICE_ALL_ROUTER":
+            reasons.append(f"canonical_execution_identity stopped_after {canon_exec.get('stopped_after')} != PRICE_ALL_ROUTER")
+        if canon_exec.get("source_path") != "current_shadow_all_market_runner._acquire_router_inputs":
+            reasons.append(f"canonical_execution_identity source_path {canon_exec.get('source_path')} mismatch")
+
+    # 3C. canonical_authority
+    canon_auth = candidate.get("canonical_authority")
+    if not isinstance(canon_auth, Mapping):
+        reasons.append("missing canonical_authority")
+    else:
+        if canon_auth.get("authority_profile") != "SHADOW":
+            reasons.append(f"canonical_authority authority_profile {canon_auth.get('authority_profile')} is not SHADOW")
+        if canon_auth.get("canonical_core_policy_id") != "ATHENA_SHARED_CANONICAL_CORE_V1":
+            reasons.append(f"canonical_authority canonical_core_policy_id {canon_auth.get('canonical_core_policy_id')} mismatch")
+
+        comps = canon_auth.get("resolved_components")
+        if not isinstance(comps, list) or len(comps) == 0:
+            reasons.append("canonical_authority resolved_components missing or not non-empty list")
+        elif len(comps) != 5:
+            reasons.append(f"canonical_authority resolved_components count {len(comps)} != 5")
+        else:
+            resp_list = [c.get("responsibility_id") for c in comps if isinstance(c, Mapping)]
+            if len(resp_list) != len(comps):
+                reasons.append("canonical_authority resolved_components contains non-mapping component")
+            elif len(set(resp_list)) != len(resp_list):
+                reasons.append("canonical_authority resolved_components contains duplicate responsibility")
+            elif set(resp_list) != EXPECTED_CANON_RESPONSIBILITIES:
+                reasons.append(f"canonical_authority resolved_components responsibilities {set(resp_list)} != {EXPECTED_CANON_RESPONSIBILITIES}")
+
+            for i, comp in enumerate(comps):
+                if not isinstance(comp, Mapping):
+                    reasons.append(f"canonical_authority component {i} is not Mapping")
+                    continue
+                if "main_authority" not in comp:
+                    reasons.append(f"canonical_authority component {i} missing main_authority")
+                elif comp.get("main_authority") is not False:
+                    reasons.append(f"canonical_authority component {i} main_authority is not False")
+
+                for comp_req in ("responsibility_id", "component_id", "contract_sha256", "artifact_git_blob_sha", "allowed_profiles"):
+                    if comp_req not in comp:
+                        reasons.append(f"canonical_authority component {i} missing {comp_req}")
+
+                allowed = comp.get("allowed_profiles")
+                if not isinstance(allowed, (list, tuple, set)) or "SHADOW" not in allowed:
+                    reasons.append(f"canonical_authority component {i} missing SHADOW in allowed_profiles")
+
+    # 3D. router_authority
+    router_auth = candidate.get("router_authority")
+    if not isinstance(router_auth, Mapping):
+        reasons.append("missing router_authority")
+    else:
+        for field in ROUTER_EXECUTION_FALSE_FIELDS:
+            if field not in router_auth:
+                reasons.append(f"router_authority missing {field}")
+            elif router_auth.get(field) is not False:
+                reasons.append(f"router_authority {field} is not False")
+
+        for field in ROUTER_RESEARCH_TRUE_FIELDS:
+            if field not in router_auth:
+                reasons.append(f"router_authority missing {field}")
+            elif router_auth.get(field) is not True:
+                reasons.append(f"router_authority {field} is not True")
+
+    if "router_wager_placed" not in candidate:
+        reasons.append("missing router_wager_placed")
+    elif candidate.get("router_wager_placed") is not False:
+        reasons.append("router_wager_placed is not False")
+
+    for leak_field in ("main_authority", "wagering", "staking", "bet", "login", "cookies", "wallet"):
+        if candidate.get(leak_field) is True:
+            reasons.append(f"candidate has {leak_field} == True")
+
+    return reasons
+
+
 def _validate_real_row_source(source: Mapping[str, Any]) -> None:
     if source.get("policy_id") != REAL_ROW_SOURCE_POLICY_ID:
         raise ComparatorError(f"real row source policy_id mismatch: {source.get('policy_id')}")
@@ -346,37 +544,10 @@ def _validate_real_row_source(source: Mapping[str, Any]) -> None:
     if quote_obs and kickoff and quote_obs >= kickoff:
         raise ComparatorError("quote observed_at is at or after kickoff_utc (temporal violation)")
 
-    # Validate retained authority structures
-    retained_auth = source.get("retained_capture_authority_state")
-    if not isinstance(retained_auth, Mapping):
-        raise ComparatorError("real row source missing retained_capture_authority_state")
-    if retained_auth.get("authority_profile") != "SHADOW":
-        raise ComparatorError("retained_capture_authority_state authority_profile is not SHADOW")
-    if retained_auth.get("main_authority") is not False:
-        raise ComparatorError("retained_capture_authority_state main_authority is not False")
-
-    canon_exec = source.get("canonical_execution_identity")
-    if not isinstance(canon_exec, Mapping):
-        raise ComparatorError("real row source missing canonical_execution_identity")
-    if canon_exec.get("authority_profile") != "SHADOW":
-        raise ComparatorError("canonical_execution_identity authority_profile is not SHADOW")
-    if canon_exec.get("stopped_after") != "PRICE_ALL_ROUTER":
-        raise ComparatorError("canonical_execution_identity stopped_after is not PRICE_ALL_ROUTER")
-
-    canon_auth = source.get("canonical_authority")
-    if not isinstance(canon_auth, Mapping):
-        raise ComparatorError("real row source missing canonical_authority")
-    if canon_auth.get("authority_profile") != "SHADOW":
-        raise ComparatorError("canonical_authority authority_profile is not SHADOW")
-
-    router_auth = source.get("router_authority")
-    if not isinstance(router_auth, Mapping):
-        raise ComparatorError("real row source missing router_authority")
-    if router_auth.get("production_selection") is not False or router_auth.get("sportybet_execution") is not False:
-        raise ComparatorError("router_authority execution permissions are not False")
-
-    if source.get("router_wager_placed") is not False:
-        raise ComparatorError("router_wager_placed is not False")
+    # Validate retained authority structures fail-closed
+    auth_errors = _validate_authority_evidence(source)
+    if auth_errors:
+        raise ComparatorError(f"real row source authority validation failed: {'; '.join(auth_errors)}")
 
 
 def build_acceptance_decision(
@@ -752,50 +923,7 @@ def compare_real_row(
         }
 
     # Rule 7: MAIN execution authority leaked
-    retained_auth = candidate.get("retained_capture_authority_state")
-    canon_exec = candidate.get("canonical_execution_identity")
-    canon_auth = candidate.get("canonical_authority")
-    router_auth = candidate.get("router_authority")
-    router_wager = candidate.get("router_wager_placed")
-
-    rule_7_reasons: list[str] = []
-    if not isinstance(retained_auth, Mapping):
-        rule_7_reasons.append("missing retained_capture_authority_state")
-    else:
-        if retained_auth.get("authority_profile") != "SHADOW":
-            rule_7_reasons.append(f"retained authority_profile {retained_auth.get('authority_profile')} is not SHADOW")
-        if retained_auth.get("main_authority") is not False:
-            rule_7_reasons.append("retained main_authority is not False")
-
-    if not isinstance(canon_exec, Mapping):
-        rule_7_reasons.append("missing canonical_execution_identity")
-    else:
-        if canon_exec.get("authority_profile") != "SHADOW":
-            rule_7_reasons.append(f"canonical_execution_identity authority_profile {canon_exec.get('authority_profile')} is not SHADOW")
-        if canon_exec.get("stopped_after") != "PRICE_ALL_ROUTER":
-            rule_7_reasons.append(f"canonical_execution_identity stopped_after {canon_exec.get('stopped_after')} != PRICE_ALL_ROUTER")
-
-    if not isinstance(canon_auth, Mapping):
-        rule_7_reasons.append("missing canonical_authority")
-    else:
-        if canon_auth.get("authority_profile") != "SHADOW":
-            rule_7_reasons.append(f"canonical_authority authority_profile {canon_auth.get('authority_profile')} is not SHADOW")
-
-    if not isinstance(router_auth, Mapping):
-        rule_7_reasons.append("missing router_authority")
-    else:
-        if router_auth.get("production_selection") is not False:
-            rule_7_reasons.append("router_authority production_selection is not False")
-        if router_auth.get("sportybet_execution") is not False:
-            rule_7_reasons.append("router_authority sportybet_execution is not False")
-
-    if router_wager is not False:
-        rule_7_reasons.append("router_wager_placed is not False")
-
-    for leak_field in ("main_authority", "wagering", "staking", "bet", "login", "cookies", "wallet"):
-        if candidate.get(leak_field) is True:
-            rule_7_reasons.append(f"candidate has {leak_field} == True")
-
+    rule_7_reasons = _validate_authority_evidence(candidate)
     rule_7_violated = bool(rule_7_reasons)
     if rule_7_violated:
         high_severity_checks["rule_7_main_execution_authority_leaked"] = {

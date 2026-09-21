@@ -681,65 +681,226 @@ def test_50_rule_7_fail_closed_authority_verification(real_row_source: dict[str,
     res = comparator.compare_real_row(real_row_source)
     assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "PASS"
 
+    def assert_rule_7_fails(tampered_dict: dict[str, Any]) -> None:
+        r = comparator.compare_real_row(tampered_dict)
+        assert r["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+        assert r["primary_classification"] == "POTENTIAL_HIGH_SEVERITY_REGRESSION"
+        assert r["unexplained_blocker"] is True
+
+    # RETAINED CAPTURE (cases 2-15)
     # 2. Missing retained_capture_authority_state -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    del tampered["retained_capture_authority_state"]
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    t = copy.deepcopy(real_row_source)
+    del t["retained_capture_authority_state"]
+    assert_rule_7_fails(t)
 
     # 3. authority_profile != SHADOW -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    tampered["retained_capture_authority_state"]["authority_profile"] = "MAIN"
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    t = copy.deepcopy(real_row_source)
+    t["retained_capture_authority_state"]["authority_profile"] = "MAIN"
+    assert_rule_7_fails(t)
 
     # 4. main_authority == True -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    tampered["retained_capture_authority_state"]["main_authority"] = True
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    t = copy.deepcopy(real_row_source)
+    t["retained_capture_authority_state"]["main_authority"] = True
+    assert_rule_7_fails(t)
 
-    # 5. Missing canonical_execution_identity -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    del tampered["canonical_execution_identity"]
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # 5-11. Boolean false fields set to True -> FAIL
+    for false_f in (
+        "login",
+        "cookies",
+        "wallet",
+        "staking",
+        "wager_placed",
+        "share_code_generation",
+        "portfolio_optimization",
+    ):
+        t = copy.deepcopy(real_row_source)
+        t["retained_capture_authority_state"][false_f] = True
+        assert_rule_7_fails(t)
 
-    # 6. canonical_execution_identity stopped_after != PRICE_ALL_ROUTER -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    tampered["canonical_execution_identity"]["stopped_after"] = "LIVE_EXECUTION"
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # 12. Missing any single required key from retained_capture_authority_state -> FAIL
+    for req_k in comparator.REQUIRED_RETAINED_AUTH_KEYS:
+        t = copy.deepcopy(real_row_source)
+        del t["retained_capture_authority_state"][req_k]
+        assert_rule_7_fails(t)
 
-    # 7. Missing canonical_authority -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    del tampered["canonical_authority"]
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # 13. retained provider_acquisition missing -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["retained_capture_authority_state"]["provider_acquisition"]
+    assert_rule_7_fails(t)
 
-    # 8. Missing router_authority -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    del tampered["router_authority"]
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # 14. retained provider_acquisition=False -> FAIL for this exact retained artifact
+    t = copy.deepcopy(real_row_source)
+    t["retained_capture_authority_state"]["provider_acquisition"] = False
+    assert_rule_7_fails(t)
 
-    # 9. router_authority production_selection is True -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    tampered["router_authority"]["production_selection"] = True
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # 15. comparator_provider_acquisition=True -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["comparator_provider_acquisition"] = True
+    assert_rule_7_fails(t)
 
-    # 10. router_authority sportybet_execution is True -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    tampered["router_authority"]["sportybet_execution"] = True
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # CANONICAL EXECUTION IDENTITY (cases 16-24)
+    # 16. Missing canonical_execution_identity -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_execution_identity"]
+    assert_rule_7_fails(t)
 
-    # 11. router_wager_placed is True -> FAIL
-    tampered = copy.deepcopy(real_row_source)
-    tampered["router_wager_placed"] = True
-    res = comparator.compare_real_row(tampered)
-    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+    # 17. authority_profile != SHADOW -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["authority_profile"] = "MAIN"
+    assert_rule_7_fails(t)
+
+    # 18. canonical_core_policy_id mismatch -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["canonical_core_policy_id"] = "WRONG_POLICY"
+    assert_rule_7_fails(t)
+
+    # 19. policy_id mismatch -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["policy_id"] = "WRONG_POLICY"
+    assert_rule_7_fails(t)
+
+    # 20. portfolio_optimization_invoked=True -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["portfolio_optimization_invoked"] = True
+    assert_rule_7_fails(t)
+
+    # 21. share_code_invoked=True -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["share_code_invoked"] = True
+    assert_rule_7_fails(t)
+
+    # 22. stopped_after != PRICE_ALL_ROUTER -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["stopped_after"] = "LIVE_EXECUTION"
+    assert_rule_7_fails(t)
+
+    # 23. source_path mismatch -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_execution_identity"]["source_path"] = "wrong.module.path"
+    assert_rule_7_fails(t)
+
+    # 24. Missing any required execution field -> FAIL
+    for req_exec in comparator.REQUIRED_CANON_EXEC_KEYS:
+        t = copy.deepcopy(real_row_source)
+        del t["canonical_execution_identity"][req_exec]
+        assert_rule_7_fails(t)
+
+    # CANONICAL AUTHORITY (cases 25-40)
+    # 25. Missing canonical_authority -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]
+    assert_rule_7_fails(t)
+
+    # 26. authority_profile != SHADOW -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["authority_profile"] = "MAIN"
+    assert_rule_7_fails(t)
+
+    # 27. canonical_core_policy_id mismatch -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["canonical_core_policy_id"] = "WRONG_POLICY"
+    assert_rule_7_fails(t)
+
+    # 28. Missing resolved_components -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"]
+    assert_rule_7_fails(t)
+
+    # 29. Empty resolved_components -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["resolved_components"] = []
+    assert_rule_7_fails(t)
+
+    # 30. count != 5 -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["resolved_components"] = t["canonical_authority"]["resolved_components"][:4]
+    assert_rule_7_fails(t)
+
+    # 31. Duplicate responsibility -> FAIL
+    t = copy.deepcopy(real_row_source)
+    dup = copy.deepcopy(t["canonical_authority"]["resolved_components"][0])
+    t["canonical_authority"]["resolved_components"][1] = dup
+    assert_rule_7_fails(t)
+
+    # 32. Responsibility set mismatch -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["resolved_components"][0]["responsibility_id"] = "unauthorized_execution"
+    assert_rule_7_fails(t)
+
+    # 33. Any component main_authority=True -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["resolved_components"][0]["main_authority"] = True
+    assert_rule_7_fails(t)
+
+    # 34. Any component missing main_authority -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"][0]["main_authority"]
+    assert_rule_7_fails(t)
+
+    # 35. Missing responsibility_id -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"][0]["responsibility_id"]
+    assert_rule_7_fails(t)
+
+    # 36. Missing component_id -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"][0]["component_id"]
+    assert_rule_7_fails(t)
+
+    # 37. Missing contract_sha256 -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"][0]["contract_sha256"]
+    assert_rule_7_fails(t)
+
+    # 38. Missing artifact_git_blob_sha -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"][0]["artifact_git_blob_sha"]
+    assert_rule_7_fails(t)
+
+    # 39. Missing allowed_profiles -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["canonical_authority"]["resolved_components"][0]["allowed_profiles"]
+    assert_rule_7_fails(t)
+
+    # 40. Allowed profiles without SHADOW -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["canonical_authority"]["resolved_components"][0]["allowed_profiles"] = ["PRODUCTION_ONLY"]
+    assert_rule_7_fails(t)
+
+    # ROUTER AUTHORITY (cases 41-63)
+    # 41-57. For EACH execution field: delete -> FAIL, set True -> FAIL
+    for exec_f in comparator.ROUTER_EXECUTION_FALSE_FIELDS:
+        # Delete field -> FAIL
+        t = copy.deepcopy(real_row_source)
+        del t["router_authority"][exec_f]
+        assert_rule_7_fails(t)
+
+        # Set True -> FAIL
+        t = copy.deepcopy(real_row_source)
+        t["router_authority"][exec_f] = True
+        assert_rule_7_fails(t)
+
+    # 58-61. For EACH research field: delete -> FAIL, set False -> FAIL
+    for res_f in comparator.ROUTER_RESEARCH_TRUE_FIELDS:
+        # Delete field -> FAIL
+        t = copy.deepcopy(real_row_source)
+        del t["router_authority"][res_f]
+        assert_rule_7_fails(t)
+
+        # Set False -> FAIL
+        t = copy.deepcopy(real_row_source)
+        t["router_authority"][res_f] = False
+        assert_rule_7_fails(t)
+
+    # 62. router_wager_placed missing -> FAIL
+    t = copy.deepcopy(real_row_source)
+    del t["router_wager_placed"]
+    assert_rule_7_fails(t)
+
+    # 63. router_wager_placed=True -> FAIL
+    t = copy.deepcopy(real_row_source)
+    t["router_wager_placed"] = True
+    assert_rule_7_fails(t)
 
 
 def test_51_retained_capture_vs_comparator_provider_acquisition(
