@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import dataclasses
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +15,40 @@ ROOT = Path(__file__).resolve().parents[1]
 RUNNER_PATH = ROOT / "domain/current_shadow_all_market_runner.py"
 
 
+def _synthetic_registry_with_exact_shadow_only_champions():
+    source = adapter._registry.load_default_registry()
+    records = tuple(
+        dataclasses.replace(
+            record,
+            allowed_profiles=(adapter._registry.SHADOW,),
+            promotion_state=adapter._registry.REGISTERED_CHAMPION,
+            main_authority=False,
+        )
+        for record in source.records
+    )
+    return adapter._registry.ComponentAuthorityRegistry(
+        records=records,
+        aliases=source.aliases,
+    )
+
+
+def _synthetic_main_only_champions():
+    source = adapter._registry.load_default_registry()
+    records = tuple(
+        dataclasses.replace(
+            record,
+            allowed_profiles=(adapter._registry.MAIN,),
+            promotion_state=adapter._registry.APPROVED_FOR_MAIN,
+            main_authority=True,
+        )
+        for record in source.records
+    )
+    return adapter._registry.ComponentAuthorityRegistry(
+        records=records,
+        aliases=source.aliases,
+    )
+
+
 def test_shadow_adapter_resolves_exact_source_controlled_five_component_core() -> None:
     adapter.clear_shadow_canonical_core_cache()
     bindings = adapter.resolve_shadow_canonical_core()
@@ -23,16 +58,68 @@ def test_shadow_adapter_resolves_exact_source_controlled_five_component_core() -
     assert {
         record.responsibility_id: record.component_id for record in bindings.records
     } == dict(adapter.EXPECTED_COMPONENTS)
-    assert all(
-        record.allowed_profiles == ("SHADOW",) and record.main_authority is False
-        for record in bindings.records
-    )
+    assert all("SHADOW" in record.allowed_profiles for record in bindings.records)
 
     summary = adapter.canonical_core_summary()
     assert summary["authority_profile"] == "SHADOW"
     assert summary["component_ids"] == dict(adapter.EXPECTED_COMPONENTS)
     assert summary["main_authority"] is False
     assert summary["wager_placed"] is False
+
+
+def test_exact_shadow_only_registered_champions_resolve_without_main_promotion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthetic = _synthetic_registry_with_exact_shadow_only_champions()
+    monkeypatch.setattr(adapter._registry, "load_default_registry", lambda: synthetic)
+    monkeypatch.setattr(
+        adapter._core,
+        "resolve_canonical_core",
+        lambda manifest, *, regime_id, required_schema_version=1: (
+            adapter._core._resolve_canonical_core_with_registry_for_test(
+                manifest,
+                regime_id=regime_id,
+                required_schema_version=required_schema_version,
+                registry=synthetic,
+            )
+        ),
+    )
+    adapter.clear_shadow_canonical_core_cache()
+
+    bindings = adapter.resolve_shadow_canonical_core()
+
+    assert len(bindings.records) == 5
+    assert all(record.allowed_profiles == ("SHADOW",) for record in bindings.records)
+    assert all(record.promotion_state == adapter._registry.REGISTERED_CHAMPION for record in bindings.records)
+    assert all(record.main_authority is False for record in bindings.records)
+    adapter.clear_shadow_canonical_core_cache()
+
+
+def test_main_only_champions_fail_shadow_resolution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    synthetic = _synthetic_main_only_champions()
+    monkeypatch.setattr(adapter._registry, "load_default_registry", lambda: synthetic)
+    monkeypatch.setattr(
+        adapter._core,
+        "resolve_canonical_core",
+        lambda manifest, *, regime_id, required_schema_version=1: (
+            adapter._core._resolve_canonical_core_with_registry_for_test(
+                manifest,
+                regime_id=regime_id,
+                required_schema_version=required_schema_version,
+                registry=synthetic,
+            )
+        ),
+    )
+    adapter.clear_shadow_canonical_core_cache()
+
+    with pytest.raises(
+        adapter.CurrentShadowCanonicalCoreAdapterError,
+        match="canonical-core resolution failed closed",
+    ):
+        adapter.resolve_shadow_canonical_core()
+    adapter.clear_shadow_canonical_core_cache()
 
 
 def test_runner_imports_one_p2_1_adapter_not_direct_shadow_stage_wrappers() -> None:
@@ -65,6 +152,7 @@ def test_stage_compatibility_calls_are_guarded_by_exact_canonical_owner(
             return SimpleNamespace(
                 component_id=adapter.EXPECTED_COMPONENTS[responsibility_id],
                 allowed_profiles=("SHADOW",),
+                promotion_state=adapter._registry.REGISTERED_CHAMPION,
                 main_authority=False,
             )
 
@@ -123,6 +211,7 @@ def test_price_context_verifier_monkeypatch_seam_reaches_delegated_price_all(
             return SimpleNamespace(
                 component_id=adapter.EXPECTED_COMPONENTS[responsibility_id],
                 allowed_profiles=("SHADOW",),
+                promotion_state=adapter._registry.REGISTERED_CHAMPION,
                 main_authority=False,
             )
 
@@ -156,6 +245,7 @@ def test_portfolio_reconciliation_monkeypatch_seam_is_preserved(
             return SimpleNamespace(
                 component_id=adapter.EXPECTED_COMPONENTS[responsibility_id],
                 allowed_profiles=("SHADOW",),
+                promotion_state=adapter._registry.REGISTERED_CHAMPION,
                 main_authority=False,
             )
 

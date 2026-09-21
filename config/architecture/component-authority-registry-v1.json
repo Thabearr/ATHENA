@@ -13,10 +13,11 @@
       "artifact_git_blob_sha": "28c44656915607315e0227f54bcff7cc7af103c7",
       "role": "CHAMPION",
       "allowed_profiles": [
+        "MAIN",
         "SHADOW"
       ],
-      "promotion_state": "REGISTERED_CHAMPION",
-      "main_authority": false,
+      "promotion_state": "APPROVED_FOR_MAIN",
+      "main_authority": true,
       "compatible_schema_versions": [
         1
       ]
@@ -29,10 +30,11 @@
       "artifact_git_blob_sha": "3011b65fcd62e5ae91fcede967b8cba4f85cdda7",
       "role": "CHAMPION",
       "allowed_profiles": [
+        "MAIN",
         "SHADOW"
       ],
-      "promotion_state": "REGISTERED_CHAMPION",
-      "main_authority": false,
+      "promotion_state": "APPROVED_FOR_MAIN",
+      "main_authority": true,
       "compatible_schema_versions": [
         1
       ]
@@ -45,10 +47,11 @@
       "artifact_git_blob_sha": "d600d5d88baf5628df23441a9216c2fc68352e45",
       "role": "CHAMPION",
       "allowed_profiles": [
+        "MAIN",
         "SHADOW"
       ],
-      "promotion_state": "REGISTERED_CHAMPION",
-      "main_authority": false,
+      "promotion_state": "APPROVED_FOR_MAIN",
+      "main_authority": true,
       "compatible_schema_versions": [
         1
       ]
@@ -61,10 +64,11 @@
       "artifact_git_blob_sha": "46eaf64b6704e1b7b47123a9a182346e0403cbe6",
       "role": "CHAMPION",
       "allowed_profiles": [
+        "MAIN",
         "SHADOW"
       ],
-      "promotion_state": "REGISTERED_CHAMPION",
-      "main_authority": false,
+      "promotion_state": "APPROVED_FOR_MAIN",
+      "main_authority": true,
       "compatible_schema_versions": [
         1
       ]
@@ -77,10 +81,11 @@
       "artifact_git_blob_sha": "cf7214a6103d91a2974e3eb00c705f65c841d458",
       "role": "CHAMPION",
       "allowed_profiles": [
+        "MAIN",
         "SHADOW"
       ],
-      "promotion_state": "REGISTERED_CHAMPION",
-      "main_authority": false,
+      "promotion_state": "APPROVED_FOR_MAIN",
+      "main_authority": true,
       "compatible_schema_versions": [
         1
       ]

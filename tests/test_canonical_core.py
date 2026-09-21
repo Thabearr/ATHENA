@@ -45,7 +45,7 @@ def _core(*, share_code_generation: bool = False) -> core.CanonicalCoreBindings:
     )
 
 
-def test_contract_and_shadow_resolution_bind_exact_five_champions() -> None:
+def test_contract_and_main_shadow_resolution_bind_same_exact_five_champions() -> None:
     assert core.validate_canonical_core_contract()["canonical_core_contract_sha256"] == core.EXPECTED_CONTRACT_SHA256
     bindings = _core()
     assert bindings.schema_version == 1
@@ -53,13 +53,25 @@ def test_contract_and_shadow_resolution_bind_exact_five_champions() -> None:
     assert bindings.authority_profile == "SHADOW"
     assert tuple(item.responsibility_id for item in bindings.records) == core.CANONICAL_RESPONSIBILITIES
     assert len(bindings.records) == 5
-    assert all(item.allowed_profiles == ("SHADOW",) and item.main_authority is False for item in bindings.records)
+    assert all(item.allowed_profiles == ("MAIN", "SHADOW") and item.main_authority is True for item in bindings.records)
     assert bindings.canonical_sha256 == core.canonical_sha256({key: value for key, value in bindings.to_dict().items() if key != "canonical_sha256"})
 
+    main_bindings = core.resolve_canonical_core(_manifest(profile="MAIN"), regime_id=REGIME)
+    assert main_bindings.authority_profile == "MAIN"
+    identity_fields = (
+        "responsibility_id", "component_id", "contract_sha256",
+        "artifact_git_blob_sha", "compatible_schema_versions",
+    )
+    assert [
+        tuple(getattr(item, field) for field in identity_fields)
+        for item in main_bindings.records
+    ] == [
+        tuple(getattr(item, field) for field in identity_fields)
+        for item in bindings.records
+    ]
 
-def test_main_and_unknown_or_incompatible_resolution_fail_closed() -> None:
-    with pytest.raises(core.CanonicalCoreError, match="resolution failed closed"):
-        core.resolve_canonical_core(_manifest(profile="MAIN"), regime_id=REGIME)
+
+def test_unknown_or_incompatible_resolution_fail_closed() -> None:
     with pytest.raises(core.CanonicalCoreError, match="resolution failed closed"):
         core.resolve_canonical_core(_manifest(), regime_id="UNKNOWN_REGIME")
     with pytest.raises(core.CanonicalCoreError, match="resolution failed closed"):
@@ -118,15 +130,13 @@ def test_resolution_is_deterministic_and_registry_order_is_not_authority() -> No
         core.CanonicalCoreBindings()
 
 
-def test_public_resolution_rejects_forged_main_promoted_registry() -> None:
+def test_public_resolution_rejects_caller_provided_forged_registry() -> None:
     loaded = registry_module.load_default_registry()
     forged = registry_module.ComponentAuthorityRegistry(
         records=tuple(
             dataclasses.replace(
                 item,
-                allowed_profiles=("MAIN", "SHADOW"),
-                promotion_state=registry_module.APPROVED_FOR_MAIN,
-                main_authority=True,
+                artifact_git_blob_sha="0" * 40,
             )
             for item in loaded.records
         )
