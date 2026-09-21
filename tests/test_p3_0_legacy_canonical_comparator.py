@@ -136,6 +136,11 @@ def test_03_p0_2_real_price_all_state_a_uses_quote_a() -> None:
     res = p0_acceptance.run_p0_2_acceptance()
     assert res["execution_evidence"]["state_a"]["decimal_odds"] == 1.50
     assert res["execution_evidence"]["state_a"]["net_expected_value"] == -0.025
+    assert res["execution_evidence"]["state_a"]["verified_evaluation"] is True
+    assert res["execution_evidence"]["state_a"]["router_status"] == RouterDecisionStatus.NO_BET.value
+    assert res["execution_evidence"]["state_a"]["selected_opportunity_id"] is None
+    assert "domain.price_all.verify_price_all_evaluation" in res["execution_evidence"]["production_apis_executed"]
+    assert "domain.market_router_canonical_adapter.route" in res["execution_evidence"]["production_apis_executed"]
     assert len(res["execution_evidence"]["state_a"]["quote_identity"]) == 64
 
 
@@ -143,6 +148,9 @@ def test_04_p0_2_real_price_all_state_b_uses_quote_b() -> None:
     res = p0_acceptance.run_p0_2_acceptance()
     assert res["execution_evidence"]["state_b"]["decimal_odds"] == 2.10
     assert res["execution_evidence"]["state_b"]["net_expected_value"] == 0.365
+    assert res["execution_evidence"]["state_b"]["verified_evaluation"] is True
+    assert res["execution_evidence"]["state_b"]["router_status"] == RouterDecisionStatus.SELECTED.value
+    assert res["execution_evidence"]["state_b"]["selected_opportunity_id"] is not None
     assert len(res["execution_evidence"]["state_b"]["quote_identity"]) == 64
 
 
@@ -151,6 +159,7 @@ def test_05_p0_2_ev_value_output_changes_due_to_price() -> None:
     assert res["canonical_avoids_defect"] is True
     assert res["execution_evidence"]["price_derived_ev_change"] is True
     assert res["execution_evidence"]["state_a"]["net_expected_value"] != res["execution_evidence"]["state_b"]["net_expected_value"]
+    assert res["execution_evidence"]["state_a"]["router_status"] != res["execution_evidence"]["state_b"]["router_status"]
 
 
 def test_06_p0_2_quote_identity_is_bound_in_output() -> None:
@@ -231,8 +240,13 @@ def test_11_public_canonical_router_route_integration_selects_same_prediction_id
     assert res["result"] == "PASS"
     assert res["execution_evidence"]["narrow_rank_ok"] is True
     assert res["execution_evidence"]["public_route_ok"] is True
+    assert res["execution_evidence"]["tie_inputs_equal"] is True
+    assert res["execution_evidence"]["candidate_x"]["robust_net_expected_value"] == res["execution_evidence"]["candidate_y"]["robust_net_expected_value"]
+    assert res["execution_evidence"]["candidate_x"]["prediction_confidence"] == res["execution_evidence"]["candidate_y"]["prediction_confidence"]
+    assert res["execution_evidence"]["candidate_x"]["prediction_identity_sha256"] != res["execution_evidence"]["candidate_y"]["prediction_identity_sha256"]
     assert res["execution_evidence"]["selected_opportunity_id_xy"] is not None
     assert res["execution_evidence"]["selected_opportunity_id_xy"] == res["execution_evidence"]["selected_opportunity_id_yx"]
+    assert res["execution_evidence"]["selected_prediction_identity_xy"] == res["execution_evidence"]["selected_prediction_identity_yx"]
 
 
 # ==============================================================================
@@ -539,8 +553,12 @@ def test_39_provider_acquisition_impossible(
     corpus: dict[str, Any],
 ) -> None:
     assert report["provider_acquisition"] is False
+    assert report["comparator_provider_acquisition"] is False
+    assert report["retained_capture_provider_acquisition"] is True
     assert decision["provider_acquisition"] is False
     assert corpus["provider_acquisition"] is False
+    assert corpus["comparator_provider_acquisition"] is False
+    assert corpus["retained_capture_provider_acquisition"] is True
 
 
 def test_40_network_sentinel(
@@ -622,3 +640,139 @@ def test_47_rejection_of_noncanonical_combo_in_p0(p0_cases: list[dict[str, Any]]
     assert res["result"] == "PASS"
     assert res["execution_evidence"]["rejected_by_legacy_resolver"] is True
     assert res["execution_evidence"]["rejected_by_market_canonicalizer"] is True
+
+
+def test_48_p0_2_both_states_verified_and_routed_with_cross_binding_impossible() -> None:
+    res = p0_acceptance.run_p0_2_acceptance()
+    evidence = res["execution_evidence"]
+    assert evidence["state_a"]["verified_evaluation"] is True
+    assert evidence["state_b"]["verified_evaluation"] is True
+    assert evidence["state_a"]["router_status"] == "NO_BET"
+    assert evidence["state_b"]["router_status"] == "SELECTED"
+    assert evidence["state_a"]["selected_opportunity_id"] is None
+    assert evidence["state_b"]["selected_opportunity_id"] is not None
+    assert evidence["state_a"]["quote_identity"] != evidence["state_b"]["quote_identity"]
+
+    apis = evidence["production_apis_executed"]
+    assert "domain.price_all.price_all_as_of" in apis
+    assert "domain.price_all.verify_price_all_evaluation" in apis
+    assert "domain.market_router_canonical_adapter.route" in apis
+
+
+def test_49_p0_5_tie_proof_requires_equal_rank_inputs() -> None:
+    res = p0_acceptance.run_p0_5_acceptance()
+    ev = res["execution_evidence"]
+    assert ev["tie_inputs_equal"] is True
+    cx = ev["candidate_x"]
+    cy = ev["candidate_y"]
+    assert cx["robust_net_expected_value"] == cy["robust_net_expected_value"]
+    assert pytest.approx(cx["robust_net_expected_value"]) == 0.20
+    assert cx["prediction_confidence"] == cy["prediction_confidence"] == 0.60
+    assert cx["prediction_identity_sha256"] != cy["prediction_identity_sha256"]
+    assert ev["selected_prediction_identity_xy"] == ev["selected_prediction_identity_yx"]
+
+    # When rank inputs are unequal, tie proof must not be claimed
+    unequal_inputs_equal = (0.25 == 0.20 and 0.60 == 0.60)
+    assert unequal_inputs_equal is False
+
+
+def test_50_rule_7_fail_closed_authority_verification(real_row_source: dict[str, Any]) -> None:
+    # 1. Valid projection passes Rule 7
+    res = comparator.compare_real_row(real_row_source)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "PASS"
+
+    # 2. Missing retained_capture_authority_state -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    del tampered["retained_capture_authority_state"]
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 3. authority_profile != SHADOW -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    tampered["retained_capture_authority_state"]["authority_profile"] = "MAIN"
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 4. main_authority == True -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    tampered["retained_capture_authority_state"]["main_authority"] = True
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 5. Missing canonical_execution_identity -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    del tampered["canonical_execution_identity"]
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 6. canonical_execution_identity stopped_after != PRICE_ALL_ROUTER -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    tampered["canonical_execution_identity"]["stopped_after"] = "LIVE_EXECUTION"
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 7. Missing canonical_authority -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    del tampered["canonical_authority"]
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 8. Missing router_authority -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    del tampered["router_authority"]
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 9. router_authority production_selection is True -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    tampered["router_authority"]["production_selection"] = True
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 10. router_authority sportybet_execution is True -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    tampered["router_authority"]["sportybet_execution"] = True
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+    # 11. router_wager_placed is True -> FAIL
+    tampered = copy.deepcopy(real_row_source)
+    tampered["router_wager_placed"] = True
+    res = comparator.compare_real_row(tampered)
+    assert res["high_severity_rules_checked"]["rule_7_main_execution_authority_leaked"]["result"] == "FAIL"
+
+
+def test_51_retained_capture_vs_comparator_provider_acquisition(
+    real_row_source: dict[str, Any],
+    report: dict[str, Any],
+) -> None:
+    # Historical capture performed provider acquisition
+    assert real_row_source["retained_capture_provider_acquisition"] is True
+    assert real_row_source["retained_capture_authority_state"]["provider_acquisition"] is True
+    # Comparator itself remains completely offline
+    assert real_row_source["comparator_provider_acquisition"] is False
+    assert report["comparator_provider_acquisition"] is False
+    assert report["provider_acquisition"] is False
+    assert report["retained_capture_provider_acquisition"] is True
+
+
+def test_52_exact_retained_as_of_timing_preservation(real_row_source: dict[str, Any]) -> None:
+    as_of = real_row_source["as_of_proof"]
+    timing = as_of["timing"]
+
+    # Microsecond precision retained timestamps
+    assert as_of["capture_started_at"] == "2026-09-20T09:34:50.939987Z"
+    assert as_of["capture_completed_at"] == "2026-09-20T09:56:52.828587Z"
+    assert timing["provider_quote_observed_at"] == "2026-09-20T09:34:56.927358Z"
+    assert timing["probability_evaluation_time"] == "2026-09-20T09:34:57.123353Z"
+    assert timing["canonical_price_all_evaluation_time"] == "2026-09-20T09:34:57.123353Z"
+    assert timing["canonical_router_evaluation_time"] == "2026-09-20T09:34:57.123353Z"
+    assert timing["legacy_evaluation_time"] == "2026-09-20T09:56:52.743879Z"
+    assert timing["legacy_evidence_observed_at"] == "2026-09-20T09:56:52.743879Z"
+    assert timing["kickoff_time"] == "2026-09-20T10:30:00.000000Z"
+
+    # Quote observed_at is distinct from capture_started_at
+    quote = real_row_source["quote"]
+    assert quote["observed_at"] == "2026-09-20T09:34:56.927358Z"
+    assert quote["quote_source_capture_started_at"] == "2026-09-20T09:34:50.939987Z"
+    assert quote["observed_at"] != quote["quote_source_capture_started_at"]

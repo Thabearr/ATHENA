@@ -18,8 +18,11 @@ import argparse
 import hashlib
 import json
 from pathlib import Path
+import sys
 from typing import Any, Mapping
 import zipfile
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from domain.p3_0_replay_corpus import canonical_json_bytes, canonical_sha256
 
@@ -226,6 +229,13 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
         price_all_output_file_sha = manifest_files.get(f"{fixture_dir}/price-all-output.json")
         probability_bundle_file_sha = manifest_files.get(f"{fixture_dir}/probability-bundle.json")
 
+        # 10. Extract authority structures from artifact bundle, record, and router payload
+        retained_capture_authority_state = bundle.get("authority_state", {})
+        canonical_execution_identity = bundle.get("canonical_execution_identity", {})
+        canonical_authority = record.get("canonical_authority", {})
+        router_authority = router_payload.get("authority", {})
+        router_wager_placed = router_payload.get("wager_placed", False)
+
         payload: dict[str, Any] = {
             "as_of_proof": as_of_proof,
             "candidate_id": EXPECTED_CANDIDATE_ID,
@@ -247,6 +257,9 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
                 "router_status": router_status,
                 "selected_opportunity_id": selected_opp_id,
             },
+            "canonical_authority": canonical_authority,
+            "canonical_execution_identity": canonical_execution_identity,
+            "comparator_provider_acquisition": False,
             "fixture": {
                 "as_of_proof_canonical_sha256": as_of_proof_canonical_sha,
                 "as_of_proof_file_sha256": as_of_proof_file_sha,
@@ -316,12 +329,16 @@ def extract_real_row_from_zip(zip_path: Path) -> dict[str, Any]:
                 "provider_semantic_status": matched_quote.get("provider_semantic_status"),
                 "provider_specifier": matched_quote.get("provider_specifier"),
                 "quote_identity_sha256": EXPECTED_QUOTE_IDENTITY_SHA256,
+                "quote_source_capture_started_at": bundle.get("capture_started_at"),
                 "reconciliation_sha256": matched_quote.get("fixture_reconciliation_sha256"),
                 "source_inventory_sha256": matched_quote.get("source_inventory_sha256"),
                 "source_manifest_sha256": matched_quote.get("source_manifest_sha256"),
-                "source_observed_at": bundle.get("capture_started_at"),
                 "source_raw_sha256": matched_quote.get("source_raw_sha256"),
             },
+            "retained_capture_authority_state": retained_capture_authority_state,
+            "retained_capture_provider_acquisition": retained_capture_authority_state.get("provider_acquisition", True),
+            "router_authority": router_authority,
+            "router_wager_placed": router_wager_placed,
             "schema_version": SCHEMA_VERSION,
             "source_mechanism": "VERIFIED_ARTIFACT_PROJECTION",
         }

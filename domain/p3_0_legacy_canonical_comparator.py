@@ -337,7 +337,7 @@ def _validate_real_row_source(source: Mapping[str, Any]) -> None:
         if field not in legacy:
             raise ComparatorError(f"real row source missing required legacy field: {field}")
 
-    # Verify temporal consistency: all observed timestamps must precede kickoff UTC
+    # Validate temporal consistency: all observed timestamps must precede kickoff UTC
     kickoff = fixture.get("kickoff_utc")
     source_obs = fixture.get("source_observed_at")
     quote_obs = source.get("quote", {}).get("observed_at")
@@ -345,6 +345,38 @@ def _validate_real_row_source(source: Mapping[str, Any]) -> None:
         raise ComparatorError("source_observed_at is at or after kickoff_utc (temporal violation)")
     if quote_obs and kickoff and quote_obs >= kickoff:
         raise ComparatorError("quote observed_at is at or after kickoff_utc (temporal violation)")
+
+    # Validate retained authority structures
+    retained_auth = source.get("retained_capture_authority_state")
+    if not isinstance(retained_auth, Mapping):
+        raise ComparatorError("real row source missing retained_capture_authority_state")
+    if retained_auth.get("authority_profile") != "SHADOW":
+        raise ComparatorError("retained_capture_authority_state authority_profile is not SHADOW")
+    if retained_auth.get("main_authority") is not False:
+        raise ComparatorError("retained_capture_authority_state main_authority is not False")
+
+    canon_exec = source.get("canonical_execution_identity")
+    if not isinstance(canon_exec, Mapping):
+        raise ComparatorError("real row source missing canonical_execution_identity")
+    if canon_exec.get("authority_profile") != "SHADOW":
+        raise ComparatorError("canonical_execution_identity authority_profile is not SHADOW")
+    if canon_exec.get("stopped_after") != "PRICE_ALL_ROUTER":
+        raise ComparatorError("canonical_execution_identity stopped_after is not PRICE_ALL_ROUTER")
+
+    canon_auth = source.get("canonical_authority")
+    if not isinstance(canon_auth, Mapping):
+        raise ComparatorError("real row source missing canonical_authority")
+    if canon_auth.get("authority_profile") != "SHADOW":
+        raise ComparatorError("canonical_authority authority_profile is not SHADOW")
+
+    router_auth = source.get("router_authority")
+    if not isinstance(router_auth, Mapping):
+        raise ComparatorError("real row source missing router_authority")
+    if router_auth.get("production_selection") is not False or router_auth.get("sportybet_execution") is not False:
+        raise ComparatorError("router_authority execution permissions are not False")
+
+    if source.get("router_wager_placed") is not False:
+        raise ComparatorError("router_wager_placed is not False")
 
 
 def build_acceptance_decision(
@@ -458,6 +490,8 @@ def build_comparator_corpus(
         "promotion_authority": False,
         "proposal_sha256": proposal_sha256,
         "provider_acquisition": False,
+        "comparator_provider_acquisition": False,
+        "retained_capture_provider_acquisition": True,
         "provider_event_id": VERIFIED_REAL_ROW_PROVIDER_EVENT_ID,
         "real_replay_row_count": 1,
         "rows": [dict(real_row)],
@@ -503,6 +537,7 @@ def validate_comparator_corpus(
 
     for field in (
         "provider_acquisition",
+        "comparator_provider_acquisition",
         "network_used",
         "main_authority",
         "selection_authority",
@@ -510,6 +545,9 @@ def validate_comparator_corpus(
     ):
         if corpus.get(field) is not False:
             raise ComparatorError(f"corpus field {field} must be False")
+
+    if corpus.get("retained_capture_provider_acquisition") is not True:
+        raise ComparatorError("corpus field retained_capture_provider_acquisition must be True")
 
     expected_sha = corpus.get("canonical_sha256")
     if not isinstance(expected_sha, str) or len(expected_sha) != 64:
@@ -714,26 +752,61 @@ def compare_real_row(
         }
 
     # Rule 7: MAIN execution authority leaked
-    provenance = candidate.get("provenance", {})
-    rule_7_violated = (
-        candidate.get("main_authority") is True
-        or candidate.get("wagering") is True
-        or candidate.get("staking") is True
-        or candidate.get("bet") is True
-        or candidate.get("login") is True
-        or candidate.get("cookies") is True
-        or candidate.get("wallet") is True
-    )
+    retained_auth = candidate.get("retained_capture_authority_state")
+    canon_exec = candidate.get("canonical_execution_identity")
+    canon_auth = candidate.get("canonical_authority")
+    router_auth = candidate.get("router_authority")
+    router_wager = candidate.get("router_wager_placed")
+
+    rule_7_reasons: list[str] = []
+    if not isinstance(retained_auth, Mapping):
+        rule_7_reasons.append("missing retained_capture_authority_state")
+    else:
+        if retained_auth.get("authority_profile") != "SHADOW":
+            rule_7_reasons.append(f"retained authority_profile {retained_auth.get('authority_profile')} is not SHADOW")
+        if retained_auth.get("main_authority") is not False:
+            rule_7_reasons.append("retained main_authority is not False")
+
+    if not isinstance(canon_exec, Mapping):
+        rule_7_reasons.append("missing canonical_execution_identity")
+    else:
+        if canon_exec.get("authority_profile") != "SHADOW":
+            rule_7_reasons.append(f"canonical_execution_identity authority_profile {canon_exec.get('authority_profile')} is not SHADOW")
+        if canon_exec.get("stopped_after") != "PRICE_ALL_ROUTER":
+            rule_7_reasons.append(f"canonical_execution_identity stopped_after {canon_exec.get('stopped_after')} != PRICE_ALL_ROUTER")
+
+    if not isinstance(canon_auth, Mapping):
+        rule_7_reasons.append("missing canonical_authority")
+    else:
+        if canon_auth.get("authority_profile") != "SHADOW":
+            rule_7_reasons.append(f"canonical_authority authority_profile {canon_auth.get('authority_profile')} is not SHADOW")
+
+    if not isinstance(router_auth, Mapping):
+        rule_7_reasons.append("missing router_authority")
+    else:
+        if router_auth.get("production_selection") is not False:
+            rule_7_reasons.append("router_authority production_selection is not False")
+        if router_auth.get("sportybet_execution") is not False:
+            rule_7_reasons.append("router_authority sportybet_execution is not False")
+
+    if router_wager is not False:
+        rule_7_reasons.append("router_wager_placed is not False")
+
+    for leak_field in ("main_authority", "wagering", "staking", "bet", "login", "cookies", "wallet"):
+        if candidate.get(leak_field) is True:
+            rule_7_reasons.append(f"candidate has {leak_field} == True")
+
+    rule_7_violated = bool(rule_7_reasons)
     if rule_7_violated:
         high_severity_checks["rule_7_main_execution_authority_leaked"] = {
             "result": RULE_STATUS_FAIL,
-            "reason": "Authority leak detected: live wagering, staking, or execution permissions active.",
+            "reason": f"Authority leak or unverified authority evidence detected: {'; '.join(rule_7_reasons)}",
         }
         any_high_severity_failure = True
     else:
         high_severity_checks["rule_7_main_execution_authority_leaked"] = {
             "result": RULE_STATUS_PASS,
-            "reason": "Zero MAIN execution authority, zero wagering, zero staking, zero login, zero cookies, zero wallet.",
+            "reason": "Zero MAIN execution authority: verified SHADOW authority across retained capture, execution identity, canonical authority, and router authority; production selection and execution permissions false; zero wagering.",
         }
 
     # Rule 8: selected-but-ineligible contradiction
@@ -1082,6 +1155,7 @@ def build_comparison_report(
     code_head_sha: str | None = None,
     comparator_module_sha256: str | None = None,
     report_builder_sha256: str | None = None,
+    p0_acceptance_module_sha256: str | None = None,
     real_row_source_sha256: str | None = None,
 ) -> dict[str, Any]:
     """Build deterministic P3.0 legacy/canonical comparison report."""
@@ -1169,6 +1243,9 @@ def build_comparison_report(
     if report_builder_sha256 is None:
         builder_file = Path("scripts/build_p3_0_legacy_canonical_comparison_report.py")
         report_builder_sha256 = hashlib.sha256(builder_file.read_bytes()).hexdigest() if builder_file.is_file() else ("0" * 64)
+    if p0_acceptance_module_sha256 is None:
+        p0_file = Path("domain/p3_0_p0_canonical_acceptance.py")
+        p0_acceptance_module_sha256 = hashlib.sha256(p0_file.read_bytes()).hexdigest() if p0_file.is_file() else ("0" * 64)
     if real_row_source_sha256 is None:
         source_receipt_file = Path("artifacts/p3-0-comparator-real-row-source-v1.json")
         real_row_source_sha256 = hashlib.sha256(source_receipt_file.read_bytes()).hexdigest() if source_receipt_file.is_file() else ("0" * 64)
@@ -1193,12 +1270,15 @@ def build_comparison_report(
         "original_r1_satisfied": False,
         "original_r2_satisfied": False,
         "p0_acceptance_cases": p0_results,
+        "p0_acceptance_module_sha256": p0_acceptance_module_sha256,
         "policy_id": REPORT_POLICY_ID,
         "portfolio_invoked": False,
         "price_availability_differences": [real_comparison["price_availability"]],
         "probability_comparisons": [real_comparison["probability_comparison"]],
         "promotion_authority": False,
         "provider_acquisition": False,
+        "comparator_provider_acquisition": False,
+        "retained_capture_provider_acquisition": True,
         "real_replay_row_count": len(real_row_comparisons),
         "real_row_comparisons": real_row_comparisons,
         "real_row_source_sha256": real_row_source_sha256,
@@ -1252,6 +1332,10 @@ def validate_comparison_report(report: Mapping[str, Any]) -> None:
     if not isinstance(builder_sha, str) or len(builder_sha) != 64 or not re.fullmatch(r"[0-9a-f]{64}", builder_sha):
         raise ComparatorError("report report_builder_sha256 must be a valid 64-character hex SHA-256")
 
+    p0_acc_sha = report.get("p0_acceptance_module_sha256")
+    if not isinstance(p0_acc_sha, str) or len(p0_acc_sha) != 64 or not re.fullmatch(r"[0-9a-f]{64}", p0_acc_sha):
+        raise ComparatorError("report p0_acceptance_module_sha256 must be a valid 64-character hex SHA-256")
+
     summary = report.get("summary", {})
     potential = summary.get("potential_high_severity", 0)
     explained = summary.get("explained_high_severity", 0)
@@ -1286,6 +1370,7 @@ def validate_comparison_report(report: Mapping[str, Any]) -> None:
 
     for field in (
         "provider_acquisition",
+        "comparator_provider_acquisition",
         "network_used",
         "portfolio_invoked",
         "share_code_invoked",
@@ -1301,6 +1386,9 @@ def validate_comparison_report(report: Mapping[str, Any]) -> None:
     ):
         if report.get(field) is not False:
             raise ComparatorError(f"report safety field {field} must remain False")
+
+    if report.get("retained_capture_provider_acquisition") is not True:
+        raise ComparatorError("report retained_capture_provider_acquisition must be True")
 
     expected_sha = report.get("canonical_sha256")
     if not isinstance(expected_sha, str) or len(expected_sha) != 64:

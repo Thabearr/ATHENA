@@ -70,9 +70,11 @@ def build_all(
     # Calculate exact byte SHAs for code binding
     comparator_file = repository_root / "domain" / "p3_0_legacy_canonical_comparator.py"
     builder_file = repository_root / "scripts" / "build_p3_0_legacy_canonical_comparison_report.py"
+    p0_acceptance_file = repository_root / "domain" / "p3_0_p0_canonical_acceptance.py"
 
     comp_bytes_sha = hashlib.sha256(comparator_file.read_bytes()).hexdigest()
     builder_bytes_sha = hashlib.sha256(builder_file.read_bytes()).hexdigest()
+    p0_acceptance_bytes_sha = hashlib.sha256(p0_acceptance_file.read_bytes()).hexdigest()
     real_row_bytes_sha = hashlib.sha256(real_row_source_path.read_bytes()).hexdigest()
 
     # 3. Build comparison report
@@ -85,6 +87,7 @@ def build_all(
         implementation_source_sha=implementation_source_sha,
         comparator_module_sha256=comp_bytes_sha,
         report_builder_sha256=builder_bytes_sha,
+        p0_acceptance_module_sha256=p0_acceptance_bytes_sha,
         real_row_source_sha256=real_row_bytes_sha,
     )
     comparator.validate_comparison_report(report)
@@ -173,8 +176,10 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     comparator_file = repo_root / "domain" / "p3_0_legacy_canonical_comparator.py"
     builder_file = repo_root / "scripts" / "build_p3_0_legacy_canonical_comparison_report.py"
+    p0_acceptance_file = repo_root / "domain" / "p3_0_p0_canonical_acceptance.py"
     comp_bytes_sha = hashlib.sha256(comparator_file.read_bytes()).hexdigest()
     builder_bytes_sha = hashlib.sha256(builder_file.read_bytes()).hexdigest()
+    p0_acceptance_bytes_sha = hashlib.sha256(p0_acceptance_file.read_bytes()).hexdigest()
     real_row_bytes_sha = hashlib.sha256(real_row_source_path.read_bytes()).hexdigest()
 
     # Pass reversed P0 cases to prove input order-independence
@@ -188,6 +193,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         implementation_source_sha=impl_sha,
         comparator_module_sha256=comp_bytes_sha,
         report_builder_sha256=builder_bytes_sha,
+        p0_acceptance_module_sha256=p0_acceptance_bytes_sha,
         real_row_source_sha256=real_row_bytes_sha,
     )
 

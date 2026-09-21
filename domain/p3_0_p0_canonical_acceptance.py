@@ -454,15 +454,19 @@ def run_p0_1_acceptance() -> dict[str, Any]:
 
 
 def run_p0_2_acceptance() -> dict[str, Any]:
-    """P0-2: Execute real canonical Price-All under two distinct provider price states.
+    """P0-2: Execute real canonical Price-All and Router under two distinct provider price states.
 
-    Demonstrates that net expected value and bound quote identity change as a direct
-    consequence of the provider quote, and the output is bound to the exact quote used.
+    Demonstrates that net expected value, verified Price-All evaluations, and downstream
+    Router selection change as a direct consequence of provider quote pricing:
+    - State A (odds 1.50): EV = -0.025, verified Price-All, Router NO_BET (non-selectable).
+    - State B (odds 2.10): EV = +0.365, verified Price-All, Router SELECTED.
     """
     candidate = _make_candidate(MarketId.MATCH_RESULT, OutcomeId.HOME, None, (0.65, 0.20, 0.15))
 
-    # State A: Odds 1.50
-    sel_a = _make_selection("1", "Match Result", None, "1", "Home", "1.50", 1.50)
+    # State A: Odds 1.50 (with complete partition for de-vig)
+    sel_a1 = _make_selection("1", "Match Result", None, "1", "Home", "1.50", 1.50)
+    sel_ax = _make_selection("1", "Match Result", None, "2", "Draw", "4.00", 4.00)
+    sel_a2 = _make_selection("1", "Match Result", None, "3", "Away", "6.00", 6.00)
     inv_a = live.SportyBetLiveEventQuoteInventory(
         dataset_name=live.INVENTORY_DATASET_NAME,
         event_id=SYNTHETIC_EVENT_ID,
@@ -479,12 +483,12 @@ def run_p0_2_acceptance() -> dict[str, Any]:
         provider_snapshot_id=None,
         source_manifest_sha256="a" * 64,
         source_raw_sha256="b" * 64,
-        selections=(sel_a,),
+        selections=(sel_a1, sel_ax, sel_a2),
     )
-    mapped_a = _make_mapped_selection(
-        inv_a, "1", "Match Result", None, "1", "Home", MarketId.MATCH_RESULT, OutcomeId.HOME, None
-    )
-    sm_a = _make_source_mapping(inv_a, (mapped_a,))
+    map_a1 = _make_mapped_selection(inv_a, "1", "Match Result", None, "1", "Home", MarketId.MATCH_RESULT, OutcomeId.HOME, None)
+    map_ax = _make_mapped_selection(inv_a, "1", "Match Result", None, "2", "Draw", MarketId.MATCH_RESULT, OutcomeId.DRAW, None)
+    map_a2 = _make_mapped_selection(inv_a, "1", "Match Result", None, "3", "Away", MarketId.MATCH_RESULT, OutcomeId.AWAY, None)
+    sm_a = _make_source_mapping(inv_a, (map_a1, map_ax, map_a2))
 
     with synthetic_harness_scope(sm_a, inv_a):
         bundle_a = quotes.issue_current_direct_provider_mapped_quotes_as_of(
@@ -497,9 +501,18 @@ def run_p0_2_acceptance() -> dict[str, Any]:
             evaluation_time=SYNTHETIC_EVALUATION_TIME,
         )
         res_a = eval_a.results[0]
+        verified_eval_a = canonical_price.verify_price_all_evaluation(eval_a)
+        fixture_state = _make_fixture_state()
+        dec_a = canonical_router.route(
+            verified_eval_a,
+            fixture_state=fixture_state,
+            evaluation_time=SYNTHETIC_EVALUATION_TIME,
+        )
 
-    # State B: Odds 2.10
-    sel_b = _make_selection("1", "Match Result", None, "1", "Home", "2.10", 2.10)
+    # State B: Odds 2.10 (with complete partition for de-vig)
+    sel_b1 = _make_selection("1", "Match Result", None, "1", "Home", "2.10", 2.10)
+    sel_bx = _make_selection("1", "Match Result", None, "2", "Draw", "3.20", 3.20)
+    sel_b2 = _make_selection("1", "Match Result", None, "3", "Away", "3.50", 3.50)
     inv_b = live.SportyBetLiveEventQuoteInventory(
         dataset_name=live.INVENTORY_DATASET_NAME,
         event_id=SYNTHETIC_EVENT_ID,
@@ -516,12 +529,12 @@ def run_p0_2_acceptance() -> dict[str, Any]:
         provider_snapshot_id=None,
         source_manifest_sha256="c" * 64,
         source_raw_sha256="d" * 64,
-        selections=(sel_b,),
+        selections=(sel_b1, sel_bx, sel_b2),
     )
-    mapped_b = _make_mapped_selection(
-        inv_b, "1", "Match Result", None, "1", "Home", MarketId.MATCH_RESULT, OutcomeId.HOME, None
-    )
-    sm_b = _make_source_mapping(inv_b, (mapped_b,))
+    map_b1 = _make_mapped_selection(inv_b, "1", "Match Result", None, "1", "Home", MarketId.MATCH_RESULT, OutcomeId.HOME, None)
+    map_bx = _make_mapped_selection(inv_b, "1", "Match Result", None, "2", "Draw", MarketId.MATCH_RESULT, OutcomeId.DRAW, None)
+    map_b2 = _make_mapped_selection(inv_b, "1", "Match Result", None, "3", "Away", MarketId.MATCH_RESULT, OutcomeId.AWAY, None)
+    sm_b = _make_source_mapping(inv_b, (map_b1, map_bx, map_b2))
 
     with synthetic_harness_scope(sm_b, inv_b):
         bundle_b = quotes.issue_current_direct_provider_mapped_quotes_as_of(
@@ -534,47 +547,79 @@ def run_p0_2_acceptance() -> dict[str, Any]:
             evaluation_time=SYNTHETIC_EVALUATION_TIME,
         )
         res_b = eval_b.results[0]
+        verified_eval_b = canonical_price.verify_price_all_evaluation(eval_b)
+        dec_b = canonical_router.route(
+            verified_eval_b,
+            fixture_state=fixture_state,
+            evaluation_time=SYNTHETIC_EVALUATION_TIME,
+        )
 
     ev_a = round(res_a.net_expected_value, 6) if res_a.net_expected_value is not None else None
     ev_b = round(res_b.net_expected_value, 6) if res_b.net_expected_value is not None else None
     quote_sha_a = res_a.quote.quote_identity[-1] if (res_a.quote and res_a.quote.quote_identity) else None
     quote_sha_b = res_b.quote.quote_identity[-1] if (res_b.quote and res_b.quote.quote_identity) else None
 
-    price_derived_ev_change = (
+    price_derived_behavior_valid = (
         quote_sha_a != quote_sha_b
         and res_a.quote.decimal_odds != res_b.quote.decimal_odds
         and ev_a != ev_b
         and ev_a == -0.025
         and ev_b == 0.365
+        and verified_eval_a is not None
+        and verified_eval_b is not None
+        and dec_a.decision_status is RouterDecisionStatus.NO_BET
+        and dec_a.selected_opportunity_id is None
+        and dec_b.decision_status is RouterDecisionStatus.SELECTED
+        and dec_b.selected_opportunity_id is not None
+    )
+
+    selected_pred_id_b = (
+        dec_b.selected_opportunity.prediction_identity_sha256
+        if dec_b.selected_opportunity
+        else None
     )
 
     return {
-        "canonical_avoids_defect": price_derived_ev_change,
-        "canonical_property": "Provider pricing directly participates in canonical Price-All net-expected-value calculation and quote identity binding.",
+        "canonical_avoids_defect": price_derived_behavior_valid,
+        "canonical_property": "Provider pricing directly participates in canonical Price-All net-expected-value calculation, verification, and downstream Router selection.",
         "case_id": "LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT",
         "execution_evidence": {
             "state_a": {
                 "decimal_odds": res_a.quote.decimal_odds if res_a.quote else None,
+                "disposition": res_a.disposition.value,
                 "net_expected_value": ev_a,
                 "quote_identity": quote_sha_a,
+                "router_status": dec_a.decision_status.value,
+                "selected_opportunity_id": dec_a.selected_opportunity_id,
+                "selected_prediction_identity": None,
+                "verified_evaluation": True,
             },
             "state_b": {
                 "decimal_odds": res_b.quote.decimal_odds if res_b.quote else None,
+                "disposition": res_b.disposition.value,
                 "net_expected_value": ev_b,
                 "quote_identity": quote_sha_b,
+                "router_status": dec_b.decision_status.value,
+                "selected_opportunity_id": dec_b.selected_opportunity_id,
+                "selected_prediction_identity": selected_pred_id_b,
+                "verified_evaluation": True,
             },
-            "price_derived_ev_change": price_derived_ev_change,
+            "price_derived_ev_change": (ev_a != ev_b),
             "production_apis_executed": [
                 "domain.price_all.price_all_as_of",
+                "domain.price_all.verify_price_all_evaluation",
+                "domain.market_router_canonical_adapter.route",
             ],
         },
         "label": "SYNTHETIC_P0_DEFECT_CLASS",
         "observed_canonical_behavior": (
-            f"Under quote A (odds 1.50), real Price-All derived EV={ev_a} bound to {quote_sha_a}; "
-            f"under quote B (odds 2.10), real Price-All derived EV={ev_b} bound to {quote_sha_b}. "
-            f"Net expected value and quote binding respond directly to provider pricing."
+            f"Under quote A (odds 1.50), real Price-All derived EV={ev_a} bound to {quote_sha_a} "
+            f"producing Router {dec_a.decision_status.value}; under quote B (odds 2.10), real "
+            f"Price-All derived EV={ev_b} bound to {quote_sha_b} producing Router {dec_b.decision_status.value} "
+            f"with selected_opportunity_id={dec_b.selected_opportunity_id}. Net expected value and "
+            f"downstream routing respond directly to provider pricing."
         ),
-        "result": "PASS" if price_derived_ev_change else "FAIL",
+        "result": "PASS" if price_derived_behavior_valid else "FAIL",
     }
 
 
@@ -746,15 +791,15 @@ def run_p0_5_acceptance() -> dict[str, Any]:
             rejection_reasons=(),
         )
 
-    opp_x = _make_opp(
+    opp_narrow_x = _make_opp(
         "x", MarketId.MATCH_RESULT, OutcomeId.HOME, None, 1.50, "zzz" * 21 + "z", "1" * 64, 800.0
     )
-    opp_y = _make_opp(
+    opp_narrow_y = _make_opp(
         "y", MarketId.TOTAL_GOALS, OutcomeId.OVER, 2.5, 2.20, "aaa" * 21 + "a", "2" * 64, 1.0
     )
 
-    ranked_ab, eligible_ab, _ = canonical_router._rank_opportunities([opp_x, opp_y])
-    ranked_ba, eligible_ba, _ = canonical_router._rank_opportunities([opp_y, opp_x])
+    ranked_ab, eligible_ab, _ = canonical_router._rank_opportunities([opp_narrow_x, opp_narrow_y])
+    ranked_ba, eligible_ba, _ = canonical_router._rank_opportunities([opp_narrow_y, opp_narrow_x])
 
     narrow_rank_ok = (
         len(eligible_ab) == 2
@@ -764,6 +809,9 @@ def run_p0_5_acceptance() -> dict[str, Any]:
     )
 
     # 2. Public route integration proof with complete partitions priced via real Price-All
+    # Candidate X (Match Result Home @ 2.00, prob 0.60 -> EV 0.20, confidence 0.60)
+    # Candidate Y (BTTS Yes @ 2.00, prob 0.60 -> EV 0.20, confidence 0.60)
+    # Both are priced via real Price-All and verified, yielding a genuine equal tie on rank inputs.
     sel_1 = _make_selection("1", "Match Result", None, "1", "Home", "2.00", 2.0)
     sel_x = _make_selection("1", "Match Result", None, "2", "Draw", "4.00", 4.0)
     sel_2 = _make_selection("1", "Match Result", None, "3", "Away", "4.00", 4.0)
@@ -808,23 +856,71 @@ def run_p0_5_acceptance() -> dict[str, Any]:
         eval_xy = canonical_price.price_all_as_of((cand_mr, cand_btts), bundle, evaluation_time=SYNTHETIC_EVALUATION_TIME)
         eval_yx = canonical_price.price_all_as_of((cand_btts, cand_mr), bundle, evaluation_time=SYNTHETIC_EVALUATION_TIME)
 
+        verified_xy = canonical_price.verify_price_all_evaluation(eval_xy)
+        verified_yx = canonical_price.verify_price_all_evaluation(eval_yx)
+
         fixture_state = _make_fixture_state()
         dec_xy = canonical_router.route(
-            canonical_price.verify_price_all_evaluation(eval_xy),
+            verified_xy,
             fixture_state=fixture_state,
             evaluation_time=SYNTHETIC_EVALUATION_TIME,
         )
         dec_yx = canonical_router.route(
-            canonical_price.verify_price_all_evaluation(eval_yx),
+            verified_yx,
             fixture_state=fixture_state,
             evaluation_time=SYNTHETIC_EVALUATION_TIME,
         )
 
+    # Extract the two routed opportunities from dec_xy to verify genuine tie inputs
+    opps_by_market = {opp.market_id: opp for opp in dec_xy.opportunities}
+    opp_mr = opps_by_market[MarketId.MATCH_RESULT]
+    opp_btts = opps_by_market[MarketId.BTTS]
+
+    cand_x_info = {
+        "market": opp_mr.market_id.value,
+        "outcome": opp_mr.outcome_id.value,
+        "line": opp_mr.line,
+        "robust_net_expected_value": opp_mr.robust_net_expected_value,
+        "prediction_confidence": opp_mr.prediction_confidence,
+        "prediction_identity_sha256": opp_mr.prediction_identity_sha256,
+        "opportunity_id": opp_mr.opportunity_id,
+        "quote_identity": opp_mr.quote_sha256,
+    }
+    cand_y_info = {
+        "market": opp_btts.market_id.value,
+        "outcome": opp_btts.outcome_id.value,
+        "line": opp_btts.line,
+        "robust_net_expected_value": opp_btts.robust_net_expected_value,
+        "prediction_confidence": opp_btts.prediction_confidence,
+        "prediction_identity_sha256": opp_btts.prediction_identity_sha256,
+        "opportunity_id": opp_btts.opportunity_id,
+        "quote_identity": opp_btts.quote_sha256,
+    }
+
+    tie_inputs_equal = (
+        opp_mr.robust_net_expected_value is not None
+        and opp_btts.robust_net_expected_value is not None
+        and opp_mr.robust_net_expected_value == opp_btts.robust_net_expected_value
+        and opp_mr.prediction_confidence == opp_btts.prediction_confidence
+    )
+    distinct_predictions = (opp_mr.prediction_identity_sha256 != opp_btts.prediction_identity_sha256)
+
+    selected_pred_id_xy = dec_xy.selected_opportunity.prediction_identity_sha256 if dec_xy.selected_opportunity else None
+    selected_pred_id_yx = dec_yx.selected_opportunity.prediction_identity_sha256 if dec_yx.selected_opportunity else None
+
+    # Deterministic tie-breaking winner:
+    # Under equal robust EV and equal confidence, canonical prediction key decides:
+    # ("BTTS", "YES", "NONE") < ("MATCH_RESULT", "HOME", "NONE"), so BTTS YES must win under both orders.
     public_route_ok = (
-        dec_xy.decision_status is RouterDecisionStatus.SELECTED
+        tie_inputs_equal
+        and distinct_predictions
+        and dec_xy.decision_status is RouterDecisionStatus.SELECTED
         and dec_yx.decision_status is RouterDecisionStatus.SELECTED
         and dec_xy.selected_opportunity_id is not None
-        and dec_xy.selected_opportunity_id == dec_yx.selected_opportunity_id
+        and dec_yx.selected_opportunity_id is not None
+        and selected_pred_id_xy is not None
+        and selected_pred_id_xy == selected_pred_id_yx
+        and selected_pred_id_xy == opp_btts.prediction_identity_sha256
     )
 
     avoids_defect = narrow_rank_ok and public_route_ok
@@ -834,15 +930,20 @@ def run_p0_5_acceptance() -> dict[str, Any]:
         "canonical_property": "Deterministic tie-breaking prioritizes canonical prediction identity key (market_id, outcome_id, line), independent of construction order, opportunity ID, or quote attributes.",
         "case_id": "LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE",
         "execution_evidence": {
+            "candidate_x": cand_x_info,
+            "candidate_y": cand_y_info,
             "narrow_rank_ok": narrow_rank_ok,
             "public_route_ok": public_route_ok,
-            "selected_opportunity_id_xy": dec_xy.selected_opportunity_id,
-            "selected_opportunity_id_yx": dec_yx.selected_opportunity_id,
             "ranking_authority": [
                 "robust_net_expected_value (descending)",
                 "prediction_confidence (descending)",
                 "canonical prediction key (market_id, outcome_id, line) (ascending)",
             ],
+            "selected_opportunity_id_xy": dec_xy.selected_opportunity_id,
+            "selected_opportunity_id_yx": dec_yx.selected_opportunity_id,
+            "selected_prediction_identity_xy": selected_pred_id_xy,
+            "selected_prediction_identity_yx": selected_pred_id_yx,
+            "tie_inputs_equal": tie_inputs_equal,
             "production_apis_executed": [
                 "domain.price_all.price_all_as_of",
                 "domain.price_all.verify_price_all_evaluation",
@@ -851,9 +952,10 @@ def run_p0_5_acceptance() -> dict[str, Any]:
         },
         "label": "SYNTHETIC_P0_DEFECT_CLASS",
         "observed_canonical_behavior": (
-            f"Narrow rank proof confirmed canonical prediction key tie order; public canonical_router.route "
-            f"integration confirmed identical selection {dec_xy.selected_opportunity_id} under both "
-            f"[X, Y] and [Y, X] candidate construction orders."
+            f"Public integration constructed true-tie candidates (robust_ev={opp_mr.robust_net_expected_value}, "
+            f"confidence={opp_mr.prediction_confidence}). Real Price-All and Router execution confirmed identical "
+            f"selection {selected_pred_id_xy} dictated by canonical prediction key under both [X, Y] and [Y, X] "
+            f"construction orders; candidate construction order has zero authority."
         ),
         "result": "PASS" if avoids_defect else "FAIL",
     }
