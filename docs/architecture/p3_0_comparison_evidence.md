@@ -434,12 +434,16 @@ Following the exhaustive adjudication of all 290 retained replay candidates, the
 ### Frozen Artifacts and Comparator Execution
 
 - **Comparator Policy**: `ATHENA_P3_0_LEGACY_CANONICAL_COMPARATOR_V1`
+- **Real-Row Source Projection Artifact**: `artifacts/p3-0-comparator-real-row-source-v1.json`
+  - Canonical SHA-256: `cdd985cebafe3c757f27e28c6c76e5290f4dd5e3493ac4618d2a82f9518dd0a7`
+  - Extracted from: GitHub Actions artifact 10603511090 (manifest `62a52a3b9fd05953bf54a63b122fc65ab1283fe7b0c2d0e63210355a14209bcc`)
 - **Comparator Corpus Artifact**: `artifacts/p3-0-comparator-corpus-v1.json`
-  - Canonical SHA-256: `276ae20b450376b61933114ffa1c0e8cdfad57682bf1956a29f3d0f42f4c1133`
+  - Canonical SHA-256: `f8471d959e46dfe20328e56fb592a102a0b9388dcf9d77d45e1135fb3dac79ae`
   - Real replay row count: 1
   - Synthetic cases admitted: 0 (strictly segregated)
 - **Comparison Report Artifact**: `artifacts/p3-0-comparison-report-v1.json`
-  - Canonical SHA-256: `40b320ee4bf25e6df72b718b334d15b4a5a8d39c255ac92d7586bd2c3361aa50`
+  - Canonical SHA-256: `0d37d24360e18c82e44fb69679aa95739b02636c5ed61c016e410314b877d89a`
+  - Implementation Source Commit: `e591cce0c0dc31401fe78a0f56d772a6b574905c`
   - Real replay row count: 1
   - Synthetic P0 case count: 5
 
@@ -447,7 +451,7 @@ Following the exhaustive adjudication of all 290 retained replay candidates, the
 
 - **Fixture Identity**: `FOTMOB:5749683` / `sr:match:71945268` (Fiorentina vs Napoli, Serie A, 2026-09-20T10:30:00Z)
 - **Legacy Side**: `legacy_final_recommendation = null`, `legacy_decision_status = ANALYTICAL_CANDIDATE`. AnalysisPipeline path is analysis-only without selection or BET authorization.
-- **Canonical Side**: `canonical_router_status = SELECTED`, `canonical_router_recommendation = "ASIAN_HANDICAP AWAY 0.0 @ 1.61 (Fiorentina vs Napoli)"` with verified exact quote binding inside bundle `d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191`.
+- **Canonical Side**: `canonical_router_status = SELECTED`, `canonical_router_recommendation = "ASIAN_HANDICAP AWAY 0.0 @ 1.61 (Fiorentina vs Napoli)"` with verified exact quote identity `7f6fb592626f12779b4824371bdf53ab45073e2125fee60e58f27d727fa2be11` inside bundle `d0cd8f13360a8134af258a8dd9892cc637296fa9500627b564d860232a989191` loaded via verified artifact projection.
 - **Classification**: `EXPECTED_POLICY_DIFFERENCE` (`severity_classification = EXPLAINED_EXPECTED`).
 - **Probability Comparison**: `NOT_COMPARABLE` (legacy heuristic scores are not calibrated de-vigged event probabilities).
 - **Price Availability**: Legacy has no price access; canonical binds verified provider quote @ 1.61.
@@ -459,7 +463,7 @@ All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/le
 2. `LEGACY_SELECTOR_QUOTE_INDEPENDENT_OUTPUT` -> PASS (Provider pricing directly drives net expected value and ranking).
 3. `LEGACY_SELECTOR_NO_PROVIDER_FAIL_CLOSED_DISPOSITION` -> PASS (Missing provider availability produces explicit fail-closed non-selectable disposition).
 4. `LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO` -> PASS (Only registered canonical `MarketId` and `OutcomeId` identities are routed).
-5. `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` -> PASS (Equal-value ties resolved deterministically by canonical opportunity identity, not list append order).
+5. `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` -> PASS (Equal-value ties resolved deterministically by quote-independent prediction identity `(market_id, outcome_id, line)`, not list append order and not opportunity ID).
 
 ### High-Severity Rules and Finding Outcome
 
