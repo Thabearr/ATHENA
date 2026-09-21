@@ -2,7 +2,7 @@ from engine.analyzer import Analyzer
 from engine.probability_engine import ProbabilityEngine
 from engine.risk_engine import RiskEngine
 from engine.reliability_engine import ReliabilityEngine
-from engine.market_selector import MarketSelector
+from services import main_canonical_prediction_adapter as _canonical_presentation
 
 
 class PredictionService:
@@ -13,9 +13,8 @@ class PredictionService:
         self.probability = ProbabilityEngine()
         self.risk = RiskEngine()
         self.reliability = ReliabilityEngine()
-        self.market = MarketSelector()
 
-    def predict(self, fixture):
+    def predict(self, fixture, *, router_decision=None):
 
         prediction = self.analyzer.analyze(fixture)
 
@@ -25,6 +24,7 @@ class PredictionService:
 
         prediction = self.reliability.evaluate(prediction)
 
-        prediction = self.market.select(prediction)
-
-        return prediction
+        return _canonical_presentation.project_canonical_router_decision(
+            prediction,
+            router_decision,
+        )
