@@ -53,9 +53,9 @@ The audit is deliberately hostile to accidental external activity.
 - Main-facing `build_acca` receives a deterministic analyzed fixture at the
   analysis-output seam so the existing accumulator filtering and construction
   functions can execute without FotMob/OpenFootball/database acquisition.
-- `PredictionService.predict` is separately exercised with a deterministic
-  analyzer seed and the actual `ProbabilityEngine`, `RiskEngine`,
-  `ReliabilityEngine`, and `MarketSelector` implementations.
+- The supplemental `PredictionService` observation is loaded from the frozen
+  P0.5 artifact.  It is historical evidence of the pre-migration selector path,
+  not a claim about the current service after P3.1 PR B.
 - Current Shadow executes the real request wrapper and real daily wrapper, then
   crosses a bounded synthetic worker seam.  The real current Shadow Price-all,
   Router and Portfolio algorithms execute.  Only deep source-replay/verifier and
@@ -118,8 +118,10 @@ remains unchanged.
 ## Supplemental legacy `PredictionService` trace
 
 `PredictionService` remains a P0.3 legacy-reachability-review component.  P0.5
-therefore exercises it separately rather than pretending it is reachable from
-`build_acca`.
+therefore exercised it separately rather than pretending it was reachable from
+`build_acca`.  The committed `runtime-reachability-v1.json` is frozen; the
+current audit loader validates and preserves this trace instead of executing the
+post-migration service and rewriting history.
 
 ```text
 services.prediction_service.PredictionService.predict
@@ -132,6 +134,24 @@ services.prediction_service.PredictionService.predict
 The final call is classified as `LEGACY_MARKET_SELECTION` decision authority
 *inside this legacy service path*.  That is not a canonical-ownership or
 production-authority assignment.
+
+## P3.1 MAIN caller migration
+
+P3.1 PR B removes that executed legacy selector path from the current
+`services.prediction_service.PredictionService` implementation.  The service
+still computes its historical football-analysis fields, but a legacy
+`Prediction.recommended_market` is now a one-way presentation projection of a
+verified MAIN canonical `RouterDecision`.  No supplied decision, or a canonical
+`NO_BET`, produces `No Recommendation`, confidence `0.0`, and an empty
+`ranked_markets` compatibility field; no fallback heuristic is permitted.
+
+The migrated service trace executes the Analyzer, Probability, Risk, and
+Reliability stages plus MAIN canonical-core ownership/projection and records
+zero `MarketSelector.select` calls.  `build_acca` already recorded zero
+PredictionService/MarketSelector execution in its supported-root P0.5 probe; PR
+B does not claim to fix a dependency that root never had.  The five historical
+selector regression fixtures and the supplemental legacy trace remain preserved
+as P0.5 evidence.
 
 ## Current Shadow trace
 

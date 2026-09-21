@@ -395,100 +395,34 @@ def _probe_build_acca(source_commit: str, profile: str) -> tuple[dict[str, Any],
     }
 
 
-class _SyntheticPredictionAnalyzer:
-    def analyze(self, _fixture: Any):
-        from models.prediction import Prediction
+def _probe_historical_prediction_service(
+    source_commit: str,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load, validate, and preserve the frozen P0.5 supplemental trace.
 
-        return Prediction(
-            fixture_id=6001,
-            league="Synthetic League",
-            home_team="Legacy Home",
-            away_team="Legacy Away",
-            home_strength=70.0,
-            away_strength=30.0,
-            home_xg=1.5,
-            away_xg=0.7,
-            expected_goals=2.2,
+    P0.5 is historical evidence.  Re-running the old selector against the
+    current PredictionService would silently rewrite that baseline after PR B.
+    The frozen artifact is therefore the only source for this supplemental
+    observation, and its own pre-P0.5 commit identity must remain intact.
+    """
+
+    if source_commit != BASELINE_MAIN:
+        raise RuntimeReachabilityError(
+            "P0.5 historical supplemental trace can only describe its frozen baseline"
         )
-
-
-def _probe_prediction_service(source_commit: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    from engine.market_selector import MarketSelector
-    from engine.probability_engine import ProbabilityEngine
-    from engine.reliability_engine import ReliabilityEngine
-    from engine.risk_engine import RiskEngine
-    from services.prediction_service import PredictionService
-
-    trace = RuntimeTrace(
-        source_commit=source_commit,
-        supported_root="services.prediction_service",
-        root_authority_profile="UNKNOWN",
-        synthetic_case_id="LEGACY_PREDICTION_SERVICE_MARKET_SELECTOR_V1",
-    )
-    service = object.__new__(PredictionService)
-    service.analyzer = _SyntheticPredictionAnalyzer()
-    service.probability = ProbabilityEngine()
-    service.risk = RiskEngine()
-    service.reliability = ReliabilityEngine()
-    service.market = MarketSelector()
-
-    with ExitStack() as stack:
-        stack.enter_context(scoped_callable_checkpoint(
-            service,
-            "predict",
-            trace=trace,
-            module="services.prediction_service",
-            qualname="PredictionService.predict",
-            checkpoint_kind="ORCHESTRATION",
-            authority_category="MODEL_ANALYSIS",
-            notes=("analyzer_input_is_deterministic_synthetic_seed",),
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            service.probability,
-            "calculate",
-            trace=trace,
-            module="engine.probability_engine",
-            qualname="ProbabilityEngine.calculate",
-            checkpoint_kind="SUPPORTING_LOGIC",
-            authority_category="MODEL_ANALYSIS",
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            service.risk,
-            "evaluate",
-            trace=trace,
-            module="engine.risk_engine",
-            qualname="RiskEngine.evaluate",
-            checkpoint_kind="SUPPORTING_LOGIC",
-            authority_category="MODEL_ANALYSIS",
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            service.reliability,
-            "evaluate",
-            trace=trace,
-            module="engine.reliability_engine",
-            qualname="ReliabilityEngine.evaluate",
-            checkpoint_kind="SUPPORTING_LOGIC",
-            authority_category="MODEL_ANALYSIS",
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            service.market,
-            "select",
-            trace=trace,
-            module="engine.market_selector",
-            qualname="MarketSelector.select",
-            checkpoint_kind="DECISION_AUTHORITY",
-            authority_category="LEGACY_MARKET_SELECTION",
-        ))
-        result = service.predict({"synthetic": True})
-
-    document = trace.to_dict(disposition="EXECUTED_DECISION_AUTHORITY")
-    validate_trace_document(document)
-    return document, {
-        "recommended_market": result.recommended_market,
-        "market_confidence": result.market_confidence,
-        "ranked_market_count": len(result.ranked_markets),
-        "prediction_snapshot": _prediction_snapshot(result),
-    }
+    frozen = _load_json(DEFAULT_OUTPUT)
+    if frozen.get("source_commit") != BASELINE_MAIN:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 runtime artifact source commit drifted"
+        )
+    trace = frozen.get("supplemental_legacy_prediction_service_trace")
+    observation = frozen.get("supplemental_legacy_prediction_service_observation")
+    if type(trace) is not dict or type(observation) is not dict:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 supplemental PredictionService evidence is malformed"
+        )
+    validate_trace_document(trace)
+    return trace, observation
 
 
 def _make_shadow_context_and_quotes():
@@ -1184,7 +1118,7 @@ def build_runtime_evidence(source_commit: str) -> dict[str, Any]:
     if set(traces) != set(roots):
         raise RuntimeReachabilityError("runtime evidence does not cover exact P0.2 supported roots")
 
-    prediction_trace, prediction_observation = _probe_prediction_service(source_commit)
+    prediction_trace, prediction_observation = _probe_historical_prediction_service(source_commit)
     legacy_cases = _legacy_cases()
     ordered_traces = [traces[root] for root in roots]
     ordered_observations = {root: observations[root] for root in roots}

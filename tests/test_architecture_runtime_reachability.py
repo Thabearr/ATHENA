@@ -158,9 +158,11 @@ def test_build_acca_runtime_trace_does_not_execute_predictionservice_or_marketse
     assert ("engine.market_selector", "MarketSelector.select") not in executed
 
 
-def test_prediction_service_supplemental_trace_reaches_legacy_market_selector() -> None:
+def test_frozen_p05_prediction_service_trace_preserves_historical_legacy_selector() -> None:
     payload = audit.build_runtime_evidence(audit.BASELINE_MAIN)
     trace = payload["supplemental_legacy_prediction_service_trace"]
+    assert trace["source_commit"] == audit.BASELINE_MAIN
+    assert payload["source_commit"] == audit.BASELINE_MAIN
     ordered = [
         (row["module"], row["qualname"], row["checkpoint_kind"])
         for row in trace["checkpoints"]
