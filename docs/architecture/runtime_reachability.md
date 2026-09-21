@@ -191,7 +191,7 @@ historical P0.5 observed behaviors for later migration review:
 | `LEGACY_SELECTOR_NONCANONICAL_OVER15_COMBO` | Can recommend the ad-hoc `Home or Over 1.5` label (`88.0`), which is not a reviewed current canonical `MarketId`. |
 | `LEGACY_SELECTOR_CONSTRUCTION_ORDER_TIE` | Equal-score `Home or Draw` / `Home or Away` rows retain legacy append/stable-sort order. |
 
-The current outputs are asserted as evidence.  Separate strict `xfail` tests
+These frozen P0.5 outputs are asserted as historical evidence.  Separate strict `xfail` tests
 state the not-yet-satisfied future properties.  An unexpected `XPASS` is a
 review signal, not permission to silently rewrite the evidence.
 

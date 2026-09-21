@@ -298,7 +298,7 @@ def test_future_legacy_selector_output_is_not_quote_independent() -> None:
 
 @pytest.mark.xfail(
     strict=True,
-    reason="P0.5 evidence: provider absence has no explicit unpriced selector disposition",
+    reason="Frozen P0.5 evidence: provider absence historically had no explicit unpriced selector disposition",
 )
 def test_future_legacy_selector_fails_closed_without_provider_availability() -> None:
     case = audit._legacy_cases()[2]
