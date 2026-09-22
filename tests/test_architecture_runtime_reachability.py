@@ -144,7 +144,7 @@ def test_full_runtime_evidence_covers_exact_p02_supported_roots() -> None:
 
 def test_frozen_p05_build_acca_trace_is_loaded_without_running_current_cli() -> None:
     raw_artifact = audit.DEFAULT_OUTPUT.read_bytes()
-    assert hashlib.sha256(raw_artifact).hexdigest() == (
+    assert hashlib.sha256(raw_artifact.replace(b"\r\n", b"\n")).hexdigest() == (
         audit.FROZEN_P05_RUNTIME_ARTIFACT_SHA256
     )
     frozen = json.loads(raw_artifact)

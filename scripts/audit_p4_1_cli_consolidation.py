@@ -37,8 +37,8 @@ BASE_MAIN_SHA = "09188ea02e20b5b8fb30365d3c246b68a1a8fa59"
 P3_3_RECEIPT_SHA256 = "4c0f1be1b534fe863b9541363e37e2f780535be740cc6a901aeb1be57fbcf8bc"
 REGISTRY_CANONICAL_SHA256 = "74e79e216497c2e7f31a51e278251a5c62645e1085d04ebb8712022658f8f109"
 P0_5_SOURCE_MAIN_SHA = "b428dbd00380dd71456640d77b26ac79fe945c5f"
-P0_5_RUNTIME_RAW_SHA256 = "3ea90c5e0e797c027ad7a516db62f95e8bf9c7239b6074651bcdf64a6a03d65e"
-P3_3_RECEIPT_RAW_SHA256 = "8e3fe3cc6870c59142b9ae658636c75338d7b70cfb4151f553ec3eee73ca6077"
+P0_5_RUNTIME_RAW_SHA256 = "a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4"
+P3_3_RECEIPT_RAW_SHA256 = "59a890ce31d298cb96c5a13f4a13bac867352b2b950604e157cbbfe057849e0c"
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "artifacts/architecture/p4_1_cli_consolidation_v1.json"
 CALLER_FIXTURE = REPOSITORY_ROOT / "tests/fixtures/architecture/p4_1_legacy_acca_builder_callers_v1.json"
@@ -50,12 +50,12 @@ FIXED_COMMIT = "a" * 40
 
 PRESERVED_HISTORICAL_FILES = {
     "artifacts/architecture/runtime-reachability-v1.json": P0_5_RUNTIME_RAW_SHA256,
-    "config/architecture/main-shadow-authority-parity-v1.json": "0b2c517517c196fe92e13c8a8c7010f8e7546372c41aee37f8abdff431b0ba34",
-    "config/architecture/architecture-boundary-policy-v1.json": "cc6831e1dc0a59063a9da1ed073f8505b2717633de67e160b44aeb1092b4dc0b",
-    "artifacts/architecture/p3_1_main_canonical_core_promotion_v1.json": "287bb60291c463c934b944fb7787a4e1f1d1abcdd887f8ef7344e905b9c5056d",
-    "artifacts/architecture/p3_1_main_caller_migration_v1.json": "f0ef41f08bfaf1d452a56e7bb30441b7966c007d2f6552dfc204fffda8193cb0",
-    "artifacts/architecture/p3_2_frozen_v2_runtime_externalization_v1.json": "eb158301ed1bdf52a9e36346ebaab79bd65b32118ade0aba6eda380dc1ba331c",
-    "tests/fixtures/architecture/p3_2_frozen_v2_policy_vectors_v1.json": "3fc9a9df063ec8252aef5bf2a98a98faf2cf78f628b37697ff63b143fee31161",
+    "config/architecture/main-shadow-authority-parity-v1.json": "d4f525a0eb8d3ffe07e5b64a3452d758bc9e180c5b1db37feecbac1faf395bfe",
+    "config/architecture/architecture-boundary-policy-v1.json": "f6aeac63c88e8dce7e52e278bd0e48b478ede9b56764a78051e500d70bcd6ee6",
+    "artifacts/architecture/p3_1_main_canonical_core_promotion_v1.json": "a08d0966d82bcdc5573b61ef05c90cf7889c8dede7e3888a615fdbd2c5a43939",
+    "artifacts/architecture/p3_1_main_caller_migration_v1.json": "28a930d25288a8572be96711779dbf137911b2fa00bfe2883134290ec38850dc",
+    "artifacts/architecture/p3_2_frozen_v2_runtime_externalization_v1.json": "8b9330b75ad2ccfce312f751bcc694b39af7c401f3e25b7668b2f1492f9051ea",
+    "tests/fixtures/architecture/p3_2_frozen_v2_policy_vectors_v1.json": "264b8998aba276fd9ed4fd82a66d902bbf2b47e0cbe4b5b2773fdde88add0f35",
     "artifacts/architecture/p3_3_module_canonicalization_v1.json": P3_3_RECEIPT_RAW_SHA256,
 }
 
@@ -80,7 +80,8 @@ class P4_1AuditError(RuntimeError):
 
 
 def _raw_sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    raw = path.read_bytes().replace(b"\r\n", b"\n")
+    return hashlib.sha256(raw).hexdigest()
 
 
 def _canonical_bytes(value: Any) -> bytes:
@@ -614,7 +615,9 @@ def build_receipt() -> dict[str, Any]:
             proof["target_total_odds_status"] == "TARGET_TOTAL_ODDS_NOT_SUPPORTED"
             and proof["target_total_odds_executor_call_count"] == 0
         ),
-        "legacy_caller_classification_fixture_sha256": hashlib.sha256(caller_bytes).hexdigest(),
+        "legacy_caller_classification_fixture_sha256": hashlib.sha256(
+            caller_bytes.replace(b"\r\n", b"\n")
+        ).hexdigest(),
         "legacy_caller_classification_counts": {
             kind: sum(1 for item in classified_callers if item.get("class") == kind)
             for kind in (

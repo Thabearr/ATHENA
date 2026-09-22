@@ -39,7 +39,7 @@ LEGACY_CASES_PATH = REPOSITORY_ROOT / "tests/fixtures/architecture/legacy_market
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "artifacts/architecture/runtime-reachability-v1.json"
 BASELINE_MAIN = "b428dbd00380dd71456640d77b26ac79fe945c5f"
 FROZEN_P05_RUNTIME_ARTIFACT_SHA256 = (
-    "3ea90c5e0e797c027ad7a516db62f95e8bf9c7239b6074651bcdf64a6a03d65e"
+    "a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4"
 )
 FIXED_NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
@@ -240,7 +240,8 @@ def _probe_build_acca(source_commit: str) -> tuple[dict[str, Any], dict[str, Any
         raise RuntimeReachabilityError(
             "frozen P0.5 runtime artifact is unavailable"
         ) from exc
-    artifact_sha256 = hashlib.sha256(raw).hexdigest()
+    # Hash Git-blob-equivalent bytes so CRLF checkout conversion is immaterial.
+    artifact_sha256 = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
     if artifact_sha256 != FROZEN_P05_RUNTIME_ARTIFACT_SHA256:
         raise RuntimeReachabilityError(
             "frozen P0.5 runtime artifact identity drifted"

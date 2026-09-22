@@ -17,5 +17,7 @@ def test_committed_runtime_reachability_artifact_is_exact_regeneration() -> None
         audit.build_runtime_evidence(audit.BASELINE_MAIN)
     )
 
-    assert committed == regenerated
-    assert hashlib.sha256(committed).hexdigest() == EXPECTED_RUNTIME_ARTIFACT_SHA256
+    assert committed.replace(b"\r\n", b"\n") == regenerated.replace(b"\r\n", b"\n")
+    assert hashlib.sha256(committed.replace(b"\r\n", b"\n")).hexdigest() == (
+        EXPECTED_RUNTIME_ARTIFACT_SHA256
+    )
