@@ -90,10 +90,10 @@ artifact and fails if that reviewed set drifts.  The current expected coverage i
 | `scripts.run_fotmob_utc_native_xg_fresh_holdout_tick` | `UNKNOWN` / protected research | `NO_DECISION_AUTHORITY_REACHED` | Fails closed before collection because the exact bootstrap is intentionally absent and live-network permission is not supplied. |
 | `scripts.send_current_shadow_email` | `SHADOW_ONLY` | `EXECUTED_DELIVERY_ONLY` | Delivery-only path; SMTP is intentionally unconfigured and guarded. |
 
-## Main-facing `build_acca` trace
+## Historical P0.5 main-facing `build_acca` trace
 
-The deterministic downstream-selection probe executes this ordered decision
-path:
+At the P0.5 checkpoint, the frozen deterministic downstream-selection probe
+recorded this ordered decision path:
 
 ```text
 build_acca.AccaBuilder.build
@@ -104,16 +104,17 @@ build_acca.AccaBuilder.build
 ```
 
 `services.prediction_service.PredictionService.predict` and
-`engine.market_selector.MarketSelector.select` are wrapped as measurement
-checkpoints during the same root execution.  Their absence from the trace is the
-runtime fact: they did not execute in the reviewed `build_acca` synthetic root
-probe.
+`engine.market_selector.MarketSelector.select` were wrapped as measurement
+checkpoints during that baseline root execution.  Their absence from the frozen
+trace is the historical runtime fact: they did not execute in the reviewed P0.5
+`build_acca` synthetic root probe.
 
-The synthetic analyzed result is injected *after* analysis specifically to avoid
-provider/database activity and to make the accumulator decision boundary
-executable.  This does not claim that an unquarantined legacy analyzer result has
+The synthetic analyzed result was injected *after* analysis specifically to
+avoid provider/database activity and to make the accumulator decision boundary
+executable.  This describes only the frozen P0.5 observation, not the current
+CLI path.  It does not claim that an unquarantined legacy analyzer result has
 runtime BET authority; existing `AnalysisPipeline.apply_runtime_authorization`
-remains unchanged.
+remained unchanged at that checkpoint.
 
 ## Supplemental legacy `PredictionService` trace
 
@@ -234,3 +235,19 @@ and cleanup review.  Neither automatically assigns `KEEP`,
 All reviewed cleanup dispositions remain `UNCLASSIFIED` in this wave.  Active
 prospective research and historical evidence remain protected even when they do
 not participate in a market-decision trace.
+
+## P4.1 current CLI trace
+
+P0.5 remains a frozen historical checkpoint; its `build_acca` observation was not
+regenerated from the migrated CLI. P4.1 adds a separate offline current-state proof:
+`build_acca` parses an explicit or shorthand request, displays the resolved request
+and permission manifest, delegates orchestration to `AthenaRunService`, and renders
+the resulting canonical `RunReceipt`. The proof uses a fixed Africa/Lagos clock and
+synthetic executor, exercises durable request/receipt persistence and idempotency,
+and denies network connections. It does not invoke the real Current Shadow
+supervisor, acquire provider data, or perform any live/sensitive action.
+
+The former `AccaBuilder` remains in
+`services/legacy_acca_builder_compat.py` for classified non-CLI and offline legacy
+callers; the supported canonical CLI import graph does not reach it. P4.1 does not
+consolidate GitHub workflows: workflow adoption remains P4.2 work.

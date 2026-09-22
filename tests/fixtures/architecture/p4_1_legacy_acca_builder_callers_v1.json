@@ -1,0 +1,126 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P4_1_LEGACY_ACCA_BUILDER_CALLER_CLASSIFICATION_V1",
+  "source_main_sha": "09188ea02e20b5b8fb30365d3c246b68a1a8fa59",
+  "classifications": [
+    {
+      "class": "SUPPORTED_CLI_CURRENT",
+      "path": "build_acca.py",
+      "sites": [
+        "AccaBuilder definition",
+        "generate Typer command",
+        "quick Typer command",
+        "backtest Typer command"
+      ],
+      "disposition": "replace with thin RunRequest parser, AthenaRunService call, and RunReceipt renderer"
+    },
+    {
+      "class": "SUPPORTED_CLI_CURRENT",
+      "path": "setup.py",
+      "sites": ["athena=build_acca:app"],
+      "disposition": "repoint console entry point to build_acca:main"
+    },
+    {
+      "class": "SUPPORTED_NON_CLI_CURRENT",
+      "path": "api/server.py",
+      "sites": ["POST /api/generate imports AccaBuilder", "POST /api/generate constructs AccaBuilder"],
+      "disposition": "preserve through services.legacy_acca_builder_compat; keep unreachable from canonical CLI"
+    },
+    {
+      "class": "OFFLINE_LEGACY_TOOL",
+      "path": "intelligence/backtester.py",
+      "sites": ["imports AccaBuilder", "uses analyst/pipeline/acca_filter/acca_engine"],
+      "disposition": "preserve through services.legacy_acca_builder_compat"
+    },
+    {
+      "class": "OFFLINE_LEGACY_TOOL",
+      "path": "tools/backtester.py",
+      "sites": ["imports AccaBuilder", "uses historical database/pipeline/filter/accumulator stack"],
+      "disposition": "preserve through services.legacy_acca_builder_compat"
+    },
+    {
+      "class": "OFFLINE_LEGACY_TOOL",
+      "path": "intelligence/evolver.py",
+      "sites": ["imports and constructs AccaBuilder; builder is unused by the evolution path"],
+      "disposition": "preserve import through services.legacy_acca_builder_compat pending later cleanup"
+    },
+    {
+      "class": "OFFLINE_LEGACY_TOOL",
+      "path": "scripts/run_evolution.py",
+      "sites": ["manual offline evolution entry point"],
+      "disposition": "no canonical CLI dependency; remains offline legacy tooling"
+    },
+    {
+      "class": "HISTORICAL_EVIDENCE",
+      "path": "scripts/_p3_0_paired_capture_part1.py",
+      "sites": ["lazy AccaBuilder import to obtain historical pipeline"],
+      "disposition": "redirect import to isolated compatibility module; preserve capture behavior"
+    },
+    {
+      "class": "HISTORICAL_EVIDENCE",
+      "path": "scripts/audit_runtime_reachability.py",
+      "sites": ["P0.5 build_acca probe reconstructs current AccaBuilder behavior"],
+      "disposition": "replace only build_acca historical probe with frozen P0.5 artifact loader"
+    },
+    {
+      "class": "HISTORICAL_EVIDENCE",
+      "path": "scripts/audit_p3_1_main_caller_migration.py",
+      "sites": ["frozen historical root-name evidence"],
+      "disposition": "retain historical identity; no live caller"
+    },
+    {
+      "class": "HISTORICAL_EVIDENCE",
+      "path": "scripts/audit_p3_3_canonical_module_names.py",
+      "sites": ["frozen historical root-name evidence"],
+      "disposition": "retain historical identity; no live caller"
+    },
+    {
+      "class": "HISTORICAL_EVIDENCE",
+      "path": "scripts/validate_main_shadow_authority_parity.py",
+      "sites": ["P0.3 historical supported-root evidence"],
+      "disposition": "retain historical identity; no live caller"
+    },
+    {
+      "class": "HISTORICAL_EVIDENCE",
+      "path": "config/architecture/main-shadow-authority-parity-v1.json",
+      "sites": ["frozen build_acca root contract data"],
+      "disposition": "preserve historical artifact bytes"
+    },
+    {
+      "class": "TEST_ONLY",
+      "path": "scripts/test_acca_reasoning.py",
+      "sites": ["manual/pytest-shaped legacy harness imports and constructs AccaBuilder"],
+      "disposition": "redirect to isolated compatibility module"
+    },
+    {
+      "class": "TEST_ONLY",
+      "path": "tests/test_build_acca_db_init.py",
+      "sites": ["legacy builder database initialization compatibility tests"],
+      "disposition": "redirect to isolated compatibility module"
+    },
+    {
+      "class": "TEST_ONLY",
+      "path": "tests/test_api_error_handling.py",
+      "sites": ["patches API AccaBuilder import"],
+      "disposition": "patch isolated compatibility import"
+    }
+  ],
+  "non_execution_references": [
+    {
+      "path": ".github/workflows/tests.yml",
+      "reference": "compileall includes build_acca.py",
+      "executes_cli": false
+    },
+    {
+      "path": ".github/workflows/athena-patch-bridge.yml",
+      "reference": "compileall and changed-path allowlist mention build_acca.py",
+      "executes_cli": false
+    }
+  ],
+  "findings": {
+    "supported_non_cli_blocker": false,
+    "provider_workflow_invocation_found": false,
+    "python_build_acca_subprocess_invocation_found": false,
+    "generate_quick_backtest_workflow_invocation_found": false
+  }
+}

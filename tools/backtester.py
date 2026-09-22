@@ -10,7 +10,7 @@ from rich.console import Console
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from database.database import Database
-from build_acca import AccaBuilder
+from services.legacy_acca_builder_compat import AccaBuilder
 from services.prediction_tracker import PredictionTracker
 
 console = Console()

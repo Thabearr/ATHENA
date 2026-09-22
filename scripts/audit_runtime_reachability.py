@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,9 @@ AUTHORITY_PATH = REPOSITORY_ROOT / "config/architecture/main-shadow-authority-pa
 LEGACY_CASES_PATH = REPOSITORY_ROOT / "tests/fixtures/architecture/legacy_market_selection_cases_v1.json"
 DEFAULT_OUTPUT = REPOSITORY_ROOT / "artifacts/architecture/runtime-reachability-v1.json"
 BASELINE_MAIN = "b428dbd00380dd71456640d77b26ac79fe945c5f"
+FROZEN_P05_RUNTIME_ARTIFACT_SHA256 = (
+    "a8ccb4c0c8ab2bea9bd133bb7fa7e155957bf1e38e5bf7ae6cccb4f44640f7e4"
+)
 FIXED_NOW = datetime(2026, 9, 10, 12, 0, tzinfo=timezone.utc)
 
 EXPECTED_SUPPORTED_ROOTS = frozenset({
@@ -223,176 +227,115 @@ def _legacy_cases() -> list[dict[str, Any]]:
     return results
 
 
-def _probe_build_acca(source_commit: str, profile: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    import build_acca
-    from domain.markets import DecisionStatus, resolve_legacy_selection, serialize_selection
-    from intelligence.acca_filter import AccaFilter
-    from intelligence.accumulator import AccumulatorEngine
-    from services.prediction_service import PredictionService
-    from engine.market_selector import MarketSelector
+def _probe_build_acca(source_commit: str) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Load the frozen P0.5 build_acca observation, never today's CLI path."""
 
-    trace = RuntimeTrace(
-        source_commit=source_commit,
-        supported_root="build_acca",
-        root_authority_profile=profile,
-        synthetic_case_id="BUILD_ACCA_SYNTHETIC_DOWNSTREAM_SELECTION_V1",
-    )
-    canonical = serialize_selection(resolve_legacy_selection("DC_1X"))
-    quote_observed = (FIXED_NOW - timedelta(seconds=30)).isoformat()
-    priced = {
-        **canonical,
-        "verdict": "DC_1X",
-        "category": "DOUBLE_CHANCE",
-        "prob": 0.72,
-        "estimated_probability": 0.72,
-        "edge": 0.10,
-        "edge_is_bookmaker_value": True,
-        "edge_method": "P0.5_SYNTHETIC_QUOTE_VALUE",
-        "bookmaker_odds": 1.40,
-        "bookmaker_quote": {
-            "market_id": canonical["market_id"],
-            "outcome_id": canonical["outcome_id"],
-            "line": canonical["line"],
-            "bookmaker_odds": 1.40,
-            "source": "p0.5_synthetic_bookmaker",
-            "quote_snapshot_id": "p0.5-build-acca-quote",
-            "observed_at": quote_observed,
-            "is_genuine": True,
-            "is_current": True,
-        },
-        "edge_pp": 10.0,
-        "kelly_stake_pct": 1.0,
-    }
-    analyzed = {
-        "fixture_id": "P05-BUILD-1",
-        "fixture": "Synthetic Alpha vs Synthetic Beta",
-        "home_team": "Synthetic Alpha",
-        "away_team": "Synthetic Beta",
-        "league": "Premier League",
-        "match_date": "2026-09-10T18:00:00+00:00",
-        "decision_status": DecisionStatus.BET.value,
-        "accumulator_eligible_selection": priced,
-        "edge": 0.10,
-        "edge_is_bookmaker_value": True,
-        "edge_pp": 10.0,
-        "risk_score": 10.0,
-        "freshness": 0.90,
-        "upset_alert": False,
-        "evidence_report": {"synthetic_case_id": "BUILD_ACCA_SYNTHETIC_DOWNSTREAM_SELECTION_V1"},
-    }
+    if source_commit != BASELINE_MAIN:
+        raise RuntimeReachabilityError(
+            "P0.5 build_acca evidence can only describe its frozen baseline"
+        )
+    try:
+        raw = DEFAULT_OUTPUT.read_bytes()
+    except OSError as exc:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 runtime artifact is unavailable"
+        ) from exc
+    # Hash Git-blob-equivalent bytes so CRLF checkout conversion is immaterial.
+    artifact_sha256 = hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()
+    if artifact_sha256 != FROZEN_P05_RUNTIME_ARTIFACT_SHA256:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 runtime artifact identity drifted"
+        )
+    try:
+        frozen = json.loads(raw)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 runtime artifact is malformed"
+        ) from exc
+    if type(frozen) is not dict:
+        raise RuntimeReachabilityError("frozen P0.5 runtime artifact is malformed")
+    if (
+        frozen.get("schema_version") != SCHEMA_VERSION
+        or frozen.get("policy_id") != POLICY_ID
+        or frozen.get("source_commit") != BASELINE_MAIN
+    ):
+        raise RuntimeReachabilityError(
+            "frozen P0.5 runtime artifact checkpoint identity drifted"
+        )
 
-    builder = object.__new__(build_acca.AccaBuilder)
-    builder.days_ahead = 1
-    builder.min_edge = 0.05
-    builder.acca_filter = AccaFilter()
-    builder.acca_engine = AccumulatorEngine(
-        min_edge=0.05,
-        current_time_provider=lambda: FIXED_NOW,
-    )
-    builder.kelly_calculator = SimpleNamespace(
-        calculate_acca_stake=lambda *_args, **_kwargs: 0.0
-    )
-    builder._fetch_live_fixtures = lambda: []
-    builder._get_fixtures_from_db = lambda _days: [{"fixture_id": "P05-BUILD-1"}]
-    builder._analyze_fixtures = lambda _fixtures: [dict(analyzed)]
-    builder._display_safe_selections = lambda *_args, **_kwargs: None
+    traces = frozen.get("supported_root_traces")
+    if type(traces) is not list:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 runtime artifact omitted supported-root traces"
+        )
+    matching_traces = [
+        item for item in traces
+        if type(item) is dict and item.get("supported_root") == "build_acca"
+    ]
+    observations = frozen.get("supported_root_observations")
+    if len(matching_traces) != 1 or type(observations) is not dict:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 build_acca evidence is missing or ambiguous"
+        )
+    trace = matching_traces[0]
+    observation = observations.get("build_acca")
+    if type(observation) is not dict:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 build_acca observation is malformed"
+        )
+    validate_trace_document(trace)
 
-    with ExitStack() as stack:
-        stack.enter_context(_temporary_attribute(
-            build_acca,
-            "console",
-            SimpleNamespace(print=lambda *_args, **_kwargs: None),
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            builder,
-            "build",
-            trace=trace,
-            module="build_acca",
-            qualname="AccaBuilder.build",
-            checkpoint_kind="ENTRYPOINT",
-            authority_category="NONE",
-            notes=("synthetic_analysis_seam=true", "live_fixture_and_db_io=false"),
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            builder.acca_filter,
-            "filter_and_rank_legs",
-            trace=trace,
-            module="intelligence.acca_filter",
-            qualname="AccaFilter.filter_and_rank_legs",
-            checkpoint_kind="DECISION_AUTHORITY",
-            authority_category="ACCUMULATOR_FILTERING",
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            builder.acca_filter,
-            "build_filtered_acca",
-            trace=trace,
-            module="intelligence.acca_filter",
-            qualname="AccaFilter.build_filtered_acca",
-            checkpoint_kind="DECISION_AUTHORITY",
-            authority_category="ACCUMULATOR_FILTERING",
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            builder.acca_engine,
-            "generate_accumulator",
-            trace=trace,
-            module="intelligence.accumulator",
-            qualname="AccumulatorEngine.generate_accumulator",
-            checkpoint_kind="DECISION_AUTHORITY",
-            authority_category="ACCUMULATOR_CONSTRUCTION",
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            PredictionService,
-            "predict",
-            trace=trace,
-            module="services.prediction_service",
-            qualname="PredictionService.predict",
-            checkpoint_kind="ORCHESTRATION",
-            authority_category="MODEL_ANALYSIS",
-            notes=("measurement_wrapper_only",),
-        ))
-        stack.enter_context(scoped_callable_checkpoint(
-            MarketSelector,
-            "select",
-            trace=trace,
-            module="engine.market_selector",
-            qualname="MarketSelector.select",
-            checkpoint_kind="DECISION_AUTHORITY",
-            authority_category="LEGACY_MARKET_SELECTION",
-            notes=("measurement_wrapper_only",),
-        ))
-        result = builder.build(days=1, fold_size=1, strict=True, league=None)
-
-    executed = {(item["module"], item["qualname"]) for item in trace.records}
-    prediction_service_executed = (
-        "services.prediction_service", "PredictionService.predict"
-    ) in executed
-    market_selector_executed = (
-        "engine.market_selector", "MarketSelector.select"
-    ) in executed
-    token = trace.begin(
-        module="build_acca",
-        qualname="AccaBuilder.build.terminus",
-        checkpoint_kind="TERMINUS",
-        authority_category="NONE",
-        notes=(
-            f"prediction_service_executed={str(prediction_service_executed).lower()}",
-            f"market_selector_executed={str(market_selector_executed).lower()}",
-            "synthetic_analysis_result_injected_before_accumulator_gate=true",
+    if (
+        trace.get("source_commit") != BASELINE_MAIN
+        or trace.get("trace_policy_id") != POLICY_ID
+        or trace.get("supported_root") != "build_acca"
+        or trace.get("root_authority_profile") != "MAIN_ONLY"
+        or trace.get("runtime_disposition") != "EXECUTED_DECISION_AUTHORITY"
+        or trace.get("synthetic_case_id")
+        != "BUILD_ACCA_SYNTHETIC_DOWNSTREAM_SELECTION_V1"
+    ):
+        raise RuntimeReachabilityError(
+            "frozen P0.5 build_acca trace identity drifted"
+        )
+    checkpoint_identity = [
+        (row.get("module"), row.get("qualname"), row.get("checkpoint_kind"))
+        for row in trace["checkpoints"]
+    ]
+    if checkpoint_identity != [
+        ("build_acca", "AccaBuilder.build", "ENTRYPOINT"),
+        (
+            "intelligence.acca_filter",
+            "AccaFilter.filter_and_rank_legs",
+            "DECISION_AUTHORITY",
         ),
-    )
-    trace.finish(token)
-    document = trace.to_dict(disposition="EXECUTED_DECISION_AUTHORITY")
-    validate_trace_document(document)
-    return document, {
-        "result_decision_status": result.get("decision_status"),
-        "prediction_service_executed": prediction_service_executed,
-        "market_selector_executed": market_selector_executed,
-        "decision_authority_modules": sorted({
-            item["module"]
-            for item in document["checkpoints"]
-            if item["checkpoint_kind"] == "DECISION_AUTHORITY"
-        }),
-    }
+        (
+            "intelligence.acca_filter",
+            "AccaFilter.build_filtered_acca",
+            "DECISION_AUTHORITY",
+        ),
+        (
+            "intelligence.accumulator",
+            "AccumulatorEngine.generate_accumulator",
+            "DECISION_AUTHORITY",
+        ),
+        ("build_acca", "AccaBuilder.build.terminus", "TERMINUS"),
+    ]:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 build_acca checkpoint identities drifted"
+        )
+    if observation != {
+        "decision_authority_modules": [
+            "intelligence.acca_filter",
+            "intelligence.accumulator",
+        ],
+        "market_selector_executed": False,
+        "prediction_service_executed": False,
+        "result_decision_status": "NO_BET",
+    }:
+        raise RuntimeReachabilityError(
+            "frozen P0.5 build_acca observation drifted"
+        )
+    return trace, observation
 
 
 def _probe_historical_prediction_service(
@@ -1085,7 +1028,7 @@ def build_runtime_evidence(source_commit: str) -> dict[str, Any]:
     traces: dict[str, dict[str, Any]] = {}
     observations: dict[str, dict[str, Any]] = {}
 
-    trace, observation = _probe_build_acca(source_commit, profiles["build_acca"])
+    trace, observation = _probe_build_acca(source_commit)
     traces["build_acca"] = trace
     observations["build_acca"] = observation
 

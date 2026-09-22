@@ -6,7 +6,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from build_acca import AccaBuilder
+from services.legacy_acca_builder_compat import AccaBuilder
 from workers.fotmob_advanced_scraper import FotMobAdvancedScraper
 from api.athenizer import router as athenizer_router
 from api.export import router as export_router
