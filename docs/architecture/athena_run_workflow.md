@@ -59,3 +59,15 @@ mapping remains `PENDING_P4_3_CAPABILITY_MAPPING`. The existing
 `current-shadow-all-market.yml` and `current-sportybet-accumulator.yml` workflows
 remain unchanged and enabled; P4.2 claims no workflow retirement. No wager authority
 is granted.
+
+## P4.3A workflow capability census
+
+P4.3A adds an evidence-backed capability and run-history census for all 40
+workflows present at the P4.2 merge base. No workflow was changed, disabled, renamed,
+or retired, and no rollback tag was created. The canonical `athena-run` surface is
+mapped, while Current Shadow remains active with its scheduled run, notification,
+issue-comment, and identity/history-artifact responsibilities. The legacy
+target-only SportyBet workflow is retained for owner review because the captured
+GitHub history contains no run. Any later P4.3B retirement decision must be made
+from the reviewed census; P4.3A does not claim the P4.3 retirement gate or broad
+workflow consolidation.
