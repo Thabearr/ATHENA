@@ -59,7 +59,7 @@ The runner resolves the five-component core before provider acquisition. If regi
 
 Current Shadow still carries reviewed profile-specific source/context and terminal receipt shapes. To keep P2.1 behavior-preserving, the adapter temporarily delegates those shapes to the existing Shadow implementation only after the corresponding canonical owner and source-controlled alias have both been proven. This is the transition window explicitly allowed by the v2 specification: the legacy wrappers are retained as implementation/evidence dependencies, but they are no longer the runner's directly imported ownership boundary and cannot independently establish authority. Existing bounded fresh-reprice and reconciliation monkeypatch seams are preserved.
 
-P2.1 does **not** claim that the legacy payload classes have been deleted or that frozen v2/v3 dependencies are gone. Their differential removal remains later P3.2/P3.3 work. P3.1 PR A adds MAIN registry eligibility only; MAIN caller migration remains P3.1 PR B.
+At the P2.1 checkpoint, that PR did **not** claim that legacy payload classes had been deleted or that frozen v2/v3 dependencies were gone. At that point P3.1 caller migration and P3.2/P3.3 remained future work. P3.1 PR B has since merged, and P3.2 now externalizes the frozen v2 runtime dependency while retaining the historical v2/v3 implementations. P3.3 naming/canonicalization remains pending, and P5.2 remains the separate deletion gate.
 
 ## Behavioral contract
 
