@@ -1,0 +1,375 @@
+{
+  "canonical_sha256": "a7609c359410c5d0d1b1aff4c04ee71a115b07c30e28bfac89eeb5a02f185da3",
+  "policy_id": "ATHENA_P3_2_FROZEN_V2_POLICY_VECTORS_V1",
+  "portfolio": {
+    "asian_handicap_settlement_components": [
+      "HALF_LOSS",
+      "HALF_WIN",
+      "LOSS",
+      "PUSH",
+      "WIN"
+    ],
+    "contract_sha256": "919149759ffc9aabef2fefe7c6e0db72d697ebd1ffe33205054fc3ffb4f785fd",
+    "dnb_settlement_components": [
+      "LOSS",
+      "PUSH",
+      "WIN"
+    ],
+    "fragility_cases": [
+      {
+        "classification": "FRAGILE_THIN_VALUE_AND_SURVIVAL",
+        "robust_ev": 0.019999999999999997,
+        "survival": 0.5999999999999999
+      },
+      {
+        "classification": "FRAGILE_THIN_VALUE",
+        "robust_ev": 0.019999999999999997,
+        "survival": 0.6
+      },
+      {
+        "classification": "FRAGILE_THIN_VALUE",
+        "robust_ev": 0.019999999999999997,
+        "survival": 0.6000000000000001
+      },
+      {
+        "classification": "FRAGILE_THIN_SURVIVAL",
+        "robust_ev": 0.02,
+        "survival": 0.5999999999999999
+      },
+      {
+        "classification": "NON_FRAGILE",
+        "robust_ev": 0.02,
+        "survival": 0.6
+      },
+      {
+        "classification": "NON_FRAGILE",
+        "robust_ev": 0.02,
+        "survival": 0.6000000000000001
+      },
+      {
+        "classification": "FRAGILE_THIN_SURVIVAL",
+        "robust_ev": 0.020000000000000004,
+        "survival": 0.5999999999999999
+      },
+      {
+        "classification": "NON_FRAGILE",
+        "robust_ev": 0.020000000000000004,
+        "survival": 0.6
+      },
+      {
+        "classification": "NON_FRAGILE",
+        "robust_ev": 0.020000000000000004,
+        "survival": 0.6000000000000001
+      }
+    ],
+    "fragility_status_values": [
+      "FRAGILE_THIN_SURVIVAL",
+      "FRAGILE_THIN_VALUE",
+      "FRAGILE_THIN_VALUE_AND_SURVIVAL",
+      "NON_FRAGILE"
+    ],
+    "fragility_thresholds": {
+      "comparison": "STRICTLY_BELOW",
+      "minimum_robust_net_expected_value_for_non_fragile": 0.02,
+      "minimum_survival_floor_for_non_fragile": 0.6
+    }
+  },
+  "price_all": {
+    "contract_sha256": "b5e3c063ac8b4e9fc1521cabbfe1da873a67b70efc67bc08d8ada61f2024e599",
+    "settlement_cases": [
+      {
+        "case_id": "ordinary_match_result_partition",
+        "expected_value": 0.10000000000000003,
+        "line": null,
+        "market_id": "MATCH_RESULT",
+        "odds": 2.0,
+        "outcome_id": "HOME",
+        "probabilities": {
+          "AWAY": 0.2,
+          "DRAW": 0.25,
+          "HOME": 0.55
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            1.0
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "ordinary_btts_yes_partition",
+        "expected_value": 0.17799999999999994,
+        "line": null,
+        "market_id": "BTTS",
+        "odds": 1.9,
+        "outcome_id": "YES",
+        "probabilities": {
+          "NO": 0.38,
+          "YES": 0.62
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            0.8999999999999999
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "ordinary_btts_no_partition",
+        "expected_value": -0.20199999999999996,
+        "line": null,
+        "market_id": "BTTS",
+        "odds": 2.1,
+        "outcome_id": "NO",
+        "probabilities": {
+          "NO": 0.38,
+          "YES": 0.62
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            1.1
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "selection_specific_yes_no_unit",
+        "expected_value": 0.1315,
+        "line": null,
+        "market_id": "DOUBLE_CHANCE",
+        "odds": 1.55,
+        "outcome_id": "HOME_OR_DRAW",
+        "probabilities": {
+          "NO": 0.27,
+          "YES": 0.73
+        },
+        "selection_outcome": "HOME_OR_DRAW",
+        "settlement_returns": [
+          [
+            "WIN",
+            0.55
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "draw_no_bet_full_settlement",
+        "expected_value": 0.25000000000000006,
+        "line": null,
+        "market_id": "DRAW_NO_BET",
+        "odds": 2.1,
+        "outcome_id": "HOME",
+        "probabilities": {
+          "LOSS": 0.3,
+          "PUSH": 0.2,
+          "WIN": 0.5
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            1.1
+          ],
+          [
+            "PUSH",
+            0.0
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "asian_handicap_five_components",
+        "expected_value": 0.17499999999999996,
+        "line": 0.25,
+        "market_id": "ASIAN_HANDICAP",
+        "odds": 2.0,
+        "outcome_id": "HOME",
+        "probabilities": {
+          "HALF_LOSS": 0.1,
+          "HALF_WIN": 0.15,
+          "LOSS": 0.2,
+          "PUSH": 0.2,
+          "WIN": 0.35
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            1.0
+          ],
+          [
+            "HALF_WIN",
+            0.5
+          ],
+          [
+            "PUSH",
+            0.0
+          ],
+          [
+            "HALF_LOSS",
+            -0.5
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "total_goals_integer_line",
+        "expected_value": -0.2,
+        "line": 3.0,
+        "market_id": "TOTAL_GOALS",
+        "odds": 2.0,
+        "outcome_id": "OVER",
+        "probabilities": {
+          "LOSS": 0.5,
+          "PUSH": 0.2,
+          "WIN": 0.3
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            1.0
+          ],
+          [
+            "PUSH",
+            0.0
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "total_goals_half_line",
+        "expected_value": -0.009999999999999953,
+        "line": 2.5,
+        "market_id": "TOTAL_GOALS",
+        "odds": 1.8,
+        "outcome_id": "UNDER",
+        "probabilities": {
+          "LOSS": 0.45,
+          "WIN": 0.55
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            0.8
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "total_goals_quarter_line",
+        "expected_value": 0.006249999999999978,
+        "line": 2.25,
+        "market_id": "TOTAL_GOALS",
+        "odds": 1.95,
+        "outcome_id": "OVER",
+        "probabilities": {
+          "HALF_LOSS": 0.1,
+          "HALF_WIN": 0.15,
+          "LOSS": 0.3,
+          "PUSH": 0.15,
+          "WIN": 0.3
+        },
+        "selection_outcome": null,
+        "settlement_returns": [
+          [
+            "WIN",
+            0.95
+          ],
+          [
+            "HALF_WIN",
+            0.475
+          ],
+          [
+            "PUSH",
+            0.0
+          ],
+          [
+            "HALF_LOSS",
+            -0.5
+          ],
+          [
+            "LOSS",
+            -1.0
+          ]
+        ]
+      },
+      {
+        "case_id": "incomplete_ordinary_distribution",
+        "error": "calibrated settlement distribution is incomplete",
+        "line": null,
+        "market_id": "MATCH_RESULT",
+        "odds": 2.0,
+        "outcome_id": "HOME",
+        "probabilities": {
+          "HOME": 0.6
+        },
+        "selection_outcome": null
+      }
+    ]
+  },
+  "router": {
+    "blocked_specialist_market_ids": [
+      "AWAY_WIN_EITHER_HALF",
+      "HOME_WIN_EITHER_HALF",
+      "MATCH_RESULT_1UP",
+      "MATCH_RESULT_2UP"
+    ],
+    "contract_sha256": "071d1246ee285634af5598b66872fb27c683f2d13ab14dc25b31de90b72195de",
+    "requires_ordinary_fair_market_ids": [
+      "AWAY_OR_OVER_2_5",
+      "AWAY_WIN_TO_NIL",
+      "BTTS",
+      "DRAW_OR_OVER_2_5",
+      "HOME_OR_OVER_2_5",
+      "HOME_WIN_TO_NIL",
+      "MATCH_RESULT",
+      "TOTAL_GOALS"
+    ],
+    "thresholds": {
+      "minimum_event_probability": 0.55,
+      "minimum_net_expected_value": 0.0,
+      "minimum_reviewed_context_completeness": 1.0,
+      "minimum_robust_edge": 0.0,
+      "minimum_robust_net_expected_value": 0.0
+    }
+  },
+  "schema_version": 1,
+  "source_main_sha": "e79322c57dd9d46789c67de8c7425fa59c8640c1",
+  "source_modules": [
+    "domain.price_all_v2_direct_provider",
+    "domain.market_router_v2_direct_provider",
+    "domain.portfolio_optimizer_v2_direct_provider"
+  ]
+}

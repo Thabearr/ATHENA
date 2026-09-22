@@ -7,7 +7,7 @@ import math
 import types
 from typing import Any, Mapping
 
-from domain import price_all_v2_direct_provider as price_v2
+from domain import _price_all_v2_direct_provider_contracts as price_v2
 from domain._market_router_contracts import (
     CONTEXT_QUALIFICATION_POLICY_ID,
     CONTEXT_RISK_METHOD,
@@ -26,6 +26,7 @@ from domain.fixture_state_v2 import (
     FIXTURE_STATE_FIELD_REGISTRY_SHA256,
     FIXTURE_STATE_FIELD_REGISTRY_VERSION,
 )
+from domain.markets import MarketId
 
 SCHEMA_VERSION = 1
 CONTRACT_VERSION = 1
@@ -50,6 +51,29 @@ TIE_BREAK_POLICY_ID = (
 UNCERTAINTY_STATUS = "DETERMINISTIC_ROUTER_V2_NO_LEARNED_UNCERTAINTY_META_MODEL"
 NEXT_BOUNDARY = "PORTFOLIO_OPTIMIZER_V2_DIRECT_PROVIDER_ROUTER_CONSUMPTION_REQUIRED"
 EXPECTED_CONTRACT_SHA256 = "071d1246ee285634af5598b66872fb27c683f2d13ab14dc25b31de90b72195de"
+
+# Extracted continuity policy previously read from the retained Router v2 runtime.
+# These constants are intentionally outside the historical hashed contract payload.
+REQUIRES_ORDINARY_FAIR = frozenset(
+    {
+        MarketId.MATCH_RESULT,
+        MarketId.BTTS,
+        MarketId.TOTAL_GOALS,
+        MarketId.DRAW_OR_OVER_2_5,
+        MarketId.HOME_OR_OVER_2_5,
+        MarketId.AWAY_OR_OVER_2_5,
+        MarketId.HOME_WIN_TO_NIL,
+        MarketId.AWAY_WIN_TO_NIL,
+    }
+)
+BLOCKED_SPECIALISTS = frozenset(
+    {
+        MarketId.HOME_WIN_EITHER_HALF,
+        MarketId.AWAY_WIN_EITHER_HALF,
+        MarketId.MATCH_RESULT_1UP,
+        MarketId.MATCH_RESULT_2UP,
+    }
+)
 
 AUTHORITY = types.MappingProxyType(
     {
@@ -142,7 +166,7 @@ def validate_market_router_v2_contract() -> Mapping[str, str]:
     try:
         price_contracts = price_v2.validate_price_all_v2_contract()
         legacy_router = validate_market_router_contract()
-    except (price_v2.PriceAllV2DirectProviderError, MarketRouterError) as exc:
+    except (price_v2.PriceAllV2ContractError, MarketRouterError) as exc:
         raise MarketRouterV2DirectProviderError(
             "Router v2 dependency validation failed"
         ) from exc

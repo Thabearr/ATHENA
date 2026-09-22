@@ -28,7 +28,7 @@ Kelly sizing is also outside P1.5. No stake is calculated.
 
 ## Preserved Portfolio-v3 policy
 
-P1.5 preserves the reviewed Portfolio-v3 policy through exact delegation of the existing policy helpers rather than copying or changing formulas. The preserved controls are:
+P1.5 preserves the reviewed Portfolio-v3 policy without changing formulas. The preserved controls are:
 
 - maximum team appearances;
 - competition concentration share/cap;
@@ -41,6 +41,8 @@ P1.5 preserves the reviewed Portfolio-v3 policy through exact delegation of the 
 - truthful shortfall.
 
 The source policy remains `PRESERVE_FROZEN_PORTFOLIO_V2_CAPS_MARGINAL_ORDER_AND_SHORTFALL_V1` during this migration window.
+
+P3.2 moves only the narrow continuity facts still consumed by Portfolio v3—DNB and Asian Handicap settlement-component sets, fragility thresholds/status semantics, and the frozen contract identity—behind `domain._portfolio_optimizer_v2_direct_provider_contracts`. The canonical Portfolio graph no longer imports the full `domain.portfolio_optimizer_v2_direct_provider` implementation. Differential boundary vectors and the retained v2 source verify exact parity; the old implementation remains unchanged for historical/test-only use. No caps, ordering, freshness, fragility classification, selection, shortfall or output formula changed.
 
 ## `SelectedPortfolio`
 

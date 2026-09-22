@@ -18,7 +18,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from domain import current_direct_provider_live_quote_mapping_consumption as current
-from domain import price_all_v2_direct_provider as v2
+from domain import _price_all_v2_direct_provider_contracts as price_v2_contracts
 from domain._price_all_contracts import (
     CalibratedValueCandidate,
     DEVIG_POLICY_ID,
@@ -39,7 +39,7 @@ STATUS_LIVE = "PRICE_ALL_V3_CURRENT_PROVIDER_LIVE_VALUE_VERIFIED"
 AS_OF_REPLAY = current.AS_OF_REPLAY
 LIVE_CURRENT = current.LIVE_CURRENT
 PR253_CONTRACT_SHA256 = current.EXPECTED_CONTRACT_SHA256
-PRICE_ALL_V2_CONTRACT_SHA256 = v2.EXPECTED_CONTRACT_SHA256
+PRICE_ALL_V2_CONTRACT_SHA256 = price_v2_contracts.EXPECTED_CONTRACT_SHA256
 DEFAULT_MAX_QUOTE_AGE_SECONDS = current.MAX_SOURCE_AGE_SECONDS
 DEFAULT_MINIMUM_LEAD_SECONDS = current.MINIMUM_LEAD_SECONDS
 SOURCE_REPLAY_POLICY_ID = "EXACT_PR253_RECONSTRUCTION_BEFORE_VALUE_V1"
@@ -201,8 +201,8 @@ def calculate_price_all_v3_contract_sha256() -> str:
 def validate_price_all_v3_contract() -> Mapping[str, str]:
     try:
         source = current.validate_current_live_quote_mapping_contract()
-        frozen_v2 = v2.validate_price_all_v2_contract()
-    except (current.CurrentDirectProviderLiveQuoteMappingConsumptionError, v2.PriceAllV2DirectProviderError) as exc:
+        frozen_v2 = price_v2_contracts.validate_price_all_v2_contract()
+    except (current.CurrentDirectProviderLiveQuoteMappingConsumptionError, price_v2_contracts.PriceAllV2ContractError) as exc:
         raise PriceAllV3CurrentProviderError(
             "Price-all v3 dependency validation failed"
         ) from exc
@@ -590,8 +590,8 @@ def _price_one(
             reason="reviewed provider settlement equivalence is absent",
         )
     try:
-        returns, ev = v2._settlement_ev(candidate, quote.decimal_odds)
-    except v2.PriceAllV2DirectProviderError:
+        returns, ev = price_v2_contracts.settlement_ev(candidate, quote.decimal_odds)
+    except price_v2_contracts.PriceAllV2ContractError:
         return _empty_result(
             **common,
             quote=quote,
