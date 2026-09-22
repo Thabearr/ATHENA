@@ -56,9 +56,9 @@ optional source-cache families and identity-state file when present.
 
 There is no email or notification step in this core workflow. Notification capability
 mapping remains `PENDING_P4_3_CAPABILITY_MAPPING`. The existing
-`current-shadow-all-market.yml` and `current-sportybet-accumulator.yml` workflows
-remain unchanged and enabled; P4.2 claims no workflow retirement. No wager authority
-is granted.
+At the P4.2 checkpoint, `current-shadow-all-market.yml` and
+`current-sportybet-accumulator.yml` remained unchanged and enabled; P4.2 claimed
+no workflow retirement. No wager authority was granted.
 
 ## P4.3A workflow capability census
 
@@ -71,3 +71,24 @@ target-only SportyBet workflow is retained for owner review because the captured
 GitHub history contains no run. Any later P4.3B retirement decision must be made
 from the reviewed census; P4.3A does not claim the P4.3 retirement gate or broad
 workflow consolidation.
+
+## P4.3B one-workflow retirement
+
+P4.3A remains the immutable 40-workflow pre-retirement census. P4.3B separately
+owner-reviewed the no-run target-only Current SportyBet workflow and proved its
+MAIN fail-closed request capability against `athena-run` offline for targets 1,
+20, and 50. The supported hosted mapping is `target_size=N` to `days=today`,
+`target_legs=N`, `target_total_odds=null`, `bookie=sportybet`, `profile=main`.
+The old YAML is retired; its exact bytes remain only at
+`tests/fixtures/architecture/retired_workflows/current-sportybet-accumulator.yml`.
+The target-only Python request and execution compatibility modules remain.
+The canonical artifact name differs, but the underlying target-only result is
+persisted inside the canonical run directory and uploaded by `athena-run`.
+The old 15-minute and canonical 90-minute job ceilings are control-plane
+differences, not a claim of equal timeout semantics. Neither MAIN path gains
+provider, share-code, or wager authority.
+
+Current Shadow remains active and unretired with its scheduled, notification,
+identity-ancestry, and issue-comment responsibilities. Fresh Holdout workflows
+remain protected. P4.3B retires no other workflow, makes no broad workflow
+consolidation claim, and does not start P4.4.

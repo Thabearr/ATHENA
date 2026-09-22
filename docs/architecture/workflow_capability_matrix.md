@@ -61,3 +61,22 @@ or Architecture Checkpoint E completion. The complete matrix and history snapsho
 the evidence base for P4.3B, where an owner must select any retirement target from
 reviewed evidence. Current Shadow is intentionally retained pending its capability
 migration. P4.4 remains not started.
+
+## P4.3B retirement delta
+
+The P4.3A matrix and receipt remain byte-identical historical evidence of all
+40 workflows before retirement. P4.3B owner-reviewed the no-run Current
+SportyBet target-only workflow and proved, independently of the P4.3A mapping
+hint, that `athena-run` preserves its bounded MAIN request and Phase-6
+fail-closed outcome. Targets 1, 20, and 50, invalid bounds, the underlying
+request payload, and the durable canonical artifact path are covered by an
+offline proof. The live YAML is retired as the sole deletion, leaving 39 live
+workflows; its exact bytes are preserved in a non-executable historical
+fixture. The P4.2 historical audit now verifies that fixture rather than
+requiring the deleted path to remain live.
+
+This delta does not retroactively change any P4.3A
+`equivalence_claimed=false` value. Current Shadow remains active with its
+unmigrated responsibilities; Fresh Holdout workflows remain protected. No
+other retirement or Architecture Checkpoint E completion is claimed. P4.4
+has not started.

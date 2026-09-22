@@ -100,8 +100,14 @@ python scripts/execute_current_sportybet_accumulator.py \
   --output-dir artifacts/current-sportybet-accumulator
 ```
 
-The hosted workflow exposes the same target only. It does not accept a Python
-factory, event IDs, native IDs, odds, candidate legs, or a slip.
+The local compatibility command remains supported. The dedicated hosted
+`current-sportybet-accumulator.yml` workflow was retired in P4.3B after an
+offline owner-reviewed equivalence proof. Its supported hosted successor is
+`athena-run.yml`: the old `target_size=N` request maps to `days=today`,
+`target_legs=N`, `target_total_odds=null`, `bookie=sportybet`, and
+`profile=main`. Neither interface accepts a Python factory, event IDs,
+native IDs, odds, candidate legs, or a slip. The Phase-6 blocker below is
+unchanged; the MAIN successor has no provider, share-code, or wager authority.
 
 At the current authoritative main, the upstream request cannot truthfully
 issue live Phase 6 candidates. The latest reviewed handoff in
