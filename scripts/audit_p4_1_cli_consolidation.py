@@ -13,6 +13,7 @@ import socket
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
@@ -263,6 +264,225 @@ print(json.dumps(result, sort_keys=True))
     return proof
 
 
+def _shadow_timeout_finalization_proof() -> dict[str, Any]:
+    """Prove the canonical adapter waits for the existing supervisor receipt.
+
+    The fake supervisor writes captured timeout artifacts immediately; no
+    provider, worker, or Current Shadow execution is started. The real
+    supervisor timeout constant is read only to bind the offline proof.
+    """
+    from unittest.mock import patch
+
+    from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
+    from services import athena_run_service as service_module
+
+    reviewed_inner_seconds = bound._supervisor_timeout_seconds()
+    if reviewed_inner_seconds != 75 * 60:
+        raise P4_1AuditError("reviewed Current Shadow timeout is not exactly 75 minutes")
+    request = parse_explicit_request(
+        days="2026-09-23",
+        target_legs=2,
+        bookie="sportybet",
+        profile="shadow",
+        now=FIXED_NOW,
+    )
+    observed = FIXED_RECEIPT_TIME
+    counts = {
+        "reviewed_fixture_count": 3,
+        "reconciled_fixture_count": 2,
+        "provider_event_count": 2,
+        "priced_fixture_count": 0,
+        "router_selected_count": 0,
+        "router_no_bet_count": 0,
+    }
+    calls: list[dict[str, Any]] = []
+
+    def write_fake_supervisor_artifacts(command, **kwargs):
+        calls.append(dict(kwargs))
+        output_dir = Path(command[command.index("--output-dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = observed.isoformat(timespec="microseconds").replace("+00:00", "Z")
+        request_policy = {
+            "schema_version": 1,
+            "dataset_name": "athena-current-shadow-request-policy-v1",
+            "fixture_scope": "today",
+            "fixture_dates": ["20260923"],
+            "rolling_date_policy": {"policy_id": "SYNTHETIC_CAPTURE"},
+            "run199_identity_policy_id": "SYNTHETIC_CAPTURE",
+            "run199_identity_policy_sha256": "b" * 64,
+            "row_local_quote_policy": {"policy_id": "SYNTHETIC_CAPTURE"},
+            "current_asof_elo_only_policy": {"policy_id": "SYNTHETIC_CAPTURE"},
+            "authority": {
+                "research_shadow_request": True,
+                "production_model": False,
+                "pricing": False,
+                "selection": False,
+                "sportybet_execution": False,
+                "bet": False,
+                "wager_placed": False,
+            },
+            "wager_placed": False,
+        }
+        timeout_receipt = {
+            "schema_version": 1,
+            "dataset_name": "athena-current-shadow-all-market-runner-v1",
+            "status": "RESEARCH_NO_CODE_SOURCE_INCOMPLETE",
+            "observed_at": timestamp,
+            "exact_commit_sha": FIXED_COMMIT,
+            "requested_target_size": request.target_legs,
+            **counts,
+            "source_summary": {
+                "timeout_stage": "CURRENT_DURABLE_FRESH_HISTORY",
+                "timeout_progress_status": "IN_PROGRESS",
+                "run_budget_seconds": reviewed_inner_seconds,
+                "wager_placed": False,
+            },
+            "portfolio": None,
+            "portfolio_sha256": None,
+            "selected_leg_count": 0,
+            "reserve_leg_count": 0,
+            "shortfall": request.target_legs,
+            "share_code_receipt": None,
+            "fixture_funnel": {},
+            "opportunity_funnel": {},
+            "market_diagnostics": [],
+            "market_family_diagnostics": [],
+            "final_selected_legs": [],
+            "fresh_fallback_events": [],
+            "shareCode": None,
+            "shareURL": None,
+            "reasons": [
+                f"RUN_BUDGET_EXCEEDED:{reviewed_inner_seconds}:STAGE:CURRENT_DURABLE_FRESH_HISTORY"
+            ],
+            "authority": {
+                "research_shadow_current_runner": True,
+                "research_shadow_source_acquisition": True,
+                "research_shadow_probability_consumption": True,
+                "research_shadow_price_all": True,
+                "research_shadow_market_routing": True,
+                "research_shadow_portfolio": True,
+                "research_shadow_shortfall": True,
+                "research_anonymous_share_code_generation": True,
+                "provider_create_reload_verification": True,
+                "production_model": False,
+                "production_probability": False,
+                "phase6": False,
+                "production_price_all": False,
+                "production_market_router": False,
+                "production_portfolio": False,
+                "production_selection": False,
+                "production_sportybet_execution": False,
+                "login": False,
+                "cookies": False,
+                "wallet": False,
+                "staking": False,
+                "bet": False,
+                "wager_placed": False,
+            },
+            "sportybet_login_used": False,
+            "sportybet_cookie_used": False,
+            "sportybet_wallet_used": False,
+            "stake_submitted": False,
+            "wager_placed": False,
+        }
+        checkpoint = {
+            "schema_version": 1,
+            "dataset_name": "athena-current-shadow-all-market-runner-v1",
+            "stage": "CURRENT_DURABLE_FRESH_HISTORY",
+            "stage_index": 3,
+            "observed_at": timestamp,
+            "exact_commit_sha": FIXED_COMMIT,
+            "requested_target_size": request.target_legs,
+            "wager_placed": False,
+        }
+        progress = {
+            **checkpoint,
+            "progress_status": "IN_PROGRESS",
+            "counts": counts,
+            "source_summary": {
+                "timeout_stage": "CURRENT_DURABLE_FRESH_HISTORY",
+                "wager_placed": False,
+            },
+        }
+        (output_dir / "current-shadow-request-policy.json").write_text(
+            json.dumps(request_policy), encoding="utf-8"
+        )
+        (output_dir / "current-shadow-all-market-run-receipt.json").write_text(
+            json.dumps(timeout_receipt), encoding="utf-8"
+        )
+        (output_dir / "current-shadow-all-market-stage.json").write_text(
+            json.dumps(checkpoint), encoding="utf-8"
+        )
+        (output_dir / "current-shadow-all-market-progress.json").write_text(
+            json.dumps(progress), encoding="utf-8"
+        )
+        return SimpleNamespace(returncode=0, stdout="synthetic timeout receipt", stderr="")
+
+    with tempfile.TemporaryDirectory(prefix="athena-p4-1-shadow-timeout-") as temporary_root:
+        with (
+            _network_denied() as network_attempts,
+            patch.object(
+                service_module.subprocess,
+                "run",
+                side_effect=write_fake_supervisor_artifacts,
+            ),
+        ):
+            service = AthenaRunService(
+                _commit_sha_provider=lambda: FIXED_COMMIT,
+                _clock=lambda: observed,
+            )
+            receipt = service.run(request, output_root=Path(temporary_root))
+
+    outer_timeout_present = bool(calls and "timeout" in calls[0])
+    if outer_timeout_present:
+        raise P4_1AuditError("AthenaRunService added a competing outer Shadow timeout")
+    legacy = receipt.evidence["current_shadow_adapter"]["evidence"]["legacy_current_shadow"]
+    preserved = legacy["receipt"]
+    expected_canonical_counts = {
+        **counts,
+        "selected_leg_count": 0,
+        "reserve_leg_count": 0,
+        "target_legs": request.target_legs,
+        "shortfall": request.target_legs,
+    }
+    partial_progress_preserved = (
+        receipt.counts == expected_canonical_counts
+        and receipt.selected_legs == ()
+        and receipt.shortfall == request.target_legs
+        and receipt.share_code_result is None
+        and receipt.wager_placed is False
+        and legacy["latest_progress_checkpoint"]["counts"] == counts
+        and preserved["source_summary"]["run_budget_seconds"] == reviewed_inner_seconds
+    )
+    inner_receipt_preserved = (
+        receipt.status == "RESEARCH_NO_CODE_SOURCE_INCOMPLETE"
+        and preserved["status"] == receipt.status
+        and preserved["exact_commit_sha"] == FIXED_COMMIT
+        and receipt.request == request
+    )
+    if not inner_receipt_preserved or not partial_progress_preserved:
+        raise P4_1AuditError("Current Shadow timeout receipt/progress was not preserved canonically")
+    if len(calls) != 1 or network_attempts["count"] != 0:
+        raise P4_1AuditError("timeout preservation proof made an unexpected call or network attempt")
+
+    return {
+        "reviewed_inner_supervisor_seconds": reviewed_inner_seconds,
+        "outer_timeout_argument_present": False,
+        "outer_equal_timeout_present": False,
+        "inner_timeout_receipt_finalization_preserved": True,
+        "partial_progress_preserved": True,
+        "synthetic_supervisor_receipt_adapted": True,
+        "status": receipt.status,
+        "counts": dict(receipt.counts),
+        "selected_leg_count": receipt.counts["selected_leg_count"],
+        "shortfall": receipt.shortfall,
+        "share_code_result_present": receipt.share_code_result is not None,
+        "wager_placed": receipt.wager_placed,
+        "subprocess_call_count": len(calls),
+        "network_attempt_count": network_attempts["count"],
+    }
+
+
 def run_offline_proof() -> dict[str, Any]:
     """Execute fixed-clock parser/service proofs using no provider executor."""
     from unittest.mock import patch
@@ -508,6 +728,10 @@ def run_offline_proof() -> dict[str, Any]:
             "kelly_executions": legacy_execution_counts["legacy_kelly"],
             "market_selector_executions": legacy_execution_counts["market_selector"],
         }
+    timeout_proof = _shadow_timeout_finalization_proof()
+    network_attempts["count"] += timeout_proof["network_attempt_count"]
+    result["shadow_timeout_budget_proof"] = timeout_proof
+    result["network_attempt_count"] = network_attempts["count"]
     if result["network_attempt_count"] != 0:
         raise P4_1AuditError("offline proof attempted network access")
     return result
@@ -576,6 +800,22 @@ def build_receipt() -> dict[str, Any]:
     ) and not any(proof["legacy_execution_counts"].values())
     if not all_sensitive_flags_false:
         raise P4_1AuditError("offline proof records unexpected live/sensitive action")
+    timeout_proof = proof.get("shadow_timeout_budget_proof")
+    if (
+        type(timeout_proof) is not dict
+        or timeout_proof.get("reviewed_inner_supervisor_seconds") != 75 * 60
+        or timeout_proof.get("outer_timeout_argument_present") is not False
+        or timeout_proof.get("outer_equal_timeout_present") is not False
+        or timeout_proof.get("inner_timeout_receipt_finalization_preserved") is not True
+        or timeout_proof.get("partial_progress_preserved") is not True
+        or timeout_proof.get("selected_leg_count") != 0
+        or type(timeout_proof.get("shortfall")) is not int
+        or timeout_proof.get("shortfall") <= 0
+        or timeout_proof.get("share_code_result_present") is not False
+        or timeout_proof.get("wager_placed") is not False
+        or timeout_proof.get("network_attempt_count") != 0
+    ):
+        raise P4_1AuditError("reviewed Current Shadow timeout finalization proof failed")
 
     classified_callers = caller_fixture["classifications"]
     supported_non_cli_callers = [
@@ -639,6 +879,7 @@ def build_receipt() -> dict[str, Any]:
         "parser_source_sha256": _raw_sha256(REPOSITORY_ROOT / "services/athena_run_request_parser.py"),
         "service_source_sha256": _raw_sha256(REPOSITORY_ROOT / "services/athena_run_service.py"),
         "offline_synthetic_request_receipt_proof": proof,
+        "shadow_timeout_budget_proof": timeout_proof,
         "idempotency_proof": proof["idempotent_replay"],
         "network_attempt_count": proof["network_attempt_count"],
         "provider_acquisition": proof["real_provider_acquisition"],
@@ -742,6 +983,22 @@ def verify_committed_receipt(path: Path | None = None) -> dict[str, Any]:
         or any(proof.get("legacy_execution_counts", {}).values())
     ):
         raise P4_1AuditError("P4.1 receipt offline proof contains an unsafe observation")
+    timeout_proof = receipt.get("shadow_timeout_budget_proof")
+    if (
+        type(timeout_proof) is not dict
+        or timeout_proof.get("reviewed_inner_supervisor_seconds") != 75 * 60
+        or timeout_proof.get("outer_timeout_argument_present") is not False
+        or timeout_proof.get("outer_equal_timeout_present") is not False
+        or timeout_proof.get("inner_timeout_receipt_finalization_preserved") is not True
+        or timeout_proof.get("partial_progress_preserved") is not True
+        or timeout_proof.get("selected_leg_count") != 0
+        or type(timeout_proof.get("shortfall")) is not int
+        or timeout_proof.get("share_code_result_present") is not False
+        or timeout_proof.get("wager_placed") is not False
+        or timeout_proof.get("network_attempt_count") != 0
+        or timeout_proof != proof.get("shadow_timeout_budget_proof")
+    ):
+        raise P4_1AuditError("P4.1 receipt lacks a valid Shadow timeout finalization proof")
     return receipt
 
 

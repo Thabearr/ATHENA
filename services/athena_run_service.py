@@ -4,7 +4,9 @@ This module sequences reviewed executors and durable evidence only.  It does
 not contain football, pricing, routing, portfolio, stake, or provider policy.
 The production MAIN executor is the existing target-only fail-closed request
 boundary. The production SHADOW executor is a lazy adapter to the existing
-bounded Current Shadow supervisor and never runs during offline proof.
+bounded Current Shadow supervisor. That supervisor exclusively owns its
+reviewed timeout and timeout-receipt finalization; this service does not place
+a competing outer timeout around it. It never runs during offline proof.
 """
 from __future__ import annotations
 
@@ -272,27 +274,18 @@ class _ShadowSupervisorExecutor:
         ]
         # This code path is only reached by an actual SHADOW run request. Tests
         # and audits inject synthetic executors and never call this supervisor.
+        # The launched request module is itself the reviewed 75-minute
+        # supervisor: it owns the timeout and writes a truthful timeout receipt
+        # before returning. Do not add a second timeout here; an equal outer
+        # timeout could terminate that finalization path before it persists the
+        # terminal receipt and last completed progress.
         try:
-            from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
-
             completed = subprocess.run(
                 command,
                 cwd=Path(__file__).resolve().parents[1],
                 check=False,
                 capture_output=True,
                 text=True,
-                timeout=bound._supervisor_timeout_seconds(),
-            )
-        except subprocess.TimeoutExpired as exc:
-            return ExecutorResult(
-                status="SOURCE_INCOMPLETE",
-                evidence={
-                    "reason": "Current Shadow supervisor exceeded its reviewed bounded runtime.",
-                    "provider_acquisition": True,
-                    "current_shadow_triggered": True,
-                    "stdout_tail": _bounded_text(exc.stdout),
-                    "stderr_tail": _bounded_text(exc.stderr),
-                },
             )
         except OSError as exc:
             return ExecutorResult(

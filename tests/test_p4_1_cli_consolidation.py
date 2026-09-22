@@ -366,6 +366,21 @@ def test_hosted_offline_service_proof_and_committed_receipt_integrity():
     assert proof["target_total_odds_executor_call_count"] == 0
     assert proof["wat_utc_unrepresentable_status"] == "SHADOW_DATE_POLICY_UNREPRESENTABLE"
     assert proof["wat_utc_requested_date_preserved"] == "2026-09-28"
+    timeout_proof = proof["shadow_timeout_budget_proof"]
+    assert timeout_proof["reviewed_inner_supervisor_seconds"] == 75 * 60
+    assert timeout_proof["outer_timeout_argument_present"] is False
+    assert timeout_proof["outer_equal_timeout_present"] is False
+    assert timeout_proof["inner_timeout_receipt_finalization_preserved"] is True
+    assert timeout_proof["partial_progress_preserved"] is True
+    assert timeout_proof["counts"]["reviewed_fixture_count"] == 3
+    assert timeout_proof["counts"]["reconciled_fixture_count"] == 2
+    assert timeout_proof["counts"]["provider_event_count"] == 2
+    assert timeout_proof["counts"]["priced_fixture_count"] == 0
+    assert timeout_proof["selected_leg_count"] == 0
+    assert timeout_proof["shortfall"] == 2
+    assert timeout_proof["share_code_result_present"] is False
+    assert timeout_proof["wager_placed"] is False
+    assert timeout_proof["network_attempt_count"] == 0
 
     receipt = audit.verify_committed_receipt()
     unsigned = dict(receipt)
@@ -374,4 +389,5 @@ def test_hosted_offline_service_proof_and_committed_receipt_integrity():
     assert receipt["p4_1_cli_exit_gate_satisfied"] is True
     assert receipt["workflow_adoption_completed"] is False
     assert receipt["workflow_consolidation_claimed"] is False
+    assert receipt["shadow_timeout_budget_proof"] == timeout_proof
     assert receipt["offline_synthetic_request_receipt_proof"] == proof

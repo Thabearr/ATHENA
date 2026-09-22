@@ -414,12 +414,15 @@ def test_shadow_synthetic_executor_preserves_exact_request_dates_without_live_pa
     assert calls == [(request, _manifest(request))]
 
 
-def test_shadow_default_adapter_maps_captured_payload_through_fake_supervisor(
+def test_shadow_default_adapter_preserves_timeout_receipt_and_progress_without_outer_timeout(
     monkeypatch, tmp_path
 ):
     from services import athena_run_service as service_module
+    from scripts import execute_current_shadow_all_market_fresh_reprice_bound as bound
 
     observed_at = datetime(2026, 9, 23, 12, 0, 0, 123456, tzinfo=timezone.utc)
+    reviewed_budget_seconds = bound._supervisor_timeout_seconds()
+    assert reviewed_budget_seconds == 75 * 60
     request = _request(
         dates=(date(2026, 9, 23),),
         target_legs=2,
@@ -427,10 +430,10 @@ def test_shadow_default_adapter_maps_captured_payload_through_fake_supervisor(
         mode="research_shadow",
         create_share_code=True,
     )
-    captured_commands = []
+    invocations = []
 
-    def fake_supervisor(command, **_kwargs):
-        captured_commands.append(list(command))
+    def fake_supervisor(command, **kwargs):
+        invocations.append((list(command), dict(kwargs)))
         output_dir = Path(command[command.index("--output-dir") + 1])
         output_dir.mkdir(parents=True, exist_ok=True)
         policy = _captured_shadow_policy("20260923")
@@ -439,11 +442,63 @@ def test_shadow_default_adapter_maps_captured_payload_through_fake_supervisor(
             exact_commit=COMMIT,
             observed_at=observed_at,
         )
+        legacy_receipt.update(
+            {
+                "status": "RESEARCH_NO_CODE_SOURCE_INCOMPLETE",
+                "reviewed_fixture_count": 3,
+                "reconciled_fixture_count": 2,
+                "provider_event_count": 2,
+                "priced_fixture_count": 0,
+                "router_selected_count": 0,
+                "router_no_bet_count": 0,
+                "source_summary": {
+                    "timeout_stage": "CURRENT_DURABLE_FRESH_HISTORY",
+                    "timeout_progress_status": "IN_PROGRESS",
+                    "run_budget_seconds": reviewed_budget_seconds,
+                    "wager_placed": False,
+                },
+                "reasons": [
+                    f"RUN_BUDGET_EXCEEDED:{reviewed_budget_seconds}:STAGE:CURRENT_DURABLE_FRESH_HISTORY"
+                ],
+            }
+        )
+        checkpoint_base = {
+            "schema_version": 1,
+            "dataset_name": "athena-current-shadow-all-market-runner-v1",
+            "stage": "CURRENT_DURABLE_FRESH_HISTORY",
+            "stage_index": 3,
+            "observed_at": observed_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+            "exact_commit_sha": COMMIT,
+            "requested_target_size": request.target_legs,
+            "wager_placed": False,
+        }
+        progress = {
+            **checkpoint_base,
+            "progress_status": "IN_PROGRESS",
+            "counts": {
+                "reviewed_fixture_count": 3,
+                "reconciled_fixture_count": 2,
+                "provider_event_count": 2,
+                "priced_fixture_count": 0,
+                "router_selected_count": 0,
+                "router_no_bet_count": 0,
+            },
+            "source_summary": {
+                "timeout_stage": "CURRENT_DURABLE_FRESH_HISTORY",
+                "wager_placed": False,
+            },
+        }
         (output_dir / "current-shadow-request-policy.json").write_text(
             json.dumps(policy), encoding="utf-8"
         )
         (output_dir / "current-shadow-all-market-run-receipt.json").write_text(
             json.dumps(legacy_receipt), encoding="utf-8"
+        )
+        (output_dir / "current-shadow-all-market-stage.json").write_text(
+            json.dumps(checkpoint_base), encoding="utf-8"
+        )
+        (output_dir / "current-shadow-all-market-progress.json").write_text(
+            json.dumps(progress), encoding="utf-8"
         )
         return SimpleNamespace(returncode=0, stdout="synthetic child", stderr="")
 
@@ -454,17 +509,38 @@ def test_shadow_default_adapter_maps_captured_payload_through_fake_supervisor(
     )
     receipt = service.run(request, output_root=tmp_path)
 
-    assert receipt.status == "RESEARCH_NO_CODE_NO_BET"
+    assert receipt.status == "RESEARCH_NO_CODE_SOURCE_INCOMPLETE"
     assert receipt.request == request
     assert receipt.request.dates == (date(2026, 9, 23),)
     assert receipt.selected_legs == ()
     assert receipt.shortfall == 2
+    assert receipt.counts["reviewed_fixture_count"] == 3
+    assert receipt.counts["reconciled_fixture_count"] == 2
+    assert receipt.counts["provider_event_count"] == 2
+    assert receipt.counts["priced_fixture_count"] == 0
+    assert receipt.counts["selected_leg_count"] == 0
+    assert receipt.counts["shortfall"] == 2
     assert receipt.share_code_result is None
     assert receipt.wager_placed is False
     assert receipt.authority_manifest == _manifest(request)
-    assert len(captured_commands) == 1
-    assert captured_commands[0][captured_commands[0].index("--fixture-dates") + 1] == "20260923"
-    assert "scripts.execute_current_shadow_request" in captured_commands[0]
+    assert len(invocations) == 1
+    command, kwargs = invocations[0]
+    assert "timeout" not in kwargs
+    assert command[command.index("--fixture-dates") + 1] == "20260923"
+    assert "scripts.execute_current_shadow_request" in command
+    adapted_evidence = receipt.evidence["current_shadow_adapter"]["evidence"]
+    preserved_legacy = adapted_evidence["legacy_current_shadow"]
+    assert preserved_legacy["receipt"]["source_summary"]["timeout_stage"] == (
+        "CURRENT_DURABLE_FRESH_HISTORY"
+    )
+    assert preserved_legacy["latest_progress_checkpoint"]["counts"] == {
+        "reviewed_fixture_count": 3,
+        "reconciled_fixture_count": 2,
+        "provider_event_count": 2,
+        "priced_fixture_count": 0,
+        "router_selected_count": 0,
+        "router_no_bet_count": 0,
+    }
 
 
 def test_shadow_lagos_date_outside_exact_utc_window_fails_closed_without_shift(tmp_path):
