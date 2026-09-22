@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import ast
+import hashlib
+import inspect
 import json
 from pathlib import Path
 
@@ -139,23 +142,51 @@ def test_full_runtime_evidence_covers_exact_p02_supported_roots() -> None:
     } == EXPECTED_ROOTS
 
 
-def test_build_acca_runtime_trace_does_not_execute_predictionservice_or_marketselector() -> None:
-    payload = audit.build_runtime_evidence(audit.BASELINE_MAIN)
-    observation = payload["supported_root_observations"]["build_acca"]
+def test_frozen_p05_build_acca_trace_is_loaded_without_running_current_cli() -> None:
+    raw_artifact = audit.DEFAULT_OUTPUT.read_bytes()
+    assert hashlib.sha256(raw_artifact).hexdigest() == (
+        audit.FROZEN_P05_RUNTIME_ARTIFACT_SHA256
+    )
+    frozen = json.loads(raw_artifact)
+    assert frozen["source_commit"] == audit.BASELINE_MAIN
+    trace, observation = audit._probe_build_acca(audit.BASELINE_MAIN)
+    expected_trace = next(
+        row for row in frozen["supported_root_traces"]
+        if row["supported_root"] == "build_acca"
+    )
+    assert trace == expected_trace
+    assert observation == frozen["supported_root_observations"]["build_acca"]
+
     assert observation["prediction_service_executed"] is False
     assert observation["market_selector_executed"] is False
     assert observation["decision_authority_modules"] == [
         "intelligence.acca_filter",
         "intelligence.accumulator",
     ]
+    assert observation["result_decision_status"] == "NO_BET"
 
-    trace = next(
-        item for item in payload["supported_root_traces"]
-        if item["supported_root"] == "build_acca"
-    )
+    assert trace["source_commit"] == audit.BASELINE_MAIN
+    assert trace["root_authority_profile"] == "MAIN_ONLY"
+    assert trace["runtime_disposition"] == "EXECUTED_DECISION_AUTHORITY"
     executed = {(row["module"], row["qualname"]) for row in trace["checkpoints"]}
     assert ("services.prediction_service", "PredictionService.predict") not in executed
     assert ("engine.market_selector", "MarketSelector.select") not in executed
+
+    function_tree = ast.parse(inspect.getsource(audit._probe_build_acca))
+    assert not any(
+        isinstance(node, ast.Import) and any(alias.name == "build_acca" for alias in node.names)
+        for node in ast.walk(function_tree)
+    )
+    assert not any(
+        isinstance(node, ast.Name) and node.id in {
+            "AccaBuilder",
+            "AccaFilter",
+            "AccumulatorEngine",
+        }
+        for node in ast.walk(function_tree)
+    )
+    with pytest.raises(audit.RuntimeReachabilityError):
+        audit._probe_build_acca("0" * 40)
 
 
 def test_frozen_p05_prediction_service_trace_preserves_historical_legacy_selector() -> None:

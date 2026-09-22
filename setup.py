@@ -39,7 +39,7 @@ setup(
     ],
     entry_points={
         "console_scripts": [
-            "athena=build_acca:app",
+            "athena=build_acca:main",
         ],
     },
 )

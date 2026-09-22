@@ -108,3 +108,13 @@ The existing Current Shadow backward-compatibility tests remain part of the host
 ## Next programme gate
 
 P1.1 is the fifth merged remediation PR in the current source-review cycle **only after it merges**. Until then the counter remains `4/5`. After P1.1 merges, the controlling architecture sources and relevant live contracts must be reread before P1.2 is drafted or opened.
+
+## P4.1 current CLI state
+
+P4.1 adds a transport-only `build_acca.py` CLI over `services.athena_run_service.AthenaRunService`. The CLI resolves user input to the existing immutable `RunRequest`, displays the exact request and `AuthorityManifest` permissions before execution, invokes the service, and renders only the resulting `RunReceipt`. The service owns executor selection, sequencing, persistence, idempotency, and exact commit binding; it contains no football formulas.
+
+The pure CLI parser resolves relative dates in `Africa/Lagos` and writes only concrete `datetime.date` values into `RunRequest`. `target_legs` remains an exact maximum desired selected-leg count from 1 through 50. The optional `target_total_odds` objective remains a separate `Decimal`; shorthand such as `25acca` maps only to `target_legs=25`. No reviewed Portfolio objective currently supports non-null target total odds, so the service records a fail-closed terminal result before executor invocation.
+
+The MAIN `main_application` boundary currently maps to the existing target-only Phase 6 request and truthfully returns zero selected legs/full shortfall without provider acquisition. SHADOW `research_shadow` remains bound to the existing Current Shadow supervisor/worker and one-way run-contract adapter. The exact Lagos dates are checked against that existing UTC rolling window before any supervisor/provider work; an unrepresentable date fails closed without being shifted. P4.1 validation uses only offline synthetic executors and does not run Current Shadow.
+
+The installed `athena` command is CLI transport only. Workflow adoption and consolidation are not part of P4.1; P4.2 remains the required workflow migration gate.

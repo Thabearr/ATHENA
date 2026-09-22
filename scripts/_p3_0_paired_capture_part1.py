@@ -441,7 +441,7 @@ def _source_artifacts(source: Any) -> list[dict[str, Any]]:
 def _legacy_pipeline() -> Any:
     # Importing the supported application constructor is deferred until explicit
     # runtime invocation; importing this module does not initialize DB/provider code.
-    from build_acca import AccaBuilder
+    from services.legacy_acca_builder_compat import AccaBuilder
     return AccaBuilder(days_ahead=1).pipeline
 
 

@@ -2,7 +2,7 @@ import sys
 import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from build_acca import AccaBuilder
+from services.legacy_acca_builder_compat import AccaBuilder
 
 def test_pipeline():
     print("=== TESTING ATHENA FULL REASONING PIPELINE ===")

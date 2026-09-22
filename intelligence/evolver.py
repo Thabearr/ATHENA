@@ -3,7 +3,7 @@ import json
 import random
 from typing import Dict, Tuple
 from loguru import logger
-from build_acca import AccaBuilder
+from services.legacy_acca_builder_compat import AccaBuilder
 
 class ModelEvolver:
     """
