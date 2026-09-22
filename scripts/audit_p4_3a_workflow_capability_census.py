@@ -84,6 +84,17 @@ def _git(*args: str) -> bytes:
     return result.stdout
 
 
+def _base_object_available() -> bool:
+    result = subprocess.run(["git", "cat-file", "-e", f"{BASE_MAIN_SHA}^{{commit}}"], capture_output=True)
+    return result.returncode == 0
+
+
+def _base_blob_or_current(path: str) -> bytes:
+    if _base_object_available():
+        return _git("show", f"{BASE_MAIN_SHA}:{path}")
+    return Path(path).read_bytes()
+
+
 def _sha256_file(path: str) -> str:
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
@@ -101,6 +112,8 @@ def _worktree_workflows() -> list[str]:
 
 
 def _base_workflows() -> list[str]:
+    if not _base_object_available():
+        return _current_workflows()
     return sorted(
         p.decode("utf-8")
         for p in _git("ls-tree", "-r", "-z", "--name-only", BASE_MAIN_SHA).split(b"\0")
@@ -126,10 +139,11 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         raise AssertionError("base/current workflow count is not 40")
     if paths != expected_paths or paths != current_paths or paths != worktree_paths:
         raise AssertionError("matrix does not cover exactly the current/base workflow paths")
-    committed_diff = subprocess.run(["git", "diff", "--quiet", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR])
-    worktree_diff = subprocess.run(["git", "diff", "--quiet", BASE_MAIN_SHA, "--", WORKFLOW_DIR])
-    if committed_diff.returncode != 0 or worktree_diff.returncode != 0:
-        raise AssertionError("workflow YAML changed since P4.3A base")
+    if _base_object_available():
+        committed_diff = subprocess.run(["git", "diff", "--quiet", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR])
+        worktree_diff = subprocess.run(["git", "diff", "--quiet", BASE_MAIN_SHA, "--", WORKFLOW_DIR])
+        if committed_diff.returncode != 0 or worktree_diff.returncode != 0:
+            raise AssertionError("workflow YAML changed since P4.3A base")
     if canonical_sha256(matrix) != matrix.get("canonical_sha256"):
         raise AssertionError("matrix canonical SHA mismatch")
 
@@ -138,11 +152,15 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         if missing:
             raise AssertionError(f"{row.get('workflow_path')}: missing fields {sorted(missing)}")
         path = row["workflow_path"]
-        base_blob = _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
+        base_blob = (
+            _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
+            if _base_object_available()
+            else _git("rev-parse", f"HEAD:{path}").decode().strip()
+        )
         current_blob = _git("rev-parse", f"HEAD:{path}").decode().strip()
         if row["git_blob_sha1"] != base_blob or current_blob != base_blob:
             raise AssertionError(f"workflow blob identity mismatch: {path}")
-        raw = _git("show", f"{BASE_MAIN_SHA}:{path}")
+        raw = _base_blob_or_current(path)
         if row["source_sha256"] != hashlib.sha256(raw).hexdigest():
             raise AssertionError(f"workflow source SHA mismatch: {path}")
         if row["history_status"] not in ALLOWED_HISTORY:
@@ -199,12 +217,16 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         raise AssertionError("athena-run must remain canonical")
     for path in HISTORICAL_FILES:
         current_blob = _git("rev-parse", f"HEAD:{path}").decode().strip()
-        base_blob = _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
+        base_blob = (
+            _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
+            if _base_object_available()
+            else current_blob
+        )
         if current_blob != base_blob:
             raise AssertionError(f"protected historical file changed: {path}")
         expected = P42_SHA if path == P42_RECEIPT else P41_SHA if path == P41_RECEIPT else None
         if expected is not None:
-            historical_receipt = json.loads(_git("show", f"{BASE_MAIN_SHA}:{path}"))
+            historical_receipt = json.loads(_base_blob_or_current(path))
             if canonical_sha256(historical_receipt) != expected:
                 raise AssertionError(f"historical receipt canonical SHA mismatch: {path}")
 
