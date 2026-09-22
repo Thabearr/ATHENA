@@ -4,7 +4,6 @@ import ast
 from datetime import date, datetime, timezone
 from pathlib import Path
 import re
-import sys
 
 from typer.testing import CliRunner
 
@@ -324,7 +323,12 @@ def _reachable_local_modules(root_module: str) -> set[str]:
 def test_canonical_cli_import_closure_cannot_reach_legacy_builder_compat():
     reachable = _reachable_local_modules("build_acca")
     assert "services.legacy_acca_builder_compat" not in reachable
-    assert "services.legacy_acca_builder_compat" not in sys.modules
+    proof = audit._fresh_cli_import_proof()
+    assert proof == {
+        "thin_main_callable": True,
+        "legacy_builder_compat_imported": False,
+        "network_attempt_count": 0,
+    }
 
 
 def test_only_run_command_is_exposed_and_legacy_backtest_is_unavailable():

@@ -7,10 +7,10 @@ from contextlib import contextmanager
 from datetime import date, datetime, timezone
 from decimal import Decimal
 import hashlib
-import importlib
 import json
 from pathlib import Path
 import socket
+import subprocess
 import sys
 import tempfile
 from typing import Any, Iterator
@@ -210,12 +210,65 @@ def _synthetic_request() -> RunRequest:
     )
 
 
+def _fresh_cli_import_proof() -> dict[str, Any]:
+    """Import the CLI in an isolated child and deny network calls there."""
+    child_code = """
+import importlib
+import json
+import socket
+import sys
+root = sys.argv.pop(1)
+sys.path.insert(0, root)
+attempts = {"count": 0}
+def deny(*_args, **_kwargs):
+    attempts["count"] += 1
+    raise RuntimeError("network access is forbidden in the P4.1 CLI import proof")
+socket.socket.connect = deny
+socket.socket.connect_ex = deny
+socket.socket.sendto = deny
+socket.socket.sendall = deny
+socket.create_connection = deny
+cli = importlib.import_module("build_acca")
+result = {
+    "thin_main_callable": callable(cli.main),
+    "legacy_builder_compat_imported": "services.legacy_acca_builder_compat" in sys.modules,
+    "network_attempt_count": attempts["count"],
+}
+print(json.dumps(result, sort_keys=True))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", child_code, str(REPOSITORY_ROOT)],
+        cwd=REPOSITORY_ROOT,
+        capture_output=True,
+        text=True,
+        timeout=30,
+        check=False,
+    )
+    if completed.returncode != 0:
+        raise P4_1AuditError(
+            "fresh-process CLI import proof failed: "
+            + (completed.stderr.strip() or f"exit={completed.returncode}")
+        )
+    try:
+        proof = json.loads(completed.stdout.strip().splitlines()[-1])
+    except (IndexError, json.JSONDecodeError) as exc:
+        raise P4_1AuditError("fresh-process CLI import proof returned invalid output") from exc
+    if (
+        proof.get("thin_main_callable") is not True
+        or proof.get("legacy_builder_compat_imported") is not False
+        or proof.get("network_attempt_count") != 0
+    ):
+        raise P4_1AuditError("fresh-process CLI import reached legacy code or network")
+    return proof
+
+
 def run_offline_proof() -> dict[str, Any]:
     """Execute fixed-clock parser/service proofs using no provider executor."""
     from unittest.mock import patch
 
     from domain.run_contracts import RunReceipt
 
+    cli_import_proof = _fresh_cli_import_proof()
     explicit = _synthetic_request()
     shorthand = parse_shorthand_request(
         date_scope="tomorrow-thursday",
@@ -243,7 +296,7 @@ def run_offline_proof() -> dict[str, Any]:
     if manifest.to_dict()["capabilities"] != expected_caps:
         raise P4_1AuditError("SHADOW permission summary drifted")
 
-    network_attempts = {"count": 0}
+    network_attempts = {"count": cli_import_proof["network_attempt_count"]}
     with tempfile.TemporaryDirectory(prefix="athena-p4-1-offline-") as temporary_root:
         root = Path(temporary_root)
         from services import athena_run_service as service_module
@@ -392,10 +445,6 @@ def run_offline_proof() -> dict[str, Any]:
         if shadow_synthetic.status != "NO_BET" or shadow_synthetic.wager_placed is not False:
             raise P4_1AuditError("synthetic SHADOW request did not produce a safe receipt")
 
-        cli_module = importlib.import_module("build_acca")
-        if not callable(cli_module.main) or "services.legacy_acca_builder_compat" in sys.modules:
-            raise P4_1AuditError("thin CLI import unexpectedly reached legacy builder")
-
         synthetic_bytes = receipt_path.read_bytes()
         result = {
             "explicit_command": "athena run --days tomorrow,thursday --target-legs 25 --bookie sportybet --profile shadow",
@@ -447,7 +496,10 @@ def run_offline_proof() -> dict[str, Any]:
             ),
             "wager_placed": False,
             "network_attempt_count": network_attempts["count"],
-            "legacy_builder_reachable_from_cli_import": False,
+            "legacy_builder_reachable_from_cli_import": cli_import_proof[
+                "legacy_builder_compat_imported"
+            ],
+            "fresh_cli_import_proof": cli_import_proof,
             "legacy_execution_counts": legacy_execution_counts,
             "legacy_accabuilder_executions": legacy_execution_counts["legacy_accabuilder"],
             "legacy_accafilter_executions": legacy_execution_counts["legacy_accafilter"],
@@ -576,7 +628,9 @@ def build_receipt() -> dict[str, Any]:
         },
         "supported_non_cli_legacy_accabuilder_caller_count": len(supported_non_cli_callers),
         "supported_non_cli_caller_preserved_by_compat_module": True,
-        "canonical_cli_reaches_legacy_builder": False,
+        "canonical_cli_reaches_legacy_builder": proof[
+            "legacy_builder_reachable_from_cli_import"
+        ],
         "direct_cli_forbidden_imports": direct_forbidden,
         "build_acca_source_sha256": hashlib.sha256(cli_source.encode("utf-8")).hexdigest(),
         "parser_source_sha256": _raw_sha256(REPOSITORY_ROOT / "services/athena_run_request_parser.py"),
@@ -665,6 +719,15 @@ def verify_committed_receipt(path: Path | None = None) -> dict[str, Any]:
     proof = receipt.get("offline_synthetic_request_receipt_proof")
     if type(proof) is not dict:
         raise P4_1AuditError("P4.1 receipt is missing offline proof object")
+    cli_import_proof = proof.get("fresh_cli_import_proof")
+    if (
+        receipt.get("canonical_cli_reaches_legacy_builder") is not False
+        or type(cli_import_proof) is not dict
+        or cli_import_proof.get("thin_main_callable") is not True
+        or cli_import_proof.get("legacy_builder_compat_imported") is not False
+        or cli_import_proof.get("network_attempt_count") != 0
+    ):
+        raise P4_1AuditError("P4.1 receipt lacks an isolated thin-CLI import proof")
     if (
         proof.get("real_shadow_supervisor_invocation_count") != 0
         or proof.get("real_provider_acquisition") is not False
