@@ -10,6 +10,8 @@ import ast
 import json
 from pathlib import Path
 
+from scripts import audit_p3_3_canonical_module_names as audit
+
 
 ROOT = Path(__file__).resolve().parents[1]
 P0_2_RUNTIME_ARTIFACT = ROOT / "artifacts/architecture/runtime-reachability-v1.json"
@@ -56,6 +58,14 @@ CANONICAL_CURRENT_IMPLEMENTATIONS = {
     "domain.price_all": "domain._price_all_current_provider",
     "domain.market_router": "domain._market_router_current_provider",
     "domain.portfolio_optimizer": "domain._portfolio_optimizer_current_provider",
+}
+
+EXPECTED_CURRENT_REQUEST_DEPENDENCIES = {
+    "price_all_v3_contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425",
+    "market_router_v3_contract_sha256": "61a90a29495399668e19ae4a149527abea98c172d7bdacf1a1b521776b4d771a",
+    "portfolio_optimizer_v3_contract_sha256": "4dc8be4e0a9f607b6c0804048bb326c0aa342d37fe540abbcd3e1b3a5f6a6dad",
+    "current_execution_contract_sha256": "62d0f48942ca28eb9566f4803deea07e61598732198882cc515cd88c6209d359",
+    "blocked_at": "CURRENT_UTC_NATIVE_MODEL_PRODUCTION_AUTHORITY_REQUIRES_REVIEWED_FRESH_HOLDOUT_CONFIRMATION",
 }
 
 
@@ -203,3 +213,26 @@ def test_narrow_v2_contract_packages_are_not_classified_as_forbidden_runtime_mod
     assert "domain._portfolio_optimizer_v2_direct_provider_contracts" in canonical_closures[
         "domain.portfolio_optimizer"
     ]
+
+
+def test_fresh_process_dynamic_isolation_proof_runs_in_hosted_pytest():
+    proof = audit._dynamic_subprocess_proof()
+    assert proof["forbidden_sys_modules"] == []
+    assert proof["network_attempt_count"] == 0
+    assert proof["main_resolved"] is True
+    assert proof["shadow_resolved"] is True
+    assert proof["real_current_provider_execution_attempted"] is False
+    assert proof["wager_placed"] is False
+    assert proof["current_request_dependencies"] == EXPECTED_CURRENT_REQUEST_DEPENDENCIES
+
+
+def test_committed_receipt_canonical_hash_and_dynamic_proof_are_intact():
+    receipt_path = ROOT / "artifacts/architecture/p3_3_module_canonicalization_v1.json"
+    receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+    recorded_sha = receipt.pop("canonical_sha256")
+    assert audit._canonical_sha256(receipt) == recorded_sha
+    assert receipt["p3_3_exit_gate_satisfied"] is True
+    assert receipt["final_dynamic_forbidden_sys_modules"] == []
+    assert receipt["fresh_subprocess_proof"]["current_request_dependencies"] == (
+        EXPECTED_CURRENT_REQUEST_DEPENDENCIES
+    )

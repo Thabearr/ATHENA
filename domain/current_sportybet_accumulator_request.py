@@ -70,10 +70,10 @@ def validate_current_request_dependencies() -> Mapping[str, str]:
     return types.MappingProxyType({
         "price_all_v3_contract_sha256": price_identity["implementation_contract_sha256"],
         "market_router_v3_contract_sha256": router_identity[
-            "canonical_market_router_contract_sha256"
+            "source_router_v3_contract_sha256"
         ],
         "portfolio_optimizer_v3_contract_sha256": portfolio_identity[
-            "canonical_portfolio_contract_sha256"
+            "source_portfolio_v3_contract_sha256"
         ],
         "current_execution_contract_sha256": current_execution["current_execution_contract_sha256"],
         "blocked_at": BLOCKED_AT,

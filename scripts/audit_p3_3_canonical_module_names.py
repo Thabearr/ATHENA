@@ -4,6 +4,7 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
+import importlib
 import json
 from pathlib import Path
 import subprocess
@@ -43,6 +44,14 @@ ROUTER_V1_CLASSIFICATION_PATH = (
 )
 REGISTRY_PATH = ROOT / "config/architecture/component-authority-registry-v1.json"
 DEFAULT_OUTPUT = ROOT / "artifacts/architecture/p3_3_module_canonicalization_v1.json"
+
+EXPECTED_CURRENT_REQUEST_DEPENDENCIES = {
+    "price_all_v3_contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425",
+    "market_router_v3_contract_sha256": "61a90a29495399668e19ae4a149527abea98c172d7bdacf1a1b521776b4d771a",
+    "portfolio_optimizer_v3_contract_sha256": "4dc8be4e0a9f607b6c0804048bb326c0aa342d37fe540abbcd3e1b3a5f6a6dad",
+    "current_execution_contract_sha256": "62d0f48942ca28eb9566f4803deea07e61598732198882cc515cd88c6209d359",
+    "blocked_at": "CURRENT_UTC_NATIVE_MODEL_PRODUCTION_AUTHORITY_REQUIRES_REVIEWED_FRESH_HOLDOUT_CONFIRMATION",
+}
 
 CURRENT_SUPPORTED_ROOTS = (
     "domain.price_all",
@@ -331,6 +340,12 @@ def _validate_rename_surface() -> dict[str, Any]:
         imports = _direct_local_imports(shim)
         if replacement not in imports:
             raise RuntimeError(f"compatibility shim {shim} does not import {replacement}")
+        module = importlib.import_module(shim)
+        if (
+            getattr(module, "DEPRECATED_COMPATIBILITY_SHIM", None) is not True
+            or getattr(module, "REPLACEMENT_MODULE", None) != replacement
+        ):
+            raise RuntimeError(f"compatibility shim metadata is missing or incorrect: {shim}")
 
     historical_path = ROOT / "domain/_historical_market_router_v1.py"
     base_router = _git_bytes("show", f"{BASE_MAIN_SHA}:domain/market_router.py").decode("utf-8")
@@ -345,6 +360,18 @@ def _validate_rename_surface() -> dict[str, Any]:
             and isinstance(tree.body[0].value.value, str)
         ):
             tree.body.pop(0)
+        tree.body = [
+            node
+            for node in tree.body
+            if not (
+                isinstance(node, ast.Assign)
+                and len(node.targets) == 1
+                and isinstance(node.targets[0], ast.Name)
+                and node.targets[0].id == "HISTORICAL_COMPATIBILITY_ONLY"
+                and isinstance(node.value, ast.Constant)
+                and node.value.value is True
+            )
+        ]
         return ast.dump(tree, annotate_fields=True, include_attributes=False)
 
     historical_body_preserved = without_docstring(
@@ -352,6 +379,12 @@ def _validate_rename_surface() -> dict[str, Any]:
     ) == without_docstring(historical, str(historical_path))
     if not historical_body_preserved:
         raise RuntimeError("historical Router-v1 implementation body drifted during rename")
+    historical_module = importlib.import_module("domain._historical_market_router_v1")
+    historical_marker = getattr(
+        historical_module, "HISTORICAL_COMPATIBILITY_ONLY", None
+    ) is True
+    if not historical_marker:
+        raise RuntimeError("historical Router-v1 compatibility marker is missing")
 
     offline_imports = {
         module: sorted(_direct_local_imports(module))
@@ -366,7 +399,11 @@ def _validate_rename_surface() -> dict[str, Any]:
         "rename_map": dict(EXACT_RENAME_MAP),
         "canonical_current_implementations": dict(CANONICAL_CURRENT_IMPLEMENTATIONS),
         "compatibility_shims": dict(COMPATIBILITY_SHIMS),
+        "compatibility_shims_machine_marked": {
+            shim: True for shim in sorted(COMPATIBILITY_SHIMS)
+        },
         "historical_router_v1_body_preserved": historical_body_preserved,
+        "historical_router_v1_machine_marked": historical_marker,
         "historical_router_v1_offline_imports": offline_imports,
     }
 
@@ -805,6 +842,8 @@ print(json.dumps({
         "price_all": price_identity["implementation_contract_sha256"],
     },
     "core_profiles_resolved": sorted(bindings),
+    "main_resolved": bindings["MAIN"].authority_profile == "MAIN",
+    "shadow_resolved": bindings["SHADOW"].authority_profile == "SHADOW",
     "shadow_adapter_resolved": True,
     "main_presentation_recommendation": projected.recommended_market,
     "offline_price_router_portfolio_selected_count": selected.selected_count,
@@ -833,7 +872,16 @@ print(json.dumps({
         proof = json.loads(result.stdout.strip().splitlines()[-1])
     except (IndexError, json.JSONDecodeError) as exc:
         raise RuntimeError("fresh-process P3.3 proof returned invalid output") from exc
-    if proof.get("forbidden_sys_modules") != [] or proof.get("network_attempt_count") != 0:
+    if (
+        proof.get("forbidden_sys_modules") != []
+        or proof.get("network_attempt_count") != 0
+        or proof.get("main_resolved") is not True
+        or proof.get("shadow_resolved") is not True
+        or proof.get("real_current_provider_execution_attempted") is not False
+        or proof.get("wager_placed") is not False
+        or proof.get("current_request_dependencies")
+        != EXPECTED_CURRENT_REQUEST_DEPENDENCIES
+    ):
         raise RuntimeError(f"fresh-process isolation proof failed: {proof}")
     return proof
 
@@ -872,8 +920,17 @@ def build_receipt() -> dict[str, Any]:
             "canonical_current_implementations"
         ],
         "deprecated_compatibility_shims": rename["compatibility_shims"],
+        "deprecated_compatibility_shims_machine_marked": rename[
+            "compatibility_shims_machine_marked"
+        ],
+        "current_request_compatibility_contract_identities": dynamic[
+            "current_request_dependencies"
+        ],
         "historical_router_v1_body_preserved": rename[
             "historical_router_v1_body_preserved"
+        ],
+        "historical_router_v1_machine_marked": rename[
+            "historical_router_v1_machine_marked"
         ],
         "historical_router_v1_offline_imports": rename[
             "historical_router_v1_offline_imports"

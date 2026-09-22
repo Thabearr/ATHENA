@@ -10,6 +10,7 @@ import pytest
 from domain import market_router as canonical
 from domain import market_router_canonical_adapter as deprecated_canonical
 from domain import _market_router_current_provider as v3
+from domain import _historical_market_router_v1 as historical_router_v1
 from domain import price_all as canonical_price
 from domain._market_router_contracts import (
     ModelAgreementStatus,
@@ -101,9 +102,16 @@ def test_contract_pins_canonical_price_all_and_exact_router_v3() -> None:
 
 
 def test_old_canonical_adapter_path_is_a_thin_compatibility_shim() -> None:
+    assert deprecated_canonical.DEPRECATED_COMPATIBILITY_SHIM is True
+    assert deprecated_canonical.REPLACEMENT_MODULE == "domain.market_router"
     assert deprecated_canonical.route is canonical.route
     assert deprecated_canonical.RouterDecision is canonical.RouterDecision
     assert deprecated_canonical.validate_canonical_market_router_contract is canonical.validate_canonical_market_router_contract
+    assert deprecated_canonical.verify_router_decision is canonical.verify_router_decision
+
+
+def test_historical_router_v1_is_explicitly_marked_compatibility_only() -> None:
+    assert historical_router_v1.HISTORICAL_COMPATIBILITY_ONLY is True
 
 
 def test_replay_selected_case_matches_router_v3_source_decision(monkeypatch) -> None:

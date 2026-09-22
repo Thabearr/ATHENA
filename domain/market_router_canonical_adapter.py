@@ -1,5 +1,8 @@
 """Deprecated compatibility shim; import the canonical API from domain.market_router."""
 
+DEPRECATED_COMPATIBILITY_SHIM = True
+REPLACEMENT_MODULE = "domain.market_router"
+
 from domain.market_router import *  # noqa: F401,F403
 from domain.market_router import __all__
 from domain.market_router import (

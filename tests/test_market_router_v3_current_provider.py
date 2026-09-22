@@ -137,6 +137,8 @@ def test_router_v3_contract_pins_price_v3_and_frozen_router_v2():
 
 
 def test_versioned_router_v3_path_is_a_thin_compatibility_shim():
+    assert deprecated_v3_router.DEPRECATED_COMPATIBILITY_SHIM is True
+    assert deprecated_v3_router.REPLACEMENT_MODULE == "domain._market_router_current_provider"
     assert deprecated_v3_router.route_price_all_v3_current_provider_as_of is router.route_price_all_v3_current_provider_as_of
     assert deprecated_v3_router.MarketRouterV3CurrentProviderDecision is router.MarketRouterV3CurrentProviderDecision
 

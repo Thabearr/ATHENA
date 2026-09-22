@@ -15,7 +15,7 @@
     "domain.portfolio_optimizer": true,
     "domain.price_all": true
   },
-  "canonical_sha256": "8736f0c323400687387b3843198b16b0af930a7be719e3651cd82ed34a3bd2e2",
+  "canonical_sha256": "4c0f1be1b534fe863b9541363e37e2f780535be740cc6a901aeb1be57fbcf8bc",
   "combined_supported_roots": [
     "app",
     "build_acca",
@@ -41,12 +41,25 @@
   "component_registry_after_sha256": "74e79e216497c2e7f31a51e278251a5c62645e1085d04ebb8712022658f8f109",
   "component_registry_before_sha256": "d52fbb292ddaea9ba2e94fda036f715db5ced7248187814fd29ac7859de26104",
   "cookies": false,
+  "current_request_compatibility_contract_identities": {
+    "blocked_at": "CURRENT_UTC_NATIVE_MODEL_PRODUCTION_AUTHORITY_REQUIRES_REVIEWED_FRESH_HOLDOUT_CONFIRMATION",
+    "current_execution_contract_sha256": "62d0f48942ca28eb9566f4803deea07e61598732198882cc515cd88c6209d359",
+    "market_router_v3_contract_sha256": "61a90a29495399668e19ae4a149527abea98c172d7bdacf1a1b521776b4d771a",
+    "portfolio_optimizer_v3_contract_sha256": "4dc8be4e0a9f607b6c0804048bb326c0aa342d37fe540abbcd3e1b3a5f6a6dad",
+    "price_all_v3_contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425"
+  },
   "current_shadow_triggered": false,
   "deprecated_compatibility_shims": {
     "domain.market_router_canonical_adapter": "domain.market_router",
     "domain.market_router_v3_current_provider": "domain._market_router_current_provider",
     "domain.portfolio_optimizer_v3_current_provider": "domain._portfolio_optimizer_current_provider",
     "domain.price_all_v3_current_provider": "domain._price_all_current_provider"
+  },
+  "deprecated_compatibility_shims_machine_marked": {
+    "domain.market_router_canonical_adapter": true,
+    "domain.market_router_v3_current_provider": true,
+    "domain.portfolio_optimizer_v3_current_provider": true,
+    "domain.price_all_v3_current_provider": true
   },
   "exact_rename_map": {
     "domain/market_router.py": "domain/_historical_market_router_v1.py",
@@ -96,18 +109,20 @@
     "current_request_dependencies": {
       "blocked_at": "CURRENT_UTC_NATIVE_MODEL_PRODUCTION_AUTHORITY_REQUIRES_REVIEWED_FRESH_HOLDOUT_CONFIRMATION",
       "current_execution_contract_sha256": "62d0f48942ca28eb9566f4803deea07e61598732198882cc515cd88c6209d359",
-      "market_router_v3_contract_sha256": "85b4b5c712154f7d4708eb53e9cadfcb7c65dc21bdb12cd94cf1b8cd48795e32",
-      "portfolio_optimizer_v3_contract_sha256": "916247c4a891e3c0a2b8205b9d33000987471a54107f2b3d508c8e5ab1e9a99c",
+      "market_router_v3_contract_sha256": "61a90a29495399668e19ae4a149527abea98c172d7bdacf1a1b521776b4d771a",
+      "portfolio_optimizer_v3_contract_sha256": "4dc8be4e0a9f607b6c0804048bb326c0aa342d37fe540abbcd3e1b3a5f6a6dad",
       "price_all_v3_contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425"
     },
     "current_request_status": "NO_CODE_CURRENT_PHASE6_AUTHORITY_REQUIRED",
     "forbidden_sys_modules": [],
     "main_presentation_recommendation": "Home Win",
+    "main_resolved": true,
     "network_attempt_count": 0,
     "offline_price_router_portfolio_selected_count": 1,
     "offline_price_router_portfolio_shortfall": 0,
     "real_current_provider_execution_attempted": false,
     "shadow_adapter_resolved": true,
+    "shadow_resolved": true,
     "wager_placed": false
   },
   "frozen_p0_2_supported_roots": [
@@ -120,6 +135,7 @@
   ],
   "historical_modules_deleted": false,
   "historical_router_v1_body_preserved": true,
+  "historical_router_v1_machine_marked": true,
   "historical_router_v1_offline_imports": {
     "domain.accumulator_optimizer": [
       "domain",

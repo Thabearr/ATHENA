@@ -10,6 +10,8 @@ football probabilities, bookmaker prices, accumulator legs, slips, or bets.
 """
 from __future__ import annotations
 
+HISTORICAL_COMPATIBILITY_ONLY = True
+
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
