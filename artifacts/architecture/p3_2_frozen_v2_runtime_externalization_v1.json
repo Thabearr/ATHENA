@@ -1,0 +1,112 @@
+{
+  "base_runtime_dependency_edges": [
+    {
+      "from": "domain._market_router_v2_contracts",
+      "to": "domain.price_all_v2_direct_provider"
+    },
+    {
+      "from": "domain._portfolio_optimizer_v2_direct_provider_contracts",
+      "to": "domain._market_router_v2_contracts"
+    },
+    {
+      "from": "domain.market_router_v3_current_provider",
+      "to": "domain._market_router_v2_contracts"
+    },
+    {
+      "from": "domain.market_router_v3_current_provider",
+      "to": "domain.market_router_v2_direct_provider"
+    },
+    {
+      "from": "domain.portfolio_optimizer_v3_current_provider",
+      "to": "domain._portfolio_optimizer_v2_direct_provider_contracts"
+    },
+    {
+      "from": "domain.portfolio_optimizer_v3_current_provider",
+      "to": "domain.portfolio_optimizer_v2_direct_provider"
+    },
+    {
+      "from": "domain.price_all_v3_current_provider",
+      "to": "domain.price_all_v2_direct_provider"
+    }
+  ],
+  "calibration_formula_changed": false,
+  "canonical_roots": [
+    "domain.market_router_canonical_adapter",
+    "domain.portfolio_optimizer",
+    "domain.price_all"
+  ],
+  "canonical_sha256": "0743e9b73d1a712a638c10866b3cc7f3e989605412786f8c91d115cc617abffd",
+  "component_registry_canonical_sha256": "d52fbb292ddaea9ba2e94fda036f715db5ced7248187814fd29ac7859de26104",
+  "cookies": false,
+  "current_replay_suites_passed": true,
+  "current_shadow_triggered": false,
+  "current_v3_contract_sha256": {
+    "portfolio": "4dc8be4e0a9f607b6c0804048bb326c0aa342d37fe540abbcd3e1b3a5f6a6dad",
+    "price_all": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425",
+    "router": "61a90a29495399668e19ae4a149527abea98c172d7bdacf1a1b521776b4d771a"
+  },
+  "differential_portfolio_policy_vectors_passed": true,
+  "differential_price_policy_vectors_passed": true,
+  "differential_router_policy_vectors_passed": true,
+  "final_dynamic_forbidden_sys_modules": [],
+  "final_static_forbidden_reachability": [],
+  "final_static_forbidden_reachability_by_root": {
+    "domain.market_router_canonical_adapter": [],
+    "domain.portfolio_optimizer": [],
+    "domain.price_all": []
+  },
+  "forbidden_runtime_v2_modules": [
+    "domain.market_router_v2_direct_provider",
+    "domain.portfolio_optimizer_v2_direct_provider",
+    "domain.price_all_v2_direct_provider"
+  ],
+  "fresh_holdout_triggered": false,
+  "frozen_v2_contract_sha256": {
+    "portfolio": "919149759ffc9aabef2fefe7c6e0db72d697ebd1ffe33205054fc3ffb4f785fd",
+    "price_all": "b5e3c063ac8b4e9fc1521cabbfe1da873a67b70efc67bc08d8ada61f2024e599",
+    "router": "071d1246ee285634af5598b66872fb27c683f2d13ab14dc25b31de90b72195de"
+  },
+  "frozen_v2_implementation_files_changed": false,
+  "frozen_v2_modules_deleted": false,
+  "login": false,
+  "model_formula_changed": false,
+  "next_required_step": "P3_3_RENAME_AND_CANONICALIZE_MODULES",
+  "p3_0_e1_triggered": false,
+  "p3_1_main_caller_migration_receipt_sha256": "f1fae3ed54c8afc632923156268bc4e70b748eb1ce9a8c3f1c822c965050a875",
+  "p3_2_exit_gate_satisfied": true,
+  "policy_id": "ATHENA_P3_2_FROZEN_V2_RUNTIME_EXTERNALIZATION_V1",
+  "policy_vector_fixture_canonical_sha256": "a7609c359410c5d0d1b1aff4c04ee71a115b07c30e28bfac89eeb5a02f185da3",
+  "portfolio_formula_changed": false,
+  "price_all_formula_changed": false,
+  "probability_formula_changed": false,
+  "provider_acquisition": false,
+  "provider_semantics_changed": false,
+  "registered_canonical_owner_identities": {
+    "market_router": {
+      "artifact_git_blob_sha": "3011b65fcd62e5ae91fcede967b8cba4f85cdda7",
+      "component_id": "domain.market_router_canonical_adapter",
+      "contract_sha256": "85b4b5c712154f7d4708eb53e9cadfcb7c65dc21bdb12cd94cf1b8cd48795e32"
+    },
+    "portfolio_optimizer": {
+      "artifact_git_blob_sha": "d600d5d88baf5628df23441a9216c2fc68352e45",
+      "component_id": "domain.portfolio_optimizer",
+      "contract_sha256": "916247c4a891e3c0a2b8205b9d33000987471a54107f2b3d508c8e5ab1e9a99c"
+    },
+    "price_all_and_de_vig": {
+      "artifact_git_blob_sha": "cf7214a6103d91a2974e3eb00c705f65c841d458",
+      "component_id": "domain.price_all",
+      "contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425"
+    }
+  },
+  "registered_owner_files_changed": false,
+  "registry_changed": false,
+  "repository_base_main_sha": "e79322c57dd9d46789c67de8c7425fa59c8640c1",
+  "router_formula_changed": false,
+  "schema_version": 1,
+  "share_code_operation": false,
+  "share_code_semantics_changed": false,
+  "staking": false,
+  "v3_modules_renamed": false,
+  "wager_placed": false,
+  "wallet": false
+}

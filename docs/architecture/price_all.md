@@ -71,9 +71,9 @@ No bookmaker price becomes football-probability authority. P1.2 remains the cano
 
 ## Frozen evidence dependencies
 
-The delegated v3 implementation currently validates both the current-provider source contract and the frozen Price-all v2 contract before issuing a result. P1.3 keeps those exact identities visible through `validate_price_all_contract()` and changes none of their bytes or formulas.
+The delegated v3 implementation validates both the current-provider source contract and the frozen Price-all v2 contract before issuing a result. P3.2 preserves the exact frozen v2 contract identity and settlement-return semantics in the narrow internal module `domain._price_all_v2_direct_provider_contracts`; canonical Price-All no longer imports the full `domain.price_all_v2_direct_provider` evaluator at runtime.
 
-This runtime dependency is transitional, not permanent architecture. Before a later PR removes the v2/v3 runtime dependency, equivalent frozen contract vectors, identities and replay evidence must be preserved in tests or historical evidence. P1.3 does not authorize that retirement.
+The v2 identity remains visible through `validate_price_all_contract()` and is pinned by source-controlled vectors and differential tests against the retained v2 implementation. Settlement states, return values, error disposition, serialization and formulas are unchanged. The v2 implementation remains in the repository as historical/differential evidence; P3.2 grants no deletion authority. P3.3 owns later module naming cleanup.
 
 ## Architecture Boundary CI and ADR-001
 

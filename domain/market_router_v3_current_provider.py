@@ -10,7 +10,7 @@ import types
 from collections.abc import Mapping, Sequence
 from typing import Any
 
-from domain import market_router_v2_direct_provider as frozen_v2
+from domain import _market_router_v2_contracts as router_v2_contracts
 from domain import price_all_v3_current_provider as price_v3
 from domain._market_router_context import RouterContextQualification, qualify_router_context
 from domain._market_router_contracts import (
@@ -67,8 +67,8 @@ AUTHORITY = types.MappingProxyType(
 )
 
 _FULL_SETTLEMENT = frozenset({MarketId.DRAW_NO_BET, MarketId.ASIAN_HANDICAP})
-_REQUIRES_FAIR = frozen_v2._REQUIRES_ORDINARY_FAIR
-_BLOCKED_SPECIALISTS = frozen_v2._BLOCKED_SPECIALISTS
+_REQUIRES_FAIR = router_v2_contracts.REQUIRES_ORDINARY_FAIR
+_BLOCKED_SPECIALISTS = router_v2_contracts.BLOCKED_SPECIALISTS
 
 
 class MarketRouterV3CurrentProviderError(ValueError):

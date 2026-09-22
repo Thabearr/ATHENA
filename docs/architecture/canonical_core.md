@@ -72,3 +72,9 @@ Pre-merge proof remains synthetic/offline. The controlling v2 specification requ
 P3.1 PR A changes no football, calibration, Price-All, Router, Portfolio, provider-market, or share-code mathematics. It grants MAIN component-resolution authority but no login, cookie, wallet, staking, bet, wager, caller-migration, or deletion authority. Current Shadow source acquisition remains a SHADOW orchestration responsibility outside the pure core.
 
 Rollback is a source-controlled reversal of the runner import/compatibility migration plus the three one-way alias entries. Because the legacy wrappers remain retained during this transition, rollback requires no evidence deletion, no registry promotion/demotion, and no provider operation.
+
+## P3.2 frozen-v2 runtime externalization
+
+P3.2 preserves the exact MAIN and SHADOW canonical resolutions and leaves the component-authority registry unchanged. The three registered Price-All, Router and Portfolio owner files retain their reviewed Git blob identities. Their internal current v3 implementations now consume only narrow frozen-contract/policy modules rather than importing the full Price-All-v2, Router-v2 or Portfolio-v2 runtime implementations. Contract hashes, settlement and selection behavior, replay payloads and formulas remain unchanged, with differential vectors and fresh-process import tests guarding continuity.
+
+The versioned v3 implementation names remain during this migration window. P3.3 is still required for naming/canonicalization work, and P5.2 retains the later, separate deletion gate. P3.2 does not delete or rename any v2/v3 implementation and does not rebind canonical authority.

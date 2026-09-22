@@ -92,6 +92,23 @@ AUTHORITY = types.MappingProxyType(
 PortfolioOptimizationStatus = legacy.AccumulatorOptimizationStatus
 FragilityStatus = legacy.FragilityStatus
 
+DNB_SETTLEMENT_COMPONENTS = frozenset({"WIN", "PUSH", "LOSS"})
+ASIAN_HANDICAP_SETTLEMENT_COMPONENTS = frozenset(
+    {"WIN", "HALF_WIN", "PUSH", "HALF_LOSS", "LOSS"}
+)
+
+
+def classify_frozen_fragility(robust_ev: float, survival: float) -> FragilityStatus:
+    thin_value = robust_ev < MINIMUM_ROBUST_NET_EXPECTED_VALUE_FOR_NON_FRAGILE
+    thin_survival = survival < MINIMUM_SURVIVAL_FLOOR_FOR_NON_FRAGILE
+    if thin_value and thin_survival:
+        return FragilityStatus.FRAGILE_THIN_VALUE_AND_SURVIVAL
+    if thin_value:
+        return FragilityStatus.FRAGILE_THIN_VALUE
+    if thin_survival:
+        return FragilityStatus.FRAGILE_THIN_SURVIVAL
+    return FragilityStatus.NON_FRAGILE
+
 
 class PortfolioOptimizerV2DirectProviderError(ValueError):
     """Raised when the direct-provider Portfolio Optimizer v2 fails closed."""

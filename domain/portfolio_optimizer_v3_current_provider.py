@@ -12,7 +12,7 @@ from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
 from domain import market_router_v3_current_provider as router_v3
-from domain import portfolio_optimizer_v2_direct_provider as frozen_v2
+from domain import _portfolio_optimizer_v2_direct_provider_contracts as portfolio_v2_contracts
 from domain import sportybet_current_event_discovery_reconciliation as current_recon
 from domain._accumulator_optimizer_contracts import (
     JOINT_DEPENDENCE_STATUS,
@@ -74,8 +74,8 @@ AUTHORITY = types.MappingProxyType(
 )
 
 _FULL_SETTLEMENT = frozenset({MarketId.DRAW_NO_BET, MarketId.ASIAN_HANDICAP})
-_DNB_COMPONENTS = frozen_v2._DNB_COMPONENTS
-_AH_COMPONENTS = frozen_v2._AH_COMPONENTS
+_DNB_COMPONENTS = portfolio_v2_contracts.DNB_SETTLEMENT_COMPONENTS
+_AH_COMPONENTS = portfolio_v2_contracts.ASIAN_HANDICAP_SETTLEMENT_COMPONENTS
 
 
 class PortfolioOptimizerV3CurrentProviderError(ValueError):
@@ -461,7 +461,7 @@ def _survival(opportunity: router_v3.CurrentProviderRoutedOpportunity, results: 
 
 
 def _fragility(robust_ev: float, survival: float) -> FragilityStatus:
-    return frozen_v2._fragility(robust_ev, survival)
+    return portfolio_v2_contracts.classify_frozen_fragility(robust_ev, survival)
 
 
 def _build_leg(source: CurrentProviderPortfolioRouterInput, now: datetime) -> CurrentProviderPortfolioLeg:
