@@ -18,7 +18,7 @@ from typing import Any, Mapping
 from unittest.mock import patch
 
 from domain._market_router_contracts import REAL_CURRENT_MARKET_ROUTER_STATUS
-from domain.market_router import route_market_candidates
+from domain._historical_market_router_v1 import route_market_candidates
 
 
 class OfflineRouterRunnerError(ValueError):

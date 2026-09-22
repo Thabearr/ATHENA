@@ -39,7 +39,7 @@ EXPECTED_COMPONENTS = MappingProxyType(
     {
         "provider_market_semantics": "domain.provider_market_semantics",
         "price_all_and_de_vig": "domain.price_all",
-        "market_router": "domain.market_router_canonical_adapter",
+        "market_router": "domain.market_router",
         "portfolio_optimizer": "domain.portfolio_optimizer",
         "delivery_share_code_transport": "domain.sportybet_share_code",
     }

@@ -52,7 +52,11 @@ from domain._price_all_contracts import (
     SportyBetExactQuote,
 )
 from domain.fixture_state_v2 import FixtureStateV2Snapshot
-from domain.market_router import MarketRouterDecision, RoutedOpportunity, route_market_candidates
+from domain._historical_market_router_v1 import (
+    MarketRouterDecision,
+    RoutedOpportunity,
+    route_market_candidates,
+)
 from domain.markets import MARKET_REGISTRY, MarketFamily, MarketId, OutcomeId
 
 _FULL_SETTLEMENT_MARKETS = frozenset({MarketId.DRAW_NO_BET, MarketId.ASIAN_HANDICAP})

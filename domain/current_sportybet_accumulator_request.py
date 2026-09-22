@@ -18,9 +18,9 @@ from typing import Any
 
 from domain import current_fotmob_latest_durable_fresh_history as current_fotmob
 from domain import current_sportybet_accumulator_execution as execution
-from domain import market_router_v3_current_provider as router_v3
-from domain import portfolio_optimizer_v3_current_provider as portfolio_v3
-from domain import price_all_v3_current_provider as price_v3
+from domain import market_router as router
+from domain import portfolio_optimizer as portfolio
+from domain import price_all as price_all
 
 DATASET_NAME = "athena-current-sportybet-accumulator-request-v1"
 MAXIMUM_TARGET_SIZE = 50
@@ -61,16 +61,20 @@ def validate_current_request_dependencies() -> Mapping[str, str]:
     ):
         raise CurrentSportyBetAccumulatorRequestError("current FotMob authority boundary drifted")
     try:
-        price = price_v3.validate_price_all_v3_contract()
-        router = router_v3.validate_market_router_v3_contract()
-        portfolio = portfolio_v3.validate_portfolio_optimizer_v3_contract()
+        price_identity = price_all.validate_price_all_contract()
+        router_identity = router.validate_canonical_market_router_contract()
+        portfolio_identity = portfolio.validate_portfolio_contract()
         current_execution = execution.validate_current_execution_contract()
     except Exception as exc:
         raise CurrentSportyBetAccumulatorRequestError("downstream current chain contract validation failed") from exc
     return types.MappingProxyType({
-        "price_all_v3_contract_sha256": price["price_all_v3_contract_sha256"],
-        "market_router_v3_contract_sha256": router["market_router_v3_contract_sha256"],
-        "portfolio_optimizer_v3_contract_sha256": portfolio["portfolio_optimizer_v3_contract_sha256"],
+        "price_all_v3_contract_sha256": price_identity["implementation_contract_sha256"],
+        "market_router_v3_contract_sha256": router_identity[
+            "canonical_market_router_contract_sha256"
+        ],
+        "portfolio_optimizer_v3_contract_sha256": portfolio_identity[
+            "canonical_portfolio_contract_sha256"
+        ],
         "current_execution_contract_sha256": current_execution["current_execution_contract_sha256"],
         "blocked_at": BLOCKED_AT,
     })

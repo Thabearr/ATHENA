@@ -20,14 +20,14 @@ from collections.abc import Mapping, Sequence
 from typing import Any
 import unicodedata
 
-from domain import portfolio_optimizer_v3_current_provider as portfolio_v3
+from domain import portfolio_optimizer as portfolio_v3
 from scripts import sportybet_direct_share_bridge as direct_bridge
 from scripts import sportybet_semantic_share_bridge as semantic_bridge
 
 SCHEMA_VERSION = 1
 CONTRACT_VERSION = 1
 DATASET_NAME = "athena-current-sportybet-accumulator-execution-v1"
-PORTFOLIO_V3_CONTRACT_SHA256 = portfolio_v3.EXPECTED_CONTRACT_SHA256
+PORTFOLIO_V3_CONTRACT_SHA256 = portfolio_v3.SOURCE_PORTFOLIO_V3_CONTRACT_SHA256
 SEMANTIC_INTENT_POLICY_ID = "ONLY_EVENT_TEAMS_MARKET_OUTCOME_AND_EXACT_SPECIFIER_V1"
 FINAL_REPLAY_POLICY_ID = "REPLAY_PORTFOLIO_ROUTER_PRICE253_MAPPING252_RECON251_BEFORE_CREATE_V1"
 COUNT_POLICY_ID = "ROUTER_OPTIMIZER_INTENT_RESOLVE_CREATE_RELOAD_EXACT_OR_NO_CODE_V1"
@@ -508,8 +508,8 @@ def _execute(
         raise CurrentSportyBetAccumulatorExecutionError("delay_seconds must be finite non-negative")
     rebuilt, _ = _replay_final_sources(optimization, now=now)
     if require_live_current and (
-        rebuilt.proof_mode != portfolio_v3.router_v3.price_v3.LIVE_CURRENT
-        or rebuilt.status != portfolio_v3.STATUS_LIVE
+        rebuilt.proof_mode != portfolio_v3.SOURCE_PORTFOLIO_V3_LIVE_CURRENT
+        or rebuilt.status != portfolio_v3.SOURCE_PORTFOLIO_V3_STATUS_LIVE
     ):
         raise CurrentSportyBetAccumulatorExecutionError("production execution requires live current ancestry")
     target = rebuilt.requested_target_size; selected_count = len(rebuilt.selected_legs)

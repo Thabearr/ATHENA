@@ -7,8 +7,9 @@ from pathlib import Path
 
 import pytest
 
-from domain import market_router_canonical_adapter as canonical
-from domain import market_router_v3_current_provider as v3
+from domain import market_router as canonical
+from domain import market_router_canonical_adapter as deprecated_canonical
+from domain import _market_router_current_provider as v3
 from domain import price_all as canonical_price
 from domain._market_router_contracts import (
     ModelAgreementStatus,
@@ -21,7 +22,7 @@ from tests.test_current_direct_provider_live_quote_mapping_consumption import EV
 from tests.test_market_router_v3_current_provider import _fixture_state, _priced_match_result
 
 ROOT = Path(__file__).resolve().parents[1]
-CANONICAL_PATH = ROOT / "domain/market_router_canonical_adapter.py"
+CANONICAL_PATH = ROOT / "domain/market_router.py"
 
 
 def _wrap(evaluation):
@@ -97,6 +98,12 @@ def test_contract_pins_canonical_price_all_and_exact_router_v3() -> None:
     assert canonical.AUTHORITY["portfolio_optimization"] is False
     assert canonical.AUTHORITY["sportybet_execution"] is False
     assert canonical.AUTHORITY["bet"] is False
+
+
+def test_old_canonical_adapter_path_is_a_thin_compatibility_shim() -> None:
+    assert deprecated_canonical.route is canonical.route
+    assert deprecated_canonical.RouterDecision is canonical.RouterDecision
+    assert deprecated_canonical.validate_canonical_market_router_contract is canonical.validate_canonical_market_router_contract
 
 
 def test_replay_selected_case_matches_router_v3_source_decision(monkeypatch) -> None:
@@ -349,7 +356,7 @@ def test_canonical_adapter_is_one_router_boundary_not_a_fourth_formula_stack() -
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
             definitions.add(node.name)
     assert "domain.price_all" in imports
-    assert "domain.market_router_v3_current_provider" in imports
+    assert "domain._market_router_current_provider" in imports
     assert "domain.current_shadow_all_market_router" not in imports
     assert not any(
         token in module

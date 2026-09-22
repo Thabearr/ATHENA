@@ -46,12 +46,12 @@ The registry population remains intentionally narrow. P2.0 adds the promoted pro
 | Responsibility | Component | Contract identity | P1.7 role/state |
 | --- | --- | --- | --- |
 | `price_all_and_de_vig` | `domain.price_all` | reviewed delegated Price-All-v3 contract | `CHAMPION / APPROVED_FOR_MAIN` |
-| `market_router` | `domain.market_router_canonical_adapter` | canonical P1.4 Router contract | `CHAMPION / APPROVED_FOR_MAIN` |
+| `market_router` | `domain.market_router` | canonical P1.4 Router contract | `CHAMPION / APPROVED_FOR_MAIN` |
 | `portfolio_optimizer` | `domain.portfolio_optimizer` | canonical P1.5 Portfolio contract | `CHAMPION / APPROVED_FOR_MAIN` |
 | `delivery_share_code_transport` | `domain.sportybet_share_code` | canonical P1.6 share-code contract | `CHAMPION / APPROVED_FOR_MAIN` |
 | `provider_market_semantics` | `domain.provider_market_semantics` | canonical P2.0 delegated semantic contract | `CHAMPION / APPROVED_FOR_MAIN` |
 
-P3.1 PR A explicitly makes the same exact five reviewed records eligible for both `MAIN` and `SHADOW`, sets `promotion_state=APPROVED_FOR_MAIN`, and sets `main_authority=true`. The component, contract, artifact, regime, role, and schema identities remain unchanged. This is a source-controlled permission boundary only: it does not migrate any MAIN caller, remove `MarketSelector`, or grant production wager authority. MAIN caller migration remains the separate P3.1 PR B step.
+At the P3.1 PR A checkpoint, the same exact five reviewed records were made eligible for both `MAIN` and `SHADOW`, with `promotion_state=APPROVED_FOR_MAIN` and `main_authority=true`; that promotion did not migrate a MAIN caller or remove `MarketSelector`. P3.1 PR B has since completed MAIN caller migration. P3.3 mechanically rebinds the Router record to the public canonical `domain.market_router`; its promotion/profile metadata and reviewed contract identity remain unchanged. This rebind does not grant production wager authority.
 
 The P1.3 Price-All wrapper deliberately preserves the reviewed Price-All-v3 payload and contract semantics byte-for-byte, so its registry `contract_sha256` is the delegated reviewed v3 implementation contract identity while `component_id` and Git blob identity bind the unversioned canonical wrapper itself.
 
@@ -83,12 +83,16 @@ Current Shadow's existing profile-specific Price-All/Router/Portfolio modules ar
 
 P0.3 remains the frozen baseline authority/parity contract and cleanup evidence. P1.7 does not rewrite its historical starting-state assignments or close its recorded migration gaps by assertion. Instead, this registry becomes the typed source-controlled authority mechanism that later migration and promotion PRs can consume.
 
-P2.0/P2.1 migrated SHADOW to the shared canonical core using these exact registered identities. P3.1 PR A promotes those reviewed identities for MAIN resolution without migrating a MAIN/legacy caller. P3.1 PR B remains required for caller migration.
+P2.0/P2.1 migrated SHADOW to the shared canonical core using the registered identities. P3.1 PR A promoted them for MAIN resolution, and P3.1 PR B has since migrated the MAIN prediction caller. P3.3 rebinds the Router owner to `domain.market_router` while leaving authority-promotion/profile metadata unchanged.
 
 ## Safety and non-authority
 
-P3.1 PR A does not fetch a provider, run Current Shadow, trigger fresh holdout, change model/calibration/Price-All/Router/Portfolio formulas, create a real SportyBet share code, log in, use cookies, access a wallet, calculate a stake, place a wager, migrate callers, or delete/retire any module. It grants no cleanup disposition and no automatic promotion authority.
+P3.1 PR A did not fetch a provider, run Current Shadow, trigger fresh holdout, change model/calibration/Price-All/Router/Portfolio formulas, create a real SportyBet share code, log in, use cookies, access a wallet, calculate a stake, place a wager, migrate callers, or delete/retire any module. It granted no cleanup disposition and no automatic promotion authority. P3.3 is a mechanical Router owner rebind and module-naming update only; it changes no formulas or promotion/profile metadata. P5.2 remains the separate deletion gate.
 
 ## Exit-gate interpretation
 
 For every responsibility/regime populated by P1.7, exactly one champion identity exists. No research challenger in the registry can be MAIN-eligible. No API or source-controlled hook allows a holdout/backtest result to mutate registry authority automatically. Those invariants are enforced by the dedicated regression suite.
+
+## P3.3 Router owner rebind
+
+The public canonical Router is now `domain.market_router`. Its registry rebind updates the Router owner identity mechanically while preserving role, profile eligibility, promotion state, MAIN authority, schema compatibility, and the reviewed Router contract. The active implementation is private and unversioned; former versioned paths are deprecated compatibility shims. No routing formulas changed. Historical implementations remain retained, and P5.2 remains the separate deletion gate.

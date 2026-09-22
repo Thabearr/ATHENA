@@ -404,7 +404,7 @@ def test_frozen_router_and_portfolio_policy_vectors_match_runtime_and_contracts(
 def test_canonical_transitive_ast_import_closure_has_no_frozen_runtime_v2():
     roots = (
         "domain.price_all",
-        "domain.market_router_canonical_adapter",
+        "domain.market_router",
         "domain.portfolio_optimizer",
     )
     forbidden = {
@@ -414,9 +414,19 @@ def test_canonical_transitive_ast_import_closure_has_no_frozen_runtime_v2():
     }
     reached, _ = _reachable_domain_imports(roots)
     assert reached.isdisjoint(forbidden)
-    assert "domain.price_all_v3_current_provider" in reached
-    assert "domain.market_router_v3_current_provider" in reached
-    assert "domain.portfolio_optimizer_v3_current_provider" in reached
+    assert {
+        "domain._price_all_current_provider",
+        "domain._market_router_current_provider",
+        "domain._portfolio_optimizer_current_provider",
+    } <= reached
+    assert reached.isdisjoint(
+        {
+            "domain.price_all_v3_current_provider",
+            "domain.market_router_v3_current_provider",
+            "domain.portfolio_optimizer_v3_current_provider",
+            "domain.market_router_canonical_adapter",
+        }
+    )
 
 
 def test_fresh_process_canonical_validation_and_offline_replay_never_load_v2_runtime():

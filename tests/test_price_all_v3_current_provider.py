@@ -4,6 +4,7 @@ from datetime import timedelta
 
 import pytest
 
+from domain import _price_all_current_provider as private_price
 from domain import price_all_v3_current_provider as price
 from domain.markets import MarketId, OutcomeId
 from domain._price_all_contracts import DevigStatus
@@ -36,6 +37,18 @@ def _candidate(
         fixture_id=FIXTURE,
         event_id=EVENT,
     )[0]
+
+
+def test_deprecated_module_is_exact_compatibility_shim():
+    assert price.DEPRECATED_COMPATIBILITY_SHIM is True
+    assert price.REPLACEMENT_MODULE == "domain._price_all_current_provider"
+    assert price.__all__ == private_price.__all__
+    assert "DEPRECATED_COMPATIBILITY_SHIM" not in price.__all__
+    assert "REPLACEMENT_MODULE" not in price.__all__
+    assert all(
+        getattr(price, name) is getattr(private_price, name)
+        for name in private_price.__all__
+    )
 
 
 def test_frozen_contract_pins_exact_pr253_and_v2_dependencies():
@@ -168,7 +181,7 @@ def test_separate_provider_markets_cannot_be_combined_for_devig(monkeypatch):
 
 def test_production_lane_owns_wall_clock_and_requires_live_pr253(monkeypatch):
     source, _ = _build(monkeypatch)
-    monkeypatch.setattr(price, "_now_utc", lambda: EVALUATION)
+    monkeypatch.setattr(private_price, "_now_utc", lambda: EVALUATION)
     with pytest.raises(price.PriceAllV3CurrentProviderError, match="LIVE_CURRENT"):
         price.price_all_current_provider_candidates((_candidate(),), source)
 

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import ast
 import inspect
+import subprocess
+import sys
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
-from domain import market_router_canonical_adapter as router
+from domain import _portfolio_optimizer_current_provider as v3
+from domain import market_router as router
 from domain import portfolio_optimizer as canonical
-from domain import portfolio_optimizer_v3_current_provider as v3
 from domain import price_all as price_all
 from domain._portfolio_optimizer_v2_direct_provider_contracts import (
     FragilityStatus,
@@ -63,6 +65,18 @@ def test_contract_pins_canonical_router_v3_policy_and_run_target_bounds() -> Non
     assert canonical.AUTHORITY["sportybet_execution"] is False
     assert canonical.AUTHORITY["staking"] is False
     assert canonical.AUTHORITY["bet"] is False
+
+
+def test_provider_v3_transition_aliases_are_exact_implementation_objects() -> None:
+    assert canonical.CurrentProviderPortfolioOptimization is v3.CurrentProviderPortfolioOptimization
+    assert canonical.CurrentProviderPortfolioRouterInput is v3.CurrentProviderPortfolioRouterInput
+    assert canonical.PortfolioOptimizerV3CurrentProviderError is v3.PortfolioOptimizerV3CurrentProviderError
+    assert canonical.validate_portfolio_optimizer_v3_contract is v3.validate_portfolio_optimizer_v3_contract
+    assert canonical.verify_current_provider_portfolio_optimization is v3.verify_current_provider_portfolio_optimization
+    assert canonical.verify_current_provider_portfolio_router_input is v3.verify_current_provider_portfolio_router_input
+    assert canonical.SOURCE_PORTFOLIO_V3_CONTRACT_SHA256 == v3.EXPECTED_CONTRACT_SHA256
+    assert canonical.SOURCE_PORTFOLIO_V3_STATUS_LIVE == v3.STATUS_LIVE
+    assert canonical.SOURCE_PORTFOLIO_V3_LIVE_CURRENT == v3.router_v3.price_v3.LIVE_CURRENT
 
 
 def test_public_optimizer_uses_target_legs_not_target_size_or_odds_objective() -> None:
@@ -261,8 +275,10 @@ def test_canonical_portfolio_import_boundary_has_no_shadow_delivery_or_wager_dep
         elif isinstance(node, ast.ImportFrom) and node.module:
             for alias in node.names:
                 imports.add(f"{node.module}.{alias.name}")
-    assert "domain.market_router_canonical_adapter" in imports
-    assert "domain.portfolio_optimizer_v3_current_provider" in imports
+    assert "domain.market_router" in imports
+    assert "domain._portfolio_optimizer_current_provider" in imports
+    assert "domain.market_router_canonical_adapter" not in imports
+    assert "domain.portfolio_optimizer_v3_current_provider" not in imports
     assert "domain.run_contracts" in imports
     assert not any("current_shadow" in module for module in imports)
     assert not any(
@@ -277,6 +293,25 @@ def test_canonical_portfolio_import_boundary_has_no_shadow_delivery_or_wager_dep
             "wager",
         )
     )
+
+
+def test_canonical_import_does_not_load_deprecated_provider_shim() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import domain.portfolio_optimizer; "
+                "assert 'domain._portfolio_optimizer_current_provider' in sys.modules; "
+                "assert 'domain.portfolio_optimizer_v3_current_provider' not in sys.modules"
+            ),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_selected_portfolio_labels_dependence_and_no_future_objective(monkeypatch) -> None:

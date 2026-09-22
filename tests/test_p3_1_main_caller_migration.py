@@ -15,8 +15,8 @@ def _unsigned(payload: dict) -> dict:
 
 
 def test_migration_receipt_is_deterministic_and_hashes_unsigned_payload():
-    first = audit.build_migration_evidence()
-    second = audit.build_migration_evidence()
+    first = audit.load_historical_migration_evidence()
+    second = audit.load_historical_migration_evidence()
     assert first == second
     assert first["policy_id"] == "ATHENA_P3_1_MAIN_CALLER_MIGRATION_V1"
     assert first["schema_version"] == 1
@@ -25,7 +25,7 @@ def test_migration_receipt_is_deterministic_and_hashes_unsigned_payload():
 
 
 def test_migration_receipt_binds_pr_a_registry_and_frozen_p05_history():
-    payload = audit.build_migration_evidence()
+    payload = audit.load_historical_migration_evidence()
     assert payload["repository_base_main_sha"] == audit.BASE_MAIN_SHA
     assert payload["p3_1_pr_a_merge_commit_sha"] == audit.P3_1_PR_A_MERGE_COMMIT_SHA
     assert payload["p3_1_pr_a_promotion_receipt_sha256"] == audit.P3_1_PR_A_RECEIPT_SHA256
@@ -45,7 +45,7 @@ def test_migration_receipt_binds_pr_a_registry_and_frozen_p05_history():
 
 
 def test_selected_no_bet_and_no_router_cases_are_explicitly_fail_closed_or_projected():
-    payload = audit.build_migration_evidence()
+    payload = audit.load_historical_migration_evidence()
     selected = payload["selected_case"]
     no_bet = payload["no_bet_case"]
     no_router = payload["no_router_decision_case"]
@@ -71,7 +71,7 @@ def test_selected_no_bet_and_no_router_cases_are_explicitly_fail_closed_or_proje
 
 
 def test_migration_receipt_records_scope_and_safety_guards():
-    payload = audit.build_migration_evidence()
+    payload = audit.load_historical_migration_evidence()
     assert payload["caller_migration_performed"] is True
     assert payload["market_selector_removed"] is False
     assert payload["market_selector_supported_runtime_execution"] is False
@@ -100,4 +100,4 @@ def test_migration_receipt_records_scope_and_safety_guards():
 
 def test_committed_receipt_matches_deterministic_audit_output():
     committed = json.loads(Path(audit.DEFAULT_OUTPUT).read_bytes())
-    assert committed == audit.build_migration_evidence()
+    assert committed == audit.load_historical_migration_evidence()
