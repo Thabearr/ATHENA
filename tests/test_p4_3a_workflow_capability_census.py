@@ -29,15 +29,17 @@ def test_matrix_has_exactly_40_sorted_live_workflows(matrix: dict) -> None:
 
 
 def test_workflow_tree_unchanged_and_each_row_binds_source_identity(matrix: dict) -> None:
-    # validate_matrix checks 40 paths before/after, no diff from base, and both
-    # Git blob SHA-1 and raw-source SHA-256 for every row.
+    # The frozen pre-retirement census remains 40 rows; exactly its reviewed
+    # target is absent from the current 39-workflow tree.
     audit.validate_matrix(matrix)
     assert matrix["workflow_count"] == 40
+    assert len(audit._worktree_workflows()) == 39
 
 
 def test_yaml_loader_preserves_github_actions_on_key(matrix: dict) -> None:
     for row in matrix["workflow_rows"]:
-        parsed = yaml.load(Path(row["workflow_path"]).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        source = audit.RETIRED_FIXTURE if row["workflow_path"] == audit.RETIRED_TARGET else row["workflow_path"]
+        parsed = yaml.load(Path(source).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         assert "on" in parsed
         assert isinstance(parsed["on"], dict)
         assert row["trigger_types"] == sorted(parsed["on"].keys())

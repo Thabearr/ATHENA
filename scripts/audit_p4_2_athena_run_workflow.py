@@ -67,6 +67,10 @@ PRESERVED_FILE_GIT_BLOB_SHA1 = {
     ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml": "d880f07fc7d5f407f9f4bdc7a7311bb89f713fd0",
     ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml": "c34528d5bf21556d85585ed7c807b34ca5f7666f",
 }
+RETIRED_WORKFLOW_PATH = ".github/workflows/current-sportybet-accumulator.yml"
+RETIRED_WORKFLOW_FIXTURE = "tests/fixtures/architecture/retired_workflows/current-sportybet-accumulator.yml"
+RETIRED_WORKFLOW_SOURCE_SHA256 = "839925e6ad0ceee2452ef008da13d481bc34d445290444b30d6f0278510542c1"
+FROZEN_P42_RECEIPT_SHA256 = "fa575a5bb5f4611eb94564b92dea3e4230b8d429b1660dc3bde3d6c164b836f8"
 
 
 class P42AuditError(RuntimeError):
@@ -104,6 +108,29 @@ def _git_blob_sha1(relative_path: str) -> str:
     if re.fullmatch(r"[0-9a-f]{40}", value, re.ASCII) is None:
         raise P42AuditError(f"frozen Git blob identity is invalid for {relative_path}")
     return value
+
+
+def verify_preserved_historical_sources() -> dict[str, str]:
+    """Verify P4.2 identities without requiring a retired YAML at its live path."""
+    try:
+        raw = (REPOSITORY_ROOT / RETIRED_WORKFLOW_FIXTURE).read_bytes()
+    except OSError as exc:
+        raise P42AuditError("retired P4.2 workflow fixture is missing") from exc
+    source_sha = hashlib.sha256(raw).hexdigest()
+    blob_sha = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+    if source_sha != RETIRED_WORKFLOW_SOURCE_SHA256 or blob_sha != PRESERVED_FILE_GIT_BLOB_SHA1[RETIRED_WORKFLOW_PATH]:
+        raise P42AuditError("retired P4.2 workflow fixture identity drifted")
+    if (REPOSITORY_ROOT / RETIRED_WORKFLOW_PATH).exists():
+        raise P42AuditError("retired P4.2 workflow remains at the live path")
+    identities = {RETIRED_WORKFLOW_PATH: blob_sha}
+    for relative, expected in PRESERVED_FILE_GIT_BLOB_SHA1.items():
+        if relative == RETIRED_WORKFLOW_PATH:
+            continue
+        actual = _git_blob_sha1(relative)
+        if actual != expected:
+            raise P42AuditError(f"protected historical source changed: {relative}")
+        identities[relative] = actual
+    return identities
 
 
 def _shadow_service_outer_timeout_present(source: str) -> bool:
@@ -643,7 +670,7 @@ def verify_committed_receipt(path: Path | None = None) -> dict[str, Any]:
     stored_sha = payload.get("canonical_sha256")
     unsigned = dict(payload)
     unsigned.pop("canonical_sha256", None)
-    if type(stored_sha) is not str or canonical_sha256(unsigned) != stored_sha:
+    if type(stored_sha) is not str or stored_sha != FROZEN_P42_RECEIPT_SHA256 or canonical_sha256(unsigned) != stored_sha:
         raise P42AuditError("P4.2 receipt canonical SHA failed verification")
     if (
         payload.get("policy_id") != POLICY_ID
@@ -672,17 +699,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--check", action="store_true")
     args = parser.parse_args(argv)
-    receipt = build_receipt()
     if args.check:
         committed = verify_committed_receipt(args.output)
-        if committed != receipt:
-            raise SystemExit("committed P4.2 receipt differs from deterministic audit")
-        print(receipt["canonical_sha256"])
+        if committed.get("historical_file_git_blob_sha1") != verify_preserved_historical_sources():
+            raise SystemExit("P4.2 historical source identities differ from the frozen receipt")
+        print(committed["canonical_sha256"])
         return 0
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_bytes(canonical_bytes(receipt))
-    print(receipt["canonical_sha256"])
-    return 0
+    raise SystemExit("P4.2 receipt is a frozen historical checkpoint; use --check")
 
 
 if __name__ == "__main__":

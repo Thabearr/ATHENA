@@ -201,9 +201,8 @@ def test_workflow_has_no_noncanonical_triggers_or_manual_sensitive_inputs():
 
 
 def test_committed_p42_receipt_hash_and_frozen_history_are_verified():
-    generated = audit.build_receipt()
     committed = audit.verify_committed_receipt()
-    assert committed == generated
+    assert committed["historical_file_git_blob_sha1"] == audit.verify_preserved_historical_sources()
     unsigned = dict(committed)
     stored = unsigned.pop("canonical_sha256")
     assert audit.canonical_sha256(unsigned) == stored
@@ -216,5 +215,6 @@ def test_committed_p42_receipt_hash_and_frozen_history_are_verified():
 
 def test_protected_and_legacy_workflows_remain_exact_base_bytes():
     for relative, expected in audit.PRESERVED_FILE_GIT_BLOB_SHA1.items():
-        if relative.startswith(".github/workflows/"):
+        if relative.startswith(".github/workflows/") and relative != audit.RETIRED_WORKFLOW_PATH:
             assert audit._git_blob_sha1(relative) == expected
+    assert audit.verify_preserved_historical_sources()[audit.RETIRED_WORKFLOW_PATH] == audit.PRESERVED_FILE_GIT_BLOB_SHA1[audit.RETIRED_WORKFLOW_PATH]

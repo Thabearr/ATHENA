@@ -28,6 +28,9 @@ P41_RECEIPT = "artifacts/architecture/p4_1_cli_consolidation_v1.json"
 REGISTRY = "config/architecture/component-authority-registry-v1.json"
 MATRIX_PATH = "artifacts/architecture/p4_3_workflow_capability_matrix_v1.json"
 RECEIPT_PATH = "artifacts/architecture/p4_3a_workflow_capability_census_v1.json"
+RETIRED_TARGET = ".github/workflows/current-sportybet-accumulator.yml"
+RETIRED_FIXTURE = "tests/fixtures/architecture/retired_workflows/current-sportybet-accumulator.yml"
+RETIRED_SOURCE_SHA256 = "839925e6ad0ceee2452ef008da13d481bc34d445290444b30d6f0278510542c1"
 P42_SHA = "fa575a5bb5f4611eb94564b92dea3e4230b8d429b1660dc3bde3d6c164b836f8"
 P41_SHA = "268933433aaab84cb2533840f2e01eba96ec5906e796c9eced2032e1d6706208"
 REGISTRY_SHA = "74e79e216497c2e7f31a51e278251a5c62645e1085d04ebb8712022658f8f109"
@@ -132,18 +135,19 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
     paths = [row.get("workflow_path") for row in rows]
     if paths != sorted(paths) or len(set(paths)) != 40:
         raise AssertionError("matrix paths must be unique and sorted")
-    expected_paths = _base_workflows()
+    expected_paths = _base_workflows() if _base_object_available() else paths
     current_paths = _current_workflows()
     worktree_paths = _worktree_workflows()
-    if len(expected_paths) != 40 or len(current_paths) != 40 or len(worktree_paths) != 40:
-        raise AssertionError("base/current workflow count is not 40")
-    if paths != expected_paths or paths != current_paths or paths != worktree_paths:
-        raise AssertionError("matrix does not cover exactly the current/base workflow paths")
+    surviving_paths = sorted(set(paths) - {RETIRED_TARGET})
+    if len(expected_paths) != 40 or len(surviving_paths) != 39 or len(worktree_paths) != 39:
+        raise AssertionError("P4.3A historical/current workflow counts are not 40/39")
+    if paths != expected_paths or worktree_paths != surviving_paths or current_paths not in (paths, surviving_paths):
+        raise AssertionError("P4.3A census differs from the one-workflow retirement transition")
     if _base_object_available():
-        committed_diff = subprocess.run(["git", "diff", "--quiet", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR])
-        worktree_diff = subprocess.run(["git", "diff", "--quiet", BASE_MAIN_SHA, "--", WORKFLOW_DIR])
-        if committed_diff.returncode != 0 or worktree_diff.returncode != 0:
-            raise AssertionError("workflow YAML changed since P4.3A base")
+        committed_diff = _git("diff", "--name-only", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR).decode().splitlines()
+        worktree_diff = _git("diff", "--name-only", BASE_MAIN_SHA, "--", WORKFLOW_DIR).decode().splitlines()
+        if committed_diff not in ([], [RETIRED_TARGET]) or worktree_diff != [RETIRED_TARGET]:
+            raise AssertionError("a workflow other than the reviewed target changed since P4.3A")
     if canonical_sha256(matrix) != matrix.get("canonical_sha256"):
         raise AssertionError("matrix canonical SHA mismatch")
 
@@ -155,15 +159,25 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         capability_mapping = row.get("capability_mapping")
         if not isinstance(capability_mapping, dict) or capability_mapping.get("equivalence_claimed") is not False:
             raise AssertionError(f"{path}: P4.3A successor equivalence must not be claimed")
-        base_blob = (
-            _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
-            if _base_object_available()
-            else _git("rev-parse", f"HEAD:{path}").decode().strip()
-        )
-        current_blob = _git("rev-parse", f"HEAD:{path}").decode().strip()
-        if row["git_blob_sha1"] != base_blob or current_blob != base_blob:
+        if path == RETIRED_TARGET:
+            raw = Path(RETIRED_FIXTURE).read_bytes()
+            if hashlib.sha256(raw).hexdigest() != RETIRED_SOURCE_SHA256:
+                raise AssertionError("retired P4.3A workflow fixture changed")
+            base_blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+            if _base_object_available() and _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip() != base_blob:
+                raise AssertionError("retired P4.3A workflow base identity changed")
+        else:
+            base_blob = (
+                _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
+                if _base_object_available()
+                else _git("rev-parse", f"HEAD:{path}").decode().strip()
+            )
+            current_blob = _git("rev-parse", f"HEAD:{path}").decode().strip()
+            if current_blob != base_blob:
+                raise AssertionError(f"workflow blob identity mismatch: {path}")
+            raw = _base_blob_or_current(path)
+        if row["git_blob_sha1"] != base_blob:
             raise AssertionError(f"workflow blob identity mismatch: {path}")
-        raw = _base_blob_or_current(path)
         if row["source_sha256"] != hashlib.sha256(raw).hexdigest():
             raise AssertionError(f"workflow source SHA mismatch: {path}")
         if row["history_status"] not in ALLOWED_HISTORY:
