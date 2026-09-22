@@ -10,13 +10,13 @@ domain.price_all
 
 The controlling ATHENA Architecture Remediation Master Implementation Specification v2 requires this first promotion PR to change ownership and interface only. It does **not** change pricing formulas.
 
-During the migration window the canonical boundary delegates to:
+At the original P1.3 migration checkpoint, the canonical boundary delegated to:
 
 ```text
 domain.price_all_v3_current_provider
 ```
 
-That implementation remains the exact pricing engine until later caller migration and retirement evidence are complete.
+That versioned implementation path has since become a deprecated compatibility shim. The active implementation now lives at the private, unversioned `domain._price_all_current_provider` path; this P3.3 naming change does not alter pricing behavior.
 
 ## Canonical API
 
@@ -71,9 +71,9 @@ No bookmaker price becomes football-probability authority. P1.2 remains the cano
 
 ## Frozen evidence dependencies
 
-The delegated v3 implementation validates both the current-provider source contract and the frozen Price-all v2 contract before issuing a result. P3.2 preserves the exact frozen v2 contract identity and settlement-return semantics in the narrow internal module `domain._price_all_v2_direct_provider_contracts`; canonical Price-All no longer imports the full `domain.price_all_v2_direct_provider` evaluator at runtime.
+The active private implementation validates both the current-provider source contract and the frozen Price-all v2 contract before issuing a result. P3.2 preserves the exact frozen v2 contract identity and settlement-return semantics in the narrow internal module `domain._price_all_v2_direct_provider_contracts`; canonical Price-All no longer imports the full `domain.price_all_v2_direct_provider` evaluator at runtime.
 
-The v2 identity remains visible through `validate_price_all_contract()` and is pinned by source-controlled vectors and differential tests against the retained v2 implementation. Settlement states, return values, error disposition, serialization and formulas are unchanged. The v2 implementation remains in the repository as historical/differential evidence; P3.2 grants no deletion authority. P3.3 owns later module naming cleanup.
+The v2 identity remains visible through `validate_price_all_contract()` and is pinned by source-controlled vectors and differential tests against the retained v2 implementation. Settlement states, return values, error disposition, serialization and formulas are unchanged. The v2 implementation remains in the repository as historical/differential evidence; P3.2 granted no deletion authority. P3.3 has since handled module naming cleanup, while P5.2 remains the separate deletion gate.
 
 ## Architecture Boundary CI and ADR-001
 
@@ -104,15 +104,19 @@ The canonical facade preserves the delegated pricing authority map:
 - staking: false;
 - bet/wager: false.
 
-P1.3 performs no provider acquisition and no Current Shadow execution. It creates no share code, performs no login, accesses no cookies or wallet, sets no stake and places no wager.
+P1.3 performed no provider acquisition and no Current Shadow execution. It created no share code, performed no login, accessed no cookies or wallet, set no stake and placed no wager.
 
 ## Migration boundary
 
-P1.3 does **not** migrate Current Shadow, `build_acca`, legacy application callers, router v3 or portfolio v3. Existing supported callers continue to use their pre-P1.3 path until their separately sequenced migration PRs.
+At the P1.3 checkpoint, this promotion did **not** migrate Current Shadow, `build_acca`, legacy application callers, Router v3 or Portfolio v3. Subsequent P2/P3 work handled the Shadow and MAIN caller migrations, including P3.1 PR B.
 
-P1.4 owns canonical Router/Coherence interface promotion. A temporary one-way `unwrap_v3_evaluation()` helper exists only so a reviewed router compatibility adapter can recover the exact verified delegated v3 evaluation during migration. Calling it does not promote router v3 or make v3 Price-all a second canonical owner.
+At that stage P1.4 owned canonical Router/Coherence interface promotion. A temporary one-way `unwrap_v3_evaluation()` helper existed so the reviewed router compatibility adapter could recover the exact verified delegated evaluation during migration. Calling it did not promote Router v3 or make v3 Price-all a second canonical owner.
 
-P2/P3 later migrate Shadow and Main/legacy callers. Only after supported pricing callers target `domain.price_all` and reachability/evidence gates are satisfied may the v3 public filename be internalized, retired or archived in a separate PR.
+P3.3 has since moved the active Price-All implementation behind its private, unversioned module path and retained the former v3 path as a deprecated compatibility shim. This does not delete the historical implementation; P5.2 remains the separate deletion gate.
+
+## P3.3 naming / retirement status
+
+P3.3 places the active implementation behind private, unversioned `domain._price_all_current_provider`; the former `domain.price_all_v3_current_provider` path is a deprecated compatibility shim. The public canonical owner remains `domain.price_all`. This is a mechanical naming/ownership-boundary update with no formula or registry-promotion change. The historical implementation remains retained; P5.2 is the separate deletion gate.
 
 ## Rollback
 

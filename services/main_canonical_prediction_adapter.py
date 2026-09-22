@@ -14,7 +14,7 @@ from types import MappingProxyType
 from typing import Any
 
 from domain import canonical_core as _canonical_core
-from domain import market_router_canonical_adapter as _canonical_router
+from domain import market_router as _canonical_router
 from domain import markets as _markets
 from domain import run_contracts as _run_contracts
 from models.prediction import Prediction
@@ -22,11 +22,11 @@ from models.prediction import Prediction
 
 POLICY_ID = "ATHENA_P3_1_MAIN_CANONICAL_PREDICTION_PRESENTATION_V1"
 REGIME_ID = _canonical_core.CURRENT_SPORTYBET_PROVIDER
-EXPECTED_ROUTER_COMPONENT_ID = "domain.market_router_canonical_adapter"
+EXPECTED_ROUTER_COMPONENT_ID = "domain.market_router"
 EXPECTED_ROUTER_CONTRACT_SHA256 = (
     "85b4b5c712154f7d4708eb53e9cadfcb7c65dc21bdb12cd94cf1b8cd48795e32"
 )
-EXPECTED_ROUTER_ARTIFACT_GIT_BLOB_SHA = "3011b65fcd62e5ae91fcede967b8cba4f85cdda7"
+EXPECTED_ROUTER_ARTIFACT_GIT_BLOB_SHA = "713ceef02b77a62d3c0b8ff1958e27dc438d42c3"
 NO_RECOMMENDATION = "No Recommendation"
 NO_ROUTER_REASON = "Canonical RouterDecision unavailable; recommendation withheld."
 
@@ -132,7 +132,7 @@ def _set_no_recommendation(prediction: Prediction, *, reasons: tuple[str, ...] =
 def _verify_router_decision(value: Any) -> _canonical_router.RouterDecision:
     if type(value) is not _canonical_router.RouterDecision:
         raise MainCanonicalPredictionAdapterError(
-            "exact canonical market_router_canonical_adapter.RouterDecision is required"
+            "exact canonical domain.market_router.RouterDecision is required"
         )
     try:
         verified = _canonical_router.verify_router_decision(value)

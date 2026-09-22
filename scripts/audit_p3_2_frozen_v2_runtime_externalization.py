@@ -474,24 +474,44 @@ def build_receipt(*, run_tests: bool) -> dict[str, Any]:
     return receipt
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Audit P3.2 frozen-v2 runtime externalization")
-    parser.add_argument(
-        "--skip-tests",
-        action="store_true",
-        help="Do not execute the local replay matrix; receipt exit gate will remain false.",
-    )
-    args = parser.parse_args()
-    receipt = build_receipt(run_tests=not args.skip_tests)
+def verify_historical_receipt() -> dict[str, Any]:
+    """Verify the frozen P3.2 checkpoint without consulting today's rebound registry."""
+
     target = ROOT / "artifacts/architecture/p3_2_frozen_v2_runtime_externalization_v1.json"
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(
-        json.dumps(receipt, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
-        encoding="utf-8",
+    receipt = json.loads(target.read_bytes())
+    unsigned = dict(receipt)
+    canonical_sha256 = unsigned.pop("canonical_sha256", None)
+    if _sha256(unsigned) != canonical_sha256:
+        raise RuntimeError("historical P3.2 receipt canonical SHA drifted")
+    if canonical_sha256 != "0743e9b73d1a712a638c10866b3cc7f3e989605412786f8c91d115cc617abffd":
+        raise RuntimeError("historical P3.2 receipt identity drifted")
+    if (
+        receipt.get("repository_base_main_sha") != BASE_MAIN_SHA
+        or receipt.get("component_registry_canonical_sha256") != REGISTRY_SHA256
+        or receipt.get("p3_2_exit_gate_satisfied") is not True
+    ):
+        raise RuntimeError("historical P3.2 checkpoint fields drifted")
+    relative = target.relative_to(ROOT).as_posix()
+    committed = subprocess.run(
+        ["git", "show", f"HEAD:{relative}"],
+        cwd=ROOT,
+        text=False,
+        capture_output=True,
+        check=False,
     )
+    if committed.returncode or committed.stdout.replace(b"\r\n", b"\n") != target.read_bytes().replace(b"\r\n", b"\n"):
+        raise RuntimeError("historical P3.2 receipt differs from the current committed checkpoint")
+    return receipt
+
+
+def main() -> int:
+    argparse.ArgumentParser(
+        description="Verify the frozen P3.2 checkpoint receipt without regenerating it"
+    ).parse_args()
+    receipt = verify_historical_receipt()
     print(receipt["canonical_sha256"])
-    print(f"p3_2_exit_gate_satisfied={receipt['p3_2_exit_gate_satisfied']}")
-    return 0 if receipt["p3_2_exit_gate_satisfied"] else 1
+    print("p3_2_exit_gate_satisfied=true (historical checkpoint)")
+    return 0
 
 
 if __name__ == "__main__":

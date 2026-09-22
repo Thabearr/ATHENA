@@ -109,6 +109,8 @@ P1.5 grants Portfolio-construction authority only inside this canonical contract
 
 All such authority fields are explicitly false in `SelectedPortfolio`. P1.6 owns the later non-wager SportyBet share-code delivery extraction.
 
-## Migration / retirement status
+## P3.3 naming / retirement status
 
-Portfolio v2, Portfolio v3 and Current Shadow Portfolio remain in the repository after P1.5. Their existence is transitional architecture evidence and does not grant permanent ownership, but P1.5 does not delete, rename, retire or reclassify them. Caller migration and evidence-backed retirement are separate later remediation work.
+The active Portfolio implementation now uses the private, unversioned `domain._portfolio_optimizer_current_provider` path; the former `domain.portfolio_optimizer_v3_current_provider` path remains a deprecated compatibility shim. The public canonical owner remains `domain.portfolio_optimizer`, and the registry rebind is mechanical: promotion/profile metadata and the reviewed contract identity are unchanged. No Portfolio formulas changed. Historical v2/v3 implementations remain retained; P5.2 is the separate deletion gate.
+
+At the P1.5 checkpoint, Portfolio v2, Portfolio v3 and Current Shadow Portfolio remained in the repository; P1.5 itself did not delete, rename, retire or reclassify them. That historical checkpoint does not describe the later P3.3 naming work or grant deletion authority.

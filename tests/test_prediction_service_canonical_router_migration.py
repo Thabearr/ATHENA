@@ -8,7 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from domain import market_router_canonical_adapter as canonical_router
+from domain import component_authority_registry
+from domain import market_router as canonical_router
 from domain import markets
 from domain import price_all
 from domain._market_router_contracts import RouterDecisionStatus
@@ -74,8 +75,9 @@ def test_main_core_and_router_owner_are_exact_and_side_effect_free():
     record = bindings.record_for("market_router")
     assert bindings.authority_profile == "MAIN"
     assert bindings.registry_canonical_sha256 == (
-        "d52fbb292ddaea9ba2e94fda036f715db5ced7248187814fd29ac7859de26104"
+        component_authority_registry.load_default_registry().canonical_sha256
     )
+    assert record.component_id == "domain.market_router"
     assert record.component_id == presentation.EXPECTED_ROUTER_COMPONENT_ID
     assert record.contract_sha256 == presentation.EXPECTED_ROUTER_CONTRACT_SHA256
     assert record.artifact_git_blob_sha == presentation.EXPECTED_ROUTER_ARTIFACT_GIT_BLOB_SHA

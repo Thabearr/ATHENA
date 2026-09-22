@@ -1,0 +1,42 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P3_3_ROUTER_V1_CALLER_CLASSIFICATION_V1",
+  "repository_base_main_sha": "f1e4b453ab4d6f490c3b674c477ec17e32d03f92",
+  "supported_root_registry": "artifacts/architecture/runtime-reachability-v1.json",
+  "supported_roots": [
+    "build_acca",
+    "scripts.execute_current_shadow_request",
+    "scripts.restore_current_shadow_history_prime_artifact",
+    "scripts.run_fotmob_fresh_holdout_release_receipt_mirror",
+    "scripts.run_fotmob_utc_native_xg_fresh_holdout_tick",
+    "scripts.send_current_shadow_email"
+  ],
+  "router_v1_route_market_candidates_callers": [
+    {
+      "caller": "scripts.evaluate_market_router",
+      "source": "scripts/evaluate_market_router.py",
+      "execution_role": "F_OFFLINE_LEGACY_TOOL",
+      "workflow_references": [],
+      "supported_root_reachable": false,
+      "detail": "Offline evaluator imports domain.market_router.route_market_candidates and invokes it in run_factory; it is not in the frozen P0.2 supported roots."
+    },
+    {
+      "caller": "domain.accumulator_optimizer",
+      "source": "domain/accumulator_optimizer.py",
+      "execution_role": "F_OFFLINE_LEGACY_TOOL",
+      "direct_call": "optimize_accumulator -> route_market_candidates",
+      "non_test_caller": "scripts.evaluate_accumulator_optimizer",
+      "workflow_references": [],
+      "supported_root_reachable": false,
+      "detail": "The optimizer's only non-test caller is an offline evaluator not in the frozen P0.2 supported roots; Current Shadow has its separate SHADOW router/portfolio path."
+    }
+  ],
+  "current_shadow_supported_root": {
+    "root": "scripts.execute_current_shadow_request",
+    "router": "domain.current_shadow_all_market_router.route_shadow_price_results",
+    "uses_router_v1_route_market_candidates": false
+  },
+  "supported_router_v1_caller_count": 0,
+  "router_v1_supported_caller_blocker": false,
+  "classification_complete_before_source_edits": true
+}

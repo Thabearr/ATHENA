@@ -24,8 +24,8 @@ import math
 import types
 from typing import Any
 
-from domain import market_router_canonical_adapter as _router
-from domain import portfolio_optimizer_v3_current_provider as _v3
+from domain import _portfolio_optimizer_current_provider as _v3
+from domain import market_router as _router
 from domain import run_contracts as _runs
 from domain._market_router_contracts import OpportunityEligibility, RouterDecisionStatus
 from domain._portfolio_optimizer_v2_direct_provider_contracts import (
@@ -43,6 +43,8 @@ CANONICAL_ROUTER_IMPLEMENTATION_ID = _router.IMPLEMENTATION_ID
 CANONICAL_ROUTER_CONTRACT_SHA256 = _router.EXPECTED_CONTRACT_SHA256
 SOURCE_PORTFOLIO_V3_CONTRACT_SHA256 = _v3.EXPECTED_CONTRACT_SHA256
 SOURCE_OPTIMIZATION_POLICY_ID = _v3.OPTIMIZATION_POLICY_ID
+SOURCE_PORTFOLIO_V3_STATUS_LIVE = _v3.STATUS_LIVE
+SOURCE_PORTFOLIO_V3_LIVE_CURRENT = _v3.router_v3.price_v3.LIVE_CURRENT
 FROZEN_PORTFOLIO_V2_CONTRACT_SHA256 = _v3.PORTFOLIO_V2_CONTRACT_SHA256
 MIN_TARGET_LEGS = _runs.MIN_TARGET_LEGS
 MAX_TARGET_LEGS = _runs.MAX_TARGET_LEGS
@@ -54,6 +56,20 @@ LIVE_CURRENT = _v3.router_v3.price_v3.LIVE_CURRENT
 STATUS_AS_OF = "CANONICAL_SELECTED_PORTFOLIO_AS_OF_VERIFIED"
 STATUS_LIVE = "CANONICAL_SELECTED_PORTFOLIO_LIVE_VERIFIED"
 NEXT_BOUNDARY = "CANONICAL_SPORTYBET_SHARE_CODE_SERVICE_REQUIRES_SELECTED_PORTFOLIO"
+
+# Transitional aliases for callers migrating from the retained provider-v3
+# contract to the canonical owner.  These are the exact implementation objects;
+# no policy, formula or identity is duplicated here.
+CurrentProviderPortfolioOptimization = _v3.CurrentProviderPortfolioOptimization
+CurrentProviderPortfolioRouterInput = _v3.CurrentProviderPortfolioRouterInput
+PortfolioOptimizerV3CurrentProviderError = _v3.PortfolioOptimizerV3CurrentProviderError
+validate_portfolio_optimizer_v3_contract = _v3.validate_portfolio_optimizer_v3_contract
+verify_current_provider_portfolio_optimization = (
+    _v3.verify_current_provider_portfolio_optimization
+)
+verify_current_provider_portfolio_router_input = (
+    _v3.verify_current_provider_portfolio_router_input
+)
 
 AUTHORITY = types.MappingProxyType(
     {
@@ -997,6 +1013,8 @@ __all__ = [
     "AUTHORITY",
     "CANONICAL_ROUTER_CONTRACT_SHA256",
     "CanonicalPortfolioError",
+    "CurrentProviderPortfolioOptimization",
+    "CurrentProviderPortfolioRouterInput",
     "EXPECTED_CONTRACT_SHA256",
     "IMPLEMENTATION_ID",
     "JOINT_DEPENDENCE_STATUS",
@@ -1007,6 +1025,7 @@ __all__ = [
     "OUTPUT_CONTRACT",
     "POLICY_ID",
     "PortfolioLeg",
+    "PortfolioOptimizerV3CurrentProviderError",
     "PortfolioRouteAudit",
     "PortfolioRouterInput",
     "RESERVE_POLICY_ID",
@@ -1014,11 +1033,16 @@ __all__ = [
     "SCHEMA_VERSION",
     "SHORTFALL_POLICY_ID",
     "SOURCE_PORTFOLIO_V3_CONTRACT_SHA256",
+    "SOURCE_PORTFOLIO_V3_LIVE_CURRENT",
+    "SOURCE_PORTFOLIO_V3_STATUS_LIVE",
     "SelectedPortfolio",
     "calculate_portfolio_contract_sha256",
     "optimize_portfolio",
     "optimize_portfolio_as_of",
     "validate_portfolio_contract",
+    "validate_portfolio_optimizer_v3_contract",
+    "verify_current_provider_portfolio_optimization",
+    "verify_current_provider_portfolio_router_input",
     "verify_portfolio_router_input",
     "verify_selected_portfolio",
 ]

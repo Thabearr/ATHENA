@@ -25,9 +25,9 @@
     {
       "responsibility_id": "market_router",
       "regime_id": "CURRENT_SPORTYBET_PROVIDER",
-      "component_id": "domain.market_router_canonical_adapter",
+      "component_id": "domain.market_router",
       "contract_sha256": "85b4b5c712154f7d4708eb53e9cadfcb7c65dc21bdb12cd94cf1b8cd48795e32",
-      "artifact_git_blob_sha": "3011b65fcd62e5ae91fcede967b8cba4f85cdda7",
+      "artifact_git_blob_sha": "713ceef02b77a62d3c0b8ff1958e27dc438d42c3",
       "role": "CHAMPION",
       "allowed_profiles": [
         "MAIN",
@@ -44,7 +44,7 @@
       "regime_id": "CURRENT_SPORTYBET_PROVIDER",
       "component_id": "domain.portfolio_optimizer",
       "contract_sha256": "916247c4a891e3c0a2b8205b9d33000987471a54107f2b3d508c8e5ab1e9a99c",
-      "artifact_git_blob_sha": "d600d5d88baf5628df23441a9216c2fc68352e45",
+      "artifact_git_blob_sha": "9dc5a1fb59f6db0da1d4ee29ee4b77a2e76fb37a",
       "role": "CHAMPION",
       "allowed_profiles": [
         "MAIN",
@@ -78,7 +78,7 @@
       "regime_id": "CURRENT_SPORTYBET_PROVIDER",
       "component_id": "domain.price_all",
       "contract_sha256": "30481bc9ebf442f0e664bcd14d2c6cd18026a42a35083d143db6366837b3d425",
-      "artifact_git_blob_sha": "cf7214a6103d91a2974e3eb00c705f65c841d458",
+      "artifact_git_blob_sha": "b16e2f5133163f6153b375239b09ca42fa97e433",
       "role": "CHAMPION",
       "allowed_profiles": [
         "MAIN",
@@ -102,7 +102,11 @@
     },
     {
       "alias_id": "domain.current_shadow_all_market_router",
-      "target_component_id": "domain.market_router_canonical_adapter"
+      "target_component_id": "domain.market_router"
+    },
+    {
+      "alias_id": "domain.market_router_canonical_adapter",
+      "target_component_id": "domain.market_router"
     }
   ]
 }

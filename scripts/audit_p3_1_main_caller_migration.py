@@ -1,9 +1,8 @@
-"""Generate deterministic P3.1 MAIN caller-migration evidence.
+"""Verify the frozen deterministic P3.1 MAIN caller-migration evidence.
 
-The audit uses the repository's offline canonical Price-All and Router seams.
-Provider acquisition, Current Shadow, share-code, credentials, and wager
-authority are never enabled.  The historical P0.5 runtime artifact is read as
-frozen evidence; it is not regenerated after the caller migration.
+This receipt records the P3.1 checkpoint and must not be regenerated from the
+current registry after P3.3's source/module rebind. Provider acquisition,
+Current Shadow, share-code, credentials, and wager authority are not enabled.
 """
 from __future__ import annotations
 
@@ -252,106 +251,45 @@ def _historical_evidence() -> tuple[dict[str, Any], dict[str, Any]]:
 
 
 def build_migration_evidence() -> dict[str, Any]:
-    historical, build_acca = _historical_evidence()
-    presentation.clear_main_canonical_core_cache()
-    bindings = presentation.resolve_main_canonical_core()
-    router_record = bindings.record_for("market_router")
-    if bindings.registry_canonical_sha256 != PROMOTED_REGISTRY_SHA256:
-        raise ValueError("promoted registry identity drifted")
+    """Return the verified frozen P3.1 receipt; never rebuild it from current state."""
+
+    return load_historical_migration_evidence()
+
+
+def load_historical_migration_evidence() -> dict[str, Any]:
+    """Load and validate the P3.1 checkpoint receipt without consulting live authority."""
+
+    payload = _load_json(DEFAULT_OUTPUT)
+    canonical_sha = payload.get("canonical_sha256")
+    unsigned = dict(payload)
+    unsigned.pop("canonical_sha256", None)
+    if _canonical_sha256(unsigned) != canonical_sha:
+        raise ValueError("frozen P3.1 migration receipt canonical hash drifted")
     if (
-        router_record.component_id != ROUTER_COMPONENT_ID
-        or router_record.contract_sha256 != ROUTER_CONTRACT_SHA256
-        or router_record.artifact_git_blob_sha != ROUTER_ARTIFACT_GIT_BLOB_SHA
+        canonical_sha != "f1fae3ed54c8afc632923156268bc4e70b748eb1ce9a8c3f1c822c965050a875"
+        or payload.get("repository_base_main_sha") != BASE_MAIN_SHA
+        or payload.get("p3_1_pr_a_merge_commit_sha") != P3_1_PR_A_MERGE_COMMIT_SHA
+        or payload.get("p3_1_pr_a_promotion_receipt_sha256") != P3_1_PR_A_RECEIPT_SHA256
+        or payload.get("promoted_registry_canonical_sha256") != PROMOTED_REGISTRY_SHA256
+        or payload.get("market_router_component_id") != "domain.market_router_canonical_adapter"
+        or payload.get("market_router_artifact_git_blob_sha")
+        != "3011b65fcd62e5ae91fcede967b8cba4f85cdda7"
     ):
-        raise ValueError("promoted Router owner identity drifted")
-
-    selected = _run_case(probability=0.60)
-    no_bet = _run_case(probability=0.45)
-    no_router = _run_case(probability=None)
-    if any(item["market_selector_executed_count"] != 0 for item in (selected, no_bet, no_router)):
-        raise ValueError("migrated PredictionService executed MarketSelector")
-    if no_router["recommended_market"] != "No Recommendation" or no_router["market_confidence"] != 0.0:
-        raise ValueError("no-router case did not fail closed")
-    if no_bet["recommended_market"] != "No Recommendation" or no_bet["market_confidence"] != 0.0:
-        raise ValueError("NO_BET case did not fail closed")
-    if selected["recommended_market"] == "No Recommendation" or selected["ranked_market_count"] != 1:
-        raise ValueError("selected canonical projection did not produce one presentation row")
-
-    trace = selected["trace"]
-    expected_trace = [
-        "PredictionService.predict",
-        "Analyzer.analyze",
-        "ProbabilityEngine.calculate",
-        "RiskEngine.evaluate",
-        "ReliabilityEngine.evaluate",
-        "main_canonical_prediction_adapter.project_canonical_router_decision",
-        "main_canonical_prediction_adapter.resolve_main_canonical_core",
-    ]
-    if trace[:5] != expected_trace[:5] or trace[-1] != expected_trace[-1]:
-        raise ValueError(f"migrated PredictionService trace drifted: {trace!r}")
-
-    unsigned = {
-        "schema_version": SCHEMA_VERSION,
-        "policy_id": POLICY_ID,
-        "repository_base_main_sha": BASE_MAIN_SHA,
-        "p3_1_pr_a_merge_commit_sha": P3_1_PR_A_MERGE_COMMIT_SHA,
-        "p3_1_pr_a_promotion_receipt_sha256": P3_1_PR_A_RECEIPT_SHA256,
-        "promoted_registry_canonical_sha256": PROMOTED_REGISTRY_SHA256,
-        "canonical_core_policy_id": canonical_core.POLICY_ID,
-        "market_router_component_id": ROUTER_COMPONENT_ID,
-        "market_router_contract_sha256": ROUTER_CONTRACT_SHA256,
-        "market_router_artifact_git_blob_sha": ROUTER_ARTIFACT_GIT_BLOB_SHA,
-        "historical_p0_5_artifact_preserved": True,
-        "historical_p0_5_artifact_sha256": historical["artifact_sha256"],
-        "historical_p0_5_artifact_source_commit": historical["source_commit"],
-        "historical_p0_5_market_selector_reachability": historical["market_selector_reachability"],
-        "current_prediction_service_market_selector_executed_count": 0,
-        "current_build_acca_market_selector_executed_count": build_acca["market_selector_executed_count"],
-        "main_canonical_core_resolution_observed": True,
-        "canonical_router_decision_verification_observed": (
-            selected["canonical_router_decision_verification_observed"]
-            and no_bet["canonical_router_decision_verification_observed"]
-        ),
-        "migrated_prediction_service_trace": trace,
-        "selected_case": {key: value for key, value in selected.items() if key != "trace"},
-        "no_bet_case": {key: value for key, value in no_bet.items() if key != "trace"},
-        "no_router_decision_case": {key: value for key, value in no_router.items() if key != "trace"},
-        "caller_migration_performed": True,
-        "market_selector_removed": False,
-        "market_selector_supported_runtime_execution": False,
-        "provider_acquisition": False,
-        "current_shadow_triggered": False,
-        "fresh_holdout_triggered": False,
-        "share_code_generation": False,
-        "login": False,
-        "cookies": False,
-        "wallet": False,
-        "staking": False,
-        "wager_placed": False,
-        "model_formula_changed": False,
-        "probability_formula_changed": False,
-        "calibration_formula_changed": False,
-        "price_all_formula_changed": False,
-        "router_formula_changed": False,
-        "portfolio_formula_changed": False,
-        "p3_1_exit_gate_satisfied": True,
-    }
-    unsigned["canonical_sha256"] = _canonical_sha256(unsigned)
-    return unsigned
+        raise ValueError("frozen P3.1 migration receipt identity drifted")
+    if payload.get("p3_1_exit_gate_satisfied") is not True:
+        raise ValueError("frozen P3.1 migration receipt does not record its historical gate")
+    return payload
 
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
-    payload = build_migration_evidence()
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    print(f"wrote {args.output} ({len(json.dumps(payload, sort_keys=True))} canonical bytes)")
+    build_parser().parse_args(argv)
+    payload = load_historical_migration_evidence()
+    print(f"verified frozen P3.1 migration receipt {payload['canonical_sha256']}")
     return 0
 
 

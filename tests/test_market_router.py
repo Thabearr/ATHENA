@@ -13,7 +13,7 @@ from domain._market_router_contracts import (
     validate_market_router_contract,
 )
 from domain.markets import MarketId, OutcomeId
-from domain.market_router import route_market_candidates
+from domain._historical_market_router_v1 import route_market_candidates
 from tests._market_router_helpers import (
     NOW,
     complete_fixture_state,

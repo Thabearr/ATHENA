@@ -5,7 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from domain import portfolio_optimizer_v3_current_provider as portfolio
+from domain import _portfolio_optimizer_current_provider as portfolio
+from domain import portfolio_optimizer_v3_current_provider as compatibility
 from domain import sportybet_current_event_discovery_reconciliation as current_recon
 from domain._portfolio_optimizer_v2_direct_provider_contracts import PortfolioOptimizationStatus
 from domain.markets import MarketId
@@ -17,7 +18,7 @@ from tests.test_market_router_v3_current_provider import (
     _fixture_state,
     _priced_match_result,
 )
-from domain import market_router_v3_current_provider as router
+from domain import _market_router_current_provider as router
 
 
 def _input(monkeypatch, probability: float = 0.60):
@@ -56,6 +57,18 @@ def _input(monkeypatch, probability: float = 0.60):
         lambda value: retained if value is retained else (_ for _ in ()).throw(AssertionError()),
     )
     return portfolio.CurrentProviderPortfolioRouterInput.from_router_decision(decision)
+
+
+def test_deprecated_module_is_exact_compatibility_shim():
+    assert compatibility.DEPRECATED_COMPATIBILITY_SHIM is True
+    assert compatibility.REPLACEMENT_MODULE == "domain._portfolio_optimizer_current_provider"
+    assert compatibility.__all__ == portfolio.__all__
+    assert "DEPRECATED_COMPATIBILITY_SHIM" not in compatibility.__all__
+    assert "REPLACEMENT_MODULE" not in compatibility.__all__
+    assert all(
+        getattr(compatibility, name) is getattr(portfolio, name)
+        for name in portfolio.__all__
+    )
 
 
 def test_portfolio_v3_contract_pins_router_v3_pr251_and_frozen_policy():

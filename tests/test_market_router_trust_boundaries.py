@@ -7,7 +7,7 @@ import pytest
 from domain._market_router_contracts import RouterDecisionStatus
 from domain.fixture_state_v2 import FixtureStateFieldId, FixtureStateStatus
 from domain.markets import MarketId, OutcomeId
-from domain.market_router import route_market_candidates
+from domain._historical_market_router_v1 import route_market_candidates
 from domain.model_status import MODEL_STATUS_REGISTRY
 from tests._market_router_helpers import (
     EVENT,

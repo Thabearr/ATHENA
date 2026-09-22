@@ -9,7 +9,7 @@ import pytest
 
 from domain import canonical_core as core
 from domain import component_authority_registry as registry_module
-from domain import market_router_canonical_adapter as router
+from domain import market_router as router
 from domain import portfolio_optimizer as portfolio
 from domain import price_all
 from domain import run_contracts
@@ -69,6 +69,8 @@ def test_contract_and_main_shadow_resolution_bind_same_exact_five_champions() ->
         tuple(getattr(item, field) for field in identity_fields)
         for item in bindings.records
     ]
+    router_record = main_bindings.record_for("market_router")
+    assert router_record.component_id == "domain.market_router"
 
 
 def test_unknown_or_incompatible_resolution_fail_closed() -> None:
@@ -217,6 +219,6 @@ def test_core_import_boundary_has_no_shadow_or_acquisition_or_sensitive_authorit
     }
     assert not (forbidden & imported)
     assert {
-        "provider_market_semantics", "price_all", "market_router_canonical_adapter",
+        "provider_market_semantics", "price_all", "market_router",
         "portfolio_optimizer", "sportybet_share_code",
     } <= domain_members

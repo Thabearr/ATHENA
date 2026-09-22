@@ -49,7 +49,7 @@ The alias layer is temporary migration metadata. It makes the retained implement
 
 ## Stage separation
 
-The binding exposes separate replay-stage adapters. It calls the existing canonical interfaces only: `domain.price_all`, `domain.market_router_canonical_adapter`, `domain.portfolio_optimizer`, and `domain.sportybet_share_code`. Delivery replay requires explicit offline semantic and transport callables, so it cannot reach real provider bridges. The stage outputs remain their existing canonical types.
+The binding exposes separate replay-stage adapters. It calls the canonical interfaces only: `domain.price_all`, `domain.market_router`, `domain.portfolio_optimizer`, and `domain.sportybet_share_code`. Delivery replay requires explicit offline semantic and transport callables, so it cannot reach real provider bridges. The stage outputs remain their existing canonical types.
 
 ## P2.1 Current Shadow migration
 
@@ -75,6 +75,6 @@ Rollback is a source-controlled reversal of the runner import/compatibility migr
 
 ## P3.2 frozen-v2 runtime externalization
 
-P3.2 preserves the exact MAIN and SHADOW canonical resolutions and leaves the component-authority registry unchanged. The three registered Price-All, Router and Portfolio owner files retain their reviewed Git blob identities. Their internal current v3 implementations now consume only narrow frozen-contract/policy modules rather than importing the full Price-All-v2, Router-v2 or Portfolio-v2 runtime implementations. Contract hashes, settlement and selection behavior, replay payloads and formulas remain unchanged, with differential vectors and fresh-process import tests guarding continuity.
+At the P3.2 checkpoint, MAIN and SHADOW canonical resolutions were preserved, the component-authority registry was unchanged, and the three registered Price-All, Router and Portfolio owner files retained their reviewed Git blob identities. Their then-versioned current implementations consumed only narrow frozen-contract/policy modules rather than importing full v2 runtime implementations. Contract hashes, settlement and selection behavior, replay payloads and formulas remained unchanged, with differential vectors and fresh-process import tests guarding continuity.
 
-The versioned v3 implementation names remain during this migration window. P3.3 is still required for naming/canonicalization work, and P5.2 retains the later, separate deletion gate. P3.2 does not delete or rename any v2/v3 implementation and does not rebind canonical authority.
+P3.3 establishes `domain.market_router` as the public canonical Router. The active implementations now use private, unversioned paths: `domain._price_all_current_provider`, `domain._market_router_current_provider`, and `domain._portfolio_optimizer_current_provider`; their former v3 paths remain deprecated compatibility shims. The former Router-v1 implementation is retained as `domain._historical_market_router_v1` for offline evaluators only, while the deprecated `domain.market_router_canonical_adapter` shim resolves to `domain.market_router`. The Router registry rebind is mechanical: promotion/profile metadata and the reviewed contract identity are unchanged. No formulas changed. Historical v2/v3 implementations remain retained, and P5.2 remains the separate deletion gate.

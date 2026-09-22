@@ -4,7 +4,8 @@ from datetime import timedelta
 
 import pytest
 
-from domain import market_router_v3_current_provider as router
+from domain import _market_router_current_provider as router
+from domain import market_router_v3_current_provider as deprecated_v3_router
 from domain import price_all_v3_current_provider as price
 from domain._market_router_contracts import (
     ModelAgreementStatus,
@@ -133,6 +134,13 @@ def test_router_v3_contract_pins_price_v3_and_frozen_router_v2():
     assert identities["price_all_v3_contract_sha256"] == price.EXPECTED_CONTRACT_SHA256
     assert identities["router_v2_policy_contract_sha256"] == router.ROUTER_V2_CONTRACT_SHA256
     assert identities["market_router_v3_contract_sha256"] == router.calculate_market_router_v3_contract_sha256()
+
+
+def test_versioned_router_v3_path_is_a_thin_compatibility_shim():
+    assert deprecated_v3_router.DEPRECATED_COMPATIBILITY_SHIM is True
+    assert deprecated_v3_router.REPLACEMENT_MODULE == "domain._market_router_current_provider"
+    assert deprecated_v3_router.route_price_all_v3_current_provider_as_of is router.route_price_all_v3_current_provider_as_of
+    assert deprecated_v3_router.MarketRouterV3CurrentProviderDecision is router.MarketRouterV3CurrentProviderDecision
 
 
 def test_routes_exact_current_price_ancestry_and_preserves_native_semantics(monkeypatch):

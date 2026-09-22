@@ -75,4 +75,10 @@ P1.4 is acceptable only when replay tests prove the canonical adapter preserves 
 
 If exact-head hosted tests fail, ordinary replay diverges from Router v3 without an explicit P1.4 semantic reason, source-v3 rejection can be upgraded, quote data regains tie authority, coherence creates a second selector, or any downstream authority expands, revert P1.4.
 
-Revisit this ADR when old `domain.market_router` v1 callers have migrated and a dedicated PR can claim the permanent canonical module name without destroying supported behavior or evidence.
+The original P1.4 revisit trigger was migration of old `domain.market_router` v1 callers followed by a dedicated PR claiming the permanent canonical module name without destroying supported behavior or evidence. P3.3 has since resolved that naming conflict; the old v1 implementation is retained for offline evaluators as recorded below.
+
+## Follow-up — P3.3 canonical naming status
+
+This follow-up records the later P3.3 outcome without changing the P1.4 decision or its historical evidence. `domain.market_router` is now the public canonical Router, backed by a private, unversioned current implementation. The former `domain.market_router_canonical_adapter` path is a deprecated compatibility shim to `domain.market_router`. The former Router-v1 implementation is retained at `domain._historical_market_router_v1` for offline evaluators only.
+
+The Router registry rebind is mechanical: profile eligibility, promotion state, MAIN authority, schema compatibility, and the reviewed contract identity are unchanged. No routing formulas changed. Versioned compatibility paths and historical implementations remain retained; P5.2 is the separate deletion gate.

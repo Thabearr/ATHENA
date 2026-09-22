@@ -9,7 +9,7 @@ import subprocess
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 from domain import component_authority_registry as _authority
-from domain import market_router_canonical_adapter as _router
+from domain import market_router as _router
 from domain import portfolio_optimizer as _portfolio
 from domain import price_all as _price_all
 from domain import provider_market_semantics as _provider_semantics
@@ -155,7 +155,7 @@ _COMPONENT_SPECS: Mapping[str, tuple[str, Any, Callable[[], str]]] = {
     ),
     "price_all_and_de_vig": ("domain.price_all", _price_all, _price_identity),
     "market_router": (
-        "domain.market_router_canonical_adapter", _router, _router_identity
+        "domain.market_router", _router, _router_identity
     ),
     "portfolio_optimizer": ("domain.portfolio_optimizer", _portfolio, _portfolio_identity),
     "delivery_share_code_transport": (

@@ -4,11 +4,13 @@ import ast
 from datetime import timedelta
 import inspect
 from pathlib import Path
+import subprocess
+import sys
 
 import pytest
 
 from domain import price_all as canonical
-from domain import price_all_v3_current_provider as v3
+from domain import _price_all_current_provider as v3
 from domain._price_all_contracts import DevigStatus
 from domain.markets import MarketId, OutcomeId
 from domain.sportybet_reviewed_canonical_market_mapping import (
@@ -296,7 +298,8 @@ def test_canonical_module_is_facade_not_parallel_formula_or_downstream_authority
         elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
             defined_functions.add(node.name)
 
-    assert "domain.price_all_v3_current_provider" in imported
+    assert "domain._price_all_current_provider" in imported
+    assert "domain.price_all_v3_current_provider" not in imported
     assert not any(
         token in module
         for module in imported
@@ -314,3 +317,22 @@ def test_canonical_module_is_facade_not_parallel_formula_or_downstream_authority
     assert not ({"_partition_quotes", "_price_one", "_settlement_ev"} & defined_functions)
     assert "def _partition_quotes" not in text
     assert "def _settlement_ev" not in text
+
+
+def test_canonical_import_does_not_load_deprecated_provider_shim() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; import domain.price_all; "
+                "assert 'domain._price_all_current_provider' in sys.modules; "
+                "assert 'domain.price_all_v3_current_provider' not in sys.modules"
+            ),
+        ],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
