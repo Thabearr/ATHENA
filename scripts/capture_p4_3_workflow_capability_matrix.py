@@ -572,7 +572,8 @@ def build_static_row(path: str, raw: bytes, success: dict[str, Any] | None, late
         "capability_mapping": {
             "successor_family": family,
             "mapping": ["target_size -> target_legs", "days=today", "target_total_odds=null", "bookie=sportybet", "profile=main"] if path == ".github/workflows/current-sportybet-accumulator.yml" else [],
-            "equivalence_claimed": path != ".github/workflows/current-sportybet-accumulator.yml",
+            # P4.3A records mapping hints only; a later owner-reviewed retirement proof establishes equivalence.
+            "equivalence_claimed": False,
         },
         "disposition": disposition,
         "retirement_candidate": False,
@@ -592,7 +593,13 @@ def build_matrix(
 ) -> dict[str, Any]:
     head = _git("rev-parse", "HEAD").decode().strip()
     if head != BASE_MAIN_SHA:
-        raise MainAdvanceError(f"capture requires exact base checkout {BASE_MAIN_SHA}; got {head}")
+        if live_history or prior_history is None:
+            raise MainAdvanceError(f"capture requires exact base checkout {BASE_MAIN_SHA}; got {head}")
+        # Offline static refresh may run on the P4.3A branch, but never against changed workflow YAML.
+        if subprocess.run(["git", "merge-base", "--is-ancestor", BASE_MAIN_SHA, "HEAD"]).returncode != 0:
+            raise MainAdvanceError(f"static refresh branch does not descend from {BASE_MAIN_SHA}")
+        if _git("diff", "--name-only", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR).strip() or _git("diff", "--name-only", BASE_MAIN_SHA, "--", WORKFLOW_DIR).strip():
+            raise MainAdvanceError("static refresh requires unchanged workflow YAML")
     paths = _tracked_workflows()
     if len(paths) != 40:
         raise RuntimeError(f"expected 40 tracked workflow YAMLs at base; got {len(paths)}")

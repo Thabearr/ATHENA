@@ -53,6 +53,32 @@ def test_required_fields_and_controlled_vocabularies(matrix: dict) -> None:
         assert row["dependency_evidence"]["consumer_sources"] is not None
 
 
+def test_no_p4_3a_row_claims_successor_equivalence(matrix: dict) -> None:
+    rows = matrix["workflow_rows"]
+    assert len(rows) == 40
+    assert all(row["capability_mapping"]["equivalence_claimed"] is False for row in rows)
+    assert sum(row["capability_mapping"]["equivalence_claimed"] is True for row in rows) == 0
+
+    for row in rows:
+        if row["successor_family"] in {
+            "ATHENA_INGEST_FUTURE", "ATHENA_RETRAIN_FUTURE", "ATHENA_BACKTEST_FUTURE",
+            "RETAIN_PENDING_AUDIT", "PROTECTED_RESEARCH",
+        } or row["disposition"] in {
+            "RETAIN_HISTORICAL_EVIDENCE_PENDING_AUDIT", "RETAIN_PROTECTED_RESEARCH",
+        }:
+            assert row["capability_mapping"]["equivalence_claimed"] is False
+
+
+def test_auditor_names_workflow_with_false_equivalence_claim(matrix: dict) -> None:
+    corrupted = dict(matrix)
+    corrupted["workflow_rows"] = [dict(row) for row in matrix["workflow_rows"]]
+    row = corrupted["workflow_rows"][0]
+    row["capability_mapping"] = dict(row["capability_mapping"], equivalence_claimed=True)
+    corrupted["canonical_sha256"] = capture.canonical_sha256(corrupted)
+    with pytest.raises(AssertionError, match=row["workflow_path"]):
+        audit.validate_matrix(corrupted)
+
+
 def test_all_without_success_rows_require_owner_review(matrix: dict) -> None:
     rows = matrix["workflow_rows"]
     no_success = [r for r in rows if r["history_status"] != "HAS_SUCCESSFUL_RUN"]
@@ -86,6 +112,7 @@ def test_current_sportybet_no_run_blocker_is_captured_honestly(matrix: dict) -> 
         "target_size -> target_legs", "days=today", "target_total_odds=null",
         "bookie=sportybet", "profile=main",
     ]
+    assert row["capability_mapping"]["equivalence_claimed"] is False
     assert row["dependency_evidence"]["artifact_consumer_exists"] is False
     assert row["dependency_evidence"]["workflow_run_dependency_references"] == []
 
@@ -94,6 +121,9 @@ def test_current_shadow_and_protected_holdout_are_retained(matrix: dict) -> None
     by_path = {r["workflow_path"]: r for r in matrix["workflow_rows"]}
     shadow = by_path[".github/workflows/current-shadow-all-market.yml"]
     assert shadow["disposition"] == "RETAIN_ACTIVE_PENDING_CANONICAL_SHADOW_MIGRATION"
+    assert shadow["successor_family"] == "ATHENA_RUN"
+    assert shadow["successor_workflow_path"] == ".github/workflows/athena-run.yml"
+    assert shadow["capability_mapping"]["equivalence_claimed"] is False
     assert shadow["retirement_eligible"] is False
     assert len(shadow["retirement_blockers"]) >= 5
     assert shadow["dependency_evidence"]["artifact_consumer_exists"] is True
@@ -107,7 +137,9 @@ def test_current_shadow_and_protected_holdout_are_retained(matrix: dict) -> None
         assert by_path[path]["fresh_holdout_protected"] is True
         assert by_path[path]["disposition"] == "RETAIN_PROTECTED_RESEARCH"
         assert by_path[path]["retirement_eligible"] is False
+        assert by_path[path]["capability_mapping"]["equivalence_claimed"] is False
     assert by_path[".github/workflows/athena-run.yml"]["disposition"] == "CANONICAL_RETAIN"
+    assert by_path[".github/workflows/athena-run.yml"]["capability_mapping"]["equivalence_claimed"] is False
 
 
 def test_date_hardcoded_workflows_are_explicit_and_not_supported_roots(matrix: dict) -> None:
@@ -125,6 +157,8 @@ def test_matrix_hash_and_p4_3a_receipt_integrity(matrix: dict) -> None:
     assert receipt["workflow_matrix_canonical_sha256"] == matrix["canonical_sha256"]
     assert receipt["p4_3a_census_exit_gate_satisfied"] is True
     assert receipt["p4_3_master_retirement_exit_gate_satisfied"] is False
+    assert receipt["successor_equivalence_claimed_count"] == 0
+    assert receipt["successor_equivalence_proof_deferred_to"] == "P4_3B_OWNER_REVIEWED_WORKFLOW_RETIREMENT_SELECTION_REQUIRED"
     assert receipt["workflow_files_changed"] == []
     assert receipt["workflow_files_deleted"] == []
     assert receipt["workflow_files_added"] == []

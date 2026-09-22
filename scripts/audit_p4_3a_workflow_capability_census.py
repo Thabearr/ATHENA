@@ -152,6 +152,9 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         if missing:
             raise AssertionError(f"{row.get('workflow_path')}: missing fields {sorted(missing)}")
         path = row["workflow_path"]
+        capability_mapping = row.get("capability_mapping")
+        if not isinstance(capability_mapping, dict) or capability_mapping.get("equivalence_claimed") is not False:
+            raise AssertionError(f"{path}: P4.3A successor equivalence must not be claimed")
         base_blob = (
             _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
             if _base_object_available()
@@ -233,6 +236,11 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
 
 def build_receipt(matrix: dict[str, Any]) -> dict[str, Any]:
     rows = matrix["workflow_rows"]
+    successor_equivalence_claimed_count = sum(
+        row["capability_mapping"]["equivalence_claimed"] is True for row in rows
+    )
+    if successor_equivalence_claimed_count != 0:
+        raise AssertionError("P4.3A successor equivalence claim count must be zero")
     by_path = {r["workflow_path"]: r for r in rows}
     no_run = [r for r in rows if r["history_status"] == "NO_RUN_HISTORY_OWNER_REVIEW_REQUIRED"]
     no_success = [r for r in rows if r["history_status"] == "RUN_HISTORY_WITHOUT_SUCCESS_OWNER_REVIEW_REQUIRED"]
@@ -251,6 +259,8 @@ def build_receipt(matrix: dict[str, Any]) -> dict[str, Any]:
         "component_registry_canonical_sha256": REGISTRY_SHA,
         "workflow_matrix_policy_id": matrix["policy_id"],
         "workflow_matrix_canonical_sha256": matrix["canonical_sha256"],
+        "successor_equivalence_claimed_count": successor_equivalence_claimed_count,
+        "successor_equivalence_proof_deferred_to": "P4_3B_OWNER_REVIEWED_WORKFLOW_RETIREMENT_SELECTION_REQUIRED",
         "workflow_count": 40,
         "matrix_row_count": len(rows),
         "workflow_files_changed": [],

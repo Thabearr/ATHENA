@@ -25,8 +25,12 @@ run history but no successful run. All five are in the explicit owner-review que
 The snapshot distinguishes successful history, a latest run without any successful
 run, and no run history. Both no-success categories require owner review and are never
 treated as deletion eligibility. The owner-review queue is included at the matrix
-top level. Successor-family labels are capability mapping hints, not retirement
-decisions.
+top level. `successor_family` is a classification destination and
+`successor_workflow_path` is a mapping hint; neither establishes capability
+equivalence. Every P4.3A row has `capability_mapping.equivalence_claimed=false`,
+including canonical, future, protected, and pending-audit rows. Only a later
+P4.3B owner-reviewed retirement proof can establish equivalence for a specific
+candidate across its inputs, outputs, artifacts, and fail-closed behavior.
 
 ## Retention decisions recorded
 
