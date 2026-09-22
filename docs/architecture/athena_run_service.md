@@ -20,4 +20,16 @@ Repeating the same request at the same exact commit returns the validated persis
 
 `build_acca.py` parses `athena run` and the documented shorthand into the same `RunRequest`, displays the resolved dates and permission manifest before execution, then delegates to `AthenaRunService` and renders the returned receipt. Relative days are resolved with `ZoneInfo("Africa/Lagos")` across the local today-through-six-day horizon. Offline tests inject only synthetic executors; they do not invoke the real SHADOW supervisor or any provider.
 
-P4.1 does not add or adopt a GitHub Actions workflow. Workflow convergence remains P4.2 work.
+P4.1 did not add or adopt a GitHub Actions workflow; workflow convergence is now P4.2 work.
+
+## P4.2 workflow transport
+
+P4.2 adds `.github/workflows/athena-run.yml` as a second thin transport alongside
+the CLI. Scheduled/manual event inputs resolve through the same P4.1 parser into the
+same immutable `RunRequest`; the workflow executor consumes persisted canonical
+request bytes and calls this service. No orchestration, authority, or football policy
+is duplicated in YAML. The canonical workflow's 90-minute job ceiling preserves
+finalization and upload headroom around the existing inner 75-minute Current Shadow
+supervisor; the service still applies no competing timeout. The automatic schedule
+uses the MAIN fail-closed profile while the legacy scheduled Shadow workflow remains
+active. See [the P4.2 workflow contract](athena_run_workflow.md).

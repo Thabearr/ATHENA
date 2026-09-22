@@ -1,0 +1,296 @@
+name: ATHENA Canonical Run
+
+on:
+  schedule:
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      days:
+        description: One through seven Lagos dates or relative day tokens
+        required: true
+        default: today
+        type: string
+      target_legs:
+        description: Maximum desired selected-leg count (1 through 50)
+        required: true
+        default: "20"
+        type: string
+      target_total_odds:
+        description: Separate optional objective; currently fails closed when supplied
+        required: false
+        default: ""
+        type: string
+      bookie:
+        description: Reviewed delivery adapter
+        required: true
+        default: sportybet
+        type: choice
+        options:
+          - sportybet
+      profile:
+        description: Explicit authority profile
+        required: true
+        default: main
+        type: choice
+        options:
+          - main
+          - shadow
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.event_name == 'workflow_dispatch' && inputs.profile == 'shadow' && 'current-shadow-all-market' || 'athena-run-main' }}
+  cancel-in-progress: false
+
+jobs:
+  canonical-run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - name: Checkout exact requested commit
+        id: checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require exact main lineage
+        id: verify_lineage
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_REF}" = "refs/heads/main"
+
+      - name: Resolve and persist canonical request once
+        id: resolve_request
+        if: success()
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_DAYS: ${{ inputs.days }}
+          INPUT_TARGET_LEGS: ${{ inputs.target_legs }}
+          INPUT_TARGET_TOTAL_ODDS: ${{ inputs.target_total_odds }}
+          INPUT_BOOKIE: ${{ inputs.bookie }}
+          INPUT_PROFILE: ${{ inputs.profile }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: python -m scripts.resolve_athena_run_workflow_request --output-root artifacts/athena-run-workflow
+
+      - name: Set up Python 3.12
+        id: setup_python
+        if: success()
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: Install project dependencies
+        id: install_dependencies
+        if: success()
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Restore latest trusted-main durable-history prime artifact
+        id: restore_history_prime
+        if: success() && steps.resolve_request.outputs.authority_profile == 'SHADOW'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          cache_dir='.cache/athena-research/current-shadow-history-github-binary-cache-v1'
+          restored=false
+          mapfile -t prime_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-history-cache-prime.yml/runs?status=success&per_page=10" \
+              --jq '.workflow_runs[] | select(.head_branch == "main") | [.id, .head_sha] | @tsv'
+          )
+          for run_row in "${prime_runs[@]}"; do
+            IFS=$'\t' read -r run_id run_sha <<< "${run_row}"
+            if ! [[ "${run_id}" =~ ^[0-9]+$ ]] || ! [[ "${run_sha}" =~ ^[0-9a-f]{40}$ ]]; then
+              continue
+            fi
+            rm -rf /tmp/athena-current-shadow-history-prime
+            mkdir -p /tmp/athena-current-shadow-history-prime
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-history-cache-prime \
+              --dir /tmp/athena-current-shadow-history-prime >/dev/null 2>&1
+            then
+              if python -m scripts.restore_current_shadow_history_prime_artifact \
+                --artifact-dir /tmp/athena-current-shadow-history-prime \
+                --cache-dir "${cache_dir}" \
+                --expected-prime-commit-sha "${run_sha}"
+              then
+                echo "Restored verified durable-history prime artifact from trusted main run ${run_id} at ${run_sha}."
+                restored=true
+                break
+              fi
+            fi
+          done
+          if [ "${restored}" != true ]; then
+            echo "No valid trusted-main durable-history prime artifact was restorable; using verified live transport fallback."
+          fi
+
+      - name: Restore fixed PR119 materialized bootstrap
+        id: restore_pr119
+        if: success() && steps.resolve_request.outputs.authority_profile == 'SHADOW'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          mkdir -p .cache/athena-research/pr119-bootstrap
+          gh release download athena-fresh-holdout-bootstrap-v1 \
+            --repo "${GITHUB_REPOSITORY}" \
+            --pattern pr119-materialized.ndjson \
+            --dir .cache/athena-research/pr119-bootstrap \
+            --clobber
+          printf '%s  %s\n' \
+            'e5b78163a5eb68000b9a60dda97f04cac2a970f9cf2aaf588233151e586be8c2' \
+            '.cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson' \
+            | sha256sum --check --strict
+
+      - name: Restore prior persistent Shadow identity state
+        id: restore_identity
+        if: success() && steps.resolve_request.outputs.authority_profile == 'SHADOW'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          state_dir='.cache/athena-research/current-shadow-fixture-identity-v2'
+          state_name='current-shadow-fixture-identity-v2-state.json'
+          state_path="${state_dir}/${state_name}"
+          mkdir -p "${state_dir}"
+          printf 'ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH=%s\n' "${state_path}" >> "${GITHUB_ENV}"
+
+          mapfile -t prior_runs < <(
+            gh api \
+              "repos/${GITHUB_REPOSITORY}/actions/workflows/current-shadow-all-market.yml/runs?status=success&per_page=5" \
+              --jq '.workflow_runs[].id'
+          )
+          for run_id in "${prior_runs[@]}"; do
+            if [ "${run_id}" = "${GITHUB_RUN_ID}" ]; then
+              continue
+            fi
+            rm -rf /tmp/athena-prior-shadow
+            mkdir -p /tmp/athena-prior-shadow
+            if gh run download "${run_id}" \
+              --repo "${GITHUB_REPOSITORY}" \
+              --name current-shadow-all-market-request \
+              --dir /tmp/athena-prior-shadow >/dev/null 2>&1
+            then
+              candidate="$(find /tmp/athena-prior-shadow -type f -name "${state_name}" -print -quit)"
+              if [ -n "${candidate}" ]; then
+                cp "${candidate}" "${state_path}"
+                echo "Restored persistent Shadow identity state from run ${run_id}."
+                break
+              fi
+            fi
+          done
+
+      - name: Resolve exact lineage main
+        id: bind_lineage_main
+        if: success() && steps.resolve_request.outputs.authority_profile == 'SHADOW'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          lineage_main_sha="$(gh api "repos/${GITHUB_REPOSITORY}/git/ref/heads/main" --jq '.object.sha')"
+          test "${#lineage_main_sha}" -eq 40
+          [[ "${lineage_main_sha}" =~ ^[0-9a-f]{40}$ ]]
+          printf 'ATHENA_EXPECTED_LINEAGE_MAIN_SHA=%s\n' "${lineage_main_sha}" >> "${GITHUB_ENV}"
+
+      - name: Execute canonical request and capture exit code
+        id: execute_request
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ATHENA_PR119_BOOTSTRAP_PATH: .cache/athena-research/pr119-bootstrap/pr119-materialized.ndjson
+          ATHENA_CURRENT_SHADOW_HISTORY_CACHE_DIR: .cache/athena-research/current-shadow-history-github-binary-cache-v1
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          python -m scripts.execute_athena_run_workflow \
+            --request artifacts/athena-run-workflow/resolved-run-request.json \
+            --output-root artifacts/athena-runs \
+            --expected-git-sha "${GITHUB_SHA}" \
+            --expected-git-ref "${GITHUB_REF}"
+          execution_exit_code=$?
+          printf 'exit_code=%s\n' "${execution_exit_code}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Preserve optional Shadow source and identity evidence
+        id: preserve_shadow_evidence
+        if: always() && steps.resolve_request.outputs.authority_profile == 'SHADOW'
+        shell: bash
+        run: |
+          evidence_root='artifacts/athena-run-workflow/source-evidence'
+          for source_dir in \
+            '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
+            '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
+            '.cache/athena-research/sportybet-live-event-quote-evidence' \
+            '.cache/athena-research/fotmob-data-matches-captures'
+          do
+            if [ -d "${source_dir}" ]; then
+              mkdir -p "${evidence_root}"
+              cp -a "${source_dir}" "${evidence_root}/"
+            fi
+          done
+
+          identity_path="${ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH:-}"
+          if [ -n "${identity_path}" ] && [ -f "${identity_path}" ]; then
+            identity_root='artifacts/athena-run-workflow/identity-state'
+            mkdir -p "${identity_root}"
+            cp "${identity_path}" "${identity_root}/"
+          fi
+
+      - name: Upload durable canonical run evidence
+        id: upload_evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-run-${{ github.run_id }}
+          path: |
+            artifacts/athena-run-workflow
+            artifacts/athena-runs
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Propagate control-plane failure after evidence upload
+        id: propagate_failure
+        if: always()
+        env:
+          CHECKOUT_RESULT: ${{ steps.checkout.outcome }}
+          LINEAGE_RESULT: ${{ steps.verify_lineage.outcome }}
+          RESOLUTION_RESULT: ${{ steps.resolve_request.outcome }}
+          PYTHON_RESULT: ${{ steps.setup_python.outcome }}
+          INSTALL_RESULT: ${{ steps.install_dependencies.outcome }}
+          HISTORY_PRIME_RESULT: ${{ steps.restore_history_prime.outcome }}
+          PR119_RESULT: ${{ steps.restore_pr119.outcome }}
+          IDENTITY_RESULT: ${{ steps.restore_identity.outcome }}
+          MAIN_LINEAGE_RESULT: ${{ steps.bind_lineage_main.outcome }}
+          EXECUTION_RESULT: ${{ steps.execute_request.outcome }}
+          PRESERVATION_RESULT: ${{ steps.preserve_shadow_evidence.outcome }}
+          UPLOAD_RESULT: ${{ steps.upload_evidence.outcome }}
+          EXECUTION_EXIT_CODE: ${{ steps.execute_request.outputs.exit_code }}
+        shell: bash
+        run: |
+          for result in \
+            "${CHECKOUT_RESULT}" "${LINEAGE_RESULT}" "${RESOLUTION_RESULT}" \
+            "${PYTHON_RESULT}" "${INSTALL_RESULT}" "${HISTORY_PRIME_RESULT}" \
+            "${PR119_RESULT}" "${IDENTITY_RESULT}" "${MAIN_LINEAGE_RESULT}" \
+            "${EXECUTION_RESULT}" "${PRESERVATION_RESULT}" "${UPLOAD_RESULT}"
+          do
+            if [ "${result}" = "failure" ] || [ "${result}" = "cancelled" ]; then
+              echo "An ATHENA run control-plane step failed: ${result}."
+              exit 1
+            fi
+          done
+          if [ -n "${EXECUTION_EXIT_CODE}" ] && [ "${EXECUTION_EXIT_CODE}" != "0" ]; then
+            echo "Canonical workflow transport failed with exit code ${EXECUTION_EXIT_CODE}."
+            exit 1
+          fi

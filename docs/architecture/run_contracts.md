@@ -118,3 +118,13 @@ The pure CLI parser resolves relative dates in `Africa/Lagos` and writes only co
 The MAIN `main_application` boundary currently maps to the existing target-only Phase 6 request and truthfully returns zero selected legs/full shortfall without provider acquisition. SHADOW `research_shadow` remains bound to the existing Current Shadow supervisor/worker and one-way run-contract adapter. The exact Lagos dates are checked against that existing UTC rolling window before any supervisor/provider work; an unrepresentable date fails closed without being shifted. P4.1 validation uses only offline synthetic executors and does not run Current Shadow.
 
 The installed `athena` command is CLI transport only. Workflow adoption and consolidation are not part of P4.1; P4.2 remains the required workflow migration gate.
+
+## P4.2 current workflow state
+
+The P4.2 `athena-run` workflow resolves both scheduled and manual event inputs
+through the same parser into the exact canonical `RunRequest` contract. Relative
+dates are frozen once in Africa/Lagos before setup/restoration and execution consumes
+the persisted request rather than reparsing user tokens. The workflow invokes the
+existing `AthenaRunService` and uploads its canonical `RunReceipt`; neither the
+request nor receipt schema changes in P4.2. The automatic schedule uses the MAIN
+fail-closed defaults while the prior scheduled Shadow workflow remains active.
