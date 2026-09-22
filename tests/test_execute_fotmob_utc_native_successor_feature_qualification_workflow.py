@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 WORKFLOW = Path(
-    ".github/workflows/execute-fotmob-utc-native-successor-feature-qualification.yml"
+    "tests/fixtures/architecture/retired_workflows/execute-fotmob-utc-native-successor-feature-qualification.yml"
 )
 
 
@@ -10,7 +10,7 @@ def _text() -> str:
     return WORKFLOW.read_text(encoding="utf-8")
 
 
-def test_execution_is_bound_to_exact_merged_control_pr_and_owner_command() -> None:
+def test_historical_v1_contract_is_bound_to_exact_merged_control_pr_and_owner_command() -> None:
     text = _text()
     required = (
         "github.event.issue.number == 138",
@@ -25,7 +25,7 @@ def test_execution_is_bound_to_exact_merged_control_pr_and_owner_command() -> No
         assert token in text
 
 
-def test_execution_is_one_shot_and_replay_fails_closed() -> None:
+def test_historical_v1_one_shot_and_replay_contract_fails_closed() -> None:
     text = _text()
     assert "ATHENA_FOTMOB_UTC_NATIVE_FEATURE_QUALIFICATION_ATTEMPT_V1" in text
     assert "A prior qualification execution attempt marker already exists" in text

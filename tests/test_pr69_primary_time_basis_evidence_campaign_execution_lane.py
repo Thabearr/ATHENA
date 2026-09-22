@@ -6,7 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
-WORKFLOW = ROOT / ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign.yml"
+WORKFLOW = ROOT / "tests/fixtures/architecture/retired_workflows/execute-pr69-primary-time-basis-evidence-campaign.yml"
 DOC = ROOT / "docs/pr69_primary_time_basis_evidence_campaign_execution_lane.md"
 
 
@@ -18,7 +18,7 @@ def _doc() -> str:
     return DOC.read_text(encoding="utf-8")
 
 
-def test_execution_workflow_is_valid_yaml() -> None:
+def test_historical_v1_workflow_fixture_is_valid_yaml() -> None:
     assert yaml.compose(_workflow()) is not None
 
 

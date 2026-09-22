@@ -70,6 +70,18 @@ PRESERVED_FILE_GIT_BLOB_SHA1 = {
 RETIRED_WORKFLOW_PATH = ".github/workflows/current-sportybet-accumulator.yml"
 RETIRED_WORKFLOW_FIXTURE = "tests/fixtures/architecture/retired_workflows/current-sportybet-accumulator.yml"
 RETIRED_WORKFLOW_SOURCE_SHA256 = "839925e6ad0ceee2452ef008da13d481bc34d445290444b30d6f0278510542c1"
+P43C_RETIRED_HISTORICAL_WORKFLOWS = {
+    ".github/workflows/execute-fotmob-utc-native-successor-feature-qualification.yml": {
+        "git_blob_sha1": "9f159f77e58f20082b5ecb0b092c1d7dab831897",
+        "fixture_path": "tests/fixtures/architecture/retired_workflows/execute-fotmob-utc-native-successor-feature-qualification.yml",
+        "source_sha256": "f48cdda138081e2453896e3f94496c4744d9ed360c0b7e6a86fb14bc7fa58c63",
+    },
+    ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign.yml": {
+        "git_blob_sha1": "04c6f1d3c709acb2c90d69e39733b2297caa7e8a",
+        "fixture_path": "tests/fixtures/architecture/retired_workflows/execute-pr69-primary-time-basis-evidence-campaign.yml",
+        "source_sha256": "39e961b07586a6de46ceb78c4281b189f783e15a8fc5023b08e2b5b6f03d416e",
+    },
+}
 FROZEN_P42_RECEIPT_SHA256 = "fa575a5bb5f4611eb94564b92dea3e4230b8d429b1660dc3bde3d6c164b836f8"
 
 
@@ -130,6 +142,24 @@ def verify_preserved_historical_sources() -> dict[str, str]:
         if actual != expected:
             raise P42AuditError(f"protected historical source changed: {relative}")
         identities[relative] = actual
+    return identities
+
+
+def verify_retired_workflow_historical_fixtures() -> dict[str, str]:
+    """Verify P4.3C V1 identities from exact non-executable historical fixtures."""
+    identities: dict[str, str] = {}
+    for original_path, identity in P43C_RETIRED_HISTORICAL_WORKFLOWS.items():
+        try:
+            raw = (REPOSITORY_ROOT / identity["fixture_path"]).read_bytes()
+        except OSError as exc:
+            raise P42AuditError(f"retired historical workflow fixture missing: {identity['fixture_path']}") from exc
+        source_sha = hashlib.sha256(raw).hexdigest()
+        blob_sha = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+        if source_sha != identity["source_sha256"] or blob_sha != identity["git_blob_sha1"]:
+            raise P42AuditError(f"retired historical workflow fixture identity drifted: {original_path}")
+        if (REPOSITORY_ROOT / original_path).exists():
+            raise P42AuditError(f"retired historical workflow is still executable: {original_path}")
+        identities[original_path] = blob_sha
     return identities
 
 
@@ -703,6 +733,7 @@ def main(argv: list[str] | None = None) -> int:
         committed = verify_committed_receipt(args.output)
         if committed.get("historical_file_git_blob_sha1") != verify_preserved_historical_sources():
             raise SystemExit("P4.2 historical source identities differ from the frozen receipt")
+        verify_retired_workflow_historical_fixtures()
         print(committed["canonical_sha256"])
         return 0
     raise SystemExit("P4.2 receipt is a frozen historical checkpoint; use --check")

@@ -19,7 +19,7 @@ def matrix() -> dict:
     return json.loads(MATRIX.read_text(encoding="utf-8"))
 
 
-def test_matrix_has_exactly_40_sorted_live_workflows(matrix: dict) -> None:
+def test_matrix_has_exactly_40_sorted_historical_workflows(matrix: dict) -> None:
     rows = matrix["workflow_rows"]
     assert matrix["workflow_count"] == 40
     assert len(rows) == 40
@@ -29,16 +29,18 @@ def test_matrix_has_exactly_40_sorted_live_workflows(matrix: dict) -> None:
 
 
 def test_workflow_tree_unchanged_and_each_row_binds_source_identity(matrix: dict) -> None:
-    # The frozen pre-retirement census remains 40 rows; exactly its reviewed
-    # target is absent from the current 39-workflow tree.
+    # The frozen pre-retirement census remains 40 rows; cumulative reviewed
+    # retirements leave 37 live workflow files.
     audit.validate_matrix(matrix)
     assert matrix["workflow_count"] == 40
-    assert len(audit._worktree_workflows()) == 39
+    assert len(audit._worktree_workflows()) == 37
 
 
 def test_yaml_loader_preserves_github_actions_on_key(matrix: dict) -> None:
     for row in matrix["workflow_rows"]:
-        source = audit.RETIRED_FIXTURE if row["workflow_path"] == audit.RETIRED_TARGET else row["workflow_path"]
+        from scripts.audit_p4_3_workflow_retirement_ledger import RETIRED
+
+        source = RETIRED[row["workflow_path"]]["fixture_path"] if row["workflow_path"] in RETIRED else row["workflow_path"]
         parsed = yaml.load(Path(source).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
         assert "on" in parsed
         assert isinstance(parsed["on"], dict)
