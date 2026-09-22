@@ -4,3 +4,5 @@ artifacts/model-states/win-either-half-analytical-inference-v1.json text eol=lf
 artifacts/research-manifests/sportybet-ng-early-payout-settlement-source-evidence-v1.json -text
 artifacts/p3-0-replay-source-audit-v1.json -text
 tests/fixtures/architecture/retired_workflows/current-sportybet-accumulator.yml -text
+tests/fixtures/architecture/retired_workflows/execute-fotmob-utc-native-successor-feature-qualification.yml -text
+tests/fixtures/architecture/retired_workflows/execute-pr69-primary-time-basis-evidence-campaign.yml -text

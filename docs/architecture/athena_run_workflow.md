@@ -72,6 +72,23 @@ GitHub history contains no run. Any later P4.3B retirement decision must be made
 from the reviewed census; P4.3A does not claim the P4.3 retirement gate or broad
 workflow consolidation.
 
+## P4.3C spent V1 evidence-workflow retirement
+
+The immutable P4.3A census records 40 workflows. P4.3B records the separate
+40→39 owner-reviewed Current SportyBet retirement. P4.3C retires exactly two
+spent V1 evidence predecessors, reducing the live set from 39 to 37. The V1
+workflows had no successful run; their run/artifact failures are explicitly
+reconciled by the corresponding V2 workflows, whose successful run identities
+are bound in the P4.3C receipt. Neither V1 success nor byte-equivalence is claimed.
+
+The exact V1 YAML bytes remain as non-executable historical fixtures. V1 tests
+read those fixtures; the unchanged V2 tests continue to cover the live V2 paths.
+The cumulative retirement ledger, not the older phase-specific audits, owns
+current workflow-set accounting. Current Shadow remains active and unretired,
+Fresh Holdout remains protected, and `athena-draft-ready-bridge.yml` remains
+pending owner review. P4.3C does not claim Architecture Checkpoint E complete.
+P4.4 is not started.
+
 ## P4.3B one-workflow retirement
 
 P4.3A remains the immutable 40-workflow pre-retirement census. P4.3B separately

@@ -34,6 +34,7 @@ TARGET_SOURCE_SHA256 = "839925e6ad0ceee2452ef008da13d481bc34d445290444b30d6f0278
 MATRIX_SHA = "6b417a19557efdd39201e233fb866e4143b8102ba2879a4f1481e5241722dd8d"
 P43A_SHA = "7dd102aa4da98d634d665b4a93f51eb24ece8d7b61c8856b9977ff84a7452a6b"
 P42_SHA = "fa575a5bb5f4611eb94564b92dea3e4230b8d429b1660dc3bde3d6c164b836f8"
+P43B_SHA256 = "cf2371c7ec2747256f23599e7a43dd2d9e46ff61dda2c478a746d8bd8a49e72a"
 ROLLBACK_TAG = "athena-p4.3b-pre-current-sportybet-workflow-retirement-d2104a8"
 RECEIPT = Path("artifacts/architecture/p4_3b_current_sportybet_workflow_retirement_v1.json")
 MATRIX = Path("artifacts/architecture/p4_3_workflow_capability_matrix_v1.json")
@@ -112,6 +113,7 @@ def verify_frozen_history() -> dict[str, Any]:
         raise P43BRetirementError("P4.2 receipt lost retired workflow identity")
     p42.verify_committed_receipt()
     p42.verify_preserved_historical_sources()
+    p42.verify_retired_workflow_historical_fixtures()
     return matrix
 
 
@@ -260,17 +262,16 @@ def prove_main_successor() -> dict[str, Any]:
 def verify_retirement_tree(matrix: dict[str, Any]) -> None:
     if Path(TARGET).exists():
         raise P43BRetirementError("retired workflow remains executable in .github/workflows")
-    current = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    expected = sorted(row["workflow_path"] for row in matrix["workflow_rows"] if row["workflow_path"] != TARGET)
-    if len(current) != 39 or current != expected:
-        raise P43BRetirementError("workflow count/set is not exactly 40 to 39 with one target deleted")
-    for row in matrix["workflow_rows"]:
-        path = row["workflow_path"]
-        if path == TARGET:
-            continue
-        raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
-        if hashlib.sha256(raw).hexdigest() != row["source_sha256"]:
-            raise P43BRetirementError(f"another workflow changed: {path}")
+    # This audit proves the historical P4.3B 40->39 transition. Current live-set
+    # accounting belongs to the cumulative ledger because later reviewed batches
+    # are allowed to retire additional workflows without rewriting this receipt.
+    receipt = json.loads(RECEIPT.read_bytes())
+    if receipt.get("workflow_count_before") != 40 or receipt.get("workflow_count_after") != 39:
+        raise P43BRetirementError("P4.3B historical transition is not 40 to 39")
+    fixture = verify_historical_fixture()
+    row = next((row for row in matrix["workflow_rows"] if row.get("workflow_path") == TARGET), None)
+    if row is None or row.get("git_blob_sha1") != _git_blob_sha1(fixture) or row.get("source_sha256") != hashlib.sha256(fixture).hexdigest():
+        raise P43BRetirementError("P4.3B fixture does not match its P4.3A baseline row")
     for path in PROTECTED:
         if not Path(path).is_file():
             raise P43BRetirementError(f"protected workflow missing: {path}")
@@ -345,15 +346,22 @@ def build_receipt() -> dict[str, Any]:
 
 
 def check(*, write_receipt: bool = False) -> dict[str, Any]:
-    receipt = build_receipt()
     if write_receipt:
-        RECEIPT.parent.mkdir(parents=True, exist_ok=True)
-        RECEIPT.write_bytes(canonical_json_bytes(receipt))
-    else:
-        committed = json.loads(RECEIPT.read_bytes())
-        if committed != receipt or canonical_sha256(committed) != committed.get("canonical_sha256"):
-            raise P43BRetirementError("committed P4.3B receipt differs from deterministic offline proof")
-    return receipt
+        raise P43BRetirementError("P4.3B is frozen historical evidence and must not be regenerated")
+    committed = json.loads(RECEIPT.read_bytes())
+    if committed.get("canonical_sha256") != P43B_SHA256 or canonical_sha256(committed) != P43B_SHA256:
+        raise P43BRetirementError("immutable P4.3B receipt canonical SHA changed")
+    matrix = verify_frozen_history()
+    verify_retirement_tree(matrix)
+    from scripts.audit_p4_3_workflow_retirement_ledger import validate_ledger
+
+    ledger = validate_ledger()
+    entry = next((item for item in ledger["retirements"] if item["workflow_path"] == TARGET), None)
+    if entry is None or entry.get("retirement_receipt_sha256") != P43B_SHA256 or entry.get("retirement_phase") != "P4.3B":
+        raise P43BRetirementError("cumulative ledger does not preserve the P4.3B historical retirement entry")
+    if committed.get("workflow_count_before") != 40 or committed.get("workflow_count_after") != 39 or committed.get("retired_workflow_path") != TARGET:
+        raise P43BRetirementError("P4.3B receipt does not preserve its one-target historical transition")
+    return committed
 
 
 def main() -> int:

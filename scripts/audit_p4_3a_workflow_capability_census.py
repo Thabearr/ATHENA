@@ -34,6 +34,8 @@ RETIRED_SOURCE_SHA256 = "839925e6ad0ceee2452ef008da13d481bc34d445290444b30d6f027
 P42_SHA = "fa575a5bb5f4611eb94564b92dea3e4230b8d429b1660dc3bde3d6c164b836f8"
 P41_SHA = "268933433aaab84cb2533840f2e01eba96ec5906e796c9eced2032e1d6706208"
 REGISTRY_SHA = "74e79e216497c2e7f31a51e278251a5c62645e1085d04ebb8712022658f8f109"
+MATRIX_SHA = "6b417a19557efdd39201e233fb866e4143b8102ba2879a4f1481e5241722dd8d"
+RECEIPT_SHA = "7dd102aa4da98d634d665b4a93f51eb24ece8d7b61c8856b9977ff84a7452a6b"
 
 REQUIRED_ROW_FIELDS = {
     "workflow_path", "workflow_name", "git_blob_sha1", "source_sha256",
@@ -103,11 +105,7 @@ def _sha256_file(path: str) -> str:
 
 
 def _current_workflows() -> list[str]:
-    return sorted(
-        p.decode("utf-8")
-        for p in _git("ls-files", "-z", f"{WORKFLOW_DIR}/*.yml").split(b"\0")
-        if p
-    )
+    return _worktree_workflows()
 
 
 def _worktree_workflows() -> list[str]:
@@ -135,21 +133,37 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
     paths = [row.get("workflow_path") for row in rows]
     if paths != sorted(paths) or len(set(paths)) != 40:
         raise AssertionError("matrix paths must be unique and sorted")
+    # Report unsafe equivalence claims by workflow even when an adversarial
+    # fixture has also updated its self-hash to match the altered row.
+    for row in rows:
+        path = row.get("workflow_path", "<unknown>")
+        mapping = row.get("capability_mapping")
+        if not isinstance(mapping, dict) or mapping.get("equivalence_claimed") is not False:
+            raise AssertionError(f"{path}: P4.3A successor equivalence must not be claimed")
+    from scripts import audit_p4_3_workflow_retirement_ledger as retirement_ledger
+
+    retirement_ledger.validate_ledger()
+    # Hosted PR checkouts may be shallow and not include the historical 40-row
+    # base commit. The pinned, hash-verified P4.3A matrix is the baseline in that
+    # case; current-tree accounting is still independently enforced by the ledger.
     expected_paths = _base_workflows() if _base_object_available() else paths
     current_paths = _current_workflows()
     worktree_paths = _worktree_workflows()
-    surviving_paths = sorted(set(paths) - {RETIRED_TARGET})
-    if len(expected_paths) != 40 or len(surviving_paths) != 39 or len(worktree_paths) != 39:
-        raise AssertionError("P4.3A historical/current workflow counts are not 40/39")
+    retired_paths = sorted(retirement_ledger.RETIRED)
+    surviving_paths = sorted(set(paths) - set(retired_paths))
+    if len(expected_paths) != 40 or len(surviving_paths) != 37 or len(worktree_paths) != 37:
+        raise AssertionError("P4.3A historical/current workflow counts are not 40/37")
     if paths != expected_paths or worktree_paths != surviving_paths or current_paths not in (paths, surviving_paths):
-        raise AssertionError("P4.3A census differs from the one-workflow retirement transition")
+        raise AssertionError("P4.3A frozen census differs from cumulative retirement ledger")
     if _base_object_available():
-        committed_diff = _git("diff", "--name-only", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR).decode().splitlines()
-        worktree_diff = _git("diff", "--name-only", BASE_MAIN_SHA, "--", WORKFLOW_DIR).decode().splitlines()
-        if committed_diff not in ([], [RETIRED_TARGET]) or worktree_diff != [RETIRED_TARGET]:
-            raise AssertionError("a workflow other than the reviewed target changed since P4.3A")
+        committed_diff = sorted(_git("diff", "--name-only", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR).decode().splitlines())
+        worktree_diff = sorted(_git("diff", "--name-only", BASE_MAIN_SHA, "--", WORKFLOW_DIR).decode().splitlines())
+        if not set(committed_diff).issubset(retired_paths) or worktree_diff != retired_paths:
+            raise AssertionError("workflow tree differs from the reviewed cumulative retirement ledger")
     if canonical_sha256(matrix) != matrix.get("canonical_sha256"):
         raise AssertionError("matrix canonical SHA mismatch")
+    if matrix.get("canonical_sha256") != MATRIX_SHA:
+        raise AssertionError("immutable P4.3A matrix SHA changed")
 
     for row in rows:
         missing = REQUIRED_ROW_FIELDS - set(row)
@@ -159,13 +173,14 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         capability_mapping = row.get("capability_mapping")
         if not isinstance(capability_mapping, dict) or capability_mapping.get("equivalence_claimed") is not False:
             raise AssertionError(f"{path}: P4.3A successor equivalence must not be claimed")
-        if path == RETIRED_TARGET:
-            raw = Path(RETIRED_FIXTURE).read_bytes()
-            if hashlib.sha256(raw).hexdigest() != RETIRED_SOURCE_SHA256:
-                raise AssertionError("retired P4.3A workflow fixture changed")
+        if path in retirement_ledger.RETIRED:
+            retired = retirement_ledger.RETIRED[path]
+            raw = Path(retired["fixture_path"]).read_bytes()
             base_blob = hashlib.sha1(b"blob " + str(len(raw)).encode("ascii") + b"\0" + raw).hexdigest()
+            if hashlib.sha256(raw).hexdigest() != retired["source_sha256"] or base_blob != retired["git_blob_sha1"]:
+                raise AssertionError(f"retired P4.3A workflow fixture changed: {path}")
             if _base_object_available() and _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip() != base_blob:
-                raise AssertionError("retired P4.3A workflow base identity changed")
+                raise AssertionError(f"retired P4.3A workflow base identity changed: {path}")
         else:
             base_blob = (
                 _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip()
@@ -350,6 +365,8 @@ def check(*, write_receipt: bool = False) -> dict[str, Any]:
             raise AssertionError("P4.3A receipt does not match the validated matrix")
         if canonical_sha256(committed) != committed.get("canonical_sha256"):
             raise AssertionError("P4.3A receipt canonical SHA mismatch")
+        if committed.get("canonical_sha256") != RECEIPT_SHA:
+            raise AssertionError("immutable P4.3A receipt SHA changed")
     return receipt
 
 

@@ -29,8 +29,8 @@ top level. `successor_family` is a classification destination and
 `successor_workflow_path` is a mapping hint; neither establishes capability
 equivalence. Every P4.3A row has `capability_mapping.equivalence_claimed=false`,
 including canonical, future, protected, and pending-audit rows. Only a later
-P4.3B owner-reviewed retirement proof can establish equivalence for a specific
-candidate across its inputs, outputs, artifacts, and fail-closed behavior.
+owner-reviewed retirement proof can establish equivalence for a specific candidate
+across its inputs, outputs, artifacts, and fail-closed behavior.
 
 ## Retention decisions recorded
 
@@ -40,10 +40,11 @@ candidate across its inputs, outputs, artifacts, and fail-closed behavior.
   blockers include unmigrated scheduled SHADOW ownership, notification/email,
   identity/history artifact ancestry, lack of live canonical SHADOW successor proof,
   and unresolved issue-comment compatibility.
-- `current-sportybet-accumulator.yml` is mapped to the canonical MAIN request shape
-  (`target_size` → `target_legs`, `days=today`, no total-odds objective,
-  `bookie=sportybet`, `profile=main`) but remains owner-review-required because no run
-  history exists. The local compatibility command/code is not removed.
+- At the P4.3A capture, `current-sportybet-accumulator.yml` was mapped to the
+  canonical MAIN request shape (`target_size` → `target_legs`, `days=today`, no
+  total-odds objective, `bookie=sportybet`, `profile=main`) and was owner-review-
+  required because no run history existed. P4.3B later performed that owner review
+  and retired the YAML; the local compatibility command/code remains.
 - The four Fresh Holdout collection, liveness, continuity, and release-receipt
   workflows remain protected research capabilities. P4.3A creates no backfill or
   reconstruction authority.
@@ -80,3 +81,28 @@ This delta does not retroactively change any P4.3A
 unmigrated responsibilities; Fresh Holdout workflows remain protected. No
 other retirement or Architecture Checkpoint E completion is claimed. P4.4
 has not started.
+
+## P4.3C spent V1 evidence-workflow retirement
+
+P4.3C retires exactly the spent V1 predecessor workflows for Feature Qualification
+and the PR69 time-basis evidence campaign. Both had run history but no successful
+run, so the owner reviewed these two paths specifically. The Feature V2 workflow
+binds the V1 guard/permission failure, reconciliation comment, run and artifact
+identity, and the explicit `V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY`
+state. PR69 V2 binds its V1 run/artifact digest and the PR #128 / PR #129
+reconciliation; the V1 campaign itself remained unqualified. Each V2 has its own
+successful run and remains live and unchanged.
+
+The two original YAML byte streams are retained as non-executable fixtures under
+`tests/fixtures/architecture/retired_workflows/`; V1 contract tests now inspect those
+fixtures, while V2 tests continue to inspect live workflows. The cumulative
+`p4_3_workflow_retirement_ledger_v1.json` owns present-day tree accounting: it records
+the P4.3B retirement plus these two P4.3C retirements and proves the 40-row P4.3A
+baseline minus exactly three reviewed paths equals the 37 live workflows. Historical
+P4.3A and P4.3B receipts remain immutable and keep their original 40-row and 40→39
+claims, respectively. The ledger binds the P4.3C receipt body hash; that receipt
+binds the final ledger hash, avoiding a circular self-reference.
+
+Current Shadow remains active and unretired, all four Fresh Holdout workflows remain
+protected, `athena-draft-ready-bridge.yml` remains pending owner review, and no broad
+retirement or Architecture Checkpoint E completion is claimed. P4.4 has not started.

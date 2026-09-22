@@ -15,7 +15,9 @@ def test_only_reviewed_workflow_is_absent_and_historical_fixture_is_exact() -> N
     matrix = audit.verify_frozen_history()
     audit.verify_retirement_tree(matrix)
     raw = audit.verify_historical_fixture()
-    assert len(list(Path(".github/workflows").glob("*.yml"))) == 39
+    # P4.3B retains its historical 40->39 transition; current cumulative state
+    # is lower because P4.3C separately retires two spent V1 evidence workflows.
+    assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
     assert not Path(audit.TARGET).exists()
     assert Path(audit.FIXTURE).is_file()
     assert not audit.FIXTURE.startswith(".github/workflows/")
