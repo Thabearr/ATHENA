@@ -123,9 +123,31 @@ def test_fresh_holdout_workflow_and_mirror_pins_match_the_reviewed_base() -> Non
         **authority.FRESH_HOLDOUT_WORKFLOW_BLOBS,
         **authority.FRESH_HOLDOUT_SCRIPT_BLOBS,
     }
-    identity_commit = authority.BASE_MAIN_SHA if authority._base_commit_available() else "HEAD"
+    current = evolution.validate_current_state()
+    maintenance = {
+        item["workflow_path"]: item
+        for item in current["transitions"]
+        if item["operation"] == "MAINTENANCE_REVISE"
+    }
+    hotfix = json.loads(
+        Path("artifacts/architecture/fresh_holdout_release_visibility_race_hotfix_v1.json")
+        .read_text(encoding="utf-8")
+    )
     for path, blob in expected.items():
-        assert _git("rev-parse", f"{identity_commit}:{path}") == blob
+        if path in maintenance:
+            historical = evolution.resolve_p43a_historical_workflow_source(
+                path, evolution_ledger=current
+            )
+            assert evolution.source_identity(historical)["git_blob_sha1"] == blob
+        elif path == "scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py":
+            # The P4.4A1 transport source is now preserved by this hotfix's
+            # exact before-fixture; its current live identity is independently
+            # checked by the hotfix receipt/tests.
+            old_transport = Path(hotfix["transport_before_fixture_path"]).read_bytes()
+            assert evolution.source_identity(old_transport)["git_blob_sha1"] == blob
+        else:
+            identity_commit = authority.BASE_MAIN_SHA if authority._base_commit_available() else "HEAD"
+            assert _git("rev-parse", f"{identity_commit}:{path}") == blob
     receipt = authority.check()
     assert receipt["fresh_holdout_workflow_blob_sha1"] == authority.FRESH_HOLDOUT_WORKFLOW_BLOBS
     assert receipt["fresh_holdout_script_blob_sha1"] == authority.FRESH_HOLDOUT_SCRIPT_BLOBS
