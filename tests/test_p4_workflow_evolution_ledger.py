@@ -52,7 +52,72 @@ def _transition(operation: str, *, path: str = NEW_PATH, before=None, after=None
 
 def _evaluate(transitions, receipts):
     baseline, frozen = _baseline()
-    return audit.apply_transitions(baseline, transitions, frozen_baseline_paths=frozen, evidence_receipts=receipts)
+    matrix, _ = retirement.load_baseline()
+    families = {row["workflow_path"]: row["successor_family"] for row in matrix["workflow_rows"]}
+    fixtures = {}
+    clean_transitions = copy.deepcopy(transitions)
+    for transition in clean_transitions:
+        raw = transition.pop("_test_fixture_bytes", None)
+        fixture = transition.get("historical_before_fixture")
+        if transition.get("operation") == "MAINTENANCE_REVISE" and raw is not None and isinstance(fixture, dict):
+            fixtures[fixture.get("path")] = raw
+    return audit.apply_transitions(
+        baseline,
+        clean_transitions,
+        frozen_baseline_paths=frozen,
+        evidence_receipts=receipts,
+        baseline_families=families,
+        historical_before_fixture_bytes=fixtures,
+    )
+
+
+def _maintenance_transition(
+    path: str,
+    *,
+    before_raw: bytes,
+    after_raw: bytes,
+    identifier: str,
+    fixture_path: str,
+    evidence_path: str | None = None,
+    checkpoint_path: str | None = None,
+    family: str | None = None,
+    contract: dict | None = None,
+):
+    matrix, _ = retirement.load_baseline()
+    row = next((item for item in matrix["workflow_rows"] if item["workflow_path"] == path), None)
+    selected_family = family if family is not None else row["successor_family"] if row else "ATHENA_INGEST"
+    transition, receipt = _transition(
+        "MAINTENANCE_REVISE",
+        path=path,
+        before=audit.source_identity(before_raw),
+        after=audit.source_identity(after_raw),
+        identifier=identifier,
+    )
+    transition["canonical_family"] = selected_family
+    transition["phase_id"] = "P4.4A1"
+    transition["historical_before_fixture"] = {
+        "path": fixture_path,
+        **audit.source_identity(before_raw),
+    }
+    transition["maintenance_contract"] = copy.deepcopy(
+        audit.MAINTENANCE_CONTRACT if contract is None else contract
+    )
+    transition["_test_fixture_bytes"] = before_raw
+    if evidence_path is not None:
+        transition["evidence_receipt_path"] = evidence_path
+    if checkpoint_path is not None:
+        transition["checkpoint_snapshot_path"] = checkpoint_path
+    _refresh_maintenance_receipt(transition, receipt)
+    return transition, receipt
+
+
+def _refresh_maintenance_receipt(transition, receipt):
+    receipt["reviewed_workflow_transition"] = {
+        key: value for key, value in transition.items()
+        if key not in {"evidence_body_sha256", "_test_fixture_bytes"}
+    }
+    transition["evidence_body_sha256"] = audit.receipt_evidence_body_sha256(receipt)
+    receipt["canonical_sha256"] = audit.canonical_sha256(receipt)
 
 
 def _phase_checkpoint(transition, receipt):
@@ -190,6 +255,384 @@ def test_frozen_survivor_cannot_be_revised_or_retired() -> None:
     retire, receipt = _transition("RETIRE", path=path, before=baseline[path], fixture={"path": FIXTURE, **baseline[path]})
     with pytest.raises(audit.WorkflowEvolutionError, match="live ledger-added"):
         _evaluate([retire], {EVIDENCE_PATH: receipt})
+
+
+def test_maintenance_revise_preserves_a_p43a_path_and_zero_count_delta() -> None:
+    path = ".github/workflows/athena-run.yml"
+    baseline, frozen = _baseline()
+    before_raw = retirement.resolve_reviewed_workflow_source(path)
+    after_raw = before_raw + b"\n# synthetic reviewed maintenance\n"
+    transition, receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_ATHENA_RUN_1",
+        fixture_path="tests/fixtures/architecture/revised_workflows/athena-run-before-1.yml",
+    )
+    derived = _evaluate([transition], {EVIDENCE_PATH: receipt})
+    assert derived[path] == audit.source_identity(after_raw)
+    assert len(derived) == len(baseline) == 37
+    assert set(derived) == set(baseline)
+    assert path in frozen
+
+
+def test_maintenance_revise_admission_is_limited_to_retained_p43a_paths() -> None:
+    baseline, _ = _baseline()
+    p43a_path = ".github/workflows/athena-run.yml"
+    before_raw = retirement.resolve_reviewed_workflow_source(p43a_path)
+    after_raw = before_raw + b"\n# reviewed maintenance\n"
+    transition, receipt = _maintenance_transition(
+        p43a_path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_REVISE_GUARDS",
+        fixture_path="tests/fixtures/architecture/revised_workflows/athena-run-guard-before.yml",
+    )
+    ordinary, ordinary_receipt = _transition(
+        "REVISE",
+        path=p43a_path,
+        before=baseline[p43a_path],
+        after=audit.source_identity(after_raw),
+        identifier="P44A1_ORDINARY_REVISE",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="live ledger-added"):
+        _evaluate([ordinary], {EVIDENCE_PATH: ordinary_receipt})
+    retire, retire_receipt = _transition(
+        "RETIRE",
+        path=p43a_path,
+        before=baseline[p43a_path],
+        fixture={"path": FIXTURE, **baseline[p43a_path]},
+        identifier="P44A1_BASELINE_RETIRE",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="live ledger-added"):
+        _evaluate([retire], {EVIDENCE_PATH: retire_receipt})
+    add, add_receipt = _transition("ADD", path=p43a_path, after=baseline[p43a_path], identifier="P44A1_BASELINE_ADD")
+    with pytest.raises(audit.WorkflowEvolutionError, match="already existed or is frozen"):
+        _evaluate([add], {EVIDENCE_PATH: add_receipt})
+
+    non_baseline, non_baseline_receipt = _maintenance_transition(
+        NEW_PATH,
+        before_raw=b"before\n",
+        after_raw=b"after\n",
+        identifier="P44A1_NON_BASELINE",
+        fixture_path="tests/fixtures/architecture/revised_workflows/non-baseline.yml",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="not a P4.3A baseline"):
+        _evaluate([non_baseline], {EVIDENCE_PATH: non_baseline_receipt})
+
+    retired_path = ".github/workflows/current-sportybet-accumulator.yml"
+    retired_row = next(r for r in retirement.load_baseline()[0]["workflow_rows"] if r["workflow_path"] == retired_path)
+    retired, retired_receipt = _maintenance_transition(
+        retired_path,
+        before_raw=b"old retired workflow\n",
+        after_raw=b"changed retired workflow\n",
+        identifier="P44A1_RETIRED",
+        fixture_path="tests/fixtures/architecture/revised_workflows/retired-target.yml",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="live retained P4.3A survivor"):
+        _evaluate([retired], {EVIDENCE_PATH: retired_receipt})
+    assert retired_row["git_blob_sha1"] != retired["before"]["git_blob_sha1"]
+
+
+def test_maintenance_revise_requires_exact_before_after_and_fixture_identity() -> None:
+    path = ".github/workflows/athena-run.yml"
+    before_raw = retirement.resolve_reviewed_workflow_source(path)
+    after_raw = before_raw + b"\n# new reviewed bytes\n"
+
+    wrong_before, wrong_before_receipt = _maintenance_transition(
+        path,
+        before_raw=b"wrong before\n",
+        after_raw=after_raw,
+        identifier="P44A1_WRONG_BEFORE",
+        fixture_path="tests/fixtures/architecture/revised_workflows/wrong-before.yml",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="before identity does not chain"):
+        _evaluate([wrong_before], {EVIDENCE_PATH: wrong_before_receipt})
+
+    unchanged, unchanged_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=before_raw,
+        identifier="P44A1_UNCHANGED",
+        fixture_path="tests/fixtures/architecture/revised_workflows/unchanged.yml",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="after identity did not change"):
+        _evaluate([unchanged], {EVIDENCE_PATH: unchanged_receipt})
+
+    no_fixture, no_fixture_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_NO_FIXTURE",
+        fixture_path="tests/fixtures/architecture/revised_workflows/no-fixture.yml",
+    )
+    no_fixture.pop("historical_before_fixture")
+    _refresh_maintenance_receipt(no_fixture, no_fixture_receipt)
+    with pytest.raises(audit.WorkflowEvolutionError, match="schema/operation"):
+        _evaluate([no_fixture], {EVIDENCE_PATH: no_fixture_receipt})
+
+    no_contract, no_contract_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_NO_CONTRACT",
+        fixture_path="tests/fixtures/architecture/revised_workflows/no-contract.yml",
+    )
+    no_contract.pop("maintenance_contract")
+    _refresh_maintenance_receipt(no_contract, no_contract_receipt)
+    with pytest.raises(audit.WorkflowEvolutionError, match="schema/operation"):
+        _evaluate([no_contract], {EVIDENCE_PATH: no_contract_receipt})
+
+    wrong_blob, wrong_blob_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_WRONG_FIXTURE_BLOB",
+        fixture_path="tests/fixtures/architecture/revised_workflows/wrong-blob.yml",
+    )
+    wrong_blob["historical_before_fixture"]["git_blob_sha1"] = "0" * 40
+    _refresh_maintenance_receipt(wrong_blob, wrong_blob_receipt)
+    with pytest.raises(audit.WorkflowEvolutionError, match="fixture differs from before"):
+        _evaluate([wrong_blob], {EVIDENCE_PATH: wrong_blob_receipt})
+
+    wrong_sha, wrong_sha_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_WRONG_FIXTURE_SHA",
+        fixture_path="tests/fixtures/architecture/revised_workflows/wrong-sha.yml",
+    )
+    wrong_sha["historical_before_fixture"]["source_sha256"] = "0" * 64
+    _refresh_maintenance_receipt(wrong_sha, wrong_sha_receipt)
+    with pytest.raises(audit.WorkflowEvolutionError, match="fixture differs from before"):
+        _evaluate([wrong_sha], {EVIDENCE_PATH: wrong_sha_receipt})
+
+    outside, outside_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_OUTSIDE_FIXTURE",
+        fixture_path="tests/fixtures/architecture/retired_workflows/athena-run.yml",
+    )
+    _refresh_maintenance_receipt(outside, outside_receipt)
+    with pytest.raises(audit.WorkflowEvolutionError, match="fixture path is invalid"):
+        _evaluate([outside], {EVIDENCE_PATH: outside_receipt})
+
+    bad_bytes, bad_bytes_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_FIXTURE_BYTES",
+        fixture_path="tests/fixtures/architecture/revised_workflows/fixture-bytes.yml",
+    )
+    bad_bytes["_test_fixture_bytes"] = before_raw + b"drift"
+    with pytest.raises(audit.WorkflowEvolutionError, match="fixture bytes drifted"):
+        _evaluate([bad_bytes], {EVIDENCE_PATH: bad_bytes_receipt})
+
+
+@pytest.mark.parametrize(
+    ("contract_change", "message"),
+    [
+        ({"policy_id": "OTHER"}, "grants or misstates"),
+        ({"baseline_origin": "P4_3D"}, "grants or misstates"),
+        ({"permissions_changed": True}, "grants or misstates"),
+        ({"provider_acquisition_authority_changed": True}, "grants or misstates"),
+        ({"model_authority_changed": True}, "grants or misstates"),
+        ({"pricing_authority_changed": True}, "grants or misstates"),
+        ({"selection_authority_changed": True}, "grants or misstates"),
+        ({"betting_authority_changed": True}, "grants or misstates"),
+        ({"path_presence_changed": True}, "grants or misstates"),
+        ({"retirement_authority_granted": True}, "grants or misstates"),
+        ({"trigger_surface_changed": True}, "grants or misstates"),
+        ({"concurrency_changed": True}, "grants or misstates"),
+        ({"unexpected": False}, "exact v1 fields"),
+    ],
+)
+def test_maintenance_contract_is_exact_and_authority_neutral(contract_change, message) -> None:
+    path = ".github/workflows/athena-run.yml"
+    before_raw = retirement.resolve_reviewed_workflow_source(path)
+    after_raw = before_raw + b"\n# maintenance contract test\n"
+    contract = copy.deepcopy(audit.MAINTENANCE_CONTRACT)
+    contract.update(contract_change)
+    transition, receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_CONTRACT",
+        fixture_path="tests/fixtures/architecture/revised_workflows/contract.yml",
+        contract=contract,
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match=message):
+        _evaluate([transition], {EVIDENCE_PATH: receipt})
+
+
+def test_maintenance_revise_preserves_protected_research_family() -> None:
+    path = ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml"
+    before_raw = retirement.resolve_reviewed_workflow_source(path)
+    after_raw = before_raw + b"\n# synthetic protected-maintenance test\n"
+    transition, receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_FH_RELEASE_RECEIPT",
+        fixture_path="tests/fixtures/architecture/revised_workflows/fh-release-before.yml",
+    )
+    assert transition["canonical_family"] == "PROTECTED_RESEARCH"
+    assert _evaluate([transition], {EVIDENCE_PATH: receipt})[path] == audit.source_identity(after_raw)
+
+    wrong_family, wrong_family_receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_FH_WRONG_FAMILY",
+        fixture_path="tests/fixtures/architecture/revised_workflows/fh-release-wrong-family.yml",
+        family="ATHENA_INGEST",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="family differs from P4.3A"):
+        _evaluate([wrong_family], {EVIDENCE_PATH: wrong_family_receipt})
+
+
+def test_chained_maintenance_revisions_require_exact_immediate_before_versions() -> None:
+    path = ".github/workflows/athena-run.yml"
+    before_a = retirement.resolve_reviewed_workflow_source(path)
+    before_b = before_a + b"\n# revision B\n"
+    after_c = before_b + b"# revision C\n"
+    first, first_receipt = _maintenance_transition(
+        path,
+        before_raw=before_a,
+        after_raw=before_b,
+        identifier="P44A1_CHAIN_1",
+        fixture_path="tests/fixtures/architecture/revised_workflows/athena-run-a.yml",
+        evidence_path="artifacts/architecture/p4_4a1_chain_1.json",
+        checkpoint_path="artifacts/architecture/p4_workflow_evolution_snapshots/p4_4a1_chain_1.json",
+    )
+    second, second_receipt = _maintenance_transition(
+        path,
+        before_raw=before_b,
+        after_raw=after_c,
+        identifier="P44A1_CHAIN_2",
+        fixture_path="tests/fixtures/architecture/revised_workflows/athena-run-b.yml",
+        evidence_path="artifacts/architecture/p4_4a1_chain_2.json",
+        checkpoint_path="artifacts/architecture/p4_workflow_evolution_snapshots/p4_4a1_chain_2.json",
+    )
+    receipts = {
+        first["evidence_receipt_path"]: first_receipt,
+        second["evidence_receipt_path"]: second_receipt,
+    }
+    assert _evaluate([first, second], receipts)[path] == audit.source_identity(after_c)
+
+    stale, stale_receipt = _maintenance_transition(
+        path,
+        before_raw=before_a,
+        after_raw=after_c,
+        identifier="P44A1_CHAIN_STALE",
+        fixture_path="tests/fixtures/architecture/revised_workflows/athena-run-stale.yml",
+        evidence_path="artifacts/architecture/p4_4a1_chain_stale.json",
+        checkpoint_path="artifacts/architecture/p4_workflow_evolution_snapshots/p4_4a1_chain_stale.json",
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="before identity does not chain"):
+        _evaluate([first, stale], {**receipts, stale["evidence_receipt_path"]: stale_receipt})
+
+
+def test_p43a_historical_resolver_uses_original_fixture_after_maintenance(monkeypatch) -> None:
+    from scripts import audit_p4_3a_workflow_capability_census as p43a
+
+    path = ".github/workflows/athena-run.yml"
+    original = retirement.resolve_reviewed_workflow_source(path)
+    revised = original + b"\n# synthetic maintenance revision\n"
+    fixture_path = "tests/fixtures/architecture/revised_workflows/athena-run-original.yml"
+    transition, _receipt = _maintenance_transition(
+        path,
+        before_raw=original,
+        after_raw=revised,
+        identifier="P44A1_HISTORICAL_RESOLVER",
+        fixture_path=fixture_path,
+    )
+    transition.pop("_test_fixture_bytes")
+    evolution = json.loads(P44A_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    evolution["transitions"] = [transition]
+
+    # The source fixture, not an old commit object, is authoritative in a shallow checkout.
+    monkeypatch.setattr(p43a, "_base_object_available", lambda: False)
+    resolved = audit.resolve_p43a_historical_workflow_source(
+        path,
+        retirement_ledger=retirement.validate_retirement_history(),
+        evolution_ledger=evolution,
+        historical_fixture_bytes={fixture_path: original},
+    )
+    assert resolved == original
+    assert audit.source_identity(resolved) == audit.source_identity(original)
+    with pytest.raises(audit.WorkflowEvolutionError, match="historical fixture bytes differ"):
+        audit.resolve_p43a_historical_workflow_source(
+            path,
+            retirement_ledger=retirement.validate_retirement_history(),
+            evolution_ledger=evolution,
+            historical_fixture_bytes={fixture_path: original + b"drift"},
+        )
+
+
+def test_maintenance_fixture_must_be_source_controlled_and_exact(monkeypatch) -> None:
+    path = ".github/workflows/athena-run.yml"
+    before_raw = retirement.resolve_reviewed_workflow_source(path)
+    after_raw = before_raw + b"\n# source-controlled fixture test\n"
+    transition, _receipt = _maintenance_transition(
+        path,
+        before_raw=before_raw,
+        after_raw=after_raw,
+        identifier="P44A1_TRACKED_FIXTURE",
+        fixture_path="tests/fixtures/architecture/revised_workflows/source-controlled.yml",
+    )
+    fixture_path = transition["historical_before_fixture"]["path"]
+    original_read_bytes = Path.read_bytes
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: before_raw if self.as_posix() == fixture_path else original_read_bytes(self),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: transition["before"]["git_blob_sha1"].encode("ascii"),
+    )
+    loaded = audit._load_maintenance_before_fixtures([transition], require_source_controlled=True)
+    assert loaded == {fixture_path: before_raw}
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: before_raw + b"drift" if self.as_posix() == fixture_path else original_read_bytes(self),
+    )
+    with pytest.raises(audit.WorkflowEvolutionError, match="source identity mismatch"):
+        audit._load_maintenance_before_fixtures([transition], require_source_controlled=True)
+
+    monkeypatch.setattr(
+        Path,
+        "read_bytes",
+        lambda self: before_raw if self.as_posix() == fixture_path else original_read_bytes(self),
+    )
+    monkeypatch.setattr(audit, "_git", lambda *args: b"0" * 40)
+    with pytest.raises(audit.WorkflowEvolutionError, match="Git blob mismatch"):
+        audit._load_maintenance_before_fixtures([transition], require_source_controlled=True)
+
+
+def test_reviewed_current_identity_accepts_only_recorded_maintenance_bytes() -> None:
+    path = ".github/workflows/athena-run.yml"
+    before = retirement.resolve_reviewed_workflow_source(path)
+    after = before + b"\n# revised current bytes\n"
+    transition, receipt = _maintenance_transition(
+        path,
+        before_raw=before,
+        after_raw=after,
+        identifier="P44A1_CURRENT_IDENTITY",
+        fixture_path="tests/fixtures/architecture/revised_workflows/athena-run-current.yml",
+    )
+    expected = _evaluate([transition], {EVIDENCE_PATH: receipt})
+    observed = dict(expected)
+    observed[path] = audit.source_identity(after)
+    audit.validate_derived_tree(expected, observed)
+    observed[path] = audit.source_identity(after + b"drift")
+    with pytest.raises(audit.WorkflowEvolutionError, match="identity differs"):
+        audit.validate_derived_tree(expected, observed)
 
 
 def test_retire_added_path_requires_exact_fixture_and_before_identity() -> None:

@@ -171,7 +171,11 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         capability_mapping = row.get("capability_mapping")
         if not isinstance(capability_mapping, dict) or capability_mapping.get("equivalence_claimed") is not False:
             raise AssertionError(f"{path}: P4.3A successor equivalence must not be claimed")
-        raw = retirement_ledger.resolve_reviewed_workflow_source(path, ledger=ledger)
+        raw = evolution_ledger.resolve_p43a_historical_workflow_source(
+            path,
+            retirement_ledger=ledger,
+            evolution_ledger=current_evolution,
+        )
         base_blob = row["git_blob_sha1"]
         if _base_object_available() and _git("rev-parse", f"{BASE_MAIN_SHA}:{path}").decode().strip() != base_blob:
             raise AssertionError(f"P4.3A baseline workflow identity changed: {path}")

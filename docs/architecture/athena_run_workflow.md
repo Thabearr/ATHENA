@@ -139,3 +139,25 @@ P4.3D checkpoint through separate review, and later evolution transitions must e
 bind their own immutable cumulative snapshot. A prior transition receipt's backlink
 must match its exact phase snapshot, not merely have a valid-looking hash. P4.4 and
 Architecture Checkpoint E are not complete.
+
+## P4.4A1 retained-workflow maintenance authority
+
+P4.3A remains immutable historical evidence, and the P4.3 retirement ledger owns
+removal of baseline paths. Ordinary evolution REVISE and RETIRE remain limited to
+paths introduced by reviewed ADD transitions. P4.4A1 adds the narrowly scoped
+MAINTENANCE_REVISE operation for a live retained P4.3A survivor; it preserves the
+workflow path and count, the P4.3A successor-family label, and all trigger,
+permission, concurrency, provider, model, pricing, selection, betting, and
+retirement authority boundaries.
+
+Each revision binds its exact before/after identities and preserves the immediately
+preceding bytes in a unique source-controlled fixture under
+tests/fixtures/architecture/revised_workflows/. The fixed maintenance contract
+prohibits authority changes. P4.3A historical identity is resolved from the first
+maintenance fixture, independently from the current workflow identity derived from
+reviewed transitions, including in a shallow checkout.
+
+P4.4A1 changes no real workflow YAML and adds no transition. It authorizes no
+Fresh-Holdout repair by itself; the release-visibility race hotfix remains a
+separate next step. P4.4B is not started, and P4.4 and Architecture Checkpoint E
+remain incomplete.
