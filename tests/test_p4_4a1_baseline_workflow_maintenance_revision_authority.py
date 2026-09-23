@@ -22,7 +22,12 @@ def test_real_p44a1_phase_has_zero_revision_and_preserves_37_workflows() -> None
         assert current["current_workflow_tree_sha1"] == authority.BASE_WORKFLOW_TREE_SHA1
         assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
         assert not Path(".github/workflows/athena-ingest.yml").exists()
-        assert _git("diff", "--name-only", f"{authority.BASE_MAIN_SHA}...HEAD", "--", ".github/workflows") == ""
+        if authority._base_commit_available():
+            assert _git("diff", "--name-only", f"{authority.BASE_MAIN_SHA}...HEAD", "--", ".github/workflows") == ""
+        else:
+            # Hosted Tests may use a shallow checkout without the P4.4A base object.
+            # The offline authority audit still verifies the exact frozen workflow tree.
+            assert _git("diff", "--name-only", "HEAD", "--", ".github/workflows") == ""
     else:
         # Future reviewed phases may extend current state; P4.4A1 remains a frozen checkpoint.
         snapshot = json.loads(
@@ -115,8 +120,9 @@ def test_fresh_holdout_workflow_and_mirror_pins_match_the_reviewed_base() -> Non
         **authority.FRESH_HOLDOUT_WORKFLOW_BLOBS,
         **authority.FRESH_HOLDOUT_SCRIPT_BLOBS,
     }
+    identity_commit = authority.BASE_MAIN_SHA if authority._base_commit_available() else "HEAD"
     for path, blob in expected.items():
-        assert _git("rev-parse", f"{authority.BASE_MAIN_SHA}:{path}") == blob
+        assert _git("rev-parse", f"{identity_commit}:{path}") == blob
     receipt = authority.check()
     assert receipt["fresh_holdout_workflow_blob_sha1"] == authority.FRESH_HOLDOUT_WORKFLOW_BLOBS
     assert receipt["fresh_holdout_script_blob_sha1"] == authority.FRESH_HOLDOUT_SCRIPT_BLOBS
