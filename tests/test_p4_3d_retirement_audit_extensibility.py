@@ -63,24 +63,27 @@ def test_p43c_snapshot_and_receipts_remain_frozen() -> None:
     matrix, census = ledger.load_baseline()
     p43c_receipt = json.loads(p43c.RECEIPT_PATH.read_text(encoding="utf-8"))
 
-    assert snapshot_bytes == current_bytes
+    if current["canonical_sha256"] == audit.LEDGER_SHA:
+        assert snapshot_bytes == current_bytes
+    ledger.validate_historical_snapshot_extension(snapshot, current)
     assert snapshot["canonical_sha256"] == ledger.P43C_LEDGER_SNAPSHOT_SHA256 == audit.LEDGER_SHA
     assert ledger.canonical_sha256(snapshot) == audit.LEDGER_SHA
-    assert current["canonical_sha256"] == audit.LEDGER_SHA
+    assert p43c_receipt["retirement_ledger_sha256"] == audit.LEDGER_SHA
     assert p43c_receipt["canonical_sha256"] == audit.P43C_SHA
     assert p43c_receipt["retirement_ledger_sha256"] == snapshot["canonical_sha256"]
     assert matrix["workflow_count"] == len(matrix["workflow_rows"]) == 40
     assert census["canonical_sha256"] == audit.P43A_RECEIPT_SHA
 
 
-def test_current_checkpoint_counts_and_workflow_tree_are_unchanged() -> None:
+def test_current_workflow_tree_follows_validated_ledger() -> None:
     current = ledger.validate_ledger()
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    assert len(live) == current["current_live_workflow_count"] == 37
-    assert current["current_retired_workflow_count"] == len(current["retirements"]) == 3
+    assert len(live) == current["current_live_workflow_count"] == 40 - len(current["retirements"])
+    assert current["current_retired_workflow_count"] == len(current["retirements"])
     assert len(ledger.load_baseline()[0]["workflow_rows"]) == 40
     assert live == audit._live_paths_at("HEAD")
-    assert audit._git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip() == audit.BASE_MAIN_WORKFLOW_TREE_SHA1
+    if current["canonical_sha256"] == audit.LEDGER_SHA:
+        assert audit._git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip() == audit.BASE_MAIN_WORKFLOW_TREE_SHA1
     assert not audit._git("diff", "--", ".github/workflows")
 
 
@@ -104,6 +107,33 @@ def test_snapshot_extension_accepts_equality_and_test_only_append_without_receip
     assert synthetic["current_live_workflow_count"] == 36
     assert receipt["retirement_ledger_sha256"] == snapshot["canonical_sha256"]
     assert receipt["retirement_ledger_sha256"] != synthetic["canonical_sha256"]
+
+
+def test_p43d_historical_check_accepts_future_ledger_and_rejects_rewritten_history() -> None:
+    before = audit.RECEIPT_PATH.read_bytes()
+    receipt = json.loads(before)
+    snapshot = ledger._load_p43c_ledger_snapshot()
+    synthetic = _synthetic_extension(snapshot)
+    assert audit.verify_historical_receipt(receipt, current_ledger=synthetic) == receipt
+    assert receipt["live_workflow_count_after"] == 37
+    assert receipt["retired_workflow_count_after"] == 3
+    assert receipt["current_retirement_ledger_sha256"] == snapshot["canonical_sha256"]
+    assert synthetic["canonical_sha256"] != receipt["current_retirement_ledger_sha256"]
+    assert audit.RECEIPT_PATH.read_bytes() == before
+
+    rewritten = copy.deepcopy(synthetic)
+    historical_path = snapshot["retired_workflow_paths"][0]
+    next(entry for entry in rewritten["retirements"] if entry["workflow_path"] == historical_path)["source_sha256"] = "0" * 64
+    rewritten["canonical_sha256"] = ledger.canonical_sha256(rewritten)
+    with pytest.raises(ledger.RetirementLedgerError, match="rewrote historical retirement metadata"):
+        audit.verify_historical_receipt(receipt, current_ledger=rewritten)
+
+
+def test_p43d_write_mode_is_disabled_and_read_only() -> None:
+    before = audit.RECEIPT_PATH.read_bytes()
+    with pytest.raises(audit.P43DRetirementAuditError, match="frozen historical evidence; write mode is disabled"):
+        audit.check(write=True)
+    assert audit.RECEIPT_PATH.read_bytes() == before
 
 
 def test_p43c_audit_is_frozen_and_keeps_verifying_v1_fixtures_and_v2_identities() -> None:
@@ -159,12 +189,13 @@ def test_frozen_prior_phase_audits_pass() -> None:
     p42.verify_retired_workflow_historical_fixtures()
 
 
-def test_protected_and_successor_workflow_blobs_match_base() -> None:
+def test_reviewed_protected_and_successor_workflow_sources_match_baseline() -> None:
     matrix, _ = ledger.load_baseline()
     baseline_blobs = {row["workflow_path"]: row["git_blob_sha1"] for row in matrix["workflow_rows"]}
+    current = ledger.validate_ledger()
     for path in PROTECTED:
-        assert Path(path).is_file()
-        assert audit._blob("HEAD", path) == baseline_blobs[path]
+        raw = ledger.resolve_reviewed_workflow_source(path, ledger=current)
+        assert ledger._git_blob_sha1(raw) == baseline_blobs[path]
 
 
 def test_p43d_receipt_hash_and_no_retirement_state() -> None:
@@ -196,4 +227,7 @@ def test_p43d_audit_and_all_nested_proofs_make_no_network_attempt(monkeypatch: p
 
 def test_checkpoint_audit_receipt_files_are_byte_identical_to_base() -> None:
     for path, expected_blob in audit.FROZEN_GIT_BLOBS.items():
-        assert audit._blob("HEAD", path) == expected_blob
+        if path == ledger.LEDGER_PATH.as_posix():
+            assert audit._git("hash-object", f"--path={path}", ledger.P43C_LEDGER_SNAPSHOT_PATH.as_posix()).decode("ascii").strip() == expected_blob
+        else:
+            assert audit._blob("HEAD", path) == expected_blob

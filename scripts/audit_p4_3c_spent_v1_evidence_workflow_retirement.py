@@ -165,12 +165,10 @@ def _identity(raw: bytes) -> tuple[str, str]:
     return blob, hashlib.sha256(raw).hexdigest()
 
 
-def _assert_tokens(path: str, tokens: list[str], *, source_override: str | None = None) -> str:
-    source = source_override if source_override is not None else Path(path).read_text(encoding="utf-8")
+def _assert_tokens(path: str, tokens: list[str], *, source: str) -> None:
     for token in tokens:
         if token not in source:
             raise P43CRetirementError(f"{path}: reconciled successor identity is missing/changed: {token}")
-    return source
 
 
 def verify_target(
@@ -192,11 +190,15 @@ def verify_target(
     if Path(path).exists():
         raise P43CRetirementError(f"retired V1 workflow still executable: {path}")
     v2_path = details["successor"]
-    live_v2_raw = Path(v2_path).read_bytes()
-    v2_blob, v2_sha = _identity(_normalized_source(live_v2_raw))
+    v2_raw = ledger_audit.resolve_reviewed_workflow_source(v2_path, ledger=current_ledger)
+    v2_blob, v2_sha = _identity(v2_raw)
     if v2_blob != details["successor_git_blob_sha1"] or v2_sha != details["successor_source_sha256"]:
         raise P43CRetirementError(f"reconciled V2 successor source identity changed: {v2_path}")
-    source = _assert_tokens(v2_path, details["v2_source_tokens"], source_override=v2_source)
+    _assert_tokens(
+        v2_path,
+        details["v2_source_tokens"],
+        source=v2_raw.decode("utf-8") if v2_source is None else v2_source,
+    )
     v1_history = details["v1_reconciliation"]
     if not v1_history.get("run_id") or not v1_history.get("artifact_id"):
         raise P43CRetirementError(f"{path}: reviewed failed/spent V1 history is incomplete")

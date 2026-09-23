@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 from pathlib import Path
@@ -15,7 +16,7 @@ from scripts import audit_p4_3b_current_sportybet_workflow_retirement as p43b
 from scripts import audit_p4_3c_spent_v1_evidence_workflow_retirement as audit
 
 
-def test_exactly_two_v1_paths_are_retired_and_successors_remain_live() -> None:
+def test_exactly_two_v1_paths_are_retired_and_successors_remain_reviewed() -> None:
     matrix, _ = ledger.load_baseline()
     current_ledger = ledger.validate_ledger()
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
@@ -24,7 +25,10 @@ def test_exactly_two_v1_paths_are_retired_and_successors_remain_live() -> None:
     assert live == expected
     for path, details in audit.TARGETS.items():
         assert not Path(path).exists()
-        assert Path(details["successor"]).is_file()
+        v2_raw = ledger.resolve_reviewed_workflow_source(details["successor"], ledger=current_ledger)
+        assert audit._identity(v2_raw) == (
+            details["successor_git_blob_sha1"], details["successor_source_sha256"]
+        )
     assert not Path(".github/workflows/current-sportybet-accumulator.yml").exists()
     assert len(current_ledger["retired_workflow_paths"]) == 3
 
@@ -72,10 +76,55 @@ def test_pr69_v1_unqualified_campaign_is_reconciled_by_successful_v2() -> None:
 @pytest.mark.parametrize("path", sorted(audit.TARGETS))
 def test_v2_reconciliation_identity_drift_fails_closed(path: str) -> None:
     details = audit.TARGETS[path]
-    source = Path(details["successor"]).read_text(encoding="utf-8")
+    source = ledger.resolve_reviewed_workflow_source(details["successor"]).decode("utf-8")
     token = details["v2_source_tokens"][0]
     with pytest.raises(audit.P43CRetirementError, match="missing/changed"):
         audit.verify_target(path, v2_source=source.replace(token, "changed", 1))
+
+
+@pytest.mark.parametrize("path", sorted(audit.TARGETS))
+def test_historical_check_accepts_reviewed_future_retired_v2_fixture(
+    path: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    details = audit.TARGETS[path]
+    v2_path = details["successor"]
+    live_proof = audit.verify_target(path)
+    current = copy.deepcopy(ledger.validate_ledger())
+    v2_raw = ledger.resolve_reviewed_workflow_source(v2_path, ledger=current)
+    fixture = tmp_path / Path(v2_path).name
+    fixture.write_bytes(v2_raw)
+    current["retirements"].append({
+        "workflow_path": v2_path,
+        "git_blob_sha1": details["successor_git_blob_sha1"],
+        "source_sha256": details["successor_source_sha256"],
+        "fixture_path": str(fixture),
+        "retirement_phase": "P4.3D_TEST_ONLY",
+        "retirement_receipt_path": "artifacts/architecture/p4_3d_synthetic_test_only.json",
+        "retirement_receipt_sha256": "a" * 64,
+        "successor_workflow_path": ".github/workflows/athena-run.yml",
+    })
+    current["retirements"].sort(key=lambda item: item["workflow_path"])
+    current["retired_workflow_paths"] = sorted(item["workflow_path"] for item in current["retirements"])
+    current["current_retired_workflow_count"] = 4
+    current["current_live_workflow_count"] = 36
+    current["canonical_sha256"] = ledger.canonical_sha256(current)
+    ledger.validate_historical_snapshot_extension(ledger._load_p43c_ledger_snapshot(), current)
+
+    original_exists = Path.exists
+
+    def future_tree_exists(candidate: Path) -> bool:
+        return False if candidate.as_posix() == v2_path else original_exists(candidate)
+
+    monkeypatch.setattr(Path, "exists", future_tree_exists)
+    monkeypatch.setattr(ledger, "validate_ledger", lambda: current)
+    assert audit.verify_target(path, current_ledger=current) == live_proof
+    before = audit.RECEIPT_PATH.read_bytes()
+    assert audit.check()["canonical_sha256"] == audit.P43C_RECEIPT_SHA
+    assert audit.RECEIPT_PATH.read_bytes() == before
+
+    fixture.write_bytes(v2_raw[:-1] + bytes([v2_raw[-1] ^ 1]))
+    with pytest.raises(ledger.RetirementLedgerError, match="fixture identity differs from baseline"):
+        audit.check()
 
 
 @pytest.mark.parametrize("path", sorted(audit.TARGETS))
@@ -135,15 +184,11 @@ def test_p4_3c_receipt_write_mode_is_disabled_and_read_only() -> None:
     assert audit.RECEIPT_PATH.read_bytes() == before
 
 
-def test_only_historical_v1_tests_read_fixture_and_v2_tests_remain_live() -> None:
+def test_historical_v1_tests_read_frozen_fixtures() -> None:
     feature_v1_test = Path("tests/test_execute_fotmob_utc_native_successor_feature_qualification_workflow.py").read_text(encoding="utf-8")
     pr69_v1_test = Path("tests/test_pr69_primary_time_basis_evidence_campaign_execution_lane.py").read_text(encoding="utf-8")
-    feature_v2_test = Path("tests/test_execute_fotmob_utc_native_successor_feature_qualification_v2_workflow.py").read_text(encoding="utf-8")
-    pr69_v2_test = Path("tests/test_pr69_primary_time_basis_evidence_campaign_execution_lane_v2.py").read_text(encoding="utf-8")
     assert "tests/fixtures/architecture/retired_workflows/execute-fotmob-utc-native-successor-feature-qualification.yml" in feature_v1_test
     assert "tests/fixtures/architecture/retired_workflows/execute-pr69-primary-time-basis-evidence-campaign.yml" in pr69_v1_test
-    assert ".github/workflows/execute-fotmob-utc-native-successor-feature-qualification-v2.yml" in feature_v2_test
-    assert ".github/workflows/execute-pr69-primary-time-basis-evidence-campaign-v2.yml" in pr69_v2_test
 
 
 def test_current_documentation_does_not_present_v1_paths_as_executable() -> None:
