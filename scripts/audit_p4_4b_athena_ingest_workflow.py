@@ -118,6 +118,9 @@ def build_evidence() -> tuple[dict, dict]:
         "fail_closed_partial_receipt_required": True,
         "invalid_request_partial_receipt_supported": True,
         "timeout_partial_receipt_supported": True,
+        "pre_receipt_lineage_gate_non_terminal": True,
+        "executor_is_authoritative_pre_acquisition_lineage_gate": True,
+        "lineage_mismatch_receipt_before_provider_acquisition": True,
         "ingest_service_budget_seconds": 900,
         "workflow_job_timeout_minutes": 20,
         "receipt_finalization_headroom_seconds": 300,
@@ -227,6 +230,9 @@ def check() -> dict:
     for key in (
         "runtime_receipt_exact_commit_sha_required", "fail_closed_partial_receipt_required",
         "invalid_request_partial_receipt_supported", "timeout_partial_receipt_supported",
+        "pre_receipt_lineage_gate_non_terminal",
+        "executor_is_authoritative_pre_acquisition_lineage_gate",
+        "lineage_mismatch_receipt_before_provider_acquisition",
     ):
         if receipt.get(key) is not True:
             raise AssertionError(f"P4.4B durable receipt capability missing: {key}")

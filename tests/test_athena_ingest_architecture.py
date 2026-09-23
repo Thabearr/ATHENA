@@ -63,6 +63,9 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
     assert receipt["fail_closed_partial_receipt_required"] is True
     assert receipt["invalid_request_partial_receipt_supported"] is True
     assert receipt["timeout_partial_receipt_supported"] is True
+    assert receipt["pre_receipt_lineage_gate_non_terminal"] is True
+    assert receipt["executor_is_authoritative_pre_acquisition_lineage_gate"] is True
+    assert receipt["lineage_mismatch_receipt_before_provider_acquisition"] is True
     assert receipt["ingest_service_budget_seconds"] == 900
     assert receipt["workflow_job_timeout_minutes"] == 20
     assert receipt["receipt_finalization_headroom_seconds"] == 300

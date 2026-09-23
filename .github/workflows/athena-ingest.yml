@@ -25,7 +25,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
 
-      - name: Require exact main lineage
+      - name: Preflight exact main lineage
+        id: lineage
+        continue-on-error: true
         shell: bash
         run: |
           test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
@@ -75,6 +77,17 @@ jobs:
           if-no-files-found: error
 
       - name: Fail after preserving failed ingest evidence
-        if: always() && steps.execute.outputs.exit_code != '0'
+        if: always()
+        env:
+          LINEAGE_OUTCOME: ${{ steps.lineage.outcome }}
+          RESOLVER_OUTCOME: ${{ steps.resolve.outcome }}
+          EXECUTOR_OUTCOME: ${{ steps.execute.outcome }}
+          EXECUTOR_EXIT_CODE: ${{ steps.execute.outputs.exit_code }}
         shell: bash
-        run: exit 1
+        run: |
+          if [[ "${LINEAGE_OUTCOME}" != "success" \
+            || "${RESOLVER_OUTCOME}" != "success" \
+            || "${EXECUTOR_OUTCOME}" != "success" \
+            || "${EXECUTOR_EXIT_CODE}" != "0" ]]; then
+            exit 1
+          fi

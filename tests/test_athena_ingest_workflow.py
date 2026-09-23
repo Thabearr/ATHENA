@@ -31,6 +31,9 @@ def test_manual_only_workflow_has_bounded_reviewed_surface() -> None:
     assert "cancel-in-progress: false" in source
     assert "timeout-minutes: 20" in source
     assert "ref: ${{ github.sha }}" in source
+    assert "- name: Preflight exact main lineage" in source
+    assert "id: lineage" in source
+    assert "continue-on-error: true" in source
     assert 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' in source
     assert 'test "${GITHUB_REF}" = "refs/heads/main"' in source
     assert source.count("scripts.resolve_athena_ingest_workflow_request") == 1
@@ -45,6 +48,45 @@ def test_manual_only_workflow_has_bounded_reviewed_surface() -> None:
     assert "if-no-files-found: error" in source
     for forbidden in ("issue_comment", "schedule:", "sportybet", "share-code", "wager", "current-shadow", "fresh-holdout", "p3-0-e1"):
         assert forbidden not in source.lower()
+
+
+def test_lineage_receipt_failure_flow_is_nonterminal_then_explicitly_fails() -> None:
+    source = WORKFLOW.read_text(encoding="utf-8")
+    checkout = source.index("- name: Checkout exact requested commit")
+    preflight_start = source.index("- name: Preflight exact main lineage")
+    setup = source.index("- name: Set up Python 3.12")
+    resolver = source.index("- name: Resolve request once")
+    executor = source.index("- name: Execute reviewed FotMob source ingest")
+    upload = source.index("- name: Preserve exact ingest evidence")
+    final_failure = source.index("- name: Fail after preserving failed ingest evidence")
+    assert checkout < preflight_start < setup < resolver < executor < upload < final_failure
+
+    preflight = source[preflight_start:setup]
+    assert "id: lineage" in preflight
+    assert "continue-on-error: true" in preflight
+    assert 'test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"' in preflight
+    assert 'test "${GITHUB_REF}" = "refs/heads/main"' in preflight
+
+    resolver_step = source[resolver:executor]
+    executor_step = source[executor:upload]
+    upload_step = source[upload:final_failure]
+    final_step = source[final_failure:]
+    assert "--expected-git-sha \"${GITHUB_SHA}\"" in resolver_step
+    assert "--expected-git-ref \"${GITHUB_REF}\"" in resolver_step
+    assert "--expected-git-sha \"${GITHUB_SHA}\"" in executor_step
+    assert "--expected-git-ref \"${GITHUB_REF}\"" in executor_step
+    assert "--execute-live-network" in executor_step
+    assert "if: always()" in upload_step
+    assert "if-no-files-found: error" in upload_step
+    assert "if: always()" in final_step
+    assert "LINEAGE_OUTCOME: ${{ steps.lineage.outcome }}" in final_step
+    assert "RESOLVER_OUTCOME: ${{ steps.resolve.outcome }}" in final_step
+    assert "EXECUTOR_OUTCOME: ${{ steps.execute.outcome }}" in final_step
+    assert '"${LINEAGE_OUTCOME}" != "success"' in final_step
+    assert '"${RESOLVER_OUTCOME}" != "success"' in final_step
+    assert '"${EXECUTOR_OUTCOME}" != "success"' in final_step
+    assert '"${EXECUTOR_EXIT_CODE}" != "0"' in final_step
+    assert "exit 1" in final_step
 
 
 def test_invalid_resolution_writes_fail_closed_receipt(tmp_path: Path) -> None:
@@ -90,7 +132,35 @@ def test_resolver_and_executor_bind_exact_git_lineage(tmp_path: Path) -> None:
         git_head_provider=lambda _root: COMMIT_SHA, acquisition_callable=acquire,
     ) == 0
     assert calls == ["20260901", "20260902"]
-    assert strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())["exact_commit_sha"] == COMMIT_SHA
+    receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
+    assert receipt["exact_commit_sha"] == COMMIT_SHA
+
+
+def test_wrong_ref_writes_lineage_receipt_before_any_provider_request(tmp_path: Path) -> None:
+    raw_input = "20260901,20260902"
+    with pytest.raises(AthenaIngestContractError, match="refs/heads/main"):
+        resolve_and_persist(
+            event_name="workflow_dispatch", dates_input=raw_input, repository_root=tmp_path,
+            expected_git_sha=COMMIT_SHA, expected_git_ref="refs/heads/feature/not-main",
+        )
+
+    root = tmp_path / ARTIFACT_RELATIVE
+    receipt_path = root / RECEIPT_NAME
+    assert root.is_dir()
+    assert receipt_path.is_file()
+    receipt = strict_json_loads(receipt_path.read_bytes())
+    assert receipt["status"] == "FAILED"
+    assert receipt["failure_code"] == "LINEAGE_MISMATCH"
+    assert receipt["stage"] == "REQUEST_RESOLUTION"
+    assert receipt["exact_commit_sha"] == COMMIT_SHA
+    assert receipt["request_sha256"] is None
+    assert receipt["canonical_store_update_sha256"] is None
+    assert receipt["raw_request_input_sha256"] == hashlib.sha256(raw_input.encode("utf-8")).hexdigest()
+    assert receipt["provider_request_count"] == 0
+    assert receipt["source_count"] == 0
+    assert receipt["canonical_store_update_committed"] is False
+    assert all(value is False for value in receipt["authorities"].values())
+    assert not (root / REQUEST_NAME).exists()
 
 
 def test_head_mismatch_writes_typed_receipt_before_acquisition(tmp_path: Path) -> None:
@@ -112,9 +182,14 @@ def test_head_mismatch_writes_typed_receipt_before_acquisition(tmp_path: Path) -
     assert calls == []
     receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
     assert receipt["failure_code"] == "LINEAGE_MISMATCH"
+    assert receipt["stage"] == "REQUEST_RESOLUTION"
     assert receipt["exact_commit_sha"] == actual
+    assert receipt["exact_commit_sha"] != COMMIT_SHA
     assert receipt["request_sha256"] == request.canonical_sha256
     assert receipt["provider_request_count"] == 0
+    assert receipt["source_count"] == 0
+    assert receipt["canonical_store_update_committed"] is False
+    assert all(value is False for value in receipt["authorities"].values())
 
 
 def test_noncanonical_persisted_request_gets_fail_closed_receipt(tmp_path: Path) -> None:
@@ -142,7 +217,7 @@ def test_noncanonical_persisted_request_gets_fail_closed_receipt(tmp_path: Path)
 
 
 def test_executor_without_explicit_live_flag_fails_closed(tmp_path: Path) -> None:
-    resolve_and_persist(
+    request = resolve_and_persist(
         event_name="workflow_dispatch", dates_input="20260901", repository_root=tmp_path,
         expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
     )
@@ -154,7 +229,13 @@ def test_executor_without_explicit_live_flag_fails_closed(tmp_path: Path) -> Non
     ) == 1
     receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
     assert receipt["failure_code"] == "LINEAGE_MISMATCH"
+    assert receipt["stage"] == "REQUEST_RESOLUTION"
+    assert receipt["exact_commit_sha"] == COMMIT_SHA
+    assert receipt["request_sha256"] == request.canonical_sha256
     assert receipt["provider_request_count"] == 0
+    assert receipt["source_count"] == 0
+    assert receipt["canonical_store_update_committed"] is False
+    assert all(value is False for value in receipt["authorities"].values())
 
 
 def test_resolver_refuses_to_overwrite_existing_evidence(tmp_path: Path) -> None:
