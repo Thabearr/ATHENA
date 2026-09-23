@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+import math
+import time
 from typing import Callable
 
 from domain.fotmob_data_matches_capture import (
@@ -16,7 +18,7 @@ from domain.ingest_contracts import (
     AthenaCanonicalStoreUpdate, AthenaIngestContractError, AthenaIngestReceipt,
     AthenaIngestRequest, AthenaIngestSourceRecord, NOT_COMMITTED, READY,
     RECEIPT_POLICY, REPLAY_POLICY, UPDATE_POLICY, canonical_json_bytes,
-    receipt_authorities, sha256_bytes,
+    receipt_authorities, sha256_bytes, validate_exact_commit_sha,
 )
 from scripts.capture_fotmob_data_matches import (
     ALLOWED_OUTPUT_RELATIVE,
@@ -29,6 +31,7 @@ REQUEST_NAME = "resolved-ingest-request.json"
 UPDATE_NAME = "canonical-store-update.json"
 RECEIPT_NAME = "ingest-receipt.json"
 REPLAY_NAME = "replay-manifest.json"
+INGEST_SERVICE_BUDGET_SECONDS = 900
 
 
 class AthenaIngestServiceError(RuntimeError):
@@ -123,12 +126,41 @@ def _replay_manifest(
     }
 
 
+def _receipt(
+    *, exact_commit_sha: str, request_sha256: str, update_sha256: str,
+    committed: bool, provider_requests: int, source_count: int,
+    failure_code: str | None, stage: str,
+) -> AthenaIngestReceipt:
+    return AthenaIngestReceipt(
+        schema_version=1, policy_id=RECEIPT_POLICY,
+        exact_commit_sha=exact_commit_sha,
+        status="SUCCESS" if failure_code is None else "FAILED",
+        failure_code=failure_code, stage=stage,
+        request_sha256=request_sha256,
+        canonical_store_update_sha256=update_sha256,
+        raw_request_input_sha256=None,
+        canonical_store_update_committed=committed,
+        provider_request_count=provider_requests, source_count=source_count,
+        authorities=receipt_authorities(
+            provider_requests=provider_requests, source_count=source_count, committed=committed,
+        ),
+    )
+
+
 def execute_ingest_request(
     request: AthenaIngestRequest,
     *,
     repository_root: Path,
+    exact_commit_sha: str,
     acquisition_callable: Callable[..., CapturedFotMobDataMatchesResponse] = fetch_fotmob_data_matches,
+    monotonic_clock: Callable[[], float] = time.monotonic,
+    service_budget_seconds: int | float = INGEST_SERVICE_BUDGET_SECONDS,
 ) -> AthenaIngestReceipt:
+    validate_exact_commit_sha(exact_commit_sha)
+    if not callable(monotonic_clock):
+        raise AthenaIngestContractError("monotonic_clock must be callable")
+    if type(service_budget_seconds) not in (int, float) or not math.isfinite(service_budget_seconds) or service_budget_seconds <= 0:
+        raise AthenaIngestContractError("service_budget_seconds must be a positive finite number")
     if not isinstance(request, AthenaIngestRequest):
         raise AthenaIngestContractError("INVALID_REQUEST")
     if request.provider != "fotmob":
@@ -139,20 +171,49 @@ def execute_ingest_request(
     records: list[AthenaIngestSourceRecord] = []
     attempted = 0
     failure: str | None = None
+    failure_stage = "SOURCE_ACQUISITION"
+    started_at = monotonic_clock()
+    if type(started_at) not in (int, float) or not math.isfinite(started_at):
+        raise AthenaIngestContractError("monotonic_clock returned an invalid value")
+    deadline = started_at + service_budget_seconds
+
+    def over_budget() -> bool:
+        now = monotonic_clock()
+        if type(now) not in (int, float) or not math.isfinite(now):
+            raise AthenaIngestContractError("monotonic_clock returned an invalid value")
+        return now >= deadline
+
     for date in request.dates:
+        failure_stage = "SOURCE_ACQUISITION"
+        try:
+            if over_budget():
+                failure = "TIMEOUT"
+                break
+        except AthenaIngestContractError:
+            failure = "ARTIFACT_PERSISTENCE_FAILED"
+            failure_stage = "CANONICAL_UPDATE"
+            break
         attempted += 1
         try:
             response = acquisition_callable(request_date=date, timezone="UTC", ccode3="NGA")
             if not isinstance(response, CapturedFotMobDataMatchesResponse) or response.network_acquisition_performed is not True:
                 raise FotMobDataMatchesCaptureError("acquisition provenance must be true")
         except Exception:
-            failure = "PROVIDER_ACQUISITION_FAILED"
+            failure = "TIMEOUT" if over_budget() else "PROVIDER_ACQUISITION_FAILED"
             break
+        if over_budget():
+            failure = "TIMEOUT"
+            break
+        failure_stage = "SOURCE_PERSISTENCE"
         try:
             capture, _ = write_data_matches_capture_directory(
                 response, request_date=date, timezone="UTC", ccode3="NGA",
                 output_root=ALLOWED_OUTPUT_RELATIVE, repository_root=repository,
             )
+        except Exception:
+            failure = "ARTIFACT_PERSISTENCE_FAILED"
+            break
+        try:
             verify_data_matches_capture_directory(
                 capture, allowed_root=repository / ALLOWED_OUTPUT_RELATIVE,
             )
@@ -163,28 +224,61 @@ def execute_ingest_request(
             copied = _copy_capture(
                 capture, request_date=date, artifact_root=artifact_root, repository=repository,
             )
-            records.append(_record_from_capture(copied, artifact_root=artifact_root, expected_date=date))
         except Exception:
             failure = "ARTIFACT_PERSISTENCE_FAILED"
+            failure_stage = "SOURCE_PERSISTENCE"
             break
+        try:
+            records.append(_record_from_capture(copied, artifact_root=artifact_root, expected_date=date))
+        except Exception:
+            failure = "SOURCE_CAPTURE_VALIDATION_FAILED"
+            break
+        if over_budget():
+            failure = "TIMEOUT"
+            break
+    if failure is None:
+        failure_stage = "CANONICAL_UPDATE"
+        if over_budget():
+            failure = "TIMEOUT"
     committed = failure is None and len(records) == len(request.dates)
     update = AthenaCanonicalStoreUpdate(
         schema_version=1, policy_id=UPDATE_POLICY, request_sha256=request.canonical_sha256,
         provider="fotmob", source_records=tuple(records), source_record_count=len(records),
         all_requested_dates_captured=committed, commit_status=READY if committed else NOT_COMMITTED,
     )
-    receipt = AthenaIngestReceipt(
-        schema_version=1, policy_id=RECEIPT_POLICY, status="SUCCESS" if committed else "FAILED",
-        failure_code=None if committed else failure or "SOURCE_CAPTURE_VALIDATION_FAILED",
-        request_sha256=request.canonical_sha256,
-        canonical_store_update_sha256=update.canonical_sha256,
-        canonical_store_update_committed=committed, provider_request_count=attempted,
-        source_count=len(records),
-        authorities=receipt_authorities(
-            provider_requests=attempted, source_count=len(records), committed=committed,
-        ),
-    )
-    _write_exact(artifact_root / UPDATE_NAME, update.canonical_bytes)
-    _write_exact(artifact_root / RECEIPT_NAME, receipt.canonical_bytes)
-    _write_exact(artifact_root / REPLAY_NAME, canonical_json_bytes(_replay_manifest(request, update, receipt)))
+    try:
+        # Reserve the finalization boundary: if the service budget expired while
+        # assembling the delta, publish only a not-committed timeout receipt.
+        if failure is None and over_budget():
+            failure = "TIMEOUT"
+            committed = False
+            update = AthenaCanonicalStoreUpdate(
+                schema_version=1, policy_id=UPDATE_POLICY, request_sha256=request.canonical_sha256,
+                provider="fotmob", source_records=tuple(records), source_record_count=len(records),
+                all_requested_dates_captured=False, commit_status=NOT_COMMITTED,
+            )
+        receipt = _receipt(
+            exact_commit_sha=exact_commit_sha, request_sha256=request.canonical_sha256,
+            update_sha256=update.canonical_sha256, committed=committed,
+            provider_requests=attempted, source_count=len(records),
+            failure_code=None if committed else failure or "SOURCE_CAPTURE_VALIDATION_FAILED",
+            stage="COMPLETED" if committed else failure_stage,
+        )
+        _write_exact(artifact_root / UPDATE_NAME, update.canonical_bytes)
+        _write_exact(artifact_root / REPLAY_NAME, canonical_json_bytes(_replay_manifest(request, update, receipt)))
+        _write_exact(artifact_root / RECEIPT_NAME, receipt.canonical_bytes)
+    except (OSError, AthenaIngestServiceError):
+        # Fail closed when a top-level artifact write is rejected. Never replace
+        # an existing receipt, since that may be more informative evidence.
+        failure_receipt = _receipt(
+            exact_commit_sha=exact_commit_sha, request_sha256=request.canonical_sha256,
+            update_sha256=update.canonical_sha256, committed=False,
+            provider_requests=attempted, source_count=len(records),
+            failure_code="ARTIFACT_PERSISTENCE_FAILED", stage="CANONICAL_UPDATE",
+        )
+        try:
+            _write_exact(artifact_root / RECEIPT_NAME, failure_receipt.canonical_bytes)
+        except (OSError, AthenaIngestServiceError):
+            pass
+        return failure_receipt
     return receipt

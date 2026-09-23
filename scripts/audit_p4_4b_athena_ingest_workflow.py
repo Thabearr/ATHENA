@@ -114,6 +114,13 @@ def build_evidence() -> tuple[dict, dict]:
         "offline_replay_supported": True,
         "offline_replay_requires_network": False,
         "offline_replay_exit_gate_satisfied": True,
+        "runtime_receipt_exact_commit_sha_required": True,
+        "fail_closed_partial_receipt_required": True,
+        "invalid_request_partial_receipt_supported": True,
+        "timeout_partial_receipt_supported": True,
+        "ingest_service_budget_seconds": 900,
+        "workflow_job_timeout_minutes": 20,
+        "receipt_finalization_headroom_seconds": 300,
         "production_database_path_added": False,
         "canonical_store_update_is_immutable_delta": True,
         "routing_authority": False, "portfolio_authority": False,
@@ -153,7 +160,24 @@ def build_evidence() -> tuple[dict, dict]:
 
 def write_evidence() -> None:
     if SNAPSHOT.exists() or RECEIPT.exists():
-        raise AssertionError("P4.4B phase evidence already exists; write mode disabled")
+        if not (SNAPSHOT.is_file() and RECEIPT.is_file()):
+            raise AssertionError("incomplete P4.4B evidence cannot be regenerated")
+        existing_snapshot = _load(SNAPSHOT)
+        existing_receipt = _load(RECEIPT)
+        existing_ledger = _load(evolution.LEDGER_PATH)
+        base = _base_ledger()
+        if (
+            existing_snapshot.get("canonical_sha256") != evolution.canonical_sha256(existing_snapshot)
+            or existing_receipt.get("canonical_sha256") != evolution.canonical_sha256(existing_receipt)
+            or existing_snapshot != existing_ledger
+            or existing_ledger.get("transitions", [])[:2] != base.get("transitions")
+            or len(existing_ledger.get("transitions", [])) != 3
+            or existing_ledger["transitions"][2].get("transition_id") != TRANSITION_ID
+            or existing_ledger["transitions"][2].get("workflow_path") != WORKFLOW
+            or existing_ledger["transitions"][2].get("operation") != "ADD"
+            or existing_receipt.get("workflow_evolution_ledger_sha256") != existing_ledger.get("canonical_sha256")
+        ):
+            raise AssertionError("existing P4.4B evidence is not a valid current ADD checkpoint")
     ledger, receipt = build_evidence()
     SNAPSHOT.parent.mkdir(parents=True, exist_ok=True)
     SNAPSHOT.write_bytes(evolution.canonical_json_bytes(ledger))
@@ -200,6 +224,18 @@ def check() -> dict:
     ):
         if receipt.get(key) is not False:
             raise AssertionError(f"P4.4B safety flag changed: {key}")
+    for key in (
+        "runtime_receipt_exact_commit_sha_required", "fail_closed_partial_receipt_required",
+        "invalid_request_partial_receipt_supported", "timeout_partial_receipt_supported",
+    ):
+        if receipt.get(key) is not True:
+            raise AssertionError(f"P4.4B durable receipt capability missing: {key}")
+    if (
+        receipt.get("ingest_service_budget_seconds") != 900
+        or receipt.get("workflow_job_timeout_minutes") != 20
+        or receipt.get("receipt_finalization_headroom_seconds") != 300
+    ):
+        raise AssertionError("P4.4B service/finalization budget changed")
     if receipt.get("workflow_count_before") != 37 or receipt.get("workflow_count_after") != 38:
         raise AssertionError("P4.4B workflow count changed")
     return receipt

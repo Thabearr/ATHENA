@@ -43,7 +43,10 @@ jobs:
           INPUT_DATES: ${{ inputs.dates }}
           PYTHONPATH: ${{ github.workspace }}
         shell: bash
-        run: python -m scripts.resolve_athena_ingest_workflow_request
+        run: |
+          python -m scripts.resolve_athena_ingest_workflow_request \
+            --expected-git-sha "${GITHUB_SHA}" \
+            --expected-git-ref "${GITHUB_REF}"
 
       - name: Execute reviewed FotMob source ingest
         id: execute
@@ -55,6 +58,8 @@ jobs:
           set +e
           python -m scripts.execute_athena_ingest_workflow \
             --request artifacts/athena-ingest-workflow/resolved-ingest-request.json \
+            --expected-git-sha "${GITHUB_SHA}" \
+            --expected-git-ref "${GITHUB_REF}" \
             --execute-live-network
           status=$?
           echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"

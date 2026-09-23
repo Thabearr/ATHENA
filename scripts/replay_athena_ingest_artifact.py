@@ -98,6 +98,7 @@ def replay_ingest_artifact(artifact_root: Path) -> dict[str, object]:
             "network_acquisition_performed": False, "provider_request_count": 0,
             "source_count": len(reproduced), "request_sha256": request.canonical_sha256,
             "canonical_store_update_sha256": update.canonical_sha256,
+            "exact_commit_sha": receipt.exact_commit_sha,
             "original_ingest_receipt_sha256": receipt.canonical_sha256,
         }
     except (AthenaIngestContractError, FotMobDataMatchesCaptureError, OSError, ValueError) as exc:

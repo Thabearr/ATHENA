@@ -21,6 +21,20 @@ REPLAY_POLICY = "ATHENA_INGEST_REPLAY_MANIFEST_V1"
 REPLAY_RECEIPT_POLICY = "ATHENA_INGEST_OFFLINE_REPLAY_RECEIPT_V1"
 READY = "CANONICAL_SOURCE_UPDATE_READY"
 NOT_COMMITTED = "CANONICAL_SOURCE_UPDATE_NOT_COMMITTED"
+INGEST_STAGES = frozenset({
+    "REQUEST_RESOLUTION", "SOURCE_ACQUISITION", "SOURCE_PERSISTENCE",
+    "CANONICAL_UPDATE", "COMPLETED",
+})
+FAILURE_STAGE = {
+    "INVALID_REQUEST": frozenset({"REQUEST_RESOLUTION"}),
+    "UNSUPPORTED_PROVIDER": frozenset({"REQUEST_RESOLUTION"}),
+    "LINEAGE_MISMATCH": frozenset({"REQUEST_RESOLUTION"}),
+    "PROVIDER_ACQUISITION_FAILED": frozenset({"SOURCE_ACQUISITION"}),
+    "SOURCE_CAPTURE_VALIDATION_FAILED": frozenset({"SOURCE_PERSISTENCE"}),
+    "ARTIFACT_PERSISTENCE_FAILED": frozenset({"SOURCE_PERSISTENCE", "CANONICAL_UPDATE"}),
+    "REPLAY_VALIDATION_FAILED": frozenset({"CANONICAL_UPDATE"}),
+    "TIMEOUT": frozenset({"REQUEST_RESOLUTION", "SOURCE_ACQUISITION", "SOURCE_PERSISTENCE", "CANONICAL_UPDATE"}),
+}
 FORBIDDEN_AUTHORITIES = (
     "fixture_selection_authority", "fixture_intelligence_authority",
     "model_feature_authority", "probability_authority", "pricing_authority",
@@ -52,6 +66,12 @@ def _fields(value: Any, expected: set[str], label: str) -> Mapping[str, Any]:
 def _sha(value: Any, label: str) -> str:
     if type(value) is not str or re.fullmatch(r"[0-9a-f]{64}", value) is None:
         raise AthenaIngestContractError(f"{label} must be a lowercase SHA-256")
+    return value
+
+
+def validate_exact_commit_sha(value: Any) -> str:
+    if type(value) is not str or re.fullmatch(r"[0-9a-f]{40}", value, re.ASCII) is None:
+        raise AthenaIngestContractError("exact_commit_sha must be 40 lowercase hexadecimal characters")
     return value
 
 
@@ -213,10 +233,13 @@ class AthenaCanonicalStoreUpdate:
 class AthenaIngestReceipt:
     schema_version: int
     policy_id: str
+    exact_commit_sha: str
     status: str
     failure_code: str | None
-    request_sha256: str
-    canonical_store_update_sha256: str
+    stage: str
+    request_sha256: str | None
+    canonical_store_update_sha256: str | None
+    raw_request_input_sha256: str | None
     canonical_store_update_committed: bool
     provider_request_count: int
     source_count: int
@@ -225,21 +248,41 @@ class AthenaIngestReceipt:
     def __post_init__(self) -> None:
         if type(self.schema_version) is not int or self.schema_version != 1 or self.policy_id != RECEIPT_POLICY:
             raise AthenaIngestContractError("ingest receipt schema/policy mismatch")
+        validate_exact_commit_sha(self.exact_commit_sha)
         if self.status not in ("SUCCESS", "FAILED") or (self.status == "SUCCESS") != (self.failure_code is None):
             raise AthenaIngestContractError("ingest receipt status/failure mismatch")
-        if self.failure_code is not None and self.failure_code not in {
-            "INVALID_REQUEST", "UNSUPPORTED_PROVIDER", "PROVIDER_ACQUISITION_FAILED",
-            "SOURCE_CAPTURE_VALIDATION_FAILED", "ARTIFACT_PERSISTENCE_FAILED", "REPLAY_VALIDATION_FAILED",
-        }:
+        if self.failure_code is not None and self.failure_code not in FAILURE_STAGE:
             raise AthenaIngestContractError("ingest receipt failure code invalid")
-        _sha(self.request_sha256, "request_sha256")
-        _sha(self.canonical_store_update_sha256, "canonical_store_update_sha256")
+        if self.stage not in INGEST_STAGES:
+            raise AthenaIngestContractError("ingest receipt stage invalid")
+        if self.status == "SUCCESS":
+            _sha(self.request_sha256, "request_sha256")
+            _sha(self.canonical_store_update_sha256, "canonical_store_update_sha256")
+            if self.raw_request_input_sha256 is not None or self.stage != "COMPLETED":
+                raise AthenaIngestContractError("successful receipt must be completed and bind canonical request/update only")
+        else:
+            if self.failure_code is None or self.stage not in FAILURE_STAGE[self.failure_code]:
+                raise AthenaIngestContractError("ingest receipt failure stage mismatch")
+            if self.request_sha256 is None:
+                if self.failure_code not in {"INVALID_REQUEST", "LINEAGE_MISMATCH"}:
+                    raise AthenaIngestContractError("failure before request resolution is not permitted for this code")
+                if self.canonical_store_update_sha256 is not None:
+                    raise AthenaIngestContractError("unresolved request cannot bind a canonical update")
+                _sha(self.raw_request_input_sha256, "raw_request_input_sha256")
+            else:
+                _sha(self.request_sha256, "request_sha256")
+                if self.raw_request_input_sha256 is not None:
+                    raise AthenaIngestContractError("resolved request receipt must not retain raw request input")
+                if self.canonical_store_update_sha256 is not None:
+                    _sha(self.canonical_store_update_sha256, "canonical_store_update_sha256")
         if type(self.canonical_store_update_committed) is not bool or self.canonical_store_update_committed != (self.status == "SUCCESS"):
             raise AthenaIngestContractError("ingest receipt commit status mismatch")
         if type(self.provider_request_count) is not int or not 0 <= self.provider_request_count <= 7:
             raise AthenaIngestContractError("ingest receipt provider count invalid")
         if type(self.source_count) is not int or not 0 <= self.source_count <= self.provider_request_count:
             raise AthenaIngestContractError("ingest receipt source count invalid")
+        if self.status == "SUCCESS" and self.source_count != self.provider_request_count:
+            raise AthenaIngestContractError("successful receipt request/source counts differ")
         expected = {"provider_acquisition": self.provider_request_count > 0,
                     "raw_source_capture": self.source_count > 0,
                     "canonical_source_update": self.canonical_store_update_committed}
@@ -269,6 +312,28 @@ def receipt_authorities(*, provider_requests: int, source_count: int, committed:
               "canonical_source_update": committed}
     result.update({key: False for key in FORBIDDEN_AUTHORITIES})
     return result
+
+
+def make_failure_receipt(
+    *, exact_commit_sha: str, failure_code: str, stage: str,
+    request_sha256: str | None = None,
+    canonical_store_update_sha256: str | None = None,
+    raw_request_input_sha256: str | None = None,
+    provider_request_count: int = 0, source_count: int = 0,
+) -> AthenaIngestReceipt:
+    validate_exact_commit_sha(exact_commit_sha)
+    return AthenaIngestReceipt(
+        schema_version=1, policy_id=RECEIPT_POLICY, exact_commit_sha=exact_commit_sha,
+        status="FAILED", failure_code=failure_code, stage=stage,
+        request_sha256=request_sha256,
+        canonical_store_update_sha256=canonical_store_update_sha256,
+        raw_request_input_sha256=raw_request_input_sha256,
+        canonical_store_update_committed=False,
+        provider_request_count=provider_request_count, source_count=source_count,
+        authorities=receipt_authorities(
+            provider_requests=provider_request_count, source_count=source_count, committed=False,
+        ),
+    )
 
 
 def strict_json_loads(raw: bytes) -> Any:

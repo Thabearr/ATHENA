@@ -17,7 +17,16 @@ It contains one resolved request, exact raw `response.json` and reviewed capture
 `manifest.json` bytes under `sources/fotmob/<date>/<capture-id>/`, an ingest receipt,
 an immutable `canonical-store-update.json` source delta, and a replay manifest.
 The delta is not a second production database. A partial failure preserves completed
-source captures but marks the batch `CANONICAL_SOURCE_UPDATE_NOT_COMMITTED`.
+source captures but marks the batch `CANONICAL_SOURCE_UPDATE_NOT_COMMITTED`. Every
+final or partial runtime receipt binds the exact 40-character checked-out commit and
+the last truthful processing stage. Invalid dispatch input produces a failure receipt
+containing only the SHA-256 of the exact input bytes, not the raw input itself.
+
+The service has a 900-second monotonic execution budget inside the 20-minute job
+timeout. The remaining five minutes are configured separation for artifact
+finalization, not a guarantee of upload duration. A budget timeout stops any later
+date acquisition, preserves completed source captures, and emits a `TIMEOUT` receipt
+with the canonical update marked not committed.
 
 `python -m scripts.replay_athena_ingest_artifact --artifact-root <directory>` verifies
 the artifact with zero network requests. It rechecks every raw and manifest digest,
@@ -25,6 +34,8 @@ reconstructs each source record, and requires the reproduced canonical update ha
 to equal the original. The offline integration test builds a two-date artifact from
 deterministic fake acquisition, removes acquisition capability, and replays that one
 artifact. This satisfies the ingest replay gate without a live provider request.
+Replay reports the original commit SHA from the receipt but does not consult Git or
+require that commit to be the current checkout.
 
 The ingest lane does not parse fixtures or grant model, pricing, routing, portfolio,
 share-code, login, wallet, stake, or wager authority. Existing ingest-like and

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,8 @@ from services.athena_ingest_service import ARTIFACT_RELATIVE, execute_ingest_req
 from scripts.replay_athena_ingest_artifact import AthenaIngestReplayError, replay_ingest_artifact
 from tests.test_athena_ingest_service import fake_response
 
+COMMIT_SHA = "b" * 40
+
 
 def _artifact(tmp_path: Path) -> tuple[Path, list[str]]:
     calls: list[str] = []
@@ -17,7 +20,8 @@ def _artifact(tmp_path: Path) -> tuple[Path, list[str]]:
         return fake_response(request_date)
     receipt = execute_ingest_request(
         AthenaIngestRequest.for_dates(("20260901", "20260902")),
-        repository_root=tmp_path, acquisition_callable=acquire,
+        repository_root=tmp_path, exact_commit_sha=COMMIT_SHA,
+        acquisition_callable=acquire,
     )
     assert receipt.status == "SUCCESS"
     return tmp_path / ARTIFACT_RELATIVE, calls
@@ -34,7 +38,13 @@ def test_two_date_artifact_replays_without_acquisition(tmp_path: Path, monkeypat
     assert result["source_count"] == 2
     assert result["provider_request_count"] == 0
     assert result["network_acquisition_performed"] is False
+    assert result["exact_commit_sha"] == COMMIT_SHA
+    assert result["original_ingest_receipt_sha256"] == receipt_sha(root)
     assert calls == ["20260901", "20260902"]
+
+
+def receipt_sha(root: Path) -> str:
+    return hashlib.sha256((root / "ingest-receipt.json").read_bytes()).hexdigest()
 
 
 @pytest.mark.parametrize("filename", [
@@ -46,6 +56,16 @@ def test_top_level_mutation_fails(tmp_path: Path, filename: str) -> None:
     target = root / filename
     target.write_bytes(target.read_bytes()[:-2] + b"x}\n")
     with pytest.raises((AthenaIngestReplayError, ValueError)):
+        replay_ingest_artifact(root)
+
+
+def test_exact_commit_receipt_identity_mutation_breaks_replay_binding(tmp_path: Path) -> None:
+    root, _ = _artifact(tmp_path)
+    receipt_path = root / "ingest-receipt.json"
+    receipt = strict_json_loads(receipt_path.read_bytes())
+    receipt["exact_commit_sha"] = "c" * 40
+    receipt_path.write_bytes(canonical_json_bytes(receipt))
+    with pytest.raises(AthenaIngestReplayError, match="manifest identities"):
         replay_ingest_artifact(root)
 
 
@@ -95,3 +115,19 @@ def test_valid_json_identity_and_traversal_mutations_fail(tmp_path: Path) -> Non
     update_path.write_bytes(canonical_json_bytes(update))
     with pytest.raises(AthenaIngestReplayError):
         replay_ingest_artifact(root)
+
+
+def test_failed_partial_ingest_cannot_pass_complete_offline_replay(tmp_path: Path) -> None:
+    calls: list[str] = []
+    def acquire(*, request_date: str, timezone: str, ccode3: str):
+        calls.append(request_date)
+        if len(calls) == 2:
+            raise OSError("offline injected provider failure")
+        return fake_response(request_date)
+    execute_ingest_request(
+        AthenaIngestRequest.for_dates(("20260901", "20260902")),
+        repository_root=tmp_path, exact_commit_sha=COMMIT_SHA,
+        acquisition_callable=acquire,
+    )
+    with pytest.raises(AthenaIngestReplayError, match="only a complete"):
+        replay_ingest_artifact(tmp_path / ARTIFACT_RELATIVE)

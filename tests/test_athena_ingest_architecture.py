@@ -59,4 +59,11 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
     assert receipt["production_database_path_added"] is False
     assert receipt["canonical_store_update_is_immutable_delta"] is True
     assert receipt["offline_replay_exit_gate_satisfied"] is True
+    assert receipt["runtime_receipt_exact_commit_sha_required"] is True
+    assert receipt["fail_closed_partial_receipt_required"] is True
+    assert receipt["invalid_request_partial_receipt_supported"] is True
+    assert receipt["timeout_partial_receipt_supported"] is True
+    assert receipt["ingest_service_budget_seconds"] == 900
+    assert receipt["workflow_job_timeout_minutes"] == 20
+    assert receipt["receipt_finalization_headroom_seconds"] == 300
     assert receipt["p4_4_overall_complete"] is False
