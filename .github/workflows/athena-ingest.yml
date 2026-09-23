@@ -1,0 +1,75 @@
+name: ATHENA Canonical Ingest
+
+on:
+  workflow_dispatch:
+    inputs:
+      dates:
+        description: Strictly increasing comma-separated YYYYMMDD dates (1 through 7)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: athena-ingest-fotmob
+  cancel-in-progress: false
+
+jobs:
+  canonical-ingest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout exact requested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Require exact main lineage
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = "${GITHUB_SHA}"
+          test "${GITHUB_REF}" = "refs/heads/main"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Resolve request once
+        id: resolve
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          INPUT_DATES: ${{ inputs.dates }}
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: python -m scripts.resolve_athena_ingest_workflow_request
+
+      - name: Execute reviewed FotMob source ingest
+        id: execute
+        if: success()
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        shell: bash
+        run: |
+          set +e
+          python -m scripts.execute_athena_ingest_workflow \
+            --request artifacts/athena-ingest-workflow/resolved-ingest-request.json \
+            --execute-live-network
+          status=$?
+          echo "exit_code=${status}" >> "${GITHUB_OUTPUT}"
+          exit 0
+
+      - name: Preserve exact ingest evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: athena-ingest-${{ github.run_id }}
+          path: artifacts/athena-ingest-workflow
+          retention-days: 30
+          if-no-files-found: error
+
+      - name: Fail after preserving failed ingest evidence
+        if: always() && steps.execute.outputs.exit_code != '0'
+        shell: bash
+        run: exit 1

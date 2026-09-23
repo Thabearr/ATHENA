@@ -161,3 +161,12 @@ P4.4A1 changes no real workflow YAML and adds no transition. It authorizes no
 Fresh-Holdout repair by itself; the release-visibility race hotfix remains a
 separate next step. P4.4B is not started, and P4.4 and Architecture Checkpoint E
 remain incomplete.
+
+## P4.4B ingest boundary
+
+P4.4B adds a separate, manual-only `athena-ingest.yml` workflow for FotMob source
+capture and offline replay. It adds one reviewed evolution transition and raises the
+live workflow count to 38. `athena-run.yml`, Current Shadow, and protected Fresh
+Holdout retain their existing authority and workflow bytes. Ingest has no routing,
+share-code, or wagering authority. Scheduled ingest and legacy capability migration
+remain for P4.4C review; P4.4 and Architecture Checkpoint E remain incomplete.
