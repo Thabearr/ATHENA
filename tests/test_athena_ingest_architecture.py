@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import ast
+import json
 from pathlib import Path
 
 from domain.ingest_contracts import FORBIDDEN_AUTHORITIES
+from scripts import audit_p4_4b_athena_ingest_workflow as p44b
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 INGEST_FILES = (
@@ -36,3 +39,24 @@ def test_ingest_authority_contract_denies_downstream_actions() -> None:
         "pricing_authority", "market_routing_authority", "portfolio_authority",
         "share_code_authority", "login", "cookies", "wallet", "staking", "wager",
     }
+
+
+def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
+    receipt = p44b.check()
+    ledger = evolution.validate_current_state()
+    snapshot = json.loads(p44b.SNAPSHOT.read_text(encoding="utf-8"))
+    assert snapshot == ledger
+    assert receipt["workflow_evolution_ledger_sha256"] == snapshot["canonical_sha256"]
+    assert receipt["workflow_git_blob_sha1"] == ledger["transitions"][2]["after"]["git_blob_sha1"]
+    assert receipt["workflow_source_sha256"] == ledger["transitions"][2]["after"]["source_sha256"]
+    assert ledger["current_live_workflow_count"] == 38
+    assert len(ledger["transitions"]) == 3
+    assert [item["transition_id"] for item in ledger["transitions"][:2]] == list(p44b.OLD_TRANSITION_IDS)
+    assert ledger["transitions"][2]["operation"] == "ADD"
+    assert ledger["transitions"][2]["before"] is None
+    assert ledger["transitions"][2]["canonical_family"] == "ATHENA_INGEST"
+    assert receipt["scheduled_acquisition_enabled"] is False
+    assert receipt["production_database_path_added"] is False
+    assert receipt["canonical_store_update_is_immutable_delta"] is True
+    assert receipt["offline_replay_exit_gate_satisfied"] is True
+    assert receipt["p4_4_overall_complete"] is False

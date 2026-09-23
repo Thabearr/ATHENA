@@ -38,8 +38,8 @@ def test_p44a_receipt_and_zero_transition_checkpoint() -> None:
     assert snapshot["current_live_workflow_count"] == 37
     assert snapshot_bytes != current_bytes
     assert receipt["workflow_evolution_transition_count"] == 0
-    assert len(ledger["transitions"]) == 2
-    assert ledger["current_workflow_tree_sha1"] == "a40328bdc4d73de7c2bc152b8fb810dcbb439f8c"
+    assert len(ledger["transitions"]) == 3
+    assert ledger["current_workflow_tree_sha1"] == "a5a1d385de1ccfd20583e663abbbc7604223d15e"
     assert receipt["live_workflow_count_before"] == receipt["live_workflow_count_after"] == 37
     assert receipt["workflow_tree_before_sha1"] == receipt["workflow_tree_after_sha1"] == evolution.BASE_WORKFLOW_TREE_SHA1
     assert receipt["p4_4a_exit_gate_satisfied"] is True
@@ -47,7 +47,7 @@ def test_p44a_receipt_and_zero_transition_checkpoint() -> None:
     assert receipt["architecture_checkpoint_e_fully_claimed"] is False
     assert receipt["source_review_counter_while_unmerged"] == "0/5"
     assert receipt["source_review_counter_if_merged"] == "1/5"
-    assert not Path(".github/workflows/athena-ingest.yml").exists()
+    assert Path(".github/workflows/athena-ingest.yml").exists()
 
 
 def _synthetic_p43_extension():
@@ -100,8 +100,8 @@ def test_immutable_history_and_current_retirement_state() -> None:
 
 def test_workflow_yaml_tree_and_protected_paths_are_unchanged() -> None:
     ledger = evolution.validate_current_state()
-    assert ledger["current_workflow_tree_sha1"] == "a40328bdc4d73de7c2bc152b8fb810dcbb439f8c"
-    assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
+    assert ledger["current_workflow_tree_sha1"] == "a5a1d385de1ccfd20583e663abbbc7604223d15e"
+    assert len(list(Path(".github/workflows").glob("*.yml"))) == 38
     assert not evolution._git("diff", "--", ".github/workflows")
     baseline = evolution.baseline_state(retirement.validate_retirement_history())
     latest = {

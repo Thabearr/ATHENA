@@ -10,7 +10,10 @@ from domain.ingest_contracts import (
     AthenaCanonicalStoreUpdate, AthenaIngestRequest, NOT_COMMITTED, READY,
     strict_json_loads,
 )
-from services.athena_ingest_service import ARTIFACT_RELATIVE, execute_ingest_request
+from services.athena_ingest_service import (
+    ARTIFACT_RELATIVE, REQUEST_NAME, AthenaIngestServiceError,
+    _safe_directory, execute_ingest_request,
+)
 
 
 OBSERVED = datetime(2026, 9, 23, 10, 7, tzinfo=timezone.utc)
@@ -87,3 +90,21 @@ def test_unreviewed_acquisition_provenance_fails_closed(tmp_path: Path) -> None:
     assert receipt.status == "FAILED"
     assert receipt.source_count == 0
     assert receipt.authorities["canonical_source_update"] is False
+
+
+def test_artifact_path_traversal_and_contradictory_request_fail_before_acquisition(tmp_path: Path) -> None:
+    with pytest.raises(AthenaIngestServiceError, match="traversal"):
+        _safe_directory(Path("artifacts/../outside"), tmp_path)
+    root = tmp_path / ARTIFACT_RELATIVE
+    root.mkdir(parents=True)
+    (root / REQUEST_NAME).write_bytes(b"contradictory")
+    calls: list[str] = []
+    def acquire(*, request_date: str, timezone: str, ccode3: str):
+        calls.append(request_date)
+        return fake_response(request_date)
+    with pytest.raises(AthenaIngestServiceError, match="overwrite"):
+        execute_ingest_request(
+            AthenaIngestRequest.for_dates(("20260901",)), repository_root=tmp_path,
+            acquisition_callable=acquire,
+        )
+    assert calls == []

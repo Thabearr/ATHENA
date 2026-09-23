@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from domain.ingest_contracts import AthenaIngestRequest, strict_json_loads
+from domain.ingest_contracts import AthenaIngestRequest, canonical_json_bytes, strict_json_loads
 from services.athena_ingest_service import ARTIFACT_RELATIVE, execute_ingest_request
 from scripts.replay_athena_ingest_artifact import AthenaIngestReplayError, replay_ingest_artifact
 from tests.test_athena_ingest_service import fake_response
@@ -70,5 +70,28 @@ def test_raw_manifest_and_symlink_mutations_fail(tmp_path: Path) -> None:
         raw.symlink_to(root / "resolved-ingest-request.json")
     except (OSError, NotImplementedError):
         pytest.skip("symlink creation unavailable")
+    with pytest.raises(AthenaIngestReplayError):
+        replay_ingest_artifact(root)
+
+
+def test_valid_json_identity_and_traversal_mutations_fail(tmp_path: Path) -> None:
+    root, _ = _artifact(tmp_path)
+    replay_path = root / "replay-manifest.json"
+    original = replay_path.read_bytes()
+    manifest = strict_json_loads(original)
+    manifest["sources"][0]["raw_sha256"] = "0" * 64
+    replay_path.write_bytes(canonical_json_bytes(manifest))
+    with pytest.raises(AthenaIngestReplayError):
+        replay_ingest_artifact(root)
+    manifest = strict_json_loads(original)
+    manifest["sources"][0]["raw_relative_path"] = "../outside/response.json"
+    replay_path.write_bytes(canonical_json_bytes(manifest))
+    with pytest.raises(AthenaIngestReplayError):
+        replay_ingest_artifact(root)
+    replay_path.write_bytes(original)
+    update_path = root / "canonical-store-update.json"
+    update = strict_json_loads(update_path.read_bytes())
+    update["source_records"][0]["raw_size"] += 1
+    update_path.write_bytes(canonical_json_bytes(update))
     with pytest.raises(AthenaIngestReplayError):
         replay_ingest_artifact(root)
