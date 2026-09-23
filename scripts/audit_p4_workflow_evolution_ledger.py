@@ -26,6 +26,23 @@ P43D_RECEIPT_PATH = Path("artifacts/architecture/p4_3d_retirement_audit_extensib
 P43_RETIREMENT_CHECKPOINT_PATH = retirement.P43C_LEDGER_SNAPSHOT_PATH
 WORKFLOW_DIR = Path(".github/workflows")
 FAMILIES = {"ATHENA_RUN", "ATHENA_INGEST", "ATHENA_RETRAIN", "ATHENA_BACKTEST", "TESTS", "ATHENA_PR_BRIDGE"}
+MAINTENANCE_CONTRACT_POLICY = "ATHENA_P4_BASELINE_WORKFLOW_MAINTENANCE_REVISE_V1"
+MAINTENANCE_CONTRACT = {
+    "policy_id": MAINTENANCE_CONTRACT_POLICY,
+    "baseline_origin": "P4_3A_SURVIVOR",
+    "path_presence_changed": False,
+    "retirement_authority_granted": False,
+    "trigger_surface_changed": False,
+    "permissions_changed": False,
+    "concurrency_changed": False,
+    "provider_acquisition_authority_changed": False,
+    "model_authority_changed": False,
+    "pricing_authority_changed": False,
+    "selection_authority_changed": False,
+    "betting_authority_changed": False,
+}
+MAINTENANCE_CONTRACT_FIELDS = frozenset(MAINTENANCE_CONTRACT)
+REVISED_WORKFLOW_FIXTURE_ROOT = "tests/fixtures/architecture/revised_workflows/"
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
 IDENTITY_KEYS = {"git_blob_sha1", "source_sha256"}
 TRANSITION_KEYS = {
@@ -124,6 +141,51 @@ def _checkpoint_path(value: Any) -> str:
     ):
         raise WorkflowEvolutionError("transition checkpoint snapshot path is outside the evolution snapshot directory")
     return value
+
+
+def _historical_before_fixture_path(value: Any) -> str:
+    if not isinstance(value, str) or "\\" in value:
+        raise WorkflowEvolutionError("maintenance historical-before fixture path must be POSIX")
+    parsed = PurePosixPath(value)
+    if (
+        not value.startswith(REVISED_WORKFLOW_FIXTURE_ROOT)
+        or parsed.as_posix() != value
+        or ".." in parsed.parts
+        or len(parsed.parts) < 5
+        or not value.endswith(".yml")
+    ):
+        raise WorkflowEvolutionError("maintenance historical-before fixture path is invalid")
+    return value
+
+
+def _validate_maintenance_contract(contract: Any) -> None:
+    if not isinstance(contract, dict) or set(contract) != MAINTENANCE_CONTRACT_FIELDS:
+        raise WorkflowEvolutionError("MAINTENANCE_REVISE contract schema must match the exact v1 fields")
+    if contract != MAINTENANCE_CONTRACT:
+        raise WorkflowEvolutionError("MAINTENANCE_REVISE contract grants or misstates maintenance authority")
+
+
+def _maintenance_fixture_identity(
+    fixture: Any,
+    before: dict[str, str],
+    *,
+    fixture_bytes: Mapping[str, bytes] | None,
+) -> tuple[str, bytes]:
+    if not isinstance(fixture, dict) or set(fixture) != {"path", *IDENTITY_KEYS}:
+        raise WorkflowEvolutionError("MAINTENANCE_REVISE requires an exact historical-before fixture identity")
+    fixture_path = _historical_before_fixture_path(fixture.get("path"))
+    fixture_identity = _identity(
+        {key: fixture.get(key) for key in IDENTITY_KEYS},
+        label=f"MAINTENANCE_REVISE fixture {fixture_path}",
+    )
+    if fixture_identity != before:
+        raise WorkflowEvolutionError(f"maintenance historical-before fixture differs from before identity: {fixture_path}")
+    raw = fixture_bytes.get(fixture_path) if fixture_bytes is not None else None
+    if not isinstance(raw, bytes):
+        raise WorkflowEvolutionError(f"maintenance historical-before fixture bytes are unavailable: {fixture_path}")
+    if source_identity(raw) != before:
+        raise WorkflowEvolutionError(f"maintenance historical-before fixture bytes drifted: {fixture_path}")
+    return fixture_path, raw
 
 
 def baseline_state(retirement_ledger: dict[str, Any]) -> dict[str, dict[str, str]]:
@@ -306,6 +368,8 @@ def apply_transitions(
     *,
     frozen_baseline_paths: Iterable[str],
     evidence_receipts: Mapping[str, dict[str, Any]],
+    baseline_families: Mapping[str, str] | None = None,
+    historical_before_fixture_bytes: Mapping[str, bytes] | None = None,
 ) -> dict[str, dict[str, str]]:
     """Pure ordered evaluator; callers separately check the derived Git tree."""
     if not isinstance(transitions, list):
@@ -314,12 +378,18 @@ def apply_transitions(
     frozen = set(frozen_baseline_paths)
     introduced: set[str] = set()
     identifiers: set[str] = set()
+    historical_fixture_paths: set[str] = set()
     for transition in transitions:
         if not isinstance(transition, dict):
             raise WorkflowEvolutionError("workflow transition must be an object")
         operation = transition.get("operation")
-        required = TRANSITION_KEYS | ({"historical_fixture"} if operation == "RETIRE" else set())
-        if set(transition) != required or operation not in {"ADD", "REVISE", "RETIRE"}:
+        operation_fields = (
+            {"historical_fixture"} if operation == "RETIRE"
+            else {"maintenance_contract", "historical_before_fixture"} if operation == "MAINTENANCE_REVISE"
+            else set()
+        )
+        required = TRANSITION_KEYS | operation_fields
+        if set(transition) != required or operation not in {"ADD", "REVISE", "RETIRE", "MAINTENANCE_REVISE"}:
             raise WorkflowEvolutionError("workflow transition schema/operation is not reviewed")
         path = _workflow_path(transition["workflow_path"])
         identifier = transition["transition_id"]
@@ -329,7 +399,13 @@ def apply_transitions(
         phase = transition["phase_id"]
         if not isinstance(phase, str) or not re.fullmatch(r"P[0-9]+(?:\.[0-9]+)?[A-Z0-9_.-]*", phase):
             raise WorkflowEvolutionError(f"workflow transition phase is invalid: {path}")
-        if transition["canonical_family"] not in FAMILIES:
+        if operation == "MAINTENANCE_REVISE":
+            if baseline_families is None or path not in baseline_families:
+                raise WorkflowEvolutionError(f"MAINTENANCE_REVISE target is not a P4.3A baseline path: {path}")
+            if transition["canonical_family"] != baseline_families[path]:
+                raise WorkflowEvolutionError(f"MAINTENANCE_REVISE canonical family differs from P4.3A: {path}")
+            _validate_maintenance_contract(transition["maintenance_contract"])
+        elif transition["canonical_family"] not in FAMILIES:
             raise WorkflowEvolutionError(f"workflow transition canonical family is invalid: {path}")
         _checkpoint_path(transition["checkpoint_snapshot_path"])
         evidence_path = _evidence_path(transition["evidence_receipt_path"])
@@ -361,7 +437,7 @@ def apply_transitions(
             if changed == before:
                 raise WorkflowEvolutionError(f"REVISE after identity did not change: {path}")
             state[path] = changed
-        else:
+        elif operation == "RETIRE":
             if path not in introduced or path not in state or path in frozen:
                 raise WorkflowEvolutionError(f"RETIRE requires a live ledger-added path: {path}")
             if _identity(before, label=f"RETIRE before {path}") != state[path] or after is not None:
@@ -375,7 +451,105 @@ def apply_transitions(
             if _identity({key: fixture[key] for key in IDENTITY_KEYS}, label=f"RETIRE fixture {path}") != before:
                 raise WorkflowEvolutionError(f"RETIRE fixture identity differs from before: {path}")
             del state[path]
+        else:
+            if path not in frozen or path not in state or path in introduced:
+                raise WorkflowEvolutionError(f"MAINTENANCE_REVISE requires a live retained P4.3A survivor: {path}")
+            before_identity = _identity(before, label=f"MAINTENANCE_REVISE before {path}")
+            if before_identity != state[path]:
+                raise WorkflowEvolutionError(f"MAINTENANCE_REVISE before identity does not chain: {path}")
+            after_identity = _identity(after, label=f"MAINTENANCE_REVISE after {path}")
+            if after_identity == before_identity:
+                raise WorkflowEvolutionError(f"MAINTENANCE_REVISE after identity did not change: {path}")
+            fixture_path, _raw = _maintenance_fixture_identity(
+                transition["historical_before_fixture"],
+                before_identity,
+                fixture_bytes=historical_before_fixture_bytes,
+            )
+            if fixture_path in historical_fixture_paths:
+                raise WorkflowEvolutionError(f"maintenance revisions require a distinct immutable fixture: {fixture_path}")
+            historical_fixture_paths.add(fixture_path)
+            state[path] = after_identity
     return state
+
+
+def _load_maintenance_before_fixtures(
+    transitions: list[dict[str, Any]],
+    *,
+    require_source_controlled: bool,
+) -> dict[str, bytes]:
+    fixtures: dict[str, bytes] = {}
+    for transition in transitions:
+        if transition.get("operation") != "MAINTENANCE_REVISE":
+            continue
+        fixture = transition.get("historical_before_fixture")
+        if not isinstance(fixture, dict):
+            raise WorkflowEvolutionError("MAINTENANCE_REVISE historical-before fixture is required")
+        path = _historical_before_fixture_path(fixture.get("path"))
+        try:
+            raw = Path(path).read_bytes()
+        except OSError as exc:
+            raise WorkflowEvolutionError(f"maintenance historical-before fixture is missing: {path}") from exc
+        before = _identity(transition.get("before"), label=f"MAINTENANCE_REVISE before {transition.get('workflow_path')}")
+        if source_identity(raw) != before:
+            raise WorkflowEvolutionError(f"maintenance historical-before fixture source identity mismatch: {path}")
+        if require_source_controlled:
+            try:
+                head_blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
+            except WorkflowEvolutionError as exc:
+                raise WorkflowEvolutionError(f"maintenance historical-before fixture is not source-controlled: {path}") from exc
+            if head_blob != before["git_blob_sha1"]:
+                raise WorkflowEvolutionError(f"maintenance historical-before fixture Git blob mismatch: {path}")
+        if path in fixtures:
+            raise WorkflowEvolutionError(f"maintenance revisions require a distinct immutable fixture: {path}")
+        fixtures[path] = raw
+    return fixtures
+
+
+def resolve_p43a_historical_workflow_source(
+    path: str,
+    *,
+    retirement_ledger: dict[str, Any] | None = None,
+    evolution_ledger: dict[str, Any] | None = None,
+    historical_fixture_bytes: Mapping[str, bytes] | None = None,
+) -> bytes:
+    """Resolve original P4.3A bytes independently from a reviewed live revision."""
+    matrix, _ = retirement.load_baseline()
+    row = next((item for item in matrix["workflow_rows"] if item.get("workflow_path") == path), None)
+    if row is None:
+        raise WorkflowEvolutionError(f"workflow path is absent from the frozen P4.3A matrix: {path}")
+    history = retirement_ledger if retirement_ledger is not None else retirement.validate_retirement_history()
+    if path in set(history.get("retired_workflow_paths", [])):
+        return retirement.resolve_reviewed_workflow_source(path, ledger=history)
+    if evolution_ledger is None:
+        try:
+            evolution_ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise WorkflowEvolutionError("workflow evolution ledger is unreadable") from exc
+    revisions = [
+        item for item in evolution_ledger.get("transitions", [])
+        if item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
+    ]
+    if not revisions:
+        return retirement.resolve_reviewed_workflow_source(path, ledger=history)
+    first = revisions[0]
+    expected = {key: row[key] for key in IDENTITY_KEYS}
+    if first.get("before") != expected:
+        raise WorkflowEvolutionError(f"first maintenance revision does not begin at P4.3A identity: {path}")
+    fixture = first.get("historical_before_fixture")
+    if not isinstance(fixture, dict):
+        raise WorkflowEvolutionError(f"first maintenance revision lacks P4.3A historical bytes: {path}")
+    fixture_path = _historical_before_fixture_path(fixture.get("path"))
+    if {key: fixture.get(key) for key in IDENTITY_KEYS} != expected:
+        raise WorkflowEvolutionError(f"first maintenance fixture identity differs from P4.3A: {path}")
+    if historical_fixture_bytes is not None:
+        raw = historical_fixture_bytes.get(fixture_path)
+        if not isinstance(raw, bytes):
+            raise WorkflowEvolutionError(f"P4.3A historical fixture bytes are unavailable: {fixture_path}")
+    else:
+        raw = _load_maintenance_before_fixtures([first], require_source_controlled=True)[fixture_path]
+    if source_identity(raw) != expected:
+        raise WorkflowEvolutionError(f"P4.3A historical fixture bytes differ from frozen matrix: {fixture_path}")
+    return raw
 
 
 def validate_derived_tree(expected: Mapping[str, dict[str, str]], observed: Mapping[str, dict[str, str]]) -> None:
@@ -475,10 +649,20 @@ def validate_current_state(
         transitions, ledger, current_retirement=history,
         current_retirement_snapshot=p43_snapshot,
     )
+    historical_before_fixtures = _load_maintenance_before_fixtures(
+        transitions,
+        require_source_controlled=True,
+    )
+    baseline_families = {
+        row["workflow_path"]: row["successor_family"]
+        for row in matrix["workflow_rows"]
+    }
     derived = apply_transitions(
         baseline, transitions,
         frozen_baseline_paths=(row["workflow_path"] for row in matrix["workflow_rows"]),
         evidence_receipts=receipts,
+        baseline_families=baseline_families,
+        historical_before_fixture_bytes=historical_before_fixtures,
     )
     if ledger.get("current_live_workflow_count") != len(derived):
         raise WorkflowEvolutionError("workflow evolution current count does not match transitions")
@@ -510,10 +694,10 @@ def validate_current_state(
         raise WorkflowEvolutionError("workflow tree SHA differs from the evolution ledger")
     observed: dict[str, dict[str, str]] = {}
     for path in real_paths:
-        if path in baseline:
-            raw = retirement.resolve_reviewed_workflow_source(path, ledger=history)
-        else:
+        try:
             raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
+        except OSError as exc:
+            raise WorkflowEvolutionError(f"live workflow is unreadable: {path}") from exc
         identity = source_identity(raw)
         head_blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
         if identity["git_blob_sha1"] != head_blob:

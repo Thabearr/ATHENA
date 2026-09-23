@@ -127,6 +127,30 @@ claimed; P4.4 has not started. If P4.3D merges, the source-review counter reache
 5/5 and the mandatory architecture/source reread must happen before further
 remediation.
 
+## P4.4A1 retained-workflow maintenance authority
+
+P4.3A remains immutable historical evidence, and the P4.3 retirement ledger remains
+the authority for removing its baseline paths. Ordinary evolution REVISE and
+RETIRE remain limited to paths introduced by a reviewed ADD. P4.4A1 adds only
+MAINTENANCE_REVISE: a path-preserving, zero-count-delta revision of a live,
+non-retired P4.3A survivor. It must retain that row's original successor-family
+classification and cannot grant trigger, permission, concurrency, provider,
+model, pricing, selection, betting, or retirement authority.
+
+Every maintenance revision binds the exact identity immediately before the change,
+an exact source-controlled historical-before fixture, a fixed no-authority-change
+contract, and its reviewed transition receipt/checkpoint. Each revision has its own
+immutable fixture; chained revisions must use the immediately prior reviewed
+identity. P4.3A historical bytes are independently resolved from the first
+maintenance fixture, while current workflow bytes are checked against the
+transition-derived identity. This also works when the original P4.3A commit is
+unavailable in a shallow checkout.
+
+P4.4A1 itself changes no workflow YAML and records zero real transitions. The
+Fresh-Holdout release-visibility race hotfix is a later, separately reviewed step
+and is not implemented here. P4.4B has not started; Architecture Checkpoint E and
+P4.4 remain incomplete.
+
 ## P4.4A reviewed workflow evolution
 
 The P4.3A 40-workflow census is historical evidence, not a permanent allowlist for

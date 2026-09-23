@@ -7,6 +7,8 @@ import pytest
 import yaml
 
 from scripts import audit_p4_3a_workflow_capability_census as audit
+from scripts import audit_p4_3_workflow_retirement_ledger as retirement
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts import capture_p4_3_workflow_capability_matrix as capture
 
 
@@ -190,3 +192,49 @@ def test_offline_auditor_passes_and_historical_inputs_are_unchanged(matrix: dict
     assert result["p4_2_receipt_sha256"] == audit.P42_SHA
     assert result["p4_1_receipt_sha256"] == audit.P41_SHA
     assert result["component_registry_canonical_sha256"] == audit.REGISTRY_SHA
+
+
+def test_original_p43a_source_uses_first_revision_fixture_in_shallow_checkout(
+    matrix: dict, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = ".github/workflows/athena-run.yml"
+    row = next(item for item in matrix["workflow_rows"] if item["workflow_path"] == path)
+    original = retirement.resolve_reviewed_workflow_source(path)
+    fixture_path = "tests/fixtures/architecture/revised_workflows/athena-run-p43a-before.yml"
+    transition = {
+        "operation": "MAINTENANCE_REVISE",
+        "workflow_path": path,
+        "before": {
+            "git_blob_sha1": row["git_blob_sha1"],
+            "source_sha256": row["source_sha256"],
+        },
+        "historical_before_fixture": {
+            "path": fixture_path,
+            "git_blob_sha1": row["git_blob_sha1"],
+            "source_sha256": row["source_sha256"],
+        },
+    }
+    evolution_ledger = json.loads(
+        Path("artifacts/architecture/p4_workflow_evolution_ledger_v1.json").read_text(encoding="utf-8")
+    )
+    evolution_ledger["transitions"] = [transition]
+    monkeypatch.setattr(audit, "_base_object_available", lambda: False)
+
+    resolved = evolution.resolve_p43a_historical_workflow_source(
+        path,
+        retirement_ledger=retirement.validate_retirement_history(),
+        evolution_ledger=evolution_ledger,
+        historical_fixture_bytes={fixture_path: original},
+    )
+    assert resolved == original
+    assert evolution.source_identity(resolved) == {
+        "git_blob_sha1": row["git_blob_sha1"],
+        "source_sha256": row["source_sha256"],
+    }
+    with pytest.raises(evolution.WorkflowEvolutionError, match="historical fixture bytes differ"):
+        evolution.resolve_p43a_historical_workflow_source(
+            path,
+            retirement_ledger=retirement.validate_retirement_history(),
+            evolution_ledger=evolution_ledger,
+            historical_fixture_bytes={fixture_path: original + b"one-byte-drift"},
+        )
