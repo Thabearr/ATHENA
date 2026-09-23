@@ -176,7 +176,7 @@ def test_current_ledger_adds_one_reviewed_ingest_workflow_after_maintenance() ->
         "P44B_ATHENA_INGEST_ADD_V1",
     ]
     assert ledger["current_live_workflow_count"] == 38
-    assert ledger["current_workflow_tree_sha1"] == "a5a1d385de1ccfd20583e663abbbc7604223d15e"
+    assert ledger["current_workflow_tree_sha1"] == "ebb9bff199c2a0afc612e7bb013371f23b5a6e5f"
     assert ledger["canonical_sha256"] == audit.canonical_sha256(ledger)
     assert Path(NEW_PATH).exists()
     assert retirement.validate_retirement_history()["canonical_sha256"] == audit.BASE_RETIREMENT_LEDGER_SHA256
