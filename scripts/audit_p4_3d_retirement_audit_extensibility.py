@@ -25,6 +25,7 @@ P43A_RECEIPT_SHA = "7dd102aa4da98d634d665b4a93f51eb24ece8d7b61c8856b9977ff84a745
 P43B_SHA = "cf2371c7ec2747256f23599e7a43dd2d9e46ff61dda2c478a746d8bd8a49e72a"
 P43C_SHA = "c4afd0d0052c7b14d643f7868d7eac85344042da20a9d7aa0e8bf3b59ab9bd24"
 LEDGER_SHA = "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
+BASE_MAIN_WORKFLOW_TREE_SHA1 = "6391a5a17b9925c91849a758852915d509a64703"
 SNAPSHOT_PATH = ledger_audit.P43C_LEDGER_SNAPSHOT_PATH
 RECEIPT_PATH = Path("artifacts/architecture/p4_3d_retirement_audit_extensibility_v1.json")
 LEDGER_PATH = ledger_audit.LEDGER_PATH
@@ -35,6 +36,14 @@ FROZEN_CANONICAL_FILES = {
     "artifacts/architecture/p4_3b_current_sportybet_workflow_retirement_v1.json": P43B_SHA,
     "artifacts/architecture/p4_3c_spent_v1_evidence_workflow_retirement_v1.json": P43C_SHA,
     "artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json": LEDGER_SHA,
+}
+FROZEN_GIT_BLOBS = {
+    "artifacts/architecture/p4_2_athena_run_workflow_v1.json": "6bbaa431c4a4fa42e4845f70045b75c319e27193",
+    "artifacts/architecture/p4_3_workflow_capability_matrix_v1.json": "918c27faabe07a8711117e7cd3dbbb768b49158f",
+    "artifacts/architecture/p4_3a_workflow_capability_census_v1.json": "ba417487dd9fd55aafc1011d8393fa13a43e5780",
+    "artifacts/architecture/p4_3b_current_sportybet_workflow_retirement_v1.json": "51d57acbab449826cafa4bd91987bd55066b26ef",
+    "artifacts/architecture/p4_3c_spent_v1_evidence_workflow_retirement_v1.json": "754d8211546c2c3c7ffe1398141c0b88281e5406",
+    "artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json": "a46cb2a50fd9398931da94533f7a67fb237a0f9e",
 }
 
 
@@ -70,28 +79,27 @@ def _live_paths_at(commit: str) -> list[str]:
 
 def _live_workflow_proof(ledger: dict[str, Any]) -> dict[str, str]:
     paths = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    if paths != sorted(
-        set(row["workflow_path"] for row in ledger_audit.load_baseline()[0]["workflow_rows"])
-        - set(ledger["retired_workflow_paths"])
-    ):
+    baseline_rows = ledger_audit.load_baseline()[0]["workflow_rows"]
+    baseline_paths = {row["workflow_path"] for row in baseline_rows}
+    if paths != sorted(baseline_paths - set(ledger["retired_workflow_paths"])):
         raise P43DRetirementAuditError("live workflow set is not baseline minus the reviewed ledger paths")
     if len(paths) != ledger["current_live_workflow_count"]:
         raise P43DRetirementAuditError("live workflow count differs from the cumulative ledger")
-    base_paths = _live_paths_at(BASE_MAIN_SHA)
     head_paths = _live_paths_at("HEAD")
-    if base_paths != head_paths or paths != head_paths:
-        raise P43DRetirementAuditError("workflow YAML set changed relative to the P4.3D base main")
-    if _git("diff", "--name-only", BASE_MAIN_SHA, "HEAD", "--", ".github/workflows"):
-        raise P43DRetirementAuditError("committed workflow YAML diff must be empty")
+    if paths != head_paths:
+        raise P43DRetirementAuditError("live workflow tree differs from the checkout tree")
+    workflow_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+    if workflow_tree != BASE_MAIN_WORKFLOW_TREE_SHA1:
+        raise P43DRetirementAuditError("live workflow tree differs from the frozen P4.3D base-main tree identity")
     if _git("diff", "--name-only", "--", ".github/workflows"):
         raise P43DRetirementAuditError("working-tree workflow YAML diff must be empty")
     blobs: dict[str, str] = {}
+    baseline_blobs = {row["workflow_path"]: row["git_blob_sha1"] for row in baseline_rows}
     for path in paths:
-        base_blob = _blob(BASE_MAIN_SHA, path)
         head_blob = _blob("HEAD", path)
-        if base_blob != head_blob:
-            raise P43DRetirementAuditError(f"live workflow blob differs from base main: {path}")
-        blobs[path] = base_blob
+        if baseline_blobs.get(path) != head_blob:
+            raise P43DRetirementAuditError(f"live workflow blob differs from the frozen P4.3A identity: {path}")
+        blobs[path] = head_blob
     return blobs
 
 
@@ -104,10 +112,9 @@ def _validate_frozen_files() -> dict[str, str]:
             raise P43DRetirementAuditError(f"frozen evidence is unreadable: {path}") from exc
         if payload.get("canonical_sha256") != expected_sha or ledger_audit.canonical_sha256(payload) != expected_sha:
             raise P43DRetirementAuditError(f"frozen evidence canonical SHA changed: {path}")
-        base_blob = _blob(BASE_MAIN_SHA, path)
         head_blob = _blob("HEAD", path)
-        if head_blob != base_blob:
-            raise P43DRetirementAuditError(f"frozen historical artifact blob changed: {path}")
+        if head_blob != FROZEN_GIT_BLOBS[path]:
+            raise P43DRetirementAuditError(f"frozen historical artifact blob differs from the P4.3D base pin: {path}")
         if _git("diff", "--name-only", "--", path):
             raise P43DRetirementAuditError(f"frozen historical artifact has a working-tree diff: {path}")
         blobs[path] = head_blob
@@ -130,15 +137,15 @@ def _validate_snapshot_and_ledger() -> tuple[dict[str, Any], dict[str, Any]]:
     snapshot_bytes = SNAPSHOT_PATH.read_bytes()
     if current_bytes != snapshot_bytes:
         raise P43DRetirementAuditError("P4.3C snapshot must byte-match the unchanged current ledger at this checkpoint")
-    if _blob(BASE_MAIN_SHA, str(LEDGER_PATH).replace("\\", "/")) != _blob("HEAD", str(LEDGER_PATH).replace("\\", "/")):
+    current_ledger_blob = _blob("HEAD", LEDGER_PATH.as_posix())
+    if current_ledger_blob != FROZEN_GIT_BLOBS[LEDGER_PATH.as_posix()]:
         raise P43DRetirementAuditError("current retirement ledger Git blob changed from base main")
-    base_ledger_blob = _blob(BASE_MAIN_SHA, LEDGER_PATH.as_posix())
     snapshot_blob = _git(
         "hash-object",
         f"--path={LEDGER_PATH.as_posix()}",
         str(SNAPSHOT_PATH).replace("\\", "/"),
     ).decode("ascii").strip()
-    if base_ledger_blob != snapshot_blob:
+    if FROZEN_GIT_BLOBS[LEDGER_PATH.as_posix()] != snapshot_blob:
         raise P43DRetirementAuditError("snapshot Git blob does not preserve the exact base ledger blob")
     ledger_audit.validate_historical_snapshot_extension(snapshot, ledger)
     return snapshot, ledger
@@ -179,6 +186,7 @@ def build_receipt() -> dict[str, Any]:
         "schema_version": 1,
         "policy_id": POLICY_ID,
         "repository_base_main_sha": BASE_MAIN_SHA,
+        "base_main_workflow_tree_sha1": BASE_MAIN_WORKFLOW_TREE_SHA1,
         "p4_2_receipt_sha256": P42_SHA,
         "p4_3a_matrix_sha256": P43A_MATRIX_SHA,
         "p4_3a_receipt_sha256": P43A_RECEIPT_SHA,
@@ -193,6 +201,7 @@ def build_receipt() -> dict[str, Any]:
         "retired_workflow_count_before": 3,
         "retired_workflow_count_after": len(ledger["retirements"]),
         "live_workflow_git_blobs": workflow_blobs,
+        "frozen_historical_git_blobs": FROZEN_GIT_BLOBS,
         "frozen_evidence_git_blobs": frozen_blobs,
         "workflow_yaml_changed": False,
         "workflow_added": False,

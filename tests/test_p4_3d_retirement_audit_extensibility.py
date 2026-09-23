@@ -79,8 +79,8 @@ def test_current_checkpoint_counts_and_workflow_tree_are_unchanged() -> None:
     assert len(live) == current["current_live_workflow_count"] == 37
     assert current["current_retired_workflow_count"] == len(current["retirements"]) == 3
     assert len(ledger.load_baseline()[0]["workflow_rows"]) == 40
-    assert audit._live_paths_at(audit.BASE_MAIN_SHA) == live == audit._live_paths_at("HEAD")
-    assert not audit._git("diff", audit.BASE_MAIN_SHA, "HEAD", "--", ".github/workflows")
+    assert live == audit._live_paths_at("HEAD")
+    assert audit._git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip() == audit.BASE_MAIN_WORKFLOW_TREE_SHA1
     assert not audit._git("diff", "--", ".github/workflows")
 
 
@@ -160,9 +160,11 @@ def test_frozen_prior_phase_audits_pass() -> None:
 
 
 def test_protected_and_successor_workflow_blobs_match_base() -> None:
+    matrix, _ = ledger.load_baseline()
+    baseline_blobs = {row["workflow_path"]: row["git_blob_sha1"] for row in matrix["workflow_rows"]}
     for path in PROTECTED:
         assert Path(path).is_file()
-        assert audit._blob(audit.BASE_MAIN_SHA, path) == audit._blob("HEAD", path)
+        assert audit._blob("HEAD", path) == baseline_blobs[path]
 
 
 def test_p43d_receipt_hash_and_no_retirement_state() -> None:
@@ -193,8 +195,5 @@ def test_p43d_audit_and_all_nested_proofs_make_no_network_attempt(monkeypatch: p
 
 
 def test_checkpoint_audit_receipt_files_are_byte_identical_to_base() -> None:
-    for path in audit.FROZEN_CANONICAL_FILES:
-        assert audit._blob(audit.BASE_MAIN_SHA, path) == audit._blob("HEAD", path)
-    assert audit._blob(audit.BASE_MAIN_SHA, str(ledger.LEDGER_PATH)) == audit._blob(
-        "HEAD", str(ledger.LEDGER_PATH)
-    )
+    for path, expected_blob in audit.FROZEN_GIT_BLOBS.items():
+        assert audit._blob("HEAD", path) == expected_blob
