@@ -39,7 +39,7 @@ def test_bridge_pins_existing_reviewed_evidence_and_binding_implementations() ->
         "ac8ba91b8f3e1086f01d35f3ca6d6aa356417623",
         "0f880bfb161d2dd9547326611505a066019b7f06",
         "ddabb6ae83cbe6c81c9264119a121a54715df960",
-        "66cfffcf1a8fa1fbcb1314ae40950e93bde43c90",
+        "3f19559205ddf24de8140d456dd8af0d3c15ccee",
         "4c05e20ded1f2b7129ec38a16d45c65cedb341ed",
     ):
         assert digest in workflow

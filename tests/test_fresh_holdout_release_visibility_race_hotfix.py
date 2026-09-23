@@ -103,7 +103,7 @@ def test_hotfix_changes_only_two_workflow_pins_and_preserves_all_other_guarded_s
     assert changed == set(WORKFLOW_FIXTURES)
     assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
     assert _git("rev-parse", "HEAD:.github/workflows") == receipt["workflow_tree_after_sha1"]
-    assert _git("rev-parse", "HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt_mirror.py") == receipt["frozen_core_mirror_blob_after"]
+    assert _git("rev-parse", "HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py") == receipt["frozen_core_mirror_blob_after"]
     assert _git("rev-parse", "HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml") == receipt["collection_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:.github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml") == receipt["watchdog_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:.github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml") == receipt["lineage_audit_workflow_blob_unchanged"]
