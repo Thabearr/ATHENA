@@ -7,17 +7,20 @@ from pathlib import Path
 import pytest
 
 from scripts import audit_p4_3_workflow_retirement_ledger as audit
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 def test_cumulative_ledger_counts_are_derived_from_reviewed_entries() -> None:
-    ledger = audit.validate_ledger()
+    ledger = audit.validate_retirement_history()
+    evolution_ledger = evolution.validate_current_state(retirement_ledger=ledger)
     matrix, _ = audit.load_baseline()
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
     assert len(matrix["workflow_rows"]) == 40
     reviewed_count = len(ledger["retirements"])
-    assert len(live) == ledger["current_live_workflow_count"] == 40 - reviewed_count
+    assert len(live) == evolution_ledger["current_live_workflow_count"]
+    assert ledger["current_live_workflow_count"] == 40 - reviewed_count
     assert ledger["current_retired_workflow_count"] == reviewed_count == 3
-    assert set(live) == {row["workflow_path"] for row in matrix["workflow_rows"]} - set(ledger["retired_workflow_paths"])
+    assert set({row["workflow_path"] for row in matrix["workflow_rows"]} - set(ledger["retired_workflow_paths"])).issubset(live)
     assert ledger["retired_workflow_paths"] == sorted(audit.RETIRED)
 
 
@@ -33,7 +36,7 @@ def test_each_retired_fixture_matches_immutable_matrix_identity() -> None:
 
 def test_unreviewed_fourth_disappearance_fails_closed() -> None:
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    with pytest.raises(audit.RetirementLedgerError, match="live workflow set"):
+    with pytest.raises(evolution.WorkflowEvolutionError, match="live workflow set"):
         audit.validate_ledger(workflow_paths=live[:-1])
 
 
@@ -41,7 +44,7 @@ def test_removing_the_p43b_ledger_entry_fails_closed() -> None:
     payload = json.loads(audit.LEDGER_PATH.read_text(encoding="utf-8"))
     payload["retirements"] = [entry for entry in payload["retirements"] if entry["retirement_phase"] != "P4.3B"]
     payload["canonical_sha256"] = audit.canonical_sha256(payload)
-    with pytest.raises(audit.RetirementLedgerError, match="retired path set mismatch"):
+    with pytest.raises(audit.RetirementLedgerError, match="ledger|retired path set"):
         audit.validate_ledger(payload)
 
 

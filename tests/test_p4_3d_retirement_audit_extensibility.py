@@ -17,6 +17,7 @@ from scripts import (
     audit_p4_3c_spent_v1_evidence_workflow_retirement as p43c,
     audit_p4_3d_retirement_audit_extensibility as audit,
 )
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 PROTECTED = (
@@ -76,20 +77,22 @@ def test_p43c_snapshot_and_receipts_remain_frozen() -> None:
 
 
 def test_current_workflow_tree_follows_validated_ledger() -> None:
-    current = ledger.validate_ledger()
+    current = ledger.validate_retirement_history()
+    current_evolution = evolution.validate_current_state(retirement_ledger=current)
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    assert len(live) == current["current_live_workflow_count"] == 40 - len(current["retirements"])
+    assert len(live) == current_evolution["current_live_workflow_count"]
+    assert current["current_live_workflow_count"] == 40 - len(current["retirements"])
     assert current["current_retired_workflow_count"] == len(current["retirements"])
     assert len(ledger.load_baseline()[0]["workflow_rows"]) == 40
     assert live == audit._live_paths_at("HEAD")
-    if current["canonical_sha256"] == audit.LEDGER_SHA:
+    if not current_evolution["transitions"]:
         assert audit._git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip() == audit.BASE_MAIN_WORKFLOW_TREE_SHA1
     assert not audit._git("diff", "--", ".github/workflows")
 
 
 def test_p43a_current_count_uses_ledger_not_permanent_37() -> None:
     source = Path("scripts/audit_p4_3a_workflow_capability_census.py").read_text(encoding="utf-8")
-    assert "expected_current_count = 40 - len(retired_paths)" in source
+    assert 'expected_current_count = current_evolution["current_live_workflow_count"]' in source
     assert "len(surviving_paths) != 37" not in source
     assert "len(worktree_paths) != 37" not in source
     receipt = p43a.check(write_receipt=False)

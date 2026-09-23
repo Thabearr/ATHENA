@@ -138,8 +138,8 @@ def _validate_snapshot_and_ledger(current_ledger: dict[str, Any]) -> dict[str, A
 
 def _assert_p43a_count_is_ledger_derived() -> None:
     source = Path("scripts/audit_p4_3a_workflow_capability_census.py").read_text(encoding="utf-8")
-    if "expected_current_count = 40 - len(retired_paths)" not in source:
-        raise P43DRetirementAuditError("P4.3A current count is not derived from the validated ledger")
+    if "expected_current_count = current_evolution[\"current_live_workflow_count\"]" not in source:
+        raise P43DRetirementAuditError("P4.3A current count is not derived from the validated evolution ledger")
     if any(marker in source for marker in ("len(surviving_paths) != 37", "len(worktree_paths) != 37", "current workflow counts are not 40/37")):
         raise P43DRetirementAuditError("P4.3A auditor still hardcodes current workflow count 37")
 

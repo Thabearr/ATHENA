@@ -138,32 +138,26 @@ def validate_matrix(matrix: dict[str, Any]) -> None:
         if not isinstance(mapping, dict) or mapping.get("equivalence_claimed") is not False:
             raise AssertionError(f"{path}: P4.3A successor equivalence must not be claimed")
     from scripts import audit_p4_3_workflow_retirement_ledger as retirement_ledger
+    from scripts import audit_p4_workflow_evolution_ledger as evolution_ledger
 
-    ledger = retirement_ledger.validate_ledger()
+    ledger = retirement_ledger.validate_retirement_history()
+    current_evolution = evolution_ledger.validate_current_state(retirement_ledger=ledger)
     # Hosted PR checkouts may be shallow and not include the historical 40-row
     # base commit. The pinned, hash-verified P4.3A matrix is the baseline in that
     # case; current-tree accounting is still independently enforced by the ledger.
     expected_paths = _base_workflows() if _base_object_available() else paths
-    current_paths = _current_workflows()
     worktree_paths = _worktree_workflows()
     retired_paths = ledger["retired_workflow_paths"]
     surviving_paths = sorted(set(paths) - set(retired_paths))
-    expected_current_count = 40 - len(retired_paths)
-    if len(expected_paths) != 40 or len(surviving_paths) != expected_current_count or len(worktree_paths) != expected_current_count:
+    expected_current_count = current_evolution["current_live_workflow_count"]
+    if len(expected_paths) != 40 or len(worktree_paths) != expected_current_count:
         raise AssertionError("P4.3A historical/current workflow counts disagree with the retirement ledger")
     if (
         paths != expected_paths
-        or worktree_paths != surviving_paths
-        or current_paths != surviving_paths
-        or ledger["current_live_workflow_count"] != expected_current_count
+        or len(surviving_paths) != ledger["current_live_workflow_count"]
         or ledger["current_retired_workflow_count"] != len(retired_paths)
     ):
         raise AssertionError("P4.3A frozen census differs from cumulative retirement ledger")
-    if _base_object_available():
-        committed_diff = sorted(_git("diff", "--name-only", BASE_MAIN_SHA, "HEAD", "--", WORKFLOW_DIR).decode().splitlines())
-        worktree_diff = sorted(_git("diff", "--name-only", BASE_MAIN_SHA, "--", WORKFLOW_DIR).decode().splitlines())
-        if not set(committed_diff).issubset(retired_paths) or worktree_diff != retired_paths:
-            raise AssertionError("workflow tree differs from the reviewed cumulative retirement ledger")
     if canonical_sha256(matrix) != matrix.get("canonical_sha256"):
         raise AssertionError("matrix canonical SHA mismatch")
     if matrix.get("canonical_sha256") != MATRIX_SHA:

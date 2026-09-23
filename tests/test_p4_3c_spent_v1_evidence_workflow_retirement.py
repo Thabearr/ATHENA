@@ -11,6 +11,7 @@ import pytest
 
 from scripts import audit_p4_2_athena_run_workflow as p42
 from scripts import audit_p4_3_workflow_retirement_ledger as ledger
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts import audit_p4_3a_workflow_capability_census as p43a
 from scripts import audit_p4_3b_current_sportybet_workflow_retirement as p43b
 from scripts import audit_p4_3c_spent_v1_evidence_workflow_retirement as audit
@@ -18,11 +19,12 @@ from scripts import audit_p4_3c_spent_v1_evidence_workflow_retirement as audit
 
 def test_exactly_two_v1_paths_are_retired_and_successors_remain_reviewed() -> None:
     matrix, _ = ledger.load_baseline()
-    current_ledger = ledger.validate_ledger()
+    current_ledger = ledger.validate_retirement_history()
+    current_evolution = evolution.validate_current_state(retirement_ledger=current_ledger)
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
     expected = sorted({row["workflow_path"] for row in matrix["workflow_rows"]} - set(current_ledger["retired_workflow_paths"]))
-    assert len(live) == current_ledger["current_live_workflow_count"]
-    assert live == expected
+    assert len(live) == current_evolution["current_live_workflow_count"]
+    assert set(expected).issubset(live)
     for path, details in audit.TARGETS.items():
         assert not Path(path).exists()
         v2_raw = ledger.resolve_reviewed_workflow_source(details["successor"], ledger=current_ledger)

@@ -126,3 +126,23 @@ not authorize a future retirement target. Architecture Checkpoint E is not fully
 claimed; P4.4 has not started. If P4.3D merges, the source-review counter reaches
 5/5 and the mandatory architecture/source reread must happen before further
 remediation.
+
+## P4.4A reviewed workflow evolution
+
+The P4.3A 40-workflow census is historical evidence, not a permanent allowlist for
+new canonical workflows. Current workflow-tree authority now composes the frozen
+P4.3A source identities, the three reviewed P4.3 retirements, and the ordered
+transitions in `p4_workflow_evolution_ledger_v1.json`. P4.4A commits that ledger
+with zero transitions: 37 workflows remain live, the P4.3 retirement ledger is
+unchanged, and no workflow YAML is added, revised, or retired.
+
+A later ADD must name a previously absent path and exact source/blob identities,
+phase, canonical family, and a source-controlled evidence receipt. REVISE and RETIRE
+are confined to paths introduced by an earlier ADD in this ledger; frozen P4.3A
+survivors cannot be changed through it. The transition binds the receipt's evidence
+body hash, excluding only the receipt's ledger backlink and self-hash. The final
+receipt binds the completed evolution-ledger hash, so the two hashes do not cycle.
+An unrecorded `athena-ingest.yml` is rejected. P4.4B is the separate implementation
+step; this PR creates no ingest workflow and performs no acquisition. Legacy and
+provider-diagnostic workflows, Current Shadow, and protected Fresh Holdout remain
+untouched. Architecture Checkpoint E and P4.4 are incomplete.
