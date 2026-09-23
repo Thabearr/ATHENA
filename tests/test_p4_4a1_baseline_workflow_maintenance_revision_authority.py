@@ -5,6 +5,8 @@ import hashlib
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from scripts import audit_p4_3_workflow_retirement_ledger as retirement
 from scripts import audit_p4_4a1_baseline_workflow_maintenance_revision_authority as authority
 from scripts import audit_p4_workflow_evolution_ledger as evolution
