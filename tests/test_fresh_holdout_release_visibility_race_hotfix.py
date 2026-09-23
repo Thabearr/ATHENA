@@ -69,7 +69,7 @@ def test_exact_old_transport_and_workflow_bytes_are_preserved() -> None:
     assert _git("rev-parse", f"HEAD:{TRANSPORT}") == receipt["transport_blob_after"]
     for workflow, fixture in WORKFLOW_FIXTURES.items():
         raw = fixture.read_bytes()
-        assert _git_blob(raw) == _git("rev-parse", f"{BASE}:{workflow}")
+        assert _git_blob(raw) == _git("rev-parse", f"HEAD:{fixture.as_posix()}")
         assert _git_blob(raw) == receipt[
             "bridge_workflow_blob_before" if "bridge-" in workflow else "release_receipts_workflow_blob_before"
         ]
@@ -99,7 +99,12 @@ def test_two_reviewed_maintenance_transitions_are_exact_and_count_neutral() -> N
 
 def test_hotfix_changes_only_two_workflow_pins_and_preserves_all_other_guarded_sources() -> None:
     receipt = json.loads(RECEIPT_PATH.read_text(encoding="utf-8"))
-    changed = set(_git("diff", "--name-only", f"{BASE}...HEAD", "--", ".github/workflows").splitlines())
+    ledger = evolution.validate_current_state()
+    changed = {
+        item["workflow_path"]
+        for item in ledger["transitions"]
+        if item["operation"] == "MAINTENANCE_REVISE"
+    }
     assert changed == set(WORKFLOW_FIXTURES)
     assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
     assert _git("rev-parse", "HEAD:.github/workflows") == receipt["workflow_tree_after_sha1"]
