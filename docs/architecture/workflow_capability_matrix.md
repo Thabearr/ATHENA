@@ -126,3 +126,34 @@ not authorize a future retirement target. Architecture Checkpoint E is not fully
 claimed; P4.4 has not started. If P4.3D merges, the source-review counter reaches
 5/5 and the mandatory architecture/source reread must happen before further
 remediation.
+
+## P4.4A reviewed workflow evolution
+
+The P4.3A 40-workflow census is historical evidence, not a permanent allowlist for
+new canonical workflows. Current workflow-tree authority now composes the frozen
+P4.3A source identities, the three reviewed P4.3 retirements, and the ordered
+transitions in `p4_workflow_evolution_ledger_v1.json`. P4.4A commits that ledger
+with zero transitions: 37 workflows remain live, the P4.3 retirement ledger is
+unchanged, and no workflow YAML is added, revised, or retired.
+
+A later ADD must name a previously absent path and exact source/blob identities,
+phase, canonical family, and a source-controlled evidence receipt. REVISE and RETIRE
+are confined to paths introduced by an earlier ADD in this ledger; frozen P4.3A
+survivors cannot be changed through it. P4.4A freezes its zero-transition state at
+`artifacts/architecture/p4_workflow_evolution_snapshots/p4_4a_workflow_evolution_ledger_v1.json`;
+the P4.4A receipt binds that immutable snapshot path/hash and separately records the
+mutable current-ledger path/hash as observed at its checkpoint. Future reviewed P4.3
+retirements may extend the current retirement ledger while preserving the immutable
+P4.3D checkpoint; they do not rewrite P4.4A history.
+
+Each future evolution transition must name a source-controlled immutable cumulative
+phase snapshot. Its receipt's `workflow_evolution_ledger_sha256` must equal that exact
+snapshot's canonical SHA, and the snapshot must contain the exact transition prefix
+through that phase. The transition binds the receipt evidence-body hash, excluding
+only its final ledger backlink and self-hash; the snapshot records the transition
+intent and evidence-body hash. This avoids a hash cycle while keeping older receipt
+backlinks verifiable after later appends. An unrecorded `athena-ingest.yml` is
+rejected. P4.4B is the separate implementation step; this PR creates no ingest
+workflow and performs no acquisition. Legacy and provider-diagnostic workflows,
+Current Shadow, and protected Fresh Holdout remain untouched. Architecture
+Checkpoint E and P4.4 are incomplete.

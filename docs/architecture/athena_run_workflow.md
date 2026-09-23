@@ -121,3 +121,21 @@ arithmetic; this does not pre-authorize any next retirement. Current Shadow rema
 active, Fresh Holdout remains protected, Architecture Checkpoint E is not fully
 claimed, and P4.4 has not started. If this PR merges, the source-review counter is
 5/5 and a mandatory source reread is required before any further remediation.
+
+## P4.4A workflow-evolution boundary
+
+After the mandatory 5/5 source reread, P4.4A establishes a reviewed evolution
+ledger for canonical workflow paths added after the frozen P4.3D checkpoint. The
+P4.3A census and P4.3 retirement evidence remain immutable. Current-tree checks
+derive from those historical identities plus explicit, evidence-bound evolution
+transitions. The initial ledger has none: all 37 live workflow YAMLs remain
+byte-identical, the three reviewed retirements remain recorded, and
+`athena-ingest.yml` is absent. A future P4.4B PR must provide a reviewed ADD
+transition before that path can exist. Current Shadow, provider diagnostics, and
+Fresh Holdout are untouched. The zero-transition P4.4A ledger is also preserved as
+an immutable phase snapshot; its receipt binds that snapshot separately from the
+then-current ledger path. Later current P4.3 retirement state may extend the frozen
+P4.3D checkpoint through separate review, and later evolution transitions must each
+bind their own immutable cumulative snapshot. A prior transition receipt's backlink
+must match its exact phase snapshot, not merely have a valid-looking hash. P4.4 and
+Architecture Checkpoint E are not complete.

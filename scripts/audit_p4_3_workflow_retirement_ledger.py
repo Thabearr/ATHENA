@@ -22,8 +22,15 @@ P43A_RECEIPT_SHA256 = "7dd102aa4da98d634d665b4a93f51eb24ece8d7b61c8856b9977ff84a
 P43B_RECEIPT_SHA256 = "cf2371c7ec2747256f23599e7a43dd2d9e46ff61dda2c478a746d8bd8a49e72a"
 P43C_RECEIPT_SHA256 = "c4afd0d0052c7b14d643f7868d7eac85344042da20a9d7aa0e8bf3b59ab9bd24"
 P43C_LEDGER_SNAPSHOT_SHA256 = "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
+P43D_RETIREMENT_LEDGER_SHA256 = P43C_LEDGER_SNAPSHOT_SHA256
 BASELINE_WORKFLOW_COUNT = 40
 WORKFLOW_DIR = Path(".github/workflows")
+LEDGER_FIELDS = {
+    "schema_version", "policy_id", "baseline_matrix_sha256",
+    "baseline_p4_3a_receipt_sha256", "baseline_workflow_count", "retirements",
+    "current_retired_workflow_count", "current_live_workflow_count",
+    "retired_workflow_paths", "canonical_sha256",
+}
 RETIRED = {
     ".github/workflows/current-sportybet-accumulator.yml": {
         "git_blob_sha1": "21400f2615a033c0b9df5dd943f469c0cae4c3e0",
@@ -207,6 +214,8 @@ def _retirement_entries_by_path(ledger: dict[str, Any]) -> dict[str, dict[str, A
 
 
 def _validate_ledger_arithmetic(ledger: dict[str, Any], *, label: str) -> tuple[list[str], list[str]]:
+    if not isinstance(ledger, dict) or set(ledger) != LEDGER_FIELDS:
+        raise RetirementLedgerError(f"{label} schema fields mismatch")
     if ledger.get("schema_version") != 1 or ledger.get("policy_id") != POLICY_ID:
         raise RetirementLedgerError(f"{label} schema/policy mismatch")
     if canonical_sha256(ledger) != ledger.get("canonical_sha256"):
@@ -278,6 +287,41 @@ def validate_historical_snapshot_extension(
         raise RetirementLedgerError("current ledger count arithmetic mismatch")
 
 
+def validate_reviewed_retirement_entries(
+    snapshot: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    expected_entries: list[dict[str, Any]],
+) -> None:
+    """Check a current ledger against an explicit, phase-reviewed entry set.
+
+    The caller supplies ``expected_entries`` only after the corresponding phase
+    evidence has been reviewed. This pure check is useful for testing a future
+    reviewed extension without granting authority to the on-disk current ledger.
+    Source fixtures and receipt bindings are still verified by
+    :func:`validate_retirement_history`.
+    """
+    validate_historical_snapshot_extension(snapshot, current)
+    if not isinstance(expected_entries, list):
+        raise RetirementLedgerError("reviewed retirement entries must be a list")
+    expected = sorted(expected_entries, key=lambda entry: entry.get("workflow_path", ""))
+    actual = current.get("retirements")
+    if actual != expected:
+        raise RetirementLedgerError("cumulative ledger retirement entries do not match reviewed evidence")
+    matrix, _ = load_baseline()
+    rows = {row["workflow_path"]: row for row in matrix["workflow_rows"]}
+    for entry in expected:
+        path = entry.get("workflow_path")
+        row = rows.get(path)
+        if row is None:
+            raise RetirementLedgerError(f"reviewed retirement is absent from the P4.3A baseline: {path}")
+        if (
+            entry.get("git_blob_sha1") != row.get("git_blob_sha1")
+            or entry.get("source_sha256") != row.get("source_sha256")
+        ):
+            raise RetirementLedgerError(f"reviewed retirement source identity differs from baseline: {path}")
+
+
 def _load_p43c_ledger_snapshot() -> dict[str, Any]:
     try:
         snapshot = json.loads(P43C_LEDGER_SNAPSHOT_PATH.read_text(encoding="utf-8"))
@@ -340,41 +384,44 @@ def resolve_reviewed_workflow_source(
     return raw
 
 
-def validate_ledger(
-    ledger: dict[str, Any] | None = None,
-    *,
-    workflow_paths: Iterable[str] | None = None,
-) -> dict[str, Any]:
+def validate_retirement_history(ledger: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Verify frozen P4.3 retirement evidence without granting current-tree authority."""
     matrix, _census = load_baseline()
     if ledger is None:
         try:
             ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RetirementLedgerError("cumulative retirement ledger is unreadable") from exc
-    retired_paths, expected_current = _validate_ledger_arithmetic(ledger, label="current retirement ledger")
+    retired_paths, _current_survivors = _validate_ledger_arithmetic(ledger, label="current retirement ledger")
+    checkpoint = _load_p43c_ledger_snapshot()
+    validate_historical_snapshot_extension(checkpoint, ledger)
+    if checkpoint.get("canonical_sha256") != P43D_RETIREMENT_LEDGER_SHA256:
+        raise RetirementLedgerError("P4.3D retirement checkpoint identity changed")
+    # This exact reviewed-entry inventory advances only when a later P4.3
+    # retirement phase adds its own audited fixture and receipt binding.
     expected_entries = _expected_entries()
+    validate_reviewed_retirement_entries(checkpoint, ledger, expected_entries=expected_entries)
     entries = ledger.get("retirements")
-    if entries != expected_entries:
-        raise RetirementLedgerError("cumulative ledger retirement entries do not match reviewed evidence")
 
     rows = matrix["workflow_rows"]
     matrix_paths = [row["workflow_path"] for row in rows]
     if not set(retired_paths).issubset(matrix_paths):
         raise RetirementLedgerError("ledger contains a retired workflow absent from the baseline matrix")
-    for row in rows:
-        path = row["workflow_path"]
-        resolve_reviewed_workflow_source(path, ledger=ledger)
-
-    current = sorted(path.as_posix() for path in WORKFLOW_DIR.glob("*.yml"))
-    supplied = sorted(workflow_paths) if workflow_paths is not None else current
-    if supplied != expected_current or current != expected_current:
-        unexpected = sorted(set(supplied) ^ set(expected_current))
-        raise RetirementLedgerError(f"live workflow set is not baseline minus reviewed retirements: {unexpected}")
-    if len(current) != ledger["current_live_workflow_count"]:
-        raise RetirementLedgerError("live workflow count differs from cumulative ledger")
-    for path in PROTECTED_LIVE:
-        if path not in current:
-            raise RetirementLedgerError(f"protected/canonical workflow is not live: {path}")
+    by_row = {row["workflow_path"]: row for row in rows}
+    for entry in entries:
+        path = entry["workflow_path"]
+        try:
+            raw = Path(entry["fixture_path"]).read_bytes()
+        except OSError as exc:
+            raise RetirementLedgerError(f"retired workflow fixture missing: {path}") from exc
+        row = by_row[path]
+        if (
+            _git_blob_sha1(raw) != row["git_blob_sha1"]
+            or _sha256(raw) != row["source_sha256"]
+            or entry["git_blob_sha1"] != row["git_blob_sha1"]
+            or entry["source_sha256"] != row["source_sha256"]
+        ):
+            raise RetirementLedgerError(f"retired workflow fixture identity differs from baseline: {path}")
 
     try:
         p43b = json.loads(P43B_RECEIPT_PATH.read_text(encoding="utf-8"))
@@ -391,15 +438,26 @@ def validate_ledger(
         or canonical_sha256(p43c) != P43C_RECEIPT_SHA256
     ):
         raise RetirementLedgerError("immutable P4.3C receipt identity changed")
-    snapshot = _load_p43c_ledger_snapshot()
-    if p43c.get("retirement_ledger_sha256") != snapshot.get("canonical_sha256"):
+    if p43c.get("retirement_ledger_sha256") != checkpoint.get("canonical_sha256"):
         raise RetirementLedgerError("P4.3C receipt does not bind its frozen historical ledger snapshot")
-    validate_historical_snapshot_extension(snapshot, ledger)
     if p43c_receipt_evidence_sha256(p43c) != next(
         entry["retirement_receipt_evidence_sha256"] for entry in entries if entry["retirement_phase"] == "P4.3C"
     ):
         raise RetirementLedgerError("P4.3C receipt evidence body does not match ledger entry")
     return ledger
+
+
+def validate_ledger(
+    ledger: dict[str, Any] | None = None,
+    *,
+    workflow_paths: Iterable[str] | None = None,
+) -> dict[str, Any]:
+    """Verify P4.3 history and delegate today's tree to the evolution ledger."""
+    history = validate_retirement_history(ledger)
+    from scripts import audit_p4_workflow_evolution_ledger as evolution_audit
+
+    evolution_audit.validate_current_state(retirement_ledger=history, workflow_paths=workflow_paths)
+    return history
 
 
 def main() -> int:

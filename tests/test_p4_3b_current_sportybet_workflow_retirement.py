@@ -9,15 +9,15 @@ import pytest
 
 from scripts import audit_p4_2_athena_run_workflow as p42
 from scripts import audit_p4_3b_current_sportybet_workflow_retirement as audit
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 def test_only_reviewed_workflow_is_absent_and_historical_fixture_is_exact() -> None:
     matrix = audit.verify_frozen_history()
     audit.verify_retirement_tree(matrix)
     raw = audit.verify_historical_fixture()
-    # P4.3B retains its historical 40->39 transition; current cumulative state
-    # is lower because P4.3C separately retires two spent V1 evidence workflows.
-    assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
+    # P4.3B retains historical 40->39; the evolution ledger owns today's tree.
+    assert len(list(Path(".github/workflows").glob("*.yml"))) == evolution.validate_current_state()["current_live_workflow_count"]
     assert not Path(audit.TARGET).exists()
     assert Path(audit.FIXTURE).is_file()
     assert not audit.FIXTURE.startswith(".github/workflows/")

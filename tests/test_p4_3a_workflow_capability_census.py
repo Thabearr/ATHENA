@@ -33,10 +33,12 @@ def test_workflow_tree_unchanged_and_each_row_binds_source_identity(matrix: dict
     # cumulative ledger instead of being frozen to one later checkpoint.
     audit.validate_matrix(matrix)
     from scripts import audit_p4_3_workflow_retirement_ledger as ledger_audit
+    from scripts import audit_p4_workflow_evolution_ledger as evolution_audit
 
-    ledger = ledger_audit.validate_ledger()
+    ledger = ledger_audit.validate_retirement_history()
+    evolution = evolution_audit.validate_current_state(retirement_ledger=ledger)
     assert matrix["workflow_count"] == 40
-    assert len(audit._worktree_workflows()) == 40 - len(ledger["retired_workflow_paths"])
+    assert len(audit._worktree_workflows()) == evolution["current_live_workflow_count"]
     assert ledger["current_live_workflow_count"] == 40 - len(ledger["retired_workflow_paths"])
 
 
