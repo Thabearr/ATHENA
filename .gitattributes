@@ -7,3 +7,4 @@ tests/fixtures/architecture/retired_workflows/current-sportybet-accumulator.yml 
 tests/fixtures/architecture/retired_workflows/execute-fotmob-utc-native-successor-feature-qualification.yml -text
 tests/fixtures/architecture/retired_workflows/execute-pr69-primary-time-basis-evidence-campaign.yml -text
 tests/fixtures/architecture/revised_workflows/*.yml -text
+tests/fixtures/architecture/revised_modules/*.py -text

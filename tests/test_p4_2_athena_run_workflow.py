@@ -7,6 +7,7 @@ import pytest
 
 from domain.run_contracts import RunReceipt, RunRequest, canonical_json_bytes
 from scripts import audit_p4_2_athena_run_workflow as audit
+from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts.execute_athena_run_workflow import (
     AthenaWorkflowExecutionError,
     execute_persisted_request,
@@ -214,7 +215,15 @@ def test_committed_p42_receipt_hash_and_frozen_history_are_verified():
 
 
 def test_protected_and_legacy_workflows_remain_exact_base_bytes():
+    historical = audit.verify_preserved_historical_sources()
+    assert historical == audit.PRESERVED_FILE_GIT_BLOB_SHA1
+    current = evolution.validate_current_state()
+    latest_maintenance = {
+        item["workflow_path"]: item["after"]
+        for item in current["transitions"]
+        if item["operation"] == "MAINTENANCE_REVISE"
+    }
     for relative, expected in audit.PRESERVED_FILE_GIT_BLOB_SHA1.items():
         if relative.startswith(".github/workflows/") and relative != audit.RETIRED_WORKFLOW_PATH:
-            assert audit._git_blob_sha1(relative) == expected
-    assert audit.verify_preserved_historical_sources()[audit.RETIRED_WORKFLOW_PATH] == audit.PRESERVED_FILE_GIT_BLOB_SHA1[audit.RETIRED_WORKFLOW_PATH]
+            expected_current = latest_maintenance.get(relative, {"git_blob_sha1": expected})
+            assert audit._git_blob_sha1(relative) == expected_current["git_blob_sha1"]

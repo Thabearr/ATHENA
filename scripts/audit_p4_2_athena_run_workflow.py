@@ -123,7 +123,7 @@ def _git_blob_sha1(relative_path: str) -> str:
 
 
 def verify_preserved_historical_sources() -> dict[str, str]:
-    """Verify P4.2 identities without requiring a retired YAML at its live path."""
+    """Verify P4.2 historical bytes separately from reviewed current revisions."""
     try:
         raw = (REPOSITORY_ROOT / RETIRED_WORKFLOW_FIXTURE).read_bytes()
     except OSError as exc:
@@ -135,13 +135,51 @@ def verify_preserved_historical_sources() -> dict[str, str]:
     if (REPOSITORY_ROOT / RETIRED_WORKFLOW_PATH).exists():
         raise P42AuditError("retired P4.2 workflow remains at the live path")
     identities = {RETIRED_WORKFLOW_PATH: blob_sha}
+    # P4.2 pins the pre-maintenance workflow sources. A later reviewed
+    # MAINTENANCE_REVISE preserves those bytes in its first before-fixture and
+    # the evolution ledger independently validates current live identities.
+    try:
+        from scripts import audit_p4_3_workflow_retirement_ledger as retirement
+        from scripts import audit_p4_workflow_evolution_ledger as evolution
+
+        retirement_history = retirement.validate_retirement_history()
+        evolution_ledger = json.loads(evolution.LEDGER_PATH.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise P42AuditError("could not load reviewed workflow-maintenance history") from exc
+    maintained = {
+        item.get("workflow_path")
+        for item in evolution_ledger.get("transitions", [])
+        if item.get("operation") == "MAINTENANCE_REVISE"
+    }
     for relative, expected in PRESERVED_FILE_GIT_BLOB_SHA1.items():
         if relative == RETIRED_WORKFLOW_PATH:
             continue
-        actual = _git_blob_sha1(relative)
+        if relative in maintained:
+            try:
+                original = evolution.resolve_p43a_historical_workflow_source(
+                    relative,
+                    retirement_ledger=retirement_history,
+                    evolution_ledger=evolution_ledger,
+                )
+            except Exception as exc:
+                raise P42AuditError(f"P4.2 historical workflow fixture is invalid: {relative}") from exc
+            actual = hashlib.sha1(
+                b"blob " + str(len(original)).encode("ascii") + b"\0" + original
+            ).hexdigest()
+        else:
+            actual = _git_blob_sha1(relative)
         if actual != expected:
             raise P42AuditError(f"protected historical source changed: {relative}")
         identities[relative] = actual
+    # Historical P4.2 pins are now checked above; current HEAD/worktree bytes
+    # must still match the reviewed current-state derivation.
+    try:
+        evolution.validate_current_state(
+            evolution_ledger,
+            retirement_ledger=retirement_history,
+        )
+    except Exception as exc:
+        raise P42AuditError("current workflow identities differ from reviewed evolution") from exc
     return identities
 
 
