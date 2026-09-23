@@ -371,6 +371,29 @@ def resolve_reviewed_workflow_source(
             raise RetirementLedgerError(f"retired workflow fixture identity differs from baseline: {path}")
         return raw
 
+    # P4.3A is historical evidence, not the current identity authority for a
+    # survivor that has a reviewed P4.4A1 MAINTENANCE_REVISE. Resolve its
+    # original bytes from that transition's immutable before-fixture; the
+    # evolution audit checks the current live bytes independently.
+    try:
+        from scripts import audit_p4_workflow_evolution_ledger as evolution
+
+        evolution_ledger = json.loads(evolution.LEDGER_PATH.read_text(encoding="utf-8"))
+        if any(
+            item.get("operation") == "MAINTENANCE_REVISE" and item.get("workflow_path") == path
+            for item in evolution_ledger.get("transitions", [])
+        ):
+            raw = evolution.resolve_p43a_historical_workflow_source(
+                path,
+                retirement_ledger=ledger,
+                evolution_ledger=evolution_ledger,
+            )
+            return raw
+    except RetirementLedgerError:
+        raise
+    except Exception as exc:
+        raise RetirementLedgerError(f"reviewed P4.3A historical source is invalid: {path}") from exc
+
     try:
         raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
     except OSError as exc:

@@ -25,14 +25,21 @@ def test_p44a_receipt_and_zero_transition_checkpoint() -> None:
     ledger = evolution.validate_current_state()
     snapshot_bytes = audit.EVOLUTION_SNAPSHOT_PATH.read_bytes()
     current_bytes = evolution.LEDGER_PATH.read_bytes()
+    snapshot = json.loads(snapshot_bytes)
     assert receipt["canonical_sha256"] == retirement.canonical_sha256(receipt)
     assert receipt["canonical_sha256"] == P44A_RECEIPT_SHA256
     assert receipt["workflow_evolution_checkpoint_path"] == audit.EVOLUTION_SNAPSHOT_PATH.as_posix()
-    assert receipt["workflow_evolution_checkpoint_sha256"] == ledger["canonical_sha256"]
-    assert receipt["current_workflow_evolution_ledger_sha256"] == ledger["canonical_sha256"]
-    assert ledger["canonical_sha256"] == EVOLUTION_CHECKPOINT_SHA256
-    assert snapshot_bytes == current_bytes
-    assert receipt["workflow_evolution_transition_count"] == len(ledger["transitions"]) == 0
+    assert receipt["workflow_evolution_checkpoint_sha256"] == EVOLUTION_CHECKPOINT_SHA256
+    assert receipt["current_workflow_evolution_ledger_sha256"] == EVOLUTION_CHECKPOINT_SHA256
+    assert ledger["canonical_sha256"] == evolution.canonical_sha256(ledger)
+    assert snapshot["canonical_sha256"] == EVOLUTION_CHECKPOINT_SHA256
+    assert evolution.canonical_sha256(snapshot) == EVOLUTION_CHECKPOINT_SHA256
+    assert snapshot["transitions"] == []
+    assert snapshot["current_live_workflow_count"] == 37
+    assert snapshot_bytes != current_bytes
+    assert receipt["workflow_evolution_transition_count"] == 0
+    assert len(ledger["transitions"]) == 2
+    assert ledger["current_workflow_tree_sha1"] == "a40328bdc4d73de7c2bc152b8fb810dcbb439f8c"
     assert receipt["live_workflow_count_before"] == receipt["live_workflow_count_after"] == 37
     assert receipt["workflow_tree_before_sha1"] == receipt["workflow_tree_after_sha1"] == evolution.BASE_WORKFLOW_TREE_SHA1
     assert receipt["p4_4a_exit_gate_satisfied"] is True
@@ -93,14 +100,18 @@ def test_immutable_history_and_current_retirement_state() -> None:
 
 def test_workflow_yaml_tree_and_protected_paths_are_unchanged() -> None:
     ledger = evolution.validate_current_state()
-    assert ledger["current_workflow_tree_sha1"] == evolution.BASE_WORKFLOW_TREE_SHA1
+    assert ledger["current_workflow_tree_sha1"] == "a40328bdc4d73de7c2bc152b8fb810dcbb439f8c"
     assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
     assert not evolution._git("diff", "--", ".github/workflows")
     baseline = evolution.baseline_state(retirement.validate_retirement_history())
+    latest = {
+        item["workflow_path"]: item["after"]
+        for item in ledger["transitions"]
+    }
     for path in evolution.PROTECTED:
         assert path in baseline
         raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
-        assert evolution.source_identity(raw) == baseline[path]
+        assert evolution.source_identity(raw) == latest.get(path, baseline[path])
 
 
 def test_historical_audits_accept_the_new_current_state() -> None:

@@ -168,11 +168,14 @@ def _synthetic_evolution_after_p43_extension(current_p43):
     return evolution
 
 
-def test_initial_ledger_is_exact_37_workflow_checkpoint() -> None:
+def test_current_ledger_keeps_37_workflows_after_reviewed_maintenance() -> None:
     ledger = audit.validate_current_state()
-    assert ledger["transitions"] == []
+    assert [item["transition_id"] for item in ledger["transitions"]] == [
+        "P44A1_FH_VISIBILITY_BRIDGE_V1",
+        "P44A1_FH_VISIBILITY_RELEASE_RECEIPTS_V1",
+    ]
     assert ledger["current_live_workflow_count"] == 37
-    assert ledger["current_workflow_tree_sha1"] == audit.BASE_WORKFLOW_TREE_SHA1
+    assert ledger["current_workflow_tree_sha1"] == "a40328bdc4d73de7c2bc152b8fb810dcbb439f8c"
     assert ledger["canonical_sha256"] == audit.canonical_sha256(ledger)
     assert not Path(NEW_PATH).exists()
     assert retirement.validate_retirement_history()["canonical_sha256"] == audit.BASE_RETIREMENT_LEDGER_SHA256
