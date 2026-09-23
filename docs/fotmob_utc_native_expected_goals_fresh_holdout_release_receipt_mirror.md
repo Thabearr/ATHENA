@@ -69,6 +69,16 @@ It **downloads the long-lived release archive bytes themselves**, rather than tr
 
 Only after the release archive passes those checks may the receipt be mirrored.
 
+Release metadata can briefly lag an Actions upload. The transport wrapper now retries
+only an absent expected asset using 31 total views (the initial view plus at most 30
+two-second waits/reloads, for a maximum 60-second visibility phase). It applies this
+bounded policy to the durable archive and to the receipt sidecar after upload. A
+concurrent receipt-upload collision is treated only as a possible race: the wrapper
+does not upload a second time and accepts the outcome only after the frozen verifier
+downloads and proves the exact canonical receipt bytes, size, and SHA-256. Duplicate
+asset names, visible-but-wrong state, size, bytes, SHA, or provenance fail immediately;
+integrity errors are never retried.
+
 ## Canonical receipt sidecar
 
 The long-lived sidecar name is unique per evidence archive:
@@ -90,12 +100,19 @@ The post-run workflow pins:
 - `actions/checkout` to immutable commit `11d5960a326750d5838078e36cf38b85af677262`;
 - `actions/setup-python` to immutable commit `a26af69be951a213d495a4c3e4e4022e16d87065`;
 - `scripts/mirror_fotmob_fresh_holdout_release_receipt.py` to Git blob `ddabb6ae83cbe6c81c9264119a121a54715df960`.
+- `scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py` to its reviewed
+  transport revision, which adds only bounded release-asset visibility handling.
 
 Changing the implementation file without a corresponding reviewed workflow-pin change causes the mirror job to fail closed.
 
 ## Safety
 
 This boundary performs GitHub repository/release evidence transport only.
+
+The frozen core mirror remains unchanged. The transport revision changes neither
+collection triggers nor permissions/concurrency and grants no provider, backfill,
+model, pricing, selection, or betting authority. Its reviewed maintenance-revision
+evidence preserves the previous transport and two workflow files byte-for-byte.
 
 It performs no:
 

@@ -14,12 +14,9 @@ unchanged.
 from __future__ import annotations
 
 from pathlib import Path
-import math
 import re
 import subprocess
 import tempfile
-import time
-from typing import Any, Callable
 
 import domain.fotmob_fresh_holdout_continuity as continuity
 import domain.fotmob_utc_native_expected_goals_fresh_holdout_schedule_recovery as schedule_recovery
@@ -38,17 +35,6 @@ CONTINUITY_RUN_NAME_RE = re.compile(
 )
 _ORIGINAL_GH_DOWNLOAD = mirror._gh_download
 _ORIGINAL_MIRROR_RUN = mirror.mirror_run
-_ORIGINAL_VERIFY_RELEASE_ARCHIVE_AND_RECEIPT = mirror.verify_release_archive_and_receipt
-RELEASE_ASSET_VISIBILITY_ATTEMPTS = 31
-RELEASE_ASSET_VISIBILITY_INTERVAL_SECONDS = 2
-
-
-class ReleaseAssetVisibilityTimeout(mirror.FreshHoldoutReleaseReceiptMirrorError):
-    """The expected release asset did not become visible within the reviewed bound."""
-
-
-class _ReceiptUploadRace(Exception):
-    """Internal marker for the one reviewed no-clobber upload collision case."""
 
 
 def _reviewed_gh_download(endpoint: str) -> bytes:
@@ -227,7 +213,6 @@ def _mirror_continuity_artifact(
                     "GitHub release receipt upload failed"
                 ) from exc
 
-    _install_reviewed_release_visibility_retry()
     result = mirror.verify_release_archive_and_receipt(
         verified=verified,
         release=release,
@@ -242,162 +227,6 @@ def _mirror_continuity_artifact(
         "continuity_target_cron": plan.target_cron,
         "continuity_provenance_replayed": True,
     }
-
-
-def _validate_release_payload(release: Any, *, label: str) -> dict:
-    if (
-        type(release) is not dict
-        or type(release.get("assets")) is not list
-        or any(type(asset) is not dict for asset in release["assets"])
-    ):
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            f"{label} release metadata is malformed"
-        )
-    return release
-
-
-def _wait_for_release_asset_visibility(
-    *,
-    initial_release: dict,
-    asset_name: str,
-    reload_release: Callable[[], dict],
-    sleep_fn: Callable[[float], Any],
-    attempts: int,
-    interval_seconds: int | float,
-    label: str,
-) -> tuple[dict, dict]:
-    """Poll only for metadata absence; all visible states remain verifier-owned."""
-    if type(attempts) is not int or attempts < 1:
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "release visibility attempts must be an exact positive integer"
-        )
-    if (
-        type(interval_seconds) not in (int, float)
-        or not math.isfinite(interval_seconds)
-        or interval_seconds < 0
-    ):
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "release visibility interval must be an exact non-negative number"
-        )
-    if type(asset_name) is not str or not asset_name or asset_name != asset_name.strip():
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "release visibility asset name must be exact text"
-        )
-    if not callable(reload_release) or not callable(sleep_fn):
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "release visibility reload and sleep hooks must be callable"
-        )
-
-    release = _validate_release_payload(initial_release, label="initial")
-    for attempt in range(attempts):
-        # Use the frozen selector, retaining its duplicate-name fail-closed rule.
-        asset = mirror._asset_by_name(release, asset_name)
-        if asset is not None:
-            return release, asset
-        if attempt + 1 == attempts:
-            break
-        sleep_fn(interval_seconds)
-        try:
-            release = _validate_release_payload(
-                reload_release(), label="reloaded"
-            )
-        except mirror.FreshHoldoutReleaseReceiptMirrorError:
-            raise
-        except Exception as exc:
-            raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-                f"{label} release metadata reload failed"
-            ) from exc
-    raise ReleaseAssetVisibilityTimeout(
-        f"timed out waiting for {label} release asset visibility: {asset_name}"
-    )
-
-
-def _reviewed_verify_release_archive_and_receipt(
-    *,
-    verified: dict,
-    release: dict,
-    download_release_asset: Callable[[int], bytes],
-    upload_receipt: Callable[[str, bytes], None],
-    reload_release: Callable[[], dict],
-) -> dict:
-    """Retry only release-view absence while leaving integrity checks frozen."""
-    if type(verified) is not dict:
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "verified Actions evidence is malformed"
-        )
-    archive_name = verified.get("artifact_name")
-    receipt_name = verified.get("receipt_name")
-    if type(archive_name) is not str or type(receipt_name) is not str:
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "verified Actions artifact/receipt names are malformed"
-        )
-
-    archive_release, _archive = _wait_for_release_asset_visibility(
-        initial_release=release,
-        asset_name=archive_name,
-        reload_release=reload_release,
-        sleep_fn=time.sleep,
-        attempts=RELEASE_ASSET_VISIBILITY_ATTEMPTS,
-        interval_seconds=RELEASE_ASSET_VISIBILITY_INTERVAL_SECONDS,
-        label="archive",
-    )
-    latest_release = [archive_release]
-
-    def tracked_reload() -> dict:
-        refreshed = _validate_release_payload(
-            reload_release(), label="reloaded"
-        )
-        latest_release[0] = refreshed
-        return refreshed
-
-    def reviewed_upload(name: str, raw: bytes) -> None:
-        try:
-            upload_receipt(name, raw)
-        except mirror.FreshHoldoutReleaseReceiptMirrorError as exc:
-            if str(exc) == "GitHub release receipt upload failed":
-                raise _ReceiptUploadRace from exc
-            raise
-
-    def never_upload_again(_name: str, _raw: bytes) -> None:
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "receipt upload retry was prohibited after visibility recovery"
-        )
-
-    def verify_again_after_receipt_visibility() -> dict:
-        receipt_release, _receipt = _wait_for_release_asset_visibility(
-            initial_release=latest_release[0],
-            asset_name=receipt_name,
-            reload_release=tracked_reload,
-            sleep_fn=time.sleep,
-            attempts=RELEASE_ASSET_VISIBILITY_ATTEMPTS,
-            interval_seconds=RELEASE_ASSET_VISIBILITY_INTERVAL_SECONDS,
-            label="receipt",
-        )
-        return _ORIGINAL_VERIFY_RELEASE_ARCHIVE_AND_RECEIPT(
-            verified=verified,
-            release=receipt_release,
-            download_release_asset=download_release_asset,
-            upload_receipt=never_upload_again,
-            reload_release=tracked_reload,
-        )
-
-    try:
-        return _ORIGINAL_VERIFY_RELEASE_ARCHIVE_AND_RECEIPT(
-            verified=verified,
-            release=archive_release,
-            download_release_asset=download_release_asset,
-            upload_receipt=reviewed_upload,
-            reload_release=tracked_reload,
-        )
-    except _ReceiptUploadRace:
-        # An upload collision may mean a concurrent worker created the exact sidecar.
-        return verify_again_after_receipt_visibility()
-    except mirror.FreshHoldoutReleaseReceiptMirrorError as exc:
-        if str(exc) != "receipt upload returned without a release receipt asset":
-            raise
-        # The frozen verifier has already uploaded once and reloaded once. Never upload
-        # again; wait for its exact sidecar to enter the release metadata view.
-        return verify_again_after_receipt_visibility()
 
 
 def _reviewed_mirror_run(*, repository: str, run_id: int) -> dict:
@@ -508,20 +337,8 @@ def _install_reviewed_no_acquisition_compatibility() -> None:
     mirror.mirror_run = _reviewed_mirror_run
 
 
-def _install_reviewed_release_visibility_retry() -> None:
-    current = mirror.verify_release_archive_and_receipt
-    if current is _reviewed_verify_release_archive_and_receipt:
-        return
-    if current is not _ORIGINAL_VERIFY_RELEASE_ARCHIVE_AND_RECEIPT:
-        raise mirror.FreshHoldoutReleaseReceiptMirrorError(
-            "release-receipt verifier hook changed before visibility retry installation"
-        )
-    mirror.verify_release_archive_and_receipt = _reviewed_verify_release_archive_and_receipt
-
-
 def main(argv: list[str] | None = None) -> int:
     _install_reviewed_actions_artifact_transport()
-    _install_reviewed_release_visibility_retry()
     _install_reviewed_no_acquisition_compatibility()
     return mirror.main(argv)
 
