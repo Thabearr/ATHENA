@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -126,6 +127,67 @@ def test_fresh_holdout_workflow_and_mirror_pins_match_the_reviewed_base() -> Non
     receipt = authority.check()
     assert receipt["fresh_holdout_workflow_blob_sha1"] == authority.FRESH_HOLDOUT_WORKFLOW_BLOBS
     assert receipt["fresh_holdout_script_blob_sha1"] == authority.FRESH_HOLDOUT_SCRIPT_BLOBS
+
+
+def test_p44a1_historical_sources_and_current_maintenance_identities_are_independent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Exercise the same mode used by shallow hosted checkouts: the immutable base
+    # commit may be absent, while HEAD still carries the reviewed original fixtures.
+    monkeypatch.setattr(authority, "_base_commit_available", lambda: False)
+    receipt = authority.check()
+    current = evolution.validate_current_state()
+    assert receipt["workflow_yaml_changed"] is False
+    transitions = {
+        item["workflow_path"]: item
+        for item in current["transitions"]
+        if item["operation"] == "MAINTENANCE_REVISE"
+    }
+    targets = (
+        ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml",
+        ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml",
+    )
+    assert len(transitions) == 2
+    for path in targets:
+        transition = transitions[path]
+        historical = evolution.resolve_p43a_historical_workflow_source(
+            path, evolution_ledger=current
+        )
+        fixture_path = transition["historical_before_fixture"]["path"]
+        assert Path(fixture_path).read_bytes() == historical
+        assert evolution.source_identity(historical) == transition["before"]
+        current_bytes = Path(path).read_bytes().replace(b"\r\n", b"\n")
+        assert evolution.source_identity(current_bytes) == transition["after"]
+        assert _git("rev-parse", f"HEAD:{path}") == transition["after"]["git_blob_sha1"]
+
+    hotfix = json.loads(
+        Path("artifacts/architecture/fresh_holdout_release_visibility_race_hotfix_v1.json")
+        .read_text(encoding="utf-8")
+    )
+    old_transport_fixture = Path(hotfix["transport_before_fixture_path"]).read_bytes()
+    assert hashlib.sha256(old_transport_fixture).hexdigest() == hotfix["transport_before_fixture_sha256"]
+    assert retirement._git_blob_sha1(old_transport_fixture) == hotfix["transport_blob_before"]
+    assert _git("rev-parse", "HEAD:scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py") == hotfix["transport_blob_after"]
+
+    bridge = transitions[targets[0]]
+    bridge_original = evolution.resolve_p43a_historical_workflow_source(
+        targets[0], evolution_ledger=current
+    )
+    bridge_fixture_path = bridge["historical_before_fixture"]["path"]
+    corrupted_original = bridge_original[:-1] + bytes([bridge_original[-1] ^ 1])
+    with pytest.raises(evolution.WorkflowEvolutionError, match="differ from frozen matrix"):
+        evolution.resolve_p43a_historical_workflow_source(
+            targets[0],
+            evolution_ledger=current,
+            historical_fixture_bytes={bridge_fixture_path: corrupted_original},
+        )
+    changed_current = dict(current["transitions"][0]["after"])
+    changed_current["source_sha256"] = "0" * 64
+    with pytest.raises(evolution.WorkflowEvolutionError, match=targets[0]):
+        evolution.validate_derived_tree(
+            {targets[0]: changed_current},
+            {targets[0]: bridge["after"]},
+        )
 
 
 def test_all_frozen_pre_p44a_evidence_identities_remain_exact() -> None:

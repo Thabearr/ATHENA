@@ -113,6 +113,10 @@ The frozen core mirror remains unchanged. The transport revision changes neither
 collection triggers nor permissions/concurrency and grants no provider, backfill,
 model, pricing, selection, or betting authority. Its reviewed maintenance-revision
 evidence preserves the previous transport and two workflow files byte-for-byte.
+The bridge and release-receipts workflow pin updates are separately recorded as two
+`MAINTENANCE_REVISE` transitions in the append-only workflow-evolution ledger. Each
+transition is `PROTECTED_RESEARCH`, preserves the path and family, and carries its
+own exact pre-revision workflow fixture and immutable phase snapshot.
 
 It performs no:
 

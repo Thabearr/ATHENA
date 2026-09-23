@@ -59,7 +59,7 @@ jobs:
             exit 1
           }
           transport_actual="$(git hash-object scripts/run_fotmob_fresh_holdout_release_receipt_mirror.py)"
-          transport_expected="66cfffcf1a8fa1fbcb1314ae40950e93bde43c90"
+          transport_expected="f0b836304b1d46877e0396ea7a532c24b46a3d16"
           test "${transport_actual}" = "${transport_expected}" || {
             echo "FATAL: release-receipt Actions transport/compatibility blob changed"
             exit 1
