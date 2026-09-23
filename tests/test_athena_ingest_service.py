@@ -75,6 +75,22 @@ def test_failure_stops_without_retry_and_preserves_partial_evidence(tmp_path: Pa
     assert len(update.source_records) == 1
 
 
+def test_unexpected_acquisition_exception_still_emits_fail_closed_receipt(tmp_path: Path) -> None:
+    attempts: list[str] = []
+    def acquire(*, request_date: str, timezone: str, ccode3: str):
+        attempts.append(request_date)
+        raise RuntimeError("injected offline fault")
+    receipt = execute_ingest_request(
+        AthenaIngestRequest.for_dates(("20260901", "20260902")),
+        repository_root=tmp_path, acquisition_callable=acquire,
+    )
+    assert attempts == ["20260901"]
+    assert receipt.failure_code == "PROVIDER_ACQUISITION_FAILED"
+    assert receipt.provider_request_count == 1
+    assert receipt.canonical_store_update_committed is False
+    assert (tmp_path / ARTIFACT_RELATIVE / "ingest-receipt.json").read_bytes() == receipt.canonical_bytes
+
+
 def test_unreviewed_acquisition_provenance_fails_closed(tmp_path: Path) -> None:
     def acquire(*, request_date: str, timezone: str, ccode3: str):
         value = fake_response(request_date)

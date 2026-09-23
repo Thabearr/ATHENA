@@ -42,7 +42,7 @@ def _regular_bytes(root: Path, relative: str) -> bytes:
 
 def replay_ingest_artifact(artifact_root: Path) -> dict[str, object]:
     root = Path(artifact_root)
-    if root.is_symlink() or not root.is_dir():
+    if any(part.is_symlink() for part in (root, *root.parents)) or not root.is_dir():
         raise AthenaIngestReplayError("artifact root must be a regular directory")
     try:
         request_raw = _regular_bytes(root, REQUEST_NAME)

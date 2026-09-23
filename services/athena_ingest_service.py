@@ -19,7 +19,7 @@ from domain.ingest_contracts import (
     receipt_authorities, sha256_bytes,
 )
 from scripts.capture_fotmob_data_matches import (
-    ALLOWED_OUTPUT_RELATIVE, FotMobDataMatchesNetworkError,
+    ALLOWED_OUTPUT_RELATIVE,
     fetch_fotmob_data_matches, write_data_matches_capture_directory,
 )
 
@@ -145,7 +145,7 @@ def execute_ingest_request(
             response = acquisition_callable(request_date=date, timezone="UTC", ccode3="NGA")
             if not isinstance(response, CapturedFotMobDataMatchesResponse) or response.network_acquisition_performed is not True:
                 raise FotMobDataMatchesCaptureError("acquisition provenance must be true")
-        except (FotMobDataMatchesNetworkError, FotMobDataMatchesCaptureError, OSError, TimeoutError):
+        except Exception:
             failure = "PROVIDER_ACQUISITION_FAILED"
             break
         try:
@@ -156,7 +156,7 @@ def execute_ingest_request(
             verify_data_matches_capture_directory(
                 capture, allowed_root=repository / ALLOWED_OUTPUT_RELATIVE,
             )
-        except (FotMobDataMatchesCaptureError, OSError):
+        except Exception:
             failure = "SOURCE_CAPTURE_VALIDATION_FAILED"
             break
         try:
@@ -164,7 +164,7 @@ def execute_ingest_request(
                 capture, request_date=date, artifact_root=artifact_root, repository=repository,
             )
             records.append(_record_from_capture(copied, artifact_root=artifact_root, expected_date=date))
-        except (AthenaIngestServiceError, FotMobDataMatchesCaptureError, OSError):
+        except Exception:
             failure = "ARTIFACT_PERSISTENCE_FAILED"
             break
     committed = failure is None and len(records) == len(request.dates)
