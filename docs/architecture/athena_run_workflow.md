@@ -109,3 +109,15 @@ Current Shadow remains active and unretired with its scheduled, notification,
 identity-ancestry, and issue-comment responsibilities. Fresh Holdout workflows
 remain protected. P4.3B retires no other workflow, makes no broad workflow
 consolidation claim, and does not start P4.4.
+
+## P4.3D retirement-audit checkpoint
+
+P4.3D freezes the exact P4.3C cumulative-ledger state as an immutable phase snapshot
+and changes historical audits to distinguish that snapshot from the extendable
+current ledger. P4.3A continues to describe 40 historical workflows; current
+accounting is 37 live and 3 retired. P4.3D changes no workflow YAML and retires
+nothing. Later ledger extensions must preserve all earlier retirement metadata and
+arithmetic; this does not pre-authorize any next retirement. Current Shadow remains
+active, Fresh Holdout remains protected, Architecture Checkpoint E is not fully
+claimed, and P4.4 has not started. If this PR merges, the source-review counter is
+5/5 and a mandatory source reread is required before any further remediation.

@@ -17,15 +17,16 @@ from scripts import audit_p4_3c_spent_v1_evidence_workflow_retirement as audit
 
 def test_exactly_two_v1_paths_are_retired_and_successors_remain_live() -> None:
     matrix, _ = ledger.load_baseline()
+    current_ledger = ledger.validate_ledger()
     live = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    expected = sorted({row["workflow_path"] for row in matrix["workflow_rows"]} - set(ledger.RETIRED))
-    assert len(live) == 37
+    expected = sorted({row["workflow_path"] for row in matrix["workflow_rows"]} - set(current_ledger["retired_workflow_paths"]))
+    assert len(live) == current_ledger["current_live_workflow_count"]
     assert live == expected
     for path, details in audit.TARGETS.items():
         assert not Path(path).exists()
         assert Path(details["successor"]).is_file()
     assert not Path(".github/workflows/current-sportybet-accumulator.yml").exists()
-    assert len(ledger.RETIRED) == 3
+    assert len(current_ledger["retired_workflow_paths"]) == 3
 
 
 @pytest.mark.parametrize("path", sorted(audit.TARGETS))
@@ -88,8 +89,10 @@ def test_new_successful_v1_history_blocks_retirement(path: str, monkeypatch: pyt
 def test_p4_3c_receipt_and_cumulative_ledger_bind_three_retirements() -> None:
     receipt = audit.check()
     current_ledger = ledger.validate_ledger()
+    snapshot = ledger._load_p43c_ledger_snapshot()
     assert receipt["canonical_sha256"] == audit.canonical_sha256(receipt)
-    assert receipt["retirement_ledger_sha256"] == current_ledger["canonical_sha256"]
+    assert receipt["retirement_ledger_sha256"] == snapshot["canonical_sha256"] == audit.P43C_LEDGER_SNAPSHOT_SHA
+    ledger.validate_historical_snapshot_extension(snapshot, current_ledger)
     assert receipt["workflow_count_before"] == 39
     assert receipt["workflow_count_after"] == 37
     assert receipt["workflow_count_decreased_by"] == 2
@@ -121,7 +124,15 @@ def test_no_network_is_attempted_by_retirement_audits(monkeypatch: pytest.Monkey
     monkeypatch.setattr(socket, "create_connection", forbidden)
     monkeypatch.setattr(urllib_request, "urlopen", forbidden)
     assert audit.check()["network_attempt_count"] == 0
-    assert ledger.validate_ledger()["current_live_workflow_count"] == 37
+    current = ledger.validate_ledger()
+    assert current["current_live_workflow_count"] == 40 - len(current["retired_workflow_paths"])
+
+
+def test_p4_3c_receipt_write_mode_is_disabled_and_read_only() -> None:
+    before = audit.RECEIPT_PATH.read_bytes()
+    with pytest.raises(audit.P43CRetirementError, match="frozen historical evidence"):
+        audit.check(write=True)
+    assert audit.RECEIPT_PATH.read_bytes() == before
 
 
 def test_only_historical_v1_tests_read_fixture_and_v2_tests_remain_live() -> None:

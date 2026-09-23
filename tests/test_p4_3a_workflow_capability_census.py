@@ -29,19 +29,24 @@ def test_matrix_has_exactly_40_sorted_historical_workflows(matrix: dict) -> None
 
 
 def test_workflow_tree_unchanged_and_each_row_binds_source_identity(matrix: dict) -> None:
-    # The frozen pre-retirement census remains 40 rows; cumulative reviewed
-    # retirements leave 37 live workflow files.
+    # The frozen census remains 40 rows; current count follows the validated
+    # cumulative ledger instead of being frozen to one later checkpoint.
     audit.validate_matrix(matrix)
+    from scripts import audit_p4_3_workflow_retirement_ledger as ledger_audit
+
+    ledger = ledger_audit.validate_ledger()
     assert matrix["workflow_count"] == 40
-    assert len(audit._worktree_workflows()) == 37
+    assert len(audit._worktree_workflows()) == 40 - len(ledger["retired_workflow_paths"])
+    assert ledger["current_live_workflow_count"] == 40 - len(ledger["retired_workflow_paths"])
 
 
 def test_yaml_loader_preserves_github_actions_on_key(matrix: dict) -> None:
     for row in matrix["workflow_rows"]:
-        from scripts.audit_p4_3_workflow_retirement_ledger import RETIRED
+        from scripts import audit_p4_3_workflow_retirement_ledger as ledger_audit
 
-        source = RETIRED[row["workflow_path"]]["fixture_path"] if row["workflow_path"] in RETIRED else row["workflow_path"]
-        parsed = yaml.load(Path(source).read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+        ledger = ledger_audit.validate_ledger()
+        raw = ledger_audit.resolve_reviewed_workflow_source(row["workflow_path"], ledger=ledger)
+        parsed = yaml.load(raw.decode("utf-8"), Loader=yaml.BaseLoader)
         assert "on" in parsed
         assert isinstance(parsed["on"], dict)
         assert row["trigger_types"] == sorted(parsed["on"].keys())
