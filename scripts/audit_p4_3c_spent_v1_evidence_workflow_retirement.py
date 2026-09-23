@@ -16,6 +16,9 @@ MATRIX_SHA = ledger_audit.MATRIX_SHA256
 P43A_RECEIPT_SHA = ledger_audit.P43A_RECEIPT_SHA256
 P43B_RECEIPT_SHA = ledger_audit.P43B_RECEIPT_SHA256
 P42_RECEIPT_SHA = "fa575a5bb5f4611eb94564b92dea3e4230b8d429b1660dc3bde3d6c164b836f8"
+P43C_RECEIPT_SHA = "c4afd0d0052c7b14d643f7868d7eac85344042da20a9d7aa0e8bf3b59ab9bd24"
+P43C_LEDGER_SNAPSHOT_SHA = ledger_audit.P43C_LEDGER_SNAPSHOT_SHA256
+P43C_LEDGER_SNAPSHOT_PATH = ledger_audit.P43C_LEDGER_SNAPSHOT_PATH
 ROLLBACK_TAG = "athena-p4.3c-pre-spent-v1-workflow-retirement-3850c90"
 RECEIPT_PATH = Path("artifacts/architecture/p4_3c_spent_v1_evidence_workflow_retirement_v1.json")
 FIXED_V1_SPENT_STATE = "V1_SPENT_GUARD_PERMISSION_FAILURE_NO_QUALIFICATION_EXECUTED_DO_NOT_REPLAY"
@@ -162,32 +165,40 @@ def _identity(raw: bytes) -> tuple[str, str]:
     return blob, hashlib.sha256(raw).hexdigest()
 
 
-def _assert_tokens(path: str, tokens: list[str], *, source_override: str | None = None) -> str:
-    source = source_override if source_override is not None else Path(path).read_text(encoding="utf-8")
+def _assert_tokens(path: str, tokens: list[str], *, source: str) -> None:
     for token in tokens:
         if token not in source:
             raise P43CRetirementError(f"{path}: reconciled successor identity is missing/changed: {token}")
-    return source
 
 
-def verify_target(path: str, *, v1_fixture_bytes: bytes | None = None, v2_source: str | None = None) -> dict[str, Any]:
+def verify_target(
+    path: str,
+    *,
+    v1_fixture_bytes: bytes | None = None,
+    v2_source: str | None = None,
+    current_ledger: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     try:
         details = TARGETS[path]
     except KeyError as exc:
         raise P43CRetirementError(f"unreviewed P4.3C target: {path}") from exc
-    fixture_path = Path(details["fixture_path"])
-    raw = fixture_path.read_bytes() if v1_fixture_bytes is None else v1_fixture_bytes
+    reviewed_raw = ledger_audit.resolve_reviewed_workflow_source(path, ledger=current_ledger)
+    raw = reviewed_raw if v1_fixture_bytes is None else v1_fixture_bytes
     blob_sha, source_sha = _identity(raw)
     if blob_sha != details["git_blob_sha1"] or source_sha != details["source_sha256"]:
         raise P43CRetirementError(f"historical V1 fixture identity drifted: {path}")
     if Path(path).exists():
         raise P43CRetirementError(f"retired V1 workflow still executable: {path}")
     v2_path = details["successor"]
-    live_v2_raw = Path(v2_path).read_bytes()
-    v2_blob, v2_sha = _identity(_normalized_source(live_v2_raw))
+    v2_raw = ledger_audit.resolve_reviewed_workflow_source(v2_path, ledger=current_ledger)
+    v2_blob, v2_sha = _identity(v2_raw)
     if v2_blob != details["successor_git_blob_sha1"] or v2_sha != details["successor_source_sha256"]:
         raise P43CRetirementError(f"reconciled V2 successor source identity changed: {v2_path}")
-    source = _assert_tokens(v2_path, details["v2_source_tokens"], source_override=v2_source)
+    _assert_tokens(
+        v2_path,
+        details["v2_source_tokens"],
+        source=v2_raw.decode("utf-8") if v2_source is None else v2_source,
+    )
     v1_history = details["v1_reconciliation"]
     if not v1_history.get("run_id") or not v1_history.get("artifact_id"):
         raise P43CRetirementError(f"{path}: reviewed failed/spent V1 history is incomplete")
@@ -247,159 +258,40 @@ def _load_matrix() -> dict[str, Any]:
     return matrix
 
 
-def build_receipt_core() -> dict[str, Any]:
-    matrix = _load_matrix()
-    if Path(".github/workflows").exists():
-        live_paths = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    else:
-        raise P43CRetirementError("workflow directory missing")
-    before_count = len(live_paths) + 2
-    if before_count != 39 or len(live_paths) != 37:
-        raise P43CRetirementError("P4.3C live workflow transition must be exactly 39 to 37")
-    target_proofs = [verify_target(path) for path in sorted(TARGETS)]
-    expected_paths = sorted(set(row["workflow_path"] for row in matrix["workflow_rows"]) - set(ledger_audit.RETIRED))
-    if live_paths != expected_paths:
-        raise P43CRetirementError("only the two authorized V1 workflow paths may be absent")
-    ledger = ledger_audit.validate_ledger()
-    receipt: dict[str, Any] = {
-        "schema_version": 1,
-        "policy_id": POLICY_ID,
-        "repository_base_main_sha": BASE_MAIN_SHA,
-        "p4_3a_matrix_sha256": MATRIX_SHA,
-        "p4_3a_receipt_sha256": P43A_RECEIPT_SHA,
-        "p4_3b_receipt_sha256": P43B_RECEIPT_SHA,
-        "p4_2_receipt_sha256": P42_RECEIPT_SHA,
-        "owner_review_scope": sorted(TARGETS),
-        "owner_review_authorized": True,
-        "target_count": 2,
-        "targets": target_proofs,
-        "workflow_count_before": 39,
-        "workflow_count_after": 37,
-        "workflow_count_decreased_by": 2,
-        "cumulative_retired_workflow_count": 3,
-        "unique_required_capability_lost": False,
-        "network_attempt_count": 0,
-        "workflow_dispatch_triggered": False,
-        "provider_acquisition": False,
-        "current_shadow_triggered": False,
-        "fresh_holdout_triggered": False,
-        "p3_0_e1_triggered": False,
-        "real_share_code_operation": False,
-        "login": False,
-        "cookies": False,
-        "wallet": False,
-        "staking": False,
-        "wager_placed": False,
-        "model_formula_changed": False,
-        "probability_formula_changed": False,
-        "calibration_formula_changed": False,
-        "price_all_formula_changed": False,
-        "router_formula_changed": False,
-        "portfolio_formula_changed": False,
-        "provider_semantics_changed": False,
-        "share_code_semantics_changed": False,
-        "rollback_tag": ROLLBACK_TAG,
-        "rollback_commit_sha": BASE_MAIN_SHA,
-        "rollback_tag_remote_verified_before_deletion": True,
-        "retirement_ledger_sha256": ledger["canonical_sha256"],
-        "p4_3c_retirement_gate_satisfied": True,
-        "architecture_checkpoint_e_fully_claimed": False,
-        "p4_4_started": False,
-        "source_review_counter_while_unmerged": "3/5",
-        "source_review_counter_if_merged": "4/5",
-    }
-    return receipt
-
-
-def build_evidence() -> tuple[dict[str, Any], dict[str, Any]]:
-    # Build the receipt body without its ledger backlink first; the ledger stores
-    # this body hash, and the final receipt then binds the resulting ledger hash.
-    core = build_receipt_core_without_ledger()
-    new_ledger = ledger_audit.build_ledger(core)
-    receipt = dict(core)
-    receipt["retirement_ledger_sha256"] = new_ledger["canonical_sha256"]
-    receipt["canonical_sha256"] = canonical_sha256(receipt)
-    return new_ledger, receipt
-
-
-def build_receipt_core_without_ledger() -> dict[str, Any]:
-    # In the write path only, construct the evidence without consulting a ledger
-    # that has not yet been materialized.
-    matrix = _load_matrix()
-    live_paths = sorted(path.as_posix() for path in Path(".github/workflows").glob("*.yml"))
-    if len(live_paths) != 37:
-        raise P43CRetirementError("P4.3C current live workflow count must be 37")
-    target_proofs = [verify_target(path) for path in sorted(TARGETS)]
-    expected_paths = sorted(set(row["workflow_path"] for row in matrix["workflow_rows"]) - set(ledger_audit.RETIRED))
-    if live_paths != expected_paths:
-        raise P43CRetirementError("only the two authorized V1 workflow paths may be absent")
-    p43b = json.loads(ledger_audit.P43B_RECEIPT_PATH.read_text(encoding="utf-8"))
-    if p43b.get("canonical_sha256") != P43B_RECEIPT_SHA:
-        raise P43CRetirementError("P4.3B historical receipt changed")
-    return {
-        "schema_version": 1,
-        "policy_id": POLICY_ID,
-        "repository_base_main_sha": BASE_MAIN_SHA,
-        "p4_3a_matrix_sha256": MATRIX_SHA,
-        "p4_3a_receipt_sha256": P43A_RECEIPT_SHA,
-        "p4_3b_receipt_sha256": P43B_RECEIPT_SHA,
-        "p4_2_receipt_sha256": P42_RECEIPT_SHA,
-        "owner_review_scope": sorted(TARGETS),
-        "owner_review_authorized": True,
-        "target_count": 2,
-        "targets": target_proofs,
-        "workflow_count_before": 39,
-        "workflow_count_after": 37,
-        "workflow_count_decreased_by": 2,
-        "cumulative_retired_workflow_count": 3,
-        "unique_required_capability_lost": False,
-        "network_attempt_count": 0,
-        "workflow_dispatch_triggered": False,
-        "provider_acquisition": False,
-        "current_shadow_triggered": False,
-        "fresh_holdout_triggered": False,
-        "p3_0_e1_triggered": False,
-        "real_share_code_operation": False,
-        "login": False,
-        "cookies": False,
-        "wallet": False,
-        "staking": False,
-        "wager_placed": False,
-        "model_formula_changed": False,
-        "probability_formula_changed": False,
-        "calibration_formula_changed": False,
-        "price_all_formula_changed": False,
-        "router_formula_changed": False,
-        "portfolio_formula_changed": False,
-        "provider_semantics_changed": False,
-        "share_code_semantics_changed": False,
-        "rollback_tag": ROLLBACK_TAG,
-        "rollback_commit_sha": BASE_MAIN_SHA,
-        "rollback_tag_remote_verified_before_deletion": True,
-        "p4_3c_retirement_gate_satisfied": True,
-        "architecture_checkpoint_e_fully_claimed": False,
-        "p4_4_started": False,
-        "source_review_counter_while_unmerged": "3/5",
-        "source_review_counter_if_merged": "4/5",
-    }
-
-
 def check(*, write: bool = False) -> dict[str, Any]:
     if write:
-        ledger, receipt = build_evidence()
-        ledger_audit.LEDGER_PATH.write_bytes(canonical_json_bytes(ledger))
-        RECEIPT_PATH.write_bytes(canonical_json_bytes(receipt))
-        ledger_audit.validate_ledger(ledger)
-        return receipt
-    committed = json.loads(RECEIPT_PATH.read_text(encoding="utf-8"))
-    expected_ledger = ledger_audit.validate_ledger()
-    rebuilt = build_receipt_core()
-    rebuilt["retirement_ledger_sha256"] = expected_ledger["canonical_sha256"]
-    rebuilt["canonical_sha256"] = canonical_sha256(rebuilt)
-    if committed != rebuilt or canonical_sha256(committed) != committed.get("canonical_sha256"):
-        raise P43CRetirementError("committed P4.3C receipt differs from offline retirement proof")
-    if committed.get("retirement_ledger_sha256") != expected_ledger["canonical_sha256"]:
-        raise P43CRetirementError("P4.3C receipt ledger binding differs")
+        raise P43CRetirementError("P4.3C is frozen historical evidence; receipt/ledger write mode is disabled")
+    try:
+        committed = json.loads(RECEIPT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise P43CRetirementError("frozen P4.3C receipt is unreadable") from exc
+    if (
+        committed.get("canonical_sha256") != P43C_RECEIPT_SHA
+        or canonical_sha256(committed) != P43C_RECEIPT_SHA
+    ):
+        raise P43CRetirementError("immutable P4.3C receipt identity changed")
+    current_ledger = ledger_audit.validate_ledger()
+    snapshot = ledger_audit._load_p43c_ledger_snapshot()
+    ledger_audit.validate_historical_snapshot_extension(snapshot, current_ledger)
+    if committed.get("retirement_ledger_sha256") != snapshot.get("canonical_sha256"):
+        raise P43CRetirementError("P4.3C receipt does not bind its frozen historical ledger snapshot")
+    if (
+        committed.get("workflow_count_before") != 39
+        or committed.get("workflow_count_after") != 37
+        or committed.get("workflow_count_decreased_by") != 2
+        or committed.get("cumulative_retired_workflow_count") != 3
+    ):
+        raise P43CRetirementError("P4.3C historical 39-to-37 transition changed")
+    proofs = [
+        verify_target(path, current_ledger=current_ledger)
+        for path in sorted(TARGETS)
+    ]
+    if committed.get("targets") != proofs:
+        raise P43CRetirementError("P4.3C V1/V2 historical reconciliation identities changed")
+    if committed.get("owner_review_scope") != sorted(TARGETS) or committed.get("owner_review_authorized") is not True:
+        raise P43CRetirementError("P4.3C historical owner-review scope changed")
+    if committed.get("p4_3c_retirement_gate_satisfied") is not True or committed.get("p4_4_started") is not False:
+        raise P43CRetirementError("P4.3C historical gate/P4.4 state changed")
     return committed
 
 

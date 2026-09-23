@@ -106,3 +106,23 @@ binds the final ledger hash, avoiding a circular self-reference.
 Current Shadow remains active and unretired, all four Fresh Holdout workflows remain
 protected, `athena-draft-ready-bridge.yml` remains pending owner review, and no broad
 retirement or Architecture Checkpoint E completion is claimed. P4.4 has not started.
+
+## P4.3D historical-audit extensibility
+
+P4.3A remains the immutable 40-workflow census; P4.3B remains the immutable 40→39
+retirement proof; and P4.3C remains the immutable 39→37 proof. The exact cumulative
+ledger state used by P4.3C is frozen at
+`artifacts/architecture/p4_3_retirement_ledger_snapshots/p4_3c_workflow_retirement_ledger_v1.json`.
+P4.3C's ledger hash identifies that phase snapshot, not every future version of the
+current cumulative ledger. The current ledger may only be extended by later reviewed
+retirement evidence that preserves every existing entry and count invariant.
+
+P4.3D retires zero workflows: the live set remains 37 and the cumulative retired set
+remains 3. P4.3A derives its present-day tree check from the validated ledger while
+retaining all 40 historical rows. P4.3C is verified as frozen historical evidence
+against its phase snapshot rather than rebuilt from today's tree. Current Shadow
+remains active, Fresh Holdout remains protected, and this audit-lifecycle fix does
+not authorize a future retirement target. Architecture Checkpoint E is not fully
+claimed; P4.4 has not started. If P4.3D merges, the source-review counter reaches
+5/5 and the mandatory architecture/source reread must happen before further
+remediation.

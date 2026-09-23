@@ -14,9 +14,14 @@ P43A_RECEIPT_PATH = Path("artifacts/architecture/p4_3a_workflow_capability_censu
 P43B_RECEIPT_PATH = Path("artifacts/architecture/p4_3b_current_sportybet_workflow_retirement_v1.json")
 P43C_RECEIPT_PATH = Path("artifacts/architecture/p4_3c_spent_v1_evidence_workflow_retirement_v1.json")
 LEDGER_PATH = Path("artifacts/architecture/p4_3_workflow_retirement_ledger_v1.json")
+P43C_LEDGER_SNAPSHOT_PATH = Path(
+    "artifacts/architecture/p4_3_retirement_ledger_snapshots/p4_3c_workflow_retirement_ledger_v1.json"
+)
 MATRIX_SHA256 = "6b417a19557efdd39201e233fb866e4143b8102ba2879a4f1481e5241722dd8d"
 P43A_RECEIPT_SHA256 = "7dd102aa4da98d634d665b4a93f51eb24ece8d7b61c8856b9977ff84a7452a6b"
 P43B_RECEIPT_SHA256 = "cf2371c7ec2747256f23599e7a43dd2d9e46ff61dda2c478a746d8bd8a49e72a"
+P43C_RECEIPT_SHA256 = "c4afd0d0052c7b14d643f7868d7eac85344042da20a9d7aa0e8bf3b59ab9bd24"
+P43C_LEDGER_SNAPSHOT_SHA256 = "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
 BASELINE_WORKFLOW_COUNT = 40
 WORKFLOW_DIR = Path(".github/workflows")
 RETIRED = {
@@ -191,6 +196,150 @@ def _source_for_row(row: dict[str, Any]) -> bytes:
         raise RetirementLedgerError(f"unretired workflow missing: {path}") from exc
 
 
+def _retirement_entries_by_path(ledger: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    entries = ledger.get("retirements")
+    if not isinstance(entries, list):
+        raise RetirementLedgerError("retirement ledger entries must be a list")
+    paths = [entry.get("workflow_path") if isinstance(entry, dict) else None for entry in entries]
+    if any(type(path) is not str for path in paths) or len(paths) != len(set(paths)):
+        raise RetirementLedgerError("retirement ledger paths must be unique strings")
+    return {entry["workflow_path"]: entry for entry in entries}
+
+
+def _validate_ledger_arithmetic(ledger: dict[str, Any], *, label: str) -> tuple[list[str], list[str]]:
+    if ledger.get("schema_version") != 1 or ledger.get("policy_id") != POLICY_ID:
+        raise RetirementLedgerError(f"{label} schema/policy mismatch")
+    if canonical_sha256(ledger) != ledger.get("canonical_sha256"):
+        raise RetirementLedgerError(f"{label} canonical SHA mismatch")
+    if (
+        ledger.get("baseline_matrix_sha256") != MATRIX_SHA256
+        or ledger.get("baseline_p4_3a_receipt_sha256") != P43A_RECEIPT_SHA256
+        or ledger.get("baseline_workflow_count") != BASELINE_WORKFLOW_COUNT
+    ):
+        raise RetirementLedgerError(f"{label} baseline identity mismatch")
+    by_path = _retirement_entries_by_path(ledger)
+    retired_paths = sorted(by_path)
+    if ledger.get("retired_workflow_paths") != retired_paths:
+        raise RetirementLedgerError(f"{label} retired path set mismatch")
+    retired_count = len(retired_paths)
+    live_count = BASELINE_WORKFLOW_COUNT - retired_count
+    if (
+        ledger.get("current_retired_workflow_count") != retired_count
+        or ledger.get("current_live_workflow_count") != live_count
+        or live_count < 0
+    ):
+        raise RetirementLedgerError(f"{label} workflow count arithmetic mismatch")
+    return retired_paths, sorted(set(_baseline_paths()) - set(retired_paths))
+
+
+def _baseline_paths() -> list[str]:
+    matrix, _census = load_baseline()
+    return [row["workflow_path"] for row in matrix["workflow_rows"]]
+
+
+def validate_historical_snapshot_extension(
+    snapshot: dict[str, Any], current: dict[str, Any]
+) -> None:
+    """Require the current ledger to monotonically extend a frozen phase snapshot.
+
+    Old retirement records are immutable. Later reviewed phases may append rows,
+    but may not rewrite an earlier source, fixture, phase, receipt, or successor.
+    """
+    snapshot_paths, _snapshot_live = _validate_ledger_arithmetic(snapshot, label="historical ledger snapshot")
+    current_paths, _current_live = _validate_ledger_arithmetic(current, label="current retirement ledger")
+    baseline_fields = (
+        "baseline_matrix_sha256",
+        "baseline_p4_3a_receipt_sha256",
+        "baseline_workflow_count",
+    )
+    if any(snapshot.get(field) != current.get(field) for field in baseline_fields):
+        raise RetirementLedgerError("current ledger changed the historical baseline")
+
+    snapshot_entries = _retirement_entries_by_path(snapshot)
+    current_entries = _retirement_entries_by_path(current)
+    matrix_paths = set(_baseline_paths())
+    if not set(current_paths).issubset(matrix_paths):
+        raise RetirementLedgerError("current ledger retires a path absent from the P4.3A baseline")
+    if not set(snapshot_paths).issubset(current_entries):
+        raise RetirementLedgerError("current ledger removed a historical retirement")
+    for path, entry in snapshot_entries.items():
+        if current_entries.get(path) != entry:
+            raise RetirementLedgerError(f"current ledger rewrote historical retirement metadata: {path}")
+
+    snapshot_retired = len(snapshot_paths)
+    current_retired = len(current_paths)
+    snapshot_live = snapshot["current_live_workflow_count"]
+    current_live = current["current_live_workflow_count"]
+    if current_retired < snapshot_retired or current_live > snapshot_live:
+        raise RetirementLedgerError("current ledger is not a monotonic retirement extension")
+    if BASELINE_WORKFLOW_COUNT - snapshot_retired != snapshot_live:
+        raise RetirementLedgerError("historical snapshot count arithmetic mismatch")
+    if BASELINE_WORKFLOW_COUNT - current_retired != current_live:
+        raise RetirementLedgerError("current ledger count arithmetic mismatch")
+
+
+def _load_p43c_ledger_snapshot() -> dict[str, Any]:
+    try:
+        snapshot = json.loads(P43C_LEDGER_SNAPSHOT_PATH.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RetirementLedgerError("frozen P4.3C retirement ledger snapshot is unreadable") from exc
+    if (
+        snapshot.get("canonical_sha256") != P43C_LEDGER_SNAPSHOT_SHA256
+        or canonical_sha256(snapshot) != P43C_LEDGER_SNAPSHOT_SHA256
+    ):
+        raise RetirementLedgerError("immutable P4.3C ledger snapshot identity changed")
+    retired_paths, _live_paths = _validate_ledger_arithmetic(snapshot, label="P4.3C ledger snapshot")
+    if len(retired_paths) != 3 or snapshot.get("current_live_workflow_count") != 37:
+        raise RetirementLedgerError("P4.3C historical ledger snapshot must remain 3 retired / 37 live")
+    return snapshot
+
+
+def resolve_reviewed_workflow_source(
+    path: str, *, ledger: dict[str, Any] | None = None
+) -> bytes:
+    """Resolve a P4.3A workflow from its live YAML or ledger-backed fixture.
+
+    Passing ``ledger`` avoids recursive validation while ``validate_ledger`` is
+    checking each row. Direct callers validate the current ledger first.
+    """
+    matrix, _census = load_baseline()
+    row = next((item for item in matrix["workflow_rows"] if item.get("workflow_path") == path), None)
+    if row is None:
+        raise RetirementLedgerError(f"workflow path is absent from the frozen P4.3A matrix: {path}")
+    if ledger is None:
+        ledger = validate_ledger()
+    entries = _retirement_entries_by_path(ledger)
+    entry = entries.get(path)
+    if entry is not None:
+        if Path(path).exists():
+            raise RetirementLedgerError(f"retired executable workflow unexpectedly exists: {path}")
+        fixture_path = entry.get("fixture_path")
+        try:
+            raw = Path(fixture_path).read_bytes()
+        except (TypeError, OSError) as exc:
+            raise RetirementLedgerError(f"retired workflow fixture missing: {path}") from exc
+        if (
+            entry.get("git_blob_sha1") != row.get("git_blob_sha1")
+            or entry.get("source_sha256") != row.get("source_sha256")
+            or _git_blob_sha1(raw) != row.get("git_blob_sha1")
+            or _sha256(raw) != row.get("source_sha256")
+        ):
+            raise RetirementLedgerError(f"retired workflow fixture identity differs from baseline: {path}")
+        return raw
+
+    try:
+        raw = Path(path).read_bytes().replace(b"\r\n", b"\n")
+    except OSError as exc:
+        raise RetirementLedgerError(f"live workflow unexpectedly missing: {path}") from exc
+    if (
+        _git_blob_sha1(raw) != row.get("git_blob_sha1")
+        or _sha256(raw) != row.get("source_sha256")
+        or _git_blob_at_head(path) != row.get("git_blob_sha1")
+    ):
+        raise RetirementLedgerError(f"live workflow identity differs from baseline: {path}")
+    return raw
+
+
 def validate_ledger(
     ledger: dict[str, Any] | None = None,
     *,
@@ -202,54 +351,27 @@ def validate_ledger(
             ledger = json.loads(LEDGER_PATH.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise RetirementLedgerError("cumulative retirement ledger is unreadable") from exc
-    if ledger.get("schema_version") != 1 or ledger.get("policy_id") != POLICY_ID:
-        raise RetirementLedgerError("retirement ledger schema/policy mismatch")
-    if canonical_sha256(ledger) != ledger.get("canonical_sha256"):
-        raise RetirementLedgerError("retirement ledger canonical SHA mismatch")
-    if (
-        ledger.get("baseline_matrix_sha256") != MATRIX_SHA256
-        or ledger.get("baseline_p4_3a_receipt_sha256") != P43A_RECEIPT_SHA256
-        or ledger.get("baseline_workflow_count") != BASELINE_WORKFLOW_COUNT
-    ):
-        raise RetirementLedgerError("retirement ledger baseline identity mismatch")
+    retired_paths, expected_current = _validate_ledger_arithmetic(ledger, label="current retirement ledger")
     expected_entries = _expected_entries()
     entries = ledger.get("retirements")
     if entries != expected_entries:
         raise RetirementLedgerError("cumulative ledger retirement entries do not match reviewed evidence")
-    retired_paths = sorted(RETIRED)
-    if ledger.get("retired_workflow_paths") != retired_paths:
-        raise RetirementLedgerError("cumulative ledger retired path set mismatch")
-    if (
-        ledger.get("current_retired_workflow_count") != len(RETIRED)
-        or ledger.get("current_live_workflow_count") != BASELINE_WORKFLOW_COUNT - len(RETIRED)
-    ):
-        raise RetirementLedgerError("cumulative ledger workflow count mismatch")
 
     rows = matrix["workflow_rows"]
     matrix_paths = [row["workflow_path"] for row in rows]
-    if not set(RETIRED).issubset(matrix_paths):
+    if not set(retired_paths).issubset(matrix_paths):
         raise RetirementLedgerError("ledger contains a retired workflow absent from the baseline matrix")
     for row in rows:
-        raw = _source_for_row(row)
         path = row["workflow_path"]
-        identity = RETIRED.get(path)
-        expected_blob = identity["git_blob_sha1"] if identity else row["git_blob_sha1"]
-        expected_sha = identity["source_sha256"] if identity else row["source_sha256"]
-        if _git_blob_sha1(raw) != expected_blob or _sha256(raw) != expected_sha:
-            raise RetirementLedgerError(f"workflow source identity differs from baseline: {path}")
-        if not identity and _git_blob_at_head(path) != row["git_blob_sha1"]:
-            raise RetirementLedgerError(f"live workflow Git blob differs from baseline: {path}")
-        if identity and Path(path).exists():
-            raise RetirementLedgerError(f"retired executable workflow still exists: {path}")
+        resolve_reviewed_workflow_source(path, ledger=ledger)
 
     current = sorted(path.as_posix() for path in WORKFLOW_DIR.glob("*.yml"))
-    expected_current = sorted(set(matrix_paths) - set(retired_paths))
     supplied = sorted(workflow_paths) if workflow_paths is not None else current
     if supplied != expected_current or current != expected_current:
         unexpected = sorted(set(supplied) ^ set(expected_current))
-        raise RetirementLedgerError(f"live workflow set is not baseline minus the three reviewed retirements: {unexpected}")
-    if len(current) != 37:
-        raise RetirementLedgerError("current live workflow count must be exactly 37")
+        raise RetirementLedgerError(f"live workflow set is not baseline minus reviewed retirements: {unexpected}")
+    if len(current) != ledger["current_live_workflow_count"]:
+        raise RetirementLedgerError("live workflow count differs from cumulative ledger")
     for path in PROTECTED_LIVE:
         if path not in current:
             raise RetirementLedgerError(f"protected/canonical workflow is not live: {path}")
@@ -264,10 +386,15 @@ def validate_ledger(
         p43c = json.loads(P43C_RECEIPT_PATH.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
         raise RetirementLedgerError("P4.3C receipt is unreadable") from exc
-    if p43c.get("canonical_sha256") != canonical_sha256(p43c):
-        raise RetirementLedgerError("P4.3C receipt canonical SHA mismatch")
-    if p43c.get("retirement_ledger_sha256") != ledger.get("canonical_sha256"):
-        raise RetirementLedgerError("P4.3C receipt does not bind the cumulative ledger")
+    if (
+        p43c.get("canonical_sha256") != P43C_RECEIPT_SHA256
+        or canonical_sha256(p43c) != P43C_RECEIPT_SHA256
+    ):
+        raise RetirementLedgerError("immutable P4.3C receipt identity changed")
+    snapshot = _load_p43c_ledger_snapshot()
+    if p43c.get("retirement_ledger_sha256") != snapshot.get("canonical_sha256"):
+        raise RetirementLedgerError("P4.3C receipt does not bind its frozen historical ledger snapshot")
+    validate_historical_snapshot_extension(snapshot, ledger)
     if p43c_receipt_evidence_sha256(p43c) != next(
         entry["retirement_receipt_evidence_sha256"] for entry in entries if entry["retirement_phase"] == "P4.3C"
     ):
