@@ -16,10 +16,14 @@ POLICY_ID = "ATHENA_P4_WORKFLOW_EVOLUTION_LEDGER_V1"
 BASE_MAIN_SHA = "d762adff8eda468dc694ac1ee43578cc7851c78d"
 BASE_WORKFLOW_TREE_SHA1 = "6391a5a17b9925c91849a758852915d509a64703"
 BASE_LIVE_COUNT = 37
+BASE_P43_RETIRED_COUNT = 3
 BASE_RETIREMENT_LEDGER_SHA256 = "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
 P43D_RECEIPT_SHA256 = "4b43e084f82f65330429388732990ed8e49abe8e05fd30fc57a319a210dfb25f"
 LEDGER_PATH = Path("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
+P44A_SNAPSHOT_PATH = Path("artifacts/architecture/p4_workflow_evolution_snapshots/p4_4a_workflow_evolution_ledger_v1.json")
+SNAPSHOT_DIR = Path("artifacts/architecture/p4_workflow_evolution_snapshots")
 P43D_RECEIPT_PATH = Path("artifacts/architecture/p4_3d_retirement_audit_extensibility_v1.json")
+P43_RETIREMENT_CHECKPOINT_PATH = retirement.P43C_LEDGER_SNAPSHOT_PATH
 WORKFLOW_DIR = Path(".github/workflows")
 FAMILIES = {"ATHENA_RUN", "ATHENA_INGEST", "ATHENA_RETRAIN", "ATHENA_BACKTEST", "TESTS", "ATHENA_PR_BRIDGE"}
 PROTECTED = retirement.PROTECTED_LIVE | {".github/workflows/current-shadow-sportybet-source-diagnostic.yml"}
@@ -27,6 +31,17 @@ IDENTITY_KEYS = {"git_blob_sha1", "source_sha256"}
 TRANSITION_KEYS = {
     "transition_id", "operation", "workflow_path", "before", "after",
     "phase_id", "canonical_family", "evidence_receipt_path", "evidence_body_sha256",
+    "checkpoint_snapshot_path",
+}
+EVOLUTION_LEDGER_FIELDS = {
+    "schema_version", "policy_id", "base_main_sha", "base_workflow_tree_sha1",
+    "base_live_workflow_count", "p4_3a_matrix_sha256",
+    "base_p4_3_retirement_checkpoint_sha256", "p4_3d_receipt_sha256",
+    "current_p4_3_retirement_ledger_sha256", "current_p4_3_retired_workflow_count",
+    "current_p4_3_retirement_ledger_snapshot_path",
+    "current_p4_3_retirement_ledger_snapshot_sha256",
+    "current_live_workflow_count", "current_workflow_tree_sha1", "transitions",
+    "canonical_sha256",
 }
 
 
@@ -99,8 +114,23 @@ def _evidence_path(value: Any) -> str:
     return value
 
 
+def _checkpoint_path(value: Any) -> str:
+    if not isinstance(value, str) or "\\" in value:
+        raise WorkflowEvolutionError("transition checkpoint snapshot path is invalid")
+    parsed = PurePosixPath(value)
+    if (
+        not value.startswith("artifacts/architecture/p4_workflow_evolution_snapshots/")
+        or parsed.as_posix() != value or ".." in parsed.parts or not value.endswith(".json")
+    ):
+        raise WorkflowEvolutionError("transition checkpoint snapshot path is outside the evolution snapshot directory")
+    return value
+
+
 def baseline_state(retirement_ledger: dict[str, Any]) -> dict[str, dict[str, str]]:
+    """Resolve frozen P4.3A survivors using the separately validated current P4.3 ledger."""
     matrix, _ = retirement.load_baseline()
+    checkpoint = retirement._load_p43c_ledger_snapshot()
+    retirement.validate_historical_snapshot_extension(checkpoint, retirement_ledger)
     retired = set(retirement_ledger["retired_workflow_paths"])
     state = {
         row["workflow_path"]: {
@@ -109,9 +139,165 @@ def baseline_state(retirement_ledger: dict[str, Any]) -> dict[str, dict[str, str
         }
         for row in matrix["workflow_rows"] if row["workflow_path"] not in retired
     }
-    if len(state) != BASE_LIVE_COUNT or retirement_ledger["canonical_sha256"] != BASE_RETIREMENT_LEDGER_SHA256:
-        raise WorkflowEvolutionError("P4.3D starting workflow state changed")
+    if len(state) != retirement_ledger["current_live_workflow_count"]:
+        raise WorkflowEvolutionError("current P4.3 retirement state arithmetic changed")
     return state
+
+
+def _evolution_immutable_fields(snapshot: dict[str, Any]) -> tuple[Any, ...]:
+    return tuple(snapshot.get(field) for field in (
+        "schema_version", "policy_id", "base_main_sha", "base_workflow_tree_sha1",
+        "base_live_workflow_count", "p4_3a_matrix_sha256",
+        "base_p4_3_retirement_checkpoint_sha256", "p4_3d_receipt_sha256",
+    ))
+
+
+def validate_evolution_snapshot_extension(
+    snapshot: dict[str, Any],
+    current: dict[str, Any],
+    *,
+    snapshot_retirement_snapshot: dict[str, Any] | None = None,
+    current_retirement_snapshot: dict[str, Any] | None = None,
+    current_retirement: dict[str, Any] | None = None,
+) -> None:
+    """Validate immutable evolution history while allowing reviewed ledger appends.
+
+    P4.3 retirement state is validated independently and may advance monotonically;
+    the evolution snapshot records the P4.3 ledger identity/count at its phase.
+    """
+    if set(snapshot) != EVOLUTION_LEDGER_FIELDS or set(current) != EVOLUTION_LEDGER_FIELDS:
+        raise WorkflowEvolutionError("evolution snapshot/current ledger schema fields mismatch")
+    if snapshot.get("canonical_sha256") != canonical_sha256(snapshot):
+        raise WorkflowEvolutionError("historical evolution snapshot canonical SHA mismatch")
+    if current.get("canonical_sha256") != canonical_sha256(current):
+        raise WorkflowEvolutionError("current evolution ledger canonical SHA mismatch")
+    if _evolution_immutable_fields(snapshot) != _evolution_immutable_fields(current):
+        raise WorkflowEvolutionError("current evolution ledger changed immutable base identity")
+    old = snapshot.get("transitions")
+    new = current.get("transitions")
+    if not isinstance(old, list) or not isinstance(new, list) or new[:len(old)] != old:
+        raise WorkflowEvolutionError("current evolution ledger rewrote or reordered a historical transition")
+    old_retired = snapshot.get("current_p4_3_retired_workflow_count")
+    new_retired = current.get("current_p4_3_retired_workflow_count")
+    if (
+        type(old_retired) is not int or type(new_retired) is not int
+        or old_retired < BASE_P43_RETIRED_COUNT or new_retired < old_retired
+        or new_retired > retirement.BASELINE_WORKFLOW_COUNT
+    ):
+        raise WorkflowEvolutionError("current P4.3 retirement state is not a monotonic extension")
+    if snapshot_retirement_snapshot is not None and current_retirement_snapshot is not None and current_retirement is not None:
+        p43_checkpoint = retirement._load_p43c_ledger_snapshot()
+        retirement.validate_historical_snapshot_extension(p43_checkpoint, snapshot_retirement_snapshot)
+        retirement.validate_historical_snapshot_extension(p43_checkpoint, current_retirement_snapshot)
+        retirement.validate_historical_snapshot_extension(p43_checkpoint, current_retirement)
+        retirement.validate_historical_snapshot_extension(snapshot_retirement_snapshot, current_retirement_snapshot)
+        retirement.validate_historical_snapshot_extension(snapshot_retirement_snapshot, current_retirement)
+        if current.get("current_p4_3_retirement_ledger_sha256") != current_retirement.get("canonical_sha256"):
+            raise WorkflowEvolutionError("evolution ledger does not bind the current P4.3 retirement ledger")
+        if new_retired != current_retirement.get("current_retired_workflow_count"):
+            raise WorkflowEvolutionError("evolution ledger P4.3 retired count differs from current retirement ledger")
+        if snapshot.get("current_p4_3_retirement_ledger_sha256") != snapshot_retirement_snapshot.get("canonical_sha256"):
+            raise WorkflowEvolutionError("historical evolution checkpoint does not bind its P4.3 ledger snapshot")
+        if snapshot.get("current_p4_3_retirement_ledger_snapshot_sha256") != snapshot_retirement_snapshot.get("canonical_sha256"):
+            raise WorkflowEvolutionError("historical evolution checkpoint P4.3 snapshot SHA mismatch")
+        if current.get("current_p4_3_retirement_ledger_snapshot_sha256") != current_retirement_snapshot.get("canonical_sha256"):
+            raise WorkflowEvolutionError("current evolution ledger does not bind its P4.3 ledger snapshot")
+        for label, ledger in (("historical", snapshot), ("current", current)):
+            snapshot_path = ledger.get("current_p4_3_retirement_ledger_snapshot_path")
+            if (
+                not isinstance(snapshot_path, str)
+                or not snapshot_path.startswith("artifacts/architecture/p4_3_retirement_ledger_snapshots/")
+                or ".." in PurePosixPath(snapshot_path).parts
+            ):
+                raise WorkflowEvolutionError(f"{label} evolution ledger P4.3 snapshot path is invalid")
+        if snapshot.get("current_p4_3_retired_workflow_count") != snapshot_retirement_snapshot.get("current_retired_workflow_count"):
+            raise WorkflowEvolutionError("historical evolution P4.3 retired count differs from its snapshot")
+        if new_retired != current_retirement_snapshot.get("current_retired_workflow_count"):
+            raise WorkflowEvolutionError("current evolution P4.3 count differs from its checkpoint snapshot")
+        if current.get("current_p4_3_retired_workflow_count") != current_retirement.get("current_retired_workflow_count"):
+            raise WorkflowEvolutionError("current evolution P4.3 count differs from current retirement ledger")
+    if type(snapshot.get("current_live_workflow_count")) is not int or type(current.get("current_live_workflow_count")) is not int:
+        raise WorkflowEvolutionError("evolution snapshot/current live count is invalid")
+    if snapshot["current_live_workflow_count"] != BASE_LIVE_COUNT - (old_retired - BASE_P43_RETIRED_COUNT) + _net_evolution_count(old):
+        raise WorkflowEvolutionError("historical evolution snapshot count arithmetic mismatch")
+    if current["current_live_workflow_count"] != BASE_LIVE_COUNT - (new_retired - BASE_P43_RETIRED_COUNT) + _net_evolution_count(new):
+        raise WorkflowEvolutionError("current evolution ledger count arithmetic mismatch")
+    for label, ledger in (("historical", snapshot), ("current", current)):
+        tree_sha = ledger.get("current_workflow_tree_sha1")
+        if not isinstance(tree_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", tree_sha):
+            raise WorkflowEvolutionError(f"{label} evolution ledger tree SHA is invalid")
+
+
+def _net_evolution_count(transitions: list[dict[str, Any]]) -> int:
+    return sum(1 if item.get("operation") == "ADD" else -1 if item.get("operation") == "RETIRE" else 0 for item in transitions)
+
+
+def load_retirement_snapshot_for_evolution(evolution_snapshot: dict[str, Any]) -> dict[str, Any]:
+    path = evolution_snapshot.get("current_p4_3_retirement_ledger_snapshot_path")
+    if not isinstance(path, str) or not path.startswith("artifacts/architecture/p4_3_retirement_ledger_snapshots/") or ".." in PurePosixPath(path).parts:
+        raise WorkflowEvolutionError("evolution checkpoint P4.3 snapshot path is invalid")
+    try:
+        value = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise WorkflowEvolutionError(f"evolution checkpoint P4.3 snapshot is unreadable: {path}") from exc
+    expected = evolution_snapshot.get("current_p4_3_retirement_ledger_snapshot_sha256")
+    if value.get("canonical_sha256") != expected or retirement.canonical_sha256(value) != expected:
+        raise WorkflowEvolutionError(f"evolution checkpoint P4.3 snapshot SHA mismatch: {path}")
+    try:
+        blob = _git("hash-object", f"--path={path}", path).decode("ascii").strip()
+        head_blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
+    except WorkflowEvolutionError:
+        # A not-yet-committed local P4.4A snapshot is allowed only for the
+        # zero-transition construction check. Hosted CI must see it in HEAD.
+        if evolution_snapshot.get("transitions"):
+            raise
+    else:
+        if blob != head_blob:
+            raise WorkflowEvolutionError(f"evolution checkpoint P4.3 snapshot is not source-controlled: {path}")
+    return value
+
+
+def validate_transition_checkpoints(
+    transitions: list[dict[str, Any]],
+    current: dict[str, Any],
+    *,
+    receipts: Mapping[str, dict[str, Any]],
+    snapshots: Mapping[str, dict[str, Any]],
+    current_retirement: dict[str, Any] | None = None,
+    current_retirement_snapshot: dict[str, Any] | None = None,
+) -> None:
+    """Verify every receipt points to its immutable ledger-prefix snapshot."""
+    for index, transition in enumerate(transitions):
+        receipt_path = _evidence_path(transition.get("evidence_receipt_path"))
+        snapshot_path = _checkpoint_path(transition.get("checkpoint_snapshot_path"))
+        receipt = receipts.get(receipt_path)
+        snapshot = snapshots.get(snapshot_path)
+        if not isinstance(receipt, dict) or not isinstance(snapshot, dict):
+            raise WorkflowEvolutionError(f"transition receipt or checkpoint snapshot is missing: {transition.get('transition_id')}")
+        if snapshot.get("canonical_sha256") != canonical_sha256(snapshot):
+            raise WorkflowEvolutionError(f"transition checkpoint snapshot hash mismatch: {snapshot_path}")
+        if _evolution_immutable_fields(snapshot) != _evolution_immutable_fields(current):
+            raise WorkflowEvolutionError(f"transition checkpoint base identity mismatch: {snapshot_path}")
+        prefix = transitions[: index + 1]
+        if snapshot.get("transitions") != prefix:
+            raise WorkflowEvolutionError(f"transition checkpoint is not the exact cumulative prefix: {snapshot_path}")
+        if receipt.get("workflow_evolution_ledger_sha256") != snapshot.get("canonical_sha256"):
+            raise WorkflowEvolutionError(f"transition receipt backlink differs from its checkpoint snapshot: {receipt_path}")
+        if receipt_evidence_body_sha256(receipt) != transition.get("evidence_body_sha256"):
+            raise WorkflowEvolutionError(f"transition receipt evidence-body hash mismatch: {receipt_path}")
+        if receipt.get("canonical_sha256") != canonical_sha256(receipt):
+            raise WorkflowEvolutionError(f"transition receipt self-hash mismatch: {receipt_path}")
+        intent = {key: value for key, value in transition.items() if key != "evidence_body_sha256"}
+        if receipt.get("reviewed_workflow_transition") != intent:
+            raise WorkflowEvolutionError(f"transition receipt does not bind exact transition intent: {receipt_path}")
+        snapshot_retirement_snapshot = load_retirement_snapshot_for_evolution(snapshot)
+        validate_evolution_snapshot_extension(
+            snapshot,
+            current,
+            snapshot_retirement_snapshot=snapshot_retirement_snapshot,
+            current_retirement_snapshot=current_retirement_snapshot,
+            current_retirement=current_retirement,
+        )
 
 
 def apply_transitions(
@@ -145,6 +331,7 @@ def apply_transitions(
             raise WorkflowEvolutionError(f"workflow transition phase is invalid: {path}")
         if transition["canonical_family"] not in FAMILIES:
             raise WorkflowEvolutionError(f"workflow transition canonical family is invalid: {path}")
+        _checkpoint_path(transition["checkpoint_snapshot_path"])
         evidence_path = _evidence_path(transition["evidence_receipt_path"])
         receipt = evidence_receipts.get(evidence_path)
         digest = transition["evidence_body_sha256"]
@@ -199,28 +386,42 @@ def validate_derived_tree(expected: Mapping[str, dict[str, str]], observed: Mapp
             raise WorkflowEvolutionError(f"live workflow identity differs from reviewed evolution: {path}")
 
 
-def _load_transition_receipts(transitions: list[dict[str, Any]], ledger_sha: str) -> dict[str, dict[str, Any]]:
+def _load_transition_evidence(
+    transitions: list[dict[str, Any]],
+    current: dict[str, Any],
+    *,
+    current_retirement: dict[str, Any],
+    current_retirement_snapshot: dict[str, Any],
+) -> tuple[dict[str, dict[str, Any]], dict[str, dict[str, Any]]]:
     receipts: dict[str, dict[str, Any]] = {}
-    for index, transition in enumerate(transitions):
+    snapshots: dict[str, dict[str, Any]] = {}
+    for transition in transitions:
         path = _evidence_path(transition.get("evidence_receipt_path"))
+        snapshot_path = _checkpoint_path(transition.get("checkpoint_snapshot_path"))
         try:
             raw = Path(path).read_bytes()
             receipt = json.loads(raw.decode("utf-8"))
         except (OSError, json.JSONDecodeError) as exc:
             raise WorkflowEvolutionError(f"transition evidence receipt is unreadable: {path}") from exc
-        worktree_blob = _git("hash-object", f"--path={path}", path).decode("ascii").strip()
-        if worktree_blob != _git("rev-parse", f"HEAD:{path}").decode("ascii").strip():
+        receipt_blob = _git("hash-object", f"--path={path}", path).decode("ascii").strip()
+        if receipt_blob != _git("rev-parse", f"HEAD:{path}").decode("ascii").strip():
             raise WorkflowEvolutionError(f"transition evidence receipt is not source-controlled at HEAD: {path}")
-        backlink = receipt.get("workflow_evolution_ledger_sha256")
-        if not isinstance(backlink, str) or not re.fullmatch(r"[0-9a-f]{64}", backlink):
-            raise WorkflowEvolutionError(f"transition receipt lacks an evolution-ledger checkpoint: {path}")
-        # Older receipts bind their immutable phase checkpoints. Only the newest
-        # transition's receipt binds the current cumulative ledger, so a later
-        # reviewed append does not invalidate earlier phase evidence.
-        if index == len(transitions) - 1 and backlink != ledger_sha:
-            raise WorkflowEvolutionError(f"latest transition receipt does not bind current evolution ledger: {path}")
         receipts[path] = receipt
-    return receipts
+        try:
+            snapshot_raw = Path(snapshot_path).read_bytes()
+            snapshot = json.loads(snapshot_raw.decode("utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise WorkflowEvolutionError(f"transition checkpoint snapshot is unreadable: {snapshot_path}") from exc
+        snapshot_blob = _git("hash-object", f"--path={snapshot_path}", snapshot_path).decode("ascii").strip()
+        if snapshot_blob != _git("rev-parse", f"HEAD:{snapshot_path}").decode("ascii").strip():
+            raise WorkflowEvolutionError(f"transition checkpoint snapshot is not source-controlled at HEAD: {snapshot_path}")
+        snapshots[snapshot_path] = snapshot
+    validate_transition_checkpoints(
+        transitions, current, receipts=receipts, snapshots=snapshots,
+        current_retirement=current_retirement,
+        current_retirement_snapshot=current_retirement_snapshot,
+    )
+    return receipts, snapshots
 
 
 def validate_current_state(
@@ -243,11 +444,13 @@ def validate_current_state(
         "base_workflow_tree_sha1": BASE_WORKFLOW_TREE_SHA1,
         "base_live_workflow_count": BASE_LIVE_COUNT,
         "p4_3a_matrix_sha256": retirement.MATRIX_SHA256,
-        "p4_3_retirement_ledger_sha256": BASE_RETIREMENT_LEDGER_SHA256,
+        "base_p4_3_retirement_checkpoint_sha256": BASE_RETIREMENT_LEDGER_SHA256,
         "p4_3d_receipt_sha256": P43D_RECEIPT_SHA256,
     }
     if any(ledger.get(key) != value for key, value in expected_header.items()):
         raise WorkflowEvolutionError("workflow evolution base identity changed")
+    if set(ledger) != EVOLUTION_LEDGER_FIELDS:
+        raise WorkflowEvolutionError("workflow evolution ledger schema fields mismatch")
     if ledger.get("canonical_sha256") != canonical_sha256(ledger):
         raise WorkflowEvolutionError("workflow evolution ledger canonical SHA changed")
     p43d = json.loads(P43D_RECEIPT_PATH.read_text(encoding="utf-8"))
@@ -255,10 +458,23 @@ def validate_current_state(
         raise WorkflowEvolutionError("frozen P4.3D receipt identity changed")
     baseline = baseline_state(history)
     matrix, _ = retirement.load_baseline()
+    if ledger.get("current_p4_3_retirement_ledger_sha256") != history.get("canonical_sha256"):
+        raise WorkflowEvolutionError("evolution ledger does not bind the current P4.3 retirement ledger")
+    if ledger.get("current_p4_3_retired_workflow_count") != history.get("current_retired_workflow_count"):
+        raise WorkflowEvolutionError("evolution ledger P4.3 retirement count differs from current validated ledger")
+    p43_base_snapshot = retirement._load_p43c_ledger_snapshot()
+    p43_snapshot = load_retirement_snapshot_for_evolution(ledger)
+    retirement.validate_historical_snapshot_extension(p43_base_snapshot, p43_snapshot)
+    retirement.validate_historical_snapshot_extension(p43_snapshot, history)
+    if ledger.get("current_p4_3_retired_workflow_count") != p43_snapshot.get("current_retired_workflow_count"):
+        raise WorkflowEvolutionError("evolution ledger current P4.3 retired count differs from its snapshot")
     transitions = ledger.get("transitions")
     if not isinstance(transitions, list):
         raise WorkflowEvolutionError("workflow evolution transitions must be a list")
-    receipts = _load_transition_receipts(transitions, ledger["canonical_sha256"])
+    receipts, _snapshots = _load_transition_evidence(
+        transitions, ledger, current_retirement=history,
+        current_retirement_snapshot=p43_snapshot,
+    )
     derived = apply_transitions(
         baseline, transitions,
         frozen_baseline_paths=(row["workflow_path"] for row in matrix["workflow_rows"]),
@@ -269,7 +485,11 @@ def validate_current_state(
     tree_sha = ledger.get("current_workflow_tree_sha1")
     if not isinstance(tree_sha, str) or not re.fullmatch(r"[0-9a-f]{40}", tree_sha):
         raise WorkflowEvolutionError("workflow evolution current tree SHA is invalid")
-    if not transitions and (len(derived) != BASE_LIVE_COUNT or tree_sha != BASE_WORKFLOW_TREE_SHA1):
+    if (
+        not transitions
+        and history["canonical_sha256"] == BASE_RETIREMENT_LEDGER_SHA256
+        and (len(derived) != BASE_LIVE_COUNT or tree_sha != BASE_WORKFLOW_TREE_SHA1)
+    ):
         raise WorkflowEvolutionError("zero-transition ledger differs from the P4.3D checkpoint")
 
     real_paths = sorted(path.as_posix() for path in WORKFLOW_DIR.glob("*.yml"))

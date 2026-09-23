@@ -132,4 +132,10 @@ transitions. The initial ledger has none: all 37 live workflow YAMLs remain
 byte-identical, the three reviewed retirements remain recorded, and
 `athena-ingest.yml` is absent. A future P4.4B PR must provide a reviewed ADD
 transition before that path can exist. Current Shadow, provider diagnostics, and
-Fresh Holdout are untouched. P4.4 and Architecture Checkpoint E are not complete.
+Fresh Holdout are untouched. The zero-transition P4.4A ledger is also preserved as
+an immutable phase snapshot; its receipt binds that snapshot separately from the
+then-current ledger path. Later current P4.3 retirement state may extend the frozen
+P4.3D checkpoint through separate review, and later evolution transitions must each
+bind their own immutable cumulative snapshot. A prior transition receipt's backlink
+must match its exact phase snapshot, not merely have a valid-looking hash. P4.4 and
+Architecture Checkpoint E are not complete.
