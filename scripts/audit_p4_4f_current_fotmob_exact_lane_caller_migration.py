@@ -86,6 +86,32 @@ PROTECTED_PATHS = (
     "services/current_fotmob_ingest_issuer.py",
     "scripts/issue_current_fotmob_reviewed_source.py",
 )
+PROTECTED_IDENTITIES = {
+    ".github/workflows/athena-ingest.yml": {
+        "git_blob_sha1": "1c3abb610477862663ccb1b077ff4413be819eda",
+        "source_sha256": "9e5137b85a28f8552c4a6bc834c7657a2c690b4203382aa914d5f6854667d8d1",
+    },
+    "domain/ingest_contracts.py": {
+        "git_blob_sha1": "77f71e1570d7f0b6aed7641b45074ef462997d7d",
+        "source_sha256": "e00f6e5c9d1670abae57bed097d89a01f78fcf059fa17a95caec238c4f6fc5fb",
+    },
+    "services/athena_ingest_service.py": {
+        "git_blob_sha1": "08a177bea47b52bed0890d0f43e0f25c5fa14246",
+        "source_sha256": "4fe52bb56047b6adfacdee71673d41412669ecf2c61eace636a29b2d567bac5a",
+    },
+    "services/current_fotmob_ingest_compatibility.py": {
+        "git_blob_sha1": "a1fecd955c7b9e4966dc7248cbae0851414371c5",
+        "source_sha256": "04a36fe3d51d9609aa215d3623e0e260a665e817c4b1830a080ed8fc67cb7934",
+    },
+    "services/current_fotmob_ingest_issuer.py": {
+        "git_blob_sha1": "0721d34cf6c53264c197d1ce0c5867592b1c8b01",
+        "source_sha256": "7de9ad0a6ffa68491aad7c2c5034123d3beab569748515e3e2bd482dc803ecec",
+    },
+    "scripts/issue_current_fotmob_reviewed_source.py": {
+        "git_blob_sha1": "b50689971ee20cb6800145317a0e9fcb3486f40f",
+        "source_sha256": "449e83af1a8e25bf5b054b88682b8559363196ca2d6e1dad87c742949b8d0484",
+    },
+}
 FALSE_AUTHORITY_FIELDS = (
     "model_authority",
     "pricing_authority",
@@ -381,8 +407,14 @@ def _check_workflow_contract() -> None:
 
 
 def _check_protected_sources() -> None:
+    base_available = subprocess.run(
+        ["git", "cat-file", "-e", f"{BASE_MAIN}^{{commit}}"], capture_output=True
+    ).returncode == 0
     for path in PROTECTED_PATHS:
-        if _identity_at(BASE_MAIN, path) != _identity_at("HEAD", path):
+        expected = PROTECTED_IDENTITIES[path]
+        if base_available and _identity_at(BASE_MAIN, path) != expected:
+            raise P44FMigrationAuditError(f"pinned P4.4F base identity drifted: {path}")
+        if _identity_at("HEAD", path) != expected:
             raise P44FMigrationAuditError(f"protected P4.4 dependency changed: {path}")
         if subprocess.run(["git", "diff", "--quiet", "HEAD", "--", path]).returncode != 0:
             raise P44FMigrationAuditError(f"protected dependency has an unstaged change: {path}")
