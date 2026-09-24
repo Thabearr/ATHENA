@@ -2,12 +2,15 @@ from __future__ import annotations
 
 from pathlib import Path
 import hashlib
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from domain.ingest_contracts import AthenaIngestContractError, AthenaIngestRequest, strict_json_loads
 from scripts.execute_athena_ingest_workflow import execute_persisted_request
-from scripts.resolve_athena_ingest_workflow_request import resolve_and_persist
+from scripts.resolve_athena_ingest_workflow_request import (
+    SCHEDULE_FAILURE_MARKER, resolve_and_persist, resolve_ingest_workflow_request,
+)
 from services.athena_ingest_service import (
     ARTIFACT_RELATIVE, RECEIPT_NAME, REQUEST_NAME, AthenaIngestServiceError,
 )
@@ -19,11 +22,12 @@ COMMIT_SHA = "c" * 40
 MAIN_REF = "refs/heads/main"
 
 
-def test_manual_only_workflow_has_bounded_reviewed_surface() -> None:
+def test_scheduled_and_manual_workflow_have_bounded_reviewed_surface() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
     assert "name: ATHENA Canonical Ingest" in source
+    assert source.count("  schedule:") == 1
+    assert source.count('    - cron: "0 8 * * *"') == 1
     assert "workflow_dispatch:" in source
-    assert "schedule:" not in source
     assert source.count("      dates:") == 1
     assert "  contents: read" in source
     assert "contents: write" not in source
@@ -46,7 +50,7 @@ def test_manual_only_workflow_has_bounded_reviewed_surface() -> None:
     assert "athena-ingest-${{ github.run_id }}" in source
     assert "retention-days: 30" in source
     assert "if-no-files-found: error" in source
-    for forbidden in ("issue_comment", "schedule:", "sportybet", "share-code", "wager", "current-shadow", "fresh-holdout", "p3-0-e1"):
+    for forbidden in ("issue_comment", "sportybet", "share-code", "wager", "current-shadow", "fresh-holdout", "p3-0-e1"):
         assert forbidden not in source.lower()
 
 
@@ -249,3 +253,127 @@ def test_resolver_refuses_to_overwrite_existing_evidence(tmp_path: Path) -> None
             expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
         )
     assert (tmp_path / ARTIFACT_RELATIVE / REQUEST_NAME).read_bytes() == original.canonical_bytes
+
+
+def test_manual_event_resolution_preserves_single_and_multiple_date_contracts() -> None:
+    single = resolve_ingest_workflow_request(event_name="workflow_dispatch", dates_input="20260924")
+    assert single.dates == ("20260924",)
+    multiple = resolve_ingest_workflow_request(
+        event_name="workflow_dispatch", dates_input="20260924,20260925,20260926",
+    )
+    assert multiple.dates == ("20260924", "20260925", "20260926")
+
+
+def test_schedule_resolution_uses_current_utc_gregorian_date() -> None:
+    request = resolve_ingest_workflow_request(
+        event_name="schedule", dates_input=None,
+        now=datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+    )
+    assert request.dates == ("20260924",)
+
+
+def test_schedule_resolution_normalizes_offset_aware_clock_to_utc() -> None:
+    # The local clock says Sep 25, while its UTC instant is still Sep 24.
+    local = datetime(2026, 9, 25, 1, 0, tzinfo=timezone(timedelta(hours=17)))
+    request = resolve_ingest_workflow_request(event_name="schedule", dates_input="", now=local)
+    assert request.dates == ("20260924",)
+
+
+def test_schedule_resolution_rejects_naive_clock_and_dispatch_override() -> None:
+    with pytest.raises(AthenaIngestContractError, match="timezone-aware"):
+        resolve_ingest_workflow_request(
+            event_name="schedule", dates_input=None, now=datetime(2026, 9, 24, 8, 0),
+        )
+    with pytest.raises(AthenaIngestContractError, match="does not accept dispatch"):
+        resolve_ingest_workflow_request(
+            event_name="schedule", dates_input="20260925",
+            now=datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+        )
+    with pytest.raises(AthenaIngestContractError, match="unsupported ingest workflow event"):
+        resolve_ingest_workflow_request(event_name="push", dates_input="20260924")
+
+
+def test_schedule_resolution_failure_receipt_uses_event_marker_digest(tmp_path: Path) -> None:
+    with pytest.raises(AthenaIngestContractError, match="dispatch date input"):
+        resolve_and_persist(
+            event_name="schedule", dates_input="20260925", repository_root=tmp_path,
+            expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
+            now=datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+        )
+    receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
+    assert receipt["status"] == "FAILED"
+    assert receipt["failure_code"] == "INVALID_REQUEST"
+    assert receipt["stage"] == "REQUEST_RESOLUTION"
+    assert receipt["request_sha256"] is None
+    assert receipt["raw_request_input_sha256"] == hashlib.sha256(
+        SCHEDULE_FAILURE_MARKER + b"20260925"
+    ).hexdigest()
+    assert receipt["provider_request_count"] == receipt["source_count"] == 0
+    assert receipt["canonical_store_update_committed"] is False
+    assert all(value is False for value in receipt["authorities"].values())
+
+
+def test_schedule_wrong_ref_writes_receipt_and_never_acquires(tmp_path: Path) -> None:
+    with pytest.raises(AthenaIngestContractError, match="refs/heads/main"):
+        resolve_and_persist(
+            event_name="schedule", dates_input="", repository_root=tmp_path,
+            expected_git_sha=COMMIT_SHA, expected_git_ref="refs/heads/feature",
+            now=datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+        )
+    receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
+    assert receipt["failure_code"] == "LINEAGE_MISMATCH"
+    assert receipt["raw_request_input_sha256"] == hashlib.sha256(SCHEDULE_FAILURE_MARKER).hexdigest()
+    assert receipt["provider_request_count"] == receipt["source_count"] == 0
+    assert receipt["canonical_store_update_committed"] is False
+
+
+def test_schedule_request_uses_same_fake_ingest_path_and_is_one_request(tmp_path: Path) -> None:
+    request = resolve_and_persist(
+        event_name="schedule", dates_input="", repository_root=tmp_path,
+        expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
+        now=datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+    )
+    request_path = tmp_path / ARTIFACT_RELATIVE / REQUEST_NAME
+    calls: list[str] = []
+
+    def acquire(*, request_date: str, timezone: str, ccode3: str):
+        calls.append(request_date)
+        return fake_response(request_date)
+
+    assert execute_persisted_request(
+        request_path=request_path, execute_live_network=True, repository_root=tmp_path,
+        expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
+        git_head_provider=lambda _root: COMMIT_SHA, acquisition_callable=acquire,
+    ) == 0
+    receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
+    assert request.dates == ("20260924",)
+    assert calls == ["20260924"]
+    assert receipt["provider_request_count"] == 1
+    assert receipt["request_sha256"] == request.canonical_sha256
+
+
+def test_schedule_executor_head_mismatch_fails_before_provider_request(tmp_path: Path) -> None:
+    request = resolve_and_persist(
+        event_name="schedule", dates_input="", repository_root=tmp_path,
+        expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
+        now=datetime(2026, 9, 24, 8, 0, tzinfo=timezone.utc),
+    )
+    calls: list[str] = []
+
+    def acquire(*, request_date: str, timezone: str, ccode3: str):
+        calls.append(request_date)
+        return fake_response(request_date)
+
+    actual = "d" * 40
+    assert execute_persisted_request(
+        request_path=tmp_path / ARTIFACT_RELATIVE / REQUEST_NAME,
+        execute_live_network=True, repository_root=tmp_path,
+        expected_git_sha=COMMIT_SHA, expected_git_ref=MAIN_REF,
+        git_head_provider=lambda _root: actual, acquisition_callable=acquire,
+    ) == 1
+    receipt = strict_json_loads((tmp_path / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes())
+    assert calls == []
+    assert receipt["failure_code"] == "LINEAGE_MISMATCH"
+    assert receipt["exact_commit_sha"] == actual
+    assert receipt["request_sha256"] == request.canonical_sha256
+    assert receipt["provider_request_count"] == receipt["source_count"] == 0

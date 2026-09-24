@@ -6,6 +6,7 @@ from pathlib import Path
 
 from domain.ingest_contracts import FORBIDDEN_AUTHORITIES
 from scripts import audit_p4_4b_athena_ingest_workflow as p44b
+from scripts import audit_p4_4c_scheduled_ingest_and_migration_review as p44c
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
@@ -70,3 +71,16 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
     assert receipt["workflow_job_timeout_minutes"] == 20
     assert receipt["receipt_finalization_headroom_seconds"] == 300
     assert receipt["p4_4_overall_complete"] is False
+
+
+def test_p4_4c_schedule_revision_and_migration_review_remain_narrow() -> None:
+    receipt = p44c.check()
+    assert receipt["workflow_evolution_ledger_sha256"] == evolution.validate_current_state()["canonical_sha256"]
+    assert receipt["schedule_cron"] == "0 8 * * *"
+    assert receipt["scheduled_max_provider_requests"] == 1
+    assert receipt["provider_request_count_during_pr"] == 0
+    assert receipt["p4_3_retirements_added"] == 0
+    assert receipt["legacy_ingest_workflows_retired"] == 0
+    assert receipt["model_authority"] is False
+    assert receipt["routing_authority"] is False
+    assert receipt["portfolio_authority"] is False
