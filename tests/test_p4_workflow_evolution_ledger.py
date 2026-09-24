@@ -10,6 +10,7 @@ import pytest
 from scripts import audit_p4_workflow_evolution_ledger as audit
 from scripts import audit_p4_3_workflow_retirement_ledger as retirement
 from scripts import audit_p4_4f_current_fotmob_exact_lane_caller_migration as p44f
+from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
 
 
 NEW_PATH = ".github/workflows/athena-ingest.yml"
@@ -169,7 +170,7 @@ def _synthetic_evolution_after_p43_extension(current_p43):
     return evolution
 
 
-def test_current_ledger_preserves_prior_ingest_history_and_adds_p44f_caller_migration() -> None:
+def test_current_ledger_preserves_prior_ingest_history_and_adds_p44g_canonical_only_transition() -> None:
     ledger = audit.validate_current_state()
     assert [item["transition_id"] for item in ledger["transitions"]] == [
         "P44A1_FH_VISIBILITY_BRIDGE_V1",
@@ -177,11 +178,12 @@ def test_current_ledger_preserves_prior_ingest_history_and_adds_p44f_caller_migr
         "P44B_ATHENA_INGEST_ADD_V1",
         "P44C_ATHENA_INGEST_SCHEDULE_REVISE_V1",
         p44f.TRANSITION_ID,
+        p44g.TRANSITION_ID,
     ]
     assert ledger["current_live_workflow_count"] == 38
-    assert len(ledger["transitions"]) == 5
-    p44f_receipt = json.loads(Path(p44f.RECEIPT_PATH).read_text(encoding="utf-8"))
-    assert ledger["current_workflow_tree_sha1"] == p44f_receipt["workflow_tree_sha1_after"]
+    assert len(ledger["transitions"]) == 6
+    p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
+    assert ledger["current_workflow_tree_sha1"] == p44g_receipt["workflow_tree_sha1_after"]
     assert ledger["canonical_sha256"] == audit.canonical_sha256(ledger)
     assert Path(NEW_PATH).exists()
     assert retirement.validate_retirement_history()["canonical_sha256"] == audit.BASE_RETIREMENT_LEDGER_SHA256

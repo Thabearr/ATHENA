@@ -504,10 +504,11 @@ def _check_caller_inventory() -> None:
     paths = _git("ls-files", "-z", "--", "*.py", "*.yml", "*.yaml").decode("utf-8").split("\0")
     caller = "scripts/issue_current_fotmob_reviewed_source_via_ingest.py"
     for relative in paths:
-        if not relative or relative.startswith("tests/") or relative in {
-            caller,
-            "scripts/audit_p4_4f_current_fotmob_exact_lane_caller_migration.py",
-        }:
+        if (
+            not relative
+            or relative.startswith(("tests/", "scripts/audit_"))
+            or relative == caller
+        ):
             continue
         if any(
             part in {".venv", "venv", "site-packages", "__pycache__"}
@@ -530,17 +531,15 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
         _check_operational_proof()
         expected_ledger, expected_snapshot, expected_receipt_value = build_evidence()
         if receipt != expected_receipt_value:
-            raise P44FMigrationAuditError("P4.4F receipt differs from rebuilt canonical evidence")
-        if _load_json(LEDGER_PATH) != expected_ledger:
-            raise P44FMigrationAuditError("current evolution ledger differs from exact P4.4F prefix")
+            raise P44FMigrationAuditError(
+                "P4.4F receipt differs from rebuilt canonical evidence"
+            )
         if _load_json(SNAPSHOT_PATH) != expected_snapshot:
-            raise P44FMigrationAuditError("P4.4F snapshot differs from exact cumulative ledger")
+            raise P44FMigrationAuditError(
+                "P4.4F snapshot differs from exact cumulative ledger"
+            )
         if check_live:
-            _require_exact_base_ancestry()
             p44d.audit(check_live=False)
-            # Verify P4.4E's immutable semantic receipt without treating this
-            # Windows checkout's CRLF conversion as a changed Git blob. The
-            # P4.4E Linux audit still enforces raw canonical bytes.
             p44e.validate_receipt(
                 json.loads(p44e.RECEIPT_PATH.read_text(encoding="utf-8")),
                 check_live=False,
@@ -548,47 +547,75 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
             p44c.check_historical()
             p44b.check()
             ledger = evolution.validate_current_state()
+            transitions = ledger.get("transitions", [])
             if (
-                len(ledger.get("transitions", [])) != 5
-                or ledger["transitions"][4] != expected_ledger["transitions"][4]
+                len(transitions) < 5
+                or transitions[:5] != expected_ledger["transitions"]
             ):
-                raise P44FMigrationAuditError("evolution ledger lacks the single exact P4.4F transition")
+                raise P44FMigrationAuditError(
+                    "evolution ledger no longer preserves exact P4.4F prefix"
+                )
             retirement_state = retirement.validate_retirement_history()
             if (
                 retirement_state.get("canonical_sha256") != P43_RETIREMENT_SHA256
                 or retirement_state.get("current_retired_workflow_count") != 3
             ):
                 raise P44FMigrationAuditError("P4.3 retirement history changed")
-            if _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip() != WORKFLOW_TREE_AFTER:
-                raise P44FMigrationAuditError("final workflow tree differs from P4.4F receipt")
-            if sum(
-                path.endswith((".yml", ".yaml"))
-                for path in _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows")
-                .decode("utf-8")
-                .splitlines()
-            ) != 38:
-                raise P44FMigrationAuditError("workflow count is not 38")
-            changed = _changed_paths_from_exact_base()
-            if changed is not None and not changed <= EXPECTED_CHANGED_PATHS:
+            current_tree = _git(
+                "rev-parse", "HEAD:.github/workflows"
+            ).decode("ascii").strip()
+            if current_tree != ledger.get("current_workflow_tree_sha1"):
                 raise P44FMigrationAuditError(
-                    f"P4.4F changed paths exceed reviewed scope: {sorted(changed - EXPECTED_CHANGED_PATHS)}"
+                    "live workflow tree differs from reviewed evolution ledger"
                 )
-            if _identity_at("HEAD", WORKFLOW_PATH) != WORKFLOW_AFTER:
-                raise P44FMigrationAuditError("workflow final source identity differs from receipt")
+            workflow_count = sum(
+                item.endswith((".yml", ".yaml"))
+                for item in _git(
+                    "ls-tree", "-r", "--name-only", "HEAD", ".github/workflows"
+                ).decode("utf-8").splitlines()
+            )
+            if workflow_count != ledger.get("current_live_workflow_count"):
+                raise P44FMigrationAuditError(
+                    "live workflow count differs from reviewed evolution ledger"
+                )
             fixture = Path(FIXTURE_PATH).read_bytes()
             if evolution.source_identity(fixture) != WORKFLOW_BEFORE:
-                raise P44FMigrationAuditError("historical-before workflow fixture identity drifted")
+                raise P44FMigrationAuditError(
+                    "historical-before workflow fixture identity drifted"
+                )
             if _identity_at("HEAD", FIXTURE_PATH) != WORKFLOW_BEFORE:
-                raise P44FMigrationAuditError("historical-before fixture is not source-controlled at HEAD")
+                raise P44FMigrationAuditError(
+                    "historical-before fixture is not source-controlled at HEAD"
+                )
+            historical_after = _git(
+                "cat-file", "-p", WORKFLOW_AFTER["git_blob_sha1"]
+            )
+            if evolution.source_identity(historical_after) != WORKFLOW_AFTER:
+                raise P44FMigrationAuditError(
+                    "historical P4.4F workflow-after blob identity drifted"
+                )
             _check_protected_sources()
-            _check_workflow_contract()
             _check_caller_inventory()
+            if len(transitions) == 5:
+                _require_exact_base_ancestry()
+                changed = _changed_paths_from_exact_base()
+                if changed is not None and not changed <= EXPECTED_CHANGED_PATHS:
+                    raise P44FMigrationAuditError(
+                        f"P4.4F changed paths exceed reviewed scope: "
+                        f"{sorted(changed - EXPECTED_CHANGED_PATHS)}"
+                    )
+                if _identity_at("HEAD", WORKFLOW_PATH) != WORKFLOW_AFTER:
+                    raise P44FMigrationAuditError(
+                        "workflow final source identity differs from P4.4F receipt"
+                    )
+                _check_workflow_contract()
         return receipt
     except (OSError, ValueError, AssertionError, json.JSONDecodeError) as exc:
         if isinstance(exc, P44FMigrationAuditError):
             raise
-        raise P44FMigrationAuditError(f"P4.4F evidence or live-state validation failed: {exc}") from exc
-
+        raise P44FMigrationAuditError(
+            f"P4.4F evidence or live-state validation failed: {exc}"
+        ) from exc
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)

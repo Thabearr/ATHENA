@@ -11,6 +11,7 @@ from scripts import audit_p4_4a_workflow_evolution_guard as audit
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 from scripts import audit_p4_3_workflow_retirement_ledger as retirement
 from scripts import audit_p4_4f_current_fotmob_exact_lane_caller_migration as p44f
+from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
 from scripts import audit_p4_3a_workflow_capability_census as p43a
 from scripts import audit_p4_3b_current_sportybet_workflow_retirement as p43b
 from scripts import audit_p4_3c_spent_v1_evidence_workflow_retirement as p43c
@@ -39,10 +40,11 @@ def test_p44a_receipt_and_zero_transition_checkpoint() -> None:
     assert snapshot["current_live_workflow_count"] == 37
     assert snapshot_bytes != current_bytes
     assert receipt["workflow_evolution_transition_count"] == 0
-    assert len(ledger["transitions"]) == 5
+    assert len(ledger["transitions"]) == 6
     assert ledger["transitions"][4]["transition_id"] == p44f.TRANSITION_ID
-    p44f_receipt = json.loads(Path(p44f.RECEIPT_PATH).read_text(encoding="utf-8"))
-    assert ledger["current_workflow_tree_sha1"] == p44f_receipt["workflow_tree_sha1_after"]
+    assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
+    p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
+    assert ledger["current_workflow_tree_sha1"] == p44g_receipt["workflow_tree_sha1_after"]
     assert receipt["live_workflow_count_before"] == receipt["live_workflow_count_after"] == 37
     assert receipt["workflow_tree_before_sha1"] == receipt["workflow_tree_after_sha1"] == evolution.BASE_WORKFLOW_TREE_SHA1
     assert receipt["p4_4a_exit_gate_satisfied"] is True
@@ -103,8 +105,8 @@ def test_immutable_history_and_current_retirement_state() -> None:
 
 def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() -> None:
     ledger = evolution.validate_current_state()
-    p44f_receipt = json.loads(Path(p44f.RECEIPT_PATH).read_text(encoding="utf-8"))
-    assert ledger["current_workflow_tree_sha1"] == p44f_receipt["workflow_tree_sha1_after"]
+    p44g_receipt = json.loads(Path(p44g.RECEIPT_PATH).read_text(encoding="utf-8"))
+    assert ledger["current_workflow_tree_sha1"] == p44g_receipt["workflow_tree_sha1_after"]
     assert len(list(Path(".github/workflows").glob("*.yml"))) == 38
     assert not evolution._git("diff", "--", ".github/workflows")
     baseline = evolution.baseline_state(retirement.validate_retirement_history())

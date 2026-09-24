@@ -151,3 +151,35 @@ projection verified 26 reviewed fixtures with zero adapter/provider requests and
 `artifacts/architecture/p4_4f_operational_proof_v1.json` (file SHA-256
 `4740158a4b5b51764dbed1cf438544ddb05859dc0a5a353da385d1679c04b873`).
 No workflow was dispatched. P4.4 and Architecture Checkpoint E remain incomplete.
+
+## P4.4G canonical-only current-source workflow boundary
+
+P4.4G leaves the proven UTC/NGA provider path unchanged and narrows only the
+legacy compatibility branch of `issue-current-fotmob-reviewed-source.yml`.
+The existing manual date/timezone/ccode3 request surface remains visible for
+compatibility, but a non-UTC/NGA request now fails closed before provider
+transport with an explicit unsupported-scope receipt. No legacy issuer, retry,
+or automatic fallback is invoked by that path.
+
+A read-only Actions review captured every workflow run returned at the P4.4G
+review cutoff `2026-09-24T22:28:53.032418Z`: 12 workflow-dispatch runs, 11
+successes and one failure. The authenticated job logs record UTC/NGA for all 12
+runs. The source-controlled history receipt records that no noncanonical use was
+observed while also stating that historical absence is not future capability
+authority.
+
+The legacy `scripts/issue_current_fotmob_reviewed_source.py` entry point is not
+deleted or modified. It remains evidence/rollback/local-compatibility code, but
+no live GitHub workflow calls it after P4.4G. The hosted UTC/NGA lane continues
+to call `scripts/issue_current_fotmob_reviewed_source_via_ingest.py`, whose
+P4.4F operational proof remains the applicable live proof because its provider
+semantics are unchanged.
+
+Implementation and review perform zero workflow dispatches and zero provider
+requests. Workflow count remains 38, no workflow retirement is authorized, and
+all model/pricing/routing/portfolio/share-code/account/wager authority remains
+unchanged. P4.4 and Architecture Checkpoint E remain incomplete.
+
+While P4.4G remains unmerged, `SOURCE_REVIEW_COUNTER = 3/5`; it becomes `4/5`
+only after an owner-authorized merge. The mandatory five-review source reread is
+therefore not due yet.

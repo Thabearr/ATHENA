@@ -7,39 +7,38 @@ from scripts.issue_current_fotmob_reviewed_source import (
 )
 
 
-def test_current_fotmob_workflow_uses_env_transport_for_dispatch_inputs() -> None:
+def _workflow() -> str:
     repository = Path(__file__).resolve().parents[1]
-    workflow = (
+    return (
         repository / ".github/workflows/issue-current-fotmob-reviewed-source.yml"
     ).read_text(encoding="utf-8")
 
+
+def test_current_fotmob_workflow_uses_env_transport_and_only_date_reaches_provider_command() -> None:
+    workflow = _workflow()
     assert "ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}" in workflow
     assert "ATHENA_FOTMOB_REQUEST_TIMEZONE: ${{ inputs.timezone }}" in workflow
     assert "ATHENA_FOTMOB_REQUEST_CCODE3: ${{ inputs.ccode3 }}" in workflow
     assert '--date "${ATHENA_FOTMOB_REQUEST_DATE}"' in workflow
-    assert '--timezone "${ATHENA_FOTMOB_REQUEST_TIMEZONE}"' in workflow
-    assert '--ccode3 "${ATHENA_FOTMOB_REQUEST_CCODE3}"' in workflow
-
+    assert '--timezone "${ATHENA_FOTMOB_REQUEST_TIMEZONE}"' not in workflow
+    assert '--ccode3 "${ATHENA_FOTMOB_REQUEST_CCODE3}"' not in workflow
     assert "--date '${{ inputs.date }}'" not in workflow
     assert "--timezone '${{ inputs.timezone }}'" not in workflow
     assert "--ccode3 '${{ inputs.ccode3 }}'" not in workflow
     assert "fotmob-data-matches-captures/${{ inputs.date }}" not in workflow
 
 
-def test_current_fotmob_workflow_migrates_only_the_exact_utc_nga_lane() -> None:
-    repository = Path(__file__).resolve().parents[1]
-    workflow = (
-        repository / ".github/workflows/issue-current-fotmob-reviewed-source.yml"
-    ).read_text(encoding="utf-8")
+def test_current_fotmob_workflow_is_canonical_or_fail_closed_only() -> None:
+    workflow = _workflow()
     canonical = workflow.split(
         "- name: Issue current reviewed FotMob fixture bootstrap via canonical ingest",
         1,
     )[1].split(
-        "- name: Issue current reviewed FotMob fixture bootstrap via legacy compatibility lane",
+        "- name: Reject unsupported noncanonical current-source request",
         1,
     )[0]
-    legacy = workflow.split(
-        "- name: Issue current reviewed FotMob fixture bootstrap via legacy compatibility lane",
+    rejected = workflow.split(
+        "- name: Reject unsupported noncanonical current-source request",
         1,
     )[1].split(
         "- name: Upload reviewed source receipt and exact raw evidence",
@@ -64,17 +63,21 @@ def test_current_fotmob_workflow_migrates_only_the_exact_utc_nga_lane() -> None:
     assert "runs-on: ubuntu-latest" in workflow
     assert "timeout-minutes: 10" in workflow
     assert "if: ${{ inputs.timezone == 'UTC' && inputs.ccode3 == 'NGA' }}" in canonical
-    assert "if: ${{ inputs.timezone != 'UTC' || inputs.ccode3 != 'NGA' }}" in legacy
-    assert "ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}" in canonical
+    assert "if: ${{ inputs.timezone != 'UTC' || inputs.ccode3 != 'NGA' }}" in rejected
     assert "scripts/issue_current_fotmob_reviewed_source_via_ingest.py" in canonical
-    assert "scripts/issue_current_fotmob_reviewed_source.py" not in canonical
-    assert "scripts/issue_current_fotmob_reviewed_source.py" in legacy
-    assert "scripts/issue_current_fotmob_reviewed_source_via_ingest.py" not in legacy
-    assert '--date "${ATHENA_FOTMOB_REQUEST_DATE}"' in canonical
+    assert "scripts/issue_current_fotmob_reviewed_source.py" not in workflow
+    assert "scripts/issue_current_fotmob_reviewed_source_via_ingest.py" not in rejected
     assert "--execute-live-network" in canonical
-    assert "GITHUB_SHA" not in canonical and "GITHUB_REF" not in canonical
-    assert '--timezone "${ATHENA_FOTMOB_REQUEST_TIMEZONE}"' in legacy
-    assert '--ccode3 "${ATHENA_FOTMOB_REQUEST_CCODE3}"' in legacy
+    assert "--execute-live-network" not in rejected
+    assert "UNSUPPORTED_CURRENT_FOTMOB_WORKFLOW_SCOPE_REQUIRES_UTC_NGA" in rejected
+    assert 'os.environ["ATHENA_FOTMOB_REQUEST_DATE"]' in rejected
+    assert 'os.environ["ATHENA_FOTMOB_REQUEST_TIMEZONE"]' in rejected
+    assert 'os.environ["ATHENA_FOTMOB_REQUEST_CCODE3"]' in rejected
+    assert '"provider": "fotmob"' in rejected
+    assert '"wager_placed": False' in rejected
+    assert "exit 1" in rejected
+    assert "GITHUB_SHA" not in canonical
+    assert "GITHUB_REF" not in canonical
     assert "--minimum-lead-seconds" not in workflow
     assert "--max-source-age-seconds" not in workflow
     assert "continue-on-error:" not in workflow
@@ -89,15 +92,10 @@ def test_current_fotmob_workflow_migrates_only_the_exact_utc_nga_lane() -> None:
     assert "athena-ingest.yml" not in workflow
     assert "SportyBet" not in workflow
     assert "share-code" not in workflow.lower()
-    assert "wager" not in workflow.lower()
 
 
 def test_current_fotmob_workflow_has_no_policy_bound_dispatch_inputs() -> None:
-    repository = Path(__file__).resolve().parents[1]
-    workflow = (
-        repository / ".github/workflows/issue-current-fotmob-reviewed-source.yml"
-    ).read_text(encoding="utf-8")
-
+    workflow = _workflow()
     assert "minimum_lead_seconds:" not in workflow
     assert "max_source_age_seconds:" not in workflow
     assert "--minimum-lead-seconds" not in workflow
