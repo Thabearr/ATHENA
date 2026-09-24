@@ -5,6 +5,7 @@ import hashlib
 from datetime import datetime, timedelta, timezone
 
 import pytest
+import yaml
 
 from domain.ingest_contracts import AthenaIngestContractError, AthenaIngestRequest, strict_json_loads
 from scripts.execute_athena_ingest_workflow import execute_persisted_request
@@ -24,6 +25,10 @@ MAIN_REF = "refs/heads/main"
 
 def test_scheduled_and_manual_workflow_have_bounded_reviewed_surface() -> None:
     source = WORKFLOW.read_text(encoding="utf-8")
+    parsed = yaml.load(source, Loader=yaml.BaseLoader)
+    assert set(parsed["on"]) == {"schedule", "workflow_dispatch"}
+    assert parsed["on"]["schedule"] == [{"cron": "0 8 * * *"}]
+    assert set(parsed["on"]["workflow_dispatch"]["inputs"]) == {"dates"}
     assert "name: ATHENA Canonical Ingest" in source
     assert source.count("  schedule:") == 1
     assert source.count('    - cron: "0 8 * * *"') == 1
