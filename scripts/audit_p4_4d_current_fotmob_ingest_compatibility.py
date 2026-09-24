@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -76,11 +77,35 @@ def _require_exact_base_ancestry() -> None:
     if merge_base.returncode == 0:
         based_on_exact_main = merge_base.stdout.decode("ascii").strip() == BASE_MAIN
     else:
-        # Hosted PR test checkouts are shallow and may not contain the base
-        # commit object. GitHub checks out a synthetic merge commit whose first
-        # parent is the exact base SHA; verify that parent directly instead.
+        # Hosted PR test checkouts may contain only the PR head, not the base
+        # commit object. A synthetic merge checkout can still prove ancestry
+        # through its parents; otherwise bind the checked-out commit to the
+        # trusted pull_request event's exact base/head identities.
         parents = _git("show", "-s", "--format=%P", "HEAD").decode("ascii").split()
         based_on_exact_main = BASE_MAIN in parents
+        if not based_on_exact_main:
+            event_path = os.environ.get("GITHUB_EVENT_PATH")
+            if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and event_path:
+                try:
+                    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+                    pull_request = event.get("pull_request")
+                    base = pull_request.get("base") if isinstance(pull_request, dict) else None
+                    head = pull_request.get("head") if isinstance(pull_request, dict) else None
+                    base_sha = base.get("sha") if isinstance(base, dict) else None
+                    base_ref = base.get("ref") if isinstance(base, dict) else None
+                    head_sha = head.get("sha") if isinstance(head, dict) else None
+                    current_sha = _git("rev-parse", "HEAD").decode("ascii").strip()
+                    github_sha = os.environ.get("GITHUB_SHA")
+                    based_on_exact_main = (
+                        base_sha == BASE_MAIN
+                        and base_ref == "main"
+                        and isinstance(head_sha, str)
+                        and len(head_sha) == 40
+                        and all(char in "0123456789abcdef" for char in head_sha)
+                        and current_sha in {head_sha, github_sha}
+                    )
+                except (OSError, json.JSONDecodeError, P44DCompatibilityAuditError):
+                    based_on_exact_main = False
     if not based_on_exact_main:
         raise P44DCompatibilityAuditError("P4.4D branch is not based on exact reviewed main")
 

@@ -115,3 +115,79 @@ def test_exact_base_ancestry_rejects_shallow_checkout_with_wrong_parent(monkeypa
 
     with pytest.raises(audit.P44DCompatibilityAuditError, match="not based on exact reviewed main"):
         audit._require_exact_base_ancestry()
+
+
+def test_exact_base_ancestry_accepts_shallow_pull_request_event_binding(monkeypatch, tmp_path) -> None:
+    head_sha = "a" * 40
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "pull_request": {
+                    "base": {"ref": "main", "sha": audit.BASE_MAIN},
+                    "head": {"sha": head_sha},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_SHA", head_sha)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=128, stdout=b"", stderr=b"missing base object"),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: (
+            ("e" * 40 + " " + "f" * 40).encode("ascii")
+            if args[:3] == ("show", "-s", "--format=%P")
+            else head_sha.encode("ascii")
+        ),
+    )
+
+    audit._require_exact_base_ancestry()
+
+
+@pytest.mark.parametrize(
+    ("base_sha", "current_sha"),
+    [("b" * 40, "a" * 40), (audit.BASE_MAIN, "c" * 40)],
+)
+def test_exact_base_ancestry_rejects_shallow_pull_request_event_mismatch(
+    monkeypatch, tmp_path, base_sha: str, current_sha: str
+) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "pull_request": {
+                    "base": {"ref": "main", "sha": base_sha},
+                    "head": {"sha": "a" * 40},
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=128, stdout=b"", stderr=b"missing base object"),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: (
+            ("e" * 40 + " " + "f" * 40).encode("ascii")
+            if args[:3] == ("show", "-s", "--format=%P")
+            else current_sha.encode("ascii")
+        ),
+    )
+
+    with pytest.raises(audit.P44DCompatibilityAuditError, match="not based on exact reviewed main"):
+        audit._require_exact_base_ancestry()
