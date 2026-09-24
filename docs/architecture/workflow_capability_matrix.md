@@ -215,12 +215,16 @@ remains the player-context research and continuation capability;
 adapter for its configurable request and fixture-bootstrap outputs; and
 `prepare-canonical-drive-transfer.yml` remains the historical archive transfer
 capability. Current source identities and read-only Actions history are bound in the
-migration-review artifact. All five remain non-equivalent and not retirement-
+migration-review artifact. Its run-history objects mean latest observed at the
+explicit `2026-09-24T01:53:50Z` capture cutoff, not a live pointer; later runs do not
+rewrite or invalidate that snapshot. All five remain non-equivalent and not retirement-
 authorized. P4.4C retires zero workflows and leaves the P4.3 retirement ledger
 unchanged.
 
 If merged, the daily schedule intentionally enables at most one FotMob request for
-one current UTC date per run. It grants no backfill or model, pricing, routing,
+one current UTC date per run. This is a newly enabled provider-acquisition trigger
+surface only; no provider family is added, manual authority does not change, and
+non-ingest authority does not expand. It grants no backfill or model, pricing, routing,
 portfolio, share-code, login, wallet, staking, betting, or wager authority. P4.4 and
 Architecture Checkpoint E remain incomplete. The merge reaches source-review 5/5;
 the mandatory architecture/source reread is required immediately afterward and

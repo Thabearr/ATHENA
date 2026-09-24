@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -31,6 +32,53 @@ WORKFLOW_PATH = ".github/workflows/athena-ingest.yml"
 TRANSITION_ID = "P44C_ATHENA_INGEST_SCHEDULE_REVISE_V1"
 POLICY_ID = "ATHENA_P4_4C_SCHEDULED_INGEST_AND_MIGRATION_REVIEW_V1"
 MIGRATION_POLICY_ID = "ATHENA_P4_4C_INGEST_CAPABILITY_MIGRATION_REVIEW_V1"
+RUN_HISTORY_CAPTURED_AT_UTC = "2026-09-24T01:53:50Z"
+RUN_HISTORY_SEMANTICS = "LATEST_OBSERVED_AT_CAPTURE_NOT_A_LIVE_POINTER"
+P44B_IDENTITY = {
+    "workflow_path": WORKFLOW_PATH,
+    "git_blob_sha1": P44B_WORKFLOW_BLOB,
+    "source_sha256": P44B_WORKFLOW_SOURCE,
+}
+MIGRATION_TOP_LEVEL_FIELDS = {
+    "schema_version", "policy_id", "repository_base_main_sha", "p4_3a_matrix_sha256",
+    "p4_4b_receipt_sha256", "p4_4b_canonical_ingest_identity", "run_history_snapshot",
+    "workflow_rows", "reviewed_workflow_count", "equivalence_claim_count",
+    "retirement_authorization_count", "canonical_sha256",
+}
+MIGRATION_ROW_FIELDS = {
+    "workflow_path", "frozen_p4_3a_source_identity", "current_live_source_identity",
+    "path_exists", "trigger_types", "permissions", "inputs", "outputs_artifact_names",
+    "artifact_upload_names", "timeout_minutes", "concurrency_group",
+    "latest_successful_run_observed_at_capture", "latest_run_observed_at_capture",
+    "unique_responsibilities", "known_workflow_consumers",
+    "known_artifact_and_document_consumers", "canonical_athena_ingest_coverage_assessment",
+    "exact_unresolved_differences", "reviewed_disposition", "equivalence_claimed",
+    "retirement_authorized",
+}
+RUN_OBJECT_FIELDS = {
+    "run_id", "created_at", "event", "status", "conclusion", "head_sha",
+    "head_branch", "url", "workflow_name",
+}
+RUN_HISTORY_SNAPSHOT_FIELDS = {
+    "captured_at_utc", "semantics", "read_only", "post_capture_runs_do_not_invalidate_snapshot",
+}
+ROLLBACK_PLAN = {
+    "policy_id": "ATHENA_P4_4C_SCHEDULE_ROLLBACK_PLAN_V1",
+    "emergency_stop": "DISABLE_ATHENA_CANONICAL_INGEST_WORKFLOW",
+    "emergency_stop_disables_manual_and_scheduled_runs": True,
+    "automatic_legacy_fallback": False,
+    "source_rollback_operation": "APPEND_NEW_REVIEWED_REVISE",
+    "source_rollback_target": {
+        "git_blob_sha1": P44B_WORKFLOW_BLOB,
+        "source_sha256": P44B_WORKFLOW_SOURCE,
+    },
+    "preserve_p4_4c_transition": True,
+    "preserve_p4_4c_snapshot": True,
+    "preserve_p4_4c_receipt": True,
+    "preserve_migration_review": True,
+    "backfill_authority": False,
+    "mandatory_5_of_5_reread_before_next_normal_remediation": True,
+}
 EXPECTED_PATHS = (
     ".github/workflows/build-historical-warehouse.yml",
     ".github/workflows/execute-fotmob-ordinary-ft-source-history-campaign.yml",
@@ -47,24 +95,24 @@ DISPOSITIONS = {
 }
 RUN_HISTORY = {
     EXPECTED_PATHS[0]: {
-        "latest_run": {"run_id": 33541247244, "event": "push", "status": "completed", "conclusion": "success", "head_sha": "5c0ccfd21e421c432217bf229ca94ab71f783a1f", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/33541247244"},
-        "latest_successful_run": {"run_id": 33541247244, "event": "push", "status": "completed", "conclusion": "success", "head_sha": "5c0ccfd21e421c432217bf229ca94ab71f783a1f", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/33541247244"},
+        "latest_run_observed_at_capture": {"run_id": 33541247244, "created_at": "2026-09-01T18:01:59Z", "event": "push", "status": "completed", "conclusion": "success", "head_sha": "5c0ccfd21e421c432217bf229ca94ab71f783a1f", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/33541247244", "workflow_name": "Build Historical Football Warehouse"},
+        "latest_successful_run_observed_at_capture": {"run_id": 33541247244, "created_at": "2026-09-01T18:01:59Z", "event": "push", "status": "completed", "conclusion": "success", "head_sha": "5c0ccfd21e421c432217bf229ca94ab71f783a1f", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/33541247244", "workflow_name": "Build Historical Football Warehouse"},
     },
     EXPECTED_PATHS[1]: {
-        "latest_run": {"run_id": 35936265994, "event": "issue_comment", "status": "completed", "conclusion": "skipped", "head_sha": "cb273ad4d0ca44f5b5fb8615ab99f1b9432dc8a3", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/35936265994"},
-        "latest_successful_run": {"run_id": 31887523012, "event": "issue_comment", "status": "completed", "conclusion": "success", "head_sha": "12a32de1cca8ffb657f67fa4a8d3106aec6ce31b", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/31887523012"},
+        "latest_run_observed_at_capture": {"run_id": 35943976140, "created_at": "2026-09-24T01:40:42Z", "event": "issue_comment", "status": "completed", "conclusion": "skipped", "head_sha": "ef540c8b6483f85eebf048636eb3b65ab0894f43", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/35943976140", "workflow_name": "Execute Reviewed FotMob Ordinary-FT Source-History Campaign"},
+        "latest_successful_run_observed_at_capture": {"run_id": 31887523012, "created_at": "2026-08-15T13:33:23Z", "event": "issue_comment", "status": "completed", "conclusion": "success", "head_sha": "12a32de1cca8ffb657f67fa4a8d3106aec6ce31b", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/31887523012", "workflow_name": "Execute Reviewed FotMob Ordinary-FT Source-History Campaign"},
     },
     EXPECTED_PATHS[2]: {
-        "latest_run": {"run_id": 35936241499, "event": "pull_request", "status": "completed", "conclusion": "skipped", "head_sha": "8f78f019ce2d306c2d17f1e8e27d0d95c9cff283", "head_branch": "feat/architecture-p4.4b-canonical-athena-ingest", "url": "https://github.com/Thabearr/ATHENA/actions/runs/35936241499"},
-        "latest_successful_run": {"run_id": 32410775191, "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "46f76e8033d3d498131c6f893111b437b6b459a9", "head_branch": "evidence/fotmob-prospective-player-context-campaign", "url": "https://github.com/Thabearr/ATHENA/actions/runs/32410775191"},
+        "latest_run_observed_at_capture": {"run_id": 35936241499, "created_at": "2026-09-23T23:59:05Z", "event": "pull_request", "status": "completed", "conclusion": "skipped", "head_sha": "8f78f019ce2d306c2d17f1e8e27d0d95c9cff283", "head_branch": "feat/architecture-p4.4b-canonical-athena-ingest", "url": "https://github.com/Thabearr/ATHENA/actions/runs/35936241499", "workflow_name": "Execute FotMob Prospective Player-Context Campaign"},
+        "latest_successful_run_observed_at_capture": {"run_id": 32410775191, "created_at": "2026-08-20T19:49:44Z", "event": "pull_request", "status": "completed", "conclusion": "success", "head_sha": "46f76e8033d3d498131c6f893111b437b6b459a9", "head_branch": "evidence/fotmob-prospective-player-context-campaign", "url": "https://github.com/Thabearr/ATHENA/actions/runs/32410775191", "workflow_name": "Execute FotMob Prospective Player-Context Campaign"},
     },
     EXPECTED_PATHS[3]: {
-        "latest_run": {"run_id": 34761344932, "event": "workflow_dispatch", "status": "completed", "conclusion": "success", "head_sha": "7e50835f1ffa85c96553d7da29ce5a44502ec182", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/34761344932"},
-        "latest_successful_run": {"run_id": 34761344932, "event": "workflow_dispatch", "status": "completed", "conclusion": "success", "head_sha": "7e50835f1ffa85c96553d7da29ce5a44502ec182", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/34761344932"},
+        "latest_run_observed_at_capture": {"run_id": 34761344932, "created_at": "2026-09-13T13:59:09Z", "event": "workflow_dispatch", "status": "completed", "conclusion": "success", "head_sha": "7e50835f1ffa85c96553d7da29ce5a44502ec182", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/34761344932", "workflow_name": "Issue Current Reviewed FotMob Source"},
+        "latest_successful_run_observed_at_capture": {"run_id": 34761344932, "created_at": "2026-09-13T13:59:09Z", "event": "workflow_dispatch", "status": "completed", "conclusion": "success", "head_sha": "7e50835f1ffa85c96553d7da29ce5a44502ec182", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/34761344932", "workflow_name": "Issue Current Reviewed FotMob Source"},
     },
     EXPECTED_PATHS[4]: {
-        "latest_run": {"run_id": 32635585415, "event": "push", "status": "completed", "conclusion": "success", "head_sha": "d2145f0e5ba74fb516797768f5d8a8681a3c3ffa", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/32635585415"},
-        "latest_successful_run": {"run_id": 32635585415, "event": "push", "status": "completed", "conclusion": "success", "head_sha": "d2145f0e5ba74fb516797768f5d8a8681a3c3ffa", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/32635585415"},
+        "latest_run_observed_at_capture": {"run_id": 32635585415, "created_at": "2026-08-23T11:06:04Z", "event": "push", "status": "completed", "conclusion": "success", "head_sha": "d2145f0e5ba74fb516797768f5d8a8681a3c3ffa", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/32635585415", "workflow_name": "Prepare Canonical Database Drive Transfer"},
+        "latest_successful_run_observed_at_capture": {"run_id": 32635585415, "created_at": "2026-08-23T11:06:04Z", "event": "push", "status": "completed", "conclusion": "success", "head_sha": "d2145f0e5ba74fb516797768f5d8a8681a3c3ffa", "head_branch": "main", "url": "https://github.com/Thabearr/ATHENA/actions/runs/32635585415", "workflow_name": "Prepare Canonical Database Drive Transfer"},
     },
 }
 ASSESSMENTS = {
@@ -142,8 +190,8 @@ def build_migration_review() -> dict[str, Any]:
             "artifact_upload_names": dependency.get("artifact_upload_names", []),
             "timeout_minutes": row.get("job_timeout_minutes", []),
             "concurrency_group": row.get("concurrency_group"),
-            "latest_successful_run": RUN_HISTORY[path]["latest_successful_run"],
-            "latest_run": RUN_HISTORY[path]["latest_run"],
+            "latest_successful_run_observed_at_capture": RUN_HISTORY[path]["latest_successful_run_observed_at_capture"],
+            "latest_run_observed_at_capture": RUN_HISTORY[path]["latest_run_observed_at_capture"],
             "unique_responsibilities": row.get("unique_responsibilities", []),
             "known_workflow_consumers": dependency.get("known_workflow_consumers", []),
             "known_artifact_and_document_consumers": dependency.get("consumer_sources", []),
@@ -164,7 +212,12 @@ def build_migration_review() -> dict[str, Any]:
             "git_blob_sha1": P44B_WORKFLOW_BLOB,
             "source_sha256": P44B_WORKFLOW_SOURCE,
         },
-        "github_actions_history_rechecked_read_only": True,
+        "run_history_snapshot": {
+            "captured_at_utc": RUN_HISTORY_CAPTURED_AT_UTC,
+            "semantics": RUN_HISTORY_SEMANTICS,
+            "read_only": True,
+            "post_capture_runs_do_not_invalidate_snapshot": True,
+        },
         "workflow_rows": reviewed_rows,
         "reviewed_workflow_count": len(reviewed_rows),
         "equivalence_claim_count": 0,
@@ -182,7 +235,7 @@ def build_evidence(migration_review: dict[str, Any] | None = None) -> tuple[dict
         migration_review = _load(MIGRATION_PATH)
     if migration_review.get("canonical_sha256") != evolution.canonical_sha256(migration_review):
         raise AssertionError("P4.4C migration-review artifact is not canonical")
-    base_ledger = _load(evolution.LEDGER_PATH)
+    base_ledger = _load(p44b.SNAPSHOT)
     if (
         base_ledger.get("canonical_sha256") != P44B_LEDGER_SHA256
         or evolution.canonical_sha256(base_ledger) != P44B_LEDGER_SHA256
@@ -190,7 +243,7 @@ def build_evidence(migration_review: dict[str, Any] | None = None) -> tuple[dict
         or base_ledger.get("current_workflow_tree_sha1") != P44B_WORKFLOW_TREE
     ):
         raise AssertionError("P4.4B evolution checkpoint changed")
-    before = _git("show", f"HEAD:{WORKFLOW_PATH}")
+    before = _git("show", f"{BASE_MAIN}:{WORKFLOW_PATH}")
     if evolution.source_identity(before) != {"git_blob_sha1": P44B_WORKFLOW_BLOB, "source_sha256": P44B_WORKFLOW_SOURCE}:
         raise AssertionError("P4.4B athena-ingest before identity changed")
     after = _git("show", f":{WORKFLOW_PATH}")
@@ -258,7 +311,13 @@ def build_evidence(migration_review: dict[str, Any] | None = None) -> tuple[dict
         "automatic_acquisition_active_on_main_while_pr_open": False,
         "automatic_daily_side_effect_if_merged": "one current UTC date and at most one FotMob request per scheduled run",
         "backfill_authority": False,
-        "authority_expansion": False,
+        "provider_acquisition_trigger_surface_changed": True,
+        "automatic_provider_acquisition_authority_added_if_merged": True,
+        "manual_provider_acquisition_authority_changed": False,
+        "non_ingest_authority_expansion": False,
+        "new_provider_family_added": False,
+        "sportybet_authority_added": False,
+        "rollback_plan": copy.deepcopy(ROLLBACK_PLAN),
         "workflow_tree_before_sha1": P44B_WORKFLOW_TREE,
         "workflow_tree_after_sha1": final_tree,
         "p4_4_overall_complete": False,
@@ -290,18 +349,79 @@ def write_evidence() -> None:
     evolution.LEDGER_PATH.write_bytes(evolution.canonical_json_bytes(ledger))
 
 
+def refresh_corrective_evidence() -> None:
+    """Regenerate the still-unmerged P4.4C evidence chain from reviewed inputs."""
+    if not (MIGRATION_PATH.is_file() and RECEIPT_PATH.is_file() and SNAPSHOT_PATH.is_file()):
+        raise AssertionError("existing P4.4C evidence is required for a corrective refresh")
+    old_ledger = _load(evolution.LEDGER_PATH)
+    p44b_snapshot = _load(p44b.SNAPSHOT)
+    if len(old_ledger.get("transitions", [])) != 4:
+        raise AssertionError("refusing to refresh outside the existing four-transition P4.4C phase")
+    if old_ledger["transitions"][:3] != p44b_snapshot["transitions"]:
+        raise AssertionError("refusing to rewrite the historical transition prefix")
+    old_transition = old_ledger["transitions"][3]
+    if (
+        old_transition.get("transition_id") != TRANSITION_ID
+        or old_transition.get("operation") != "REVISE"
+        or old_transition.get("before") != {"git_blob_sha1": P44B_WORKFLOW_BLOB, "source_sha256": P44B_WORKFLOW_SOURCE}
+        or old_transition.get("after") != _current_identity(WORKFLOW_PATH)
+    ):
+        raise AssertionError("refusing to refresh after P4.4C workflow transition drift")
+    migration = build_migration_review()
+    ledger, receipt = build_evidence(migration)
+    MIGRATION_PATH.write_bytes(evolution.canonical_json_bytes(migration))
+    SNAPSHOT_PATH.write_bytes(evolution.canonical_json_bytes(ledger))
+    RECEIPT_PATH.write_bytes(evolution.canonical_json_bytes(receipt))
+    evolution.LEDGER_PATH.write_bytes(evolution.canonical_json_bytes(ledger))
+
+
 def _validate_migration_review(review: dict[str, Any]) -> None:
+    if set(review) != MIGRATION_TOP_LEVEL_FIELDS:
+        raise AssertionError("P4.4C migration-review top-level schema changed")
     if review.get("canonical_sha256") != evolution.canonical_sha256(review):
         raise AssertionError("P4.4C migration-review canonical SHA mismatch")
-    if review.get("p4_3a_matrix_sha256") != retirement.MATRIX_SHA256:
-        raise AssertionError("P4.4C review changed frozen P4.3A matrix identity")
-    if review.get("reviewed_workflow_count") != 5 or len(review.get("workflow_rows", [])) != 5:
+    expected_top = {
+        "schema_version": 1,
+        "policy_id": MIGRATION_POLICY_ID,
+        "repository_base_main_sha": BASE_MAIN,
+        "p4_3a_matrix_sha256": retirement.MATRIX_SHA256,
+        "p4_4b_receipt_sha256": P44B_RECEIPT_SHA256,
+        "p4_4b_canonical_ingest_identity": P44B_IDENTITY,
+        "reviewed_workflow_count": 5,
+        "equivalence_claim_count": 0,
+        "retirement_authorization_count": 0,
+    }
+    if any(review.get(key) != value for key, value in expected_top.items()):
+        raise AssertionError("P4.4C migration-review top-level identity or counters changed")
+    run_snapshot = review.get("run_history_snapshot")
+    if not isinstance(run_snapshot, dict) or set(run_snapshot) != RUN_HISTORY_SNAPSHOT_FIELDS:
+        raise AssertionError("P4.4C run-history snapshot schema changed")
+    captured_at = run_snapshot.get("captured_at_utc")
+    if not isinstance(captured_at, str):
+        raise AssertionError("P4.4C run-history capture timestamp is missing")
+    try:
+        parsed_capture = datetime.fromisoformat(captured_at.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise AssertionError("P4.4C run-history capture timestamp is invalid") from exc
+    if parsed_capture.tzinfo is None or parsed_capture.utcoffset() != timezone.utc.utcoffset(parsed_capture):
+        raise AssertionError("P4.4C run-history capture timestamp must be timezone-aware UTC")
+    expected_snapshot = {
+        "captured_at_utc": RUN_HISTORY_CAPTURED_AT_UTC,
+        "semantics": RUN_HISTORY_SEMANTICS,
+        "read_only": True,
+        "post_capture_runs_do_not_invalidate_snapshot": True,
+    }
+    if run_snapshot != expected_snapshot:
+        raise AssertionError("P4.4C run-history snapshot is not the reviewed immutable capture")
+    if type(review.get("reviewed_workflow_count")) is not int or review.get("reviewed_workflow_count") != 5 or len(review.get("workflow_rows", [])) != 5:
         raise AssertionError("P4.4C review must contain exactly five future-ingest rows")
     if [row.get("workflow_path") for row in review["workflow_rows"]] != list(EXPECTED_PATHS):
         raise AssertionError("P4.4C reviewed workflow path set/order changed")
     matrix, _ = retirement.load_baseline()
     frozen = {row["workflow_path"]: row for row in matrix["workflow_rows"]}
     for row in review["workflow_rows"]:
+        if not isinstance(row, dict) or set(row) != MIGRATION_ROW_FIELDS:
+            raise AssertionError("P4.4C migration-review row schema changed")
         path = row["workflow_path"]
         expected = frozen[path]
         expected_identity = {key: expected[key] for key in evolution.IDENTITY_KEYS}
@@ -313,25 +433,121 @@ def _validate_migration_review(review: dict[str, Any]) -> None:
             raise AssertionError(f"P4.4C current workflow identity changed: {path}")
         if row.get("current_live_source_identity") != expected_identity:
             raise AssertionError(f"P4.4C current workflow no longer matches its frozen source: {path}")
-        if row.get("reviewed_disposition") != DISPOSITIONS[path]:
-            raise AssertionError(f"P4.4C disposition changed: {path}")
         if row.get("equivalence_claimed") is not False or row.get("retirement_authorized") is not False:
             raise AssertionError(f"P4.4C cannot claim equivalence or authorize retirement: {path}")
-        for field in (
-            "trigger_types", "permissions", "inputs", "outputs_artifact_names",
-            "timeout_minutes", "concurrency_group", "unique_responsibilities",
-        ):
-            expected_value = {
-                "trigger_types": expected.get("trigger_types", []),
-                "permissions": expected.get("permissions", {}),
-                "inputs": expected.get("workflow_dispatch_inputs", {}),
-                "outputs_artifact_names": expected.get("outputs_or_receipts", []),
-                "timeout_minutes": expected.get("job_timeout_minutes", []),
-                "concurrency_group": expected.get("concurrency_group"),
-                "unique_responsibilities": expected.get("unique_responsibilities", []),
-            }[field]
-            if row.get(field) != expected_value:
-                raise AssertionError(f"P4.4C review metadata differs from frozen census ({field}): {path}")
+        expected_snapshot = RUN_HISTORY[path]
+        for run_key in ("latest_successful_run_observed_at_capture", "latest_run_observed_at_capture"):
+            observed = row.get(run_key)
+            if not isinstance(observed, dict) or set(observed) != RUN_OBJECT_FIELDS:
+                raise AssertionError(f"P4.4C captured run object schema changed ({run_key}): {path}")
+            if observed != expected_snapshot[run_key]:
+                raise AssertionError(f"P4.4C run-history capture changed ({run_key}): {path}")
+        expected_assessment, expected_differences = ASSESSMENTS[path]
+        dependency = expected.get("dependency_evidence", {})
+        expected_row = {
+            "workflow_path": path,
+            "frozen_p4_3a_source_identity": expected_identity,
+            "current_live_source_identity": expected_identity,
+            "path_exists": True,
+            "trigger_types": expected.get("trigger_types", []),
+            "permissions": expected.get("permissions", {}),
+            "inputs": expected.get("workflow_dispatch_inputs", {}),
+            "outputs_artifact_names": expected.get("outputs_or_receipts", []),
+            "artifact_upload_names": dependency.get("artifact_upload_names", []),
+            "timeout_minutes": expected.get("job_timeout_minutes", []),
+            "concurrency_group": expected.get("concurrency_group"),
+            "latest_successful_run_observed_at_capture": expected_snapshot["latest_successful_run_observed_at_capture"],
+            "latest_run_observed_at_capture": expected_snapshot["latest_run_observed_at_capture"],
+            "unique_responsibilities": expected.get("unique_responsibilities", []),
+            "known_workflow_consumers": dependency.get("known_workflow_consumers", []),
+            "known_artifact_and_document_consumers": dependency.get("consumer_sources", []),
+            "canonical_athena_ingest_coverage_assessment": expected_assessment,
+            "exact_unresolved_differences": expected_differences,
+            "reviewed_disposition": DISPOSITIONS[path],
+            "equivalence_claimed": False,
+            "retirement_authorized": False,
+        }
+        if row != expected_row:
+            raise AssertionError(f"P4.4C review evidence differs from frozen assessment: {path}")
+
+
+def _validate_receipt_semantics(receipt: dict[str, Any]) -> None:
+    expected = {
+        "schema_version": 1,
+        "policy_id": POLICY_ID,
+        "repository_base_main_sha": BASE_MAIN,
+        "source_review_counter_while_unmerged": "4/5",
+        "source_review_counter_if_merged": "5/5",
+        "p4_4b_receipt_sha256": P44B_RECEIPT_SHA256,
+        "p4_3_retirement_ledger_sha256": P43_LEDGER_SHA256,
+        "migration_review_artifact_path": MIGRATION_PATH.as_posix(),
+        "workflow_path": WORKFLOW_PATH,
+        "scheduled_acquisition_enabled": True,
+        "schedule_cron": "0 8 * * *",
+        "schedule_timezone": "UTC",
+        "scheduled_date_count": 1,
+        "scheduled_max_provider_requests": 1,
+        "manual_max_dates": 7,
+        "provider_scope": ["fotmob"],
+        "timezone": "UTC",
+        "ccode3": "NGA",
+        "service_budget_seconds": 900,
+        "workflow_timeout_minutes": 20,
+        "finalization_headroom_seconds": 300,
+        "acquisition_retry_count": 0,
+        "offline_replay_supported": True,
+        "p4_3_retirements_added": 0,
+        "legacy_ingest_workflows_retired": 0,
+        "workflow_count_before": 38,
+        "workflow_count_after": 38,
+        "transition_count_before": 3,
+        "transition_count_after": 4,
+        "provider_acquisition_during_pr": False,
+        "provider_request_count_during_pr": 0,
+        "workflow_dispatch_during_pr": False,
+        "automatic_acquisition_active_on_main_while_pr_open": False,
+        "automatic_daily_side_effect_if_merged": "one current UTC date and at most one FotMob request per scheduled run",
+        "backfill_authority": False,
+        "provider_acquisition_trigger_surface_changed": True,
+        "automatic_provider_acquisition_authority_added_if_merged": True,
+        "manual_provider_acquisition_authority_changed": False,
+        "non_ingest_authority_expansion": False,
+        "new_provider_family_added": False,
+        "sportybet_authority_added": False,
+        "model_authority": False,
+        "routing_authority": False,
+        "portfolio_authority": False,
+        "share_code_authority": False,
+        "login": False,
+        "cookies": False,
+        "wallet": False,
+        "staking": False,
+        "wager": False,
+        "p4_4_overall_complete": False,
+        "architecture_checkpoint_e_fully_claimed": False,
+        "mandatory_source_reread_required_after_merge": True,
+        "next_required_step_if_merged": "MANDATORY_5_OF_5_ARCHITECTURE_SOURCE_REREAD_BEFORE_NEXT_REMEDIATION_MISSION",
+        "rollback_plan": ROLLBACK_PLAN,
+    }
+    boolean_fields = {
+        key for key, value in expected.items() if type(value) is bool
+    }
+    integer_fields = {
+        "schema_version", "scheduled_date_count", "scheduled_max_provider_requests",
+        "manual_max_dates", "service_budget_seconds", "workflow_timeout_minutes",
+        "finalization_headroom_seconds", "acquisition_retry_count", "p4_3_retirements_added",
+        "legacy_ingest_workflows_retired", "workflow_count_before", "workflow_count_after",
+        "transition_count_before", "transition_count_after", "provider_request_count_during_pr",
+    }
+    for key, value in expected.items():
+        if receipt.get(key) != value:
+            raise AssertionError(f"P4.4C receipt semantic field changed: {key}")
+        if key in boolean_fields and type(receipt.get(key)) is not bool:
+            raise AssertionError(f"P4.4C receipt boolean field has invalid type: {key}")
+        if key in integer_fields and type(receipt.get(key)) is not int:
+            raise AssertionError(f"P4.4C receipt integer field has invalid type: {key}")
+    if "authority_expansion" in receipt:
+        raise AssertionError("P4.4C receipt must not use the ambiguous authority_expansion claim")
 
 
 def check() -> dict[str, Any]:
@@ -373,38 +589,7 @@ def check() -> dict[str, Any]:
     triggers = re.search(r"(?ms)^on:\n(.*?)(?=^permissions:)", workflow)
     if not triggers or re.search(r"(?m)^  (?!schedule:|workflow_dispatch:)[A-Za-z_][A-Za-z0-9_-]*:", triggers.group(1)):
         raise AssertionError("P4.4C added an unreviewed acquisition trigger")
-    expected_flags = {
-        "scheduled_acquisition_enabled": True,
-        "schedule_cron": "0 8 * * *",
-        "schedule_timezone": "UTC",
-        "scheduled_date_count": 1,
-        "scheduled_max_provider_requests": 1,
-        "manual_max_dates": 7,
-        "provider_scope": ["fotmob"],
-        "timezone": "UTC",
-        "ccode3": "NGA",
-        "service_budget_seconds": 900,
-        "workflow_timeout_minutes": 20,
-        "finalization_headroom_seconds": 300,
-        "acquisition_retry_count": 0,
-        "p4_3_retirements_added": 0,
-        "legacy_ingest_workflows_retired": 0,
-        "workflow_count_before": 38,
-        "workflow_count_after": 38,
-        "transition_count_before": 3,
-        "transition_count_after": 4,
-        "provider_acquisition_during_pr": False,
-        "provider_request_count_during_pr": 0,
-        "workflow_dispatch_during_pr": False,
-        "automatic_acquisition_active_on_main_while_pr_open": False,
-        "backfill_authority": False,
-        "authority_expansion": False,
-        "p4_4_overall_complete": False,
-        "architecture_checkpoint_e_fully_claimed": False,
-        "mandatory_source_reread_required_after_merge": True,
-    }
-    if any(receipt.get(key) != value for key, value in expected_flags.items()):
-        raise AssertionError("P4.4C receipt violates the scheduled-ingest/authority contract")
+    _validate_receipt_semantics(receipt)
     if ledger.get("current_live_workflow_count") != 38 or ledger.get("current_workflow_tree_sha1") != _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip():
         raise AssertionError("P4.4C current workflow tree/count does not match reviewed state")
     if history.get("current_retired_workflow_count") != 3:
@@ -417,10 +602,13 @@ def main() -> int:
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true")
     group.add_argument("--write-evidence", action="store_true")
+    group.add_argument("--refresh-corrective-evidence", action="store_true")
     args = parser.parse_args()
     try:
         if args.write_evidence:
             write_evidence()
+        elif args.refresh_corrective_evidence:
+            refresh_corrective_evidence()
         else:
             check()
         return 0

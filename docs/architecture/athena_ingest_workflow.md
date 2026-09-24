@@ -21,6 +21,9 @@ provider requests. If the owner merges P4.4C, GitHub schedule activation permits
 bounded FotMob request for the current UTC date per daily scheduled run. That does not
 authorize backfill, SportyBet, share-code creation, login, cookies, wallet, staking,
 betting, or wager activity, and does not alter model, routing, or portfolio authority.
+P4.4C intentionally changes the provider-acquisition trigger surface: automatic
+canonical FotMob acquisition becomes permitted only if merged. It adds no provider
+family, and does not change manual acquisition authority or any non-ingest authority.
 
 The uploaded `athena-ingest-${{ github.run_id }}` artifact is retained for 30 days.
 It contains one resolved request, exact raw `response.json` and reviewed capture
@@ -57,3 +60,27 @@ an archive-transfer capability. All five remain non-equivalent and unretired. No
 legacy workflow is deleted by P4.4C. P4.4 and Architecture Checkpoint E remain
 incomplete; after a P4.4C merge, the mandatory 5/5 architecture/source reread is
 required before another remediation mission.
+
+P4.4C's Actions run history is a read-only snapshot captured at
+`2026-09-24T01:53:50Z`. Each run is the latest observed at that capture cutoff, not a
+live pointer; later issue-comment or other workflow runs do not invalidate that
+historical snapshot. The source-controlled auditor pins the capture timestamp,
+run identities, row metadata, and frozen P4.3A dependency evidence.
+
+## P4.4C rollback plan
+
+For an emergency operational stop after merge, disable **ATHENA Canonical Ingest** in
+GitHub Actions. This disables both its scheduled and manual executions. Do not fall
+back automatically to a legacy acquisition workflow, and do not backfill missed
+dates. This operational stop does not rewrite source history.
+
+A permanent source rollback targets the exact P4.4B manual-only workflow identity:
+blob `7f5fecabd8ada0ccac1fb35a8d2749601cc293c7`, source SHA-256
+`acdb74d306e7cd2220123186112ee5ae197b7719761e304e7e3cd08dea628cbe`. It must append
+a new reviewed ordinary `REVISE` transition restoring those manual-only bytes. It
+must preserve P4.4C transition 4, its immutable checkpoint snapshot and receipt, and
+the migration-review artifact; it must never delete or rewrite transition 4 to imply
+that schedule activation did not occur. If PR #394 merges, source review reaches 5/5;
+the mandatory architecture/source reread is required before the next normal
+remediation mission. If an emergency stop is needed before then, disable the workflow
+operationally rather than bypassing that reread with an unreviewed code change.
