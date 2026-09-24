@@ -194,6 +194,19 @@ No ParseBot, BookBet or other third-party booking-code service is introduced.
 FotMob source qualification and SportyBet code-generation transport remain
 separate authority boundaries.
 
+## Canonical ingest compatibility (P4.4D)
+
+The offline P4.4D adapter can feed this existing PR243 chain only from one
+successful canonical FotMob ingest source for exactly one date with fixed UTC/NGA
+request semantics. It verifies the canonical replay, then reuses the raw response
+and manifest in place; the adapter makes no second provider request and does not
+rewrite source evidence. The legacy capture-root default and this workflow's
+existing request behavior are unchanged. This is not full legacy workflow
+equivalence: non-UTC/NGA requests remain unsupported, the workflow remains live
+and unretired, and caller migration requires a later reviewed step. No model,
+pricing, routing, portfolio, share-code, or wager authority is added. P4.4 and
+Architecture Checkpoint E remain incomplete.
+
 ## Next exact boundary
 
 The next missing boundary is intentionally explicit:
