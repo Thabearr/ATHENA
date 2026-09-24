@@ -256,3 +256,30 @@ replay and P4.4D/PR243 projection of the same immutable source. The post-acquisi
 Windows proof-environment `tzdata` interruption is retained explicitly rather than
 rewritten as a single-process success. P4.4 and Architecture Checkpoint E remain
 incomplete.
+
+## P4.4G current-source canonical-only workflow boundary
+
+P4.4G reviews the remaining live legacy branch inside
+`issue-current-fotmob-reviewed-source.yml` rather than deleting the workflow.
+The read-only GitHub Actions capture at `2026-09-24T22:28:53.032418Z` returned
+12 total historical runs for workflow ID `343652927`; all 12 were manual
+workflow dispatches and authenticated job logs show UTC/NGA for every run.
+Eleven runs succeeded and one failed. No retained run used a noncanonical
+request, but the receipt explicitly prevents that observation from becoming a
+claim of future capability authority.
+
+The workflow retains its date/timezone/ccode3 input surface and exact UTC/NGA
+canonical-ingest-backed behavior. A non-UTC/NGA request is now an explicit
+fail-closed unsupported-scope result with zero provider acquisition instead of
+a legacy-provider branch. The legacy Python CLI remains source-controlled and
+unchanged; this phase neither retires nor deletes it.
+
+P4.4G is one `MAINTENANCE_REVISE` transition with zero workflow-count delta:
+38 workflows remain live and the P4.3 retirement ledger remains at three
+reviewed retirements. It performs no provider request and no workflow dispatch,
+and it reuses the frozen P4.4F operational proof because the canonical lane is
+unchanged. No additional workflow retirement, model/pricing/router/portfolio,
+share-code, login, cookies, wallet, staking or wager authority is granted.
+P4.4 and Architecture Checkpoint E remain incomplete. The source-review counter
+is 3/5 while P4.4G is unmerged and becomes 4/5 only after an owner-authorized
+merge.

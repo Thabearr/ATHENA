@@ -9,6 +9,7 @@ import pytest
 from scripts import audit_p4_3_workflow_retirement_ledger as retirement
 from scripts import audit_p4_4b_athena_ingest_workflow as p44b
 from scripts import audit_p4_4c_scheduled_ingest_and_migration_review as p44c
+from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
@@ -43,7 +44,8 @@ def test_p4_4c_appends_only_ordinary_ingest_revise_and_preserves_history() -> No
     assert ledger["transitions"][:3] == p44b_snapshot["transitions"]
     assert ledger["transitions"][:4] == snapshot["transitions"]
     assert len(snapshot["transitions"]) == 4
-    assert len(ledger["transitions"]) == 5
+    assert len(ledger["transitions"]) == 6
+    assert ledger["transitions"][5]["transition_id"] == p44g.TRANSITION_ID
     transition = snapshot["transitions"][3]
     assert transition["transition_id"] == "P44C_ATHENA_INGEST_SCHEDULE_REVISE_V1"
     assert transition["operation"] == "REVISE"

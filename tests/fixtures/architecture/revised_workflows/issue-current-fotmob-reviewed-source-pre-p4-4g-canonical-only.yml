@@ -47,7 +47,7 @@ jobs:
             --execute-live-network \
             --output .cache/athena-research/current-fotmob-reviewed-source/execution.json
 
-      - name: Reject unsupported noncanonical current-source request
+      - name: Issue current reviewed FotMob fixture bootstrap via legacy compatibility lane
         if: ${{ inputs.timezone != 'UTC' || inputs.ccode3 != 'NGA' }}
         env:
           ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}
@@ -56,34 +56,12 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p .cache/athena-research/current-fotmob-reviewed-source
-          python - <<'PY'
-          import json
-          import os
-          from pathlib import Path
-
-          payload = {
-              "dataset_name": "athena-current-fotmob-reviewed-source-execution-v1",
-              "max_source_age_seconds": 900,
-              "minimum_lead_seconds": 3600,
-              "next_required_boundary": "CURRENT_REVIEWED_FOTMOB_SEMANTIC_FACT_OR_MODEL_FEATURE_ISSUER_REQUIRED",
-              "request": {
-                  "ccode3": os.environ["ATHENA_FOTMOB_REQUEST_CCODE3"],
-                  "date": os.environ["ATHENA_FOTMOB_REQUEST_DATE"],
-                  "provider": "fotmob",
-                  "timezone": os.environ["ATHENA_FOTMOB_REQUEST_TIMEZONE"],
-              },
-              "schema_version": 1,
-              "status": "UNSUPPORTED_CURRENT_FOTMOB_WORKFLOW_SCOPE_REQUIRES_UTC_NGA",
-              "wager_placed": False,
-          }
-          output = Path(".cache/athena-research/current-fotmob-reviewed-source/execution.json")
-          output.write_text(
-              json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
-              encoding="utf-8",
-          )
-          PY
-          echo "Current reviewed FotMob workflow supports only timezone=UTC and ccode3=NGA." >&2
-          exit 1
+          python scripts/issue_current_fotmob_reviewed_source.py \
+            --date "${ATHENA_FOTMOB_REQUEST_DATE}" \
+            --timezone "${ATHENA_FOTMOB_REQUEST_TIMEZONE}" \
+            --ccode3 "${ATHENA_FOTMOB_REQUEST_CCODE3}" \
+            --execute-live-network \
+            --output .cache/athena-research/current-fotmob-reviewed-source/execution.json
 
       - name: Upload reviewed source receipt and exact raw evidence
         if: always()

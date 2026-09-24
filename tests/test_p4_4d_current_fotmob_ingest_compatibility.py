@@ -84,6 +84,7 @@ def test_self_rehashed_semantic_mutations_are_rejected(field: str, replacement) 
 
 def test_workflow_identities_and_evolution_evidence_are_pinned_historically() -> None:
     from scripts import audit_p4_4f_current_fotmob_exact_lane_caller_migration as p44f
+    from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as p44g
 
     receipt = audit.validate_receipt(_receipt(), check_live=False)
     assert receipt["legacy_current_reviewed_workflow_identity"] == audit.LEGACY_IDENTITY
@@ -96,7 +97,9 @@ def test_workflow_identities_and_evolution_evidence_are_pinned_historically() ->
         if row["workflow_path"] == audit.LEGACY_PATH
     )
     assert legacy_row["current_live_source_identity"] == audit.LEGACY_IDENTITY
-    assert p44f._identity_at("HEAD", audit.LEGACY_PATH) == p44f.WORKFLOW_AFTER
+    assert p44f._identity_at("HEAD", audit.LEGACY_PATH) == p44g.WORKFLOW_AFTER
+    historical_p44f = p44f._git("cat-file", "-p", p44f.WORKFLOW_AFTER["git_blob_sha1"])
+    assert p44f.evolution.source_identity(historical_p44f) == p44f.WORKFLOW_AFTER
     assert audit._source_identity(audit.INGEST_PATH) == audit.INGEST_IDENTITY
 
 

@@ -112,13 +112,18 @@ preselected fixture list, or policy-bound overrides to this path.
 
 ## Production entry point
 
-The fixed entry point is:
+The original PR243 local/live compatibility entry point is:
 
 ```text
 scripts/issue_current_fotmob_reviewed_source.py
 ```
 
-A live call must explicitly authorize the one transparent network request:
+P4.4F/P4.4G below supersede this CLI as the hosted workflow's provider-acquisition
+path for supported UTC/NGA execution. The legacy CLI remains source-controlled for
+historical evidence, rollback, and separately reviewed local compatibility; it is
+not called by a live GitHub workflow after P4.4G.
+
+A direct legacy/local live call must explicitly authorize the one transparent network request:
 
 ```bash
 git pull && python scripts/issue_current_fotmob_reviewed_source.py \
@@ -264,3 +269,36 @@ P4.4D/PR243 projection with 26 approved fixtures, zero adapter requests, and no 
 The proof artifact binds the interruption and continuation; it does not claim the
 single process returned successfully. P4.4 and Architecture Checkpoint E remain
 incomplete.
+
+## P4.4G canonical-only hosted current-source boundary
+
+P4.4G narrows only the hosted `issue-current-fotmob-reviewed-source.yml`
+execution boundary. The workflow keeps its existing manual trigger, date,
+timezone and ccode3 inputs, permissions, timeout, execution-summary path,
+artifact name and retention contract. Exact `timezone=UTC` / `ccode3=NGA`
+continues to invoke the already-proven canonical-ingest-backed issuer without
+changing its provider implementation.
+
+Before this change, the complete Actions run set returned for this workflow was
+captured read-only: 12 workflow-dispatch runs, 11 successful and one failed.
+Authenticated job logs show all 12 used UTC/NGA; no retained run shows a
+noncanonical timezone or ccode3. That history is evidence about observed use,
+not authority to infer that another input can never be needed.
+
+For a non-UTC/NGA request the hosted workflow now writes the deterministic
+`UNSUPPORTED_CURRENT_FOTMOB_WORKFLOW_SCOPE_REQUIRES_UTC_NGA` execution receipt
+and fails before provider acquisition. It does not invoke the legacy live
+issuer, retry, or fall back to another acquisition path. The legacy Python CLI
+`scripts/issue_current_fotmob_reviewed_source.py` remains source-controlled and
+unchanged for historical evidence, rollback, and separately reviewed local
+compatibility; P4.4G does not authorize its deletion.
+
+P4.4G performs no provider request or workflow dispatch during implementation
+or review and reuses the frozen P4.4F operational proof for the unchanged
+canonical UTC/NGA lane. No model, pricing, routing, portfolio, share-code,
+login, cookies, wallet, staking or wager authority changes. P4.4 and
+Architecture Checkpoint E remain incomplete.
+
+While P4.4G remains unmerged, `SOURCE_REVIEW_COUNTER = 3/5`; it becomes `4/5`
+only after an owner-authorized merge. The mandatory five-review source reread is
+therefore not due yet.

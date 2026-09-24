@@ -173,8 +173,9 @@ def test_p4_4f_live_audit_passes_after_reviewed_commit() -> None:
     assert receipt["canonical_sha256"] == audit.expected_receipt()["canonical_sha256"]
 
 
-def test_workflow_contract_checker_enforces_disjoint_lanes() -> None:
-    audit._check_workflow_contract()
+def test_p4_4f_historical_workflow_after_blob_is_preserved() -> None:
+    raw = audit._git("cat-file", "-p", audit.WORKFLOW_AFTER["git_blob_sha1"])
+    assert evolution.source_identity(raw) == audit.WORKFLOW_AFTER
 
 
 def test_shallow_pr_changed_path_fallback_still_requires_exact_base_event(monkeypatch, tmp_path) -> None:
