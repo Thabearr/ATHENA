@@ -82,12 +82,15 @@ def test_self_rehashed_semantic_mutations_are_rejected(field: str, replacement) 
         audit.validate_receipt(mutated, check_live=False)
 
 
-def test_workflow_identities_and_evolution_evidence_are_pinned() -> None:
-    receipt = _receipt()
+def test_workflow_identities_and_evolution_evidence_are_pinned_historically() -> None:
+    from scripts import audit_p4_4f_current_fotmob_exact_lane_caller_migration as p44f
+
+    receipt = audit.validate_receipt(_receipt(), check_live=False)
     assert receipt["legacy_current_reviewed_workflow_identity"] == audit.LEGACY_IDENTITY
     assert receipt["canonical_ingest_workflow_identity"] == audit.INGEST_IDENTITY
     assert Path(audit.INGEST_PATH).is_file()
-    assert audit._source_identity(audit.LEGACY_PATH) == audit.LEGACY_IDENTITY
+    assert p44f._identity_at(p44f.BASE_MAIN, audit.LEGACY_PATH) == audit.LEGACY_IDENTITY
+    assert p44f._identity_at("HEAD", audit.LEGACY_PATH) == p44f.WORKFLOW_AFTER
     assert audit._source_identity(audit.INGEST_PATH) == audit.INGEST_IDENTITY
 
 
