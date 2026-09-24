@@ -102,15 +102,21 @@ def test_two_reviewed_maintenance_transitions_are_exact_and_count_neutral() -> N
     assert retirement.validate_retirement_history()["canonical_sha256"] == "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
 
 
-def test_hotfix_changes_only_two_workflow_pins_and_preserves_all_other_guarded_sources() -> None:
+def test_hotfix_phase_changes_only_two_workflow_pins_and_preserves_guarded_sources() -> None:
     receipt = json.loads(RECEIPT_PATH.read_text(encoding="utf-8"))
     ledger = evolution.validate_current_state()
-    changed = {
+    maintenance = [
         item["workflow_path"]
         for item in ledger["transitions"]
         if item["operation"] == "MAINTENANCE_REVISE"
-    }
-    assert changed == set(WORKFLOW_FIXTURES)
+        and item["phase_id"].startswith("P4.4A1-FH-")
+    ]
+    assert set(maintenance) == set(WORKFLOW_FIXTURES)
+    p44f_transitions = [
+        item for item in ledger["transitions"] if item["phase_id"] == "P4.4F"
+    ]
+    assert len(p44f_transitions) == 1
+    assert p44f_transitions[0]["workflow_path"] == ".github/workflows/issue-current-fotmob-reviewed-source.yml"
     phase_snapshot = json.loads(Path(
         "artifacts/architecture/p4_workflow_evolution_snapshots/"
         "fresh_holdout_release_visibility_race_release_receipts_v1.json"

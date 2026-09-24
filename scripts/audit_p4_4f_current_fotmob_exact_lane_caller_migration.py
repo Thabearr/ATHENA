@@ -77,6 +77,7 @@ EXPECTED_CHANGED_PATHS = {
     "tests/test_athena_ingest_architecture.py",
     "tests/test_p4_4a_workflow_evolution_guard.py",
     "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
+    "tests/test_fresh_holdout_release_visibility_race_hotfix.py",
 }
 PROTECTED_PATHS = (
     ".github/workflows/athena-ingest.yml",
