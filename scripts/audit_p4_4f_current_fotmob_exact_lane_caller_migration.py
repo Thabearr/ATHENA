@@ -47,6 +47,10 @@ SNAPSHOT_PATH = Path(
 RECEIPT_PATH = Path(
     "artifacts/architecture/p4_4f_current_fotmob_exact_lane_caller_migration_v1.json"
 )
+PROOF_PATH = Path("artifacts/architecture/p4_4f_operational_proof_v1.json")
+PROOF_FILE_SHA256 = "4740158a4b5b51764dbed1cf438544ddb05859dc0a5a353da385d1679c04b873"
+PROOF_BODY_SHA256 = "77ea5d0579ccbc5a34fef215f7ab87cf9d64618ba5a16ab44c82a424534f12d9"
+PROOF_POLICY_ID = "ATHENA_P4_4F_COMPOSITIONAL_OPERATIONAL_PROOF_V1"
 FIXTURE_PATH = (
     "tests/fixtures/architecture/revised_workflows/"
     "issue-current-fotmob-reviewed-source-pre-p4-4f-canonical-lane.yml"
@@ -61,6 +65,7 @@ EXPECTED_CHANGED_PATHS = {
     "scripts/audit_p4_4f_current_fotmob_exact_lane_caller_migration.py",
     "tests/test_p4_4f_current_fotmob_exact_lane_caller_migration.py",
     "artifacts/architecture/p4_4f_current_fotmob_exact_lane_caller_migration_v1.json",
+    PROOF_PATH.as_posix(),
     SNAPSHOT_PATH.as_posix(),
     LEDGER_PATH.as_posix(),
     FIXTURE_PATH,
@@ -221,12 +226,22 @@ def _receipt_body() -> dict[str, Any]:
         "acquisition_retry_added": False,
         "fallback_after_canonical_acquisition": False,
         "max_provider_requests_per_dispatch_path": 1,
-        "provider_acquisition_during_pr": False,
-        "provider_request_count_during_pr": 0,
+        "provider_acquisition_during_pr": True,
+        "provider_request_count_during_pr": 1,
         "workflow_dispatch_during_pr": False,
         "operational_proof_required": True,
-        "operational_proof_completed": False,
-        "owner_operational_proof_authorization_received": False,
+        "operational_proof_completed": True,
+        "owner_operational_proof_authorization_received": True,
+        "operational_proof_receipt_path": PROOF_PATH.as_posix(),
+        "operational_proof_receipt_sha256": PROOF_FILE_SHA256,
+        "operational_proof_evidence_body_sha256": PROOF_BODY_SHA256,
+        "operational_proof_main_sha": BASE_MAIN,
+        "operational_proof_request_date": "20260926",
+        "operational_proof_ingest_receipt_sha256": "baff4ed293f46f7d6b5a5b51d47a9516e02b7c8b8aae35b38b691a63642ab6cc",
+        "operational_proof_source_raw_sha256": "05ba602de32315a472b468bcacab23c0800c2a88def380316fd5df6618dd56f6",
+        "operational_proof_source_manifest_sha256": "d9264b007f83040e01038e2ce0e408874f9369209defb0ec138f814dcb9c92e9",
+        "operational_proof_compatibility_sha256": "cd75e4399e5198e04e26af2d436316b13ed1b1c93fe88fe80486e3bae762430a",
+        "operational_proof_approved_count": 26,
         "model_authority": False,
         "pricing_authority": False,
         "routing_authority": False,
@@ -284,6 +299,59 @@ def validate_receipt(value: Any) -> dict[str, Any]:
     if value.get("canonical_sha256") != evolution.canonical_sha256(value):
         raise P44FMigrationAuditError("P4.4F receipt self-hash mismatch")
     return value
+
+
+def _check_operational_proof() -> dict[str, Any]:
+    raw = PROOF_PATH.read_bytes().replace(b"\r\n", b"\n")
+    if hashlib.sha256(raw).hexdigest() != PROOF_FILE_SHA256:
+        raise P44FMigrationAuditError("P4.4F operational proof file hash differs")
+    proof = strict_json_loads(raw)
+    if type(proof) is not dict or canonical_json_bytes(proof) != raw:
+        raise P44FMigrationAuditError("P4.4F operational proof is not canonical JSON")
+    unsigned = {key: item for key, item in proof.items() if key != "evidence_body_sha256"}
+    if (
+        proof.get("policy_id") != PROOF_POLICY_ID
+        or proof.get("evidence_body_sha256") != PROOF_BODY_SHA256
+        or hashlib.sha256(canonical_json_bytes(unsigned)).hexdigest() != PROOF_BODY_SHA256
+        or proof.get("compositional_operational_proof_complete") is not True
+        or proof.get("second_live_provider_attempt_performed") is not False
+    ):
+        raise P44FMigrationAuditError("P4.4F operational proof identity/completion differs")
+    authorization = proof.get("authorization", {})
+    live = proof.get("live_attempt", {})
+    offline = proof.get("offline_continuation", {})
+    if (
+        authorization.get("owner_authorized") is not True
+        or authorization.get("provider_request_budget") != 1
+        or authorization.get("provider_request_budget_consumed") is not True
+        or authorization.get("retry_budget") != 0
+        or authorization.get("workflow_dispatch_budget") != 0
+        or live.get("status") != "SUCCESS"
+        or live.get("stage") != "COMPLETED"
+        or live.get("failure_code") is not None
+        or live.get("exact_commit_sha") != BASE_MAIN
+        or live.get("provider_request_count") != 1
+        or live.get("source_count") != 1
+        or live.get("retry_count") != 0
+        or live.get("workflow_dispatch_count") != 0
+    ):
+        raise P44FMigrationAuditError("P4.4F live proof budget/ingest evidence differs")
+    if (
+        offline.get("replay_status") != "ATHENA_INGEST_OFFLINE_REPLAY_VERIFIED"
+        or offline.get("network_acquisition_performed") is not False
+        or offline.get("provider_request_count") != 0
+        or offline.get("provider_request_count_by_adapter") != 0
+        or offline.get("exact_commit_sha") != BASE_MAIN
+        or offline.get("source_raw_sha256") != "05ba602de32315a472b468bcacab23c0800c2a88def380316fd5df6618dd56f6"
+        or offline.get("source_capture_manifest_sha256") != "d9264b007f83040e01038e2ce0e408874f9369209defb0ec138f814dcb9c92e9"
+        or offline.get("compatibility_receipt_canonical_sha256") != "cd75e4399e5198e04e26af2d436316b13ed1b1c93fe88fe80486e3bae762430a"
+        or offline.get("approved_count") != 26
+        or offline.get("wager_placed") is not False
+    ):
+        raise P44FMigrationAuditError("P4.4F zero-network compatibility proof differs")
+    if any(proof.get("authority", {}).values()):
+        raise P44FMigrationAuditError("P4.4F operational proof expanded forbidden authority")
+    return proof
 
 
 def _require_exact_base_ancestry() -> None:
@@ -459,6 +527,7 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
     try:
         receipt = _load_json(path)
         validate_receipt(receipt)
+        _check_operational_proof()
         expected_ledger, expected_snapshot, expected_receipt_value = build_evidence()
         if receipt != expected_receipt_value:
             raise P44FMigrationAuditError("P4.4F receipt differs from rebuilt canonical evidence")

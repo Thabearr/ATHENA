@@ -139,7 +139,15 @@ artifact name, and retention remain stable, and a canonical failure has no retry
 legacy fallback. This is an exact-subset caller migration only: full legacy
 equivalence and retirement authority are not claimed.
 
-The migrated lane changes live provider execution behavior if merged. A bounded
-operational proof is required for final merge review, but this PR does not authorize
-or run that proof. No workflow is dispatched and no provider is contacted during
-implementation/review. P4.4 and Architecture Checkpoint E remain incomplete.
+The migrated lane changes live provider execution behavior if merged. The bounded
+owner-authorized compositional operational proof is complete for 2026-09-26 on exact
+main `42341585c37a5e346b3aaea5cb550f004fa3f6a4`: one FotMob request produced a
+successful committed canonical ingest with one source. The proof process then hit a
+Windows proof-environment-only missing-`tzdata` blocker after acquisition; no retry
+or second provider request was made. With `tzdata==2026.4` isolated outside the
+repository, the same immutable artifact replayed offline and the P4.4D/PR243
+projection verified 26 reviewed fixtures with zero adapter/provider requests and
+`wager_placed=false`. The exact proof is frozen in
+`artifacts/architecture/p4_4f_operational_proof_v1.json` (file SHA-256
+`4740158a4b5b51764dbed1cf438544ddb05859dc0a5a353da385d1679c04b873`).
+No workflow was dispatched. P4.4 and Architecture Checkpoint E remain incomplete.

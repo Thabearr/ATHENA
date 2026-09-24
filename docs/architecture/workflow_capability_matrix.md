@@ -249,6 +249,10 @@ P4.4F performs a partial, capability-preserving caller migration for
 ingest-backed issuer, while all other currently supported timezone/ccode3 pairs
 remain on the legacy lane. The workflow inputs and operational contract are
 preserved. This closes only the proven one-date FotMob/UTC/NGA compatibility subset;
-it does not claim full workflow equivalence or authorize retirement. A bounded
-operational proof is required but not run or authorized by the P4.4F implementation
-PR. P4.4 and Architecture Checkpoint E remain incomplete.
+it does not claim full workflow equivalence or authorize retirement. The bounded
+owner-authorized proof is now complete compositionally: one exact-main canonical
+FotMob acquisition for 20260926, zero retries/dispatches, followed by zero-network
+replay and P4.4D/PR243 projection of the same immutable source. The post-acquisition
+Windows proof-environment `tzdata` interruption is retained explicitly rather than
+rewritten as a single-process success. P4.4 and Architecture Checkpoint E remain
+incomplete.

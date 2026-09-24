@@ -43,7 +43,7 @@ def test_p4_4f_transition_and_cumulative_snapshot_are_exact() -> None:
     }
 
 
-def test_p4_4f_receipt_is_exact_and_honestly_awaits_operational_proof() -> None:
+def test_p4_4f_receipt_is_exact_and_binds_completed_operational_proof() -> None:
     receipt = audit.validate_receipt(_receipt())
     assert receipt["migration_scope"] == {
         "date_count": 1,
@@ -57,13 +57,32 @@ def test_p4_4f_receipt_is_exact_and_honestly_awaits_operational_proof() -> None:
     assert receipt["legacy_workflow_retirement_authorized"] is False
     assert receipt["live_behavior_changes_if_merged"] is True
     assert receipt["operational_proof_required"] is True
-    assert receipt["operational_proof_completed"] is False
-    assert receipt["owner_operational_proof_authorization_received"] is False
-    assert receipt["provider_request_count_during_pr"] == 0
+    assert receipt["operational_proof_completed"] is True
+    assert receipt["owner_operational_proof_authorization_received"] is True
+    assert receipt["provider_acquisition_during_pr"] is True
+    assert receipt["provider_request_count_during_pr"] == 1
     assert receipt["workflow_dispatch_during_pr"] is False
+    assert receipt["operational_proof_receipt_path"] == audit.PROOF_PATH.as_posix()
+    assert receipt["operational_proof_receipt_sha256"] == audit.PROOF_FILE_SHA256
+    assert receipt["operational_proof_evidence_body_sha256"] == audit.PROOF_BODY_SHA256
+    assert receipt["operational_proof_approved_count"] == 26
     assert receipt["source_review_counter_while_unmerged"] == "2/5"
     assert receipt["source_review_counter_if_merged"] == "3/5"
     assert all(receipt[field] is False for field in audit.FALSE_AUTHORITY_FIELDS)
+
+
+def test_p4_4f_operational_proof_is_exact_and_zero_retry() -> None:
+    proof = audit._check_operational_proof()
+    assert proof["compositional_operational_proof_complete"] is True
+    assert proof["second_live_provider_attempt_performed"] is False
+    assert proof["authorization"]["provider_request_budget"] == 1
+    assert proof["live_attempt"]["provider_request_count"] == 1
+    assert proof["live_attempt"]["retry_count"] == 0
+    assert proof["live_attempt"]["workflow_dispatch_count"] == 0
+    assert proof["offline_continuation"]["provider_request_count"] == 0
+    assert proof["offline_continuation"]["provider_request_count_by_adapter"] == 0
+    assert proof["offline_continuation"]["approved_count"] == 26
+    assert proof["offline_continuation"]["wager_placed"] is False
 
 
 @pytest.mark.parametrize(
@@ -93,12 +112,22 @@ def test_p4_4f_receipt_is_exact_and_honestly_awaits_operational_proof() -> None:
         ("acquisition_retry_added", True),
         ("fallback_after_canonical_acquisition", True),
         ("max_provider_requests_per_dispatch_path", 2),
-        ("provider_acquisition_during_pr", True),
-        ("provider_request_count_during_pr", 1),
+        ("provider_acquisition_during_pr", False),
+        ("provider_request_count_during_pr", 0),
         ("workflow_dispatch_during_pr", True),
         ("operational_proof_required", False),
-        ("operational_proof_completed", True),
-        ("owner_operational_proof_authorization_received", True),
+        ("operational_proof_completed", False),
+        ("owner_operational_proof_authorization_received", False),
+        ("operational_proof_receipt_path", "somewhere-else.json"),
+        ("operational_proof_receipt_sha256", "f" * 64),
+        ("operational_proof_evidence_body_sha256", "f" * 64),
+        ("operational_proof_main_sha", "f" * 40),
+        ("operational_proof_request_date", "20260927"),
+        ("operational_proof_ingest_receipt_sha256", "f" * 64),
+        ("operational_proof_source_raw_sha256", "f" * 64),
+        ("operational_proof_source_manifest_sha256", "f" * 64),
+        ("operational_proof_compatibility_sha256", "f" * 64),
+        ("operational_proof_approved_count", 25),
         ("p4_4_overall_complete", True),
         ("architecture_checkpoint_e_complete", True),
         ("source_review_counter_while_unmerged", "3/5"),

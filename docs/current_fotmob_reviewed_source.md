@@ -253,7 +253,14 @@ fixture/catalog/bootstrap semantics, and wager=false boundary remain unchanged.
 
 This is a partial caller migration, not full legacy workflow equivalence. The legacy
 workflow remains active, noncanonical request capability is retained, and retirement
-is not authorized. Because the exact UTC/NGA lane changes live provider execution
-behavior if merged, one bounded owner-authorized operational proof is still required
-before merge review can be considered complete; no such proof is authorized or run
-by this implementation PR. P4.4 and Architecture Checkpoint E remain incomplete.
+is not authorized. The required bounded owner-authorized proof has now been completed
+compositionally. On exact main `42341585c37a5e346b3aaea5cb550f004fa3f6a4`, one
+20260926 UTC/NGA FotMob request produced a SUCCESS/COMPLETED committed canonical
+ingest with one source. A missing-`tzdata` condition in the local Windows proof
+interpreter interrupted only the subsequent compatibility projection; the request
+budget was consumed and no retry occurred. After an isolated environment-only
+`tzdata==2026.4` repair, the exact persisted source passed zero-network replay and
+P4.4D/PR243 projection with 26 approved fixtures, zero adapter requests, and no wager.
+The proof artifact binds the interruption and continuation; it does not claim the
+single process returned successfully. P4.4 and Architecture Checkpoint E remain
+incomplete.
