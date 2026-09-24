@@ -89,7 +89,13 @@ def test_workflow_identities_and_evolution_evidence_are_pinned_historically() ->
     assert receipt["legacy_current_reviewed_workflow_identity"] == audit.LEGACY_IDENTITY
     assert receipt["canonical_ingest_workflow_identity"] == audit.INGEST_IDENTITY
     assert Path(audit.INGEST_PATH).is_file()
-    assert p44f._identity_at(p44f.BASE_MAIN, audit.LEGACY_PATH) == audit.LEGACY_IDENTITY
+    migration_review = json.loads(audit.p44c.MIGRATION_PATH.read_text(encoding="utf-8"))
+    assert migration_review["canonical_sha256"] == audit.P44C_MIGRATION_SHA256
+    legacy_row = next(
+        row for row in migration_review["workflow_rows"]
+        if row["workflow_path"] == audit.LEGACY_PATH
+    )
+    assert legacy_row["current_live_source_identity"] == audit.LEGACY_IDENTITY
     assert p44f._identity_at("HEAD", audit.LEGACY_PATH) == p44f.WORKFLOW_AFTER
     assert audit._source_identity(audit.INGEST_PATH) == audit.INGEST_IDENTITY
 
