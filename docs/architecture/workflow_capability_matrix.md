@@ -151,6 +151,18 @@ Fresh-Holdout release-visibility race hotfix is a later, separately reviewed ste
 and is not implemented here. P4.4B has not started; Architecture Checkpoint E and
 P4.4 remain incomplete.
 
+## P4.4B canonical ingest ADD
+
+The frozen P4.3A census still has 40 historical rows. P4.4B appends one reviewed
+`ATHENA_INGEST` ADD transition for `.github/workflows/athena-ingest.yml` after the
+two Fresh-Holdout maintenance revisions. The current live workflow set grows from
+37 to 38; the P4.3 retirement ledger remains at three reviewed retirements. No
+baseline workflow changes or retires. The new workflow is manual only and its
+immutable phase snapshot and receipt bind the exact new source identity. Provider
+diagnostics and earlier ingest-like workflows remain live without successor
+equivalence claims. P4.4C schedule and migration review has not begun; Checkpoint E
+and P4.4 remain incomplete.
+
 ## P4.4A reviewed workflow evolution
 
 The P4.3A 40-workflow census is historical evidence, not a permanent allowlist for

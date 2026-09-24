@@ -81,19 +81,24 @@ def test_exact_old_transport_and_workflow_bytes_are_preserved() -> None:
 def test_two_reviewed_maintenance_transitions_are_exact_and_count_neutral() -> None:
     receipt = json.loads(RECEIPT_PATH.read_text(encoding="utf-8"))
     ledger = evolution.validate_current_state()
-    assert len(ledger["transitions"]) == receipt["workflow_evolution_transition_count"] == 2
-    assert ledger["canonical_sha256"] == receipt["workflow_evolution_ledger_sha256"]
-    assert ledger["current_live_workflow_count"] == receipt["workflow_count_after"] == 37
-    assert ledger["current_workflow_tree_sha1"] == receipt["workflow_tree_after_sha1"]
-    assert [item["transition_id"] for item in ledger["transitions"]] == [
+    phase_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/"
+        "fresh_holdout_release_visibility_race_release_receipts_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert len(phase_snapshot["transitions"]) == receipt["workflow_evolution_transition_count"] == 2
+    assert phase_snapshot["canonical_sha256"] == receipt["workflow_evolution_ledger_sha256"]
+    assert phase_snapshot["current_live_workflow_count"] == receipt["workflow_count_after"] == 37
+    assert phase_snapshot["current_workflow_tree_sha1"] == receipt["workflow_tree_after_sha1"]
+    assert phase_snapshot["transitions"] == ledger["transitions"][:2]
+    assert [item["transition_id"] for item in phase_snapshot["transitions"]] == [
         "P44A1_FH_VISIBILITY_BRIDGE_V1",
         "P44A1_FH_VISIBILITY_RELEASE_RECEIPTS_V1",
     ]
-    assert all(item["operation"] == "MAINTENANCE_REVISE" for item in ledger["transitions"])
-    assert all(item["canonical_family"] == "PROTECTED_RESEARCH" for item in ledger["transitions"])
-    assert all(item["maintenance_contract"]["baseline_origin"] == "P4_3A_SURVIVOR" for item in ledger["transitions"])
-    assert all(item["before"] != item["after"] for item in ledger["transitions"])
-    assert all(item["workflow_path"] in WORKFLOW_FIXTURES for item in ledger["transitions"])
+    assert all(item["operation"] == "MAINTENANCE_REVISE" for item in phase_snapshot["transitions"])
+    assert all(item["canonical_family"] == "PROTECTED_RESEARCH" for item in phase_snapshot["transitions"])
+    assert all(item["maintenance_contract"]["baseline_origin"] == "P4_3A_SURVIVOR" for item in phase_snapshot["transitions"])
+    assert all(item["before"] != item["after"] for item in phase_snapshot["transitions"])
+    assert all(item["workflow_path"] in WORKFLOW_FIXTURES for item in phase_snapshot["transitions"])
     assert retirement.validate_retirement_history()["canonical_sha256"] == "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
 
 
@@ -106,14 +111,19 @@ def test_hotfix_changes_only_two_workflow_pins_and_preserves_all_other_guarded_s
         if item["operation"] == "MAINTENANCE_REVISE"
     }
     assert changed == set(WORKFLOW_FIXTURES)
-    assert len(list(Path(".github/workflows").glob("*.yml"))) == 37
-    assert _git("rev-parse", "HEAD:.github/workflows") == receipt["workflow_tree_after_sha1"]
+    phase_snapshot = json.loads(Path(
+        "artifacts/architecture/p4_workflow_evolution_snapshots/"
+        "fresh_holdout_release_visibility_race_release_receipts_v1.json"
+    ).read_text(encoding="utf-8"))
+    assert phase_snapshot["current_live_workflow_count"] == receipt["workflow_count_after"] == 37
+    assert phase_snapshot["current_workflow_tree_sha1"] == receipt["workflow_tree_after_sha1"]
+    assert phase_snapshot["transitions"] == ledger["transitions"][:2]
+    assert len(list(Path(".github/workflows").glob("*.yml"))) == ledger["current_live_workflow_count"]
     assert _git("rev-parse", "HEAD:scripts/mirror_fotmob_fresh_holdout_release_receipt.py") == receipt["frozen_core_mirror_blob_after"]
     assert _git("rev-parse", "HEAD:.github/workflows/fotmob-utc-native-xg-fresh-holdout.yml") == receipt["collection_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:.github/workflows/watch-fotmob-fresh-holdout-scheduler-liveness.yml") == receipt["watchdog_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:.github/workflows/audit-fotmob-utc-native-xg-fresh-holdout-lineage.yml") == receipt["lineage_audit_workflow_blob_unchanged"]
     assert _git("rev-parse", "HEAD:scripts/audit_fotmob_fresh_holdout_actions_lineage.py") == receipt["lineage_auditor_blob_unchanged"]
-    assert not Path(".github/workflows/athena-ingest.yml").exists()
     for key in (
         "workflow_added", "workflow_deleted", "provider_acquisition", "backfill",
         "fresh_holdout_collection_triggered", "current_shadow_triggered", "p3_0_e1_triggered",

@@ -168,16 +168,17 @@ def _synthetic_evolution_after_p43_extension(current_p43):
     return evolution
 
 
-def test_current_ledger_keeps_37_workflows_after_reviewed_maintenance() -> None:
+def test_current_ledger_adds_one_reviewed_ingest_workflow_after_maintenance() -> None:
     ledger = audit.validate_current_state()
     assert [item["transition_id"] for item in ledger["transitions"]] == [
         "P44A1_FH_VISIBILITY_BRIDGE_V1",
         "P44A1_FH_VISIBILITY_RELEASE_RECEIPTS_V1",
+        "P44B_ATHENA_INGEST_ADD_V1",
     ]
-    assert ledger["current_live_workflow_count"] == 37
-    assert ledger["current_workflow_tree_sha1"] == "a40328bdc4d73de7c2bc152b8fb810dcbb439f8c"
+    assert ledger["current_live_workflow_count"] == 38
+    assert ledger["current_workflow_tree_sha1"] == "8a65d5b4ed767d71d77c729d91f3fc95daa6d10a"
     assert ledger["canonical_sha256"] == audit.canonical_sha256(ledger)
-    assert not Path(NEW_PATH).exists()
+    assert Path(NEW_PATH).exists()
     assert retirement.validate_retirement_history()["canonical_sha256"] == audit.BASE_RETIREMENT_LEDGER_SHA256
 
 
@@ -187,7 +188,7 @@ def test_unreviewed_add_is_rejected_but_exact_reviewed_add_is_accepted() -> None
     new_identity = audit.source_identity(b"name: synthetic ingest\n")
     invented[NEW_PATH] = new_identity
     with pytest.raises(audit.WorkflowEvolutionError, match="live workflow set"):
-        audit.validate_current_state(workflow_paths=[*baseline, NEW_PATH])
+        audit.validate_current_state(workflow_paths=[*baseline, NEW_PATH, ".github/workflows/unreviewed-ingest.yml"])
     with pytest.raises(audit.WorkflowEvolutionError, match="live workflow set"):
         audit.validate_derived_tree(baseline, invented)
     add, receipt = _transition("ADD", after=new_identity)
