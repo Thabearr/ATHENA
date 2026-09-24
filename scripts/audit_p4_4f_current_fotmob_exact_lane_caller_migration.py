@@ -73,6 +73,10 @@ EXPECTED_CHANGED_PATHS = {
     "tests/test_p4_4e_current_fotmob_ingest_issuer.py",
     "tests/test_current_fotmob_ingest_issuer.py",
     "tests/test_p4_4d_current_fotmob_ingest_compatibility.py",
+    "tests/test_p4_workflow_evolution_ledger.py",
+    "tests/test_athena_ingest_architecture.py",
+    "tests/test_p4_4a_workflow_evolution_guard.py",
+    "tests/test_p4_4a1_baseline_workflow_maintenance_revision_authority.py",
 }
 PROTECTED_PATHS = (
     ".github/workflows/athena-ingest.yml",
