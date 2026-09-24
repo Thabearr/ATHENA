@@ -348,11 +348,24 @@ def _build_verified_current_fotmob_bootstrap_from_capture(
     repository_root: Path | None = None,
     code_state: Mapping[str, Any] | None = None,
     shadow_policy: bool,
+    capture_root_override: Path | None = None,
 ) -> CurrentFotMobReviewedSourceExecution:
     """Replay one exact PR38 capture through one fixed reviewed current policy."""
 
     repository = _repo_root(repository_root)
-    capture_root = repository / DATA_MATCHES_CAPTURE_ROOT
+    if capture_root_override is None:
+        capture_root = repository / DATA_MATCHES_CAPTURE_ROOT
+    else:
+        try:
+            capture_root = Path(capture_root_override)
+        except (TypeError, ValueError) as exc:
+            raise CurrentFotMobReviewedSourceError(
+                "capture root override is invalid"
+            ) from exc
+        if not capture_root.is_absolute():
+            raise CurrentFotMobReviewedSourceError(
+                "capture root override must be an absolute path"
+            )
     try:
         manifest = verify_data_matches_capture_directory(
             capture_directory,

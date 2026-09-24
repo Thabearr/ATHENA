@@ -61,6 +61,27 @@ legacy workflow is deleted by P4.4C. P4.4 and Architecture Checkpoint E remain
 incomplete; after a P4.4C merge, the mandatory 5/5 architecture/source reread is
 required before another remediation mission.
 
+## P4.4D current-reviewed source compatibility boundary
+
+P4.4D adds an offline adapter for exactly one already-completed canonical FotMob
+capture whose request is one date, `timezone=UTC`, and `ccode3=NGA`. It requires a
+successful committed canonical-source update, one network-acquired source record,
+exact raw/manifest verification, and a successful canonical offline replay. The
+adapter consumes the verified source in place under
+`sources/fotmob/<date>/<capture-id>/`; it makes zero provider requests and does not
+copy or rewrite the source bytes.
+
+That exact source is projected through the existing PR243 current-reviewed
+fixture-identity policy, catalog handoff/admission, and fixture bootstrap. The
+existing legacy capture root and caller behavior remain the default. Noncanonical
+timezone/ccode3 requests are not compatible, and this adapter does not claim full
+legacy request-contract or workflow equivalence. The legacy
+`issue-current-fotmob-reviewed-source.yml` workflow remains unchanged and live;
+P4.4D grants no retirement authority. A later caller migration requires its own
+review. No fixture-intelligence, model, probability, pricing, routing, portfolio,
+share-code, account, or wagering authority is added. P4.4 and Architecture
+Checkpoint E remain incomplete.
+
 P4.4C's Actions run history is a read-only snapshot captured at
 `2026-09-24T01:53:50Z`. Each run is the latest observed at that capture cutoff, not a
 live pointer; later issue-comment or other workflow runs do not invalidate that
