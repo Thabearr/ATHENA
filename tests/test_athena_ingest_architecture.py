@@ -46,12 +46,12 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
     receipt = p44b.check()
     ledger = evolution.validate_current_state()
     snapshot = json.loads(p44b.SNAPSHOT.read_text(encoding="utf-8"))
-    assert snapshot == ledger
+    assert snapshot["transitions"] == ledger["transitions"][:3]
     assert receipt["workflow_evolution_ledger_sha256"] == snapshot["canonical_sha256"]
     assert receipt["workflow_git_blob_sha1"] == ledger["transitions"][2]["after"]["git_blob_sha1"]
     assert receipt["workflow_source_sha256"] == ledger["transitions"][2]["after"]["source_sha256"]
     assert ledger["current_live_workflow_count"] == 38
-    assert len(ledger["transitions"]) == 3
+    assert len(ledger["transitions"]) == 4
     assert [item["transition_id"] for item in ledger["transitions"][:2]] == list(p44b.OLD_TRANSITION_IDS)
     assert ledger["transitions"][2]["operation"] == "ADD"
     assert ledger["transitions"][2]["before"] is None
