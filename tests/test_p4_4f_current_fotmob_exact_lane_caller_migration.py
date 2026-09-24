@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -145,3 +146,43 @@ def test_p4_4f_live_audit_passes_after_reviewed_commit() -> None:
 
 def test_workflow_contract_checker_enforces_disjoint_lanes() -> None:
     audit._check_workflow_contract()
+
+
+def test_shallow_pr_changed_path_fallback_still_requires_exact_base_event(monkeypatch, tmp_path) -> None:
+    event_path = tmp_path / "event.json"
+    synthetic_merge_sha = "b" * 40
+    event = {
+        "pull_request": {
+            "base": {"ref": "main", "sha": audit.BASE_MAIN},
+            "head": {"sha": "a" * 40},
+        }
+    }
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_SHA", synthetic_merge_sha)
+
+    def fake_run(args, capture_output=False):
+        if args[:2] == ["git", "diff"]:
+            return SimpleNamespace(returncode=128, stdout=b"", stderr=b"invalid symmetric difference expression")
+        if args[:2] == ["git", "cat-file"]:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"missing base object")
+        if args[1:3] == ["merge-base", "HEAD"]:
+            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"missing base object")
+        raise AssertionError(args)
+
+    def fake_git(*args):
+        if args == ("show", "-s", "--format=%P", "HEAD"):
+            return b""
+        if args == ("rev-parse", "HEAD"):
+            return synthetic_merge_sha.encode("ascii")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(audit.subprocess, "run", fake_run)
+    monkeypatch.setattr(audit, "_git", fake_git)
+    assert audit._changed_paths_from_exact_base() is None
+
+    event["pull_request"]["base"]["sha"] = "c" * 40
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    with pytest.raises(audit.P44FMigrationAuditError, match="not based on exact authoritative main"):
+        audit._changed_paths_from_exact_base()

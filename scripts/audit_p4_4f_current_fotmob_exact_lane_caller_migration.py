@@ -288,6 +288,32 @@ def _require_exact_base_ancestry() -> None:
         raise P44FMigrationAuditError("P4.4F branch is not based on exact authoritative main")
 
 
+def _changed_paths_from_exact_base() -> set[str] | None:
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{BASE_MAIN}...HEAD"], capture_output=True
+    )
+    if result.returncode == 0:
+        return set(result.stdout.decode("utf-8").splitlines())
+
+    # Hosted pull_request checkouts can contain only the synthetic merge commit.
+    # In that case the exact base object is absent, so a tree diff cannot be
+    # computed locally. Accept this limitation only after independently binding
+    # the exact base/head through the trusted pull_request event above; all
+    # source identities, protected files, and workflow/evolution invariants are
+    # still checked directly below. A present base object with a failed diff is
+    # an actual audit error, not a shallow-checkout fallback.
+    base_object = subprocess.run(
+        ["git", "cat-file", "-e", f"{BASE_MAIN}^{{commit}}"], capture_output=True
+    )
+    if base_object.returncode == 0 or os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+        raise P44FMigrationAuditError(
+            f"cannot verify P4.4F changed paths against the exact base: "
+            f"{result.stderr.decode('utf-8', 'replace')}"
+        )
+    _require_exact_base_ancestry()
+    return None
+
+
 def _check_workflow_contract() -> None:
     workflow = Path(WORKFLOW_PATH).read_text(encoding="utf-8")
     canonical_marker = "if: ${{ inputs.timezone == 'UTC' && inputs.ccode3 == 'NGA' }}"
@@ -440,10 +466,8 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
                 .splitlines()
             ) != 38:
                 raise P44FMigrationAuditError("workflow count is not 38")
-            changed = set(
-                _git("diff", "--name-only", f"{BASE_MAIN}...HEAD").decode("utf-8").splitlines()
-            )
-            if not changed <= EXPECTED_CHANGED_PATHS:
+            changed = _changed_paths_from_exact_base()
+            if changed is not None and not changed <= EXPECTED_CHANGED_PATHS:
                 raise P44FMigrationAuditError(
                     f"P4.4F changed paths exceed reviewed scope: {sorted(changed - EXPECTED_CHANGED_PATHS)}"
                 )
