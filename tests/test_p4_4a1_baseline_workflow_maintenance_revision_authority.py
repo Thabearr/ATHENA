@@ -162,16 +162,16 @@ def test_p44a1_historical_sources_and_current_maintenance_identities_are_indepen
     receipt = authority.check()
     current = evolution.validate_current_state()
     assert receipt["workflow_yaml_changed"] is False
-    transitions = {
-        item["workflow_path"]: item
-        for item in current["transitions"]
-        if item["operation"] == "MAINTENANCE_REVISE"
-    }
     targets = (
         ".github/workflows/bridge-fotmob-fresh-holdout-continuity-receipts.yml",
         ".github/workflows/fotmob-utc-native-xg-fresh-holdout-release-receipts.yml",
     )
-    assert len(transitions) == 2
+    transitions = {
+        item["workflow_path"]: item
+        for item in current["transitions"]
+        if item["operation"] == "MAINTENANCE_REVISE" and item["workflow_path"] in targets
+    }
+    assert set(transitions) == set(targets)
     for path in targets:
         transition = transitions[path]
         historical = evolution.resolve_p43a_historical_workflow_source(

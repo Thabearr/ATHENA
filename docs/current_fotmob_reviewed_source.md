@@ -234,3 +234,33 @@ composition of those existing sources.
 
 It must not copy the legacy bypass runtime's detached `home_form` / `away_form`
 values into canonical authority.
+
+## P4.4F exact current-source caller migration
+
+P4.4F migrates only executions of the existing manual
+`issue-current-fotmob-reviewed-source.yml` workflow whose inputs are exactly
+`timezone=UTC` and `ccode3=NGA`. That lane uses the P4.4E canonical-ingest-backed
+issuer and the exact P4.4D in-place compatibility projection. Every other supported
+timezone/ccode3 pair remains on the legacy issuer path; the configurable inputs and
+legacy behavior remain available.
+
+The canonical lane preserves the workflow name, manual trigger, inputs, permissions,
+timeout, execution-summary path, artifact name and retention. Its artifact includes
+the canonical ingest evidence root; source bytes remain in canonical storage and are
+not copied into the legacy capture cache. A canonical-lane failure is terminal: it
+does not retry or fall back to a second provider request. The PR243 policy bounds,
+fixture/catalog/bootstrap semantics, and wager=false boundary remain unchanged.
+
+This is a partial caller migration, not full legacy workflow equivalence. The legacy
+workflow remains active, noncanonical request capability is retained, and retirement
+is not authorized. The required bounded owner-authorized proof has now been completed
+compositionally. On exact main `42341585c37a5e346b3aaea5cb550f004fa3f6a4`, one
+20260926 UTC/NGA FotMob request produced a SUCCESS/COMPLETED committed canonical
+ingest with one source. A missing-`tzdata` condition in the local Windows proof
+interpreter interrupted only the subsequent compatibility projection; the request
+budget was consumed and no retry occurred. After an isolated environment-only
+`tzdata==2026.4` repair, the exact persisted source passed zero-network replay and
+P4.4D/PR243 projection with 26 approved fixtures, zero adapter requests, and no wager.
+The proof artifact binds the interruption and continuation; it does not claim the
+single process returned successfully. P4.4 and Architecture Checkpoint E remain
+incomplete.

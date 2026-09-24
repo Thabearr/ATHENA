@@ -21,8 +21,11 @@ def _rehash(value: dict) -> None:
     ).hexdigest()
 
 
-def test_p4_4e_receipt_and_frozen_architecture_boundary_pass() -> None:
-    receipt = audit.audit()
+def test_p4_4e_receipt_and_frozen_architecture_boundary_pass_historically() -> None:
+    receipt = audit.validate_receipt(
+        json.loads(audit.RECEIPT_PATH.read_text(encoding="utf-8")),
+        check_live=False,
+    )
     assert receipt["repository_base_main_sha"] == audit.BASE_MAIN
     assert receipt["p4_4d_receipt_sha256"] == audit.P44D_RECEIPT_SHA256
     assert receipt["workflow_tree_sha1_before"] == receipt["workflow_tree_sha1_after"]
@@ -136,6 +139,10 @@ def test_receipt_duplicate_keys_and_noncanonical_bytes_fail(tmp_path) -> None:
 
 def test_protected_source_identities_match_reviewed_base() -> None:
     for path, expected in audit.EXPECTED_IDENTITIES.items():
+        if path == audit.LEGACY_PATH:
+            # P4.4F deliberately revises this caller workflow; its before/after
+            # identity is validated by the P4.4F transition audit.
+            continue
         assert audit._source_identity(path) == expected
 
 

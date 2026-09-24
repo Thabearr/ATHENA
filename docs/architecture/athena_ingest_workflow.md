@@ -123,3 +123,31 @@ workflow remains live and unchanged; non-UTC/NGA inputs are not supported by thi
 compatibility seam. P4.4E does not claim full legacy workflow equivalence or
 retirement authority. Caller migration is a later reviewed step. P4.4 and
 Architecture Checkpoint E remain incomplete.
+
+## P4.4F current-reviewed caller migration
+
+P4.4F changes only the exact UTC/NGA lane of the existing
+`issue-current-fotmob-reviewed-source.yml` workflow. That one-date FotMob request
+uses the shared canonical ingest service, then the P4.4D compatibility adapter and
+P4.4E issuer seam. The workflow continues to expose its existing manual date,
+timezone, and ccode3 inputs. Every non-UTC/NGA combination remains on the legacy
+issuer path; neither the legacy issuer nor its workflow is deleted or disabled.
+
+The canonical source stays under `artifacts/athena-ingest-workflow/`; it is not
+copied or rewritten into the legacy capture directory. The execution summary path,
+artifact name, and retention remain stable, and a canonical failure has no retry or
+legacy fallback. This is an exact-subset caller migration only: full legacy
+equivalence and retirement authority are not claimed.
+
+The migrated lane changes live provider execution behavior if merged. The bounded
+owner-authorized compositional operational proof is complete for 2026-09-26 on exact
+main `42341585c37a5e346b3aaea5cb550f004fa3f6a4`: one FotMob request produced a
+successful committed canonical ingest with one source. The proof process then hit a
+Windows proof-environment-only missing-`tzdata` blocker after acquisition; no retry
+or second provider request was made. With `tzdata==2026.4` isolated outside the
+repository, the same immutable artifact replayed offline and the P4.4D/PR243
+projection verified 26 reviewed fixtures with zero adapter/provider requests and
+`wager_placed=false`. The exact proof is frozen in
+`artifacts/architecture/p4_4f_operational_proof_v1.json` (file SHA-256
+`4740158a4b5b51764dbed1cf438544ddb05859dc0a5a353da385d1679c04b873`).
+No workflow was dispatched. P4.4 and Architecture Checkpoint E remain incomplete.

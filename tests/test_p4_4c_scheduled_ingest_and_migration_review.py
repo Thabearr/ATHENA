@@ -36,14 +36,15 @@ def test_migration_review_covers_exact_five_frozen_rows_without_equivalence() ->
 
 
 def test_p4_4c_appends_only_ordinary_ingest_revise_and_preserves_history() -> None:
-    receipt = p44c.check()
+    receipt = p44c.check_historical()
     ledger = evolution.validate_current_state()
     snapshot = json.loads(p44c.SNAPSHOT_PATH.read_text(encoding="utf-8"))
     p44b_snapshot = json.loads(p44b.SNAPSHOT.read_text(encoding="utf-8"))
     assert ledger["transitions"][:3] == p44b_snapshot["transitions"]
-    assert snapshot == ledger
-    assert len(ledger["transitions"]) == 4
-    transition = ledger["transitions"][3]
+    assert ledger["transitions"][:4] == snapshot["transitions"]
+    assert len(snapshot["transitions"]) == 4
+    assert len(ledger["transitions"]) == 5
+    transition = snapshot["transitions"][3]
     assert transition["transition_id"] == "P44C_ATHENA_INGEST_SCHEDULE_REVISE_V1"
     assert transition["operation"] == "REVISE"
     assert transition["workflow_path"] == ".github/workflows/athena-ingest.yml"
