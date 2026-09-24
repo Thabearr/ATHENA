@@ -23,8 +23,13 @@ def _rehash(value: dict) -> None:
     ).hexdigest()
 
 
-def test_p4_4d_architecture_receipt_and_live_boundary_pass() -> None:
-    receipt = audit.audit()
+def test_p4_4d_architecture_receipt_historical_boundary_pass() -> None:
+    # P4.4D is merged historical evidence. Later remediation PRs can run in shallow
+    # synthetic merge checkouts whose event base is a later main SHA, so this test
+    # validates the immutable receipt only. Direct P4.4D ancestry remains covered by
+    # the dedicated _require_exact_base_ancestry tests below; the current remediation
+    # audit enforces its own exact live base.
+    receipt = audit.audit(check_live=False)
     assert receipt["repository_base_main_sha"] == audit.BASE_MAIN
     assert receipt["workflow_tree_sha1_before"] == receipt["workflow_tree_sha1_after"]
     assert receipt["workflow_count_before"] == receipt["workflow_count_after"] == 38

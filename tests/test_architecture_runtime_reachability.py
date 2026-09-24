@@ -16,6 +16,7 @@ from domain.architecture_runtime_reachability import (
     validate_trace_document,
 )
 from scripts import audit_runtime_reachability as audit
+from scripts import run_fotmob_fresh_holdout_release_receipt_mirror as receipt_mirror_entry
 
 
 EXPECTED_ROOTS = {
@@ -261,6 +262,26 @@ def test_delivery_and_maintenance_roots_do_not_gain_market_decision_authority() 
             row["checkpoint_kind"] != "DECISION_AUTHORITY"
             for row in by_root[root]["checkpoints"]
         )
+
+
+def test_receipt_mirror_probe_restores_all_hooks_and_is_repeatable() -> None:
+    mirror = receipt_mirror_entry.mirror
+
+    def identities() -> tuple[object, object, object]:
+        return (
+            mirror._gh_download,
+            mirror.mirror_run,
+            mirror.verify_release_archive_and_receipt,
+        )
+
+    before_first = identities()
+    audit._probe_receipt_mirror_root(audit.BASELINE_MAIN, "MAIN_ONLY")
+    after_first = identities()
+    assert all(after is before for after, before in zip(after_first, before_first))
+
+    audit._probe_receipt_mirror_root(audit.BASELINE_MAIN, "MAIN_ONLY")
+    after_second = identities()
+    assert all(after is before for after, before in zip(after_second, before_first))
 
 
 def test_legacy_problem_case_registry_has_five_reproduced_cases() -> None:
