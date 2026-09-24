@@ -6,6 +6,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -190,6 +191,45 @@ def _source_identity(path: str) -> dict[str, str]:
     }
 
 
+def _require_exact_base_ancestry() -> None:
+    merge_base = subprocess.run(
+        ["git", "merge-base", "HEAD", BASE_MAIN], capture_output=True
+    )
+    if merge_base.returncode == 0:
+        based_on_exact_main = merge_base.stdout.decode("ascii").strip() == BASE_MAIN
+    else:
+        # Hosted PR checkouts may contain only the synthetic merge commit. Its
+        # parent or the trusted pull_request event must bind this P4.4E base,
+        # not the older P4.4D branch base.
+        parents = _git("show", "-s", "--format=%P", "HEAD").decode("ascii").split()
+        based_on_exact_main = BASE_MAIN in parents
+        if not based_on_exact_main:
+            event_path = os.environ.get("GITHUB_EVENT_PATH")
+            if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and event_path:
+                try:
+                    event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+                    pull_request = event.get("pull_request")
+                    base = pull_request.get("base") if isinstance(pull_request, dict) else None
+                    head = pull_request.get("head") if isinstance(pull_request, dict) else None
+                    base_sha = base.get("sha") if isinstance(base, dict) else None
+                    base_ref = base.get("ref") if isinstance(base, dict) else None
+                    head_sha = head.get("sha") if isinstance(head, dict) else None
+                    current_sha = _git("rev-parse", "HEAD").decode("ascii").strip()
+                    github_sha = os.environ.get("GITHUB_SHA")
+                    based_on_exact_main = (
+                        base_sha == BASE_MAIN
+                        and base_ref == "main"
+                        and isinstance(head_sha, str)
+                        and len(head_sha) == 40
+                        and all(char in "0123456789abcdef" for char in head_sha)
+                        and current_sha in {head_sha, github_sha}
+                    )
+                except (OSError, json.JSONDecodeError, P44EIngestIssuerAuditError):
+                    based_on_exact_main = False
+    if not based_on_exact_main:
+        raise P44EIngestIssuerAuditError("P4.4E branch is not based on exact reviewed main")
+
+
 def _workflow_count_at_head() -> int:
     paths = _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows").decode(
         "utf-8"
@@ -256,8 +296,8 @@ def _validate_issuer_composition() -> None:
 
 def _validate_live_state() -> None:
     try:
-        p44d._require_exact_base_ancestry()
-        p44d.audit()
+        _require_exact_base_ancestry()
+        p44d.audit(check_live=False)
     except (AssertionError, OSError, ValueError) as exc:
         raise P44EIngestIssuerAuditError(
             f"P4.4D historical boundary or exact base ancestry failed: {exc}"

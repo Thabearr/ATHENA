@@ -142,4 +142,66 @@ def test_protected_source_identities_match_reviewed_base() -> None:
 def test_p4_4d_architecture_audit_still_passes() -> None:
     from scripts import audit_p4_4d_current_fotmob_ingest_compatibility as p44d
 
-    assert p44d.audit()["canonical_sha256"] == audit.P44D_RECEIPT_SHA256
+    # P4.4D's receipt is immutable evidence; its old branch-base ancestry check
+    # is not the P4.4E branch ancestry check.
+    assert p44d.audit(check_live=False)["canonical_sha256"] == audit.P44D_RECEIPT_SHA256
+
+
+def test_exact_p4_4e_base_ancestry_accepts_shallow_pr_event(monkeypatch, tmp_path) -> None:
+    head_sha = "a" * 40
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps({
+            "pull_request": {
+                "base": {"ref": "main", "sha": audit.BASE_MAIN},
+                "head": {"sha": head_sha},
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_SHA", head_sha)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 128, "stdout": b""})(),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: (
+            ("e" * 40 + " " + "f" * 40).encode("ascii")
+            if args[:3] == ("show", "-s", "--format=%P")
+            else head_sha.encode("ascii")
+        ),
+    )
+    audit._require_exact_base_ancestry()
+
+
+def test_exact_p4_4e_base_ancestry_rejects_wrong_shallow_pr_event(monkeypatch, tmp_path) -> None:
+    event_path = tmp_path / "event.json"
+    event_path.write_text(
+        json.dumps({
+            "pull_request": {
+                "base": {"ref": "main", "sha": "b" * 40},
+                "head": {"sha": "a" * 40},
+            }
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setenv("GITHUB_SHA", "a" * 40)
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 128, "stdout": b""})(),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: ("e" * 40 + " " + "f" * 40).encode("ascii"),
+    )
+    with pytest.raises(audit.P44EIngestIssuerAuditError, match="not based on exact reviewed main"):
+        audit._require_exact_base_ancestry()
