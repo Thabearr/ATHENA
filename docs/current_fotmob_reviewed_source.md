@@ -234,3 +234,26 @@ composition of those existing sources.
 
 It must not copy the legacy bypass runtime's detached `home_form` / `away_form`
 values into canonical authority.
+
+## P4.4F exact current-source caller migration
+
+P4.4F migrates only executions of the existing manual
+`issue-current-fotmob-reviewed-source.yml` workflow whose inputs are exactly
+`timezone=UTC` and `ccode3=NGA`. That lane uses the P4.4E canonical-ingest-backed
+issuer and the exact P4.4D in-place compatibility projection. Every other supported
+timezone/ccode3 pair remains on the legacy issuer path; the configurable inputs and
+legacy behavior remain available.
+
+The canonical lane preserves the workflow name, manual trigger, inputs, permissions,
+timeout, execution-summary path, artifact name and retention. Its artifact includes
+the canonical ingest evidence root; source bytes remain in canonical storage and are
+not copied into the legacy capture cache. A canonical-lane failure is terminal: it
+does not retry or fall back to a second provider request. The PR243 policy bounds,
+fixture/catalog/bootstrap semantics, and wager=false boundary remain unchanged.
+
+This is a partial caller migration, not full legacy workflow equivalence. The legacy
+workflow remains active, noncanonical request capability is retained, and retirement
+is not authorized. Because the exact UTC/NGA lane changes live provider execution
+behavior if merged, one bounded owner-authorized operational proof is still required
+before merge review can be considered complete; no such proof is authorized or run
+by this implementation PR. P4.4 and Architecture Checkpoint E remain incomplete.

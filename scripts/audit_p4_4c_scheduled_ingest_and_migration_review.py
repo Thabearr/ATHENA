@@ -20,6 +20,7 @@ from scripts import audit_p4_workflow_evolution_ledger as evolution
 BASE_MAIN = "ef540c8b6483f85eebf048636eb3b65ab0894f43"
 P44B_LEDGER_SHA256 = "3c06063d4cc57e71d712e95ba5fee81c5f9656de1ea045d56ec5ef7cabae5b6b"
 P44B_WORKFLOW_TREE = "8a65d5b4ed767d71d77c729d91f3fc95daa6d10a"
+P44C_WORKFLOW_TREE = "02e62ab141627885652c304f83dda4274d7245a9"
 P44B_WORKFLOW_BLOB = "7f5fecabd8ada0ccac1fb35a8d2749601cc293c7"
 P44B_WORKFLOW_SOURCE = "acdb74d306e7cd2220123186112ee5ae197b7719761e304e7e3cd08dea628cbe"
 P44B_RECEIPT_SHA256 = "557e2c2dc78ea18ce12705c1418f8deff3b2b7611e7fb1daf90a75740b75a999"
@@ -597,10 +598,63 @@ def check() -> dict[str, Any]:
     return receipt
 
 
+def check_historical() -> dict[str, Any]:
+    """Validate immutable P4.4C evidence after later workflow revisions."""
+    p44b.check()
+    history = retirement.validate_retirement_history()
+    if history.get("canonical_sha256") != P43_LEDGER_SHA256:
+        raise AssertionError("P4.3 retirement ledger changed after P4.4C")
+    snapshot = _load(SNAPSHOT_PATH)
+    receipt = _load(RECEIPT_PATH)
+    review = _load(MIGRATION_PATH)
+    if snapshot.get("canonical_sha256") != evolution.canonical_sha256(snapshot):
+        raise AssertionError("P4.4C historical snapshot self-hash mismatch")
+    if receipt.get("canonical_sha256") != evolution.canonical_sha256(receipt):
+        raise AssertionError("P4.4C historical receipt self-hash mismatch")
+    if len(snapshot.get("transitions", [])) != 4:
+        raise AssertionError("P4.4C historical snapshot must preserve four transitions")
+    p44b_snapshot = _load(p44b.SNAPSHOT)
+    if snapshot.get("transitions", [])[:3] != p44b_snapshot.get("transitions"):
+        raise AssertionError("P4.4C historical transition prefix differs from P4.4B")
+    transition = snapshot["transitions"][3]
+    if (
+        transition.get("transition_id") != TRANSITION_ID
+        or transition.get("operation") != "REVISE"
+        or transition.get("workflow_path") != WORKFLOW_PATH
+        or transition.get("before") != {
+            "git_blob_sha1": P44B_WORKFLOW_BLOB,
+            "source_sha256": P44B_WORKFLOW_SOURCE,
+        }
+    ):
+        raise AssertionError("P4.4C historical REVISE identity changed")
+    if receipt.get("workflow_evolution_ledger_sha256") != snapshot.get("canonical_sha256"):
+        raise AssertionError("P4.4C receipt does not bind its immutable snapshot")
+    if receipt.get("reviewed_workflow_transition") != {
+        key: value for key, value in transition.items() if key != "evidence_body_sha256"
+    }:
+        raise AssertionError("P4.4C receipt transition intent changed")
+    if evolution.receipt_evidence_body_sha256(receipt) != transition.get("evidence_body_sha256"):
+        raise AssertionError("P4.4C historical evidence-body digest mismatch")
+    if receipt.get("migration_review_artifact_sha256") != review.get("canonical_sha256"):
+        raise AssertionError("P4.4C receipt migration-review binding changed")
+    _validate_migration_review(review)
+    _validate_receipt_semantics(receipt)
+    if receipt.get("workflow_after_identity") != transition.get("after"):
+        raise AssertionError("P4.4C historical workflow identity binding changed")
+    if (
+        snapshot.get("current_live_workflow_count") != 38
+        or snapshot.get("current_workflow_tree_sha1") != P44C_WORKFLOW_TREE
+        or receipt.get("workflow_tree_after_sha1") != P44C_WORKFLOW_TREE
+    ):
+        raise AssertionError("P4.4C historical workflow checkpoint changed")
+    return receipt
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument("--check", action="store_true")
+    group.add_argument("--historical", action="store_true")
     group.add_argument("--write-evidence", action="store_true")
     group.add_argument("--refresh-corrective-evidence", action="store_true")
     args = parser.parse_args()
@@ -609,6 +663,8 @@ def main() -> int:
             write_evidence()
         elif args.refresh_corrective_evidence:
             refresh_corrective_evidence()
+        elif args.historical:
+            check_historical()
         else:
             check()
         return 0

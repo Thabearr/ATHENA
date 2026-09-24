@@ -153,7 +153,9 @@ def test_success_path_uses_one_canonical_request_and_produces_pr243_result(
     assert (repository / ARTIFACT_RELATIVE / RECEIPT_NAME).read_bytes() == result.ingest_receipt.canonical_bytes
 
 
-def test_same_exact_capture_has_direct_pr243_semantic_parity(tmp_path: Path) -> None:
+def test_same_exact_capture_has_direct_pr243_semantic_parity(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
     repository = _repo(tmp_path)
     calls = 0
 
@@ -196,6 +198,46 @@ def test_same_exact_capture_has_direct_pr243_semantic_parity(tmp_path: Path) -> 
     assert receipt["max_source_age_seconds"] == direct.policy_result.max_source_age_seconds == 900
     assert receipt["pr243_authority"] == summary["authority"]
     assert summary["wager_placed"] is False
+
+    from scripts import issue_current_fotmob_reviewed_source_via_ingest as workflow_cli
+
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_SHA", COMMIT)
+    calls_to_issuer = []
+
+    def reviewed_issuer(request_date, **kwargs):
+        calls_to_issuer.append((request_date, kwargs))
+        return projected
+
+    monkeypatch.setattr(
+        workflow_cli,
+        "issue_current_reviewed_fotmob_via_canonical_ingest",
+        reviewed_issuer,
+    )
+    output = repository / "workflow-facing-execution.json"
+    assert workflow_cli.main([
+        "--date", REQUEST_DATE, "--execute-live-network", "--output", str(output)
+    ]) == 0
+    workflow_summary = json.loads(output.read_text(encoding="utf-8"))
+    canonical_summary = projected.execution.summary()
+    assert calls_to_issuer == [(
+        REQUEST_DATE,
+        {
+            "repository_root": Path(workflow_cli.__file__).resolve().parents[1],
+            "expected_git_sha": COMMIT,
+            "expected_git_ref": "refs/heads/main",
+            "execute_live_network": True,
+        },
+    )]
+    assert workflow_summary == canonical_summary
+    assert {
+        key: value for key, value in workflow_summary.items()
+        if key != "source_capture_directory"
+    } == {
+        key: value for key, value in summary.items()
+        if key != "source_capture_directory"
+    }
+    assert calls == 1
 
 
 @pytest.mark.parametrize(

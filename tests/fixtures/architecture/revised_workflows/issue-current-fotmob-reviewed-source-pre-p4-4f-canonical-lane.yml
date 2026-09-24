@@ -36,19 +36,7 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Issue current reviewed FotMob fixture bootstrap via canonical ingest
-        if: ${{ inputs.timezone == 'UTC' && inputs.ccode3 == 'NGA' }}
-        env:
-          ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}
-        run: |
-          set -euo pipefail
-          python scripts/issue_current_fotmob_reviewed_source_via_ingest.py \
-            --date "${ATHENA_FOTMOB_REQUEST_DATE}" \
-            --execute-live-network \
-            --output .cache/athena-research/current-fotmob-reviewed-source/execution.json
-
-      - name: Issue current reviewed FotMob fixture bootstrap via legacy compatibility lane
-        if: ${{ inputs.timezone != 'UTC' || inputs.ccode3 != 'NGA' }}
+      - name: Issue current reviewed FotMob fixture bootstrap
         env:
           ATHENA_FOTMOB_REQUEST_DATE: ${{ inputs.date }}
           ATHENA_FOTMOB_REQUEST_TIMEZONE: ${{ inputs.timezone }}
@@ -73,4 +61,3 @@ jobs:
           path: |
             .cache/athena-research/current-fotmob-reviewed-source/execution.json
             .cache/athena-research/fotmob-data-matches-captures/
-            artifacts/athena-ingest-workflow/

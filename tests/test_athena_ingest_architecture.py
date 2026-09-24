@@ -74,7 +74,7 @@ def test_reviewed_add_snapshot_and_receipt_bind_one_new_workflow() -> None:
 
 
 def test_p4_4c_schedule_revision_and_migration_review_remain_narrow() -> None:
-    receipt = p44c.check()
+    receipt = p44c.check_historical()
     assert receipt["workflow_evolution_ledger_sha256"] == evolution.validate_current_state()["canonical_sha256"]
     assert receipt["schedule_cron"] == "0 8 * * *"
     assert receipt["scheduled_max_provider_requests"] == 1

@@ -123,3 +123,23 @@ workflow remains live and unchanged; non-UTC/NGA inputs are not supported by thi
 compatibility seam. P4.4E does not claim full legacy workflow equivalence or
 retirement authority. Caller migration is a later reviewed step. P4.4 and
 Architecture Checkpoint E remain incomplete.
+
+## P4.4F current-reviewed caller migration
+
+P4.4F changes only the exact UTC/NGA lane of the existing
+`issue-current-fotmob-reviewed-source.yml` workflow. That one-date FotMob request
+uses the shared canonical ingest service, then the P4.4D compatibility adapter and
+P4.4E issuer seam. The workflow continues to expose its existing manual date,
+timezone, and ccode3 inputs. Every non-UTC/NGA combination remains on the legacy
+issuer path; neither the legacy issuer nor its workflow is deleted or disabled.
+
+The canonical source stays under `artifacts/athena-ingest-workflow/`; it is not
+copied or rewritten into the legacy capture directory. The execution summary path,
+artifact name, and retention remain stable, and a canonical failure has no retry or
+legacy fallback. This is an exact-subset caller migration only: full legacy
+equivalence and retirement authority are not claimed.
+
+The migrated lane changes live provider execution behavior if merged. A bounded
+operational proof is required for final merge review, but this PR does not authorize
+or run that proof. No workflow is dispatched and no provider is contacted during
+implementation/review. P4.4 and Architecture Checkpoint E remain incomplete.
