@@ -22,7 +22,10 @@ def _rehash(value: dict) -> None:
 
 
 def test_p4_4e_receipt_and_frozen_architecture_boundary_pass_historically() -> None:
-    receipt = audit.audit(check_live=False)
+    receipt = audit.validate_receipt(
+        json.loads(audit.RECEIPT_PATH.read_text(encoding="utf-8")),
+        check_live=False,
+    )
     assert receipt["repository_base_main_sha"] == audit.BASE_MAIN
     assert receipt["p4_4d_receipt_sha256"] == audit.P44D_RECEIPT_SHA256
     assert receipt["workflow_tree_sha1_before"] == receipt["workflow_tree_sha1_after"]

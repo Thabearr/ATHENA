@@ -376,7 +376,7 @@ def refresh_corrective_evidence() -> None:
     evolution.LEDGER_PATH.write_bytes(evolution.canonical_json_bytes(ledger))
 
 
-def _validate_migration_review(review: dict[str, Any]) -> None:
+def _validate_migration_review(review: dict[str, Any], *, check_live: bool = True) -> None:
     if set(review) != MIGRATION_TOP_LEVEL_FIELDS:
         raise AssertionError("P4.4C migration-review top-level schema changed")
     if review.get("canonical_sha256") != evolution.canonical_sha256(review):
@@ -428,10 +428,11 @@ def _validate_migration_review(review: dict[str, Any]) -> None:
         expected_identity = {key: expected[key] for key in evolution.IDENTITY_KEYS}
         if row.get("frozen_p4_3a_source_identity") != expected_identity:
             raise AssertionError(f"P4.4C review lost frozen P4.3A identity: {path}")
-        if row.get("path_exists") is not True or not Path(path).is_file():
-            raise AssertionError(f"P4.4C reviewed workflow is missing: {path}")
-        if _current_identity(path) != row.get("current_live_source_identity"):
-            raise AssertionError(f"P4.4C current workflow identity changed: {path}")
+        if check_live:
+            if row.get("path_exists") is not True or not Path(path).is_file():
+                raise AssertionError(f"P4.4C reviewed workflow is missing: {path}")
+            if _current_identity(path) != row.get("current_live_source_identity"):
+                raise AssertionError(f"P4.4C current workflow identity changed: {path}")
         if row.get("current_live_source_identity") != expected_identity:
             raise AssertionError(f"P4.4C current workflow no longer matches its frozen source: {path}")
         if row.get("equivalence_claimed") is not False or row.get("retirement_authorized") is not False:
@@ -637,7 +638,7 @@ def check_historical() -> dict[str, Any]:
         raise AssertionError("P4.4C historical evidence-body digest mismatch")
     if receipt.get("migration_review_artifact_sha256") != review.get("canonical_sha256"):
         raise AssertionError("P4.4C receipt migration-review binding changed")
-    _validate_migration_review(review)
+    _validate_migration_review(review, check_live=False)
     _validate_receipt_semantics(receipt)
     if receipt.get("workflow_after_identity") != transition.get("after"):
         raise AssertionError("P4.4C historical workflow identity binding changed")

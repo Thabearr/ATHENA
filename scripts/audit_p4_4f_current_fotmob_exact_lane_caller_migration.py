@@ -377,6 +377,11 @@ def _check_caller_inventory() -> None:
             "scripts/audit_p4_4f_current_fotmob_exact_lane_caller_migration.py",
         }:
             continue
+        if any(
+            part in {".venv", "venv", "site-packages", "__pycache__"}
+            for part in Path(relative).parts
+        ):
+            continue
         if relative.startswith("docs/"):
             continue
         if relative == WORKFLOW_PATH:
@@ -400,7 +405,13 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
         if check_live:
             _require_exact_base_ancestry()
             p44d.audit(check_live=False)
-            p44e.audit(check_live=False)
+            # Verify P4.4E's immutable semantic receipt without treating this
+            # Windows checkout's CRLF conversion as a changed Git blob. The
+            # P4.4E Linux audit still enforces raw canonical bytes.
+            p44e.validate_receipt(
+                json.loads(p44e.RECEIPT_PATH.read_text(encoding="utf-8")),
+                check_live=False,
+            )
             p44c.check_historical()
             p44b.check()
             ledger = evolution.validate_current_state()
