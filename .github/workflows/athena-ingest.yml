@@ -1,6 +1,8 @@
 name: ATHENA Canonical Ingest
 
 on:
+  schedule:
+    - cron: "0 8 * * *"
   workflow_dispatch:
     inputs:
       dates:
@@ -42,7 +44,7 @@ jobs:
         id: resolve
         env:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
-          INPUT_DATES: ${{ inputs.dates }}
+          INPUT_DATES: ${{ inputs.dates || '' }}
           PYTHONPATH: ${{ github.workspace }}
         shell: bash
         run: |

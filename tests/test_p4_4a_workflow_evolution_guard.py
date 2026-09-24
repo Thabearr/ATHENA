@@ -38,8 +38,9 @@ def test_p44a_receipt_and_zero_transition_checkpoint() -> None:
     assert snapshot["current_live_workflow_count"] == 37
     assert snapshot_bytes != current_bytes
     assert receipt["workflow_evolution_transition_count"] == 0
-    assert len(ledger["transitions"]) == 3
-    assert ledger["current_workflow_tree_sha1"] == "8a65d5b4ed767d71d77c729d91f3fc95daa6d10a"
+    assert len(ledger["transitions"]) == 4
+    current_p44c = json.loads(Path("artifacts/architecture/p4_4c_athena_ingest_schedule_and_migration_review_v1.json").read_text(encoding="utf-8"))
+    assert ledger["current_workflow_tree_sha1"] == current_p44c["workflow_tree_after_sha1"]
     assert receipt["live_workflow_count_before"] == receipt["live_workflow_count_after"] == 37
     assert receipt["workflow_tree_before_sha1"] == receipt["workflow_tree_after_sha1"] == evolution.BASE_WORKFLOW_TREE_SHA1
     assert receipt["p4_4a_exit_gate_satisfied"] is True
@@ -98,9 +99,10 @@ def test_immutable_history_and_current_retirement_state() -> None:
     assert len(retirement.load_baseline()[0]["workflow_rows"]) == 40
 
 
-def test_workflow_yaml_tree_and_protected_paths_are_unchanged() -> None:
+def test_current_workflow_tree_and_protected_paths_match_reviewed_evolution() -> None:
     ledger = evolution.validate_current_state()
-    assert ledger["current_workflow_tree_sha1"] == "8a65d5b4ed767d71d77c729d91f3fc95daa6d10a"
+    current_p44c = json.loads(Path("artifacts/architecture/p4_4c_athena_ingest_schedule_and_migration_review_v1.json").read_text(encoding="utf-8"))
+    assert ledger["current_workflow_tree_sha1"] == current_p44c["workflow_tree_after_sha1"]
     assert len(list(Path(".github/workflows").glob("*.yml"))) == 38
     assert not evolution._git("diff", "--", ".github/workflows")
     baseline = evolution.baseline_state(retirement.validate_retirement_history())

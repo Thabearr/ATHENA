@@ -193,3 +193,39 @@ rejected. P4.4B is the separate implementation step; this PR creates no ingest
 workflow and performs no acquisition. Legacy and provider-diagnostic workflows,
 Current Shadow, and protected Fresh Holdout remain untouched. Architecture
 Checkpoint E and P4.4 are incomplete.
+
+## P4.4C scheduled ingest activation and capability migration review
+
+P4.4B introduced the canonical FotMob ingest as manual-only. P4.4C revises that
+existing workflow to add exactly one daily schedule, `0 8 * * *` UTC, while
+preserving `workflow_dispatch`. A scheduled request resolves from an aware UTC clock
+to exactly the current Gregorian date; it does not catch up or backfill. Manual
+dispatch keeps its existing 1–7 strictly increasing exact-date contract. Provider
+scope (FotMob), UTC/NGA, no-retry behavior, 900-second service budget, and 20-minute
+job timeout remain unchanged. The new automatic acquisition is inactive on main
+while this PR is open; implementation and review validation make zero provider
+requests.
+
+P4.4C reviewed exactly the five frozen P4.3A `ATHENA_INGEST_FUTURE` workflows.
+`build-historical-warehouse.yml` remains the distinct multi-source historical
+warehouse; `execute-fotmob-ordinary-ft-source-history-campaign.yml` remains an
+owner-controlled source-history campaign; `execute-fotmob-prospective-player-context-campaign.yml`
+remains the player-context research and continuation capability;
+`issue-current-fotmob-reviewed-source.yml` remains pending an exact compatibility
+adapter for its configurable request and fixture-bootstrap outputs; and
+`prepare-canonical-drive-transfer.yml` remains the historical archive transfer
+capability. Current source identities and read-only Actions history are bound in the
+migration-review artifact. Its run-history objects mean latest observed at the
+explicit `2026-09-24T01:53:50Z` capture cutoff, not a live pointer; later runs do not
+rewrite or invalidate that snapshot. All five remain non-equivalent and not retirement-
+authorized. P4.4C retires zero workflows and leaves the P4.3 retirement ledger
+unchanged.
+
+If merged, the daily schedule intentionally enables at most one FotMob request for
+one current UTC date per run. This is a newly enabled provider-acquisition trigger
+surface only; no provider family is added, manual authority does not change, and
+non-ingest authority does not expand. It grants no backfill or model, pricing, routing,
+portfolio, share-code, login, wallet, staking, betting, or wager authority. P4.4 and
+Architecture Checkpoint E remain incomplete. The merge reaches source-review 5/5;
+the mandatory architecture/source reread is required immediately afterward and
+before another remediation mission.

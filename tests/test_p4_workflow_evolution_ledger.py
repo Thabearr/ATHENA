@@ -168,15 +168,17 @@ def _synthetic_evolution_after_p43_extension(current_p43):
     return evolution
 
 
-def test_current_ledger_adds_one_reviewed_ingest_workflow_after_maintenance() -> None:
+def test_current_ledger_adds_ingest_then_revises_its_schedule_after_maintenance() -> None:
     ledger = audit.validate_current_state()
     assert [item["transition_id"] for item in ledger["transitions"]] == [
         "P44A1_FH_VISIBILITY_BRIDGE_V1",
         "P44A1_FH_VISIBILITY_RELEASE_RECEIPTS_V1",
         "P44B_ATHENA_INGEST_ADD_V1",
+        "P44C_ATHENA_INGEST_SCHEDULE_REVISE_V1",
     ]
     assert ledger["current_live_workflow_count"] == 38
-    assert ledger["current_workflow_tree_sha1"] == "8a65d5b4ed767d71d77c729d91f3fc95daa6d10a"
+    p44c_receipt = json.loads(Path("artifacts/architecture/p4_4c_athena_ingest_schedule_and_migration_review_v1.json").read_text(encoding="utf-8"))
+    assert ledger["current_workflow_tree_sha1"] == p44c_receipt["workflow_tree_after_sha1"]
     assert ledger["canonical_sha256"] == audit.canonical_sha256(ledger)
     assert Path(NEW_PATH).exists()
     assert retirement.validate_retirement_history()["canonical_sha256"] == audit.BASE_RETIREMENT_LEDGER_SHA256
