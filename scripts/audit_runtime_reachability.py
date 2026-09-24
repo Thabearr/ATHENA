@@ -915,6 +915,9 @@ def _probe_receipt_mirror_root(source_commit: str, profile: str) -> tuple[dict[s
     )
     original_download = entry.mirror._gh_download
     original_mirror_run = entry.mirror.mirror_run
+    original_verify_release_archive_and_receipt = (
+        entry.mirror.verify_release_archive_and_receipt
+    )
     try:
         with ExitStack() as stack:
             stack.enter_context(scoped_callable_checkpoint(
@@ -932,6 +935,9 @@ def _probe_receipt_mirror_root(source_commit: str, profile: str) -> tuple[dict[s
     finally:
         entry.mirror._gh_download = original_download
         entry.mirror.mirror_run = original_mirror_run
+        entry.mirror.verify_release_archive_and_receipt = (
+            original_verify_release_archive_and_receipt
+        )
     if result_code != 0:
         raise RuntimeReachabilityError("synthetic receipt-mirror entrypoint failed")
     document = trace.to_dict(disposition="NO_DECISION_AUTHORITY_REACHED")

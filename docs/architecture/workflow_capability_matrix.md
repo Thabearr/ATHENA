@@ -229,3 +229,15 @@ portfolio, share-code, login, wallet, staking, betting, or wager authority. P4.4
 Architecture Checkpoint E remain incomplete. The merge reaches source-review 5/5;
 the mandatory architecture/source reread is required immediately afterward and
 before another remediation mission.
+
+## P4.4E canonical-ingest-backed issuer seam
+
+P4.4E prepares an internal, unwired service that composes canonical ingest with
+the P4.4D current-reviewed source adapter for exactly one FotMob date under fixed
+UTC/NGA semantics. It preserves the exact acquired raw/manifest identity, calls
+the shared ingest service as the sole provider-transport owner, and makes no
+second request during the PR243 projection. The canonical ingest workflow and
+legacy current-reviewed workflow remain byte-identical; no supported live caller
+has migrated to the new seam. This does not claim full legacy workflow equivalence
+or authorize retirement. Caller migration remains a later reviewed step; P4.4 and
+Architecture Checkpoint E remain incomplete.

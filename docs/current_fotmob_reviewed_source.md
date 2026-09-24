@@ -207,6 +207,16 @@ and unretired, and caller migration requires a later reviewed step. No model,
 pricing, routing, portfolio, share-code, or wager authority is added. P4.4 and
 Architecture Checkpoint E remain incomplete.
 
+P4.4E adds an activation-ready internal issuer service that composes the existing
+canonical ingest service with this P4.4D adapter for only one FotMob date under
+fixed UTC/NGA semantics. The shared ingest service owns the single provider
+request; projection consumes the exact verified capture in place and makes no
+second request. P4.4E does not wire the new service into this CLI, this workflow,
+or another supported live caller. The legacy request contract and workflow remain
+unchanged, caller migration has not happened, and no workflow retirement is
+authorized. Noncanonical timezone/country inputs remain outside the adapter's
+scope; P4.4 and Architecture Checkpoint E remain incomplete.
+
 ## Next exact boundary
 
 The next missing boundary is intentionally explicit:

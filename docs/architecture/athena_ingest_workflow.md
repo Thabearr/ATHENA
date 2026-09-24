@@ -105,3 +105,21 @@ that schedule activation did not occur. If PR #394 merges, source review reaches
 the mandatory architecture/source reread is required before the next normal
 remediation mission. If an emergency stop is needed before then, disable the workflow
 operationally rather than bypassing that reread with an unreviewed code change.
+
+## P4.4E activation-ready current-source issuer seam
+
+P4.4E composes the existing `AthenaIngestRequest`, shared
+`execute_ingest_request(...)` service, and P4.4D offline compatibility adapter for
+exactly one FotMob date with fixed `timezone=UTC` and `ccode3=NGA`. The issuer
+requires the actual checked-out commit to equal the expected 40-character main
+commit, and it only projects a successful one-request canonical ingest. Provider
+transport remains owned by the canonical ingest service; the P4.4D projection
+makes zero additional requests and consumes the verified capture in place.
+
+This is an internal service seam only. It is not referenced by a workflow or a
+supported live caller, and it does not modify the canonical ingest request schema,
+either protected workflow, or the legacy current-reviewed issuer. The legacy
+workflow remains live and unchanged; non-UTC/NGA inputs are not supported by this
+compatibility seam. P4.4E does not claim full legacy workflow equivalence or
+retirement authority. Caller migration is a later reviewed step. P4.4 and
+Architecture Checkpoint E remain incomplete.
