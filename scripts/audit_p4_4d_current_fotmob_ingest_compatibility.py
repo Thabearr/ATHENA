@@ -69,6 +69,22 @@ def _source_identity(path: str) -> dict[str, str]:
     }
 
 
+def _require_exact_base_ancestry() -> None:
+    merge_base = subprocess.run(
+        ["git", "merge-base", "HEAD", BASE_MAIN], capture_output=True
+    )
+    if merge_base.returncode == 0:
+        based_on_exact_main = merge_base.stdout.decode("ascii").strip() == BASE_MAIN
+    else:
+        # Hosted PR test checkouts are shallow and may not contain the base
+        # commit object. GitHub checks out a synthetic merge commit whose first
+        # parent is the exact base SHA; verify that parent directly instead.
+        parents = _git("show", "-s", "--format=%P", "HEAD").decode("ascii").split()
+        based_on_exact_main = BASE_MAIN in parents
+    if not based_on_exact_main:
+        raise P44DCompatibilityAuditError("P4.4D branch is not based on exact reviewed main")
+
+
 def expected_receipt() -> dict[str, Any]:
     value: dict[str, Any] = {
         "schema_version": 1,
@@ -154,16 +170,11 @@ def validate_receipt(value: Any, *, check_live: bool = True) -> dict[str, Any]:
 
 
 def _validate_live_state() -> None:
-    if _git("rev-parse", "HEAD").decode("ascii").strip() != BASE_MAIN:
-        # During implementation the branch HEAD remains the exact base until the
-        # reviewed PR commits; after commits, ancestry must still start there.
-        if _git("merge-base", "HEAD", BASE_MAIN).decode("ascii").strip() != BASE_MAIN:
-            raise P44DCompatibilityAuditError("P4.4D branch is not based on exact reviewed main")
-    if _git("rev-parse", f"{BASE_MAIN}:.github/workflows").decode("ascii").strip() != WORKFLOW_TREE_SHA1:
-        raise P44DCompatibilityAuditError("P4.4C workflow tree base identity changed")
-    if _git("rev-parse", f"{BASE_MAIN}:{evolution.LEDGER_PATH.as_posix()}").decode("ascii").strip() == "":
-        raise P44DCompatibilityAuditError("P4.4C evolution ledger is missing at base")
-    ledger = json.loads(_git("show", f"{BASE_MAIN}:{evolution.LEDGER_PATH.as_posix()}"))
+    _require_exact_base_ancestry()
+    workflow_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
+    if workflow_tree != WORKFLOW_TREE_SHA1:
+        raise P44DCompatibilityAuditError("P4.4C workflow tree identity changed")
+    ledger = json.loads(_git("show", f"HEAD:{evolution.LEDGER_PATH.as_posix()}"))
     if ledger.get("canonical_sha256") != EVOLUTION_SHA256 or evolution.canonical_sha256(ledger) != EVOLUTION_SHA256:
         raise P44DCompatibilityAuditError("P4.4C evolution ledger identity changed")
     if len(ledger.get("transitions", [])) != 4:
@@ -187,8 +198,6 @@ def _validate_live_state() -> None:
     for path, identity in ((LEGACY_PATH, LEGACY_IDENTITY), (INGEST_PATH, INGEST_IDENTITY)):
         if _source_identity(path) != identity:
             raise P44DCompatibilityAuditError(f"protected workflow identity changed: {path}")
-        if evolution.source_identity(_git("show", f"{BASE_MAIN}:{path}")) != identity:
-            raise P44DCompatibilityAuditError(f"base workflow identity changed: {path}")
         if subprocess.run(["git", "diff", "--quiet", "HEAD", "--", path]).returncode != 0:
             raise P44DCompatibilityAuditError(f"protected workflow has an uncommitted change: {path}")
         if subprocess.run(["git", "diff", "--cached", "--quiet", "HEAD", "--", path]).returncode != 0:

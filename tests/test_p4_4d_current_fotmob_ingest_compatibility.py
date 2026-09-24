@@ -4,6 +4,7 @@ import copy
 import hashlib
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -83,3 +84,34 @@ def test_workflow_identities_and_evolution_evidence_are_pinned() -> None:
     assert Path(audit.INGEST_PATH).is_file()
     assert audit._source_identity(audit.LEGACY_PATH) == audit.LEGACY_IDENTITY
     assert audit._source_identity(audit.INGEST_PATH) == audit.INGEST_IDENTITY
+
+
+def test_exact_base_ancestry_accepts_shallow_synthetic_merge_checkout(monkeypatch) -> None:
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=128, stdout=b"", stderr=b"missing base object"),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: (audit.BASE_MAIN + " " + "f" * 40).encode("ascii"),
+    )
+
+    audit._require_exact_base_ancestry()
+
+
+def test_exact_base_ancestry_rejects_shallow_checkout_with_wrong_parent(monkeypatch) -> None:
+    monkeypatch.setattr(
+        audit.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=128, stdout=b"", stderr=b"missing base object"),
+    )
+    monkeypatch.setattr(
+        audit,
+        "_git",
+        lambda *args: ("e" * 40 + " " + "f" * 40).encode("ascii"),
+    )
+
+    with pytest.raises(audit.P44DCompatibilityAuditError, match="not based on exact reviewed main"):
+        audit._require_exact_base_ancestry()
