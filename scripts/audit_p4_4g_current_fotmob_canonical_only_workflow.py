@@ -23,6 +23,8 @@ from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
 BASE_MAIN = "4cacd70378581a27785e4b10bd6205cde9241a41"
+P44G_REVIEWED_HEAD = "27d65d15bbfb1d6ccded9076999147f5a10050e9"
+P44G_MERGE_COMMIT = "8d59f9507ac79c0d783e1bfc974f67df931e176c"
 P44F_RECEIPT_SHA256 = "c5a3f66db6626acad2b3bcbcbadf5a5da62551cd4c2ffe4334b253e47ff2e60e"
 P44F_SNAPSHOT_SHA256 = "0df166e1c71d67d2be5f1a5bffde5b467770dec8437d33675ec50e399812650a"
 P43_RETIREMENT_SHA256 = "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
@@ -72,6 +74,7 @@ EXPECTED_CHANGED_PATHS = {
     "docs/architecture/workflow_capability_matrix.md",
     "tests/test_athena_ingest_architecture.py",
     "tests/test_p4_4c_scheduled_ingest_and_migration_review.py",
+    "tests/test_p4_4d_current_fotmob_ingest_compatibility.py",
     "tests/test_p4_workflow_evolution_ledger.py",
     "tests/test_p4_4a_workflow_evolution_guard.py",
 }
@@ -370,63 +373,128 @@ def _check_history_evidence() -> dict[str, Any]:
         )
     return history
 
-def _require_exact_base_ancestry() -> None:
-    merge_base = subprocess.run(
-        ["git", "merge-base", "HEAD", BASE_MAIN], capture_output=True
-    )
-    if merge_base.returncode == 0:
-        valid = merge_base.stdout.decode("ascii").strip() == BASE_MAIN
-    else:
-        parents = _git("show", "-s", "--format=%P", "HEAD").decode("ascii").split()
-        valid = BASE_MAIN in parents
-        if not valid and os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
-            event_path = os.environ.get("GITHUB_EVENT_PATH")
-            try:
-                event = json.loads(Path(event_path).read_text(encoding="utf-8")) if event_path else {}
-                pull_request = event.get("pull_request", {})
-                base = pull_request.get("base", {})
-                head = pull_request.get("head", {})
-                current = _git("rev-parse", "HEAD").decode("ascii").strip()
-                valid = (
-                    base.get("ref") == "main"
-                    and base.get("sha") == BASE_MAIN
-                    and re.fullmatch(r"[0-9a-f]{40}", str(head.get("sha", ""))) is not None
-                    and current in {head.get("sha"), os.environ.get("GITHUB_SHA")}
-                )
-            except (OSError, json.JSONDecodeError, P44GCanonicalOnlyWorkflowAuditError):
-                valid = False
-    if not valid:
-        raise P44GCanonicalOnlyWorkflowAuditError("P4.4G branch is not based on exact authoritative main")
+def _commit_object_available(commit: str) -> bool:
+    return subprocess.run(
+        ["git", "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True
+    ).returncode == 0
 
 
-def _changed_paths_from_exact_base() -> set[str] | None:
-    result = subprocess.run(
-        ["git", "diff", "--name-only", f"{BASE_MAIN}...HEAD"], capture_output=True
-    )
-    if result.returncode == 0:
-        return set(result.stdout.decode("utf-8").splitlines())
-
-    # Hosted pull_request checkouts can contain only the synthetic merge commit.
-    # In that case the exact base object is absent, so a tree diff cannot be
-    # computed locally. Accept this limitation only after independently binding
-    # the exact base/head through the trusted pull_request event above; all
-    # source identities, protected files, and workflow/evolution invariants are
-    # still checked directly below. A present base object with a failed diff is
-    # an actual audit error, not a shallow-checkout fallback.
-    base_object = subprocess.run(
-        ["git", "cat-file", "-e", f"{BASE_MAIN}^{{commit}}"], capture_output=True
-    )
-    if base_object.returncode == 0 or os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
+def _require_trusted_shallow_pull_request_context() -> None:
+    """Bind a shallow historical audit to its current PR event, not P4.4G's old base."""
+    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
         raise P44GCanonicalOnlyWorkflowAuditError(
-            f"cannot verify P4.4G changed paths against the exact base: "
+            "P4.4G historical Git objects are unavailable outside a trusted pull_request checkout"
+        )
+    event_path = os.environ.get("GITHUB_EVENT_PATH")
+    try:
+        event = json.loads(Path(event_path).read_text(encoding="utf-8")) if event_path else {}
+        pull_request = event.get("pull_request", {})
+        base = pull_request.get("base", {})
+        head = pull_request.get("head", {})
+        current = _git("rev-parse", "HEAD").decode("ascii").strip()
+        valid = (
+            base.get("ref") == "main"
+            and re.fullmatch(r"[0-9a-f]{40}", str(base.get("sha", ""))) is not None
+            and re.fullmatch(r"[0-9a-f]{40}", str(head.get("sha", ""))) is not None
+            and re.fullmatch(r"[0-9a-f]{40}", str(os.environ.get("GITHUB_SHA", ""))) is not None
+            and current == os.environ.get("GITHUB_SHA")
+        )
+    except (OSError, json.JSONDecodeError, P44GCanonicalOnlyWorkflowAuditError):
+        valid = False
+    if not valid:
+        raise P44GCanonicalOnlyWorkflowAuditError(
+            "P4.4G historical audit lacks a trusted current main pull_request binding"
+        )
+
+
+def _validate_p44g_evolution_prefix(
+    ledger: dict[str, Any], expected_ledger: dict[str, Any]
+) -> None:
+    transitions = ledger.get("transitions", [])
+    historical_prefix = expected_ledger.get("transitions", [])
+    if (
+        not isinstance(transitions, list)
+        or len(transitions) < len(historical_prefix)
+        or transitions[: len(historical_prefix)] != historical_prefix
+    ):
+        raise P44GCanonicalOnlyWorkflowAuditError(
+            "evolution ledger does not preserve the exact P4.4G historical transition prefix"
+        )
+
+
+def _historical_p44g_changed_paths(
+    current_ledger: dict[str, Any], expected_ledger: dict[str, Any]
+) -> set[str] | None:
+    """Return the immutable P4.4G base-to-reviewed-head paths, never current-HEAD paths.
+
+    Call only after the current cumulative ledger has been independently validated
+    and its exact P4.4G prefix has been checked. If old commits are absent from a
+    trusted shallow PR checkout, the immutable receipt/snapshot/prefix and PR event
+    provide the independent binding; no paths are fabricated.
+    """
+    _validate_p44g_evolution_prefix(current_ledger, expected_ledger)
+    scope_commits_available = all(
+        _commit_object_available(commit) for commit in (BASE_MAIN, P44G_REVIEWED_HEAD)
+    )
+    if not scope_commits_available:
+        _require_trusted_shallow_pull_request_context()
+        return None
+
+    if _commit_object_available(P44G_MERGE_COMMIT):
+        parents = _git("show", "-s", "--format=%P", P44G_MERGE_COMMIT).decode("ascii").split()
+        if parents != [BASE_MAIN, P44G_REVIEWED_HEAD]:
+            raise P44GCanonicalOnlyWorkflowAuditError(
+                "P4.4G merge commit does not bind the exact reviewed base and head"
+            )
+        ancestry = subprocess.run(
+            ["git", "merge-base", "--is-ancestor", P44G_MERGE_COMMIT, "HEAD"],
+            capture_output=True,
+        )
+        if ancestry.returncode != 0:
+            raise P44GCanonicalOnlyWorkflowAuditError(
+                "P4.4G reviewed merge is not in the current main/PR history"
+            )
+    else:
+        _require_trusted_shallow_pull_request_context()
+    result = subprocess.run(
+        ["git", "diff", "--name-only", f"{BASE_MAIN}...{P44G_REVIEWED_HEAD}"],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        raise P44GCanonicalOnlyWorkflowAuditError(
+            "cannot compute the frozen P4.4G base-to-reviewed-head diff: "
             f"{result.stderr.decode('utf-8', 'replace')}"
         )
-    _require_exact_base_ancestry()
-    return None
+    return set(result.stdout.decode("utf-8").splitlines())
 
 
-def _check_workflow_contract() -> None:
-    workflow = Path(WORKFLOW_PATH).read_text(encoding="utf-8")
+def _assert_exact_historical_p44g_scope(changed_paths: set[str]) -> None:
+    if changed_paths != EXPECTED_CHANGED_PATHS:
+        missing = sorted(EXPECTED_CHANGED_PATHS - changed_paths)
+        unexpected = sorted(changed_paths - EXPECTED_CHANGED_PATHS)
+        raise P44GCanonicalOnlyWorkflowAuditError(
+            f"P4.4G historical changed-path set differs; missing={missing}, unexpected={unexpected}"
+        )
+
+
+def _historical_p44g_workflow_source() -> str:
+    raw = _git("cat-file", "-p", WORKFLOW_AFTER["git_blob_sha1"])
+    if evolution.source_identity(raw) != WORKFLOW_AFTER:
+        raise P44GCanonicalOnlyWorkflowAuditError(
+            "historical P4.4G workflow-after blob identity is unavailable or changed"
+        )
+    if _commit_object_available(P44G_REVIEWED_HEAD) and _identity_at(
+        P44G_REVIEWED_HEAD, WORKFLOW_PATH
+    ) != WORKFLOW_AFTER:
+        raise P44GCanonicalOnlyWorkflowAuditError(
+            "P4.4G reviewed-head workflow identity differs from its immutable transition"
+        )
+    return raw.decode("utf-8")
+
+
+def _check_workflow_contract(workflow: str | None = None) -> None:
+    if workflow is None:
+        workflow = Path(WORKFLOW_PATH).read_text(encoding="utf-8")
     canonical_marker = "if: ${{ inputs.timezone == 'UTC' && inputs.ccode3 == 'NGA' }}"
     reject_marker = "if: ${{ inputs.timezone != 'UTC' || inputs.ccode3 != 'NGA' }}"
     canonical = workflow.split(
@@ -534,27 +602,46 @@ def _check_protected_sources() -> None:
             raise P44GCanonicalOnlyWorkflowAuditError(f"protected dependency has a staged change: {path}")
 
 
-def _check_caller_inventory() -> None:
-    canonical_cli = Path("scripts/issue_current_fotmob_reviewed_source_via_ingest.py")
-    source = canonical_cli.read_text(encoding="utf-8")
+def _check_caller_inventory(ref: str = "HEAD") -> None:
+    canonical_cli_path = "scripts/issue_current_fotmob_reviewed_source_via_ingest.py"
+    source = _git("show", f"{ref}:{canonical_cli_path}").decode("utf-8")
     for forbidden in ("fetch_fotmob_data_matches", "write_data_matches_capture_directory", "issue_current_fotmob_reviewed_source("):
         if forbidden in source:
             raise P44GCanonicalOnlyWorkflowAuditError("canonical CLI duplicated or fell back to legacy provider acquisition")
-    if not Path("scripts/issue_current_fotmob_reviewed_source.py").exists():
+    tracked_paths = _git("ls-tree", "-r", "--name-only", ref).decode("utf-8").splitlines()
+    if "scripts/issue_current_fotmob_reviewed_source.py" not in tracked_paths:
         raise P44GCanonicalOnlyWorkflowAuditError("legacy CLI was deleted instead of retained for history/rollback")
     legacy_ref = "scripts/issue_current_fotmob_reviewed_source.py"
-    for workflow_path in Path(".github/workflows").glob("*.yml"):
-        if legacy_ref in workflow_path.read_text(encoding="utf-8"):
-            raise P44GCanonicalOnlyWorkflowAuditError(f"legacy current-source CLI remains workflow-live: {workflow_path}")
+    workflow_refs = subprocess.run(
+        ["git", "grep", "-l", "-F", legacy_ref, ref, "--", ".github/workflows/*.yml", ".github/workflows/*.yaml"],
+        capture_output=True,
+    )
+    if workflow_refs.returncode not in {0, 1}:
+        raise P44GCanonicalOnlyWorkflowAuditError("cannot inspect historical workflow consumers")
+    if workflow_refs.returncode == 0:
+        workflow_path = workflow_refs.stdout.decode("utf-8").splitlines()[0].split(":", 1)[1]
+        raise P44GCanonicalOnlyWorkflowAuditError(f"legacy current-source CLI remains workflow-live: {workflow_path}")
     caller_ref = "scripts/issue_current_fotmob_reviewed_source_via_ingest.py"
+    runtime_matches = subprocess.run(
+        ["git", "grep", "-l", "-F", caller_ref, ref, "--", "*.py", "*.yml", "*.yaml"],
+        capture_output=True,
+    )
+    if runtime_matches.returncode not in {0, 1}:
+        raise P44GCanonicalOnlyWorkflowAuditError("cannot inspect historical runtime callers")
     runtime_refs = []
-    for relative in _git("ls-files", "-z", "--", "*.py", "*.yml", "*.yaml").decode("utf-8").split("\0"):
-        if not relative or relative.startswith(("tests/", "docs/", "scripts/audit_")) or relative == caller_ref:
-            continue
-        if any(part in {".venv", "venv", "site-packages", "__pycache__"} for part in Path(relative).parts):
-            continue
-        if caller_ref in Path(relative).read_text(encoding="utf-8"):
-            runtime_refs.append(relative)
+    if runtime_matches.returncode == 0:
+        runtime_refs = [
+            line.split(":", 1)[1]
+            for line in runtime_matches.stdout.decode("utf-8").splitlines()
+            if ":" in line
+        ]
+        runtime_refs = [
+            path for path in runtime_refs
+            if not path.startswith(("tests/", "docs/", "scripts/audit/"))
+            and not path.startswith("scripts/audit_")
+            and path != caller_ref
+            and not any(part in {".venv", "venv", "site-packages", "__pycache__"} for part in Path(path).parts)
+        ]
     if runtime_refs != [WORKFLOW_PATH]:
         raise P44GCanonicalOnlyWorkflowAuditError(f"canonical current-source workflow caller set differs: {runtime_refs}")
 
@@ -570,42 +657,28 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
             raise P44GCanonicalOnlyWorkflowAuditError(
                 "P4.4G receipt differs from rebuilt canonical evidence"
             )
-        if _load_json(LEDGER_PATH) != expected_ledger:
-            raise P44GCanonicalOnlyWorkflowAuditError(
-                "current evolution ledger differs from exact P4.4G state"
-            )
         if _load_json(SNAPSHOT_PATH) != expected_snapshot:
             raise P44GCanonicalOnlyWorkflowAuditError(
-                "P4.4G snapshot differs from exact cumulative ledger"
+                "immutable P4.4G snapshot differs from its exact cumulative checkpoint"
             )
         if check_live:
-            _require_exact_base_ancestry()
             p44f.validate_receipt(
                 json.loads(p44f.RECEIPT_PATH.read_text(encoding="utf-8"))
             )
             ledger = evolution.validate_current_state()
-            if (
-                len(ledger.get("transitions", [])) != 6
-                or ledger["transitions"][:5]
-                != expected_ledger["transitions"][:5]
-                or ledger["transitions"][5]
-                != expected_ledger["transitions"][5]
-            ):
-                raise P44GCanonicalOnlyWorkflowAuditError(
-                    "evolution ledger lacks the exact P4.4F prefix plus P4.4G transition"
-                )
+            _validate_p44g_evolution_prefix(ledger, expected_ledger)
             retirement_state = retirement.validate_retirement_history()
             if (
                 retirement_state.get("canonical_sha256") != P43_RETIREMENT_SHA256
                 or retirement_state.get("current_retired_workflow_count") != 3
             ):
                 raise P44GCanonicalOnlyWorkflowAuditError(
-                    "P4.3 retirement history changed"
-                )
+                "P4.3 retirement history changed"
+            )
             current_tree = _git("rev-parse", "HEAD:.github/workflows").decode("ascii").strip()
-            if current_tree != WORKFLOW_TREE_AFTER:
+            if current_tree != ledger.get("current_workflow_tree_sha1"):
                 raise P44GCanonicalOnlyWorkflowAuditError(
-                    "final workflow tree differs from P4.4G receipt"
+                    "current workflow tree differs from the current reviewed evolution ledger"
                 )
             workflow_count = sum(
                 item.endswith((".yml", ".yaml"))
@@ -613,20 +686,14 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
                     "ls-tree", "-r", "--name-only", "HEAD", ".github/workflows"
                 ).decode("utf-8").splitlines()
             )
-            if workflow_count != 38:
+            if workflow_count != ledger.get("current_live_workflow_count"):
                 raise P44GCanonicalOnlyWorkflowAuditError(
-                    "workflow count is not 38"
+                    "current workflow count differs from the current reviewed evolution ledger"
                 )
-            changed = _changed_paths_from_exact_base()
-            if changed is not None and not changed <= EXPECTED_CHANGED_PATHS:
-                raise P44GCanonicalOnlyWorkflowAuditError(
-                    f"P4.4G changed paths exceed reviewed scope: "
-                    f"{sorted(changed - EXPECTED_CHANGED_PATHS)}"
-                )
-            if _identity_at("HEAD", WORKFLOW_PATH) != WORKFLOW_AFTER:
-                raise P44GCanonicalOnlyWorkflowAuditError(
-                    "workflow final source identity differs from receipt"
-                )
+            changed = _historical_p44g_changed_paths(ledger, expected_ledger)
+            if changed is not None:
+                _assert_exact_historical_p44g_scope(changed)
+            workflow_source = _historical_p44g_workflow_source()
             fixture = Path(FIXTURE_PATH).read_bytes()
             if evolution.source_identity(fixture) != WORKFLOW_BEFORE:
                 raise P44GCanonicalOnlyWorkflowAuditError(
@@ -637,8 +704,9 @@ def audit(path: Path = RECEIPT_PATH, *, check_live: bool = True) -> dict[str, An
                     "historical-before fixture is not source-controlled at HEAD"
                 )
             _check_protected_sources()
-            _check_workflow_contract()
-            _check_caller_inventory()
+            _check_workflow_contract(workflow_source)
+            if _commit_object_available(P44G_REVIEWED_HEAD):
+                _check_caller_inventory(P44G_REVIEWED_HEAD)
         return receipt
     except (OSError, ValueError, AssertionError, json.JSONDecodeError) as exc:
         if isinstance(exc, P44GCanonicalOnlyWorkflowAuditError):

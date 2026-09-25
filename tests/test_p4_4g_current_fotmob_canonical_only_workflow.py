@@ -4,7 +4,6 @@ import copy
 import json
 from pathlib import Path
 from types import SimpleNamespace
-
 import pytest
 
 from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as audit
@@ -36,6 +35,11 @@ def test_p4_4g_transition_and_cumulative_snapshot_are_exact() -> None:
     assert transition["maintenance_contract"] == evolution.MAINTENANCE_CONTRACT
     assert transition["historical_before_fixture"]["path"] == audit.FIXTURE_PATH
     assert receipt["workflow_evolution_ledger_sha256"] == ledger["canonical_sha256"]
+    assert receipt["canonical_sha256"] == "af0e87fc9fc925d1c30f5f2adee699be0724fa1b68842963f25c5a1f56fe12af"
+    assert ledger["canonical_sha256"] == "b9ee60aa5cfa63080159cae839ca82b5662fdfbfe70a91055392a1728ed05f7a"
+    assert receipt["p4_3_retirement_ledger_sha256"] == "afa4a082f5225d83ca1ab32aab396b02bedf6f43dc57b6467a4187a720a0d56a"
+    assert receipt["workflow_tree_sha1_after"] == "d58f71b9ac653c8762f1d9b18eede15755ee1a76"
+    assert receipt["workflow_count_after"] == 38
     assert evolution.receipt_evidence_body_sha256(receipt) == transition["evidence_body_sha256"]
     assert receipt["reviewed_workflow_transition"] == {
         key: value for key, value in transition.items() if key != "evidence_body_sha256"
@@ -194,14 +198,121 @@ def test_p4_4g_live_audit_passes_after_reviewed_commit() -> None:
     assert receipt["canonical_sha256"] == audit.expected_receipt()["canonical_sha256"]
 
 
-def test_shallow_pr_changed_path_fallback_still_requires_exact_base_event(
+def test_exact_historical_p44g_diff_matches_all_19_reviewed_paths() -> None:
+    if not all(
+        audit._commit_object_available(commit)
+        for commit in (audit.BASE_MAIN, audit.P44G_REVIEWED_HEAD)
+    ):
+        pytest.skip("historical P4.4G base/reviewed-head objects are absent in this shallow checkout")
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+    paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+    assert paths == audit.EXPECTED_CHANGED_PATHS
+    assert len(paths) == 19
+    assert "tests/test_p4_4d_current_fotmob_ingest_compatibility.py" in paths
+
+
+def test_historical_scope_fails_closed_if_p44d_test_path_is_omitted() -> None:
+    with pytest.raises(audit.P44GCanonicalOnlyWorkflowAuditError, match="historical changed-path set"):
+        audit._assert_exact_historical_p44g_scope(
+            audit.EXPECTED_CHANGED_PATHS
+            - {"tests/test_p4_4d_current_fotmob_ingest_compatibility.py"}
+        )
+
+
+def test_historical_diff_is_pinned_to_p44g_reviewed_head_not_future_head(monkeypatch) -> None:
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+    diff_commands: list[list[str]] = []
+    hypothetical_future_path = "artifacts/architecture/p4_4h_future_review.json"
+
+    def tracking_run(args, capture_output=False):
+        if args[:3] == ["git", "merge-base", "--is-ancestor"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+        if args[:3] == ["git", "diff", "--name-only"]:
+            diff_commands.append(args)
+            assert args[3] == f"{audit.BASE_MAIN}...{audit.P44G_REVIEWED_HEAD}"
+            assert "HEAD" not in args[3]
+            return SimpleNamespace(
+                returncode=0,
+                stdout=("\n".join(sorted(audit.EXPECTED_CHANGED_PATHS)) + "\n").encode("utf-8"),
+                stderr=b"",
+            )
+        raise AssertionError(args)
+
+    original_git = audit._git
+
+    def historical_git(*args):
+        if args == ("show", "-s", "--format=%P", audit.P44G_MERGE_COMMIT):
+            return f"{audit.BASE_MAIN} {audit.P44G_REVIEWED_HEAD}".encode("ascii")
+        return original_git(*args)
+
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: True)
+    monkeypatch.setattr(audit.subprocess, "run", tracking_run)
+    monkeypatch.setattr(audit, "_git", historical_git)
+    paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+    assert paths == audit.EXPECTED_CHANGED_PATHS
+    hypothetical_current_head_paths = set(paths) | {hypothetical_future_path}
+    assert hypothetical_future_path in hypothetical_current_head_paths
+    assert paths != hypothetical_current_head_paths
+    assert len(diff_commands) == 1
+
+
+def test_synthetic_reviewed_cumulative_extension_preserves_p44g_prefix_and_snapshot(
+    monkeypatch,
+) -> None:
+    expected_ledger, expected_snapshot, _ = audit.build_evidence()
+    extended = copy.deepcopy(expected_ledger)
+    extended["transitions"].append(
+        {
+            "transition_id": "SYNTHETIC_REVIEWED_FUTURE_TRANSITION",
+            "phase_id": "P4.4I",
+            "operation": "MAINTENANCE_REVISE",
+            "workflow_path": audit.WORKFLOW_PATH,
+            "after": {"git_blob_sha1": "e" * 40, "source_sha256": "f" * 64},
+        }
+    )
+    future_tree = "a" * 40
+    extended["current_workflow_tree_sha1"] = future_tree
+    extended["canonical_sha256"] = evolution.canonical_sha256(extended)
+    audit._validate_p44g_evolution_prefix(extended, expected_ledger)
+    assert extended["transitions"][:6] == expected_ledger["transitions"]
+    assert audit._load_json(audit.SNAPSHOT_PATH) == expected_snapshot
+
+    monkeypatch.setattr(evolution, "validate_current_state", lambda: extended)
+    original_git = audit._git
+    current_workflow_paths = original_git(
+        "ls-tree", "-r", "--name-only", "HEAD", ".github/workflows"
+    )
+
+    def synthetic_current_git(*args):
+        if args == ("rev-parse", "HEAD:.github/workflows"):
+            return future_tree.encode("ascii")
+        if args == ("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows"):
+            return current_workflow_paths
+        return original_git(*args)
+
+    monkeypatch.setattr(audit, "_git", synthetic_current_git)
+    receipt = audit.audit(check_live=True)
+    assert receipt["canonical_sha256"] == "af0e87fc9fc925d1c30f5f2adee699be0724fa1b68842963f25c5a1f56fe12af"
+
+
+def test_mutated_p44g_transition_prefix_fails_closed() -> None:
+    expected_ledger, _, _ = audit.build_evidence()
+    mutated = copy.deepcopy(expected_ledger)
+    mutated["transitions"][5]["transition_id"] = "MUTATED_P44G_TRANSITION"
+    with pytest.raises(audit.P44GCanonicalOnlyWorkflowAuditError, match="transition prefix"):
+        audit._validate_p44g_evolution_prefix(mutated, expected_ledger)
+
+
+def test_shallow_pr_historical_scope_requires_current_main_event_and_prefix(
     monkeypatch, tmp_path: Path
 ) -> None:
     event_path = tmp_path / "event.json"
     synthetic_merge_sha = "b" * 40
     event = {
         "pull_request": {
-            "base": {"ref": "main", "sha": audit.BASE_MAIN},
+            "base": {"ref": "main", "sha": audit.P44G_MERGE_COMMIT},
             "head": {"sha": "a" * 40},
         }
     }
@@ -209,31 +320,23 @@ def test_shallow_pr_changed_path_fallback_still_requires_exact_base_event(
     monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
     monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
     monkeypatch.setenv("GITHUB_SHA", synthetic_merge_sha)
-
-    def fake_run(args, capture_output=False):
-        if args[:2] == ["git", "diff"]:
-            return SimpleNamespace(returncode=128, stdout=b"", stderr=b"invalid symmetric difference expression")
-        if args[:2] == ["git", "cat-file"]:
-            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"missing base object")
-        if args[1:3] == ["merge-base", "HEAD"]:
-            return SimpleNamespace(returncode=1, stdout=b"", stderr=b"missing base object")
-        raise AssertionError(args)
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = copy.deepcopy(expected_ledger)
+    current_ledger["transitions"].append({"transition_id": "FUTURE"})
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: False)
 
     def fake_git(*args):
-        if args == ("show", "-s", "--format=%P", "HEAD"):
-            return b""
         if args == ("rev-parse", "HEAD"):
             return synthetic_merge_sha.encode("ascii")
         raise AssertionError(args)
 
-    monkeypatch.setattr(audit.subprocess, "run", fake_run)
     monkeypatch.setattr(audit, "_git", fake_git)
-    assert audit._changed_paths_from_exact_base() is None
+    assert audit._historical_p44g_changed_paths(current_ledger, expected_ledger) is None
 
-    event["pull_request"]["base"]["sha"] = "c" * 40
+    event["pull_request"]["base"]["ref"] = "release"
     event_path.write_text(json.dumps(event), encoding="utf-8")
     with pytest.raises(
         audit.P44GCanonicalOnlyWorkflowAuditError,
-        match="not based on exact authoritative main",
+        match="trusted current main pull_request binding",
     ):
-        audit._changed_paths_from_exact_base()
+        audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
