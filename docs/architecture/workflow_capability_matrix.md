@@ -283,3 +283,25 @@ share-code, login, cookies, wallet, staking or wager authority is granted.
 P4.4 and Architecture Checkpoint E remain incomplete. The source-review counter
 is 3/5 while P4.4G is unmerged and becomes 4/5 only after an owner-authorized
 merge.
+
+## P4.4H Current Shadow canonical-run migration review
+
+P4.4H adds only a source-controlled offline parity review. The Current Shadow
+workflow remains live and unchanged; no caller migration, workflow retirement, or
+live canonical SHADOW proof is authorized. The canonical SHADOW service delegates
+to the existing reviewed Current Shadow supervisor, but the schedule is not
+equivalent today: the legacy workflow schedules SHADOW at 09:00 UTC while the
+canonical schedule resolves MAIN. Canonical relative dates also use
+`Africa/Lagos`, unlike the legacy UTC fixture-date horizon; the 23:00 UTC boundary
+therefore remains an exact migration blocker.
+
+The review keeps notification/email as a separable post-core consumer and preserves
+the current artifact/history ancestry dependencies, including the
+`current-shadow-all-market-request` identity artifact consumed by canonical run
+and P3.0 evidence paths. The `/athena-shadow` issue-comment grammar remains an
+explicit compatibility wrapper candidate; it is not removed or silently mapped.
+All five P4.3A Current Shadow blockers remain open pending later caller migration
+and operational evidence. No workflow YAML or evolution transition changes in
+P4.4H. P4.4 and Architecture Checkpoint E remain incomplete; the source-review
+counter is 0/5 while unmerged and would become 1/5 if the owner merges, requiring
+the prescribed reread before the next remediation mission.

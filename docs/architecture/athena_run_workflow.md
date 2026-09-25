@@ -54,6 +54,32 @@ existing `current-shadow-all-market` group. It always attempts to upload the res
 request and run directory for 30 days. For SHADOW runs it also preserves the same
 optional source-cache families and identity-state file when present.
 
+## P4.4H Current Shadow migration review
+
+P4.4H is an offline migration review, not a caller migration. The live
+`current-shadow-all-market.yml` workflow remains unchanged and owns the daily 09:00
+UTC SHADOW schedule, manual request surface, and `/athena-shadow` issue-comment
+compatibility. `athena-run` SHADOW dispatch already delegates to the reviewed
+Current Shadow supervisor through `AthenaRunService` and the canonical
+`RunRequest -> RunReceipt` boundary; sharing that executor alone is not a claim of
+full workflow equivalence.
+
+The scheduled requests are not yet equivalent: Current Shadow's schedule resolves
+SHADOW, while the canonical schedule defaults to MAIN. Explicit date requests can
+be represented when both policies see the same horizon, but Current Shadow's
+calendar horizon is UTC and the canonical parser resolves relative dates in
+`Africa/Lagos`. At 23:00 UTC these dates differ, so no date is shifted to force a
+match. The old identity-state artifact ancestry and optional post-core email also
+remain migration blockers. Issue-comment grammar remains explicit and retained;
+P4.4H neither removes the trigger nor migrates its caller.
+
+No Current Shadow run, provider request, workflow dispatch, or email/share-code
+operation is performed by this review. Live canonical SHADOW successor proof
+requires separate owner authorization. No caller migration or workflow retirement
+is authorized; P4.4 and Architecture Checkpoint E remain incomplete. While this
+review is unmerged the source-review counter is 0/5; a merge would make it 1/5 and
+require an immediate source reread before another remediation mission.
+
 There is no email or notification step in this core workflow. Notification capability
 mapping remains `PENDING_P4_3_CAPABILITY_MAPPING`. The existing
 At the P4.2 checkpoint, `current-shadow-all-market.yml` and
