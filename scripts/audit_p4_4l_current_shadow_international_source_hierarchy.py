@@ -396,8 +396,19 @@ def expected_receipt() -> dict[str, Any]:
 
 
 def _validate_receipt(value: Any) -> dict[str, Any]:
-    if type(value) is not dict or value != expected_receipt():
+    expected = expected_receipt()
+    if type(value) is not dict:
         raise P44LReviewError("P4.4L receipt differs from deterministic expected evidence")
+    mismatched_fields = sorted(
+        key
+        for key in set(value) | set(expected)
+        if value.get(key) != expected.get(key)
+    )
+    if mismatched_fields:
+        raise P44LReviewError(
+            "P4.4L receipt differs from deterministic expected evidence: "
+            + ", ".join(mismatched_fields)
+        )
     if value.get("canonical_sha256") != _canonical_sha(value):
         raise P44LReviewError("P4.4L canonical receipt SHA-256 mismatch")
     architecture = value["prior_architecture"]
