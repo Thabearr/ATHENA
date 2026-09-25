@@ -363,7 +363,7 @@ def _read_canonical(path: Path) -> dict[str, Any]:
     return value
 
 
-def _verify_base() -> None:
+def _verify_base() -> bool:
     head = _git("rev-parse", "HEAD").decode().strip()
     trusted_pr_event = False
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request":
@@ -392,11 +392,34 @@ def _verify_base() -> None:
     except subprocess.CalledProcessError:
         if not trusted_pr_event:
             raise P44HReviewError("exact P4.4H base is not in current history")
+    return trusted_pr_event
+
+
+def _verify_base_source_identity(path: str, pair: tuple[str, str], *, trusted_pr_event: bool) -> None:
+    """Bind a protected source to P4.4H base, tolerating only trusted shallow PR checkouts.
+
+    GitHub's depth-1 synthetic pull-request checkout may omit the exact base commit
+    object. In that case the event must bind the exact base SHA, and the checked-out
+    source must independently retain the reviewed base identity. If the base commit
+    is present, its tree is authoritative and is checked directly.
+    """
+    expected = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
+    try:
+        _git("cat-file", "-e", BASE_MAIN)
+    except P44HReviewError:
+        if not trusted_pr_event:
+            raise P44HReviewError(f"exact P4.4H base object unavailable for {path}")
+        if _identity(path) != expected:
+            raise P44HReviewError(f"shallow P4.4H checkout source identity differs from reviewed base: {path}")
+        return
+
+    if evolution.source_identity(_git("show", f"{BASE_MAIN}:{path}")) != expected:
+        raise P44HReviewError(f"authorized base source identity differs: {path}")
 
 
 def audit(*, check_live: bool = True) -> dict[str, Any]:
     try:
-        _verify_base()
+        trusted_pr_event = _verify_base()
         expected = expected_receipt()
         receipt = _read_canonical(RECEIPT_PATH)
         if receipt != expected or receipt.get("canonical_sha256") != _canonical_sha(receipt):
@@ -436,8 +459,8 @@ def audit(*, check_live: bool = True) -> dict[str, Any]:
             for path, pair in FRESH_HOLDOUT_IDENTITIES.items():
                 if _identity(path) != {"git_blob_sha1": pair[0], "source_sha256": pair[1]}:
                     raise P44HReviewError(f"Fresh Holdout source identity drift: {path}")
-            if evolution.source_identity(_git("show", f"{BASE_MAIN}:{CURRENT_SHADOW}")) != {"git_blob_sha1": EXPECTED_IDENTITIES[CURRENT_SHADOW][0], "source_sha256": EXPECTED_IDENTITIES[CURRENT_SHADOW][1]} or evolution.source_identity(_git("show", f"{BASE_MAIN}:{ATHENA_RUN}")) != {"git_blob_sha1": EXPECTED_IDENTITIES[ATHENA_RUN][0], "source_sha256": EXPECTED_IDENTITIES[ATHENA_RUN][1]}:
-                raise P44HReviewError("Current Shadow / athena-run YAML differs from authorized base")
+            for path in (CURRENT_SHADOW, ATHENA_RUN):
+                _verify_base_source_identity(path, EXPECTED_IDENTITIES[path], trusted_pr_event=trusted_pr_event)
         return receipt
     except (OSError, ValueError, AssertionError, json.JSONDecodeError) as exc:
         if isinstance(exc, P44HReviewError):

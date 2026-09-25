@@ -29,6 +29,41 @@ def test_review_receipt_is_source_bound_and_live_audit_passes() -> None:
     assert value["review_execution"]["workflow_dispatch_during_pr"] is False
 
 
+def test_base_source_identity_allows_only_trusted_shallow_pr_checkout(monkeypatch) -> None:
+    path = audit.CURRENT_SHADOW
+    pair = audit.EXPECTED_IDENTITIES[path]
+    expected = {"git_blob_sha1": pair[0], "source_sha256": pair[1]}
+
+    def missing_base_object(*args: str) -> bytes:
+        assert args == ("cat-file", "-e", audit.BASE_MAIN)
+        raise audit.P44HReviewError("base commit object is absent in depth-1 checkout")
+
+    monkeypatch.setattr(audit, "_git", missing_base_object)
+    monkeypatch.setattr(audit, "_identity", lambda selected: expected)
+
+    # Trusted PR event binding is established by _verify_base before this helper.
+    audit._verify_base_source_identity(path, pair, trusted_pr_event=True)
+    with pytest.raises(audit.P44HReviewError, match="base object unavailable"):
+        audit._verify_base_source_identity(path, pair, trusted_pr_event=False)
+
+
+def test_shallow_base_fallback_still_rejects_current_source_identity_drift(monkeypatch) -> None:
+    path = audit.ATHENA_RUN
+    pair = audit.EXPECTED_IDENTITIES[path]
+
+    def missing_base_object(*args: str) -> bytes:
+        raise audit.P44HReviewError("base commit object is absent in depth-1 checkout")
+
+    monkeypatch.setattr(audit, "_git", missing_base_object)
+    monkeypatch.setattr(
+        audit,
+        "_identity",
+        lambda selected: {"git_blob_sha1": "0" * 40, "source_sha256": "0" * 64},
+    )
+    with pytest.raises(audit.P44HReviewError, match="shallow P4.4H checkout source identity differs"):
+        audit._verify_base_source_identity(path, pair, trusted_pr_event=True)
+
+
 def test_valid_explicit_shadow_request_pairs_are_exact() -> None:
     parity = audit._request_parity()
     valid = parity["valid_request_pairs"]
