@@ -365,6 +365,28 @@ def test_existing_uefa_club_source_name_path_precedes_international_fallback() -
     assert "Current Shadow international source identity" not in note
 
 
+def test_known_looking_international_label_without_qualified_primary_id_stays_unreviewed() -> None:
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                match_id=88006,
+                league_id=777777,
+                primary_id=999999,
+                competition_name="UEFA Nations League A Grp. 1",
+                competition_ccode="INT",
+                kickoff=REVIEWED + dt.timedelta(seconds=1800),
+            ),
+        )
+    )
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    assert result.exact_competition_identity_count == 0
+    assert result.policy_approved_count == 0
+    assert result.review_bundle.unreviewed_count == 1
+
+
 def test_production_builder_never_invokes_shadow_international_resolver(monkeypatch) -> None:
     def unexpected(**kwargs):
         raise AssertionError("production PR243 invoked the P4.4L Shadow-only bridge")

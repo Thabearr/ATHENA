@@ -235,6 +235,7 @@ def _validate_policy() -> None:
         "test_shadow_mixed_club_and_international_card_admits_each_through_own_path",
         "test_pure_club_source_resolution_retains_existing_reviewed_note_semantics",
         "test_production_builder_never_invokes_shadow_international_resolver",
+        "test_known_looking_international_label_without_qualified_primary_id_stays_unreviewed",
     ):
         if f"def {test_name}(" not in tests_source:
             raise P44LReviewError("required mixed/pure-scope or production-isolation regression missing")
