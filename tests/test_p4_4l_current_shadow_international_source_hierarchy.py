@@ -96,6 +96,18 @@ def test_current_architecture_identity_uses_checked_out_head_in_shallow_checkout
     assert architecture["workflow_count"] == audit.WORKFLOW_COUNT
 
 
+def test_source_identity_hashes_committed_blob_bytes_across_checkout_line_endings() -> None:
+    path = "domain/current_shadow_fotmob_international_source_identity.py"
+    committed_bytes = audit._git("show", f"HEAD:{path}")
+
+    source_identity = audit._source_identity(path)
+
+    assert source_identity["git_blob_sha1"] == audit._git(
+        "rev-parse", f"HEAD:{path}"
+    ).decode("ascii").strip()
+    assert source_identity["source_sha256"] == audit._sha256(committed_bytes)
+
+
 @pytest.mark.parametrize(
     ("section", "key", "replacement"),
     [

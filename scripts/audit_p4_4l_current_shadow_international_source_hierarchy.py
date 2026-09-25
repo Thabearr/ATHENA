@@ -84,9 +84,10 @@ def _canonical_sha(value: dict[str, Any]) -> str:
 
 
 def _source_identity(path: str) -> dict[str, str]:
-    root = Path(__file__).resolve().parents[1]
-    raw = (root / path).read_bytes()
-    blob = _git("hash-object", "--", path).decode("ascii").strip()
+    # Hash the committed blob bytes rather than checkout bytes: Windows may
+    # materialize CRLF while hosted Linux checkouts use LF for the same blob.
+    raw = _git("show", f"HEAD:{path}")
+    blob = _git("rev-parse", f"HEAD:{path}").decode("ascii").strip()
     return {"git_blob_sha1": blob, "source_sha256": _sha256(raw)}
 
 
