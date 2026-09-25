@@ -7,8 +7,26 @@ import inspect
 import json
 from pathlib import Path
 import subprocess
+from unittest.mock import patch
 from typing import Any
+import datetime as dt
 
+import domain.fotmob_fixture_candidates as candidate_module
+import domain.current_fotmob_fixture_review_policy as review_policy
+from domain.fotmob_data_matches_capture import (
+    DATASET_NAME as CAPTURE_DATASET_NAME,
+    SCHEMA_VERSION as CAPTURE_SCHEMA_VERSION,
+)
+from domain.fotmob_fixture_candidate_review import FixtureCandidateReviewDisposition
+from domain.fotmob_fixture_candidates import (
+    DATASET_NAME as CANDIDATE_DATASET_NAME,
+    SCHEMA_VERSION as CANDIDATE_SCHEMA_VERSION,
+    SOURCE_NAME,
+    FixtureCandidateReviewStatus,
+    FotMobFixtureCandidate,
+    FotMobFixtureCandidateBundle,
+    FotMobFixtureCandidateSource,
+)
 from domain.ingest_contracts import canonical_json_bytes, strict_json_loads
 from domain import current_shadow_fotmob_international_source_identity as identity
 from config.competition_review_priority import (
@@ -171,6 +189,28 @@ def _validate_policy() -> None:
     if observed != EXPECTED_UNQUALIFIED_KEYS:
         raise P44LReviewError("observed-but-unqualified identity set drift")
     payload = identity.international_source_identity_policy_payload()
+    if payload.get("cross_path_identity_conflict_rule") != (
+        "FAIL_CLOSED_WHEN_KNOWN_P4_4L_PRIMARY_ID_CONFLICTS_WITH_EXISTING_SOURCE_NAME_RESOLUTION"
+    ) or payload.get("unknown_primary_id_preserves_existing_reviewed_source_name_path") is not True or payload.get(
+        "observed_unqualified_primary_id_cannot_be_reclassified_by_source_name"
+    ) is not True:
+        raise P44LReviewError("cross-path identity conflict semantics are not policy-bound")
+    if (
+        identity.InternationalSourceCoverageState.__members__.get(
+            "OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED"
+        )
+        is not identity.InternationalSourceCoverageState.OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED
+    ):
+        raise P44LReviewError("observed-unqualified coverage enum member is undefined")
+    enum_references = __import__("re").findall(
+        r"InternationalSourceCoverageState\.([A-Z][A-Z0-9_]*)",
+        inspect.getsource(identity),
+    )
+    if any(
+        member_name not in identity.InternationalSourceCoverageState.__members__
+        for member_name in enum_references
+    ):
+        raise P44LReviewError("international identity policy references an undefined enum member")
     authority = payload.get("authority")
     if not isinstance(authority, dict) or any(
         type(value) is not bool or value is not False for value in authority.values()
@@ -225,13 +265,15 @@ def _validate_policy() -> None:
     policy_source = (root / "domain/current_fotmob_fixture_review_policy.py").read_text(
         encoding="utf-8"
     )
-    required_shadow_guard = "priority is None and policy_id == SHADOW_POLICY_ID"
+    required_shadow_guard = "if policy_id == SHADOW_POLICY_ID:"
     if (
         required_shadow_guard not in policy_source
         or "resolve_current_shadow_international_source_priority(" not in policy_source
         or "reviewed_current_fotmob_international_source_identity(" not in policy_source
+        or "observed_unqualified_current_fotmob_international_source_identity(" not in policy_source
     ):
         raise P44LReviewError("Shadow-only fallback or current exact source path drifted")
+    _validate_cross_path_identity_behavior()
     tests_source = (root / "tests/test_current_fotmob_fixture_review_policy.py").read_text(
         encoding="utf-8"
     )
@@ -240,9 +282,146 @@ def _validate_policy() -> None:
         "test_pure_club_source_resolution_retains_existing_reviewed_note_semantics",
         "test_production_builder_never_invokes_shadow_international_resolver",
         "test_known_looking_international_label_without_qualified_primary_id_stays_unreviewed",
+        "test_shadow_rejects_conflicting_reviewed_name_and_p4_4l_primary_id",
+        "test_shadow_rejects_observed_unqualified_id_reclassified_by_source_name",
+        "test_unknown_p44l_primary_id_preserves_existing_uefa_club_source_name_path",
     ):
         if f"def {test_name}(" not in tests_source:
             raise P44LReviewError("required mixed/pure-scope or production-isolation regression missing")
+
+
+def _identity_contract_fixture_bundle(
+    specs: tuple[tuple[int, int, int, str, str], ...] | None = None,
+) -> FotMobFixtureCandidateBundle:
+    observed = dt.datetime(2026, 8, 27, 7, 0, tzinfo=dt.timezone.utc)
+    raw = b'{"offline_identity_contract":true}\n'
+    raw_sha = _sha256(raw)
+    specs = specs or (
+        (88041, 500, 9806, "Champions League", "INT"),
+        (88042, 500, 13287, "Champions League", "INT"),
+        (88043, 500, 700001, "Champions League", "INT"),
+        (88044, 47, 47, "Premier League", "ENG"),
+        (88045, 500, 9807, "Renamed presentation metadata", "INT"),
+    )
+    source = FotMobFixtureCandidateSource(
+        source_capture_dataset_name=CAPTURE_DATASET_NAME,
+        source_capture_schema_version=CAPTURE_SCHEMA_VERSION,
+        source_capture_manifest_sha256="1" * 64,
+        source_raw_sha256=raw_sha,
+        source_raw_size=len(raw),
+        source_observed_at=observed,
+        request_date="20260827",
+        timezone="UTC",
+        ccode3="NGA",
+        schema_assessment_sha256="2" * 64,
+        candidate_count=len(specs),
+    )
+    candidates = tuple(
+        sorted(
+            (
+                FotMobFixtureCandidate(
+                    review_status=FixtureCandidateReviewStatus.UNREVIEWED,
+                    source=SOURCE_NAME,
+                    source_match_id=match_id,
+                    source_league_id=league_id,
+                    source_competition_primary_id=primary_id,
+                    source_competition_name=competition_name,
+                    source_competition_ccode=ccode,
+                    home_source_team_id=1000 + match_id,
+                    home_name=f"Home {match_id}",
+                    home_long_name=f"Home {match_id}",
+                    away_source_team_id=2000 + match_id,
+                    away_name=f"Away {match_id}",
+                    away_long_name=f"Away {match_id}",
+                    kickoff_utc=dt.datetime(2026, 8, 27, 15, 0, tzinfo=dt.timezone.utc),
+                    source_capture_manifest_sha256=source.source_capture_manifest_sha256,
+                    source_raw_sha256=raw_sha,
+                    source_request_date=source.request_date,
+                    source_observed_at=observed,
+                )
+                for match_id, league_id, primary_id, competition_name, ccode in specs
+            ),
+            key=candidate_module._candidate_sort_key,
+        )
+    )
+    duplicate_count, fixture_conflicts = candidate_module._make_fixture_observations(
+        candidates
+    )
+    team_conflicts = candidate_module._make_team_conflicts(candidates)
+    competition_conflicts = candidate_module._make_competition_conflicts(candidates)
+    return FotMobFixtureCandidateBundle(
+        schema_version=CANDIDATE_SCHEMA_VERSION,
+        dataset_name=CANDIDATE_DATASET_NAME,
+        sources=(source,),
+        candidate_count=len(candidates),
+        candidates=candidates,
+        duplicate_source_match_id_count=duplicate_count,
+        fixture_identity_conflict_count=len(fixture_conflicts),
+        fixture_identity_conflicts=fixture_conflicts,
+        team_identity_conflict_count=len(team_conflicts),
+        team_identity_conflicts=team_conflicts,
+        competition_identity_conflict_count=len(competition_conflicts),
+        competition_identity_conflicts=competition_conflicts,
+        safety=candidate_module._default_safety(),
+    )
+
+
+def _validate_cross_path_identity_behavior() -> None:
+    reviewed_at = dt.datetime(2026, 8, 27, 7, 5, tzinfo=dt.timezone.utc)
+    cases = (
+        ((88041, 500, 9806, "Champions League", "INT"), False),
+        ((88042, 500, 13287, "Champions League", "INT"), False),
+        ((88043, 500, 700001, "Champions League", "INT"), True),
+        ((88044, 47, 47, "Premier League", "ENG"), True),
+    )
+    for (match_id, league_id, primary_id, name, ccode), expected_approval in cases:
+        result = review_policy.build_current_shadow_fotmob_fixture_review_policy_result(
+            _identity_contract_fixture_bundle(
+                ((match_id, league_id, primary_id, name, ccode),)
+            ),
+            reviewed_at=reviewed_at,
+        )
+        if result.policy_approved_count != int(expected_approval):
+            raise P44LReviewError(
+                f"Current Shadow cross-path identity behavior drift for {ccode}:{primary_id}"
+            )
+
+    mixed = review_policy.build_current_shadow_fotmob_fixture_review_policy_result(
+        _identity_contract_fixture_bundle(
+            (
+                (88044, 47, 47, "Premier League", "ENG"),
+                (88045, 500, 9807, "Renamed presentation metadata", "INT"),
+            )
+        ),
+        reviewed_at=reviewed_at,
+    )
+    if mixed.policy_approved_count != 2:
+        raise P44LReviewError("valid mixed club/international source card was suppressed")
+
+    def unexpected(**kwargs: Any) -> None:
+        raise P44LReviewError("production PR243 invoked the Shadow international bridge")
+
+    with patch.object(
+        review_policy,
+        "resolve_current_shadow_international_source_priority",
+        unexpected,
+    ), patch.object(
+        review_policy,
+        "reviewed_current_fotmob_international_source_identity",
+        unexpected,
+    ), patch.object(
+        review_policy,
+        "observed_unqualified_current_fotmob_international_source_identity",
+        unexpected,
+    ):
+        production = review_policy.build_current_fotmob_fixture_review_policy_result(
+            _identity_contract_fixture_bundle(
+                ((88043, 500, 700001, "Champions League", "INT"),)
+            ),
+            reviewed_at=reviewed_at,
+        )
+    if production.policy_approved_count != 1:
+        raise P44LReviewError("production source-name path changed under P4.4L")
 
 
 def expected_receipt() -> dict[str, Any]:
@@ -268,6 +447,19 @@ def expected_receipt() -> dict[str, Any]:
             "policy_id": identity.POLICY_ID,
             "policy_sha256": identity.international_source_identity_policy_sha256(),
             "identity_semantics": policy_payload["identity_semantics"],
+            "cross_path_identity_conflict_rule": policy_payload[
+                "cross_path_identity_conflict_rule"
+            ],
+            "unknown_primary_id_preserves_existing_reviewed_source_name_path": (
+                policy_payload[
+                    "unknown_primary_id_preserves_existing_reviewed_source_name_path"
+                ]
+            ),
+            "observed_unqualified_primary_id_cannot_be_reclassified_by_source_name": (
+                policy_payload[
+                    "observed_unqualified_primary_id_cannot_be_reclassified_by_source_name"
+                ]
+            ),
             "coverage": policy_payload["coverage"],
             "observed_unqualified_identities": policy_payload[
                 "observed_unqualified_identities"

@@ -54,6 +54,7 @@ from domain.fotmob_fixture_candidates import (
 )
 from domain.current_shadow_fotmob_international_source_identity import (
     POLICY_ID as CURRENT_SHADOW_INTERNATIONAL_SOURCE_IDENTITY_POLICY_ID,
+    observed_unqualified_current_fotmob_international_source_identity,
     resolve_current_shadow_international_source_priority,
     reviewed_current_fotmob_international_source_identity,
 )
@@ -356,8 +357,21 @@ def _build_current_fotmob_fixture_review_policy_result(
             candidate.source_competition_name,
         )
         international_identity = None
-        if priority is None and policy_id == SHADOW_POLICY_ID:
-            international_identity = (
+        if policy_id == SHADOW_POLICY_ID:
+            observed_unqualified_identity = (
+                observed_unqualified_current_fotmob_international_source_identity(
+                    source_competition_ccode=candidate.source_competition_ccode,
+                    source_competition_primary_id=(
+                        candidate.source_competition_primary_id
+                    ),
+                )
+            )
+            if observed_unqualified_identity is not None and priority is not None:
+                # Do not launder a specifically observed-but-unqualified family
+                # into an unrelated reviewed identity through presentation text.
+                continue
+
+            known_international_identity = (
                 reviewed_current_fotmob_international_source_identity(
                     source_competition_ccode=candidate.source_competition_ccode,
                     source_competition_primary_id=(
@@ -365,13 +379,35 @@ def _build_current_fotmob_fixture_review_policy_result(
                     ),
                 )
             )
-            if international_identity is not None:
-                priority = resolve_current_shadow_international_source_priority(
-                    source_competition_ccode=candidate.source_competition_ccode,
-                    source_competition_primary_id=(
-                        candidate.source_competition_primary_id
-                    ),
+            if known_international_identity is not None:
+                international_priority = (
+                    resolve_current_shadow_international_source_priority(
+                        source_competition_ccode=candidate.source_competition_ccode,
+                        source_competition_primary_id=(
+                            candidate.source_competition_primary_id
+                        ),
+                    )
                 )
+                if priority is not None:
+                    if international_priority is None or (
+                        priority.scope,
+                        priority.canonical_name,
+                        priority.priority_band,
+                        priority.rank,
+                        priority.kind,
+                    ) != (
+                        international_priority.scope,
+                        international_priority.canonical_name,
+                        international_priority.priority_band,
+                        international_priority.rank,
+                        international_priority.kind,
+                    ):
+                        # Two independently reviewed source identities disagree;
+                        # neither one is authoritative for this candidate.
+                        continue
+                else:
+                    priority = international_priority
+                    international_identity = known_international_identity
         if priority is None:
             continue
         exact_competition_count += 1

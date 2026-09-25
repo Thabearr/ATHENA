@@ -46,6 +46,9 @@ class InternationalSourceCoverageState(str, Enum):
     NO_REVIEWED_CURRENT_SOURCE_IDENTITY_EVIDENCE = (
         "NO_REVIEWED_CURRENT_SOURCE_IDENTITY_EVIDENCE"
     )
+    OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED = (
+        "OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED"
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -299,6 +302,22 @@ def reviewed_current_fotmob_international_source_identity(
     return _IDENTITY_BY_KEY.get((source_competition_ccode, source_competition_primary_id))
 
 
+def observed_unqualified_current_fotmob_international_source_identity(
+    *,
+    source_competition_ccode: Any,
+    source_competition_primary_id: Any,
+) -> ObservedUnqualifiedInternationalSourceIdentity | None:
+    """Return an exact observed-but-unqualified key, never by display name."""
+
+    if type(source_competition_ccode) is not str or source_competition_ccode != "INT":
+        return None
+    if type(source_competition_primary_id) is not int:
+        return None
+    return _OBSERVED_UNQUALIFIED_BY_KEY.get(
+        (source_competition_ccode, source_competition_primary_id)
+    )
+
+
 def international_source_identity_policy_payload() -> dict[str, Any]:
     """Build the deterministic, evidence-backed identity policy payload."""
 
@@ -349,6 +368,11 @@ def international_source_identity_policy_payload() -> dict[str, Any]:
         "schema_version": POLICY_SCHEMA_VERSION,
         "policy_id": POLICY_ID,
         "identity_semantics": "EXACT_FOTMOB_SOURCE_SCOPED_CCODE_AND_PRIMARY_ID",
+        "cross_path_identity_conflict_rule": (
+            "FAIL_CLOSED_WHEN_KNOWN_P4_4L_PRIMARY_ID_CONFLICTS_WITH_EXISTING_SOURCE_NAME_RESOLUTION"
+        ),
+        "unknown_primary_id_preserves_existing_reviewed_source_name_path": True,
+        "observed_unqualified_primary_id_cannot_be_reclassified_by_source_name": True,
         "p4_4k_evidence": {
             "workflow_run_id": P4_4K_WORKFLOW_RUN_ID,
             "exact_main_sha": P4_4K_EXACT_MAIN_SHA,
@@ -407,7 +431,7 @@ def international_source_identity_policy_sha256() -> str:
     return hashlib.sha256(canonical_international_source_identity_policy_bytes()).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "2c6f0a8737520166aa1226e2b2ff0377bc418d4c93856fcef9afc0aacbb884dd"
+PINNED_POLICY_SHA256 = "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b"
 
 
 __all__ = [
@@ -428,6 +452,7 @@ __all__ = [
     "international_hierarchy_coverage_table",
     "international_source_identity_policy_payload",
     "international_source_identity_policy_sha256",
+    "observed_unqualified_current_fotmob_international_source_identity",
     "resolve_current_shadow_international_source_priority",
     "reviewed_current_fotmob_international_source_identity",
 ]

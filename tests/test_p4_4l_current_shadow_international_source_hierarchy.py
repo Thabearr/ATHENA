@@ -14,8 +14,13 @@ def test_p4_4l_receipt_audits_full_hierarchy_and_p4_4k_replay() -> None:
         "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1"
     )
     assert receipt["policy"]["policy_sha256"] == (
-        "2c6f0a8737520166aa1226e2b2ff0377bc418d4c93856fcef9afc0aacbb884dd"
+        "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b"
     )
+    assert receipt["policy"]["cross_path_identity_conflict_rule"] == (
+        "FAIL_CLOSED_WHEN_KNOWN_P4_4L_PRIMARY_ID_CONFLICTS_WITH_EXISTING_SOURCE_NAME_RESOLUTION"
+    )
+    assert receipt["policy"]["unknown_primary_id_preserves_existing_reviewed_source_name_path"] is True
+    assert receipt["policy"]["observed_unqualified_primary_id_cannot_be_reclassified_by_source_name"] is True
     coverage = receipt["policy"]["coverage"]
     assert len(coverage) == 12
     assert {row["priority_band"] for row in coverage} == {

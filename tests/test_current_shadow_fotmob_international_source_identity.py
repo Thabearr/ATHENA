@@ -24,6 +24,7 @@ from domain.current_shadow_fotmob_international_source_identity import (
     international_hierarchy_coverage_table,
     international_source_identity_policy_payload,
     international_source_identity_policy_sha256,
+    observed_unqualified_current_fotmob_international_source_identity,
     resolve_current_shadow_international_source_priority,
     reviewed_current_fotmob_international_source_identity,
 )
@@ -192,12 +193,40 @@ def test_13287_is_explicitly_observed_but_unqualified() -> None:
         )
         is None
     )
+    assert observed_unqualified_current_fotmob_international_source_identity(
+        source_competition_ccode="INT",
+        source_competition_primary_id=13287,
+    ) is observed
+    assert observed_unqualified_current_fotmob_international_source_identity(
+        source_competition_ccode="NGA",
+        source_competition_primary_id=13287,
+    ) is None
+    assert observed_unqualified_current_fotmob_international_source_identity(
+        source_competition_ccode="INT",
+        source_competition_primary_id=True,
+    ) is None
+    assert observed_unqualified_current_fotmob_international_source_identity(
+        source_competition_ccode="INT",
+        source_competition_primary_id=999999,
+    ) is None
+
+
+def test_observed_unqualified_coverage_state_is_defined() -> None:
+    assert (
+        InternationalSourceCoverageState.OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED.value
+        == "OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED"
+    )
 
 
 def test_policy_payload_is_deterministic_and_p4_4k_anchors_are_exact() -> None:
     payload = international_source_identity_policy_payload()
     assert payload == copy.deepcopy(international_source_identity_policy_payload())
     assert payload["policy_id"] == POLICY_ID
+    assert payload["cross_path_identity_conflict_rule"] == (
+        "FAIL_CLOSED_WHEN_KNOWN_P4_4L_PRIMARY_ID_CONFLICTS_WITH_EXISTING_SOURCE_NAME_RESOLUTION"
+    )
+    assert payload["unknown_primary_id_preserves_existing_reviewed_source_name_path"] is True
+    assert payload["observed_unqualified_primary_id_cannot_be_reclassified_by_source_name"] is True
     assert payload["p4_4k_evidence"] == {
         "workflow_run_id": 36136878384,
         "exact_main_sha": "b17e97dbea043d45d47db9ad2011354fe4682baf",

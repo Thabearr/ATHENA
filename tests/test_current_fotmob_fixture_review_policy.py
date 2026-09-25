@@ -342,14 +342,60 @@ def test_pure_club_source_resolution_retains_existing_reviewed_note_semantics() 
     )
 
 
-def test_existing_uefa_club_source_name_path_precedes_international_fallback() -> None:
+@pytest.mark.parametrize("primary_id", [9806, 9807, 9808, 9821, 10608, 114, 10437, 9833])
+def test_shadow_rejects_conflicting_reviewed_name_and_p4_4l_primary_id(primary_id: int) -> None:
     result = build_current_shadow_fotmob_fixture_review_policy_result(
         _bundle(
             (
                 _seed_candidate(
                     match_id=88004,
                     league_id=500,
-                    primary_id=9806,
+                    primary_id=primary_id,
+                    competition_name="Champions League",
+                    competition_ccode="INT",
+                    kickoff=REVIEWED + dt.timedelta(seconds=1800),
+                ),
+            )
+        ),
+        reviewed_at=REVIEWED,
+    )
+    assert result.policy_approved_count == 0
+    assert result.review_bundle.unreviewed_count == 1
+    assert not any(
+        decision.disposition is FixtureCandidateReviewDisposition.APPROVED
+        for decision in result.review_bundle.decisions
+    )
+
+
+def test_shadow_rejects_observed_unqualified_id_reclassified_by_source_name() -> None:
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        _bundle(
+            (
+                _seed_candidate(
+                    match_id=88007,
+                    league_id=500,
+                    primary_id=13287,
+                    competition_name="Champions League",
+                    competition_ccode="INT",
+                    kickoff=REVIEWED + dt.timedelta(seconds=1800),
+                ),
+            )
+        ),
+        reviewed_at=REVIEWED,
+    )
+    assert result.policy_approved_count == 0
+    assert result.exact_competition_identity_count == 0
+    assert result.review_bundle.unreviewed_count == 1
+
+
+def test_unknown_p44l_primary_id_preserves_existing_uefa_club_source_name_path() -> None:
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        _bundle(
+            (
+                _seed_candidate(
+                    match_id=88008,
+                    league_id=500,
+                    primary_id=700001,
                     competition_name="Champions League",
                     competition_ccode="INT",
                     kickoff=REVIEWED + dt.timedelta(seconds=1800),
@@ -399,6 +445,11 @@ def test_production_builder_never_invokes_shadow_international_resolver(monkeypa
     monkeypatch.setattr(
         review_policy_module,
         "reviewed_current_fotmob_international_source_identity",
+        unexpected,
+    )
+    monkeypatch.setattr(
+        review_policy_module,
+        "observed_unqualified_current_fotmob_international_source_identity",
         unexpected,
     )
     bundle = _bundle(
