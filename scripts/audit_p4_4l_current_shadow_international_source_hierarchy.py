@@ -2,14 +2,15 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import hashlib
 import inspect
 import json
+import re
 from pathlib import Path
 import subprocess
 from unittest.mock import patch
 from typing import Any
-import datetime as dt
 
 import domain.fotmob_fixture_candidates as candidate_module
 import domain.current_fotmob_fixture_review_policy as review_policy
@@ -202,7 +203,7 @@ def _validate_policy() -> None:
         is not identity.InternationalSourceCoverageState.OBSERVED_IDENTITY_NOT_HIERARCHY_QUALIFIED
     ):
         raise P44LReviewError("observed-unqualified coverage enum member is undefined")
-    enum_references = __import__("re").findall(
+    enum_references = re.findall(
         r"InternationalSourceCoverageState\.([A-Z][A-Z0-9_]*)",
         inspect.getsource(identity),
     )
