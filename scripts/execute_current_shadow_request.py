@@ -71,7 +71,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _selected_source_issuer(selected_dates: tuple[str, ...]):
-    def issue(*, repository_root: Path):
+    def issue(*, repository_root: Path, execute_live_network: bool = True):
         try:
             request_dates = fixture_dates.validate_fixture_dates(
                 selected_dates,
@@ -89,7 +89,7 @@ def _selected_source_issuer(selected_dates: tuple[str, ...]):
                     request_date=request_date,
                     timezone="UTC",
                     ccode3="NGA",
-                    execute_live_network=True,
+                    execute_live_network=execute_live_network,
                     repository_root=repository_root,
                 )
             except runner.current_fotmob_source.CurrentFotMobReviewedSourceError as exc:
