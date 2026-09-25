@@ -52,6 +52,11 @@ from domain.fotmob_fixture_candidates import (
     FotMobFixtureCandidateSource,
     sha256_fotmob_fixture_candidate_bundle,
 )
+from domain.current_shadow_fotmob_international_source_identity import (
+    POLICY_ID as CURRENT_SHADOW_INTERNATIONAL_SOURCE_IDENTITY_POLICY_ID,
+    resolve_current_shadow_international_source_priority,
+    reviewed_current_fotmob_international_source_identity,
+)
 
 
 SCHEMA_VERSION = 1
@@ -350,6 +355,23 @@ def _build_current_fotmob_fixture_review_policy_result(
             candidate.source_competition_ccode,
             candidate.source_competition_name,
         )
+        international_identity = None
+        if priority is None and policy_id == SHADOW_POLICY_ID:
+            international_identity = (
+                reviewed_current_fotmob_international_source_identity(
+                    source_competition_ccode=candidate.source_competition_ccode,
+                    source_competition_primary_id=(
+                        candidate.source_competition_primary_id
+                    ),
+                )
+            )
+            if international_identity is not None:
+                priority = resolve_current_shadow_international_source_priority(
+                    source_competition_ccode=candidate.source_competition_ccode,
+                    source_competition_primary_id=(
+                        candidate.source_competition_primary_id
+                    ),
+                )
         if priority is None:
             continue
         exact_competition_count += 1
@@ -376,6 +398,34 @@ def _build_current_fotmob_fixture_review_policy_result(
         if candidate.kickoff_utc < lead_floor:
             lead_excluded += 1
             continue
+        if international_identity is None:
+            decision_notes = (
+                f"{policy_id}; exact reviewed source competition "
+                f"{candidate.source_competition_ccode}:{candidate.source_competition_name}; "
+                f"canonical={priority.canonical_name}; rank={priority.rank}; "
+                f"minimum_lead_seconds={minimum_lead}; "
+                f"max_source_age_seconds={max_source_age}; "
+                f"source_request_date={source.request_date}; "
+                f"source_timezone={source.timezone}"
+            )
+        else:
+            decision_notes = (
+                f"{policy_id}; Current Shadow international source identity; "
+                f"source_competition_ccode={international_identity.source_competition_ccode}; "
+                "source_competition_primary_id="
+                f"{international_identity.source_competition_primary_id}; "
+                f"canonical={priority.canonical_name}; "
+                f"priority_band={priority.priority_band}; "
+                f"competition_kind={priority.kind.value}; rank={priority.rank}; "
+                f"source_display_name_metadata={candidate.source_competition_name}; "
+                f"source_identity_policy_id="
+                f"{CURRENT_SHADOW_INTERNATIONAL_SOURCE_IDENTITY_POLICY_ID}; "
+                f"review_policy_id={SHADOW_POLICY_ID}; "
+                f"minimum_lead_seconds={minimum_lead}; "
+                f"max_source_age_seconds={max_source_age}; "
+                f"source_request_date={source.request_date}; "
+                f"source_timezone={source.timezone}"
+            )
         decisions.append(
             FotMobFixtureCandidateReviewDecision(
                 source_capture_manifest_sha256=candidate.source_capture_manifest_sha256,
@@ -384,15 +434,7 @@ def _build_current_fotmob_fixture_review_policy_result(
                 disposition=FixtureCandidateReviewDisposition.APPROVED,
                 reviewed_at=reviewed,
                 reviewer_reference=reviewer_reference,
-                notes=(
-                    f"{policy_id}; exact reviewed source competition "
-                    f"{candidate.source_competition_ccode}:{candidate.source_competition_name}; "
-                    f"canonical={priority.canonical_name}; rank={priority.rank}; "
-                    f"minimum_lead_seconds={minimum_lead}; "
-                    f"max_source_age_seconds={max_source_age}; "
-                    f"source_request_date={source.request_date}; "
-                    f"source_timezone={source.timezone}"
-                ),
+                notes=decision_notes,
             )
         )
 

@@ -8,6 +8,8 @@ import inspect
 import pytest
 
 import domain.fotmob_fixture_candidates as candidate_module
+import domain.current_shadow_fotmob_international_source_identity as international_identity
+import domain.current_fotmob_fixture_review_policy as review_policy_module
 from domain.current_fotmob_fixture_review_policy import (
     DEFAULT_MAX_SOURCE_AGE_SECONDS,
     DEFAULT_MINIMUM_LEAD_SECONDS,
@@ -65,6 +67,7 @@ def _candidate(
     *,
     match_id: int,
     league_id: int = 10,
+    primary_id: int | None = None,
     competition_name: str = "Premier League",
     competition_ccode: str = "ENG",
     home_id: int = 101,
@@ -78,7 +81,9 @@ def _candidate(
         source=SOURCE_NAME,
         source_match_id=match_id,
         source_league_id=league_id,
-        source_competition_primary_id=league_id,
+        source_competition_primary_id=(
+            league_id if primary_id is None else primary_id
+        ),
         source_competition_name=competition_name,
         source_competition_ccode=competition_ccode,
         home_source_team_id=home_id,
@@ -102,6 +107,7 @@ def _bundle(candidates: tuple[FotMobFixtureCandidate, ...]) -> FotMobFixtureCand
             source,
             match_id=item.source_match_id,
             league_id=item.source_league_id,
+            primary_id=item.source_competition_primary_id,
             competition_name=item.source_competition_name,
             competition_ccode=item.source_competition_ccode,
             home_id=item.home_source_team_id,
@@ -220,6 +226,177 @@ def test_current_shadow_v2_rejects_1799_seconds() -> None:
     assert result.lead_window_excluded_count == 1
     assert result.policy_approved_count == 0
     assert result.review_bundle.unreviewed_count == 1
+
+
+@pytest.mark.parametrize(
+    ("primary_id", "canonical", "band", "kind"),
+    [
+        (9806, "Nations League", "INT-D", "INTERNATIONAL_NATIONS_LEAGUE"),
+        (9807, "Nations League", "INT-D", "INTERNATIONAL_NATIONS_LEAGUE"),
+        (9808, "Nations League", "INT-D", "INTERNATIONAL_NATIONS_LEAGUE"),
+        (9821, "Nations League", "INT-D", "INTERNATIONAL_NATIONS_LEAGUE"),
+        (
+            10608,
+            "Continental Championship Qualification",
+            "INT-C",
+            "INTERNATIONAL_QUALIFIER",
+        ),
+        (114, "International Friendly", "INT-F", "INTERNATIONAL_FRIENDLY"),
+        (10437, "Youth / Olympic International", "INT-G", "INTERNATIONAL_YOUTH"),
+        (9833, "Youth / Olympic International", "INT-G", "INTERNATIONAL_YOUTH"),
+    ],
+)
+def test_p44l_exact_international_primary_id_is_shadow_only(
+    primary_id, canonical, band, kind
+) -> None:
+    candidate = _seed_candidate(
+        match_id=primary_id,
+        league_id=900000 + primary_id,
+        primary_id=primary_id,
+        competition_name="Renamed source presentation metadata",
+        competition_ccode="INT",
+        kickoff=REVIEWED + dt.timedelta(seconds=SHADOW_MINIMUM_LEAD_SECONDS),
+    )
+    bundle = _bundle((candidate,))
+
+    shadow = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    assert shadow.exact_competition_identity_count == 1
+    assert shadow.policy_approved_count == 1
+    note = shadow.review_bundle.decisions[0].notes
+    assert "Current Shadow international source identity" in note
+    assert "source_competition_ccode=INT" in note
+    assert f"source_competition_primary_id={primary_id}" in note
+    assert f"canonical={canonical}" in note
+    assert f"priority_band={band}" in note
+    assert f"competition_kind={kind}" in note
+    assert "source_display_name_metadata=Renamed source presentation metadata" in note
+    assert "source_identity_policy_id=ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1" in note
+    assert "review_policy_id=ATHENA_CURRENT_SHADOW_FOTMOB_FIXTURE_IDENTITY_POLICY_V2" in note
+    assert "minimum_lead_seconds=1800" in note
+    assert "max_source_age_seconds=900" in note
+    assert "source_request_date=20260827" in note
+    assert "source_timezone=UTC" in note
+    assert all(value is False for value in shadow.safety.values())
+
+    production = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    assert production.exact_competition_identity_count == 0
+    assert production.policy_approved_count == 0
+
+
+def test_shadow_mixed_club_and_international_card_admits_each_through_own_path() -> None:
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                match_id=88001,
+                league_id=47,
+                primary_id=47,
+                competition_name="Premier League",
+                competition_ccode="ENG",
+                kickoff=REVIEWED + dt.timedelta(seconds=1800),
+            ),
+            _seed_candidate(
+                match_id=88002,
+                league_id=920741,
+                primary_id=9806,
+                competition_name="Presentation wrapper changed",
+                competition_ccode="INT",
+                kickoff=REVIEWED + dt.timedelta(seconds=1800),
+            ),
+        )
+    )
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    assert result.policy_approved_count == 2
+    by_match = {
+        decision.source_match_id: decision.notes
+        for decision in result.review_bundle.decisions
+    }
+    assert "exact reviewed source competition ENG:Premier League" in by_match[88001]
+    assert "Current Shadow international source identity" in by_match[88002]
+    assert "source_competition_primary_id=9806" in by_match[88002]
+    assert international_identity.resolve_current_shadow_international_source_priority(
+        source_competition_ccode="INT",
+        source_competition_primary_id=9806,
+    ).priority_band == "INT-D"
+
+
+def test_pure_club_source_resolution_retains_existing_reviewed_note_semantics() -> None:
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        _bundle((_seed_candidate(match_id=88003),)),
+        reviewed_at=REVIEWED,
+    )
+    assert result.policy_approved_count == 1
+    assert result.review_bundle.decisions[0].notes == (
+        "ATHENA_CURRENT_SHADOW_FOTMOB_FIXTURE_IDENTITY_POLICY_V2; exact reviewed "
+        "source competition ENG:Premier League; canonical=Premier League; rank=10; "
+        "minimum_lead_seconds=1800; max_source_age_seconds=900; "
+        "source_request_date=20260827; source_timezone=UTC"
+    )
+
+
+def test_existing_uefa_club_source_name_path_precedes_international_fallback() -> None:
+    result = build_current_shadow_fotmob_fixture_review_policy_result(
+        _bundle(
+            (
+                _seed_candidate(
+                    match_id=88004,
+                    league_id=500,
+                    primary_id=9806,
+                    competition_name="Champions League",
+                    competition_ccode="INT",
+                    kickoff=REVIEWED + dt.timedelta(seconds=1800),
+                ),
+            )
+        ),
+        reviewed_at=REVIEWED,
+    )
+    assert result.policy_approved_count == 1
+    note = result.review_bundle.decisions[0].notes
+    assert "exact reviewed source competition INT:Champions League" in note
+    assert "canonical=UEFA Champions League" in note
+    assert "Current Shadow international source identity" not in note
+
+
+def test_production_builder_never_invokes_shadow_international_resolver(monkeypatch) -> None:
+    def unexpected(**kwargs):
+        raise AssertionError("production PR243 invoked the P4.4L Shadow-only bridge")
+
+    monkeypatch.setattr(
+        review_policy_module,
+        "resolve_current_shadow_international_source_priority",
+        unexpected,
+    )
+    monkeypatch.setattr(
+        review_policy_module,
+        "reviewed_current_fotmob_international_source_identity",
+        unexpected,
+    )
+    bundle = _bundle(
+        (
+            _seed_candidate(
+                match_id=88005,
+                league_id=777,
+                primary_id=9806,
+                competition_name="Renamed international metadata",
+                competition_ccode="INT",
+                kickoff=REVIEWED + dt.timedelta(seconds=3600),
+            ),
+        )
+    )
+    result = build_current_fotmob_fixture_review_policy_result(
+        bundle,
+        reviewed_at=REVIEWED,
+    )
+    assert result.exact_competition_identity_count == 0
+    assert result.policy_approved_count == 0
 
 
 def test_legacy_pr243_accepts_exactly_3600_seconds() -> None:
