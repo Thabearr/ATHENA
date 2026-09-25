@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+  "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "6b39648cac4e9924c0809d60dddc9c5d5660ad77",
+  "issue_337_diagnostic_evidence_comment_id": 5840014421,
+  "diagnostic_authorization": {
+    "authorization_consumed": true,
+    "request_count": 4,
+    "maximum_requests": 4,
+    "retry_count": 0,
+    "provider_requests_during_this_pr_implementation": 0,
+    "workflow_dispatches_during_this_pr_implementation": 0
+  },
+  "source_contract": {
+    "provider": "SportyBet",
+    "provider_region": "Nigeria",
+    "source_method": "PUBLIC_ANONYMOUS_FACTS_CENTER_PC_UPCOMING_EVENTS_GET",
+    "origin": "https://www.sportybet.com",
+    "endpoint_path": "/api/ng/factsCenter/pcUpcomingEvents",
+    "not_endpoint_path": [
+      "/api/ng/factsCenter/pc/upcomingEvents",
+      "/api/ng/factsCenter/wapConfigurableUpcomingEvents"
+    ],
+    "fixed_query": {
+      "sportId": "sr:sport:1",
+      "marketId": 1,
+      "pageSize": 100,
+      "pageNum": "1-through-20-positive-integer",
+      "todayGames": false,
+      "timeline": 48,
+      "_t": "response-scoped-positive-epoch-millisecond-request-nonce"
+    },
+    "request_headers": {
+      "Accept": "application/json",
+      "Accept-Language": "en-NG,en;q=0.9",
+      "OperId": "2",
+      "User-Agent": "ATHENA/1.0 sportybet-current-event-discovery"
+    },
+    "anonymous_no_cookie_or_authorization": true,
+    "coverage_horizon_hours": 48,
+    "market_filter": 1,
+    "runtime_owner_status": "EVIDENCE_QUALIFIED_CANDIDATE_NOT_RUNTIME_OWNER"
+  },
+  "diagnostic_pages": [
+    {
+      "page_num": 1,
+      "request_target": "/api/ng/factsCenter/pcUpcomingEvents?sportId=sr%3Asport%3A1&marketId=1&pageSize=100&pageNum=1&todayGames=false&timeline=48&_t=1790371922118",
+      "http_status": 200,
+      "response_completed_utc": "2026-09-25T21:32:56.419Z",
+      "raw_bytes": 206280,
+      "raw_sha256": "4db55291edf5f1cee3c2348aad4dd1ba5e59c6448d785a8154e70b37539e7367",
+      "bizCode": 10000,
+      "totalNum": 1148,
+      "tournament_count": 15,
+      "event_count": 100
+    },
+    {
+      "page_num": 2,
+      "request_target": "/api/ng/factsCenter/pcUpcomingEvents?sportId=sr%3Asport%3A1&marketId=1&pageSize=100&pageNum=2&todayGames=false&timeline=48&_t=1790371985712",
+      "http_status": 200,
+      "response_completed_utc": "2026-09-25T21:33:48.923Z",
+      "raw_bytes": 200718,
+      "raw_sha256": "8cf628647aaff4c9711545361a7b7c48773052b88b2122bfc7af8d009a9dcd6a",
+      "bizCode": 10000,
+      "totalNum": 1148,
+      "tournament_count": 15,
+      "event_count": 100
+    },
+    {
+      "page_num": 3,
+      "request_target": "/api/ng/factsCenter/pcUpcomingEvents?sportId=sr%3Asport%3A1&marketId=1&pageSize=100&pageNum=3&todayGames=false&timeline=48&_t=1790372038297",
+      "http_status": 200,
+      "response_completed_utc": "2026-09-25T21:34:38.553Z",
+      "raw_bytes": 200230,
+      "raw_sha256": "7426e8b3813461b9de625d9d796f542d9ca06bc5220f4079b9a41b949df8a88b",
+      "bizCode": 10000,
+      "totalNum": 1148,
+      "tournament_count": 14,
+      "event_count": 100
+    }
+  ],
+  "diagnostic_capture_assessment": {
+    "captured_event_count": 300,
+    "unique_event_count_across_pages": 300,
+    "match_status_absent_rows": 20,
+    "match_status_absent_rows_by_page": {
+      "1": 1,
+      "2": 17,
+      "3": 2
+    },
+    "missing_match_status_treatment": "PRESERVED_NULL_NOT_INFERRED_AND_NOT_PREMATCH_BOOKABLE",
+    "provider_totalNum": 1148,
+    "pagination_complete": false,
+    "pagination_exhausted_in_diagnostic": false,
+    "global_page_integrity": "PASS",
+    "page_1_contains_club_and_international": true,
+    "page_1_club_event_count": 14,
+    "page_1_and_later_provider_page_distinctness": "PAGES_1_2_3_DISTINCT_AND_100_UNIQUE_EVENTS_EACH",
+    "protocol_deviation": {
+      "pages_2_and_3_unnecessary_under_original_stop_rule": true,
+      "reason": "Page 1 already contained both a club event and the exact CONCACAF Nations League provider family; the earlier diagnostic logic instead continued while searching specifically for a Premier League control.",
+      "maximum_request_count_exceeded": false,
+      "retry_count": 0
+    }
+  },
+  "observed_provider_families": [
+    {
+      "scope_observed": "CLUB",
+      "category_id": "sr:category:26",
+      "category_name": "USA",
+      "tournament_id": "sr:tournament:242",
+      "tournament_name": "MLS",
+      "page_1_event_count": 14,
+      "sample_event_id": "sr:match:66299580",
+      "sample_home": "Atlanta United FC",
+      "sample_away": "New York City FC",
+      "athena_source_family_mapping_added": false
+    },
+    {
+      "scope_observed": "INTERNATIONAL",
+      "category_id": "sr:category:4",
+      "category_name": "International",
+      "tournament_id": "sr:tournament:23755",
+      "tournament_name": "UEFA Nations League",
+      "page_1_event_count": 18,
+      "athena_source_family_mapping_added": false
+    },
+    {
+      "scope_observed": "INTERNATIONAL",
+      "category_id": "sr:category:4",
+      "category_name": "International",
+      "tournament_id": "sr:tournament:1848",
+      "tournament_name": "Africa Cup of Nations Qualification",
+      "page_1_event_count": 2,
+      "athena_source_family_mapping_added": false
+    },
+    {
+      "scope_observed": "INTERNATIONAL",
+      "category_id": "sr:category:4",
+      "category_name": "International",
+      "tournament_id": "sr:tournament:851",
+      "tournament_name": "Int. Friendly Games",
+      "page_1_event_count": 7,
+      "athena_source_family_mapping_added": false
+    },
+    {
+      "scope_observed": "INTERNATIONAL",
+      "category_id": "sr:category:4",
+      "category_name": "International",
+      "tournament_id": "sr:tournament:27420",
+      "tournament_name": "CONCACAF Nations League",
+      "page_1_future_prematch_event_count": 9,
+      "athena_source_family_mapping_added": false
+    },
+    {
+      "scope_observed": "INTERNATIONAL",
+      "category_id": "sr:category:4",
+      "category_name": "International",
+      "tournament_id": "sr:tournament:622",
+      "tournament_name": "Gulf Cup",
+      "page_2_event_count": 2,
+      "athena_source_family_mapping_added": false,
+      "note": "Observed only; no source/provider binding is granted by this receipt."
+    }
+  ],
+  "direct_event_confirmation": {
+    "event_id": "sr:match:73220868",
+    "request_target": "/api/ng/factsCenter/event?productId=3&eventId=sr%3Amatch%3A73220868",
+    "http_status": 200,
+    "response_completed_utc": "2026-09-25T21:36:26.617Z",
+    "raw_bytes": 188113,
+    "raw_sha256": "cfbe9cd146a61c6c66975bfdf311d489b1ecebe54f27a9b4f3b663f03c35fc8e",
+    "bizCode": 10000,
+    "confirmation_result": "PASS",
+    "home_team_id": "sr:competitor:21808",
+    "home_team_name": "Barbados",
+    "away_team_id": "sr:competitor:21820",
+    "away_team_name": "Saint Lucia",
+    "estimate_start_time_utc": "2026-09-26T00:00:00Z",
+    "match_status": "Not start",
+    "booking_status": "Booked",
+    "category_id": "sr:category:4",
+    "category_name": "International",
+    "tournament_id": "sr:tournament:27420",
+    "tournament_name": "CONCACAF Nations League",
+    "market_count": 195
+  },
+  "runtime_and_governance": {
+    "old_current_shadow_runtime_owner": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
+    "current_shadow_runtime_owner_changed": false,
+    "p3_runtime_owner_changed": false,
+    "paginated_runtime_reconciliation_authority": false,
+    "catalog_fanout_runtime_authority": false,
+    "fanout_global_echo_rejection_preserved": true,
+    "international_provider_family_mapping_added": false,
+    "provider_absence_authority": false,
+    "provider_acquisition_during_implementation": false,
+    "provider_request_count_during_implementation": 0,
+    "workflow_dispatch_during_implementation": false,
+    "workflow_dispatch_count_during_implementation": 0,
+    "model_authority": false,
+    "pricing_authority": false,
+    "router_authority": false,
+    "portfolio_authority": false,
+    "share_code_authority": false,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false,
+    "source_review_counter_while_unmerged": "0/5",
+    "source_review_counter_if_merged": "1/5",
+    "p4_4_complete": false,
+    "architecture_checkpoint_e_complete": false,
+    "next_live_proof_authorized": false
+  },
+  "canonical_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+}
