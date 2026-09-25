@@ -17,6 +17,7 @@ from scripts import audit_p4_4h_current_shadow_canonical_run_migration_review as
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 BASE_MAIN = "0066720de62611a3673468597335c3a2c55aacaf"
+P44I_REVIEWED_HEAD = "9ff94e22a161373373900a3e7744311aaab29089"
 POLICY_ID = "ATHENA_P4_4I_SHADOW_SUPERVISOR_FAILURE_EVIDENCE_V1"
 RECEIPT_PATH = Path("artifacts/architecture/p4_4i_shadow_supervisor_failure_evidence_v1.json")
 P44H_RECEIPT_SHA256 = "0000a5978268909dd07330d59079bc4d7f8d32c0fee161653a4a19eea9b97c64"
@@ -264,9 +265,32 @@ def _verify_before_service_identity(*, trusted_pr_event: bool) -> None:
         raise P44IReviewError("P4.4I before-service identity differs from exact main")
 
 
-def audit() -> dict[str, Any]:
+def _historical_changed_paths() -> set[str] | None:
+    """Return P4.4I's frozen diff when its original Git objects are available.
+
+    Later shallow synthetic PR checkouts may omit the old P4.4I objects. Historical
+    validation then relies on the exact immutable receipt and prior-phase identity
+    binding; it must never substitute current HEAD for P4.4I's reviewed head.
+    """
+    for commit in (BASE_MAIN, P44I_REVIEWED_HEAD):
+        try:
+            _git("cat-file", "-e", f"{commit}^{{commit}}")
+        except P44IReviewError:
+            return None
+    if _source_identity(SERVICE_PATH, BASE_MAIN) != SERVICE_BEFORE:
+        raise P44IReviewError("P4.4I historical before-source identity drifted")
+    if _source_identity(SERVICE_PATH, P44I_REVIEWED_HEAD) != SERVICE_AFTER:
+        raise P44IReviewError("P4.4I historical after-source identity drifted")
+    return set(
+        _git("diff", "--name-only", f"{BASE_MAIN}...{P44I_REVIEWED_HEAD}")
+        .decode()
+        .splitlines()
+    )
+
+
+def audit(*, check_live: bool = True) -> dict[str, Any]:
     try:
-        trusted_pr_event = _verify_base()
+        trusted_pr_event = _verify_base() if check_live else False
         value = _validate_receipt(_read_canonical(RECEIPT_PATH))
 
         historical_h = p44h.audit(check_live=False)
@@ -276,48 +300,55 @@ def audit() -> dict[str, Any]:
         ):
             raise P44IReviewError("immutable P4.4H receipt drifted")
 
-        service_identity = _worktree_source_identity(SERVICE_PATH)
-        if service_identity != SERVICE_AFTER:
-            raise P44IReviewError("Current Shadow supervisor evidence implementation identity drifted")
-        _verify_before_service_identity(trusted_pr_event=trusted_pr_event)
+        p44g.audit(check_live=check_live)
+        if check_live:
+            service_identity = _worktree_source_identity(SERVICE_PATH)
+            if service_identity != SERVICE_AFTER:
+                raise P44IReviewError("Current Shadow supervisor evidence implementation identity drifted")
+            _verify_before_service_identity(trusted_pr_event=trusted_pr_event)
 
-        if _git("rev-parse", "HEAD:.github/workflows").decode().strip() != WORKFLOW_TREE_SHA1:
-            raise P44IReviewError("workflow tree changed during P4.4I evidence-only correction")
-        workflow_paths = _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows").decode().splitlines()
-        if sum(path.endswith((".yml", ".yaml")) for path in workflow_paths) != WORKFLOW_COUNT:
-            raise P44IReviewError("workflow count changed")
+            if _git("rev-parse", "HEAD:.github/workflows").decode().strip() != WORKFLOW_TREE_SHA1:
+                raise P44IReviewError("workflow tree changed during P4.4I evidence-only correction")
+            workflow_paths = _git("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows").decode().splitlines()
+            if sum(path.endswith((".yml", ".yaml")) for path in workflow_paths) != WORKFLOW_COUNT:
+                raise P44IReviewError("workflow count changed")
 
-        ledger = _read_canonical(evolution.LEDGER_PATH)
-        if (
-            ledger.get("canonical_sha256") != EVOLUTION_SHA256
-            or evolution.canonical_sha256(ledger) != EVOLUTION_SHA256
-            or len(ledger.get("transitions", [])) != 6
-        ):
-            raise P44IReviewError("workflow evolution ledger changed")
-        retirement_state = retirement.validate_retirement_history()
-        if (
-            retirement_state.get("canonical_sha256") != RETIREMENT_SHA256
-            or retirement_state.get("current_retired_workflow_count") != RETIRED_COUNT
-        ):
-            raise P44IReviewError("P4.3 retirement history changed")
-        p44g.audit(check_live=False)
+            ledger = _read_canonical(evolution.LEDGER_PATH)
+            if (
+                ledger.get("canonical_sha256") != EVOLUTION_SHA256
+                or evolution.canonical_sha256(ledger) != EVOLUTION_SHA256
+                or len(ledger.get("transitions", [])) != 6
+            ):
+                raise P44IReviewError("workflow evolution ledger changed")
+            retirement_state = retirement.validate_retirement_history()
+            if (
+                retirement_state.get("canonical_sha256") != RETIREMENT_SHA256
+                or retirement_state.get("current_retired_workflow_count") != RETIRED_COUNT
+            ):
+                raise P44IReviewError("P4.3 retirement history changed")
 
-        try:
-            changed_paths = set(
-                _git("diff", "--name-only", f"{BASE_MAIN}...HEAD").decode().splitlines()
-            )
-        except P44IReviewError:
-            if not trusted_pr_event:
-                raise
+            try:
+                changed_paths = set(
+                    _git("diff", "--name-only", f"{BASE_MAIN}...HEAD").decode().splitlines()
+                )
+            except P44IReviewError:
+                if not trusted_pr_event:
+                    raise
+            else:
+                for line in _git("status", "--porcelain", "--untracked-files=all").decode().splitlines():
+                    if len(line) >= 4:
+                        path = line[3:]
+                        if path not in LOCAL_TEST_DIAGNOSTIC_PATHS:
+                            changed_paths.add(path)
+                if changed_paths != EXPECTED_CHANGED_PATHS:
+                    raise P44IReviewError(
+                        "P4.4I changed-file scope differs from the reviewed evidence-only envelope"
+                    )
         else:
-            for line in _git("status", "--porcelain", "--untracked-files=all").decode().splitlines():
-                if len(line) >= 4:
-                    path = line[3:]
-                    if path not in LOCAL_TEST_DIAGNOSTIC_PATHS:
-                        changed_paths.add(path)
-            if changed_paths != EXPECTED_CHANGED_PATHS:
+            changed_paths = _historical_changed_paths()
+            if changed_paths is not None and changed_paths != EXPECTED_CHANGED_PATHS:
                 raise P44IReviewError(
-                    "P4.4I changed-file scope differs from the reviewed evidence-only envelope"
+                    "P4.4I historical changed-file scope differs from its reviewed head"
                 )
         return value
     except (OSError, ValueError, AssertionError, json.JSONDecodeError) as exc:
@@ -335,7 +366,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.write:
             RECEIPT_PATH.parent.mkdir(parents=True, exist_ok=True)
             RECEIPT_PATH.write_bytes(canonical_json_bytes(expected_receipt()))
-        receipt = audit()
+        receipt = audit(check_live=True)
         print(f"P4.4I supervisor failure evidence audit: PASS ({receipt['canonical_sha256']})")
         return 0
     except (P44IReviewError, OSError, ValueError) as exc:

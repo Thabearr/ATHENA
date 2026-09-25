@@ -233,3 +233,39 @@ the supervisor exits zero. It does not change football/source behavior, add a
 timeout, dispatch a workflow, or acquire provider data. P4.4I does not complete
 the live successor proof, migrate callers, authorize retirement, or complete P4.4
 or Architecture Checkpoint E.
+
+## P4.4J explicit-date Current Shadow issuer network-control seam
+
+Canonical SHADOW run `36119049997` ran once at exact main
+`301f5d13ca8f60392c52d8ff132e8740b9b979bb` for `2026-09-25`, target 20. The
+canonical request SHA-256 was
+`af5b8c5de987f4dacd286f734dd57be7f17b7d0091d743e373c63683cfa1e69e`; artifact
+10856121902 (`athena-run-36119049997`) had ZIP SHA-256
+`d3cfc66ad2786304c2ca0c18f86d02c9a2597901a8d25c3ce5999fb0b30329a3`. Its
+canonical receipt SHA-256 was
+`918678993d2f08df3779e3ebf103e7acfa1c3ff8bd118e9306f6c4c7382db8e9`, and the
+inner Current Shadow receipt SHA-256 was
+`6e78b117cf95b5aee2ea121dd203d68d41c7c70a1c6899135cef308228c37c02`.
+
+GitHub reported control-plane `success`, while the business result was
+`SOURCE_INCOMPLETE`, with zero selected legs, shortfall 20, no share-code result,
+and `wager_placed=false`. P4.4I's evidence-preservation guard correctly recorded
+`supervisor_returncode=1`, rejected the provisional terminal receipt, and
+preserved the bounded failure text. The exact source failure was
+`TypeError: _selected_source_issuer.<locals>.issue() got an unexpected keyword
+argument 'execute_live_network'`. This identifies a call-signature/network-control
+passthrough mismatch in the explicit-date compatibility issuer; it is not evidence
+of a provider-data, fixture, football-model, SportyBet, Router, or Portfolio
+failure.
+
+P4.4J corrects that seam offline: the selected-date issuer accepts the runner's
+`execute_live_network` keyword, forwards its exact value, and retains the
+reviewed default of `true`. Explicit UTC date validation/order/horizon, exact
+`STATUS_NO_FIXTURES` skip behavior, other exception propagation, and unconditional
+temporary issuer restoration remain unchanged. P4.4J does not perform a provider
+request, workflow dispatch, or live proof; it does not change workflow YAML,
+caller ownership, timeout, or authority. The single live authorization was
+consumed by run `36119049997`; retries are zero and no retry is authorized. The
+live canonical SHADOW successor blocker remains OPEN and requires separate owner
+authorization for any future proof. P4.4, Architecture Checkpoint E, caller
+migration, and workflow retirement remain incomplete/unauthorized.

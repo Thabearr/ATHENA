@@ -31,6 +31,7 @@ def _args(tmp_path: Path, dates=None):
 def test_selected_source_issuer_calls_only_requested_non_contiguous_dates(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "_now", lambda: NOW)
     calls = []
+    network_flags = []
     values = {
         "20260908": SimpleNamespace(name="tue"),
         "20260910": SimpleNamespace(name="thu"),
@@ -39,6 +40,7 @@ def test_selected_source_issuer_calls_only_requested_non_contiguous_dates(monkey
     def issue(**kwargs):
         request_date = kwargs["request_date"]
         calls.append(request_date)
+        network_flags.append(kwargs["execute_live_network"])
         return values[request_date]
 
     monkeypatch.setattr(
@@ -47,10 +49,39 @@ def test_selected_source_issuer_calls_only_requested_non_contiguous_dates(monkey
         issue,
     )
     issuer = request_cli._selected_source_issuer(("20260910", "20260908"))
-    sources, attempted = issuer(repository_root=tmp_path)
+    sources, attempted = issuer(repository_root=tmp_path, execute_live_network=False)
     assert attempted == ("20260908", "20260910")
     assert calls == ["20260908", "20260910"]
+    assert network_flags == [False, False]
     assert sources == ((values["20260908"], "20260908"), (values["20260910"], "20260910"))
+
+
+@pytest.mark.parametrize("explicit_value", [None, True])
+def test_selected_source_issuer_preserves_live_default_and_true(monkeypatch, tmp_path, explicit_value):
+    monkeypatch.setattr(runner, "_now", lambda: NOW)
+    network_flags = []
+
+    def issue(**kwargs):
+        network_flags.append(kwargs["execute_live_network"])
+        return SimpleNamespace(request_date=kwargs["request_date"])
+
+    monkeypatch.setattr(
+        runner.current_fotmob_source,
+        "issue_current_shadow_fotmob_reviewed_source",
+        issue,
+    )
+    issuer = request_cli._selected_source_issuer(("20260908",))
+    if explicit_value is None:
+        sources, attempted = issuer(repository_root=tmp_path)
+    else:
+        sources, attempted = issuer(
+            repository_root=tmp_path,
+            execute_live_network=explicit_value,
+        )
+
+    assert attempted == ("20260908",)
+    assert sources[0][1] == "20260908"
+    assert network_flags == [True]
 
 
 def test_selected_source_issuer_skips_only_exact_no_fixture_status(monkeypatch, tmp_path):
@@ -132,6 +163,54 @@ def test_explicit_worker_binds_exact_count_and_restores_all_compatibility(monkey
     assert diagnostic["state_counts"] == {}
     assert diagnostic["authority"]["production_model"] is False
     assert diagnostic["wager_placed"] is False
+
+
+def test_explicit_worker_issuer_accepts_runner_network_control_and_restores(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "_now", lambda: NOW)
+    original_issuer = runner._issue_current_fixture_sources
+    attempted_calls = []
+    expected = {
+        "20260908": SimpleNamespace(name="tue"),
+        "20260910": SimpleNamespace(name="thu"),
+    }
+
+    def source_issue(**kwargs):
+        attempted_calls.append(kwargs)
+        return expected[kwargs["request_date"]]
+
+    monkeypatch.setattr(
+        runner.current_fotmob_source,
+        "issue_current_shadow_fotmob_reviewed_source",
+        source_issue,
+    )
+
+    def execute(args):
+        # This is the exact keyword contract used by acquire_current_shadow_pre_router_bundle.
+        return runner._issue_current_fixture_sources(
+            repository_root=tmp_path,
+            execute_live_network=False,
+        )
+
+    monkeypatch.setattr(daily, "_execute_worker", execute)
+    args = _args(tmp_path, ("20260910", "20260908"))
+    result = request_cli._execute_worker(args)
+
+    assert result == (
+        ((expected["20260908"], "20260908"), (expected["20260910"], "20260910")),
+        ("20260908", "20260910"),
+    )
+    assert [call["request_date"] for call in attempted_calls] == ["20260908", "20260910"]
+    assert [call["execute_live_network"] for call in attempted_calls] == [False, False]
+    assert runner._issue_current_fixture_sources is original_issuer
+
+    policy = json.loads((tmp_path / request_cli.REQUEST_POLICY_FILENAME).read_text())
+    assert policy["authority"]["production_model"] is False
+    assert policy["authority"]["pricing"] is False
+    assert policy["authority"]["selection"] is False
+    assert policy["authority"]["sportybet_execution"] is False
+    assert policy["authority"]["bet"] is False
+    assert policy["authority"]["wager_placed"] is False
+    assert policy["wager_placed"] is False
 
 
 def test_diagnostic_write_failure_is_non_authoritative(monkeypatch, tmp_path):
