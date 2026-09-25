@@ -92,11 +92,14 @@ def _source_identity(path: str) -> dict[str, str]:
 
 def _current_architecture_identity() -> dict[str, Any]:
     root = Path(__file__).resolve().parents[1]
-    workflows_tree = _git("rev-parse", f"{BASE_MAIN}:.github/workflows").decode(
+    # Hosted pull_request checkouts are intentionally shallow and may not have
+    # BASE_MAIN's commit object.  The current checked-out merge/head tree is
+    # available and must still equal the frozen reviewed workflow identity.
+    workflows_tree = _git("rev-parse", "HEAD:.github/workflows").decode(
         "ascii"
     ).strip()
     workflow_paths = _git(
-        "ls-tree", "-r", "--name-only", BASE_MAIN, ".github/workflows"
+        "ls-tree", "-r", "--name-only", "HEAD", ".github/workflows"
     ).decode("utf-8").splitlines()
     evolution = json.loads(
         (root / "artifacts/architecture/p4_workflow_evolution_ledger_v1.json").read_text(

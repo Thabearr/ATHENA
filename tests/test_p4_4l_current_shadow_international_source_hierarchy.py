@@ -72,6 +72,30 @@ def test_p4_4l_receipt_audits_full_hierarchy_and_p4_4k_replay() -> None:
     assert replay["current_shadow_policy_request_date_excluded_count"] == 0
 
 
+def test_current_architecture_identity_uses_checked_out_head_in_shallow_checkout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original_git = audit._git
+    calls: list[tuple[str, ...]] = []
+
+    def shallow_git(*args: str) -> bytes:
+        calls.append(args)
+        if audit.BASE_MAIN in args or any(
+            argument.startswith(f"{audit.BASE_MAIN}:") for argument in args
+        ):
+            raise AssertionError("shallow hosted audit must not require the base object")
+        return original_git(*args)
+
+    monkeypatch.setattr(audit, "_git", shallow_git)
+
+    architecture = audit._current_architecture_identity()
+
+    assert ("rev-parse", "HEAD:.github/workflows") in calls
+    assert ("ls-tree", "-r", "--name-only", "HEAD", ".github/workflows") in calls
+    assert architecture["workflow_tree_sha1"] == audit.WORKFLOW_TREE_SHA1
+    assert architecture["workflow_count"] == audit.WORKFLOW_COUNT
+
+
 @pytest.mark.parametrize(
     ("section", "key", "replacement"),
     [
