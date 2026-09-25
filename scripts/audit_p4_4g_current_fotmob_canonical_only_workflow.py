@@ -501,6 +501,9 @@ def _historical_p44g_changed_paths(
             raise P44GCanonicalOnlyWorkflowAuditError(
                 "P4.4G reviewed merge is not in the current main/PR history"
             )
+    else:
+        _require_trusted_shallow_ci_context()
+
     result = subprocess.run(
         ["git", "diff", "--name-only", f"{BASE_MAIN}...{P44G_REVIEWED_HEAD}"],
         capture_output=True,

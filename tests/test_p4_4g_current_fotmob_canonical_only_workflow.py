@@ -258,36 +258,35 @@ def test_historical_diff_is_pinned_to_p44g_reviewed_head_not_future_head(monkeyp
     assert len(diff_commands) == 1
 
 
-def test_historical_scope_uses_available_base_and_reviewed_head_without_merge_object(
+def test_historical_scope_requires_trusted_context_when_merge_object_is_missing(
     monkeypatch,
 ) -> None:
     expected_ledger, _, _ = audit.build_evidence()
     current_ledger = evolution.validate_current_state()
-    diff_commands: list[list[str]] = []
-
-    def tracking_run(args, capture_output=False):
-        if args[:3] == ["git", "diff", "--name-only"]:
-            diff_commands.append(args)
-            assert args[3] == f"{audit.BASE_MAIN}...{audit.P44G_REVIEWED_HEAD}"
-            return SimpleNamespace(
-                returncode=0,
-                stdout=("\n".join(sorted(audit.EXPECTED_CHANGED_PATHS)) + "\n").encode("utf-8"),
-                stderr=b"",
-            )
-        raise AssertionError(args)
 
     monkeypatch.setattr(
         audit,
         "_commit_object_available",
         lambda commit: commit != audit.P44G_MERGE_COMMIT,
     )
-    monkeypatch.setattr(audit.subprocess, "run", tracking_run)
-    for name in ("GITHUB_EVENT_NAME", "GITHUB_EVENT_PATH", "GITHUB_SHA", "GITHUB_REF"):
+    for name in (
+        "GITHUB_EVENT_NAME",
+        "GITHUB_EVENT_PATH",
+        "GITHUB_SHA",
+        "GITHUB_REF",
+        "GITHUB_REPOSITORY",
+    ):
         monkeypatch.delenv(name, raising=False)
 
-    paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
-    assert paths == audit.EXPECTED_CHANGED_PATHS
-    assert len(diff_commands) == 1
+    def unexpected_subprocess(*args, **kwargs):
+        raise AssertionError(f"historical diff must not run without trusted context: {args}")
+
+    monkeypatch.setattr(audit.subprocess, "run", unexpected_subprocess)
+    with pytest.raises(
+        audit.P44GCanonicalOnlyWorkflowAuditError,
+        match="trusted current main pull_request or push binding",
+    ):
+        audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
 
 
 def test_synthetic_reviewed_cumulative_extension_preserves_p44g_prefix_and_snapshot(
@@ -418,6 +417,52 @@ def _configure_trusted_shallow_push(
 
     monkeypatch.setattr(audit, "_git", fake_git)
     return event, event_path
+
+
+def test_historical_scope_with_missing_merge_object_requires_and_accepts_trusted_push(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path)
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+    available_objects = {
+        audit.BASE_MAIN: True,
+        audit.P44G_REVIEWED_HEAD: True,
+        audit.P44G_MERGE_COMMIT: False,
+    }
+    checked_objects: list[str] = []
+    diff_commands: list[list[str]] = []
+
+    def commit_available(commit: str) -> bool:
+        checked_objects.append(commit)
+        return available_objects[commit]
+
+    def tracking_run(args, **kwargs):
+        if args[:3] != ["git", "diff", "--name-only"]:
+            raise AssertionError(args)
+        diff_commands.append(args)
+        assert args == [
+            "git",
+            "diff",
+            "--name-only",
+            f"{audit.BASE_MAIN}...{audit.P44G_REVIEWED_HEAD}",
+        ]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=("\n".join(sorted(audit.EXPECTED_CHANGED_PATHS)) + "\n").encode(
+                "utf-8"
+            ),
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(audit, "_commit_object_available", commit_available)
+    monkeypatch.setattr(audit.subprocess, "run", tracking_run)
+
+    paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+    assert paths == audit.EXPECTED_CHANGED_PATHS
+    assert set(checked_objects) == set(available_objects)
+    assert len(diff_commands) == 1
 
 
 def test_shallow_main_push_is_trusted_only_for_exact_checked_out_main(
