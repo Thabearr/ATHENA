@@ -258,6 +258,37 @@ def test_historical_diff_is_pinned_to_p44g_reviewed_head_not_future_head(monkeyp
     assert len(diff_commands) == 1
 
 
+def test_historical_scope_requires_trusted_context_when_merge_object_is_missing(
+    monkeypatch,
+) -> None:
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+
+    monkeypatch.setattr(
+        audit,
+        "_commit_object_available",
+        lambda commit: commit != audit.P44G_MERGE_COMMIT,
+    )
+    for name in (
+        "GITHUB_EVENT_NAME",
+        "GITHUB_EVENT_PATH",
+        "GITHUB_SHA",
+        "GITHUB_REF",
+        "GITHUB_REPOSITORY",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def unexpected_subprocess(*args, **kwargs):
+        raise AssertionError(f"historical diff must not run without trusted context: {args}")
+
+    monkeypatch.setattr(audit.subprocess, "run", unexpected_subprocess)
+    with pytest.raises(
+        audit.P44GCanonicalOnlyWorkflowAuditError,
+        match="trusted current main pull_request or push binding",
+    ):
+        audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+
 def test_synthetic_reviewed_cumulative_extension_preserves_p44g_prefix_and_snapshot(
     monkeypatch,
 ) -> None:
@@ -340,3 +371,222 @@ def test_shallow_pr_historical_scope_requires_current_main_event_and_prefix(
         match="trusted current main pull_request binding",
     ):
         audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+
+def _configure_trusted_shallow_push(
+    monkeypatch,
+    tmp_path: Path,
+    *,
+    github_ref: str = "refs/heads/main",
+    github_sha: str = "a" * 40,
+    event_ref: str = "refs/heads/main",
+    event_after: str | None = None,
+    deleted: bool = False,
+    repository_name: str = "Thabearr/ATHENA",
+    default_branch: str = "main",
+    repository_env: str | None = "Thabearr/ATHENA",
+    checkout_sha: str | None = None,
+) -> tuple[dict, Path]:
+    event_path = tmp_path / "push-event.json"
+    event = {
+        "ref": event_ref,
+        "after": event_after if event_after is not None else github_sha,
+        "deleted": deleted,
+        "repository": {
+            "full_name": repository_name,
+            "default_branch": default_branch,
+        },
+    }
+    event_path.write_text(json.dumps(event), encoding="utf-8")
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", github_ref)
+    monkeypatch.setenv("GITHUB_SHA", github_sha)
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    if repository_env is None:
+        monkeypatch.delenv("GITHUB_REPOSITORY", raising=False)
+    else:
+        monkeypatch.setenv("GITHUB_REPOSITORY", repository_env)
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: False)
+
+    actual_checkout_sha = checkout_sha if checkout_sha is not None else github_sha
+
+    def fake_git(*args):
+        if args == ("rev-parse", "HEAD"):
+            return actual_checkout_sha.encode("ascii")
+        raise AssertionError(args)
+
+    monkeypatch.setattr(audit, "_git", fake_git)
+    return event, event_path
+
+
+def test_historical_scope_with_missing_merge_object_requires_and_accepts_trusted_push(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path)
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+    available_objects = {
+        audit.BASE_MAIN: True,
+        audit.P44G_REVIEWED_HEAD: True,
+        audit.P44G_MERGE_COMMIT: False,
+    }
+    checked_objects: list[str] = []
+    diff_commands: list[list[str]] = []
+
+    def commit_available(commit: str) -> bool:
+        checked_objects.append(commit)
+        return available_objects[commit]
+
+    def tracking_run(args, **kwargs):
+        if args[:3] != ["git", "diff", "--name-only"]:
+            raise AssertionError(args)
+        diff_commands.append(args)
+        assert args == [
+            "git",
+            "diff",
+            "--name-only",
+            f"{audit.BASE_MAIN}...{audit.P44G_REVIEWED_HEAD}",
+        ]
+        return SimpleNamespace(
+            returncode=0,
+            stdout=("\n".join(sorted(audit.EXPECTED_CHANGED_PATHS)) + "\n").encode(
+                "utf-8"
+            ),
+            stderr=b"",
+        )
+
+    monkeypatch.setattr(audit, "_commit_object_available", commit_available)
+    monkeypatch.setattr(audit.subprocess, "run", tracking_run)
+
+    paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+    assert paths == audit.EXPECTED_CHANGED_PATHS
+    assert set(checked_objects) == set(available_objects)
+    assert len(diff_commands) == 1
+
+
+def test_shallow_main_push_is_trusted_only_for_exact_checked_out_main(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path)
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = copy.deepcopy(expected_ledger)
+    current_ledger["transitions"].append({"transition_id": "LATER_REVIEWED_PREFIX"})
+
+    assert audit._historical_p44g_changed_paths(current_ledger, expected_ledger) is None
+
+
+def test_live_audit_passes_with_trusted_shallow_main_push_context(
+    monkeypatch, tmp_path: Path
+) -> None:
+    exact_main = audit._git("rev-parse", "HEAD").decode("ascii").strip()
+    event_path = tmp_path / "main-push-event.json"
+    event_path.write_text(
+        json.dumps(
+            {
+                "ref": "refs/heads/main",
+                "after": exact_main,
+                "deleted": False,
+                "repository": {
+                    "full_name": "Thabearr/ATHENA",
+                    "default_branch": "main",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "push")
+    monkeypatch.setenv("GITHUB_REF", "refs/heads/main")
+    monkeypatch.setenv("GITHUB_SHA", exact_main)
+    monkeypatch.setenv("GITHUB_REPOSITORY", "Thabearr/ATHENA")
+    monkeypatch.setenv("GITHUB_EVENT_PATH", str(event_path))
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: False)
+
+    receipt = audit.audit(check_live=True)
+    assert receipt["canonical_sha256"] == audit.expected_receipt()["canonical_sha256"]
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        {"github_ref": "refs/heads/release"},
+        {"event_ref": "refs/heads/release"},
+        {"github_ref": "refs/tags/v1.0.0", "event_ref": "refs/tags/v1.0.0"},
+        {"event_after": "b" * 40},
+        {"checkout_sha": "c" * 40},
+        {"repository_name": "attacker/ATHENA"},
+        {"repository_env": "attacker/ATHENA"},
+        {"default_branch": "release"},
+        {"deleted": True},
+        {"github_sha": "A" * 40},
+        {"github_sha": "not-a-canonical-sha"},
+    ],
+)
+def test_shallow_main_push_rejects_mismatched_event_bindings(
+    monkeypatch, tmp_path: Path, override: dict
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path, **override)
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+
+    with pytest.raises(
+        audit.P44GCanonicalOnlyWorkflowAuditError,
+        match="trusted current main push binding",
+    ):
+        audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+
+@pytest.mark.parametrize("event_state", ["missing", "malformed"])
+def test_shallow_push_rejects_missing_or_malformed_event(
+    monkeypatch, tmp_path: Path, event_state: str
+) -> None:
+    _, event_path = _configure_trusted_shallow_push(monkeypatch, tmp_path)
+    if event_state == "missing":
+        monkeypatch.setenv("GITHUB_EVENT_PATH", str(tmp_path / "absent-event.json"))
+    else:
+        event_path.write_text("{not-json", encoding="utf-8")
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+
+    with pytest.raises(
+        audit.P44GCanonicalOnlyWorkflowAuditError,
+        match="trusted current main push",
+    ):
+        audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+
+def test_shallow_push_rejects_local_unknown_event_without_historical_objects(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path)
+    monkeypatch.setenv("GITHUB_EVENT_NAME", "workflow_dispatch")
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+
+    with pytest.raises(
+        audit.P44GCanonicalOnlyWorkflowAuditError,
+        match="trusted current main pull_request or push binding",
+    ):
+        audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
+
+
+def test_trusted_push_cannot_bypass_mutated_p44g_evolution_prefix(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path)
+    expected_ledger, _, _ = audit.build_evidence()
+    mutated_current = copy.deepcopy(expected_ledger)
+    mutated_current["transitions"][5]["transition_id"] = "MUTATED_P44G_PREFIX"
+
+    with pytest.raises(audit.P44GCanonicalOnlyWorkflowAuditError, match="transition prefix"):
+        audit._historical_p44g_changed_paths(mutated_current, expected_ledger)
+
+
+def test_shallow_main_push_allows_absent_repository_env_when_event_binds_repo(
+    monkeypatch, tmp_path: Path
+) -> None:
+    _configure_trusted_shallow_push(monkeypatch, tmp_path, repository_env=None)
+    expected_ledger, _, _ = audit.build_evidence()
+    current_ledger = evolution.validate_current_state()
+
+    assert audit._historical_p44g_changed_paths(current_ledger, expected_ledger) is None

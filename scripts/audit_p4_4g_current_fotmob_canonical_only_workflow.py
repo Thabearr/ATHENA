@@ -379,31 +379,78 @@ def _commit_object_available(commit: str) -> bool:
     ).returncode == 0
 
 
-def _require_trusted_shallow_pull_request_context() -> None:
-    """Bind a shallow historical audit to its current PR event, not P4.4G's old base."""
-    if os.environ.get("GITHUB_EVENT_NAME") != "pull_request":
-        raise P44GCanonicalOnlyWorkflowAuditError(
-            "P4.4G historical Git objects are unavailable outside a trusted pull_request checkout"
-        )
+def _require_trusted_shallow_ci_context() -> None:
+    """Bind a shallow historical audit to an exact trusted PR or main-push event."""
+    event_name = os.environ.get("GITHUB_EVENT_NAME")
     event_path = os.environ.get("GITHUB_EVENT_PATH")
     try:
-        event = json.loads(Path(event_path).read_text(encoding="utf-8")) if event_path else {}
-        pull_request = event.get("pull_request", {})
-        base = pull_request.get("base", {})
-        head = pull_request.get("head", {})
+        if not event_path:
+            raise ValueError("GITHUB_EVENT_PATH is missing")
+        event = json.loads(Path(event_path).read_text(encoding="utf-8"))
+        if not isinstance(event, dict):
+            raise ValueError("GitHub event must be a JSON object")
         current = _git("rev-parse", "HEAD").decode("ascii").strip()
-        valid = (
-            base.get("ref") == "main"
-            and re.fullmatch(r"[0-9a-f]{40}", str(base.get("sha", ""))) is not None
-            and re.fullmatch(r"[0-9a-f]{40}", str(head.get("sha", ""))) is not None
-            and re.fullmatch(r"[0-9a-f]{40}", str(os.environ.get("GITHUB_SHA", ""))) is not None
-            and current == os.environ.get("GITHUB_SHA")
-        )
-    except (OSError, json.JSONDecodeError, P44GCanonicalOnlyWorkflowAuditError):
-        valid = False
-    if not valid:
+        github_sha = os.environ.get("GITHUB_SHA", "")
+        sha_is_valid = re.fullmatch(r"[0-9a-f]{40}", github_sha) is not None
+
+        if event_name == "pull_request":
+            pull_request = event.get("pull_request")
+            if not isinstance(pull_request, dict):
+                raise ValueError("pull_request event is malformed")
+            base = pull_request.get("base")
+            head = pull_request.get("head")
+            if not isinstance(base, dict) or not isinstance(head, dict):
+                raise ValueError("pull_request base/head metadata is malformed")
+            valid = (
+                base.get("ref") == "main"
+                and re.fullmatch(r"[0-9a-f]{40}", str(base.get("sha", ""))) is not None
+                and re.fullmatch(r"[0-9a-f]{40}", str(head.get("sha", ""))) is not None
+                and sha_is_valid
+                and current == github_sha
+            )
+            if not valid:
+                raise ValueError("pull_request identity differs")
+            return
+
+        if event_name == "push":
+            repository = event.get("repository")
+            if not isinstance(repository, dict):
+                raise ValueError("push repository metadata is malformed")
+            repository_env = os.environ.get("GITHUB_REPOSITORY")
+            valid = (
+                os.environ.get("GITHUB_REF") == "refs/heads/main"
+                and sha_is_valid
+                and (repository_env is None or repository_env == "Thabearr/ATHENA")
+                and event.get("ref") == "refs/heads/main"
+                and event.get("after") == github_sha
+                and re.fullmatch(
+                    r"[0-9a-f]{40}", str(event.get("after", ""))
+                ) is not None
+                and event.get("deleted") is not True
+                and repository.get("full_name") == "Thabearr/ATHENA"
+                and repository.get("default_branch") == "main"
+                and current == github_sha
+            )
+            if not valid:
+                raise ValueError("push identity differs")
+            return
+
+        raise ValueError("event is neither pull_request nor push")
+    except (
+        OSError,
+        json.JSONDecodeError,
+        UnicodeDecodeError,
+        ValueError,
+        P44GCanonicalOnlyWorkflowAuditError,
+    ):
+        if event_name == "pull_request":
+            detail = "trusted current main pull_request binding"
+        elif event_name == "push":
+            detail = "trusted current main push binding"
+        else:
+            detail = "trusted current main pull_request or push binding"
         raise P44GCanonicalOnlyWorkflowAuditError(
-            "P4.4G historical audit lacks a trusted current main pull_request binding"
+            f"P4.4G historical audit lacks a {detail}"
         )
 
 
@@ -429,15 +476,15 @@ def _historical_p44g_changed_paths(
 
     Call only after the current cumulative ledger has been independently validated
     and its exact P4.4G prefix has been checked. If old commits are absent from a
-    trusted shallow PR checkout, the immutable receipt/snapshot/prefix and PR event
-    provide the independent binding; no paths are fabricated.
+    trusted shallow CI checkout, the immutable receipt/snapshot/prefix and exact PR
+    or main-push event provide the independent binding; no paths are fabricated.
     """
     _validate_p44g_evolution_prefix(current_ledger, expected_ledger)
     scope_commits_available = all(
         _commit_object_available(commit) for commit in (BASE_MAIN, P44G_REVIEWED_HEAD)
     )
     if not scope_commits_available:
-        _require_trusted_shallow_pull_request_context()
+        _require_trusted_shallow_ci_context()
         return None
 
     if _commit_object_available(P44G_MERGE_COMMIT):
@@ -455,7 +502,8 @@ def _historical_p44g_changed_paths(
                 "P4.4G reviewed merge is not in the current main/PR history"
             )
     else:
-        _require_trusted_shallow_pull_request_context()
+        _require_trusted_shallow_ci_context()
+
     result = subprocess.run(
         ["git", "diff", "--name-only", f"{BASE_MAIN}...{P44G_REVIEWED_HEAD}"],
         capture_output=True,
