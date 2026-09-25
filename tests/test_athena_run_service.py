@@ -143,6 +143,157 @@ def _captured_shadow_receipt(*, target: int, exact_commit: str, observed_at: dat
     }
 
 
+def _captured_shadow_checkpoint(
+    *, request: RunRequest, observed_at: datetime, progress: bool = False
+) -> dict:
+    from domain import current_shadow_run_contract_adapter as adapter
+
+    stage = "CURRENT_FOTMOB_SOURCE"
+    value = {
+        "schema_version": 1,
+        "dataset_name": adapter.CURRENT_RECEIPT_DATASET,
+        "stage": stage,
+        "stage_index": adapter.CURRENT_STAGE_SEQUENCE.index(stage),
+        "observed_at": observed_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+        "exact_commit_sha": COMMIT,
+        "requested_target_size": request.target_legs,
+        "wager_placed": False,
+    }
+    if progress:
+        value.update(
+            {
+                "progress_status": "IN_PROGRESS",
+                "counts": {
+                    "provider_event_count": 0,
+                    "reconciled_fixture_count": 0,
+                },
+                "source_summary": {"wager_placed": False},
+            }
+        )
+    return value
+
+
+def _captured_verified_shadow_receipt(
+    *, request: RunRequest, observed_at: datetime
+) -> dict:
+    status = "RESEARCH_SHADOW_CODE_VERIFIED_WITH_SHORTFALL"
+    leg = {
+        "fixture_identity": "FOTMOB:123",
+        "provider_event_id": "sr:match:123",
+        "market_id": "MATCH_RESULT",
+        "outcome_id": "HOME",
+        "decimal_odds": "1.75",
+        "quote_identity_sha256": "c" * 64,
+    }
+    portfolio_sha256 = "e" * 64
+    authority = {
+        "production_model": False,
+        "production_probability": False,
+        "phase6": False,
+        "production_selection": False,
+        "production_sportybet_execution": False,
+        "login": False,
+        "cookies": False,
+        "wallet": False,
+        "staking": False,
+        "bet": False,
+        "wager_placed": False,
+    }
+    receipt = _captured_shadow_receipt(
+        target=request.target_legs,
+        exact_commit=COMMIT,
+        observed_at=observed_at,
+    )
+    receipt.update(
+        {
+            "status": status,
+            "reviewed_fixture_count": 1,
+            "reconciled_fixture_count": 1,
+            "provider_event_count": 1,
+            "priced_fixture_count": 1,
+            "router_selected_count": 1,
+            "router_no_bet_count": 0,
+            "portfolio": {
+                "requested_target_size": request.target_legs,
+                "selected_leg_count": 1,
+                "selected_legs": [leg],
+                "shortfall": request.target_legs - 1,
+                "wager_placed": False,
+            },
+            "portfolio_sha256": portfolio_sha256,
+            "selected_leg_count": 1,
+            "shortfall": request.target_legs - 1,
+            "final_selected_legs": [leg],
+            "shareCode": "ABC123",
+            "shareURL": "https://example.test/ABC123",
+            "share_code_receipt": {
+                "schema_version": 2,
+                "dataset_name": "athena-current-shadow-all-market-share-code-v2",
+                "status": status,
+                "observed_at": observed_at.isoformat(timespec="microseconds").replace("+00:00", "Z"),
+                "portfolio_sha256": portfolio_sha256,
+                "requested_target_size": request.target_legs,
+                "portfolio_shortfall": request.target_legs - 1,
+                "selected_leg_count": 1,
+                "reasons": [],
+                "semantic_resolution_receipt_sha256": "f" * 64,
+                "transport_receipt_sha256": "1" * 64,
+                "shareCode": "ABC123",
+                "shareURL": "https://example.test/ABC123",
+                "combined_odds": "1.75",
+                "fresh_selected_legs": [leg],
+                "fallback_events": [],
+                "exact_create_reload_equality": True,
+                "code_verified": True,
+                "authority": authority,
+                "sportybet_login_used": False,
+                "sportybet_cookie_used": False,
+                "sportybet_wallet_used": False,
+                "stake_submitted": False,
+                "wager_placed": False,
+            },
+        }
+    )
+    return receipt
+
+
+def _write_shadow_child_evidence(
+    command: list[str],
+    *,
+    request: RunRequest,
+    observed_at: datetime,
+    receipt: dict | None,
+    include_policy: bool = True,
+    include_stage: bool = False,
+    include_progress: bool = False,
+) -> Path:
+    output_dir = Path(command[command.index("--output-dir") + 1])
+    output_dir.mkdir(parents=True, exist_ok=True)
+    if include_policy:
+        (output_dir / "current-shadow-request-policy.json").write_text(
+            json.dumps(_captured_shadow_policy("20260923")), encoding="utf-8"
+        )
+    if receipt is not None:
+        (output_dir / "current-shadow-all-market-run-receipt.json").write_text(
+            json.dumps(receipt), encoding="utf-8"
+        )
+    if include_stage:
+        (output_dir / "current-shadow-all-market-stage.json").write_text(
+            json.dumps(_captured_shadow_checkpoint(request=request, observed_at=observed_at)),
+            encoding="utf-8",
+        )
+    if include_progress:
+        (output_dir / "current-shadow-all-market-progress.json").write_text(
+            json.dumps(
+                _captured_shadow_checkpoint(
+                    request=request, observed_at=observed_at, progress=True
+                )
+            ),
+            encoding="utf-8",
+        )
+    return output_dir
+
+
 def test_run_requires_exact_run_request(tmp_path):
     service = _service(lambda *_args, **_kwargs: pytest.fail("executor called"))
     with pytest.raises(AthenaRunServiceError, match="exact domain.run_contracts.RunRequest"):
@@ -541,6 +692,223 @@ def test_shadow_default_adapter_preserves_timeout_receipt_and_progress_without_o
         "router_selected_count": 0,
         "router_no_bet_count": 0,
     }
+    assert receipt.evidence["supervisor_returncode"] == 0
+    assert all(
+        getattr(receipt.authority_manifest, name) is False
+        for name in ("login", "cookies", "wallet", "staking", "wager")
+    )
+
+
+def _shadow_service_request() -> RunRequest:
+    return _request(
+        dates=(date(2026, 9, 23),),
+        target_legs=2,
+        authority_profile="SHADOW",
+        mode="research_shadow",
+        create_share_code=True,
+    )
+
+
+def _run_shadow_supervisor_fixture(monkeypatch, tmp_path, *, request, child_result):
+    from services import athena_run_service as service_module
+
+    calls = []
+
+    def fake_supervisor(command, **kwargs):
+        calls.append((list(command), dict(kwargs)))
+        child_result(command)
+        return SimpleNamespace(returncode=1, stdout="", stderr="")
+
+    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    service = AthenaRunService(
+        _commit_sha_provider=lambda: COMMIT,
+        _clock=lambda: NOW,
+    )
+    return service.run(request, output_root=tmp_path), calls
+
+
+def test_shadow_nonzero_provisional_receipt_is_durable_incomplete_failure(
+    monkeypatch, tmp_path
+):
+    from services import athena_run_service as service_module
+
+    request = _shadow_service_request()
+    stdout = "synthetic stdout " * 200 + "STDOUT_ALLOWED_SUFFIX"
+    stderr = "synthetic stderr " * 200 + "STDERR_ALLOWED_SUFFIX"
+    calls = []
+
+    def fake_supervisor(command, **kwargs):
+        calls.append((list(command), dict(kwargs)))
+        _write_shadow_child_evidence(
+            command,
+            request=request,
+            observed_at=NOW,
+            receipt={
+                **_captured_shadow_receipt(
+                    target=request.target_legs,
+                    exact_commit=COMMIT,
+                    observed_at=NOW,
+                ),
+                "status": "RESEARCH_NO_CODE_SOURCE_INCOMPLETE",
+                "reasons": ["SOURCE_CHAIN_PENDING:STARTED"],
+            },
+            include_stage=True,
+            include_progress=True,
+        )
+        return SimpleNamespace(returncode=1, stdout=stdout, stderr=stderr)
+
+    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
+    receipt = service.run(request, output_root=tmp_path)
+
+    failure = receipt.evidence["current_shadow_supervisor_failure"]
+    assert receipt.status == "SOURCE_INCOMPLETE"
+    assert receipt.selected_legs == ()
+    assert receipt.share_code_result is None
+    assert receipt.counts["selected_leg_count"] == 0
+    assert receipt.wager_placed is False
+    assert failure["failure_classification"] == "CURRENT_SHADOW_SUPERVISOR_NONZERO"
+    assert failure["failure_boundary"] == "CURRENT_SHADOW_SUPERVISOR"
+    assert failure["failure_cause_inferred"] is False
+    assert failure["supervisor_returncode"] == 1
+    assert failure["current_shadow_triggered"] is True
+    assert failure["provider_acquisition"] is True
+    assert failure["request_policy_file_exists"] is True
+    assert failure["terminal_receipt_file_exists"] is True
+    assert failure["terminal_receipt_accepted"] is False
+    assert failure["provisional_marker_observed"] is True
+    assert len(failure["stdout_tail"]) == 2000
+    assert failure["stdout_tail"] == stdout[-2000:]
+    assert len(failure["stderr_tail"]) == 2000
+    assert failure["stderr_tail"] == stderr[-2000:]
+    assert [stage.stage for stage in receipt.stages] == [
+        "CURRENT_FOTMOB_SOURCE",
+        "CURRENT_FOTMOB_SOURCE",
+    ]
+    assert receipt.stages[0].evidence == {
+        "legacy_checkpoint_source": "stage",
+        "structurally_valid": True,
+    }
+    assert receipt.stages[1].counts == {
+        "provider_event_count": 0,
+        "reconciled_fixture_count": 0,
+    }
+    assert len(calls) == 1
+    assert "timeout" not in calls[0][1]
+    assert receipt.authority_manifest.provider_acquisition is True
+    assert all(
+        getattr(receipt.authority_manifest, name) is False
+        for name in ("login", "cookies", "wallet", "staking", "wager")
+    )
+    assert all(
+        value is False
+        for key, value in receipt.authority_manifest.additional_capabilities.items()
+        if key.startswith("production_") or key in {"login", "cookies", "wallet", "staking", "bet", "wager_placed"}
+    )
+
+
+def test_shadow_nonzero_overrides_terminal_selection_and_share_code_receipt(
+    monkeypatch, tmp_path
+):
+    from domain import current_shadow_run_contract_adapter as adapter
+
+    request = _shadow_service_request()
+    policy = _captured_shadow_policy("20260923")
+    terminal_receipt = _captured_verified_shadow_receipt(request=request, observed_at=NOW)
+    adapted_terminal = adapter.adapt_current_shadow_receipt(
+        request=request,
+        receipt_payload=terminal_receipt,
+        request_policy=policy,
+    )
+    assert adapted_terminal.selected_legs
+    assert adapted_terminal.share_code_result is not None
+
+    def child(command):
+        _write_shadow_child_evidence(
+            command,
+            request=request,
+            observed_at=NOW,
+            receipt=terminal_receipt,
+        )
+
+    receipt, calls = _run_shadow_supervisor_fixture(
+        monkeypatch, tmp_path, request=request, child_result=child
+    )
+    assert receipt.status == "SOURCE_INCOMPLETE"
+    assert receipt.selected_legs == ()
+    assert receipt.share_code_result is None
+    assert receipt.counts["selected_leg_count"] == 0
+    assert receipt.evidence["current_shadow_supervisor_failure"]["supervisor_returncode"] == 1
+    assert receipt.evidence["current_shadow_supervisor_failure"]["terminal_receipt_accepted"] is False
+    assert len(calls) == 1
+
+
+def test_shadow_zero_returncode_startup_provisional_receipt_is_not_terminal(
+    monkeypatch, tmp_path
+):
+    from services import athena_run_service as service_module
+
+    request = _shadow_service_request()
+
+    def fake_supervisor(command, **_kwargs):
+        _write_shadow_child_evidence(
+            command,
+            request=request,
+            observed_at=NOW,
+            receipt={
+                **_captured_shadow_receipt(
+                    target=request.target_legs,
+                    exact_commit=COMMIT,
+                    observed_at=NOW,
+                ),
+                "status": "RESEARCH_NO_CODE_SOURCE_INCOMPLETE",
+                "reasons": ["SOURCE_CHAIN_PENDING:STARTED"],
+            },
+            include_stage=True,
+        )
+        return SimpleNamespace(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
+    receipt = service.run(request, output_root=tmp_path)
+
+    failure = receipt.evidence["current_shadow_supervisor_failure"]
+    assert receipt.status == "SOURCE_INCOMPLETE"
+    assert receipt.selected_legs == ()
+    assert receipt.share_code_result is None
+    assert failure["failure_classification"] == "CURRENT_SHADOW_PROVISIONAL_RECEIPT_NOT_TERMINAL"
+    assert failure["supervisor_returncode"] == 0
+    assert failure["provisional_marker_observed"] is True
+    assert failure["terminal_receipt_accepted"] is False
+
+
+def test_shadow_supervisor_missing_policy_or_receipt_pair_stays_fail_closed(
+    monkeypatch, tmp_path
+):
+    from services import athena_run_service as service_module
+
+    request = _shadow_service_request()
+    calls = []
+
+    def fake_supervisor(command, **kwargs):
+        calls.append((list(command), dict(kwargs)))
+        output_dir = Path(command[command.index("--output-dir") + 1])
+        output_dir.mkdir(parents=True, exist_ok=True)
+        return SimpleNamespace(returncode=0, stdout="no durable output", stderr="")
+
+    monkeypatch.setattr(service_module.subprocess, "run", fake_supervisor)
+    service = AthenaRunService(_commit_sha_provider=lambda: COMMIT, _clock=lambda: NOW)
+    receipt = service.run(request, output_root=tmp_path)
+
+    failure = receipt.evidence["current_shadow_supervisor_failure"]
+    assert receipt.status == "SOURCE_INCOMPLETE"
+    assert receipt.selected_legs == ()
+    assert receipt.share_code_result is None
+    assert failure["failure_classification"] == "CURRENT_SHADOW_TERMINAL_EVIDENCE_PAIR_MISSING"
+    assert failure["request_policy_file_exists"] is False
+    assert failure["terminal_receipt_file_exists"] is False
+    assert failure["supervisor_returncode"] == 0
+    assert len(calls) == 1
 
 
 def test_shadow_lagos_date_outside_exact_utc_window_fails_closed_without_shift(tmp_path):

@@ -419,7 +419,10 @@ def _verify_base_source_identity(path: str, pair: tuple[str, str], *, trusted_pr
 
 def audit(*, check_live: bool = True) -> dict[str, Any]:
     try:
-        trusted_pr_event = _verify_base()
+        # The immutable phase receipt remains auditable after later main
+        # advances. Exact live ancestry and current-tree invariants are checked
+        # only when this phase is explicitly being reviewed as live.
+        trusted_pr_event = _verify_base() if check_live else False
         expected = expected_receipt()
         receipt = _read_canonical(RECEIPT_PATH)
         if receipt != expected or receipt.get("canonical_sha256") != _canonical_sha(receipt):

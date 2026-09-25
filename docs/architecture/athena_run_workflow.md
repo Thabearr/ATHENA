@@ -201,3 +201,35 @@ live workflow count to 38. `athena-run.yml`, Current Shadow, and protected Fresh
 Holdout retain their existing authority and workflow bytes. Ingest has no routing,
 share-code, or wagering authority. Scheduled ingest and legacy capability migration
 remain for P4.4C review; P4.4 and Architecture Checkpoint E remain incomplete.
+
+## P4.4I Current Shadow supervisor failure evidence
+
+Canonical SHADOW run `36111105935` (`workflow_dispatch`, attempt 1) ran at exact
+main `0066720de62611a3673468597335c3a2c55aacaf` for `2026-09-25`, target 20.
+Its canonical request SHA-256 was
+`af5b8c5de987f4dacd286f734dd57be7f17b7d0091d743e373c63683cfa1e69e`; artifact
+10853141346 (`athena-run-36111105935`) had ZIP SHA-256
+`2976c375787297c0759eb545e9d68706649d731b6b99fa26531f2baaab3b54d1`. The
+canonical RunReceipt SHA-256 was
+`4b65f9b8e9e927e6261dac48ee71557ba7645e96eccff24682dcaa15f53dbec3`, and the
+inner Current Shadow receipt SHA-256 was
+`63c9f0637ef5a1fa87545127577942902369e6b680eafdbcb3cd3ba965c21efe`.
+
+GitHub reported control-plane `success`, but the canonical business status was
+`RESEARCH_NO_CODE_SOURCE_INCOMPLETE`: zero selected legs, shortfall 20, no share
+code, and `wager_placed=false`. The adapter recorded
+`supervisor_returncode=1`; the child left the provisional startup reason
+`SOURCE_CHAIN_PENDING:STARTED`, so the exact child exception is UNKNOWN and is not
+inferred here. Only `CURRENT_FOTMOB_SOURCE` was checkpointed. This run therefore
+did not complete the live canonical SHADOW successor proof; that blocker remains
+OPEN.
+
+The single live authorization was consumed by that run. Retry count is zero, no
+retry is authorized, and the P4.4I correction is offline evidence-integrity work
+only. It makes a nonzero supervisor exit fail closed as `SOURCE_INCOMPLETE`,
+preserves only bounded stdout/stderr tails and structurally validated checkpoint
+metadata, and rejects the exact startup-only marker as a terminal result even if
+the supervisor exits zero. It does not change football/source behavior, add a
+timeout, dispatch a workflow, or acquire provider data. P4.4I does not complete
+the live successor proof, migrate callers, authorize retirement, or complete P4.4
+or Architecture Checkpoint E.
