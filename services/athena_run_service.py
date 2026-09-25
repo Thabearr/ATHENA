@@ -298,22 +298,66 @@ class _ShadowSupervisorExecutor:
                 },
             )
 
-        if not receipt_path.is_file() or not request_policy_path.is_file():
-            return ExecutorResult(
-                status="SOURCE_INCOMPLETE",
-                evidence={
-                    "reason": "Current Shadow supervisor produced no complete policy/terminal receipt pair.",
-                    "supervisor_returncode": completed.returncode,
-                    "provider_acquisition": True,
-                    "current_shadow_triggered": True,
-                    "stdout_tail": _bounded_text(completed.stdout),
-                    "stderr_tail": _bounded_text(completed.stderr),
-                },
+        request_policy_exists = request_policy_path.is_file()
+        receipt_exists = receipt_path.is_file()
+
+        # A child that exits nonzero has not established a terminal business
+        # result, even if it left behind syntactically valid policy/receipt
+        # files. In particular, the receipt may still be the startup marker
+        # written before the failed source chain ran. Keep only bounded process
+        # tails and independently validated checkpoint metadata; never adapt
+        # selected legs or share-code evidence from a failed supervisor.
+        if completed.returncode != 0:
+            receipt_observation = _observe_shadow_receipt(receipt_path)
+            return _source_incomplete_shadow_outcome(
+                request=request,
+                exact_commit_sha=exact_commit_sha,
+                request_policy_exists=request_policy_exists,
+                receipt_exists=receipt_exists,
+                stage_path=stage_path,
+                progress_path=progress_path,
+                supervisor_returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                failure_classification="CURRENT_SHADOW_SUPERVISOR_NONZERO",
+                reason="Current Shadow supervisor exited nonzero; its receipt was not accepted as terminal.",
+                provisional_marker_observed=receipt_observation["provisional_marker_observed"],
+            )
+
+        if not receipt_exists or not request_policy_exists:
+            return _source_incomplete_shadow_outcome(
+                request=request,
+                exact_commit_sha=exact_commit_sha,
+                request_policy_exists=request_policy_exists,
+                receipt_exists=receipt_exists,
+                stage_path=stage_path,
+                progress_path=progress_path,
+                supervisor_returncode=completed.returncode,
+                stdout=completed.stdout,
+                stderr=completed.stderr,
+                failure_classification="CURRENT_SHADOW_TERMINAL_EVIDENCE_PAIR_MISSING",
+                reason="Current Shadow supervisor produced no complete policy/terminal receipt pair.",
             )
 
         try:
             request_policy = _read_json_object(request_policy_path)
             shadow_receipt = _read_json_object(receipt_path)
+            if _is_provisional_shadow_receipt(shadow_receipt):
+                return _source_incomplete_shadow_outcome(
+                    request=request,
+                    exact_commit_sha=exact_commit_sha,
+                    request_policy_exists=request_policy_exists,
+                    receipt_exists=receipt_exists,
+                    stage_path=stage_path,
+                    progress_path=progress_path,
+                    supervisor_returncode=completed.returncode,
+                    stdout=completed.stdout,
+                    stderr=completed.stderr,
+                    failure_classification="CURRENT_SHADOW_PROVISIONAL_RECEIPT_NOT_TERMINAL",
+                    reason="Current Shadow receipt contains only the startup source-chain marker.",
+                    provisional_marker_observed=True,
+                )
+
             stage_payload = _read_json_object(stage_path) if stage_path.is_file() else None
             progress_payload = _read_json_object(progress_path) if progress_path.is_file() else None
             from domain import current_shadow_run_contract_adapter as adapter
@@ -375,6 +419,119 @@ def _bounded_text(value: Any, limit: int = 2000) -> str | None:
     if type(value) is not str:
         return None
     return value[-limit:]
+
+
+def _is_provisional_shadow_receipt(receipt: Mapping[str, Any]) -> bool:
+    return receipt.get("reasons") == ["SOURCE_CHAIN_PENDING:STARTED"]
+
+
+def _observe_shadow_receipt(path: Path) -> dict[str, bool]:
+    if not path.is_file():
+        return {"provisional_marker_observed": False}
+    try:
+        return {
+            "provisional_marker_observed": _is_provisional_shadow_receipt(
+                _read_json_object(path)
+            )
+        }
+    except (OSError, ValueError, json.JSONDecodeError):
+        return {"provisional_marker_observed": False}
+
+
+def _safe_shadow_checkpoint_stage(
+    path: Path,
+    *,
+    request: RunRequest,
+    exact_commit_sha: str,
+    source: str,
+) -> RunStage | None:
+    if not path.is_file():
+        return None
+    try:
+        from domain import current_shadow_run_contract_adapter as adapter
+
+        validated = adapter._checkpoint_stage(
+            _read_json_object(path),
+            request=request,
+            exact_commit_sha=exact_commit_sha,
+            source=source,
+        )
+    except Exception:
+        # Checkpoints are supplemental failure evidence. Invalid/untrusted
+        # payloads are omitted rather than allowed to obscure the primary
+        # SOURCE_INCOMPLETE result.
+        return None
+
+    allowed_counts = {
+        "reviewed_fixture_count",
+        "reconciled_fixture_count",
+        "provider_event_count",
+        "priced_fixture_count",
+        "router_selected_count",
+        "router_no_bet_count",
+    }
+    counts = {key: value for key, value in validated.counts.items() if key in allowed_counts}
+    if source == "progress" and validated.status not in {"STARTED", "IN_PROGRESS", "COMPLETED"}:
+        return None
+    return RunStage(
+        stage=validated.stage,
+        status=validated.status,
+        observed_at=validated.observed_at,
+        counts=counts,
+        evidence={"legacy_checkpoint_source": source, "structurally_valid": True},
+    )
+
+
+def _source_incomplete_shadow_outcome(
+    *,
+    request: RunRequest,
+    exact_commit_sha: str,
+    request_policy_exists: bool,
+    receipt_exists: bool,
+    stage_path: Path,
+    progress_path: Path,
+    supervisor_returncode: int,
+    stdout: Any,
+    stderr: Any,
+    failure_classification: str,
+    reason: str,
+    provisional_marker_observed: bool = False,
+) -> ExecutorResult:
+    stages = tuple(
+        stage
+        for path, source in ((stage_path, "stage"), (progress_path, "progress"))
+        if (
+            stage := _safe_shadow_checkpoint_stage(
+                path,
+                request=request,
+                exact_commit_sha=exact_commit_sha,
+                source=source,
+            )
+        )
+        is not None
+    )
+    return ExecutorResult(
+        status="SOURCE_INCOMPLETE",
+        stages=stages,
+        evidence={
+            "current_shadow_supervisor_failure": {
+                "failure_classification": failure_classification,
+                "failure_boundary": "CURRENT_SHADOW_SUPERVISOR",
+                "failure_cause_inferred": False,
+                "reason": reason,
+                "supervisor_returncode": supervisor_returncode,
+                "current_shadow_triggered": True,
+                "provider_acquisition": True,
+                "request_policy_file_exists": request_policy_exists,
+                "terminal_receipt_file_exists": receipt_exists,
+                "terminal_receipt_accepted": False,
+                "provisional_marker_observed": provisional_marker_observed,
+                "stdout_tail": _bounded_text(stdout),
+                "stderr_tail": _bounded_text(stderr),
+                "checkpoint_stage_count": len(stages),
+            }
+        },
+    )
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:

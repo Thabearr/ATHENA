@@ -17,8 +17,10 @@ from scripts import audit_p4_4h_current_shadow_canonical_run_migration_review as
 from scripts import audit_p4_workflow_evolution_ledger as evolution
 
 
-def test_review_receipt_is_source_bound_and_live_audit_passes() -> None:
-    value = audit.audit(check_live=True)
+def test_review_receipt_remains_source_bound_as_historical_evidence() -> None:
+    # P4.4H is merged historical evidence. Current-phase ancestry and live tree
+    # invariants belong to the current remediation audit, not this old base.
+    value = audit.audit(check_live=False)
     assert value["repository_base_main_sha"] == audit.BASE_MAIN
     assert value["p4_4g_receipt_sha256"] == audit.P44G_RECEIPT_SHA256
     assert value["p4_workflow_evolution_ledger_sha256"] == audit.EVOLUTION_SHA256
