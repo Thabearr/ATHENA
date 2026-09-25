@@ -3,6 +3,7 @@ from __future__ import annotations
 import copy
 import json
 from pathlib import Path
+from types import SimpleNamespace
 import pytest
 
 from scripts import audit_p4_4g_current_fotmob_canonical_only_workflow as audit
@@ -198,6 +199,11 @@ def test_p4_4g_live_audit_passes_after_reviewed_commit() -> None:
 
 
 def test_exact_historical_p44g_diff_matches_all_19_reviewed_paths() -> None:
+    if not all(
+        audit._commit_object_available(commit)
+        for commit in (audit.BASE_MAIN, audit.P44G_REVIEWED_HEAD)
+    ):
+        pytest.skip("historical P4.4G base/reviewed-head objects are absent in this shallow checkout")
     expected_ledger, _, _ = audit.build_evidence()
     current_ledger = evolution.validate_current_state()
     paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
@@ -207,32 +213,43 @@ def test_exact_historical_p44g_diff_matches_all_19_reviewed_paths() -> None:
 
 
 def test_historical_scope_fails_closed_if_p44d_test_path_is_omitted() -> None:
-    expected_ledger, _, _ = audit.build_evidence()
-    current_ledger = evolution.validate_current_state()
-    paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
-    assert paths is not None
     with pytest.raises(audit.P44GCanonicalOnlyWorkflowAuditError, match="historical changed-path set"):
         audit._assert_exact_historical_p44g_scope(
-            paths - {"tests/test_p4_4d_current_fotmob_ingest_compatibility.py"}
+            audit.EXPECTED_CHANGED_PATHS
+            - {"tests/test_p4_4d_current_fotmob_ingest_compatibility.py"}
         )
 
 
 def test_historical_diff_is_pinned_to_p44g_reviewed_head_not_future_head(monkeypatch) -> None:
     expected_ledger, _, _ = audit.build_evidence()
     current_ledger = evolution.validate_current_state()
-    original_run = audit.subprocess.run
     diff_commands: list[list[str]] = []
     hypothetical_future_path = "artifacts/architecture/p4_4h_future_review.json"
 
     def tracking_run(args, capture_output=False):
+        if args[:3] == ["git", "merge-base", "--is-ancestor"]:
+            return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
         if args[:3] == ["git", "diff", "--name-only"]:
             diff_commands.append(args)
             assert args[3] == f"{audit.BASE_MAIN}...{audit.P44G_REVIEWED_HEAD}"
             assert "HEAD" not in args[3]
-            return original_run(args, capture_output=capture_output)
-        return original_run(args, capture_output=capture_output)
+            return SimpleNamespace(
+                returncode=0,
+                stdout=("\n".join(sorted(audit.EXPECTED_CHANGED_PATHS)) + "\n").encode("utf-8"),
+                stderr=b"",
+            )
+        raise AssertionError(args)
 
+    original_git = audit._git
+
+    def historical_git(*args):
+        if args == ("show", "-s", "--format=%P", audit.P44G_MERGE_COMMIT):
+            return f"{audit.BASE_MAIN} {audit.P44G_REVIEWED_HEAD}".encode("ascii")
+        return original_git(*args)
+
+    monkeypatch.setattr(audit, "_commit_object_available", lambda _commit: True)
     monkeypatch.setattr(audit.subprocess, "run", tracking_run)
+    monkeypatch.setattr(audit, "_git", historical_git)
     paths = audit._historical_p44g_changed_paths(current_ledger, expected_ledger)
     assert paths == audit.EXPECTED_CHANGED_PATHS
     hypothetical_current_head_paths = set(paths) | {hypothetical_future_path}
