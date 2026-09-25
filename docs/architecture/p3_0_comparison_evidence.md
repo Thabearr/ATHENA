@@ -536,3 +536,18 @@ All five reviewed defect-class acceptance cases (`tests/fixtures/architecture/le
 - `P3.1`: **NOT STARTED**
 - `SOURCE_REVIEW_COUNTER`: **4 / 5** while unmerged
 - Terminal machine state: `P3_0_COMPARATOR_MERGE_REQUIRED`
+
+### Post-P4.4L shared-football discovery candidate (source contract only)
+
+The evidence-bound `ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1`
+contract qualifies SportyBet's `/api/ng/factsCenter/pcUpcomingEvents` response
+shape as a replayable provider-evidence candidate containing both club and
+senior-international football. It does not change P3.0's active source owner:
+P3.0 and Current Shadow continue to use
+`ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1` until a separate reviewed
+migration. This contract grants no fixture-reconciliation, pricing, selection,
+model, or execution authority, and adds no international source/provider
+identity mappings. Its retained diagnostic captured only 300 of `totalNum=1148`
+events, so pagination is explicitly incomplete and no provider-absence claim is
+permitted. See
+`artifacts/architecture/post_p4_4l_pc_upcoming_shared_football_source_v1.json`.
