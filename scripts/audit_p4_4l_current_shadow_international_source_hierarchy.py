@@ -277,7 +277,9 @@ def expected_receipt() -> dict[str, Any]:
             "p4_4k_capture": policy_payload["p4_4k_evidence"],
             "checked_in_primary_id_qualification": {
                 "path": PRIMARY_ID_QUALIFICATION_PATH,
-                "file_sha256": _sha256((root / PRIMARY_ID_QUALIFICATION_PATH).read_bytes()),
+                "file_sha256": _sha256(
+                    _git("show", f"HEAD:{PRIMARY_ID_QUALIFICATION_PATH}")
+                ),
                 "qualified_record_count": len(qualifier_records),
                 "record_competition_classes": sorted(
                     {item.get("competition_class") for item in qualifier_records}

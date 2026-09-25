@@ -108,6 +108,17 @@ def test_source_identity_hashes_committed_blob_bytes_across_checkout_line_ending
     assert source_identity["source_sha256"] == audit._sha256(committed_bytes)
 
 
+def test_qualification_evidence_hash_uses_committed_blob_bytes() -> None:
+    receipt = audit.expected_receipt()
+    committed_bytes = audit._git(
+        "show", f"HEAD:{audit.PRIMARY_ID_QUALIFICATION_PATH}"
+    )
+
+    assert receipt["evidence_inventory"]["checked_in_primary_id_qualification"][
+        "file_sha256"
+    ] == audit._sha256(committed_bytes)
+
+
 @pytest.mark.parametrize(
     ("section", "key", "replacement"),
     [
