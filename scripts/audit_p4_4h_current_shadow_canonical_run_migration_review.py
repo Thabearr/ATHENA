@@ -210,7 +210,7 @@ def _request_parity() -> dict[str, Any]:
             "at_2026_09_24T23_00Z": False,
             "legacy_utc_window": ["20260924", "20260930"],
             "canonical_lagos_window": ["20260925", "20261001"],
-            "classification": "REPRESENTABLE_ONLY_WITH_EXPLICIT_DATE_PRESERVATION",
+            "classification": "UNREPRESENTABLE_WITH_CURRENT_CANONICAL_WORKFLOW_REQUEST_SURFACE",
         },
         "legacy_explicit_input_normalization": {
             "unsorted_unique_dates": "ACCEPTED_AND_SORTED_BY_EXISTING_LEGACY_POLICY",

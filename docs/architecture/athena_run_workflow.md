@@ -68,17 +68,22 @@ The scheduled requests are not yet equivalent: Current Shadow's schedule resolve
 SHADOW, while the canonical schedule defaults to MAIN. Explicit date requests can
 be represented when both policies see the same horizon, but Current Shadow's
 calendar horizon is UTC and the canonical parser resolves relative dates in
-`Africa/Lagos`. At 23:00 UTC these dates differ, so no date is shifted to force a
-match. The old identity-state artifact ancestry and optional post-core email also
-remain migration blockers. Issue-comment grammar remains explicit and retained;
+`Africa/Lagos`. A seven-day explicit request is representable with preserved dates
+at 22:59 UTC, but at 23:00 UTC the legacy window `20260924..20260930` and canonical
+Lagos window `20260925..20261001` are mutually out of range; the mapping is
+unrepresentable with the current canonical request surface. No date is shifted to
+force a match. The old identity-state artifact ancestry and optional post-core email
+also remain migration blockers. Issue-comment grammar remains explicit and retained;
 P4.4H neither removes the trigger nor migrates its caller.
 
 No Current Shadow run, provider request, workflow dispatch, or email/share-code
 operation is performed by this review. Live canonical SHADOW successor proof
 requires separate owner authorization. No caller migration or workflow retirement
-is authorized; P4.4 and Architecture Checkpoint E remain incomplete. While this
-review is unmerged the source-review counter is 0/5; a merge would make it 1/5 and
-require an immediate source reread before another remediation mission.
+is authorized; P4.4 and Architecture Checkpoint E remain incomplete. PR #399 closed
+the previous source-review cycle at 5/5, and its mandatory architecture/source
+reread was completed after that merge. The new cycle reset to 0/5: P4.4H is 0/5
+while unmerged and would become 1/5 if merged. No new mandatory reread is due at
+1/5; the next mandatory reread is due only when this cycle reaches 5/5.
 
 There is no email or notification step in this core workflow. Notification capability
 mapping remains `PENDING_P4_3_CAPABILITY_MAPPING`. The existing

@@ -27,6 +27,15 @@ def test_review_receipt_is_source_bound_and_live_audit_passes() -> None:
     assert value["workflow_count"] == 38
     assert value["review_execution"]["provider_request_count_during_pr"] == 0
     assert value["review_execution"]["workflow_dispatch_during_pr"] is False
+    assert value["review_execution"]["source_review_counter_while_unmerged"] == "0/5"
+    assert value["review_execution"]["source_review_counter_if_merged"] == "1/5"
+    assert value["review_execution"]["mandatory_source_reread_after_merge"] is False
+    assert value["review_execution"]["workflow_yaml_changed"] is False
+    assert value["review_execution"]["current_shadow_live_run_performed"] is False
+    assert value["review_execution"]["p4_4_overall_complete"] is False
+    assert value["review_execution"]["architecture_checkpoint_e_complete"] is False
+    assert value["migration_dispositions"]["current_shadow_caller_migration_authorized"] is False
+    assert value["migration_dispositions"]["current_shadow_workflow_retirement_authorized"] is False
 
 
 def test_base_source_identity_allows_only_trusted_shallow_pr_checkout(monkeypatch) -> None:
@@ -80,6 +89,42 @@ def test_valid_explicit_shadow_request_pairs_are_exact() -> None:
     assert all(row["canonical_intent"]["mode"] == "research_shadow" for row in valid)
     assert all(row["canonical_intent"]["place_wager"] is False for row in valid)
     assert all(row["canonical_intent"]["create_share_code"] is True for row in valid)
+
+
+def test_seven_day_horizon_classification_tracks_utc_lagos_boundary() -> None:
+    parity = audit._request_parity()
+    seven_day_case = next(
+        row for row in parity["valid_request_pairs"]
+        if row["case"] == "workflow_dispatch_explicit_seven_day_horizon"
+    )
+    assert seven_day_case["parity"] is True
+    assert seven_day_case["classification"] == "REPRESENTABLE_ONLY_WITH_EXPLICIT_DATE_PRESERVATION"
+
+    boundary = parity["seven_day_horizon"]
+    assert boundary["same_date_at_2026_09_24T22_59Z"] is True
+    assert boundary["at_2026_09_24T23_00Z"] is False
+    assert boundary["legacy_utc_window"] == ["20260924", "20260930"]
+    assert boundary["canonical_lagos_window"] == ["20260925", "20261001"]
+    assert boundary["classification"] == "UNREPRESENTABLE_WITH_CURRENT_CANONICAL_WORKFLOW_REQUEST_SURFACE"
+
+
+def test_source_review_cadence_docs_match_receipt() -> None:
+    expected_phrases = (
+        "PR #399",
+        "previous source-review cycle",
+        "mandatory architecture/source reread was completed",
+        "new cycle reset to 0/5",
+        "would become 1/5 if merged",
+        "No new mandatory reread is due at 1/5",
+        "only when this cycle reaches 5/5",
+    )
+    for path in (
+        Path("docs/architecture/athena_run_workflow.md"),
+        Path("docs/architecture/workflow_capability_matrix.md"),
+    ):
+        content = " ".join(path.read_text(encoding="utf-8").split())
+        p44h_section = content.split("## P4.4H", 1)[1]
+        assert all(phrase in p44h_section for phrase in expected_phrases), path
 
 
 def test_scheduled_shadow_is_not_owned_by_current_canonical_schedule() -> None:
@@ -221,6 +266,12 @@ def test_seven_day_horizon_diverges_at_utc_lagos_midnight() -> None:
     canonical_lagos_window = tuple((date(2026, 9, 25) + timedelta(days=i)).strftime("%Y%m%d") for i in range(7))
     with pytest.raises(legacy_dates.CurrentShadowFixtureDateRequestError):
         legacy_dates.validate_fixture_dates(canonical_lagos_window, current_utc=boundary)
+    parity = audit._request_parity()["seven_day_horizon"]
+    assert parity["same_date_at_2026_09_24T22_59Z"] is True
+    assert parity["at_2026_09_24T23_00Z"] is False
+    assert parity["legacy_utc_window"] == [utc_legacy_window[0], utc_legacy_window[-1]]
+    assert parity["canonical_lagos_window"] == [canonical_lagos_window[0], canonical_lagos_window[-1]]
+    assert parity["classification"] == "UNREPRESENTABLE_WITH_CURRENT_CANONICAL_WORKFLOW_REQUEST_SURFACE"
 
 
 def test_comment_grammar_is_exact_and_not_broadened() -> None:

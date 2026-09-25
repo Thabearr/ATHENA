@@ -292,8 +292,12 @@ live canonical SHADOW proof is authorized. The canonical SHADOW service delegate
 to the existing reviewed Current Shadow supervisor, but the schedule is not
 equivalent today: the legacy workflow schedules SHADOW at 09:00 UTC while the
 canonical schedule resolves MAIN. Canonical relative dates also use
-`Africa/Lagos`, unlike the legacy UTC fixture-date horizon; the 23:00 UTC boundary
-therefore remains an exact migration blocker.
+`Africa/Lagos`, unlike the legacy UTC fixture-date horizon. The explicit seven-day
+window is representable with date preservation at 22:59 UTC, but at 23:00 UTC the
+legacy UTC window `20260924..20260930` and canonical Lagos window
+`20260925..20261001` cannot be accepted by both policies; that mapping is
+unrepresentable with the current canonical request surface. No date shifting is
+allowed.
 
 The review keeps notification/email as a separable post-core consumer and preserves
 the current artifact/history ancestry dependencies, including the
@@ -302,6 +306,8 @@ and P3.0 evidence paths. The `/athena-shadow` issue-comment grammar remains an
 explicit compatibility wrapper candidate; it is not removed or silently mapped.
 All five P4.3A Current Shadow blockers remain open pending later caller migration
 and operational evidence. No workflow YAML or evolution transition changes in
-P4.4H. P4.4 and Architecture Checkpoint E remain incomplete; the source-review
-counter is 0/5 while unmerged and would become 1/5 if the owner merges, requiring
-the prescribed reread before the next remediation mission.
+P4.4H. P4.4 and Architecture Checkpoint E remain incomplete. PR #399 reached 5/5
+in the previous source-review cycle; its mandatory architecture/source reread was
+completed after merge, and the new cycle reset to 0/5. P4.4H is 0/5 while unmerged
+and would become 1/5 if merged. No new mandatory reread is due at 1/5; the next
+mandatory reread is due only when this cycle reaches 5/5.
