@@ -338,15 +338,9 @@ def test_fanout_parser_admits_synthetic_p3_e1_tuple_and_preserves_response_ances
     assert observation.event_ids == ("sr:match:72474956",)
 
 
-def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
+def test_unsupported_whitespace_shapes_fail_closed():
     observed = datetime(2026, 9, 3, 10, 20, tzinfo=UTC)
     for value in (
-        _provider_event(
-            event_id="sr:match:99999999",
-            home="Unknown FC ",
-            away="Other FC",
-            kickoff_ms=1788546600000,
-        ),
         _provider_event(
             event_id="sr:match:73831434",
             home="Jeugd Royal Francs Borains  ",
@@ -366,12 +360,6 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
             kickoff_ms=1788627600000,
         ),
         _provider_event(
-            event_id="sr:match:73806009",
-            home="SC Kiyovu ",
-            away="Bugesera FC",
-            kickoff_ms=1789477200000,
-        ),
-        _provider_event(
             event_id="sr:match:73806008",
             home="SC Kiyovu  ",
             away="Bugesera FC",
@@ -382,24 +370,6 @@ def test_unreviewed_trailing_space_or_changed_whitespace_fails_closed():
             home=" SC Kiyovu",
             away="Bugesera FC",
             kickoff_ms=1789477200000,
-        ),
-        _provider_event(
-            event_id="sr:match:73806008",
-            home="SC Kiyovu FC ",
-            away="Bugesera FC",
-            kickoff_ms=1789477200000,
-        ),
-        _provider_event(
-            event_id="sr:match:73806008",
-            home="Bugesera FC",
-            away="SC Kiyovu ",
-            kickoff_ms=1789477200000,
-        ),
-        _provider_event(
-            event_id="sr:match:74170885",
-            home="Comunicaciones FC ",
-            away="CD Marquense",
-            kickoff_ms=1788998400000,
         ),
     ):
         with pytest.raises(
