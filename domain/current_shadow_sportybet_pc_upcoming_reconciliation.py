@@ -16,7 +16,7 @@ import os
 from pathlib import Path
 import tempfile
 from types import MappingProxyType, SimpleNamespace
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 
 from domain import current_shadow_sportybet_pc_upcoming_discovery as source
 from domain import current_shadow_sportybet_upcoming_reconciliation as legacy
@@ -54,6 +54,9 @@ EVIDENCE_ROOT = source.EVIDENCE_ROOT
 ALLOWED_OUTPUT_RELATIVE = EVIDENCE_ROOT
 RUNTIME_ATTEMPTS_DIRECTORY = "runtime-attempts"
 STABILIZATION_RECEIPT_FILENAME = "runtime-capture-stabilization.json"
+RAW_RESPONSE_DIRECTORY = "raw-responses"
+RAW_RESPONSE_JOURNAL_FILENAME = "raw-response-observations.json"
+PARSE_FAILURE_FILENAME = "parse-failure.json"
 INCOMPLETE_PAGINATION_STATE = "PC_UPCOMING_RUNTIME_PAGINATION_INCOMPLETE"
 PROSPECTIVE_DISCOVERY_ELIGIBLE = legacy.PROSPECTIVE_DISCOVERY_ELIGIBLE
 PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS = legacy.PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS
@@ -150,6 +153,25 @@ def _policy_payload() -> dict[str, Any]:
             "per_page_transport_retry": False,
             "provider_request_upper_bound_is_finite": True,
         },
+        "preparse_response_evidence": {
+            "every_successful_runtime_http_response_persisted_before_semantic_parse": True,
+            "raw_response_bytes_written_exclusively": True,
+            "raw_response_journal_canonical_self_hash": True,
+            "raw_response_request_page_time_sha_ancestry": True,
+            "parse_failure_receipt_binds_exact_raw_response_sha": True,
+            "parse_failure_receipt_before_source_failure_propagation": True,
+            "parse_failure_semantic_acceptance": False,
+            "parse_failure_provider_absence_authority": False,
+            "parse_failure_identity_learning_authority": False,
+            "parse_failure_reconciliation_authority": False,
+            "parse_failure_pricing_authority": False,
+            "parse_failure_router_authority": False,
+            "parse_failure_portfolio_authority": False,
+            "parse_failure_selection_authority": False,
+            "parse_failure_delivery_authority": False,
+            "non_totalnum_parse_failure_starts_fresh_epoch": False,
+            "source_v1_acceptance_unchanged": True,
+        },
         "identity_observation_order": [
             "EXACT_PROVIDER_RAW_PAGE_BYTES",
             "RAW_ANCESTRY_BOUND_ATHENA_PROVIDER_IDENTITY_PROJECTION",
@@ -177,7 +199,7 @@ def calculate_policy_sha256() -> str:
     return hashlib.sha256(_canonical(_policy_payload())).hexdigest()
 
 
-PINNED_POLICY_SHA256 = "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
+PINNED_POLICY_SHA256 = "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
 EXPECTED_CONTRACT_SHA256 = PINNED_POLICY_SHA256
 CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 = PINNED_POLICY_SHA256
 
@@ -209,6 +231,7 @@ def validate_contract() -> Mapping[str, Any]:
         "source_path": UPCOMING_PATH,
         "pagination_complete_required": True,
         "capture_stabilization": MappingProxyType(dict(_policy_payload()["capture_stabilization"])),
+        "preparse_response_evidence": MappingProxyType(dict(_policy_payload()["preparse_response_evidence"])),
     })
 
 
@@ -320,10 +343,139 @@ def _write_page_observations(attempt_root: Path, attempt_index: int,
     _write_json(attempt_root / "page-observations.json", payload, replace_existing=True)
 
 
+def _raw_response_row(
+    *, attempt_index: int, page_num: int, request_target: str, request_nonce: int,
+    observed_at: str, raw_relative_path: str, raw_sha256: str, raw_size: int,
+    semantic_parse_attempted: bool, semantic_parse_succeeded: bool,
+    exception_type: str | None, exception_message: str | None,
+) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "attempt_index": attempt_index,
+        "page_num": page_num,
+        "request_target": request_target,
+        "request_nonce": request_nonce,
+        "observed_at": observed_at,
+        "raw_relative_path": raw_relative_path,
+        "raw_sha256": raw_sha256,
+        "raw_size": raw_size,
+        "semantic_parse_attempted": semantic_parse_attempted,
+        "semantic_parse_succeeded": semantic_parse_succeeded,
+        "exception_type": exception_type,
+        "exception_message": exception_message,
+    }
+
+
+def _read_raw_response_observations(attempt_root: Path) -> list[dict[str, Any]]:
+    path = attempt_root / RAW_RESPONSE_JOURNAL_FILENAME
+    raw_root = attempt_root / RAW_RESPONSE_DIRECTORY
+    if not path.exists():
+        if raw_root.exists():
+            raise PcUpcomingRuntimeReconciliationError(
+                "pre-parse raw response files exist without their journal"
+            )
+        return []
+    try:
+        value = _read_runtime_json(path)
+    except PcUpcomingRuntimeReconciliationError as exc:
+        raise PcUpcomingRuntimeReconciliationError(
+            "pre-parse raw-response journal is unreadable"
+        ) from exc
+    if type(value) is not dict:
+        raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response journal shape is invalid")
+    semantic = dict(value)
+    embedded = semantic.pop("canonical_sha256", None)
+    if embedded != hashlib.sha256(_canonical(semantic)).hexdigest():
+        raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response journal SHA mismatch")
+    rows = value.get("responses")
+    if value.get("schema_version") != 1 or type(rows) is not list:
+        raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response journal shape is invalid")
+    return rows
+
+
+def _write_raw_response_observations(
+    attempt_root: Path, attempt_index: int, rows: Sequence[Mapping[str, Any]],
+) -> dict[str, Any]:
+    document = _seal_document({
+        "schema_version": 1,
+        "attempt_index": attempt_index,
+        "responses": [dict(item) for item in rows],
+    })
+    _write_json(
+        attempt_root / RAW_RESPONSE_JOURNAL_FILENAME,
+        document,
+        replace_existing=True,
+    )
+    return document
+
+
+def _write_raw_response_exclusive(path: Path, raw: bytes) -> None:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("xb") as handle:
+            handle.write(raw)
+            handle.flush()
+            os.fsync(handle.fileno())
+    except OSError as exc:
+        raise PcUpcomingRuntimeReconciliationError(
+            "could not persist pre-parse raw provider response; semantic parsing was not attempted"
+        ) from exc
+
+
+def _parse_failure_receipt(
+    *, attempt_index: int, response: Mapping[str, Any], exception_type: str,
+    exception_message: str,
+) -> dict[str, Any]:
+    payload = {
+        "schema_version": 1,
+        "runtime_policy_id": POLICY_ID,
+        "runtime_policy_sha256": PINNED_POLICY_SHA256,
+        "source_policy_id": UPSTREAM_SOURCE_POLICY_ID,
+        "source_policy_sha256": UPSTREAM_SOURCE_POLICY_SHA256,
+        "attempt_index": attempt_index,
+        "page_num": response["page_num"],
+        "request_target": response["request_target"],
+        "request_nonce": response["request_nonce"],
+        "observed_at": response["observed_at"],
+        "raw_relative_path": response["raw_relative_path"],
+        "raw_sha256": response["raw_sha256"],
+        "raw_size": response["raw_size"],
+        "exception_type": exception_type,
+        "exception_message": exception_message,
+        "semantic_acceptance": False,
+        "provider_absence_authority": False,
+        "identity_learning_authority": False,
+        "reconciliation_authority": False,
+        "pricing_authority": False,
+        "router_authority": False,
+        "portfolio_authority": False,
+        "selection_authority": False,
+        "delivery_authority": False,
+        "fallback": False,
+        "fresh_epoch_authorized": False,
+    }
+    return _seal_document(payload)
+
+
+def _persist_parse_failure(
+    *, attempt_root: Path, attempt_index: int, response: Mapping[str, Any],
+    exception_type: str, exception_message: str,
+) -> dict[str, Any]:
+    receipt = _parse_failure_receipt(
+        attempt_index=attempt_index,
+        response=response,
+        exception_type=exception_type,
+        exception_message=exception_message,
+    )
+    _write_json(attempt_root / PARSE_FAILURE_FILENAME, receipt)
+    return receipt
+
+
 def _attempt_receipt(
     *, attempt_index: int, attempt_root: Path, status: str,
     failure_class: str | None, failure_message: str | None,
-    observations: Sequence[Mapping[str, Any]], accepted: bool,
+    observations: Sequence[Mapping[str, Any]],
+    raw_responses: Sequence[Mapping[str, Any]], accepted: bool,
 ) -> dict[str, Any]:
     manifest_path = attempt_root / "manifest.json"
     manifest_sha256: str | None = None
@@ -341,15 +493,39 @@ def _attempt_receipt(
             observation_document = json.loads(observation_path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, json.JSONDecodeError):
             observation_document = None
+    raw_response_document: dict[str, Any] | None = None
+    raw_response_path = attempt_root / RAW_RESPONSE_JOURNAL_FILENAME
+    if raw_response_path.is_file():
+        try:
+            raw_response_document = json.loads(raw_response_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            raw_response_document = None
+    parse_failure_document: dict[str, Any] | None = None
+    parse_failure_path = attempt_root / PARSE_FAILURE_FILENAME
+    if parse_failure_path.is_file():
+        try:
+            parse_failure_document = json.loads(parse_failure_path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, json.JSONDecodeError):
+            parse_failure_document = None
     payload = {
         "schema_version": 1,
         "attempt_index": attempt_index,
         "status": status,
         "failure_class": failure_class,
         "failure_message": failure_message,
-        "successful_page_response_count": len(observations),
+        "successful_page_response_count": len(raw_responses),
+        "parsed_page_count": len(observations),
         "observed_totalNum_sequence": [item["totalNum"] for item in observations],
         "raw_page_sha256s": [item["raw_sha256"] for item in observations],
+        "raw_response_sha256s": [item["raw_sha256"] for item in raw_responses],
+        "raw_response_observations_sha256": (
+            raw_response_document.get("canonical_sha256")
+            if type(raw_response_document) is dict else None
+        ),
+        "parse_failure_sha256": (
+            parse_failure_document.get("canonical_sha256")
+            if type(parse_failure_document) is dict else None
+        ),
         "stable_totalNum": len({item["totalNum"] for item in observations}) <= 1,
         "manifest_emitted": manifest_path.is_file(),
         "manifest_canonical_sha256": manifest_sha256,
@@ -380,6 +556,10 @@ def _stabilization_base() -> dict[str, Any]:
         "attempt_receipts": [],
         "workflow_retry": False,
         "per_page_transport_retry": False,
+        "pre_parse_raw_response_preservation": True,
+        "parse_failure_receipt_required": True,
+        "parse_failure_semantic_acceptance": False,
+        "non_totalnum_parse_failure_fresh_epoch": False,
         "fallback": False,
         "provider_absence_from_failed_attempt": False,
         "identity_learning_from_failed_attempt": False,
@@ -498,6 +678,10 @@ def verify_runtime_capture_stabilization(
         or receipt.get("max_successful_page_responses") != MAX_SUCCESSFUL_PAGE_RESPONSES
         or receipt.get("workflow_retry") is not False
         or receipt.get("per_page_transport_retry") is not False
+        or receipt.get("pre_parse_raw_response_preservation") is not True
+        or receipt.get("parse_failure_receipt_required") is not True
+        or receipt.get("parse_failure_semantic_acceptance") is not False
+        or receipt.get("non_totalnum_parse_failure_fresh_epoch") is not False
         or receipt.get("fallback") is not False
         or receipt.get("provider_absence_from_failed_attempt") is not False
         or receipt.get("identity_learning_from_failed_attempt") is not False
@@ -544,8 +728,11 @@ def verify_runtime_capture_stabilization(
         } or attempt_doc.get("attempt_index") != expected_index:
             raise PcUpcomingRuntimeReconciliationError("runtime attempt receipt index/ancestry drifted")
         observations = _read_page_observations(attempt_root)
+        raw_responses = _read_raw_response_observations(attempt_root)
         if any(type(item) is not dict for item in observations):
             raise PcUpcomingRuntimeReconciliationError("runtime page observation row is malformed")
+        if any(type(item) is not dict for item in raw_responses):
+            raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response row is malformed")
         if observations_path.exists():
             observation_doc = _read_runtime_json(observations_path)
             if (
@@ -558,6 +745,134 @@ def verify_runtime_capture_stabilization(
             raise PcUpcomingRuntimeReconciliationError("runtime page observations exist without their journal")
         elif attempt_doc.get("page_observations_sha256") is not None:
             raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent page-observation journal")
+        raw_observation_path = attempt_root / RAW_RESPONSE_JOURNAL_FILENAME
+        raw_directory = attempt_root / RAW_RESPONSE_DIRECTORY
+        if raw_observation_path.exists():
+            raw_observation_doc = _read_runtime_json(raw_observation_path)
+            if (
+                type(raw_observation_doc) is not dict
+                or raw_observation_doc.get("attempt_index") != expected_index
+                or attempt_doc.get("raw_response_observations_sha256") != raw_observation_doc.get("canonical_sha256")
+            ):
+                raise PcUpcomingRuntimeReconciliationError("attempt raw-response ancestry drifted")
+        elif raw_responses or raw_directory.exists():
+            raise PcUpcomingRuntimeReconciliationError("pre-parse raw responses exist without a valid journal")
+        elif attempt_doc.get("raw_response_observations_sha256") is not None:
+            raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent raw-response journal")
+        if raw_directory.exists() and raw_directory.is_symlink():
+            raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response directory must not be a symlink")
+        expected_raw_names = {
+            f"page-{index:03d}.raw.json" for index in range(1, len(raw_responses) + 1)
+        }
+        if raw_directory.exists():
+            actual_raw_names: set[str] = set()
+            for raw_path in raw_directory.iterdir():
+                if raw_path.is_symlink() or not raw_path.is_file():
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response directory contains a non-regular entry")
+                actual_raw_names.add(raw_path.name)
+            if actual_raw_names != expected_raw_names:
+                raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response files differ from the exact journal inventory")
+        elif expected_raw_names:
+            raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response journal lacks its raw-response directory")
+        if tuple(item.get("page_num") for item in raw_responses) != tuple(range(1, len(raw_responses) + 1)):
+            raise PcUpcomingRuntimeReconciliationError("pre-parse responses are not contiguous from page 1")
+        if len(raw_responses) > MAX_PAGES_PER_EPOCH:
+            raise PcUpcomingRuntimeReconciliationError("pre-parse response count exceeds MAX_PAGES_PER_EPOCH")
+        parse_failure_path = attempt_root / PARSE_FAILURE_FILENAME
+        parse_failure_doc: dict[str, Any] | None = None
+        if parse_failure_path.exists():
+            parse_failure_value = _read_runtime_json(parse_failure_path)
+            if type(parse_failure_value) is not dict:
+                raise PcUpcomingRuntimeReconciliationError("parse-failure receipt shape is invalid")
+            parse_failure_doc = parse_failure_value
+            parse_failure_semantic = dict(parse_failure_doc)
+            parse_failure_sha = parse_failure_semantic.pop("canonical_sha256", None)
+            if parse_failure_sha != hashlib.sha256(_canonical(parse_failure_semantic)).hexdigest():
+                raise PcUpcomingRuntimeReconciliationError("parse-failure receipt SHA mismatch")
+            if attempt_doc.get("parse_failure_sha256") != parse_failure_sha:
+                raise PcUpcomingRuntimeReconciliationError("attempt receipt parse-failure ancestry drifted")
+        elif attempt_doc.get("parse_failure_sha256") is not None:
+            raise PcUpcomingRuntimeReconciliationError("attempt receipt claims an absent parse-failure receipt")
+        failed_parse_rows = [
+            item for item in raw_responses
+            if item.get("semantic_parse_attempted") is True
+            and item.get("semantic_parse_succeeded") is False
+        ]
+        if len(failed_parse_rows) > 1 or bool(failed_parse_rows) != (parse_failure_doc is not None):
+            raise PcUpcomingRuntimeReconciliationError("parse-failure receipt does not exactly match raw-response journal")
+        if raw_responses:
+            raw_row_keys = {
+                "schema_version", "attempt_index", "page_num", "request_target", "request_nonce",
+                "observed_at", "raw_relative_path", "raw_sha256", "raw_size",
+                "semantic_parse_attempted", "semantic_parse_succeeded", "exception_type", "exception_message",
+            }
+            for position, item in enumerate(raw_responses, 1):
+                if set(item) != raw_row_keys or item.get("schema_version") != 1 or item.get("attempt_index") != expected_index:
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response journal row shape is invalid")
+                if item.get("raw_relative_path") != f"{RAW_RESPONSE_DIRECTORY}/page-{position:03d}.raw.json":
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response path is not exact")
+                try:
+                    raw = source._read_regular(
+                        attempt_root / item["raw_relative_path"], max_bytes=source.MAX_RESPONSE_BYTES
+                    )
+                    observed_at = source._parse_utc_text(item["observed_at"], "pre-parse observed_at")
+                    if item.get("request_target") != source.request_target(item["page_num"], item["request_nonce"]):
+                        raise ValueError("request target mismatch")
+                    source._validate_target(item["request_target"], page_num=item["page_num"], observed_at=observed_at)
+                except Exception as exc:
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response ancestry is invalid") from exc
+                if hashlib.sha256(raw).hexdigest() != item.get("raw_sha256") or len(raw) != item.get("raw_size"):
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse raw-response bytes differ from journal SHA/size")
+                attempted = item.get("semantic_parse_attempted")
+                succeeded = item.get("semantic_parse_succeeded")
+                if type(attempted) is not bool or type(succeeded) is not bool or (succeeded and not attempted):
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse semantic state is invalid")
+                if position < len(raw_responses) and (attempted is not True or succeeded is not True):
+                    raise PcUpcomingRuntimeReconciliationError("response capture continued after an unparsed/failed page")
+                if attempted is True and succeeded is True and (item.get("exception_type") is not None or item.get("exception_message") is not None):
+                    raise PcUpcomingRuntimeReconciliationError("successful parse row carries a failure")
+                if attempted is False and (item.get("exception_type") is not None or item.get("exception_message") is not None):
+                    raise PcUpcomingRuntimeReconciliationError("unattempted parse row carries a failure")
+                if item in failed_parse_rows and (type(item.get("exception_type")) is not str or type(item.get("exception_message")) is not str):
+                    raise PcUpcomingRuntimeReconciliationError("failed parse row lacks exact exception data")
+                if attempted is True and succeeded is True:
+                    parsed_index = item.get("page_num") - 1
+                    if parsed_index >= len(observations):
+                        raise PcUpcomingRuntimeReconciliationError("successful pre-parse row lacks parsed-page ancestry")
+                    page_row = observations[parsed_index]
+                    try:
+                        replayed = source.parse_page(
+                            raw, page_num=item["page_num"], request_nonce_ms=item["request_nonce"],
+                            observed_at=observed_at,
+                        )
+                    except Exception as exc:
+                        raise PcUpcomingRuntimeReconciliationError("pre-parse successful response no longer parses") from exc
+                    if page_row != _page_observation(replayed, expected_index):
+                        raise PcUpcomingRuntimeReconciliationError("parsed-page journal differs from pre-parse response")
+                if failed_parse_rows and item is failed_parse_rows[0]:
+                    try:
+                        source.parse_page(
+                            raw, page_num=item["page_num"], request_nonce_ms=item["request_nonce"],
+                            observed_at=observed_at,
+                        )
+                    except Exception as exc:
+                        if type(exc).__name__ != item.get("exception_type") or str(exc) != item.get("exception_message"):
+                            raise PcUpcomingRuntimeReconciliationError("parse failure no longer replays exactly") from exc
+                    else:
+                        raise PcUpcomingRuntimeReconciliationError("parse-failure response now parses successfully")
+                    if parse_failure_doc is None:
+                        raise PcUpcomingRuntimeReconciliationError("parse-failure receipt is absent")
+                    expected_failure = _parse_failure_receipt(
+                        attempt_index=expected_index,
+                        response=item,
+                        exception_type=item["exception_type"],
+                        exception_message=item["exception_message"],
+                    )
+                    if parse_failure_doc != expected_failure:
+                        raise PcUpcomingRuntimeReconciliationError("parse-failure receipt fields differ from exact raw ancestry")
+        if len(raw_responses) != len(observations) + len(failed_parse_rows):
+            raise PcUpcomingRuntimeReconciliationError("raw response and parsed-page counts are inconsistent")
+        total_successful_pages += len(raw_responses)
         if len(observations) > MAX_PAGES_PER_EPOCH:
             raise PcUpcomingRuntimeReconciliationError("runtime attempt exceeds MAX_PAGES_PER_EPOCH")
         if tuple(item.get("page_num") for item in observations) != tuple(range(1, len(observations) + 1)):
@@ -579,11 +894,12 @@ def verify_runtime_capture_stabilization(
                 raise PcUpcomingRuntimeReconciliationError("runtime page observation raw replay failed") from exc
             if item != _page_observation(page, expected_index):
                 raise PcUpcomingRuntimeReconciliationError("runtime page metadata differs from exact source replay")
-        total_successful_pages += len(observations)
         if (
-            attempt_doc.get("successful_page_response_count") != len(observations)
+            attempt_doc.get("successful_page_response_count") != len(raw_responses)
+            or attempt_doc.get("parsed_page_count") != len(observations)
             or attempt_doc.get("observed_totalNum_sequence") != [item["totalNum"] for item in observations]
             or attempt_doc.get("raw_page_sha256s") != [item["raw_sha256"] for item in observations]
+            or attempt_doc.get("raw_response_sha256s") != [item["raw_sha256"] for item in raw_responses]
             or attempt_doc.get("stable_totalNum") is not (len({item["totalNum"] for item in observations}) <= 1)
             or attempt_doc.get("manifest_emitted") is not (attempt_root / "manifest.json").is_file()
         ):
@@ -732,6 +1048,76 @@ def capture_current_pc_upcoming_discovery(
     for attempt_index in range(1, MAX_CAPTURE_EPOCHS + 1):
         attempt_root = root / RUNTIME_ATTEMPTS_DIRECTORY / f"attempt-{attempt_index:03d}"
         observations: list[dict[str, Any]] = []
+        raw_responses: list[dict[str, Any]] = []
+
+        def observe_raw_response(
+            *, page_num: int, request_target: str, request_nonce: int,
+            observed_at: str, raw_bytes: bytes, raw_sha256: str, raw_size: int,
+            semantic_parse_attempted: bool, semantic_parse_succeeded: bool,
+            exception_type: str | None, exception_message: str | None,
+        ) -> None:
+            if (
+                type(raw_bytes) is not bytes
+                or len(raw_bytes) != raw_size
+                or hashlib.sha256(raw_bytes).hexdigest() != raw_sha256
+                or type(page_num) is not int
+                or type(request_nonce) is not int
+                or request_target != source.request_target(page_num, request_nonce)
+            ):
+                raise PcUpcomingRuntimeReconciliationError(
+                    "pre-parse response ancestry failed exact local validation"
+                )
+            parsed_observed_at = source._parse_utc_text(observed_at, "pre-parse observed_at")
+            source._validate_target(request_target, page_num=page_num, observed_at=parsed_observed_at)
+            relative = f"{RAW_RESPONSE_DIRECTORY}/page-{page_num:03d}.raw.json"
+            row = _raw_response_row(
+                attempt_index=attempt_index,
+                page_num=page_num,
+                request_target=request_target,
+                request_nonce=request_nonce,
+                observed_at=observed_at,
+                raw_relative_path=relative,
+                raw_sha256=raw_sha256,
+                raw_size=raw_size,
+                semantic_parse_attempted=semantic_parse_attempted,
+                semantic_parse_succeeded=semantic_parse_succeeded,
+                exception_type=exception_type,
+                exception_message=exception_message,
+            )
+            if semantic_parse_attempted is False and semantic_parse_succeeded is False:
+                if exception_type is not None or exception_message is not None or page_num != len(raw_responses) + 1:
+                    raise PcUpcomingRuntimeReconciliationError("pre-parse response arrived out of order")
+                _write_raw_response_exclusive(attempt_root / relative, raw_bytes)
+                raw_responses.append(row)
+                _write_raw_response_observations(attempt_root, attempt_index, raw_responses)
+                return
+            if not raw_responses or raw_responses[-1].get("page_num") != page_num:
+                raise PcUpcomingRuntimeReconciliationError("semantic parse callback lacks its pre-parse response")
+            prior = raw_responses[-1]
+            ancestry_fields = (
+                "page_num", "request_target", "request_nonce", "observed_at",
+                "raw_sha256", "raw_size",
+            )
+            if any(prior.get(key) != row.get(key) for key in ancestry_fields):
+                raise PcUpcomingRuntimeReconciliationError("semantic parse callback changed pre-parse ancestry")
+            if prior.get("semantic_parse_attempted") is not False or prior.get("semantic_parse_succeeded") is not False:
+                raise PcUpcomingRuntimeReconciliationError("semantic parse callback repeated for one response")
+            if semantic_parse_attempted is not True or semantic_parse_succeeded not in {True, False}:
+                raise PcUpcomingRuntimeReconciliationError("semantic parse callback state is invalid")
+            if semantic_parse_succeeded is True and (exception_type is not None or exception_message is not None):
+                raise PcUpcomingRuntimeReconciliationError("successful semantic parse callback carries an exception")
+            if semantic_parse_succeeded is False and (type(exception_type) is not str or type(exception_message) is not str):
+                raise PcUpcomingRuntimeReconciliationError("failed semantic parse callback lacks exact exception")
+            raw_responses[-1] = row
+            _write_raw_response_observations(attempt_root, attempt_index, raw_responses)
+            if semantic_parse_succeeded is False:
+                _persist_parse_failure(
+                    attempt_root=attempt_root,
+                    attempt_index=attempt_index,
+                    response=row,
+                    exception_type=exception_type,
+                    exception_message=exception_message,
+                )
 
         def observe_page(page: source.PcUpcomingPageEvidence) -> None:
             observation = _page_observation(page, attempt_index)
@@ -743,6 +1129,7 @@ def capture_current_pc_upcoming_discovery(
             manifest = source._capture_current_pc_upcoming_discovery_once(
                 evidence_root=attempt_root,
                 execute_live_network=True,
+                raw_response_observer=observe_raw_response,
                 page_observer=observe_page,
             )
             verified = source._verify_manifest_at_root(evidence_root=attempt_root)
@@ -763,6 +1150,7 @@ def capture_current_pc_upcoming_discovery(
                 failure_class=None,
                 failure_message=None,
                 observations=observations,
+                raw_responses=raw_responses,
                 accepted=True,
             )
             attempt_receipts[attempt_index] = receipt
@@ -805,6 +1193,7 @@ def capture_current_pc_upcoming_discovery(
                 failure_class=failure_class,
                 failure_message=failure_message,
                 observations=observations,
+                raw_responses=raw_responses,
                 accepted=False,
             )
             attempt_receipts[attempt_index] = receipt

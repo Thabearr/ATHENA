@@ -252,20 +252,24 @@ def audit_historical(repository_root: str | Path = ".") -> dict[str, Any]:
 
 
 def audit(repository_root: str | Path = ".") -> dict[str, Any]:
-    """Validate history, then require the exact P4.4O current-runtime supersession."""
+    """Validate P4.4N history, then the exact later runtime supersession chain."""
     root = Path(repository_root)
     historical = audit_historical(root)
     try:
         from scripts import audit_p4_4o_pc_upcoming_stable_epoch_recovery as p44o
     except ImportError as exc:
-        raise P44NError("P4.4N current-state supersession requires the P4.4O audit") from exc
+        raise P44NError("P4.4N current-state supersession requires the P4.4O/P4.4P audits") from exc
     current = p44o.audit(root)
-    _require(current.get("runtime_policy_sha256") == P44O_RUNTIME_SHA256 == runtime.PINNED_POLICY_SHA256,
-             "current runtime does not match exact P4.4O supersession")
+    _require(historical.get("historical_runtime_wrapper_sha256") == NEW_VALUES["runtime_wrapper"],
+             "P4.4N historical current-at-the-time runtime identity changed")
+    _require(current.get("runtime_policy_sha256") == runtime.PINNED_POLICY_SHA256
+             and current.get("historical_runtime_wrapper_sha256") == P44O_RUNTIME_SHA256,
+             "current runtime does not match exact P4.4P supersession of P4.4O")
     result = dict(historical)
     result["historical_runtime_wrapper_sha256"] = historical["historical_runtime_wrapper_sha256"]
     result["runtime_wrapper_sha256"] = current["runtime_policy_sha256"]
     result["p4_4o_receipt_sha256"] = current["receipt_sha256"]
+    result["p4_4p_receipt_sha256"] = current["p4_4p_receipt_sha256"]
     return result
 
 

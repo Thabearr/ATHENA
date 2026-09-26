@@ -239,7 +239,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
+        "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
     stabilization = upcoming._policy_payload().get("capture_stabilization", {})
@@ -270,6 +270,26 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         "provider_request_upper_bound_is_finite": True,
     }:
         raise P30LiveReadinessError("Check F failed: stable-epoch recovery bounds drifted")
+    if upcoming._policy_payload().get("preparse_response_evidence") != {
+        "every_successful_runtime_http_response_persisted_before_semantic_parse": True,
+        "raw_response_bytes_written_exclusively": True,
+        "raw_response_journal_canonical_self_hash": True,
+        "raw_response_request_page_time_sha_ancestry": True,
+        "parse_failure_receipt_binds_exact_raw_response_sha": True,
+        "parse_failure_receipt_before_source_failure_propagation": True,
+        "parse_failure_semantic_acceptance": False,
+        "parse_failure_provider_absence_authority": False,
+        "parse_failure_identity_learning_authority": False,
+        "parse_failure_reconciliation_authority": False,
+        "parse_failure_pricing_authority": False,
+        "parse_failure_router_authority": False,
+        "parse_failure_portfolio_authority": False,
+        "parse_failure_selection_authority": False,
+        "parse_failure_delivery_authority": False,
+        "non_totalnum_parse_failure_starts_fresh_epoch": False,
+        "source_v1_acceptance_unchanged": True,
+    }:
+        raise P30LiveReadinessError("Check F failed: pre-parse runtime evidence contract drifted")
     if identities["identity_compatibility_policy_sha256"] != (
         "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
     ):

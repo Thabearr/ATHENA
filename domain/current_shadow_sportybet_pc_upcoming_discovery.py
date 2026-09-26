@@ -854,6 +854,7 @@ def _capture_current_pc_upcoming_discovery_once(
     *,
     evidence_root: str | Path,
     execute_live_network: bool,
+    raw_response_observer: Callable[..., None] | None = None,
     page_observer: Callable[[PcUpcomingPageEvidence], None] | None = None,
 ) -> PcUpcomingDiscoveryManifest:
     """Capture exactly one V1 epoch into an explicit, non-overwriting directory."""
@@ -873,7 +874,46 @@ def _capture_current_pc_upcoming_discovery_once(
             break
         nonce = int(time.time() * 1000)
         raw, observed = _fetch_page(page_num, nonce)
-        page = parse_page(raw, page_num=page_num, request_nonce_ms=nonce, observed_at=observed)
+        target = request_target(page_num, nonce)
+        raw_ancestry = {
+            "page_num": page_num,
+            "request_target": target,
+            "request_nonce": nonce,
+            "observed_at": _utc_text(observed),
+            "raw_bytes": raw,
+            "raw_sha256": hashlib.sha256(raw).hexdigest(),
+            "raw_size": len(raw),
+        }
+        if raw_response_observer is not None:
+            # The runtime must durably preserve exact bytes and request ancestry
+            # before source semantics are allowed to inspect the response.
+            raw_response_observer(
+                **raw_ancestry,
+                semantic_parse_attempted=False,
+                semantic_parse_succeeded=False,
+                exception_type=None,
+                exception_message=None,
+            )
+        try:
+            page = parse_page(raw, page_num=page_num, request_nonce_ms=nonce, observed_at=observed)
+        except Exception as exc:
+            if raw_response_observer is not None:
+                raw_response_observer(
+                    **raw_ancestry,
+                    semantic_parse_attempted=True,
+                    semantic_parse_succeeded=False,
+                    exception_type=type(exc).__name__,
+                    exception_message=str(exc),
+                )
+            raise
+        if raw_response_observer is not None:
+            raw_response_observer(
+                **raw_ancestry,
+                semantic_parse_attempted=True,
+                semantic_parse_succeeded=True,
+                exception_type=None,
+                exception_message=None,
+            )
         _write_exclusive(root / page.raw_relative_path, raw)
         pages.append(page)
         if page_observer is not None:
