@@ -239,9 +239,37 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
+        "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
+    stabilization = upcoming._policy_payload().get("capture_stabilization", {})
+    if stabilization != {
+        "recovery_semantics": "FRESH_CAPTURE_EPOCH_AFTER_EXACT_CROSS_PAGE_TOTALNUM_DRIFT",
+        "exact_first_epoch_trigger": upcoming.TOTALNUM_DRIFT_ERROR,
+        "max_capture_epochs": 2,
+        "max_pages_per_epoch": 20,
+        "max_successful_page_responses": 40,
+        "each_epoch_starts_at_page": 1,
+        "no_per_page_http_retry": True,
+        "no_third_capture_epoch": True,
+        "failed_epoch_provider_absence_authority": False,
+        "failed_epoch_identity_learning_authority": False,
+        "failed_epoch_reconciliation_authority": False,
+        "failed_epoch_selection_authority": False,
+        "failed_epoch_pricing_authority": False,
+        "failed_epoch_router_authority": False,
+        "failed_epoch_portfolio_authority": False,
+        "failed_epoch_delivery_authority": False,
+        "cross_epoch_event_merge": False,
+        "accepted_epoch_independently_source_v1_verified": True,
+        "accepted_epoch_independently_runtime_complete": True,
+        "source_fallback": False,
+        "all_attempt_evidence_retained_under_source_evidence_root": True,
+        "workflow_retry": False,
+        "per_page_transport_retry": False,
+        "provider_request_upper_bound_is_finite": True,
+    }:
+        raise P30LiveReadinessError("Check F failed: stable-epoch recovery bounds drifted")
     if identities["identity_compatibility_policy_sha256"] != (
         "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
     ):
@@ -300,6 +328,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         "active_discovery_root": str(upcoming.ALLOWED_OUTPUT_RELATIVE),
         "historical_wap_source_retained": True,
         "runtime_pagination_complete_required": True,
+        "runtime_capture_stabilization": dict(stabilization),
         "paginated_contract_sha256_retained_historically": historical[
             "contract_sha256"
         ],

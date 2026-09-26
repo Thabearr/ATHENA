@@ -19,6 +19,9 @@ def test_p4_4n_receipt_and_current_contract_supersession_are_exact():
         "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
     )
     assert result["runtime_wrapper_sha256"] == (
+        "dac1f99da0b536b3808f8c7e41f66ad501101871d811131f8ede9e5dc99d4a5f"
+    )
+    assert result["historical_runtime_wrapper_sha256"] == (
         "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
     )
     assert result["historical_evidence_examples"] == 6

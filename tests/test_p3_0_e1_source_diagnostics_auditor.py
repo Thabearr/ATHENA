@@ -217,3 +217,9 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
     monkeypatch.setattr(upcoming, "validate_contract", lambda: stale)
     with pytest.raises(readiness.P30LiveReadinessError, match="identity compatibility policy SHA drifted"):
         readiness.check_f_upcoming_discovery_contract()
+    monkeypatch.setattr(upcoming, "validate_contract", lambda: {
+        **actual,
+        "runtime_policy_sha256": "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73",
+    })
+    with pytest.raises(readiness.P30LiveReadinessError, match="runtime wrapper or completeness rule drifted"):
+        readiness.check_f_upcoming_discovery_contract()
