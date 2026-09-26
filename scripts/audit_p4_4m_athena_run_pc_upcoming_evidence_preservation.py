@@ -199,7 +199,7 @@ def check() -> dict[str, Any]:
     if (
         upload_with.get("name") != "athena-run-${{ github.run_id }}"
         or upload_with.get("retention-days") != "30"
-        or upload_with.get("path") != "artifacts/athena-run-workflow\nartifacts/athena-runs"
+        or upload_with.get("path") != "artifacts/athena-run-workflow\nartifacts/athena-runs\n"
     ):
         raise P44MError("canonical artifact name, roots, or retention changed")
     if receipt.get("pre_fix_preservation_list") != list(PREVIOUS_ROOTS) or receipt.get("post_fix_preservation_list") != list(AFTER_ROOTS):

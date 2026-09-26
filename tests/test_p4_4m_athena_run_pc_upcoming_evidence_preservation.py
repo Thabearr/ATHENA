@@ -62,7 +62,7 @@ def test_identity_state_and_canonical_artifact_upload_contract_are_unchanged() -
     upload = _step(current, "upload_evidence")["with"]
     assert upload["name"] == "athena-run-${{ github.run_id }}"
     assert upload["retention-days"] == "30"
-    assert upload["path"] == "artifacts/athena-run-workflow\nartifacts/athena-runs"
+    assert upload["path"] == "artifacts/athena-run-workflow\nartifacts/athena-runs\n"
 
 
 def test_evolution_ledger_appends_exactly_one_maintenance_revision() -> None:
