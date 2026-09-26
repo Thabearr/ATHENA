@@ -408,6 +408,7 @@ def _install_upcoming_discovery(
     def fetch(page_num: int, nonce: int) -> tuple[bytes, datetime]:
         return raw, observed
 
+    monkeypatch.setattr(pc_upcoming_source.time, "time", lambda: observed.timestamp() - 0.250)
     monkeypatch.setattr(pc_upcoming_source, "_fetch_page", fetch)
 
 
@@ -848,7 +849,20 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
         tournament_id=provider_tournament_id,
     )
     _install_upcoming_discovery(
-        monkeypatch, [provider_event], tournament_name="Championship", observed=DISCOVERY_OBSERVED
+        monkeypatch,
+        [_event(
+            event_id=native_event_id,
+            home="QPR Provider Renamed",
+            away="Cardiff Provider Renamed",
+            kickoff=native_kickoff,
+            tournament_name="Championship",
+            home_team_id=provider_home_id,
+            away_team_id=provider_away_id,
+            category_id=provider_category_id,
+            tournament_id=provider_tournament_id,
+        )],
+        tournament_name="Championship",
+        observed=DISCOVERY_OBSERVED,
     )
     _install_detail(monkeypatch, raw=detail_raw)
     monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
@@ -1057,7 +1071,20 @@ def test_ambiguous_native_id_match_has_no_evidence_or_state_side_effect(
         away_id=8344,
     )
     _install_upcoming_discovery(
-        monkeypatch, [provider_event], tournament_name="Championship", observed=DISCOVERY_OBSERVED
+        monkeypatch,
+        [_event(
+            event_id=native_event_id,
+            home="QPR Provider Renamed",
+            away="Cardiff Provider Renamed",
+            kickoff=native_kickoff,
+            tournament_name="Championship",
+            home_team_id=provider_home_id,
+            away_team_id=provider_away_id,
+            category_id=provider_category_id,
+            tournament_id=provider_tournament_id,
+        )],
+        tournament_name="Championship",
+        observed=DISCOVERY_OBSERVED,
     )
     monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
     state_path = tmp_path / "ambiguous-current-shadow-identity-state.json"
