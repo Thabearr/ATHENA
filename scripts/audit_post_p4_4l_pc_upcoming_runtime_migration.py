@@ -164,7 +164,7 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
     _require(runner.reconciliation is runtime and runner.upcoming_discovery is runtime,
              "Current Shadow runner does not use the reviewed pcUpcoming wrapper")
     _require(runtime.POLICY_ID == receipt["runtime_wrapper"]["policy_id"], "runner policy differs from receipt")
-    _require(runtime.PINNED_POLICY_SHA256 == receipt["runtime_wrapper"]["policy_sha256"], "runner hash differs from receipt")
+    _require(runtime.PINNED_POLICY_SHA256 == p44n_state["runtime_wrapper_sha256"], "runner hash differs from P4.4N current-state supersession")
     _require(historical_wap.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
              "historical WAP source identity was deleted or rewritten")
     _require(historical_wap.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 == OLD_WAP_SOURCE_SHA256
