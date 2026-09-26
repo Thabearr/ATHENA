@@ -176,3 +176,30 @@ def test_existing_scope_callers_need_not_supply_projection_bytes():
     identity.reset_runtime_evidence()
     assert compatibility.begin_identity_scope(((_source_capture(), None),)) is None
     assert not identity._provider
+
+
+def test_published_policy_binds_both_match_orders_and_raw_projection_ancestry():
+    payload = compatibility._policy_payload()
+    assert payload["match_order"] == [
+        "RUN199_EXACT_FIXTURE_IDENTITY_OVERLAY", "V3_IDENTITY_RECOVERY",
+        "V2_STABLE_IDENTITY", "REVIEWED_LITERAL_MATCH",
+    ]
+    bridge_path = payload["international_bridge_preemption"]
+    assert bridge_path["match_order"] == [
+        "V2_STABLE_IDENTITY_WITH_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE",
+        "FAIL_CLOSED_NO_RUN199_V3_ALIAS_LITERAL_FALLTHROUGH",
+    ]
+    assert bridge_path["bridge_policy_sha256"] == bridge.PINNED_POLICY_SHA256
+    assert payload["provider_evidence_observation_policy_id"] != "VERIFIED_ACTIVE_SOURCE_RAW_BYTES_ONLY"
+    assert payload["provider_evidence_observation"]["athena_projection_requires_exact_observed_provider_page_raw_sha256"] is True
+    assert payload["provider_evidence_observation"]["athena_projection_is_provider_response"] is False
+    assert compatibility.calculate_policy_sha256() == compatibility.EXPECTED_POLICY_SHA256
+    assert compatibility.EXPECTED_POLICY_SHA256 != "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+
+
+def test_projection_without_prior_exact_provider_page_is_rejected():
+    with pytest.raises(compatibility.CurrentShadowFixtureIdentityCompatibilityError):
+        compatibility.begin_identity_scope(
+            ((_source_capture(), None),),
+            provider_identity_projection_bytes=(_projection(),),
+        )

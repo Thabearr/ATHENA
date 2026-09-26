@@ -12,6 +12,8 @@ from domain import current_shadow_fixture_identity_v2 as identity
 from domain import current_shadow_sportybet_international_provider_family_bridge as bridge
 from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_upcoming
 from domain import current_shadow_sportybet_upcoming_reconciliation as old_upcoming
+from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated
+from domain import current_shadow_sportybet_catalog_fanout_reconciliation as fanout
 from domain import current_shadow_all_market_runner as runner
 from scripts import verify_p3_0_e1_live_readiness as p3_readiness
 
@@ -19,7 +21,17 @@ from scripts import verify_p3_0_e1_live_readiness as p3_readiness
 RECEIPT_PATH = Path("artifacts/architecture/post_p4_4l_international_provider_family_bridge_v1.json")
 BASE_MAIN = "9e121e8e5022313bf715639a888949a67aa048b1"
 SEED_REGISTRY_SHA256 = "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79"
-V2_REGISTRY_SHA256 = "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+V2_REGISTRY_SHA256_BEFORE = "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+V2_REGISTRY_SHA256_AFTER = "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
+COMPATIBILITY_SHA256_BEFORE = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+COMPATIBILITY_SHA256_AFTER = "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+UPCOMING_COMPATIBILITY_SHA256_BEFORE = "29a250f3b7db3b0d84e8852df4a119df34e3eab914d5ac4e56c25d2e19ef64f2"
+UPCOMING_COMPATIBILITY_SHA256_AFTER = "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12"
+UPSTREAM_SOURCE_SHA256 = "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
+PAGINATED_SHA256_BEFORE = "106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90"
+PAGINATED_SHA256_AFTER = "6de2847f8ed32873f7ae50e902708c7e27ca5516f492e183063f3dfc0f1635a8"
+FANOUT_SHA256_BEFORE = "cf9ee8d606288eb8f3b964b5a581fca007ce3d6baf018b50633e0288dc31ce58"
+FANOUT_SHA256_AFTER = "2d8c1f7b533eea104c1951a9a1f963c4cd85933252aa44da7dbeb447528ad0a0"
 EXPECTED_SOURCE_KEYS = {("INT", 9806), ("INT", 9807), ("INT", 9808), ("INT", 9821), ("INT", 10608), ("INT", 114)}
 EXPECTED_PROVIDER_ROWS = {
     ("INT", 9806): ("sr:category:4", "International", "sr:tournament:23755", "UEFA Nations League"),
@@ -126,7 +138,17 @@ def validate_receipt(receipt: Any) -> str:
     continuity = receipt.get("continuity")
     _require(type(continuity) is dict, "runtime continuity evidence missing")
     _require(continuity.get("v2_seed_registry_sha256_before") == SEED_REGISTRY_SHA256 == continuity.get("v2_seed_registry_sha256_after") == identity.seed_registry_sha256(), "club/general V2 seed registry changed")
-    _require(continuity.get("v2_registry_sha256_unchanged") == V2_REGISTRY_SHA256 == identity.REGISTRY_SHA256, "V2 registry identity changed")
+    _require(continuity.get("seed_registry_unchanged") is True, "V2 seed continuity assertion missing")
+    _require(continuity.get("v2_registry_sha256_before") == V2_REGISTRY_SHA256_BEFORE, "historical V2 registry identity drifted")
+    _require(continuity.get("v2_registry_sha256_after") == V2_REGISTRY_SHA256_AFTER == identity.REGISTRY_SHA256 == identity.registry_sha256(), "new V2 semantic registry identity drifted")
+    _require(V2_REGISTRY_SHA256_AFTER != V2_REGISTRY_SHA256_BEFORE, "V2 semantic registry falsely retained old hash")
+    _require(continuity.get("identity_compatibility_sha256_before") == COMPATIBILITY_SHA256_BEFORE, "historical compatibility identity drifted")
+    _require(continuity.get("identity_compatibility_sha256_after") == COMPATIBILITY_SHA256_AFTER == compatibility.EXPECTED_POLICY_SHA256 == compatibility.calculate_policy_sha256(), "new compatibility identity drifted")
+    _require(continuity.get("current_shadow_upcoming_compatibility_sha256_before") == UPCOMING_COMPATIBILITY_SHA256_BEFORE, "historical upcoming compatibility identity drifted")
+    _require(continuity.get("current_shadow_upcoming_compatibility_sha256_after") == UPCOMING_COMPATIBILITY_SHA256_AFTER == old_upcoming.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == old_upcoming.calculate_current_shadow_upcoming_compatibility_sha256(), "new upcoming compatibility identity drifted")
+    _require(continuity.get("upstream_upcoming_source_contract_sha256_unchanged") == UPSTREAM_SOURCE_SHA256 == old_upcoming.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256, "upstream provider-source contract changed")
+    _require(continuity.get("retained_paginated_compatibility_sha256_before") == PAGINATED_SHA256_BEFORE and continuity.get("retained_paginated_compatibility_sha256_after") == PAGINATED_SHA256_AFTER == paginated.EXPECTED_CONTRACT_SHA256 == paginated.calculate_contract_sha256(), "retained paginated compatibility lineage drifted")
+    _require(continuity.get("retained_fanout_compatibility_sha256_before") == FANOUT_SHA256_BEFORE and continuity.get("retained_fanout_compatibility_sha256_after") == FANOUT_SHA256_AFTER == fanout.EXPECTED_CONTRACT_SHA256 == fanout.calculate_contract_sha256(), "retained fanout compatibility lineage drifted")
     _require(continuity.get("identity_state_schema_version") == 2 == identity.STATE_SCHEMA_VERSION, "identity-state schema changed")
     _require(continuity.get("current_shadow_runtime_source") == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1" and continuity.get("p3_runtime_source") == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1", "current runtime source owner changed")
     _require(continuity.get("pc_upcoming_status") == "EVIDENCE_QUALIFIED_CANDIDATE_NOT_RUNTIME_OWNER" and continuity.get("current_shadow_runtime_changed") is False and continuity.get("p3_runtime_changed") is False, "pcUpcoming candidate was promoted")
@@ -149,7 +171,10 @@ def validate_receipt(receipt: Any) -> str:
 def validate_runtime_isolation() -> None:
     identity.reset_runtime_evidence()
     _require(identity.seed_registry_sha256() == SEED_REGISTRY_SHA256, "V2 club/general seed set changed")
-    _require(identity.registry_sha256() == V2_REGISTRY_SHA256, "V2 registry hash changed")
+    _require(identity.registry_sha256() == V2_REGISTRY_SHA256_AFTER, "V2 semantic registry hash drifted")
+    registry = identity.registry_payload()
+    _require(registry.get("international_provider_family_bridge_policy_id") == bridge.POLICY_ID and registry.get("international_provider_family_bridge_policy_sha256") == bridge.PINNED_POLICY_SHA256, "V2 registry omits bridge policy ancestry")
+    _require(registry.get("provider_identity_projection_source_policy_id") == pc_upcoming.POLICY_ID and registry.get("provider_identity_projection_source_policy_sha256") == pc_upcoming.PINNED_POLICY_SHA256 and registry.get("provider_identity_projection_raw_ancestry_required") is True, "V2 registry omits projection raw ancestry")
     bridge_provider_keys = {row.provider_key for row in bridge.REVIEWED_MAPPINGS}
     _require(not (bridge_provider_keys & set(identity._comp_reverse)), "bridge rows were inserted in the learned one-to-one competition registry")
     _require(runner.reconciliation is old_upcoming and old_upcoming.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1", "Current Shadow runtime owner changed")
@@ -160,7 +185,12 @@ def validate_runtime_isolation() -> None:
     bridge_guard = compatibility_source.find("provider_event_requires_international_family_bridge")
     old_path = compatibility_source.find("run199_identity.match_event")
     _require(bridge_guard >= 0 and old_path > bridge_guard, "bridge-owned provider events can fall through legacy identity paths")
-    _require(compatibility.EXPECTED_POLICY_SHA256 == "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b" and compatibility.calculate_policy_sha256() == compatibility.EXPECTED_POLICY_SHA256, "compatibility authority policy changed")
+    compatibility_payload = compatibility._policy_payload()
+    _require(compatibility_payload.get("match_order") == ["RUN199_EXACT_FIXTURE_IDENTITY_OVERLAY", "V3_IDENTITY_RECOVERY", "V2_STABLE_IDENTITY", "REVIEWED_LITERAL_MATCH"], "default compatibility order changed")
+    preemption = compatibility_payload.get("international_bridge_preemption", {})
+    _require(preemption.get("match_order") == ["V2_STABLE_IDENTITY_WITH_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE", "FAIL_CLOSED_NO_RUN199_V3_ALIAS_LITERAL_FALLTHROUGH"] and preemption.get("bridge_policy_sha256") == bridge.PINNED_POLICY_SHA256, "bridge-first compatibility contract missing")
+    _require(compatibility_payload.get("provider_evidence_observation_policy_id") == "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2" and compatibility_payload.get("provider_evidence_observation", {}).get("athena_projection_requires_exact_observed_provider_page_raw_sha256") is True, "projection observation contract is stale")
+    _require(compatibility.EXPECTED_POLICY_SHA256 == COMPATIBILITY_SHA256_AFTER and compatibility.calculate_policy_sha256() == COMPATIBILITY_SHA256_AFTER, "compatibility authority policy drifted")
 
 
 def audit(repository_root: str | Path = ".") -> dict[str, str]:

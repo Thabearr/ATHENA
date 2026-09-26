@@ -123,7 +123,18 @@
   "continuity": {
     "v2_seed_registry_sha256_before": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
     "v2_seed_registry_sha256_after": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
-    "v2_registry_sha256_unchanged": "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f",
+    "seed_registry_unchanged": true,
+    "v2_registry_sha256_before": "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f",
+    "v2_registry_sha256_after": "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e",
+    "identity_compatibility_sha256_before": "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b",
+    "identity_compatibility_sha256_after": "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58",
+    "current_shadow_upcoming_compatibility_sha256_before": "29a250f3b7db3b0d84e8852df4a119df34e3eab914d5ac4e56c25d2e19ef64f2",
+    "current_shadow_upcoming_compatibility_sha256_after": "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12",
+    "upstream_upcoming_source_contract_sha256_unchanged": "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff",
+    "retained_paginated_compatibility_sha256_before": "106c296d2f5428dfdc1a27782c230bd57cde1f957df23d119a3989c4d9040a90",
+    "retained_paginated_compatibility_sha256_after": "6de2847f8ed32873f7ae50e902708c7e27ca5516f492e183063f3dfc0f1635a8",
+    "retained_fanout_compatibility_sha256_before": "cf9ee8d606288eb8f3b964b5a581fca007ce3d6baf018b50633e0288dc31ce58",
+    "retained_fanout_compatibility_sha256_after": "2d8c1f7b533eea104c1951a9a1f963c4cd85933252aa44da7dbeb447528ad0a0",
     "identity_state_schema_version": 2,
     "current_shadow_runtime_source": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
     "p3_runtime_source": "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
@@ -155,5 +166,5 @@
     "architecture_checkpoint_e_complete": false,
     "next_live_proof_authorized": false
   },
-  "canonical_sha256": "dc775e079efc7b47f47b4209c9cffc80bae67ecc863642625d6291bd87be98db"
+  "canonical_sha256": "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2"
 }

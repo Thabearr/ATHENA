@@ -1115,6 +1115,16 @@ def registry_payload() -> dict[str, Any]:
         "state_filename": STATE_FILENAME,
         "seed_registry_sha256": SEED_REGISTRY_SHA256,
         "seed_registry_payload": seed_registry_payload(),
+        "international_provider_family_bridge_policy_id": international_bridge.POLICY_ID,
+        "international_provider_family_bridge_policy_sha256": international_bridge.PINNED_POLICY_SHA256,
+        "international_bridge_behavior": "EXACT_REVIEWED_PROVIDER_FAMILY_PREEMPTS_GENERIC_COMPETITION_NAME_LEARNING",
+        "international_bridge_conflict_behavior": "FAIL_CLOSED_NO_GENERIC_COMPETITION_NAME_FALLTHROUGH",
+        "provider_identity_projection_dataset": "ATHENA_PC_UPCOMING_PROVIDER_IDENTITY_PROJECTION_V1",
+        "provider_identity_projection_source_policy_id": international_bridge.PROVIDER_SOURCE_POLICY_ID,
+        "provider_identity_projection_source_policy_sha256": international_bridge.PROVIDER_SOURCE_POLICY_SHA256,
+        "provider_identity_projection_is_provider_response": False,
+        "provider_identity_projection_raw_ancestry_required": True,
+        "provider_payload_sha_semantics": "EXACT_PROVIDER_SOURCE_PAGE_RAW_SHA256",
         "reviewed_alias_registry_ancestry": [
             [dict(row) for row in chain]
             for chain in _REVIEWED_COMPLETE_ALIAS_ANCESTRIES

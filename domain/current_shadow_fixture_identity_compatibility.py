@@ -24,9 +24,9 @@ from scripts import current_shadow_fixture_identity_reconciliation_recovery as i
 
 POLICY_ID = "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
 STATUS = "CURRENT_SHADOW_SOURCE_AGNOSTIC_IDENTITY_COMPATIBILITY_VERIFIED"
-PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID = "VERIFIED_ACTIVE_SOURCE_RAW_BYTES_ONLY"
+PROVIDER_EVIDENCE_OBSERVATION_POLICY_ID = "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2"
 STATE_SCHEMA_VERSION = fixture_identity_v2.STATE_SCHEMA_VERSION
-EXPECTED_POLICY_SHA256 = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+EXPECTED_POLICY_SHA256 = "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
 _AUTHORITY = {
     "provider_evidence_observation": True,
     "fixture_identity_reconciliation": True,
@@ -147,6 +147,22 @@ def _policy_payload() -> dict[str, Any]:
             "V2_STABLE_IDENTITY",
             "REVIEWED_LITERAL_MATCH",
         ],
+        "international_bridge_preemption": {
+            "trigger": "EXACT_REVIEWED_PROVIDER_FAMILY_OR_REVIEWED_SOURCE_CONFLICT",
+            "match_order": [
+                "V2_STABLE_IDENTITY_WITH_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE",
+                "FAIL_CLOSED_NO_RUN199_V3_ALIAS_LITERAL_FALLTHROUGH",
+            ],
+            "bridge_policy_id": fixture_identity_v2.international_bridge.POLICY_ID,
+            "bridge_policy_sha256": fixture_identity_v2.international_bridge.PINNED_POLICY_SHA256,
+        },
+        "provider_evidence_observation": {
+            "provider_raw_bytes_required": True,
+            "athena_projection_requires_exact_observed_provider_page_raw_sha256": True,
+            "athena_projection_is_provider_response": False,
+            "provider_payload_ancestry": "EXACT_PROVIDER_SOURCE_PAGE_RAW_SHA256",
+            "projection_sha_is_separate_evidence": True,
+        },
         "team_label_policy_id": team_label_compatibility.POLICY_ID,
         "team_label_policy_sha256": team_label_compatibility.EXPECTED_POLICY_SHA256,
         "alias_v3_policy_id": alias_registry.POLICY_ID,

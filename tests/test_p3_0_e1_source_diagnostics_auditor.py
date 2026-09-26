@@ -163,7 +163,7 @@ def test_runtime_architecture_invariants_preserved():
     - Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1.
     - Paginated source is historical only (paginated_runtime_reconciliation_authority: False).
     - Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce.
-    - Stable identity SHA is fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f.
+    - Stable identity SHA is fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e.
     - State schema version is 2.
     - Zero changes / zero execution authority for Price-All, Router, Portfolio.
     """
@@ -190,8 +190,8 @@ def test_runtime_architecture_invariants_preserved():
     # 3. Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce
     assert identity._REVIEWED_ALIAS_V3["registry_sha256"] == "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
 
-    # 4. Stable identity SHA is fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f
-    assert identity.REGISTRY_SHA256 == "fae19e6db66c1dca559895fb4ae30b591628b72965989c027c5f5ae785bced3f"
+    # 4. Stable identity SHA binds the reviewed bridge semantics.
+    assert identity.REGISTRY_SHA256 == "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
 
     # 5. State schema version is 2
     assert identity.STATE_SCHEMA_VERSION == 2
@@ -202,3 +202,17 @@ def test_runtime_architecture_invariants_preserved():
     assert runner.AUTHORITY.get("staking") is False
     assert runner.AUTHORITY.get("wallet") is False
     assert runner.AUTHORITY.get("login") is False
+
+
+def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypatch):
+    from scripts import verify_p3_0_e1_live_readiness as readiness
+    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+    accepted = readiness.check_f_upcoming_discovery_contract()
+    assert accepted["status"] == "PASSED"
+    assert accepted["current_shadow_upcoming_policy_id"] == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    actual = upcoming.validate_contract()
+    stale = dict(actual)
+    stale["identity_compatibility_policy_sha256"] = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+    monkeypatch.setattr(upcoming, "validate_contract", lambda: stale)
+    with pytest.raises(readiness.P30LiveReadinessError, match="identity compatibility policy SHA drifted"):
+        readiness.check_f_upcoming_discovery_contract()
