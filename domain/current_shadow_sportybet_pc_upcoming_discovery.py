@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 import time
 import types
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -81,6 +81,9 @@ AUTHORITY = types.MappingProxyType({
 
 class PcUpcomingDiscoveryError(ValueError):
     """Raised when pcUpcomingEvents bytes do not satisfy the reviewed contract."""
+
+
+TOTALNUM_DRIFT_ERROR = "provider totalNum changed across pages; capture is incomplete"
 
 
 def _canonical(value: Any, *, newline: bool = False) -> bytes:
@@ -758,10 +761,11 @@ def _read_regular(path: Path, *, max_bytes: int) -> bytes:
     return raw
 
 
-def verify_current_pc_upcoming_discovery(
-    *, repository_root: str | Path, manifest: Mapping[str, Any] | None = None
+def _verify_manifest_at_root(
+    *, evidence_root: str | Path, manifest: Mapping[str, Any] | None = None
 ) -> PcUpcomingDiscoveryManifest:
-    root = Path(repository_root) / EVIDENCE_ROOT
+    """Replay one V1 manifest at an explicit evidence root for runtime orchestration."""
+    root = Path(evidence_root)
     if manifest is None:
         manifest_raw = _read_regular(root / "manifest.json", max_bytes=MAX_MANIFEST_BYTES)
         loaded = _strict_json_loads(manifest_raw)
@@ -803,6 +807,14 @@ def verify_current_pc_upcoming_discovery(
     return rebuilt
 
 
+def verify_current_pc_upcoming_discovery(
+    *, repository_root: str | Path, manifest: Mapping[str, Any] | None = None
+) -> PcUpcomingDiscoveryManifest:
+    return _verify_manifest_at_root(
+        evidence_root=Path(repository_root) / EVIDENCE_ROOT, manifest=manifest
+    )
+
+
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, request: Request, response: Any, code: int, msg: str, headers: Any, new_url: str) -> None:
         return None
@@ -838,16 +850,22 @@ def _write_exclusive(path: Path, raw: bytes) -> None:
         raise PcUpcomingDiscoveryError("could not persist non-overwriting source evidence") from exc
 
 
-def capture_current_pc_upcoming_discovery(
-    *, repository_root: str | Path, execute_live_network: bool
+def _capture_current_pc_upcoming_discovery_once(
+    *,
+    evidence_root: str | Path,
+    execute_live_network: bool,
+    page_observer: Callable[[PcUpcomingPageEvidence], None] | None = None,
 ) -> PcUpcomingDiscoveryManifest:
-    """Explicitly gated fixed-query capture; tests and audits must never call live."""
+    """Capture exactly one V1 epoch into an explicit, non-overwriting directory."""
     if execute_live_network is not True:
         raise PcUpcomingDiscoveryError("network capture requires explicit execute_live_network=True")
-    root = Path(repository_root) / EVIDENCE_ROOT
+    root = Path(evidence_root)
     if root.exists():
         raise PcUpcomingDiscoveryError("refusing to overwrite an existing evidence capture")
-    root.mkdir(parents=True, exist_ok=False)
+    try:
+        root.mkdir(parents=True, exist_ok=False)
+    except OSError as exc:
+        raise PcUpcomingDiscoveryError("could not create non-overwriting source evidence root") from exc
     pages: list[PcUpcomingPageEvidence] = []
     required_pages: int | None = None
     for page_num in range(1, MAX_PAGES + 1):
@@ -858,10 +876,12 @@ def capture_current_pc_upcoming_discovery(
         page = parse_page(raw, page_num=page_num, request_nonce_ms=nonce, observed_at=observed)
         _write_exclusive(root / page.raw_relative_path, raw)
         pages.append(page)
+        if page_observer is not None:
+            page_observer(page)
         if required_pages is None:
             required_pages = max(1, math.ceil(page.total_num / PAGE_SIZE))
         elif page.total_num != pages[0].total_num:
-            raise PcUpcomingDiscoveryError("provider totalNum changed across pages; capture is incomplete")
+            raise PcUpcomingDiscoveryError(TOTALNUM_DRIFT_ERROR)
     if required_pages is None:
         raise PcUpcomingDiscoveryError("no page was captured")
     manifest = build_manifest(tuple(pages))
@@ -870,3 +890,13 @@ def capture_current_pc_upcoming_discovery(
         raise PcUpcomingDiscoveryError("manifest exceeds the fixed evidence byte bound")
     _write_exclusive(root / "manifest.json", manifest_bytes)
     return manifest
+
+
+def capture_current_pc_upcoming_discovery(
+    *, repository_root: str | Path, execute_live_network: bool
+) -> PcUpcomingDiscoveryManifest:
+    """Explicitly gated strict one-epoch V1 capture; tests and audits stay offline."""
+    return _capture_current_pc_upcoming_discovery_once(
+        evidence_root=Path(repository_root) / EVIDENCE_ROOT,
+        execute_live_network=execute_live_network,
+    )

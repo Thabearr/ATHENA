@@ -238,3 +238,19 @@ removes the key solely from projected validation bytes before replaying the
 frozen PR87/PR89 chain; the original raw and manifest remain source ancestry.
 It gives `shortName` no identity, source-capability, model, pricing, selection,
 or provider-semantic meaning. Any other team key still fails closed.
+
+## P4.4O bounded pcUpcoming capture-epoch recovery (2026-09-26)
+
+The active Current Shadow/P3 source remains the shared `pcUpcomingEvents`
+runtime wrapper. The source V1 policy remains a strict, single-epoch capture:
+all pages in an accepted manifest must have the same exact `totalNum`, the
+required contiguous page set must be present, and unique event count must equal
+that total. P4.4O adds one runtime-level fresh capture epoch only when the first
+epoch raises the exact reviewed cross-page `totalNum` drift error. A promoted
+epoch independently passes the unchanged V1 verifier and runtime completeness
+check. Failed epoch evidence is retained but cannot establish provider absence
+or enter identity, reconciliation, pricing, Router, Portfolio, or delivery.
+There is no per-page transport retry, third epoch, or fallback source. This is
+an offline implementation PR; no new live proof has run, and the successor
+proof remains incomplete pending separate authorization. See
+`artifacts/architecture/p4_4o_pc_upcoming_stable_epoch_recovery_v1.json`.
