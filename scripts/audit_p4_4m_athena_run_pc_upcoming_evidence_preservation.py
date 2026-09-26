@@ -23,6 +23,7 @@ from scripts import audit_p4_3_workflow_retirement_ledger as retirement
 
 BASE_MAIN_SHA = "6fdd44a2ec6ed36d7a26c719d03cf4772aff3e80"
 POLICY_ID = "ATHENA_P4_4M_CANONICAL_SHADOW_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
+TRANSITION_ID = "P44M_ATHENA_RUN_PC_UPCOMING_EVIDENCE_PRESERVATION_V1"
 WORKFLOW_PATH = ".github/workflows/athena-run.yml"
 FIXTURE_PATH = "tests/fixtures/architecture/revised_workflows/athena-run-pre-p4-4m-pc-upcoming-evidence-preservation.yml"
 LEDGER_PATH = Path("artifacts/architecture/p4_workflow_evolution_ledger_v1.json")
