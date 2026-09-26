@@ -217,38 +217,50 @@ def check_e_discovery_contract() -> dict[str, Any]:
 
 
 def check_f_upcoming_discovery_contract() -> dict[str, Any]:
-    """Check F: the reviewed upcoming source is the canonical P3 source."""
+    """Check F: Current Shadow and P3 share the reviewed complete pcUpcoming owner."""
     from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated
     from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
     from domain import current_shadow_fixture_identity_aliases as aliases
     from domain import current_shadow_fixture_identity_v2 as stable_identity
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+    from domain import current_shadow_sportybet_upcoming_reconciliation as historical_upcoming
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming
 
     identities = upcoming.validate_contract()
+    historical_identities = historical_upcoming.validate_contract()
     historical = paginated.validate_contract()
-    if identities["upstream_upcoming_source_contract_sha256"] != (
+    if identities["source_policy_sha256"] != (
+        "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
+    ) or identities["source_policy_id"] != (
+        "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
+    ):
+        raise P30LiveReadinessError("Check F failed: reviewed pcUpcoming source ancestry drifted")
+    if identities["bridge_policy_sha256"] != (
+        "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
+    ):
+        raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
+    if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
+        "5721d136035205aa48b9b214343e4816bcbf1e986d72e940a26010d4f792a3a9"
+    ) or identities["pagination_complete_required"] is not True:
+        raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
+    if historical_identities["upstream_upcoming_source_contract_sha256"] != (
         "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
     ):
         raise P30LiveReadinessError(
-            "Check F failed: reviewed upcoming source contract SHA drifted"
+            "Check F failed: historical wap source contract SHA drifted"
         )
-    if identities["current_shadow_upcoming_policy_id"] != (
+    if historical_identities["current_shadow_upcoming_policy_id"] != (
         "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
     ):
         raise P30LiveReadinessError(
-            "Check F failed: Current Shadow upcoming strategy ID drifted"
+            "Check F failed: retained historical wap strategy ID drifted"
         )
-    if identities["current_shadow_upcoming_compatibility_sha256"] != (
+    if historical_identities["current_shadow_upcoming_compatibility_sha256"] != (
         "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12"
     ):
         raise P30LiveReadinessError(
-            "Check F failed: Current Shadow upcoming compatibility SHA drifted"
+            "Check F failed: historical wap compatibility SHA drifted"
         )
-    if identities["identity_compatibility_policy_id"] != identity_compatibility.POLICY_ID:
-        raise P30LiveReadinessError(
-            "Check F failed: shared identity compatibility policy ID drifted"
-        )
-    if identities["identity_compatibility_policy_sha256"] != (
+    if identity_compatibility.POLICY_ID != "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1" or identity_compatibility.calculate_policy_sha256() != (
         "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
     ):
         raise P30LiveReadinessError(
@@ -272,22 +284,18 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         )
     return {
         "status": "PASSED",
-        "upstream_upcoming_source_contract_sha256": identities[
+        "runtime_policy_id": identities["runtime_policy_id"],
+        "runtime_policy_sha256": identities["runtime_policy_sha256"],
+        "source_policy_id": identities["source_policy_id"],
+        "source_policy_sha256": identities["source_policy_sha256"],
+        "bridge_policy_sha256": identities["bridge_policy_sha256"],
+        "identity_compatibility_policy_sha256": identities["identity_compatibility_policy_sha256"],
+        "historical_wap_source_contract_sha256": historical_identities[
             "upstream_upcoming_source_contract_sha256"
         ],
-        "current_shadow_upcoming_policy_id": identities[
-            "current_shadow_upcoming_policy_id"
-        ],
-        "current_shadow_upcoming_compatibility_sha256": identities[
-            "current_shadow_upcoming_compatibility_sha256"
-        ],
-        "identity_compatibility_policy_id": identities[
-            "identity_compatibility_policy_id"
-        ],
-        "identity_compatibility_policy_sha256": identities[
-            "identity_compatibility_policy_sha256"
-        ],
         "active_discovery_root": str(upcoming.ALLOWED_OUTPUT_RELATIVE),
+        "historical_wap_source_retained": True,
+        "runtime_pagination_complete_required": True,
         "paginated_contract_sha256_retained_historically": historical[
             "contract_sha256"
         ],
@@ -355,7 +363,8 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
     from domain import (
         current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
     )
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+    from domain import current_shadow_sportybet_upcoming_reconciliation as historical_upcoming
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming
     from domain import (
         sportybet_current_event_discovery_reconciliation as discovery,
     )
@@ -367,6 +376,7 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
     discovery.validate_current_event_discovery_contract()
     paginated.validate_contract()
     upcoming.validate_contract()
+    historical_upcoming.validate_contract()
 
     shape_path = (
         repository_root
@@ -572,6 +582,7 @@ def check_h_retained_evidence_verification(repository_root: Path) -> dict[str, A
             "router_input_count": 0,
         },
         "active_upcoming_discovery_root": str(upcoming.ALLOWED_OUTPUT_RELATIVE),
+        "historical_wap_source_retained": True,
         "paginated_runtime_reconciliation_authority": False,
     }
 
@@ -580,7 +591,7 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
     """Check I: Prove supported and P3 use the exact same canonical pre-Router source strategy."""
     from domain import current_shadow_all_market_runner as runner
     from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming_discovery
     from scripts import _p3_0_paired_capture_part1 as part1
 
     if not hasattr(runner, "acquire_current_shadow_pre_router_bundle"):
@@ -600,7 +611,7 @@ def check_i_pre_router_pipeline_readiness(repository_root: Path) -> dict[str, An
             "Check I failed: paginated discovery remains runtime authority"
         )
     if upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID != (
-        "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+        "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     ):
         raise P30LiveReadinessError(
             "Check I failed: upcoming discovery strategy ID drifted"
@@ -1237,7 +1248,8 @@ def check_l_workflows_integrity(repository_root: Path) -> dict[str, Any]:
 def check_m_wager_safety_invariants() -> dict[str, Any]:
     """Check M: Safety authority invariants are all False."""
     from domain import current_shadow_all_market_runner as runner
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+    from domain import current_shadow_sportybet_upcoming_reconciliation as historical_upcoming
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming
 
     safety_keys = ("login", "cookies", "wallet", "staking", "bet", "wager_placed")
     for key in safety_keys:
@@ -1249,9 +1261,14 @@ def check_m_wager_safety_invariants() -> dict[str, Any]:
             raise P30LiveReadinessError(
                 f"Check M failed: upcoming AUTHORITY[{key}] is not False"
             )
+        if historical_upcoming.AUTHORITY.get(key) is not False:
+            raise P30LiveReadinessError(
+                f"Check M failed: historical upcoming AUTHORITY[{key}] is not False"
+            )
     return {
         "status": "PASSED",
         "all_safety_invariants_false": True,
+        "historical_wap_source_retained_only": True,
         "paginated_source_retained_historically_only": True,
     }
 

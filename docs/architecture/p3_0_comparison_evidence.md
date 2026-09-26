@@ -551,3 +551,21 @@ identity mappings. Its retained diagnostic captured only 300 of `totalNum=1148`
 events, so pagination is explicitly incomplete and no provider-absence claim is
 permitted. See
 `artifacts/architecture/post_p4_4l_pc_upcoming_shared_football_source_v1.json`.
+
+### Current shared-football runtime owner (2026-09-26)
+
+The former `wapConfigurableUpcomingEvents` endpoint was the post-#374 Current
+Shadow/P3 source owner. Canonical SHADOW run `36183632970` exposed that its
+bounded ten-event response could omit a fixture visible in the SportyBet
+catalogue. The bounded anonymous diagnostics then proved that the distinct
+`/api/ng/factsCenter/pcUpcomingEvents` source can return club and senior
+international football in one global response. PR #405 qualified its
+replayable source contract, and PR #406 added the evidence-bound international
+provider-family bridge. This migration makes the same complete-pagination
+`pcUpcomingEvents` wrapper the Current Shadow and P3.0 source owner; incomplete
+pagination fails at the source boundary and is not interpreted as provider
+absence. The former WAP source remains available only for historical replay.
+The old paginated `liveOrPrematchEvents` and tournament-fanout sources remain
+non-runtime because their existing authority limitations are unchanged. The
+historical P3 comparator observations and acceptance history above are not
+rewritten by this source-owner migration.
