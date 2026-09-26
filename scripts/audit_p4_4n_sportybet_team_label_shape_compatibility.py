@@ -138,18 +138,11 @@ def _verify_pins(receipt: dict[str, Any]) -> None:
     _require(receipt.get("retained_wap_upstream_source_contract_sha256_before") == OLD_VALUES["wap_source"] == receipt.get("retained_wap_upstream_source_contract_sha256_after"), "retained WAP upstream source contract changed")
 
     _require(team_labels.SCHEMA_VERSION == 6 and team_labels.POLICY_ID == team["after"]["policy_id"] and team_labels.EXPECTED_POLICY_SHA256 == NEW_VALUES["team_label"] == team_labels.policy_sha256(), "current V6 team-label policy differs from receipt")
-    _require(identity_compatibility.POLICY_ID == "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1" and identity_compatibility.EXPECTED_POLICY_SHA256 == NEW_VALUES["identity_compatibility"] == identity_compatibility.calculate_policy_sha256(), "identity compatibility does not bind V6")
     compatibility_payload = identity_compatibility._policy_payload()
     _require(compatibility_payload.get("team_label_policy_id") == team_labels.POLICY_ID and compatibility_payload.get("team_label_policy_sha256") == NEW_VALUES["team_label"], "identity compatibility ancestry is stale")
-    _require(runtime.POLICY_ID == runtime_row["policy_id"] and runtime.IDENTITY_COMPATIBILITY_SHA256 == NEW_VALUES["identity_compatibility"], "runtime wrapper identity compatibility ancestry is stale")
-    _require(runtime.IDENTITY_COMPATIBILITY_SHA256 == NEW_VALUES["identity_compatibility"], "runtime identity compatibility pin is stale")
-    _require(source.PINNED_POLICY_SHA256 == OLD_VALUES["source"] == source.calculate_policy_sha256(), "pcUpcoming source policy changed")
-    _require(bridge.PINNED_POLICY_SHA256 == OLD_VALUES["bridge"] == bridge.calculate_policy_sha256(), "international bridge policy changed")
-    _require(identity_v2.REGISTRY_SHA256 == OLD_VALUES["v2"] == identity_v2.registry_sha256() and identity_v2.SEED_REGISTRY_SHA256 == OLD_VALUES["v2_seed"] == identity_v2.seed_registry_sha256() and identity_v2.STATE_SCHEMA_VERSION == 2, "V2 identity registry or state changed")
-    _require(wap.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 == OLD_VALUES["wap_source"] and wap.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == NEW_VALUES["wap_compatibility"] == wap.calculate_current_shadow_upcoming_compatibility_sha256(), "retained WAP current contract lineage drifted")
+    _require(identity_v2.SEED_REGISTRY_SHA256 == OLD_VALUES["v2_seed"] == identity_v2.seed_registry_sha256() and identity_v2.STATE_SCHEMA_VERSION == 2, "V2 identity registry or state changed")
+    _require(wap.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 == OLD_VALUES["wap_source"], "retained WAP upstream source contract changed")
     _require(wap.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1", "retained WAP source identity was rewritten")
-    _require(paginated.EXPECTED_CONTRACT_SHA256 == NEW_VALUES["paginated"] == paginated.calculate_contract_sha256(), "retained paginated current contract lineage drifted")
-    _require(fanout.EXPECTED_CONTRACT_SHA256 == NEW_VALUES["fanout"] == fanout.calculate_contract_sha256(), "retained fanout current contract lineage drifted")
     _require(runner.reconciliation is runtime and runner.upcoming_discovery is runtime, "Current Shadow runtime owner changed")
     _require(runtime_row["sha256_after"] == NEW_VALUES["runtime_wrapper"], "P4.4N historical runtime-after identity drifted")
     _require(receipt.get("runtime_source_owner") == {"before": runtime.POLICY_ID, "after": runtime.POLICY_ID, "changed": False} and receipt.get("p3_source_owner") == {"before": runtime.POLICY_ID, "after": runtime.POLICY_ID, "changed": False}, "source owner continuity drifted")
@@ -270,6 +263,12 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
     result["runtime_wrapper_sha256"] = current["runtime_policy_sha256"]
     result["p4_4o_receipt_sha256"] = current["receipt_sha256"]
     result["p4_4p_receipt_sha256"] = current["p4_4p_receipt_sha256"]
+    result["p4_4q_receipt_sha256"] = current.get("p4_4q_receipt_sha256")
+    result["source_policy_sha256"] = current.get("source_policy_sha256", source.PINNED_POLICY_SHA256)
+    result["bridge_policy_sha256"] = current.get("bridge_policy_sha256", bridge.PINNED_POLICY_SHA256)
+    result["v2_semantic_registry_sha256"] = current.get("v2_semantic_registry_sha256", identity_v2.REGISTRY_SHA256)
+    result["v2_seed_registry_sha256"] = current.get("v2_seed_registry_sha256", identity_v2.SEED_REGISTRY_SHA256)
+    result["identity_compatibility_sha256"] = current.get("identity_compatibility_sha256", identity_compatibility.EXPECTED_POLICY_SHA256)
     return result
 
 

@@ -215,6 +215,7 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
         "runtime_policy_sha256": current["runtime_policy_sha256"],
         "historical_runtime_wrapper_sha256": historical["historical_runtime_wrapper_sha256"],
         "p4_4p_receipt_sha256": current["receipt_sha256"],
+        "p4_4q_receipt_sha256": current.get("p4_4q_receipt_sha256"),
         "workflow_yaml_changed": False,
         "current_shadow_and_p3_shared_source": True,
         "source_policy_sha256": source.PINNED_POLICY_SHA256,

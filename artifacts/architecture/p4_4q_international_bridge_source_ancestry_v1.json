@@ -1,0 +1,210 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P4_4Q_INTERNATIONAL_BRIDGE_SOURCE_ANCESTRY_V1",
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "1c70a32ce16afd633af85922edcda8ac058bed43",
+  "source_review_counter_while_unmerged": "2/5",
+  "source_review_counter_if_merged": "3/5",
+  "upstream_source_receipt": {
+    "path": "artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_source_compatibility_v1.json",
+    "policy_id": "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_SOURCE_COMPATIBILITY_V1",
+    "canonical_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+  },
+  "bridge_policy": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE_V1",
+    "sha256_before": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+    "sha256_after": "e6e937ff72c83ff2120fcfdfbc3dc3cbf6c8fa10a17122308d60dd0fb0505d2d"
+  },
+  "provider_source_authority": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "sha256_before": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "sha256_after": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+    "receipt_sha256_before": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+    "receipt_sha256_after": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+  },
+  "source_authority": {
+    "policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+    "policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+    "receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+    "unchanged": true
+  },
+  "reviewed_mappings": [
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 114,
+      "source_canonical_name": "International Friendly",
+      "source_priority_band": "INT-F",
+      "source_priority_rank": 60,
+      "source_competition_kind": "INTERNATIONAL_FRIENDLY",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:851",
+      "provider_tournament_name": "Int. Friendly Games",
+      "mapping_cardinality": "ONE_SOURCE_IDENTITY_TO_ONE_PROVIDER_FAMILY",
+      "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+      "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+      "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9806,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:23755",
+      "provider_tournament_name": "UEFA Nations League",
+      "mapping_cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY",
+      "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+      "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+      "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9807,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:23755",
+      "provider_tournament_name": "UEFA Nations League",
+      "mapping_cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY",
+      "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+      "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+      "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9808,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:23755",
+      "provider_tournament_name": "UEFA Nations League",
+      "mapping_cardinality": "MANY_SOURCE_IDENTITIES_TO_ONE_PROVIDER_FAMILY",
+      "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+      "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+      "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 9821,
+      "source_canonical_name": "Nations League",
+      "source_priority_band": "INT-D",
+      "source_priority_rank": 40,
+      "source_competition_kind": "INTERNATIONAL_NATIONS_LEAGUE",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:27420",
+      "provider_tournament_name": "CONCACAF Nations League",
+      "mapping_cardinality": "ONE_SOURCE_IDENTITY_TO_ONE_PROVIDER_FAMILY",
+      "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+      "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+      "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    },
+    {
+      "source_ccode": "INT",
+      "source_primary_id": 10608,
+      "source_canonical_name": "Continental Championship Qualification",
+      "source_priority_band": "INT-C",
+      "source_priority_rank": 30,
+      "source_competition_kind": "INTERNATIONAL_QUALIFIER",
+      "provider_category_id": "sr:category:4",
+      "provider_category_name": "International",
+      "provider_tournament_id": "sr:tournament:1848",
+      "provider_tournament_name": "Africa Cup of Nations Qualification",
+      "mapping_cardinality": "ONE_SOURCE_IDENTITY_TO_ONE_PROVIDER_FAMILY",
+      "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
+      "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
+      "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
+      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    }
+  ],
+  "unmapped_source_identities": [
+    {
+      "ccode": "INT",
+      "primary_id": 10437,
+      "state": "QUALIFIED_SOURCE_WITHOUT_PROVIDER_MAPPING"
+    },
+    {
+      "ccode": "INT",
+      "primary_id": 9833,
+      "state": "QUALIFIED_SOURCE_WITHOUT_PROVIDER_MAPPING"
+    },
+    {
+      "ccode": "INT",
+      "primary_id": 13287,
+      "state": "OBSERVED_UNQUALIFIED_SOURCE_IDENTITY"
+    }
+  ],
+  "provider_only_unmapped_observation": {
+    "category_id": "sr:category:4",
+    "category_name": "International",
+    "tournament_id": "sr:tournament:622",
+    "tournament_name": "Gulf Cup",
+    "source_mapping_added": false
+  },
+  "no_simple_tournament_mapping_added": true,
+  "sr_simple_tournament_11141_provider_native_only_no_mapping": true,
+  "identity_semantics": {
+    "exact_provider_ids_and_reviewed_labels_required": true,
+    "display_name_matching_authority": false,
+    "fuzzy_matching": false,
+    "suffix_stripping": false,
+    "provider_team_seeds_added": false,
+    "bridge_rows_persisted_as_learned_competition_mappings": false
+  },
+  "authority": {
+    "identity_family_bridge": true,
+    "current_shadow_runtime_discovery": false,
+    "p3_runtime_discovery": false,
+    "provider_acquisition": false,
+    "workflow_dispatch": false,
+    "live_retry": false,
+    "fixture_reconciliation": false,
+    "model": false,
+    "pricing": false,
+    "router": false,
+    "portfolio": false,
+    "selection": false,
+    "share_code": false,
+    "login": false,
+    "cookies": false,
+    "wallet": false,
+    "staking": false,
+    "bet": false,
+    "wager_placed": false
+  },
+  "governance": {
+    "source_review_counter_while_unmerged": "2/5",
+    "source_review_counter_if_merged": "3/5",
+    "p4_4_complete": false,
+    "architecture_checkpoint_e_complete": false,
+    "next_live_proof_authorized": false
+  },
+  "canonical_sha256": "1166c858d83b896d325d92e1c684f87b532bb48b82f2b3a6eae7160cf5d3edbd"
+}

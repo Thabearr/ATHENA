@@ -246,108 +246,14 @@ def _verify_source_private_observer_order(root: Path) -> None:
 
 
 def _verify_current_contract(receipt: dict[str, Any], root: Path) -> dict[str, Any]:
-    runtime.validate_contract()
-    _require(runtime.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-             and runtime.PINNED_POLICY_SHA256 == NEW_RUNTIME_SHA256
-             and runtime.calculate_policy_sha256() == NEW_RUNTIME_SHA256,
-             "current runtime wrapper does not match the P4.4P policy hash")
-    _require(receipt["runtime_policy"]["sha256_after"] == runtime.PINNED_POLICY_SHA256
-             and runtime.PINNED_POLICY_SHA256 != OLD_RUNTIME_SHA256,
-             "P4.4P current runtime before/after lineage is stale")
-    expected_preparse = {
-        "every_successful_runtime_http_response_persisted_before_semantic_parse": True,
-        "raw_response_bytes_written_exclusively": True,
-        "raw_response_journal_canonical_self_hash": True,
-        "raw_response_request_page_time_sha_ancestry": True,
-        "parse_failure_receipt_binds_exact_raw_response_sha": True,
-        "parse_failure_receipt_before_source_failure_propagation": True,
-        "parse_failure_semantic_acceptance": False,
-        "parse_failure_provider_absence_authority": False,
-        "parse_failure_identity_learning_authority": False,
-        "parse_failure_reconciliation_authority": False,
-        "parse_failure_pricing_authority": False,
-        "parse_failure_router_authority": False,
-        "parse_failure_portfolio_authority": False,
-        "parse_failure_selection_authority": False,
-        "parse_failure_delivery_authority": False,
-        "non_totalnum_parse_failure_starts_fresh_epoch": False,
-        "source_v1_acceptance_unchanged": True,
-    }
-    _require(dict(runtime._policy_payload()["preparse_response_evidence"]) == expected_preparse,
-             "runtime policy no longer binds strict pre-parse capture semantics")
-    _require(runtime.MAX_CAPTURE_EPOCHS == 2 and runtime.MAX_PAGES_PER_EPOCH == 20
-             and runtime.MAX_SUCCESSFUL_PAGE_RESPONSES == 40
-             and runtime.TOTALNUM_DRIFT_ERROR == "provider totalNum changed across pages; capture is incomplete",
-             "P4.4O bounded epoch constants or exact trigger changed")
-    source_payload = source.policy_payload()
-    _require(source.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
-             and source.PINNED_POLICY_SHA256 == SOURCE_SHA256
-             and source.calculate_policy_sha256() == SOURCE_SHA256
-             and source_payload["policy_id"] == source.POLICY_ID,
-             "PR #405 source V1 contract changed")
-    _require((source._TOURNAMENT_ID_RE.pattern, source._CATEGORY_ID_RE.pattern,
-              source._EVENT_ID_RE.pattern, source._COMPETITOR_ID_RE.pattern) == (
-                  r"^sr:tournament:([1-9][0-9]*)$", r"^sr:category:([1-9][0-9]*)$",
-                  r"^sr:match:([1-9][0-9]*)$", r"^sr:competitor:([1-9][0-9]*)$",
-              ), "provider-native ID acceptance patterns changed")
-    for invalid in (242, None, "242", " sr:tournament:242", "sr:tournament:0", "sr:tournament:242 "):
-        try:
-            source._provider_id(invalid, source._TOURNAMENT_ID_RE, "tournament.id")
-        except source.PcUpcomingDiscoveryError:
-            continue
-        raise P44PError(f"provider-native ID coercion or malformed ID acceptance broadened: {invalid!r}")
-    _verify_source_private_observer_order(root)
-    _require(team_labels.EXPECTED_POLICY_SHA256 == TEAM_LABEL_SHA256
-             and team_labels.policy_sha256() == TEAM_LABEL_SHA256,
-             "team-label V6 identity changed")
-    _require(identity_compatibility.EXPECTED_POLICY_SHA256 == IDENTITY_SHA256
-             and identity_compatibility.calculate_policy_sha256() == IDENTITY_SHA256,
-             "identity compatibility identity changed")
-    _require(bridge.PINNED_POLICY_SHA256 == BRIDGE_SHA256 and bridge.calculate_policy_sha256() == BRIDGE_SHA256,
-             "international bridge identity changed")
-    _require(identity_v2.REGISTRY_SHA256 == V2_SHA256 and identity_v2.registry_sha256() == V2_SHA256
-             and identity_v2.SEED_REGISTRY_SHA256 == V2_SEED_SHA256
-             and identity_v2.seed_registry_sha256() == V2_SEED_SHA256,
-             "V2 semantic or seed registry changed")
-    _require(wap.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == WAP_SHA256
-             and wap.calculate_current_shadow_upcoming_compatibility_sha256() == WAP_SHA256
-             and paginated.EXPECTED_CONTRACT_SHA256 == PAGINATED_SHA256
-             and paginated.calculate_contract_sha256() == PAGINATED_SHA256
-             and fanout.EXPECTED_CONTRACT_SHA256 == FANOUT_SHA256
-             and fanout.calculate_contract_sha256() == FANOUT_SHA256,
-             "retained WAP/paginated/fanout compatibility changed")
-    _require(runner.reconciliation is runtime and runner.upcoming_discovery is runtime,
-             "Current Shadow active source owner changed")
-    p3_contract = p3.check_f_upcoming_discovery_contract()
-    _require(p3_contract.get("runtime_policy_id") == runtime.POLICY_ID
-             and p3_contract.get("runtime_policy_sha256") == NEW_RUNTIME_SHA256,
-             "P3 readiness does not pin the exact current runtime")
-    _require(runtime.AUTHORITY["model"] is False and runtime.AUTHORITY["pricing"] is False
-             and runtime.AUTHORITY["router"] is False and runtime.AUTHORITY["portfolio"] is False
-             and runtime.AUTHORITY["login"] is False and runtime.AUTHORITY["cookies"] is False
-             and runtime.AUTHORITY["wallet"] is False and runtime.AUTHORITY["staking"] is False
-             and runtime.AUTHORITY["bet"] is False and runtime.AUTHORITY["wager_placed"] is False,
-             "runtime authority profile broadened")
-    workflow = root / ".github/workflows/athena-run.yml"
-    try:
-        workflow_sha = hashlib.sha256(workflow.read_bytes().replace(b"\r\n", b"\n")).hexdigest()
-    except OSError as exc:
-        raise P44PError("P4.4M workflow is unavailable") from exc
-    _require(workflow_sha == P44M_WORKFLOW_SHA256, "P4.4M workflow bytes changed")
-    _require(receipt["unchanged_contracts"]["p4_4m_workflow_sha256_after"] == workflow_sha,
-             "P4.4P receipt workflow ancestry is stale")
-    return {
-        "runtime_policy_id": runtime.POLICY_ID,
-        "runtime_policy_sha256": runtime.PINNED_POLICY_SHA256,
-        "source_policy_sha256": source.PINNED_POLICY_SHA256,
-        "team_label_policy_sha256": team_labels.EXPECTED_POLICY_SHA256,
-        "identity_compatibility_sha256": identity_compatibility.EXPECTED_POLICY_SHA256,
-        "bridge_policy_sha256": bridge.PINNED_POLICY_SHA256,
-        "v2_semantic_registry_sha256": identity_v2.REGISTRY_SHA256,
-        "v2_seed_registry_sha256": identity_v2.SEED_REGISTRY_SHA256,
-        "current_shadow_and_p3_shared_source": True,
-        "workflow_sha256": workflow_sha,
-    }
+    # Kept as an internal compatibility seam for callers of the old audit.
+    # P4.4P itself is historical; the exact P4.4Q receipt owns current pins.
+    from scripts import audit_p4_4q_pc_upcoming_simple_tournament_identity as p44q
+    current = p44q.audit_current(root)
+    _require(receipt.get("runtime_policy", {}).get("sha256_after") == NEW_RUNTIME_SHA256
+             and current.get("runtime_policy_sha256") == runtime.PINNED_POLICY_SHA256,
+             "P4.4P historical runtime/P4.4Q current supersession chain drifted")
+    return current
 
 
 def audit_historical(repository_root: str | Path = ".") -> dict[str, Any]:
@@ -363,11 +269,16 @@ def audit_current(repository_root: str | Path = ".") -> dict[str, Any]:
     receipt = _verify_receipt(root)
     _verify_historical_receipts(root)
     current = _verify_current_contract(receipt, root)
-    return {"status": "PASSED", "policy_id": POLICY_ID,
-            "receipt_sha256": receipt["canonical_sha256"], **current,
-            "provider_acquisition_during_implementation": False,
-            "workflow_dispatch_during_implementation": False,
-            "live_retry": False}
+    return {
+        "status": "PASSED",
+        "policy_id": POLICY_ID,
+        **current,
+        "receipt_sha256": receipt["canonical_sha256"],
+        "p4_4q_receipt_sha256": current.get("receipt_sha256"),
+        "provider_acquisition_during_implementation": False,
+        "workflow_dispatch_during_implementation": False,
+        "live_retry": False,
+    }
 
 
 def audit(repository_root: str | Path = ".") -> dict[str, Any]:

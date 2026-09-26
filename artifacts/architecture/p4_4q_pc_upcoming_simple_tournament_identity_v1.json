@@ -1,0 +1,89 @@
+{
+  "schema_version": 1,
+  "policy_id": "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_IDENTITY_V1",
+  "repository": "Thabearr/ATHENA",
+  "base_main_sha": "1c70a32ce16afd633af85922edcda8ac058bed43",
+  "source_review_counter_while_unmerged": "2/5",
+  "source_review_counter_if_merged": "3/5",
+  "failed_proof": {
+    "run_id": 36273291448,
+    "artifact_id": 10915589630,
+    "artifact_name": "athena-run-36273291448",
+    "artifact_zip_sha256": "cf71cc2b502e2ca9ebfbb6b9da07a8196508e015291ea1c37734a062e8f14b12",
+    "evidence_comment_id": 5850164306,
+    "diagnosis_comment_id": 5850251689,
+    "classification": "POST_P4_4P_CANONICAL_SHADOW_SUCCESSOR_PROOF_INCOMPLETE:PC_UPCOMING_RUNTIME_SOURCE_INCOMPLETE_TOURNAMENT_ID_NOT_EXACT_PROVIDER_NATIVE_ID",
+    "exact_failing_page_num": 7,
+    "exact_failing_raw_sha256": "77fc822ef8448e97ec46937fc51d023b2179c39fbf14daa5637a44e23a6664ad",
+    "parse_failure_receipt_sha256": "bb766117f7e3855f515c6d783cb602634c84458f17e9437e686cc2d14a750f5c",
+    "exact_failing_path": "$.data.tournaments[8].id",
+    "exact_failing_value": "sr:simple_tournament:11141",
+    "category_id": "sr:category:131",
+    "category_name": "Wales",
+    "tournament_name": "Premier League, Women"
+  },
+  "source_receipt": {
+    "path": "artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_source_compatibility_v1.json",
+    "policy_id": "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_SOURCE_COMPATIBILITY_V1",
+    "canonical_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+  },
+  "bridge_receipt": {
+    "path": "artifacts/architecture/p4_4q_international_bridge_source_ancestry_v1.json",
+    "policy_id": "ATHENA_P4_4Q_INTERNATIONAL_BRIDGE_SOURCE_ANCESTRY_V1",
+    "canonical_sha256": "1166c858d83b896d325d92e1c684f87b532bb48b82f2b3a6eae7160cf5d3edbd"
+  },
+  "lineage_hashes": {
+    "source_sha256_before": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "source_sha256_after": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+    "bridge_sha256_before": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+    "bridge_sha256_after": "e6e937ff72c83ff2120fcfdfbc3dc3cbf6c8fa10a17122308d60dd0fb0505d2d",
+    "v2_semantic_registry_sha256_before": "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e",
+    "v2_semantic_registry_sha256_after": "d787ace95bcd9e95c8ade0120580f8f42245f2a32bedd1441825cf42a78f67db",
+    "v2_seed_registry_sha256_before": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+    "v2_seed_registry_sha256_after": "7fe662fc91a80daabf1e774ddd5c8ecdb5215eaf63adb03822b3fb05f872df79",
+    "seed_registry_unchanged": true,
+    "identity_compatibility_sha256_before": "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04",
+    "identity_compatibility_sha256_after": "5b5f804fc0ca21a8f5a15334a32faedc5f9eaa23024adac5c42d467f9fef37fc",
+    "retained_wap_compatibility_sha256_before": "dd1b4366ef2cf4d1e12359c42fbff5cbae8bef60cc06ca40589ec0e8a157f943",
+    "retained_wap_compatibility_sha256_after": "1ef767b2de32b4d3a51bd9ec5c8244744ce5ba9ddf45c7d61b307327351e81a4",
+    "retained_paginated_contract_sha256_before": "7373a05c25466206aa3a67bc53b219e8d2841f432fda13db2dc0808b40b47238",
+    "retained_paginated_contract_sha256_after": "17b5e525ea5a253738ab3daed06e0af93ac54eed6e3f06a2278262e6898ad7b6",
+    "retained_fanout_contract_sha256_before": "c1ce52d8c441a6a38aee08c05413d579f0f18a497e56eb7833faf1fbc60c622f",
+    "retained_fanout_contract_sha256_after": "9fa6673848e627e1b59d922dd83b93dd979fa2325eac26b84917cd20f187e022",
+    "runtime_policy_sha256_before": "a5c42439e894d33950b5cba608dcd5a031896e7a8e75c6bf613b2314497b1c24",
+    "runtime_policy_sha256_after": "5af808f2dddba92088d80fe6572b6ec895ee1e0df0938f8ba143d07df845bdec"
+  },
+  "invariants": {
+    "team_label_v6_sha256": "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b",
+    "team_label_v6_unchanged": true,
+    "p4_4o_stable_epoch_recovery_unchanged": true,
+    "p4_4p_preparse_response_evidence_unchanged": true,
+    "workflow_sha256": "45f7fe3556f892320a12b15c210637782edca60792ccbf030a714414a32f005a",
+    "workflow_yaml_changed": false,
+    "admitted_tournament_grammar": "^sr:(?:tournament|simple_tournament):[1-9][0-9]*$",
+    "mapping_additions": 0,
+    "seed_additions": 0
+  },
+  "historical_receipts_unchanged": {
+    "p4_4l_runtime_migration_canonical_sha256": "09bbbb0842b0f92c214d5e868ec3fe5e2d047f9de7b5c3e6d620bc147092f6f3",
+    "p4_4m_canonical_sha256": "8202845b28abcea6ff8ea0ffb279a924b09ca7b2e5ab1d1918c957b757f345cf",
+    "p4_4n_canonical_sha256": "3f08b29da1cfa782d897d8bad9ea8cb4c05a962e5402144d3982d7f7e3e47ec5",
+    "p4_4o_canonical_sha256": "766b8d54dec4310b60c032a26a51cdac0dbab436dbbd0ee81bb0f5cde4e4db3f",
+    "p4_4p_canonical_sha256": "d7d8c9733b41b0146e73940769f66c6103c48c87bed054ecbbadb512aae1ffae"
+  },
+  "authority_and_execution": {
+    "provider_acquisition_during_implementation": false,
+    "workflow_dispatch_during_implementation": false,
+    "live_retry": false,
+    "share_code_action": false,
+    "wager_action": false,
+    "caller_migration": false,
+    "workflow_retirement": false,
+    "successor_proof_complete": false,
+    "successor_proof_rerun": false,
+    "next_live_proof_authorized": false,
+    "p4_4_complete": false,
+    "architecture_checkpoint_e_complete": false
+  },
+  "canonical_sha256": "b683c34ef7c88c37c50d61f1e92fb43fc549acdc2da5def72978c324e1c615ff"
+}
