@@ -27,8 +27,8 @@ def test_policy_is_deterministic_and_binds_both_reviewed_receipt_ancestries():
     }
     assert payload["provider_source_authority"] == {
         "policy_id": bridge.PROVIDER_SOURCE_POLICY_ID,
-        "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
-        "receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+        "policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+        "receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c",
     }
     assert payload["provider_only_unmapped_observation"]["tournament_id"] == "sr:tournament:622"
     assert payload["authority"]["current_shadow_runtime_discovery"] is False

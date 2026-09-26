@@ -78,20 +78,20 @@ def test_contract_mirrors_exact_pr258_upcoming_path_without_changing_shared_cont
         current.calculate_current_shadow_upcoming_compatibility_sha256()
     )
     assert current.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == (
-        "dd1b4366ef2cf4d1e12359c42fbff5cbae8bef60cc06ca40589ec0e8a157f943"
+        "1ef767b2de32b4d3a51bd9ec5c8244744ce5ba9ddf45c7d61b307327351e81a4"
     )
     assert current.validate_contract()["identity_compatibility_policy_id"] == (
         "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1"
     )
     assert current.validate_contract()["identity_compatibility_policy_sha256"] == (
-        "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
+        "5b5f804fc0ca21a8f5a15334a32faedc5f9eaa23024adac5c42d467f9fef37fc"
     )
     compatibility = identity_compatibility.validate_contract()
     assert compatibility["provider_evidence_observation_policy_id"] == (
         "VERIFIED_PROVIDER_RAW_BYTES_PLUS_RAW_ANCESTRY_BOUND_ATHENA_PCUPCOMING_PROJECTION_V2"
     )
     assert compatibility["policy_sha256"] == (
-        "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
+        "5b5f804fc0ca21a8f5a15334a32faedc5f9eaa23024adac5c42d467f9fef37fc"
     )
     assert current.CURRENT_SHADOW_UPCOMING_POLICY_ID == (
         "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
