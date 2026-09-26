@@ -246,7 +246,17 @@ def policy_payload() -> dict[str, Any]:
         "max_pages": MAX_PAGES,
         "coverage_horizon_hours": TIMELINE_HOURS,
         "identity": "EXACT_PROVIDER_NATIVE_IDS_AND_ENCLOSING_TOURNAMENT_ANCESTRY",
-        "provider_native_tournament_id_grammar": "^sr:(?:tournament|simple_tournament):[1-9][0-9]*$",
+        "provider_native_id_grammar": {
+            "event": _EVENT_ID_RE.pattern,
+            "competitor": _COMPETITOR_ID_RE.pattern,
+            "category": _CATEGORY_ID_RE.pattern,
+            "tournament": _TOURNAMENT_ID_RE.pattern,
+            "exact_string_only": True,
+            "normalization": "NONE",
+            "coercion": False,
+            "tournament_namespace_rewrite": False,
+        },
+        "provider_native_tournament_id_grammar": _TOURNAMENT_ID_RE.pattern,
         "provider_native_tournament_id_namespaces": [
             "sr:tournament",
             "sr:simple_tournament",
@@ -275,7 +285,7 @@ def calculate_policy_sha256() -> str:
 
 
 # Set to the canonical policy hash after the contract payload is finalized.
-PINNED_POLICY_SHA256 = "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b"
+PINNED_POLICY_SHA256 = "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
 
 
 @dataclasses.dataclass(frozen=True)

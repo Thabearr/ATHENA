@@ -191,7 +191,7 @@ def test_runtime_architecture_invariants_preserved():
     assert identity._REVIEWED_ALIAS_V3["registry_sha256"] == "cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce"
 
     # 4. Stable identity SHA binds the reviewed bridge semantics.
-    assert identity.REGISTRY_SHA256 == "d787ace95bcd9e95c8ade0120580f8f42245f2a32bedd1441825cf42a78f67db"
+    assert identity.REGISTRY_SHA256 == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
 
     # 5. State schema version is 2
     assert identity.STATE_SCHEMA_VERSION == 2
@@ -210,7 +210,7 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
     accepted = readiness.check_f_upcoming_discovery_contract()
     assert accepted["status"] == "PASSED"
     assert accepted["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-    assert accepted["runtime_policy_sha256"] == "5af808f2dddba92088d80fe6572b6ec895ee1e0df0938f8ba143d07df845bdec"
+    assert accepted["runtime_policy_sha256"] == "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
     assert accepted["runtime_pagination_complete_required"] is True
     actual = upcoming.validate_contract()
     stale = dict(actual)

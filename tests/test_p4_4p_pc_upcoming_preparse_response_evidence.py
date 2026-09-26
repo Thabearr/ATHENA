@@ -76,13 +76,13 @@ def test_runtime_contract_binds_evidence_first_semantics_and_immutable_source_v1
     identities = runtime.validate_contract()
     assert runtime.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == (
-        "5af808f2dddba92088d80fe6572b6ec895ee1e0df0938f8ba143d07df845bdec"
+        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
     )
     assert identities["preparse_response_evidence"]["every_successful_runtime_http_response_persisted_before_semantic_parse"] is True
     assert identities["preparse_response_evidence"]["parse_failure_semantic_acceptance"] is False
     assert source.POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
     assert source.calculate_policy_sha256() == source.PINNED_POLICY_SHA256 == (
-        "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b"
+        "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
     )
 
 

@@ -15,10 +15,10 @@ def test_p4_4o_receipt_and_current_runtime_supersession_are_exact():
     assert result["policy_id"] == "ATHENA_P4_4O_PC_UPCOMING_STABLE_EPOCH_RECOVERY_V1"
     assert result["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert result["runtime_policy_sha256"] == (
-        "5af808f2dddba92088d80fe6572b6ec895ee1e0df0938f8ba143d07df845bdec"
+        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
     )
     assert result["source_policy_sha256"] == (
-        "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b"
+        "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
     )
     assert result["workflow_yaml_changed"] is False
     assert result["current_shadow_and_p3_shared_source"] is True

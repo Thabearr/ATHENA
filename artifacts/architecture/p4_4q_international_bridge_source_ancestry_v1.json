@@ -8,19 +8,19 @@
   "upstream_source_receipt": {
     "path": "artifacts/architecture/p4_4q_pc_upcoming_simple_tournament_source_compatibility_v1.json",
     "policy_id": "ATHENA_P4_4Q_PC_UPCOMING_SIMPLE_TOURNAMENT_SOURCE_COMPATIBILITY_V1",
-    "canonical_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    "canonical_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
   },
   "bridge_policy": {
     "policy_id": "ATHENA_CURRENT_SHADOW_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE_V1",
     "sha256_before": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
-    "sha256_after": "e6e937ff72c83ff2120fcfdfbc3dc3cbf6c8fa10a17122308d60dd0fb0505d2d"
+    "sha256_after": "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
   },
   "provider_source_authority": {
     "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
     "sha256_before": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
-    "sha256_after": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
-    "receipt_sha256_before": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
-    "receipt_sha256_after": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+    "sha256_after": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
+    "receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+    "supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
   },
   "source_authority": {
     "policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
@@ -44,9 +44,10 @@
       "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
       "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
       "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
-      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "provider_source_policy_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
       "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
-      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+      "provider_receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+      "provider_source_supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
     },
     {
       "source_ccode": "INT",
@@ -63,9 +64,10 @@
       "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
       "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
       "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
-      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "provider_source_policy_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
       "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
-      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+      "provider_receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+      "provider_source_supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
     },
     {
       "source_ccode": "INT",
@@ -82,9 +84,10 @@
       "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
       "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
       "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
-      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "provider_source_policy_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
       "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
-      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+      "provider_receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+      "provider_source_supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
     },
     {
       "source_ccode": "INT",
@@ -101,9 +104,10 @@
       "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
       "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
       "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
-      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "provider_source_policy_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
       "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
-      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+      "provider_receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+      "provider_source_supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
     },
     {
       "source_ccode": "INT",
@@ -120,9 +124,10 @@
       "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
       "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
       "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
-      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "provider_source_policy_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
       "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
-      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+      "provider_receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+      "provider_source_supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
     },
     {
       "source_ccode": "INT",
@@ -139,9 +144,10 @@
       "source_policy_id": "ATHENA_CURRENT_SHADOW_FOTMOB_INTERNATIONAL_SOURCE_HIERARCHY_V1",
       "source_policy_sha256": "f4a50b836540d4dd797631f50215598d852aab05a9c2e9a65ff8069afcde570b",
       "provider_source_policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
-      "provider_source_policy_sha256": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+      "provider_source_policy_sha256": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
       "source_receipt_sha256": "15f8b85ba2ef5c9a8dd65fa262eb44a49b61070040cd7ea09985416c063cd91f",
-      "provider_receipt_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+      "provider_receipt_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34",
+      "provider_source_supersession_receipt_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
     }
   ],
   "unmapped_source_identities": [
@@ -206,5 +212,5 @@
     "architecture_checkpoint_e_complete": false,
     "next_live_proof_authorized": false
   },
-  "canonical_sha256": "1166c858d83b896d325d92e1c684f87b532bb48b82f2b3a6eae7160cf5d3edbd"
+  "canonical_sha256": "d27d905977635970f8d37a6f3ad6d26d246543080c0975e62ede0c610d4fe3c2"
 }

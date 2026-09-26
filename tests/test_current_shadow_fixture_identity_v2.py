@@ -198,7 +198,7 @@ def _reviewed(*, match_id: int, kickoff: datetime, competition: str, home: str, 
 
 def test_registry_identity_is_pinned_to_retained_run38_evidence():
     assert identity.POLICY_ID == "ATHENA_CURRENT_SHADOW_STABLE_SOURCE_PROVIDER_IDENTITY_V2"
-    assert identity.REGISTRY_SHA256 == "d787ace95bcd9e95c8ade0120580f8f42245f2a32bedd1441825cf42a78f67db"
+    assert identity.REGISTRY_SHA256 == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
     assert identity.registry_sha256() == identity.REGISTRY_SHA256
     assert len(identity.TEAM_IDENTITY_SEEDS) == 64
     assert len(identity.COMPETITION_IDENTITY_SEEDS) == 12
@@ -210,7 +210,7 @@ def test_international_bridge_keeps_club_seed_registry_sha_and_one_to_one_maps_u
     assert len(identity.COMPETITION_IDENTITY_SEEDS) == 12
     assert len({(row[0], row[1]) for row in identity.COMPETITION_IDENTITY_SEEDS}) == 12
     assert len({(row[2], row[3]) for row in identity.COMPETITION_IDENTITY_SEEDS}) == 12
-    assert identity.REGISTRY_SHA256 == "d787ace95bcd9e95c8ade0120580f8f42245f2a32bedd1441825cf42a78f67db"
+    assert identity.REGISTRY_SHA256 == "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
 
 
 @pytest.mark.parametrize(

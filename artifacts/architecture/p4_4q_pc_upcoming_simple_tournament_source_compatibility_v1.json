@@ -48,13 +48,23 @@
     "policy_id_before": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
     "policy_id_after": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
     "sha256_before": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
-    "sha256_after": "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b",
+    "sha256_after": "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5",
     "accepted_grammar_before": "^sr:tournament:[1-9][0-9]*$",
     "accepted_grammar_after": "^sr:(?:tournament|simple_tournament):[1-9][0-9]*$",
     "provider_native_tournament_id_namespaces": [
       "sr:tournament",
       "sr:simple_tournament"
-    ]
+    ],
+    "provider_native_id_grammar": {
+      "category": "^sr:category:([1-9][0-9]*)$",
+      "coercion": false,
+      "competitor": "^sr:competitor:([1-9][0-9]*)$",
+      "event": "^sr:match:([1-9][0-9]*)$",
+      "exact_string_only": true,
+      "normalization": "NONE",
+      "tournament": "^sr:(?:tournament|simple_tournament):([1-9][0-9]*)$",
+      "tournament_namespace_rewrite": false
+    }
   },
   "semantics": {
     "coercion": false,
@@ -78,5 +88,11 @@
     "share_code_actions": 0,
     "wager_actions": 0
   },
-  "canonical_sha256": "84d9d5430aabaa0796cb8c559eea93fb2a529b5d1abd19fd3d0284fedf82c94c"
+  "historical_source_qualification": {
+    "path": "artifacts/architecture/post_p4_4l_pc_upcoming_shared_football_source_v1.json",
+    "policy_id": "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1",
+    "policy_sha256": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+    "receipt_canonical_sha256": "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b0ca75bb34"
+  },
+  "canonical_sha256": "5b63af742fc96305ec72446ba444ce735f951a8d11c45eb1c9fcbe7725f2f5a9"
 }

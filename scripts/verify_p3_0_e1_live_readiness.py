@@ -229,17 +229,17 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     historical_identities = historical_upcoming.validate_contract()
     historical = paginated.validate_contract()
     if identities["source_policy_sha256"] != (
-        "f0e25a0da8fab8ae22a6d8f4b2d6931c5d16297e28365d8c492c2504a05f431b"
+        "306e9b37bb749032cae48be100ae7b49f1221fcf3392373a2e2407a8b3c339f5"
     ) or identities["source_policy_id"] != (
         "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
     ):
         raise P30LiveReadinessError("Check F failed: reviewed pcUpcoming source ancestry drifted")
     if identities["bridge_policy_sha256"] != (
-        "e6e937ff72c83ff2120fcfdfbc3dc3cbf6c8fa10a17122308d60dd0fb0505d2d"
+        "c3f05e5ea6ce08c392ec13d1b39d40dd8dd177e5a73f3660605c359705719858"
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "5af808f2dddba92088d80fe6572b6ec895ee1e0df0938f8ba143d07df845bdec"
+        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
     stabilization = upcoming._policy_payload().get("capture_stabilization", {})
@@ -291,7 +291,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     }:
         raise P30LiveReadinessError("Check F failed: pre-parse runtime evidence contract drifted")
     if identities["identity_compatibility_policy_sha256"] != (
-        "5b5f804fc0ca21a8f5a15334a32faedc5f9eaa23024adac5c42d467f9fef37fc"
+        "e8587d1e99cb7aa6214f65b515ca59f1456443a554a762ba27be204506da7569"
     ):
         raise P30LiveReadinessError("Check F failed: identity compatibility policy SHA drifted")
     if historical_identities["upstream_upcoming_source_contract_sha256"] != (
@@ -307,19 +307,19 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
             "Check F failed: retained historical wap strategy ID drifted"
         )
     if historical_identities["current_shadow_upcoming_compatibility_sha256"] != (
-        "1ef767b2de32b4d3a51bd9ec5c8244744ce5ba9ddf45c7d61b307327351e81a4"
+        "e831850d45b5b40706d53d04f9afb6c06e221a8dbecc7969afc9516fcb99d17e"
     ):
         raise P30LiveReadinessError(
             "Check F failed: historical wap compatibility SHA drifted"
         )
     if identity_compatibility.POLICY_ID != "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1" or identity_compatibility.calculate_policy_sha256() != (
-        "5b5f804fc0ca21a8f5a15334a32faedc5f9eaa23024adac5c42d467f9fef37fc"
+        "e8587d1e99cb7aa6214f65b515ca59f1456443a554a762ba27be204506da7569"
     ):
         raise P30LiveReadinessError(
             "Check F failed: shared identity compatibility policy SHA drifted"
         )
     if historical["contract_sha256"] != (
-        "17b5e525ea5a253738ab3daed06e0af93ac54eed6e3f06a2278262e6898ad7b6"
+        "baf9d4301d56669abebf8793ecac41aa2f427094dfcf1ee7ebf2aa411996f451"
     ):
         raise P30LiveReadinessError(
             "Check F failed: retained paginated compatibility contract SHA drifted"
@@ -329,7 +329,7 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: alias V3 SHA drifted")
     if stable_identity.REGISTRY_SHA256 != (
-        "d787ace95bcd9e95c8ade0120580f8f42245f2a32bedd1441825cf42a78f67db"
+        "149b7b61213e33ee85f030d3e567966e5f79df6bea4e138d54d638c76d5e8156"
     ) or stable_identity.STATE_SCHEMA_VERSION != 2:
         raise P30LiveReadinessError(
             "Check F failed: stable identity registry or state schema drifted"

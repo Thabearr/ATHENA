@@ -16,10 +16,10 @@ def test_p4_4n_receipt_and_current_contract_supersession_are_exact():
         "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b"
     )
     assert result["identity_compatibility_sha256"] == (
-        "5b5f804fc0ca21a8f5a15334a32faedc5f9eaa23024adac5c42d467f9fef37fc"
+        "e8587d1e99cb7aa6214f65b515ca59f1456443a554a762ba27be204506da7569"
     )
     assert result["runtime_wrapper_sha256"] == (
-        "5af808f2dddba92088d80fe6572b6ec895ee1e0df0938f8ba143d07df845bdec"
+        "308ce60e2a3562d2cf600489075145ecd6a734b71676e5c68d87a8d0737f0d75"
     )
     assert result["historical_runtime_wrapper_sha256"] == (
         "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
