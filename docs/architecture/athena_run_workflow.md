@@ -269,3 +269,15 @@ consumed by run `36119049997`; retries are zero and no retry is authorized. The
 live canonical SHADOW successor blocker remains OPEN and requires separate owner
 authorization for any future proof. P4.4, Architecture Checkpoint E, caller
 migration, and workflow retirement remain incomplete/unauthorized.
+
+## P4.4M canonical Shadow source-evidence preservation
+
+Canonical SHADOW run `36229731847` exposed an artifact evidence gap: the active
+pcUpcoming runtime evidence root existed during execution but was omitted from
+the workflow's optional source-evidence preservation list. P4.4M adds that
+active root to the existing copy loop so its manifest and raw pages are retained
+in canonical artifacts when present, including after a business failure reaches
+the preservation step. This is evidence preservation only; no source parsing,
+fixture identity, or team-label semantics change. No live proof or retry was run,
+and the successor proof remains incomplete. The team-label source-schema blocker
+remains open. Caller migration and workflow retirement remain unauthorized.

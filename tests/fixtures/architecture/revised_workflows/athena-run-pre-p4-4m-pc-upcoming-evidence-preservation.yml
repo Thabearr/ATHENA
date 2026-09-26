@@ -232,7 +232,6 @@ jobs:
           for source_dir in \
             '.cache/athena-research/current-shadow-sportybet-catalog-fanout' \
             '.cache/athena-research/current-shadow-sportybet-upcoming-discovery' \
-            '.cache/athena-research/current-shadow-sportybet-pc-upcoming-discovery' \
             '.cache/athena-research/sportybet-live-event-quote-evidence' \
             '.cache/athena-research/fotmob-data-matches-captures'
           do
