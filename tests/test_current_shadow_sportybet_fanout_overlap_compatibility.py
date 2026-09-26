@@ -24,7 +24,7 @@ def test_overlap_policy_identity_is_evidence_pinned_in_shadow_contract():
         "019b749eeb82a0e27d99726b08a6832d7823ecc9a17fd75ff576537841101924"
     )
     assert fanout.EXPECTED_CONTRACT_SHA256 == (
-        "2d8c1f7b533eea104c1951a9a1f963c4cd85933252aa44da7dbeb447528ad0a0"
+        "c1ce52d8c441a6a38aee08c05413d579f0f18a497e56eb7833faf1fbc60c622f"
     )
     assert fanout.calculate_contract_sha256() == fanout.EXPECTED_CONTRACT_SHA256
     assert identity["fanout_overlap_compatibility_policy_id"] == (

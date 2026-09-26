@@ -239,11 +239,11 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
     ):
         raise P30LiveReadinessError("Check F failed: international bridge ancestry drifted")
     if identities["runtime_policy_id"] != upcoming.POLICY_ID or identities["runtime_policy_sha256"] != (
-        "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e"
+        "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
     if identities["identity_compatibility_policy_sha256"] != (
-        "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+        "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
     ):
         raise P30LiveReadinessError("Check F failed: identity compatibility policy SHA drifted")
     if historical_identities["upstream_upcoming_source_contract_sha256"] != (
@@ -259,19 +259,19 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
             "Check F failed: retained historical wap strategy ID drifted"
         )
     if historical_identities["current_shadow_upcoming_compatibility_sha256"] != (
-        "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12"
+        "dd1b4366ef2cf4d1e12359c42fbff5cbae8bef60cc06ca40589ec0e8a157f943"
     ):
         raise P30LiveReadinessError(
             "Check F failed: historical wap compatibility SHA drifted"
         )
     if identity_compatibility.POLICY_ID != "ATHENA_CURRENT_SHADOW_FIXTURE_IDENTITY_COMPATIBILITY_V1" or identity_compatibility.calculate_policy_sha256() != (
-        "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+        "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
     ):
         raise P30LiveReadinessError(
             "Check F failed: shared identity compatibility policy SHA drifted"
         )
     if historical["contract_sha256"] != (
-        "6de2847f8ed32873f7ae50e902708c7e27ca5516f492e183063f3dfc0f1635a8"
+        "7373a05c25466206aa3a67bc53b219e8d2841f432fda13db2dc0808b40b47238"
     ):
         raise P30LiveReadinessError(
             "Check F failed: retained paginated compatibility contract SHA drifted"

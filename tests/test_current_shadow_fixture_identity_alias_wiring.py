@@ -493,9 +493,9 @@ def test_frozen_non_shadow_parser_rejects_p3_e1_away_trailing_space():
 
 def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
     identity = label_compat.validate_policy()
-    assert label_compat.SCHEMA_VERSION == 5
+    assert label_compat.SCHEMA_VERSION == 6
     assert label_compat.POLICY_ID == (
-        "ATHENA_CURRENT_SHADOW_EXACT_PROVIDER_TRAILING_SPACE_LABEL_COMPATIBILITY_V5"
+        "ATHENA_CURRENT_SHADOW_EXACT_ONE_TRAILING_ASCII_SPACE_LABEL_COMPATIBILITY_V6"
     )
     assert label_compat.EVIDENCE_WORKFLOW_RUN_ID == 33743684967
     assert label_compat.EVIDENCE_ARTIFACT_ID == 9888817924
@@ -524,8 +524,12 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
         "46a549f09d3d4864f8b00185b8634d427d11d219e4e0545a5e3746198ec22b11"
     )
     assert label_compat.P3_E1_BLOCKER_EVIDENCE_OBSERVED_AT == "2026-09-12T11:01:42.950736Z"
+    assert label_compat.SCHEMA_VERSION == 6
+    assert label_compat.POLICY_ID == (
+        "ATHENA_CURRENT_SHADOW_EXACT_ONE_TRAILING_ASCII_SPACE_LABEL_COMPATIBILITY_V6"
+    )
     assert label_compat.EXPECTED_POLICY_SHA256 == (
-        "6ec1d805263cddb7d4a4cf8338a611a7b66b22dd12db665db1614b3baa799f14"
+        "0c382ec8b12d802879a51b766daae8f655dd5b371509653e56a13190a85c6c7b"
     )
     assert label_compat.policy_sha256() == label_compat.EXPECTED_POLICY_SHA256
     assert identity["policy_sha256"] == label_compat.EXPECTED_POLICY_SHA256
@@ -657,20 +661,28 @@ def test_team_label_policy_is_exactly_pinned_to_diagnostic_evidence():
 
 
 @pytest.mark.parametrize(
-    ("event_id", "field", "value"),
+    "value",
     (
-        ("sr:match:99999999", "awayTeamName", "Comunicaciones FC "),
-        ("sr:match:72474956", "homeTeamName", "Comunicaciones FC "),
-        ("sr:match:72474956", "awayTeamName", " Comunicaciones FC"),
-        ("sr:match:72474956", "awayTeamName", "Comunicaciones FC  "),
-        ("sr:match:72474956", "awayTeamName", "Comunicaciones FC\t"),
-        ("sr:match:72474956", "awayTeamName", "Comunicaciones FC\u00a0"),
-        ("sr:match:72474956", "awayTeamName", "Different FC "),
+        " Comunicaciones FC",
+        "Comunicaciones FC  ",
+        "Comunicaciones FC\t",
+        "Comunicaciones FC\u00a0",
+        "Different FC \u00a0",
     ),
 )
-def test_p3_e1_exact_tuple_rejects_all_other_whitespace_shapes(event_id, field, value):
+def test_p3_e1_shape_rule_rejects_unreviewed_whitespace(value):
     with pytest.raises(label_compat.CurrentShadowSportyBetTeamLabelCompatibilityError):
-        label_compat.project_team_label(event_id=event_id, field=field, value=value)
+        label_compat.project_team_label(
+            event_id="sr:match:72474956", field="awayTeamName", value=value
+        )
+
+
+def test_p3_e1_one_trailing_ascii_space_is_not_event_bound():
+    assert label_compat.project_team_label(
+        event_id="sr:match:99999999991",
+        field="awayTeamName",
+        value="Example Athletic ",
+    ) == "Example Athletic"
 
 
 def test_already_trimmed_p3_e1_label_passes_through_unchanged():

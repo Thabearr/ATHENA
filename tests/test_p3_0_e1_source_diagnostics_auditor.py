@@ -213,7 +213,7 @@ def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypat
     assert accepted["runtime_pagination_complete_required"] is True
     actual = upcoming.validate_contract()
     stale = dict(actual)
-    stale["identity_compatibility_policy_sha256"] = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"
+    stale["identity_compatibility_policy_sha256"] = "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
     monkeypatch.setattr(upcoming, "validate_contract", lambda: stale)
     with pytest.raises(readiness.P30LiveReadinessError, match="identity compatibility policy SHA drifted"):
         readiness.check_f_upcoming_discovery_contract()

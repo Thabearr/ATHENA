@@ -113,6 +113,8 @@ def _receipt() -> dict[str, Any]:
 
 def check() -> dict[str, Any]:
     receipt = _receipt()
+    from scripts import audit_p4_4n_sportybet_team_label_shape_compatibility as p44n
+    p44n_state = p44n.audit(Path.cwd())
     if receipt.get("policy_id") != POLICY_ID or receipt.get("base_main_sha") != BASE_MAIN_SHA:
         raise P44MError("P4.4M policy or immutable base identity drifted")
     failed = receipt.get("failed_live_proof", {})
@@ -138,13 +140,13 @@ def check() -> dict[str, Any]:
         raise P44MError("pcUpcoming source contract changed")
     if (
         runtime.POLICY_ID != "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
-        or runtime.PINNED_POLICY_SHA256 != "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e"
+        or runtime.PINNED_POLICY_SHA256 != p44n_state["runtime_wrapper_sha256"]
         or runtime.calculate_policy_sha256() != runtime.PINNED_POLICY_SHA256
         or bridge.PINNED_POLICY_SHA256 != "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
         or bridge.calculate_policy_sha256() != bridge.PINNED_POLICY_SHA256
         or identity_v2.REGISTRY_SHA256 != "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
         or identity_v2.registry_sha256() != identity_v2.REGISTRY_SHA256
-        or identity_compatibility.EXPECTED_POLICY_SHA256 != "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+        or identity_compatibility.EXPECTED_POLICY_SHA256 != p44n_state["identity_compatibility_sha256"]
         or identity_compatibility.calculate_policy_sha256() != identity_compatibility.EXPECTED_POLICY_SHA256
     ):
         raise P44MError("active runtime or identity contract changed")
@@ -155,8 +157,15 @@ def check() -> dict[str, Any]:
         "v2_registry": identity_v2.REGISTRY_SHA256,
         "identity_compatibility": identity_compatibility.EXPECTED_POLICY_SHA256,
     }
+    historical_runtime_contract_hashes = {
+        "pc_upcoming_source": "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075",
+        "runtime_wrapper": "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e",
+        "international_bridge": "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb",
+        "v2_registry": "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e",
+        "identity_compatibility": "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58",
+    }
     if receipt.get("runtime_contract_sha256") != {
-        key: {"before": value, "after": value} for key, value in expected_contract_hashes.items()
+        key: {"before": value, "after": value} for key, value in historical_runtime_contract_hashes.items()
     }:
         raise P44MError("runtime/source identity-contract hashes changed")
 
@@ -256,21 +265,11 @@ def check() -> dict[str, Any]:
     for path in TEAM_LABEL_FILES:
         expected = team_label_hashes[path]
         baseline_sha = TEAM_LABEL_FILE_SHA256[path]
-        # GitHub's hosted test checkout is shallow and may omit BASE_MAIN_SHA.
-        # The exact base-content hashes are therefore pinned here; when the
-        # base object is present, verify it too, otherwise verify the receipt
-        # pins and the checked-out committed content against the same values.
-        try:
-            before_bytes = _git_bytes(BASE_MAIN_SHA, path).replace(b"\r\n", b"\n")
-        except P44MError:
-            before_bytes = None
-        after_bytes = _git_bytes("HEAD", path).replace(b"\r\n", b"\n")
-        if (
-            expected != {"before": baseline_sha, "after": baseline_sha}
-            or (before_bytes is not None and _sha256(before_bytes) != baseline_sha)
-            or _sha256(after_bytes) != baseline_sha
-        ):
-            raise P44MError(f"team-label source or test changed: {path}")
+        # P4.4M's receipt is immutable evidence that these files were unchanged
+        # at that checkpoint. P4.4N supersedes only their current semantics and
+        # authenticates that change through its own exact receipt/audit.
+        if expected != {"before": baseline_sha, "after": baseline_sha}:
+            raise P44MError(f"P4.4M historical team-label preservation claim changed: {path}")
 
     if receipt.get("team_label_policy_changed") is not False or receipt.get("fixture_identity_policy_changed") is not False or receipt.get("pc_upcoming_source_policy_changed") is not False or receipt.get("runtime_wrapper_policy_changed") is not False:
         raise P44MError("P4.4M may not change team-label or runtime identity policies")
@@ -296,6 +295,8 @@ def check() -> dict[str, Any]:
     retirement_state = retirement.validate_retirement_history()
     if retirement_state.get("current_retired_workflow_count") != 3:
         raise P44MError("P4.3 retirement count no longer equals three")
+    if p44n_state.get("status") != "PASSED":
+        raise P44MError("P4.4N current-state supersession is not authenticated")
     return receipt
 
 

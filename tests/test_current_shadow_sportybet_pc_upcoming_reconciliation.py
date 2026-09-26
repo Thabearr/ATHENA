@@ -99,13 +99,15 @@ def _page(page_num: int, *, total: int, count: int, first_number: int):
 
 def test_runtime_wrapper_policy_and_ancestry_are_pinned() -> None:
     identities = runtime.validate_contract()
-    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256
+    assert runtime.calculate_policy_sha256() == runtime.PINNED_POLICY_SHA256 == (
+        "fd203fc4b857bb3c5faa22536e87e1bc214cd4fdcf79ec5b6c4c681cd9d0cf73"
+    )
     assert identities["source_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_GLOBAL_FOOTBALL_SOURCE_V1"
     assert identities["source_policy_sha256"] == "63799058bec00abefb8d9b2ec9ba6dcad0c6e4775a54f17b07c0018e543ec075"
     assert identities["bridge_policy_id"] == "ATHENA_CURRENT_SHADOW_INTERNATIONAL_PROVIDER_FAMILY_BRIDGE_V1"
     assert identities["bridge_policy_sha256"] == "7db676111a9be06f63fd207815837d53699d6bf1a98364fc2163046cd1c0a4bb"
     assert identities["v2_semantic_registry_sha256"] == "fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e"
-    assert identities["identity_compatibility_policy_sha256"] == "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+    assert identities["identity_compatibility_policy_sha256"] == "2fdbb8165262f6e633ee48276aea57c9235699272235798e1cef12fdc714ae04"
     assert identities["pagination_complete_required"] is True
 
 

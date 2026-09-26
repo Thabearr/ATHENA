@@ -26,6 +26,8 @@ SOURCE_RECEIPT_SHA256 = "8dde6427c296d966ff8d7f4cdec33e57a8c4210e8ecdb37071af68b
 BRIDGE_RECEIPT_SHA256 = "34c183b5274e9e2c3320b5a8d75a123b7ebed2405aa55cdfb1af7d59c2613aa2"
 OLD_WAP_SOURCE_SHA256 = "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
 OLD_WAP_COMPATIBILITY_SHA256 = "e0718a5e7c9e0c707ba5cc7369910f3ec371bd1a9f7520ab41aa30df69d0ab12"
+HISTORICAL_IDENTITY_COMPATIBILITY_SHA256 = "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+HISTORICAL_RUNTIME_WRAPPER_SHA256 = "e44d8b3476118a094d3e59f885f7456c3aebc677c07d8eeefaa232df5bc6a43e"
 EXPECTED_SOURCE_KEYS = {("INT", 9806), ("INT", 9807), ("INT", 9808), ("INT", 9821), ("INT", 10608), ("INT", 114)}
 
 
@@ -84,7 +86,7 @@ def validate_receipt(receipt: Any) -> str:
     }, "immutable PR #406 bridge ancestry/mappings drifted")
     _require(receipt.get("v2_semantic_registry_sha256") == identity.REGISTRY_SHA256 == identity.registry_sha256(), "V2 semantic registry pin drifted")
     _require(receipt.get("v2_seed_registry_sha256") == identity.SEED_REGISTRY_SHA256 == identity.seed_registry_sha256(), "V2 seed registry changed")
-    _require(receipt.get("identity_compatibility_sha256") == compatibility.EXPECTED_POLICY_SHA256 == compatibility.calculate_policy_sha256(), "identity compatibility pin drifted")
+    _require(receipt.get("identity_compatibility_sha256") == HISTORICAL_IDENTITY_COMPATIBILITY_SHA256, "historical identity compatibility pin drifted")
 
     old_source = receipt.get("retained_old_wap_source")
     _require(type(old_source) is dict and old_source == {
@@ -96,7 +98,7 @@ def validate_receipt(receipt: Any) -> str:
     runtime_row = receipt.get("runtime_wrapper")
     _require(type(runtime_row) is dict and runtime_row == {
         "policy_id": runtime.POLICY_ID,
-        "policy_sha256": runtime.PINNED_POLICY_SHA256,
+        "policy_sha256": HISTORICAL_RUNTIME_WRAPPER_SHA256,
         "source_method": source.SOURCE_METHOD,
         "endpoint": source.SOURCE_PATH,
         "pagination_complete_required": True,
@@ -142,6 +144,8 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
     root = Path(repository_root)
     receipt = _read_json(root, RECEIPT_PATH, "runtime migration architecture receipt")
     receipt_sha = validate_receipt(receipt)
+    from scripts import audit_p4_4n_sportybet_team_label_shape_compatibility as p44n
+    p44n_state = p44n.audit(root)
 
     # These validators authenticate the historical receipts themselves. Their
     # old-owner assertions remain facts about those receipts, not today's owner.
@@ -164,8 +168,8 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
     _require(historical_wap.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1",
              "historical WAP source identity was deleted or rewritten")
     _require(historical_wap.UPSTREAM_UPCOMING_SOURCE_CONTRACT_SHA256 == OLD_WAP_SOURCE_SHA256
-             and historical_wap.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == OLD_WAP_COMPATIBILITY_SHA256,
-             "historical WAP source contract or compatibility identity drifted")
+             and historical_wap.CURRENT_SHADOW_UPCOMING_COMPATIBILITY_SHA256 == p44n_state["retained_wap_compatibility_sha256"],
+             "historical WAP source or P4.4N-superseded current compatibility identity drifted")
     _require(source.PINNED_POLICY_SHA256 == source_lineage_sha(receipt), "PR #405 source contract pin drifted")
     _require(bridge.PINNED_POLICY_SHA256 == receipt["international_provider_family_bridge"]["policy_sha256"],
              "PR #406 bridge policy pin drifted")
@@ -214,6 +218,7 @@ def audit(repository_root: str | Path = ".") -> dict[str, Any]:
         "migration_receipt_sha256": receipt_sha,
         "historical_source_receipt_sha256": source_receipt_sha,
         "historical_bridge_receipt_sha256": bridge_receipt_sha,
+        "p4_4n_receipt_sha256": p44n_state["receipt_sha256"],
         "current_shadow_and_p3_shared_source": True,
         "pagination_complete_required": True,
         "old_wap_retained_historical": True,
