@@ -15,7 +15,8 @@ from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_fixture_identity_compatibility as identity_compatibility
 from domain import current_shadow_fixture_identity_v2 as fixture_identity
 from domain import current_shadow_sportybet_paginated_discovery_reconciliation as paginated_discovery
-from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery
+from domain import current_shadow_sportybet_pc_upcoming_discovery as pc_upcoming_source
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming_discovery
 from domain.current_shadow_sportybet_catalog_fanout_reconciliation import (
     CurrentShadowSportyBetCatalogFanoutReconciliationError,
     validate_fanout_request_scope,
@@ -241,7 +242,7 @@ def _event(
     away: str = "Chelsea",
     kickoff: datetime = KICKOFF,
     status: int = 0,
-    booking_status: str = "Available",
+    booking_status: str = "Booked",
     tournament_name: str | None = "Premier League",
     home_team_id: str | None = None,
     away_team_id: str | None = None,
@@ -378,17 +379,36 @@ def _install_upcoming_discovery(
     tournament_name: str = "Premier League",
     observed: datetime = DISCOVERY_OBSERVED,
 ) -> None:
+    grouped: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
+    for index, original in enumerate(events):
+        row = dict(original)
+        sport = row.get("sport") if type(row.get("sport")) is dict else {}
+        category = sport.get("category") if type(sport.get("category")) is dict else {}
+        tournament = category.get("tournament") if type(category.get("tournament")) is dict else {}
+        category_id = row.get("categoryId", category.get("id", "sr:category:1"))
+        category_name = row.get("categoryName", category.get("name", "England"))
+        tournament_id = row.get("tournamentId", tournament.get("id", "sr:tournament:1"))
+        name = row.get("tournamentName", tournament_name)
+        row["homeTeamId"] = row.get("homeTeamId") or f"sr:competitor:{91000 + index * 2}"
+        row["awayTeamId"] = row.get("awayTeamId") or f"sr:competitor:{91001 + index * 2}"
+        row["bookingStatus"] = row.get("bookingStatus", "Booked")
+        row["matchStatus"] = row.get("matchStatus", "Not start")
+        key = (category_id, category_name, tournament_id, name)
+        grouped.setdefault(key, []).append(row)
+    tournaments = [
+        {"categoryId": category_id, "categoryName": category_name,
+         "id": tournament_id, "name": name, "events": rows}
+        for (category_id, category_name, tournament_id, name), rows in sorted(grouped.items())
+    ]
     raw = json.dumps(
-        {"bizCode": 10000, "data": list(events)},
-        ensure_ascii=False,
-        separators=(",", ":"),
+        {"bizCode": 10000, "data": {"totalNum": len(events), "tournaments": tournaments}},
+        ensure_ascii=False, separators=(",", ":"),
     ).encode("utf-8")
-    nonce = _epoch_ms(observed) - 250
 
-    def fetch() -> tuple[bytes, int, datetime, int]:
-        return raw, 200, observed, nonce
+    def fetch(page_num: int, nonce: int) -> tuple[bytes, datetime]:
+        return raw, observed
 
-    monkeypatch.setattr(upcoming_discovery, "_network_fetch_snapshot", fetch)
+    monkeypatch.setattr(pc_upcoming_source, "_fetch_page", fetch)
 
 
 def _install_detail(
@@ -761,7 +781,7 @@ def test_full_admission_aware_source_to_router_pipeline_canonical_equivalence(
     assert s_inp.router_decision_sha256 == p_inp.router_decision_sha256
 
     # Assert discovery strategy equality and truthful vocabulary
-    strategy_id = "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    strategy_id = "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert supported_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert p3_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert "provider_catalog_fanout_snapshot_sha256" not in supported_bundle.source_summary
@@ -827,12 +847,9 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
         category_id=provider_category_id,
         tournament_id=provider_tournament_id,
     )
-    nonce = _epoch_ms(DISCOVERY_OBSERVED) - 250
-
-    def fetch_upcoming() -> tuple[bytes, int, datetime, int]:
-        return provider_raw, 200, DISCOVERY_OBSERVED, nonce
-
-    monkeypatch.setattr(upcoming_discovery, "_network_fetch_snapshot", fetch_upcoming)
+    _install_upcoming_discovery(
+        monkeypatch, [provider_event], tournament_name="Championship", observed=DISCOVERY_OBSERVED
+    )
     _install_detail(monkeypatch, raw=detail_raw)
     monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
 
@@ -969,7 +986,7 @@ def test_native_id_required_source_to_router_pipeline_canonical_equivalence(
     assert supported_input.price_all_bundle_sha256 == p3_input.price_all_bundle_sha256
     assert supported_input.router_decision_sha256 == p3_input.router_decision_sha256
 
-    strategy_id = "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    strategy_id = "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
     assert supported_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert p3_bundle.source_summary["provider_discovery_strategy_id"] == strategy_id
     assert supported_bundle.source_summary["provider_discovery_strategy_id"] == (
@@ -1039,12 +1056,9 @@ def test_ambiguous_native_id_match_has_no_evidence_or_state_side_effect(
         home_id=10172,
         away_id=8344,
     )
-    nonce = _epoch_ms(DISCOVERY_OBSERVED) - 250
-
-    def fetch_upcoming() -> tuple[bytes, int, datetime, int]:
-        return provider_raw, 200, DISCOVERY_OBSERVED, nonce
-
-    monkeypatch.setattr(upcoming_discovery, "_network_fetch_snapshot", fetch_upcoming)
+    _install_upcoming_discovery(
+        monkeypatch, [provider_event], tournament_name="Championship", observed=DISCOVERY_OBSERVED
+    )
     monkeypatch.setattr(reviewed_discovery, "_now_utc", lambda: EVALUATION)
     state_path = tmp_path / "ambiguous-current-shadow-identity-state.json"
     monkeypatch.setenv("ATHENA_CURRENT_SHADOW_IDENTITY_STATE_PATH", str(state_path))
@@ -1053,15 +1067,11 @@ def test_ambiguous_native_id_match_has_no_evidence_or_state_side_effect(
         repository_root=tmp_path,
         execute_live_network=True,
     )
-    snapshot = upcoming_discovery.verify_current_upcoming_discovery(
-        discovery_directory,
+    snapshot = upcoming_discovery.verify_current_pc_upcoming_discovery(
         repository_root=tmp_path,
     )
-    verified_raw = upcoming_discovery._read_verified_upcoming_raw(
-        discovery_directory,
-        snapshot,
-    )
-    event = snapshot.events[0]
+    verified_raw = (tmp_path / pc_upcoming_source.EVIDENCE_ROOT / "pages/page-001.raw.json").read_bytes()
+    event = upcoming_discovery._provider_events(snapshot)[0]
     reviewed_rows = reviewed_discovery._reviewed_rows(admission)
     assert len(reviewed_rows) == 2
     assert (event.home_team_name, event.away_team_name) == (
@@ -1077,6 +1087,7 @@ def test_ambiguous_native_id_match_has_no_evidence_or_state_side_effect(
         identity_compatibility.begin_identity_scope(
             captures,
             provider_raw_bytes=(verified_raw,),
+            provider_identity_projection_bytes=(pc_upcoming_source.provider_identity_projection_bytes(snapshot),),
         )
         before = identity_compatibility.identity_state_snapshot()
         before_file_exists = state_path.exists()

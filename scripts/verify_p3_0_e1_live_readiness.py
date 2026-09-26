@@ -242,6 +242,10 @@ def check_f_upcoming_discovery_contract() -> dict[str, Any]:
         "5721d136035205aa48b9b214343e4816bcbf1e986d72e940a26010d4f792a3a9"
     ) or identities["pagination_complete_required"] is not True:
         raise P30LiveReadinessError("Check F failed: runtime wrapper or completeness rule drifted")
+    if identities["identity_compatibility_policy_sha256"] != (
+        "dbef6539dd7c5d1c1589debe8daca9378ea2e0c0bb32acf3315a0d1a005c2b58"
+    ):
+        raise P30LiveReadinessError("Check F failed: identity compatibility policy SHA drifted")
     if historical_identities["upstream_upcoming_source_contract_sha256"] != (
         "90c14bd68ed6e8205c16fedfa815d120c53f2af1a3a8f362eee2702a4223b9ff"
     ):

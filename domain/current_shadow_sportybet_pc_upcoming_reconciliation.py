@@ -292,8 +292,12 @@ class CurrentShadowPcUpcomingReconciliationBundle:
         return getattr(self._legacy_bundle, name)
 
 
-def _provider_events(manifest: source.PcUpcomingDiscoveryManifest) -> tuple[reviewed.SportyBetDiscoveredEvent, ...]:
-    return tuple(reviewed.SportyBetDiscoveredEvent(
+def _provider_events(manifest: source.PcUpcomingDiscoveryManifest) -> tuple[Any, ...]:
+    # Keep provider labels byte-faithful here. The pcUpcoming schema permits
+    # provider-observed trailing whitespace; only an explicit existing team
+    # alias may project it. Construct the shared attribute interface without
+    # invoking the legacy one-page model's stricter label constructor.
+    return tuple(SimpleNamespace(
         event_id=event.event_id,
         home_team_name=event.home_team_name,
         away_team_name=event.away_team_name,
