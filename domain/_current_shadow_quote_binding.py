@@ -19,6 +19,7 @@ from domain import current_sportybet_semantic_registry as prb
 from domain import sportybet_current_event_discovery_reconciliation as current_reconciliation
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as catalog_fanout_reconciliation
 from domain import current_shadow_sportybet_upcoming_reconciliation as shadow_reconciliation
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming_reconciliation
 from domain import sportybet_live_event_quote_evidence as live
 from domain.current_fotmob_latest_durable_fresh_history import CurrentLatestDurableFreshHistoryHandoff
 from domain.markets import MarketId, OutcomeId
@@ -54,6 +55,7 @@ class CurrentShadowPriceContext:
     _current_reconciliation_bundle: (
         current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
         | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle
         | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
         | None
     )
@@ -132,6 +134,7 @@ def _compose(
     reconciliation_bundle: (
         current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
         | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle
         | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
         | None
     ),
@@ -240,6 +243,7 @@ def build_current_shadow_price_context_from_reconciliation(
     current_reconciliation_bundle: (
         current_reconciliation.SportyBetCurrentEventDiscoveryReconciliationBundle
         | shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle
+        | pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle
         | catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle
     ),
 ) -> CurrentShadowPriceContext:
@@ -258,6 +262,10 @@ def build_current_shadow_price_context_from_reconciliation(
         verifier = shadow_reconciliation.verify_current_event_discovery_reconciliation_bundle
         reconciliation_error = shadow_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
         fixture_basis = "PRF_PR258_UPCOMING_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
+    elif type(current_reconciliation_bundle) is pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle:
+        verifier = pc_upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        reconciliation_error = pc_upcoming_reconciliation.PcUpcomingRuntimeReconciliationError
+        fixture_basis = "PCUPCOMING_RUNTIME_UNIQUE_EXACT_CURRENT_PROVIDER_RECONCILIATION"
     elif type(current_reconciliation_bundle) is catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
         verifier = catalog_fanout_reconciliation.verify_current_event_discovery_reconciliation_bundle
         reconciliation_error = catalog_fanout_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationError

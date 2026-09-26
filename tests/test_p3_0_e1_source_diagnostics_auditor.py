@@ -160,7 +160,7 @@ def test_runtime_architecture_invariants_preserved():
     """Verify runtime architecture invariants remain preserved as required by PR #376 review.
 
     Invariants:
-    - Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1.
+    - Active strategy is ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1.
     - Paginated source is historical only (paginated_runtime_reconciliation_authority: False).
     - Alias V3 SHA is cb3573bb5d695aca8a496a50c4ad6962b88f3670175058f8239c5daf1730f0ce.
     - Stable identity SHA is fc64fb0c2df3cee4f425158c48cfaada6757ba01e1759dd5b976ca899f85421e.
@@ -171,12 +171,12 @@ def test_runtime_architecture_invariants_preserved():
         current_shadow_all_market_runner as runner,
         current_shadow_fixture_identity_v2 as identity,
         current_shadow_sportybet_paginated_discovery_reconciliation as paginated,
-        current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery,
+        current_shadow_sportybet_pc_upcoming_reconciliation as upcoming_discovery,
     )
 
 
-    # 1. Active strategy is ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1
-    assert upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    # 1. Active strategy is the complete pcUpcoming runtime wrapper.
+    assert upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
 
     # 2. Paginated source is historical only (paginated_runtime_reconciliation_authority: False)
     assert runner.reconciliation is not paginated
@@ -206,10 +206,11 @@ def test_runtime_architecture_invariants_preserved():
 
 def test_p3_readiness_accepts_new_identity_pins_and_rejects_stale_ones(monkeypatch):
     from scripts import verify_p3_0_e1_live_readiness as readiness
-    from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming
     accepted = readiness.check_f_upcoming_discovery_contract()
     assert accepted["status"] == "PASSED"
-    assert accepted["current_shadow_upcoming_policy_id"] == "ATHENA_CURRENT_SHADOW_UPCOMING_DISCOVERY_V1"
+    assert accepted["runtime_policy_id"] == "ATHENA_CURRENT_SHADOW_PC_UPCOMING_DISCOVERY_RECONCILIATION_V1"
+    assert accepted["runtime_pagination_complete_required"] is True
     actual = upcoming.validate_contract()
     stale = dict(actual)
     stale["identity_compatibility_policy_sha256"] = "e1ce7468c61dcf4067725f6d58cd34d36bd1dc01e3a2177c4a724647bcab324b"

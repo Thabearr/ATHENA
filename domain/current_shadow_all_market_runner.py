@@ -28,7 +28,7 @@ from typing import Any, Callable, Mapping
 from domain import current_fotmob_latest_durable_fresh_history as latest_history
 from domain import current_shadow_canonical_core_adapter as shadow_core_adapter
 from domain import sportybet_share_code as share_module
-from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_discovery
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as upcoming_discovery
 reconciliation = upcoming_discovery
 from domain._current_shadow_price_core import ShadowPriceError
 from domain.fotmob_data_matches_capture import (
@@ -836,7 +836,7 @@ def acquire_current_shadow_pre_router_bundle(
     first_matched = next((item for item in source_rows if item[4].matched_rows), None)
     primary = first_matched or source_rows[0]
     primary_date, primary_execution, _primary_raw, _primary_manifest, primary_events = primary
-    if type(discovery_manifest) is upcoming_discovery.CurrentShadowUpcomingDiscoverySnapshot:
+    if type(discovery_manifest) is upcoming_discovery.PcUpcomingDiscoveryManifest:
         discovery_assessment = upcoming_discovery.prospective_discovery_assessment(
             discovery_manifest,
             evaluation_time=_now(),
@@ -854,12 +854,18 @@ def acquire_current_shadow_pre_router_bundle(
             "provider_discovery_source_method": upcoming_discovery.DISCOVERY_SOURCE_METHOD,
             "provider_discovery_strategy_id": upcoming_discovery.CURRENT_SHADOW_UPCOMING_POLICY_ID,
             "provider_discovery_observed_at": None,
+            "provider_discovery_first_observed_at": getattr(
+                discovery_manifest, "first_observed_at", None
+            ),
+            "provider_discovery_last_observed_at": getattr(
+                discovery_manifest, "last_observed_at", None
+            ),
             "source_viability": upcoming_discovery.PROSPECTIVE_DISCOVERY_NO_PREMATCH_EVENTS,
             "captured_page_count": 0,
         }
     else:
         raise CurrentShadowAllMarketRunnerError(
-            "upcoming discovery did not return an exact reviewed snapshot"
+            "pcUpcoming discovery did not return an exact complete reviewed manifest"
         )
     reconciliation_by_date = {
         request_date: {
@@ -893,8 +899,20 @@ def acquire_current_shadow_pre_router_bundle(
         "provider_discovery_manifest_sha256": discovery_manifest.canonical_sha256,
         "provider_discovery_page_count": discovery_assessment["captured_page_count"],
         "provider_discovery_event_count": len(discovery_manifest.events),
-        "provider_discovery_observation_count": 1,
+        "provider_discovery_observation_count": discovery_assessment["captured_page_count"],
         "provider_discovery_source_method": upcoming_discovery.DISCOVERY_SOURCE_METHOD,
+        "provider_total_num": getattr(
+            discovery_manifest, "provider_total_num", len(getattr(discovery_manifest, "events", ()))
+        ),
+        "provider_discovery_pagination_complete": getattr(
+            discovery_manifest, "pagination_complete", False
+        ),
+        "provider_discovery_first_observed_at": discovery_assessment[
+            "provider_discovery_first_observed_at"
+        ],
+        "provider_discovery_last_observed_at": discovery_assessment[
+            "provider_discovery_last_observed_at"
+        ],
         **dict(discovery_assessment),
     }
     source_progress_summary: dict[str, Any] = {

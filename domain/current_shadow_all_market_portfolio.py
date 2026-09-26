@@ -231,10 +231,14 @@ def build_shadow_portfolio_router_input(
         raise CurrentShadowPortfolioError("PR-D context omitted retained current reconciliation")
     bundle = context._current_reconciliation_bundle
     from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_reconciliation
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming_reconciliation
 
     if type(bundle) is upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
         verifier = upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
         error_cls = upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError
+    elif type(bundle) is pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle:
+        verifier = pc_upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        error_cls = pc_upcoming_reconciliation.PcUpcomingRuntimeReconciliationError
     else:
         verifier = reconciliation.verify_current_event_discovery_reconciliation_bundle
         error_cls = reconciliation.SportyBetCurrentEventDiscoveryError

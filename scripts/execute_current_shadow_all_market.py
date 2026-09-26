@@ -16,6 +16,7 @@ from domain import _current_shadow_quote_binding as quote_binding
 from domain import current_shadow_all_market_runner as runner
 from domain import current_shadow_sportybet_catalog_fanout_reconciliation as catalog_reconciliation
 from domain import current_shadow_sportybet_upcoming_reconciliation as upcoming_reconciliation
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as pc_upcoming_reconciliation
 from domain import sportybet_current_event_discovery_reconciliation as pr251_reconciliation
 
 WORKER_ENV = "ATHENA_CURRENT_SHADOW_ALL_MARKET_WORKER"
@@ -54,6 +55,7 @@ class _PortfolioReconciliationFacade:
     SportyBetCurrentEventDiscoveryError = (
         pr251_reconciliation.SportyBetCurrentEventDiscoveryError,
         upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationError,
+        pc_upcoming_reconciliation.PcUpcomingRuntimeReconciliationError,
         catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationError,
     )
 
@@ -63,6 +65,8 @@ class _PortfolioReconciliationFacade:
             verifier = pr251_reconciliation.verify_current_event_discovery_reconciliation_bundle
         elif type(value) is upcoming_reconciliation.CurrentShadowSportyBetUpcomingReconciliationBundle:
             verifier = upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
+        elif type(value) is pc_upcoming_reconciliation.CurrentShadowPcUpcomingReconciliationBundle:
+            verifier = pc_upcoming_reconciliation.verify_current_event_discovery_reconciliation_bundle
         elif type(value) is catalog_reconciliation.CurrentShadowSportyBetCatalogFanoutReconciliationBundle:
             verifier = catalog_reconciliation.verify_current_event_discovery_reconciliation_bundle
         else:

@@ -6,7 +6,7 @@ import pytest
 
 from domain import current_shadow_fixture_identity_aliases as aliases
 from domain import current_shadow_fixture_identity_v2 as stable_identity
-from domain import current_shadow_sportybet_upcoming_reconciliation as reconciliation
+from domain import current_shadow_sportybet_pc_upcoming_reconciliation as reconciliation
 from scripts import capture_p3_0_paired_evidence as collector
 from scripts import execute_current_shadow_all_market as all_market_cli
 from scripts import execute_current_shadow_daily as current_daily
@@ -252,6 +252,10 @@ def test_recovered_fixtures_reach_nonempty_router_input_with_frozen_quote_seam(
         canonical_sha256="c" * 64,
         pages=(),
         events=(),
+        provider_total_num=0,
+        pagination_complete=False,
+        first_observed_at=None,
+        last_observed_at=None,
     )
     frozen_quote = object()
     built_contexts = []

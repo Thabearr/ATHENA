@@ -312,3 +312,31 @@ def test_daily_worker_activates_and_restores_builder_audit_layer(monkeypatch, tm
         ("verification_restore", None),
     ]
     assert daily.all_market_cli.WORKER_ENV not in __import__("os").environ
+
+
+def test_identity_recovery_scopes_legacy_matcher_without_mutating_pc_upcoming_policy():
+    from domain import current_shadow_fixture_identity_v2 as identity
+    from domain import current_shadow_sportybet_pc_upcoming_reconciliation as runtime
+    from domain import current_shadow_sportybet_upcoming_reconciliation as legacy
+    from scripts import current_shadow_fixture_identity_reconciliation_recovery as recovery
+
+    original_match_event = identity.match_event
+    original_matching_basis = legacy.MATCHING_BASIS
+    original_expected_contract = legacy.EXPECTED_CONTRACT_SHA256
+    wrapper_policy_sha = runtime.calculate_policy_sha256()
+
+    hooks = recovery.install(runtime)
+    try:
+        assert identity.match_event is recovery.match_event
+        assert legacy.MATCHING_BASIS == recovery.MATCHING_BASIS
+        assert legacy.EXPECTED_CONTRACT_SHA256 == original_expected_contract
+        assert runtime.validate_contract()["runtime_policy_sha256"] == wrapper_policy_sha
+        assert runtime.calculate_policy_sha256() == wrapper_policy_sha
+        assert runtime.PINNED_POLICY_SHA256 == wrapper_policy_sha
+    finally:
+        recovery.restore(runtime, hooks)
+
+    assert identity.match_event is original_match_event
+    assert legacy.MATCHING_BASIS == original_matching_basis
+    assert legacy.EXPECTED_CONTRACT_SHA256 == original_expected_contract
+    assert legacy.validate_contract()["contract_sha256"] == original_expected_contract

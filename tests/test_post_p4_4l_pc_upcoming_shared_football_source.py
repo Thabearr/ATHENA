@@ -30,8 +30,8 @@ def test_source_contract_audit_passes_offline() -> None:
     result = audit.audit(ROOT)
     assert result["status"] == "PASSED"
     assert result["network_used"] is False
-    assert result["runtime_owner_unchanged"] is True
-    assert result["p3_runtime_owner_unchanged"] is True
+    assert result["historical_candidate_receipt_unchanged"] is True
+    assert result["runtime_owner_superseded_by_reviewed_migration"] is True
     assert result["paginated_runtime_authority_false"] is True
     assert result["fanout_runtime_authority_false"] is True
     assert result["fanout_global_echo_rejected"] is True
