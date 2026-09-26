@@ -74,6 +74,12 @@ class PcUpcomingRuntimeReconciliationError(ValueError):
     """Raised when the runtime wrapper cannot prove a complete safe source."""
 
 
+# The runner's bounded failure taxonomy historically catches this module-shaped
+# exception. The alias preserves that seam while retaining the new source-boundary
+# error identity and stable incomplete-pagination state.
+SportyBetCurrentEventDiscoveryError = PcUpcomingRuntimeReconciliationError
+
+
 def _canonical(value: Any) -> bytes:
     return json.dumps(value, ensure_ascii=False, allow_nan=False, sort_keys=True,
                       separators=(",", ":")).encode("utf-8")
@@ -532,6 +538,6 @@ __all__ = [
     "PcUpcomingRuntimeReconciliationError", "calculate_policy_sha256", "capture_current_pc_upcoming_discovery",
     "capture_current_upcoming_discovery", "discover_and_reconcile_current_events", "prospective_discovery_assessment",
     "reconcile_current_events_from_pc_upcoming_discovery", "reconcile_current_events_from_upcoming_discovery",
-    "validate_contract", "verify_current_event_discovery_reconciliation_bundle",
+    "SportyBetCurrentEventDiscoveryError", "validate_contract", "verify_current_event_discovery_reconciliation_bundle",
     "verify_current_pc_upcoming_discovery", "verify_current_pc_upcoming_reconciliation_bundle",
 ]
